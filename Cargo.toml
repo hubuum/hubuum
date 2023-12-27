@@ -1,0 +1,34 @@
+[package]
+name = "hubuum"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+actix-service = "2.0.2"
+actix-web = { version = "4.4.1", features = ["actix-tls"] }
+bytes = "1.5.0"
+chrono = { version = "0.4.31", features = ["serde"] }
+diesel = { version = "2.1.4", features = [
+    "postgres",
+    "sqlite",
+    "mysql",
+    "serde_json",
+    "r2d2",
+] }
+futures-util = "0.3.30"
+r2d2 = "0.8.10"
+rand = "0.8.5"
+scrypt = "0.11.0"
+serde = { version = "1.0.193", features = ["derive"] }
+serde_json = "1.0.108"
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["serde_json", "serde", "json"] }
+urlparse = "0.7.3"
+uuid = { version = "1.6.1", features = ["v4"] }
+
+[features]
+postgres = []
+mysql = []
+sqlite = []
