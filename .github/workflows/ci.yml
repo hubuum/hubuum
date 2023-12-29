@@ -36,24 +36,24 @@ jobs:
             skip_tests: true
           - os_name: Linux-x86_64
             os: ubuntu-20.04
-            target: x86_64-unknown-linux-musl
+            target: x86_64-unknown-linux
             bin: hubuum
-            name: hubuum-Linux-x86_64-musl.tar.gz
+            name: hubuum-Linux-x86_64.tar.gz
           - os_name: Linux-aarch64
             os: ubuntu-20.04
-            target: aarch64-unknown-linux-musl
+            target: aarch64-unknown-linux
             bin: hubuum
-            name: hubuum-Linux-aarch64-musl.tar.gz
+            name: hubuum-Linux-aarch64.tar.gz
           - os_name: Linux-arm
             os: ubuntu-20.04
-            target: arm-unknown-linux-musleabi
+            target: arm-unknown-linuxeabi
             bin: hubuum
-            name: hubuum-Linux-arm-musl.tar.gz
+            name: hubuum-Linux-arm.tar.gz
           - os_name: Linux-i686
             os: ubuntu-20.04
-            target: i686-unknown-linux-musl
+            target: i686-unknown-linux
             bin: hubuum
-            name: hubuum-Linux-i686-musl.tar.gz
+            name: hubuum-Linux-i686.tar.gz
             skip_tests: true
           - os_name: Linux-powerpc
             os: ubuntu-20.04
