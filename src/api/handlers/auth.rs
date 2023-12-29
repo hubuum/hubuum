@@ -97,7 +97,7 @@ pub async fn logout(pool: web::Data<DbPool>, bearer_token: BearerToken) -> impl 
     use diesel::RunQueryDsl;
 
     let mut conn = pool.get().expect("couldn't get db connection from pool");
-    let token_value = &bearer_token.0;
+    let token_value = &bearer_token.token;
 
     debug!(message = "Logging out token {}.", token_value);
 
@@ -124,31 +124,15 @@ pub async fn logout(pool: web::Data<DbPool>, bearer_token: BearerToken) -> impl 
 #[get("/logout_all")]
 pub async fn logout_all(pool: web::Data<DbPool>, bearer_token: BearerToken) -> impl Responder {
     use crate::schema::tokens::dsl::*;
-    use crate::schema::users::dsl::*;
     use diesel::RunQueryDsl;
 
     let mut conn = pool.get().expect("couldn't get db connection from pool");
-    let token_value = &bearer_token.0;
+    let token_value = &bearer_token.token;
+    let token_user_id = &bearer_token.user_id;
 
-    let user_result = tokens
-        .filter(token.eq(token_value))
-        .inner_join(users)
-        .select(users::all_columns())
-        .first::<User>(&mut conn);
+    debug!(message = "Logging out all tokens for {}.", token_user_id);
 
-    let user = match user_result {
-        Ok(user) => user,
-        Err(_) => {
-            return json_response(
-                json!({ "message": "Authentication failure"}),
-                StatusCode::UNAUTHORIZED,
-            )
-        }
-    };
-
-    debug!(message = "Logging out all tokens for {}.", user.username);
-
-    let delete_result = diesel::delete(tokens.filter(user_id.eq(user.id))).execute(&mut conn);
+    let delete_result = diesel::delete(tokens.filter(user_id.eq(token_user_id))).execute(&mut conn);
 
     match delete_result {
         Ok(_) => {
@@ -161,6 +145,7 @@ pub async fn logout_all(pool: web::Data<DbPool>, bearer_token: BearerToken) -> i
             warn!(
                 message = "Logout failed",
                 token = token_value,
+                user_id = token_user_id,
                 error = e.to_string()
             );
             return json_response(

@@ -2,7 +2,7 @@
 
 use actix_web::web;
 
-use crate::handlers::iam as iam_handlers;
+use crate::api::v1::handlers::iam as iam_handlers;
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(iam_handlers::create_user)
         .service(iam_handlers::get_users)

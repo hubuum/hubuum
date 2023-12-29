@@ -6,13 +6,13 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 use actix_web::middleware::Logger;
 
+mod api;
 mod config;
 mod db;
+mod errors;
 mod extractors;
-mod handlers;
 mod middlewares;
 mod models;
-mod routes;
 mod schema;
 mod utilities;
 
@@ -39,7 +39,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(middlewares::tracing::TracingMiddleware)
             .wrap(Logger::default())
             .app_data(Data::new(pool.clone()))
-            .configure(routes::config)
+            .configure(api::config)
     })
     .bind("127.0.0.1:8080")?
     .run()

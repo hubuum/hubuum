@@ -1,25 +1,29 @@
 use actix_web::dev::Payload;
 use actix_web::FromRequest;
-use actix_web::{web::Data, Error, HttpRequest};
+use actix_web::{web::Data, HttpRequest};
 use futures_util::future::{ready, Ready};
 
 use crate::db::connection::DbPool;
 
 use crate::utilities::auth::validate_token;
 
-// Step 1: Custom Extractor
-pub struct BearerToken(pub String);
+use crate::errors::ApiError;
+
+pub struct BearerToken {
+    pub token: String,
+    pub user_id: i32,
+}
 
 impl FromRequest for BearerToken {
-    type Error = Error;
+    type Error = ApiError;
     type Future = Ready<Result<Self, Self::Error>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
         let pool = match req.app_data::<Data<DbPool>>() {
             Some(pool) => pool,
             None => {
-                return ready(Err(actix_web::error::ErrorInternalServerError(
-                    "Pool not found",
+                return ready(Err(ApiError::InternalServerError(
+                    "Pool not found".to_string(),
                 )))
             }
         };
@@ -29,14 +33,15 @@ impl FromRequest for BearerToken {
                 if auth_str.starts_with("Bearer ") {
                     let token_string = auth_str[7..].to_string();
 
-                    if validate_token(&token_string, &pool) {
-                        return ready(Ok(BearerToken(token_string)));
+                    match validate_token(&token_string, &pool) {
+                        Ok(Some(bearer_token)) => return ready(Ok(bearer_token)),
+                        Ok(None) | Err(_) => {
+                            return ready(Err(ApiError::Forbidden("Invalid token".to_string())))
+                        }
                     }
-
-                    return ready(Err(actix_web::error::ErrorUnauthorized("Unauthorized")));
                 }
             }
         }
-        ready(Err(actix_web::error::ErrorUnauthorized("Unauthorized")))
+        ready(Err(ApiError::Unauthorized("No token provided".to_string())))
     }
 }

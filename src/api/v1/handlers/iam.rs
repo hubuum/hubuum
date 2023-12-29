@@ -11,7 +11,6 @@ use crate::db::connection::DbPool;
 
 use tracing::debug;
 
-// use crate::schema::users;
 use diesel::prelude::*;
 use diesel::QueryDsl;
 

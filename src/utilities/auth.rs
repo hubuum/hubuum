@@ -14,6 +14,8 @@ use crate::db::connection::DbPool;
 
 use tracing::debug;
 
+use crate::extractors::BearerToken;
+
 // Function to hash a password
 pub fn hash_password(password: &str) -> Result<String, Box<dyn std::error::Error>> {
     let salt = SaltString::generate(&mut OsRng);
@@ -73,7 +75,10 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool, argon2::Error
 /// * `token` - A string slice that holds the token to be validated
 /// * `pool` - A DbPool that holds the database connection pool
 ///
-pub fn validate_token(token: &str, pool: &DbPool) -> bool {
+pub fn validate_token(
+    token: &str,
+    pool: &DbPool,
+) -> Result<Option<BearerToken>, diesel::result::Error> {
     use crate::schema::tokens::dsl::{expires, token as token_column, tokens};
     use chrono::prelude::Utc;
     use diesel::prelude::{ExpressionMethods, QueryDsl, RunQueryDsl};
@@ -87,15 +92,20 @@ pub fn validate_token(token: &str, pool: &DbPool) -> bool {
         .filter(expires.gt(now))
         .first::<crate::models::token::Token>(&mut conn);
 
-    if token_result.is_err() {
-        debug!(
-            message = "Token validation failed.",
-            error = token_result.err().unwrap().to_string()
-        );
-        return false;
+    match token_result {
+        Ok(token_data) => Ok(Some(BearerToken {
+            token: token_data.token,
+            user_id: token_data.user_id,
+        })),
+        Err(e) => {
+            debug!(
+                message = "Token validation failed.",
+                token = token,
+                error = e.to_string()
+            );
+            Ok(None)
+        }
     }
-
-    true
 }
 
 pub fn generate_random_password(length: usize) -> String {
