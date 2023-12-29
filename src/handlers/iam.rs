@@ -2,7 +2,10 @@ use actix_web::{delete, get, http::StatusCode, patch, post, web, Responder};
 
 use crate::models::group::{Group, NewGroup, UpdateGroup};
 use crate::models::user::{NewUser, UpdateUser, User};
-use crate::utilities::response::handle_result;
+use crate::utilities::auth::hash_password;
+use crate::utilities::response::{handle_result, json_response};
+
+use serde_json::json;
 
 use crate::db::connection::DbPool;
 
@@ -63,6 +66,26 @@ pub async fn update_user(
     let mut conn = pool.get().expect("couldn't get db connection from pool");
     let user_id = user_id.into_inner();
     let updated_user = updated_user.into_inner();
+
+    // If we get a password update, we need to hash it
+    let updated_user = if updated_user.password.is_some() {
+        let hashed_password_result = hash_password(&updated_user.password.unwrap());
+
+        match hashed_password_result {
+            Ok(hashed_password) => UpdateUser {
+                password: Some(hashed_password),
+                ..updated_user
+            },
+            Err(_) => {
+                return json_response(
+                    json!({ "message": "Internal authentication failure, please try again later."}),
+                    StatusCode::UNAUTHORIZED,
+                )
+            }
+        }
+    } else {
+        updated_user
+    };
 
     // Perform the update operation
     let result = diesel::update(users.filter(id.eq(user_id)))

@@ -1,4 +1,4 @@
-use actix_web::{http::StatusCode, HttpResponse, Responder};
+use actix_web::{http::StatusCode, HttpResponse};
 use serde::Serialize;
 use serde_json::json;
 
@@ -12,7 +12,7 @@ pub fn handle_result<T, E>(
     result: Result<T, E>,
     success_status: StatusCode,
     error_status: StatusCode,
-) -> impl Responder
+) -> HttpResponse
 where
     T: Serialize,
     E: std::fmt::Debug,

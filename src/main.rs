@@ -8,12 +8,14 @@ use actix_web::middleware::Logger;
 
 mod config;
 mod db;
+mod extractors;
 mod handlers;
 mod middlewares;
 mod models;
 mod routes;
 mod schema;
 mod utilities;
+
 use crate::db::connection::init_pool;
 
 #[actix_web::main]

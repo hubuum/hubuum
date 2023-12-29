@@ -109,7 +109,7 @@ pub async fn init(pool: DbPool) {
         }
 
         warn!(
-            "Created admin user: {} : {}.",
+            "Created admin user: {} `{}`",
             new_user.username, default_password
         );
     } else {

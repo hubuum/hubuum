@@ -133,6 +133,11 @@ jobs:
       - name: Install musl-tools on Linux
         run: sudo apt-get update --yes && sudo apt-get install --yes musl-tools
         if: contains(matrix.platform.name, 'musl')
+      - name: Install database libraries on Linux
+        run: |
+          sudo apt-get update --yes
+          sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev
+        if: contains(matrix.platform.os, 'ubuntu')
       - name: Build binary
         uses: houseabsolute/actions-rust-cross@v0
         with:

@@ -44,3 +44,10 @@ pub struct NewUser {
     pub password: String,
     pub email: Option<String>,
 }
+
+#[derive(AsChangeset, Deserialize, Serialize)]
+#[diesel(table_name = users)]
+pub struct LoginUser {
+    pub username: String,
+    pub password: String,
+}

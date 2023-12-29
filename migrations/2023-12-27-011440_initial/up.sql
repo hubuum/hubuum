@@ -17,3 +17,10 @@ CREATE TABLE user_groups (
     group_id INT REFERENCES groups (id),
     PRIMARY KEY (user_id, group_id)
 );
+
+CREATE TABLE tokens (
+    token VARCHAR NOT NULL,
+    user_id INT REFERENCES users (id),
+    expires TIMESTAMP NOT NULL,
+    PRIMARY KEY (token, user_id)
+);
