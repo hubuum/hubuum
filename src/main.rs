@@ -1,5 +1,6 @@
 use actix_web::{web::Data, App, HttpServer};
 
+use tracing_subscriber::filter::EnvFilter;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -16,11 +17,28 @@ mod models;
 mod schema;
 mod utilities;
 
-use crate::db::connection::init_pool;
+use db::connection::init_pool;
+use tracing::{debug, warn};
+
+use crate::config::AppConfig;
+use crate::utilities::is_valid_log_level;
+use clap::Parser;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    let config = AppConfig::parse();
+    let filter = if is_valid_log_level(&config.log_level) {
+        EnvFilter::try_new(&config.log_level).unwrap_or_else(|_e| {
+            warn!("Error parsing log level: {}", &config.log_level);
+            std::process::exit(1);
+        })
+    } else {
+        warn!("Invalid log level: {}", config.log_level);
+        std::process::exit(1);
+    };
+
     tracing_subscriber::registry()
+        .with(filter)
         .with(
             tracing_subscriber::fmt::layer()
                 .json() // Enable JSON output
@@ -28,9 +46,17 @@ async fn main() -> std::io::Result<()> {
         )
         .init();
 
-    let database_url =
-        std::env::var("HUBUUM_DATABASE_URL").expect("HUBUUM_DATABASE_URL must be set");
-    let pool = init_pool(&database_url);
+    debug!(
+        message = "Starting server",
+        bind_ip = %config.bind_ip,
+        port = config.port,
+        log_level = %config.log_level,
+        actix_workers = config.actix_workers,
+        db_pool_size = config.db_pool_size,
+    );
+
+    let database_url: String = config.database_url;
+    let pool = init_pool(&database_url, config.db_pool_size);
 
     utilities::init::init(pool.clone()).await;
 
@@ -41,7 +67,8 @@ async fn main() -> std::io::Result<()> {
             .app_data(Data::new(pool.clone()))
             .configure(api::config)
     })
-    .bind("127.0.0.1:8080")?
+    .bind(format!("{}:{}", config.bind_ip, config.port))?
+    .workers(config.actix_workers)
     .run()
     .await
 }

@@ -9,11 +9,7 @@ use crate::utilities::db::DatabaseUrlComponents;
 
 pub type DbPool = Pool<ConnectionManager<PgConnection>>;
 
-pub fn init_pool(database_url: &str) -> DbPool {
-    return init_pool_with_size(database_url, 10);
-}
-
-pub fn init_pool_with_size(database_url: &str, max_size: i8) -> DbPool {
+pub fn init_pool(database_url: &str, max_size: u32) -> DbPool {
     let database_url_components = DatabaseUrlComponents::new(database_url);
 
     match database_url_components {
@@ -32,7 +28,7 @@ pub fn init_pool_with_size(database_url: &str, max_size: i8) -> DbPool {
 
     let manager = ConnectionManager::<PgConnection>::new(database_url);
     let pool = Pool::builder()
-        .max_size(max_size as u32)
+        .max_size(max_size)
         .build(manager)
         .expect("Failed to create pool");
 
@@ -46,7 +42,7 @@ mod tests {
     #[test]
     fn test_init_pool() {
         let database_url = test_database_url();
-        let pool = super::init_pool(&database_url);
+        let pool = super::init_pool(&database_url, 5);
         assert_eq!(pool.max_size(), 10);
     }
 }
