@@ -31,7 +31,7 @@ CREATE TABLE namespaces (
     description VARCHAR NOT NULL
 );
 
-CREATE TABLE classpermissions (
+CREATE TABLE namespacepermissions (
     id SERIAL PRIMARY KEY,
     namespace_id INT REFERENCES namespaces (id),
     group_id INT REFERENCES groups (id),
@@ -68,5 +68,6 @@ CREATE TABLE hubuumobject (
     name VARCHAR NOT NULL,
     namespace_id INT REFERENCES namespaces (id),
     hubuum_class_id INT REFERENCES hubuumclass (id),
+    data JSONB NOT NULL,
     description VARCHAR NOT NULL
 );
