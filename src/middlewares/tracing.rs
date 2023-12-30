@@ -51,7 +51,7 @@ where
         let path = req.path().to_string();
 
         let start_time = Instant::now();
-        info!(message = "Request start", request_id = %request_id, method = &method, path = &path);
+        info!(request_id = %request_id, message = "Request start", method = &method, path = &path);
 
         let fut = self.service.call(req);
 
