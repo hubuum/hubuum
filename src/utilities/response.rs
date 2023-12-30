@@ -4,7 +4,18 @@ use serde_json::json;
 
 use tracing::debug;
 
+/// Create a JSON response with the given data and status code
+///
+/// ## Arguments
+///
+/// * `data` - The json data to be serialized and sent in the response (use `json!` macro)
+/// * `status` - The HTTP status code to be sent in the response
 pub fn json_response<T: Serialize>(data: T, status: StatusCode) -> HttpResponse {
+    debug!(message = "Creating JSON response", status = ?status);
+
+    if status == StatusCode::NO_CONTENT {
+        return HttpResponse::build(status).finish();
+    }
     HttpResponse::build(status).json(data)
 }
 

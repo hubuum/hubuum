@@ -12,6 +12,7 @@ mod config;
 mod db;
 mod errors;
 mod extractors;
+mod logger;
 mod middlewares;
 mod models;
 mod schema;
@@ -41,8 +42,9 @@ async fn main() -> std::io::Result<()> {
         .with(filter)
         .with(
             tracing_subscriber::fmt::layer()
-                .json() // Enable JSON output
-                .with_span_events(FmtSpan::CLOSE),
+                .json()
+                .with_span_events(FmtSpan::CLOSE)
+                .event_format(logger::HubuumLoggingFormat),
         )
         .init();
 

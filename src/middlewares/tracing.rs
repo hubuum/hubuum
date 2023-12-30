@@ -2,6 +2,7 @@ use actix_service::{Service, Transform};
 use actix_web::{dev::ServiceRequest, dev::ServiceResponse, Error};
 use futures_util::future::{self, LocalBoxFuture, Ready};
 use std::task::{Context, Poll};
+use std::time::Instant;
 use tracing::{info, span, Instrument, Level};
 use uuid::Uuid;
 
@@ -49,6 +50,7 @@ where
         let method = req.method().to_string();
         let path = req.path().to_string();
 
+        let start_time = Instant::now();
         info!(message = "Request start", request_id = %request_id, method = &method, path = &path);
 
         let fut = self.service.call(req);
@@ -56,8 +58,8 @@ where
         Box::pin(
             async move {
                 let res = fut.await?;
-                // Here you can manipulate the response if needed
-                info!(message = "Request end", request_id = %request_id, method = &method, path = &path);
+                let elapsed_time = start_time.elapsed();
+                info!(message = "Request end", run_time = ?elapsed_time, method = &method, path = &path);
 
                 Ok(res)
             }

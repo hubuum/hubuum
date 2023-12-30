@@ -10,11 +10,7 @@ use rand::{thread_rng, Rng};
 
 use sha2::{Digest, Sha512};
 
-use crate::db::connection::DbPool;
-
 use tracing::debug;
-
-use crate::extractors::BearerToken;
 
 // Function to hash a password
 pub fn hash_password(password: &str) -> Result<String, Box<dyn std::error::Error>> {
@@ -62,50 +58,6 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool, argon2::Error
     return Ok(Argon2::default()
         .verify_password(password.as_bytes(), &parsed_hash)
         .is_ok());
-}
-
-/// Validate a token against the hash stored in the database. Reasons for the
-/// token to be invalid include:
-///
-/// * The token is not found in database
-/// * The token has expired
-///
-/// ## Arguments
-///
-/// * `token` - A string slice that holds the token to be validated
-/// * `pool` - A DbPool that holds the database connection pool
-///
-pub fn validate_token(
-    token: &str,
-    pool: &DbPool,
-) -> Result<Option<BearerToken>, diesel::result::Error> {
-    use crate::schema::tokens::dsl::{expires, token as token_column, tokens};
-    use chrono::prelude::Utc;
-    use diesel::prelude::{ExpressionMethods, QueryDsl, RunQueryDsl};
-
-    let mut conn = pool.get().expect("couldn't get db connection from pool");
-
-    let now = Utc::now().naive_utc();
-
-    let token_result = tokens
-        .filter(token_column.eq(token))
-        .filter(expires.gt(now))
-        .first::<crate::models::token::Token>(&mut conn);
-
-    match token_result {
-        Ok(token_data) => Ok(Some(BearerToken {
-            token: token_data.token,
-            user_id: token_data.user_id,
-        })),
-        Err(e) => {
-            debug!(
-                message = "Token validation failed.",
-                token = token,
-                error = e.to_string()
-            );
-            Ok(None)
-        }
-    }
 }
 
 pub fn generate_random_password(length: usize) -> String {

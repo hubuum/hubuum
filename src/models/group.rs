@@ -32,7 +32,7 @@ impl Group {
     }
 }
 
-#[derive(Deserialize, Serialize, Insertable)]
+#[derive(Deserialize, Serialize, Insertable, Debug)]
 #[diesel(table_name = groups)]
 pub struct NewGroup {
     pub groupname: String,
