@@ -68,6 +68,15 @@ impl User {
     }
 }
 
+/// Trait to hash a password.
+pub trait PasswordHashable {
+    fn hash_password(&mut self) -> Result<(), String>;
+}
+
+/// Struct to update a user.
+///
+/// The password, if present, is expected to be hashed
+/// before being passed to the database.
 #[derive(AsChangeset, Deserialize, Serialize)]
 #[diesel(table_name = users)]
 pub struct UpdateUser {
@@ -76,6 +85,25 @@ pub struct UpdateUser {
     pub email: Option<String>,
 }
 
+impl PasswordHashable for UpdateUser {
+    fn hash_password(&mut self) -> Result<(), String> {
+        if let Some(ref password) = self.password {
+            match crate::utilities::auth::hash_password(password) {
+                Ok(hashed_password) => {
+                    self.password = Some(hashed_password);
+                    Ok(())
+                }
+                Err(e) => Err(format!("Failed to hash password: {}", e)),
+            }
+        } else {
+            Ok(())
+        }
+    }
+}
+/// Struct to create a new user.
+///
+/// The password is expected to be hashed
+/// before being passed to the database.
 #[derive(Serialize, Deserialize, Insertable, Debug)]
 #[diesel(table_name = users)]
 pub struct NewUser {
@@ -84,6 +112,20 @@ pub struct NewUser {
     pub email: Option<String>,
 }
 
+impl PasswordHashable for NewUser {
+    fn hash_password(&mut self) -> Result<(), String> {
+        match crate::utilities::auth::hash_password(&self.password) {
+            Ok(hashed_password) => {
+                self.password = hashed_password;
+                Ok(())
+            }
+            Err(e) => Err(format!("Failed to hash password: {}", e)),
+        }
+    }
+}
+/// Struct to log in a user.
+///
+/// The password is expected to be plaintext.
 #[derive(AsChangeset, Deserialize, Serialize)]
 #[diesel(table_name = users)]
 pub struct LoginUser {

@@ -2,9 +2,10 @@ use actix_web::{delete, get, http::StatusCode, patch, post, web, Responder};
 
 use crate::models::group::{Group, NewGroup, UpdateGroup};
 use crate::models::user::{NewUser, UpdateUser, User};
-use crate::utilities::auth::hash_password;
+
 use crate::utilities::response::{handle_result, json_response};
 
+use crate::models::user::PasswordHashable;
 use serde_json::json;
 
 use crate::db::connection::DbPool;
@@ -48,20 +49,13 @@ pub async fn create_user(
     );
 
     let mut new_user = new_user.into_inner();
-    let hashed_password_result = hash_password(&new_user.password);
 
-    new_user = match hashed_password_result {
-        Ok(hashed_password) => NewUser {
-            password: hashed_password,
-            ..new_user
-        },
-        Err(_) => {
-            return json_response(
-                json!({ "message": "Internal authentication failure, please try again later."}),
-                StatusCode::UNAUTHORIZED,
-            )
-        }
-    };
+    if let Err(error_message) = new_user.hash_password() {
+        return json_response(
+            json!({ "message": error_message }),
+            StatusCode::INTERNAL_SERVER_ERROR,
+        );
+    }
 
     let result = diesel::insert_into(crate::schema::users::table)
         .values(&new_user)
@@ -108,7 +102,7 @@ pub async fn update_user(
 
     let mut conn = pool.get().expect("couldn't get db connection from pool");
     let user_id = user_id.into_inner();
-    let updated_user = updated_user.into_inner();
+    let mut updated_user = updated_user.into_inner();
 
     debug!(
         message = "User patch requested",
@@ -116,27 +110,13 @@ pub async fn update_user(
         requestor = requestor.user.id
     );
 
-    // If we get a password update, we need to hash it
-    let updated_user = if updated_user.password.is_some() {
-        let hashed_password_result = hash_password(&updated_user.password.unwrap());
+    if let Err(error_message) = updated_user.hash_password() {
+        return json_response(
+            json!({ "message": error_message }),
+            StatusCode::INTERNAL_SERVER_ERROR,
+        );
+    }
 
-        match hashed_password_result {
-            Ok(hashed_password) => UpdateUser {
-                password: Some(hashed_password),
-                ..updated_user
-            },
-            Err(_) => {
-                return json_response(
-                    json!({ "message": "Internal authentication failure, please try again later."}),
-                    StatusCode::UNAUTHORIZED,
-                )
-            }
-        }
-    } else {
-        updated_user
-    };
-
-    // Perform the update operation
     let result = diesel::update(users.filter(id.eq(user_id)))
         .set(&updated_user)
         .execute(&mut conn);
