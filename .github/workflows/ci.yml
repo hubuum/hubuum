@@ -162,7 +162,7 @@ jobs:
           command: "test"
           target: ${{ matrix.platform.target }}
           toolchain: ${{ matrix.toolchain }}
-          args: "--locked --release --database-url postgres://postgres:postgres@localhost:5432/postgres"
+          args: "--locked --release -- --database-url postgres://postgres:postgres@localhost:5432/postgres"
         if: ${{ !matrix.platform.skip_tests }}
       - name: Package as archive
         shell: bash
