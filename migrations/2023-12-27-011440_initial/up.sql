@@ -27,7 +27,7 @@ CREATE TABLE tokens (
 
 CREATE TABLE namespaces (
     id SERIAL PRIMARY KEY,
-    namespace VARCHAR NOT NULL,
+    name VARCHAR NOT NULL,
     description VARCHAR NOT NULL
 );
 

@@ -21,13 +21,12 @@ mod utilities;
 use db::connection::init_pool;
 use tracing::{debug, warn};
 
-use crate::config::AppConfig;
+use crate::config::get_config;
 use crate::utilities::is_valid_log_level;
-use clap::Parser;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let config = AppConfig::parse();
+    let config = get_config();
     let filter = if is_valid_log_level(&config.log_level) {
         EnvFilter::try_new(&config.log_level).unwrap_or_else(|_e| {
             warn!("Error parsing log level: {}", &config.log_level);
@@ -57,8 +56,7 @@ async fn main() -> std::io::Result<()> {
         db_pool_size = config.db_pool_size,
     );
 
-    let database_url: String = config.database_url;
-    let pool = init_pool(&database_url, config.db_pool_size);
+    let pool = init_pool(&config.database_url.clone(), config.db_pool_size.clone());
 
     utilities::init::init(pool.clone()).await;
 

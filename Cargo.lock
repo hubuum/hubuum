@@ -818,6 +818,7 @@ dependencies = [
  "clap",
  "diesel",
  "futures-util",
+ "once_cell",
  "r2d2",
  "rand",
  "serde",

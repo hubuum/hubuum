@@ -74,12 +74,13 @@ pub fn init_pool(database_url: &str, max_size: u32) -> DbPool {
 
 #[cfg(test)]
 mod tests {
-    use crate::utilities::test::test_database_url;
+    use crate::config::get_config;
 
     #[test]
     fn test_init_pool() {
-        let database_url = test_database_url();
-        let pool = super::init_pool(&database_url, 5);
-        assert_eq!(pool.max_size(), 10);
+        let database_url = get_config().database_url.clone();
+        let pool_size = get_config().db_pool_size.clone();
+        let pool = super::init_pool(&database_url, pool_size);
+        assert_eq!(pool.max_size(), pool_size);
     }
 }

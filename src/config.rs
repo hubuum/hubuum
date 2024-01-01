@@ -1,5 +1,7 @@
 use clap::Parser;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 
 #[derive(Parser, Debug, Deserialize, Serialize, Clone)]
 pub struct AppConfig {
@@ -30,4 +32,10 @@ pub struct AppConfig {
     /// Number of DB connections in the pool
     #[clap(long, env = "HUBUUM_DB_POOL_SIZE", default_value_t = 10)]
     pub db_pool_size: u32,
+}
+
+pub static CONFIG: Lazy<Mutex<AppConfig>> = Lazy::new(|| Mutex::new(AppConfig::parse()));
+
+pub fn get_config() -> std::sync::MutexGuard<'static, AppConfig> {
+    CONFIG.lock().unwrap()
 }

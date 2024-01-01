@@ -122,6 +122,16 @@ jobs:
           - stable
           - beta
           - nightly
+    services:
+      postgres:
+        image: postgres
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v3
       - name: Cache cargo & target directories
@@ -152,7 +162,7 @@ jobs:
           command: "test"
           target: ${{ matrix.platform.target }}
           toolchain: ${{ matrix.toolchain }}
-          args: "--locked --release"
+          args: "--locked --release --database-url postgres://postgres:postgres@localhost:5432/postgres"
         if: ${{ !matrix.platform.skip_tests }}
       - name: Package as archive
         shell: bash
