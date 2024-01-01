@@ -18,6 +18,11 @@ pub struct AdminAccess {
     pub user: User,
 }
 
+pub struct AdminOrSelfAccess {
+    pub token: String,
+    pub user: User,
+}
+
 /// A user with a valid token
 ///
 /// This is a user that has a valid token, but is not necessarily an admin. In
@@ -44,6 +49,21 @@ fn extract_token(req: &HttpRequest) -> Result<String, ApiError> {
 fn get_db_pool<'a>(req: &'a HttpRequest) -> Result<&'a Data<DbPool>, ApiError> {
     req.app_data::<Data<DbPool>>()
         .ok_or_else(|| ApiError::InternalServerError("Pool not found".to_string()))
+}
+
+fn extract_user_from_token(pool: &Data<DbPool>, token_string: &str) -> Result<User, ApiError> {
+    let bearer_token = pool
+        .get_valid_token(token_string)
+        .map_err(|_| ApiError::Forbidden("Invalid token".to_string()))?;
+
+    let mut conn = pool.get().expect("couldn't get db connection from pool");
+    use crate::schema::users::dsl::*;
+    use diesel::prelude::*;
+
+    users
+        .filter(id.eq(bearer_token.user_id))
+        .first::<User>(&mut conn)
+        .map_err(|_| ApiError::Forbidden("Invalid token".to_string()))
 }
 
 impl FromRequest for BearerToken {
@@ -78,32 +98,15 @@ impl FromRequest for UserAccess {
             Err(e) => return ready(Err(e)),
         };
 
-        let token_string = match extract_token(req) {
-            Ok(token) => token,
-            Err(e) => return ready(Err(e)),
-        };
-
-        match pool.get_valid_token(&token_string) {
-            Ok(bearer_token) => {
-                use crate::schema::users::dsl::*;
-                use diesel::prelude::{ExpressionMethods, QueryDsl, RunQueryDsl};
-
-                let mut conn = pool.get().expect("couldn't get db connection from pool");
-                let user = users
-                    .filter(id.eq(bearer_token.user_id))
-                    .first::<User>(&mut conn);
-
-                match user {
-                    Ok(user) => {
-                        return ready(Ok(UserAccess {
-                            token: token_string,
-                            user,
-                        }))
-                    }
-                    Err(_) => return ready(Err(ApiError::Forbidden("Invalid token".to_string()))),
-                }
-            }
-            Err(_) => ready(Err(ApiError::Forbidden("Invalid token".to_string()))),
+        match extract_token(req) {
+            Ok(token_string) => match extract_user_from_token(&pool, &token_string) {
+                Ok(user) => ready(Ok(UserAccess {
+                    token: token_string,
+                    user,
+                })),
+                Err(e) => ready(Err(e)),
+            },
+            Err(e) => ready(Err(e)),
         }
     }
 }
@@ -118,38 +121,46 @@ impl FromRequest for AdminAccess {
             Err(e) => return ready(Err(e)),
         };
 
-        let token_string = match extract_token(req) {
-            Ok(token) => token,
+        match extract_token(req) {
+            Ok(token_string) => match extract_user_from_token(&pool, &token_string) {
+                Ok(user) if user.is_admin(&pool) => ready(Ok(AdminAccess {
+                    token: token_string,
+                    user,
+                })),
+                Ok(_) => ready(Err(ApiError::Forbidden("Permission denied".to_string()))),
+                Err(e) => ready(Err(e)),
+            },
+            Err(e) => ready(Err(e)),
+        }
+    }
+}
+
+impl FromRequest for AdminOrSelfAccess {
+    type Error = ApiError;
+    type Future = Ready<Result<Self, Self::Error>>;
+
+    fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
+        let pool = match get_db_pool(req) {
+            Ok(pool) => pool,
             Err(e) => return ready(Err(e)),
         };
 
-        match pool.get_valid_token(&token_string) {
-            Ok(bearer_token) => {
-                use crate::schema::users::dsl::*;
-                use diesel::prelude::{ExpressionMethods, QueryDsl, RunQueryDsl};
-
-                let mut conn = pool.get().expect("couldn't get db connection from pool");
-                let user = users
-                    .filter(id.eq(bearer_token.user_id))
-                    .first::<User>(&mut conn);
-
-                match user {
-                    Ok(user) => {
-                        if !user.is_admin(pool.get_ref()) {
-                            return ready(Err(ApiError::Forbidden(
-                                "Permission denied".to_string(),
-                            )));
-                        }
-
-                        return ready(Ok(AdminAccess {
+        match extract_token(req) {
+            Ok(token_string) => match extract_user_from_token(&pool, &token_string) {
+                Ok(user) => {
+                    let path_user_id: i32 = req.match_info().query("user_id").parse().unwrap_or(-1);
+                    if user.is_admin(&pool) || user.id == path_user_id {
+                        ready(Ok(AdminOrSelfAccess {
                             token: token_string,
                             user,
-                        }));
+                        }))
+                    } else {
+                        ready(Err(ApiError::Forbidden("Permission denied".to_string())))
                     }
-                    Err(_) => return ready(Err(ApiError::Forbidden("Invalid token".to_string()))),
                 }
-            }
-            Err(_) => ready(Err(ApiError::Forbidden("Invalid token".to_string()))),
+                Err(e) => ready(Err(e)),
+            },
+            Err(e) => ready(Err(e)),
         }
     }
 }

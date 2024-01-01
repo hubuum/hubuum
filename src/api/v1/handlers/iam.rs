@@ -1,7 +1,7 @@
 use actix_web::{delete, get, http::StatusCode, patch, post, web, Responder};
 
 use crate::models::group::{Group, NewGroup, UpdateGroup};
-use crate::models::user::{NewUser, UpdateUser, User};
+use crate::models::user::{NewUser, UpdateUser, User, UserID};
 
 use crate::utilities::response::{handle_result, json_response};
 
@@ -10,7 +10,7 @@ use serde_json::json;
 
 use crate::db::connection::DbPool;
 
-use crate::extractors::{AdminAccess, UserAccess};
+use crate::extractors::{AdminAccess, AdminOrSelfAccess, UserAccess};
 
 use tracing::debug;
 
@@ -68,10 +68,44 @@ pub async fn create_user(
     );
 }
 
+#[get("/users/{user_id}/tokens")]
+pub async fn get_user_tokens(
+    pool: web::Data<DbPool>,
+    user_id: web::Path<UserID>,
+    requestor: AdminOrSelfAccess,
+) -> impl Responder {
+    use crate::schema::tokens::dsl::{expires, tokens, user_id as user_id_column};
+    use chrono::prelude::Utc;
+    use diesel::prelude::{ExpressionMethods, QueryDsl, RunQueryDsl};
+
+    let mut conn = pool.get().expect("couldn't get db connection from pool");
+
+    let now = Utc::now().naive_utc();
+
+    let uid = user_id.into_inner();
+
+    debug!(
+        message = "User tokens requested",
+        target = uid,
+        requestor = requestor.user.id
+    );
+
+    let token_result = tokens
+        .filter(user_id_column.eq(uid))
+        .filter(expires.gt(now))
+        .load::<crate::models::token::Token>(&mut conn);
+
+    return handle_result(
+        token_result,
+        StatusCode::OK,
+        StatusCode::INTERNAL_SERVER_ERROR,
+    );
+}
+
 #[get("/users/{user_id}")]
 pub async fn get_user(
     pool: web::Data<DbPool>,
-    user_id: web::Path<i32>,
+    user_id: web::Path<UserID>,
     requestor: UserAccess,
 ) -> impl Responder {
     use crate::schema::users::dsl::*;
@@ -94,7 +128,7 @@ pub async fn get_user(
 #[patch("/users/{user_id}")]
 pub async fn update_user(
     pool: web::Data<DbPool>,
-    user_id: web::Path<i32>, // Extracting user_id from path
+    user_id: web::Path<UserID>, // Extracting user_id from path
     updated_user: web::Json<UpdateUser>,
     requestor: AdminAccess,
 ) -> impl Responder {
@@ -131,7 +165,7 @@ pub async fn update_user(
 #[delete("/users/{user_id}")]
 pub async fn delete_user(
     pool: web::Data<DbPool>,
-    user_id: web::Path<i32>,
+    user_id: web::Path<UserID>,
     requestor: AdminAccess,
 ) -> impl Responder {
     use crate::schema::users::dsl::*;

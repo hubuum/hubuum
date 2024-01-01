@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::connection::DbPool;
 
+pub type UserID = i32;
+
 #[derive(Serialize, Deserialize, Queryable, Insertable)]
 #[diesel(table_name = users)]
 pub struct User {
