@@ -12,6 +12,7 @@ lazy_static! {
     static ref NO_CONTENT_STATUS_CODES: HashSet<StatusCode> = {
         let mut m = HashSet::new();
         m.insert(StatusCode::NO_CONTENT);
+        m.insert(StatusCode::CREATED);
         m.insert(StatusCode::RESET_CONTENT);
         m.insert(StatusCode::NOT_MODIFIED);
         m
@@ -44,6 +45,7 @@ pub fn json_response_with_header<T: Serialize>(
     }
 
     if NO_CONTENT_STATUS_CODES.contains(&status) {
+        debug!(message = "Empty result requested", status = ?status);
         response_builder.finish()
     } else {
         response_builder.json(data)

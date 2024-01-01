@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::connection::DbPool;
 
+pub type GroupID = i32;
+
 #[derive(Serialize, Deserialize, Queryable, Insertable)]
 #[diesel(table_name = groups)]
 pub struct Group {

@@ -3,10 +3,11 @@ use urlparse::urlparse;
 use crate::errors::ApiError;
 use diesel::result::{DatabaseErrorKind, Error as DieselError};
 
-pub fn handle_diesel_error(e: DieselError, conflict_message: &str) -> ApiError {
+pub fn handle_diesel_error(e: DieselError, message: &str) -> ApiError {
     match e {
+        DieselError::NotFound => ApiError::Conflict(message.to_string()),
         DieselError::DatabaseError(DatabaseErrorKind::UniqueViolation, _) => {
-            ApiError::Conflict(conflict_message.to_string())
+            ApiError::Conflict(message.to_string())
         }
         _ => ApiError::DatabaseError(e.to_string()),
     }
