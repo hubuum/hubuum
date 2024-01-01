@@ -1,3 +1,4 @@
+use actix_web::ResponseError;
 use actix_web::{get, http::StatusCode, web, Responder};
 
 use diesel::sql_query;
@@ -8,10 +9,20 @@ use diesel::RunQueryDsl;
 use crate::db::connection::DbPool;
 use crate::utilities::response::json_response;
 
-use serde_json::json;
-
 use crate::extractors::AdminAccess;
+use serde::Serialize;
 use tracing::debug;
+
+use crate::errors::ApiError;
+
+#[derive(Serialize, Debug)]
+struct DbStateResponse {
+    available_connections: u32,
+    idle_connections: u32,
+    active_connections: i64,
+    db_size: i64,
+    last_vacuum_time: Option<String>,
+}
 
 #[derive(QueryableByName, Debug)]
 #[diesel(table_name = pg_stat_user_tables)]
@@ -46,20 +57,16 @@ pub async fn get_db_state(pool: web::Data<DbPool>, requestor: AdminAccess) -> im
             requestor = requestor.user.id
         );
 
-        return json_response(
-            json!({
-                "available_connections": state.connections,
-                "idle_connections": state.idle_connections,
-                "active_connections": row.active_connections,
-                "database_size": row.db_size,
-                "last_vacuum_time": row.last_vacuum_time.map(|dt| dt.to_string()),
-            }),
-            StatusCode::OK,
-        );
+        let response = DbStateResponse {
+            available_connections: state.connections,
+            idle_connections: state.idle_connections,
+            active_connections: row.active_connections,
+            db_size: row.db_size,
+            last_vacuum_time: row.last_vacuum_time.map(|dt| dt.to_string()),
+        };
+        json_response(response, StatusCode::OK)
     } else {
-        json_response(
-            json!({"message": "Backend failure"}),
-            StatusCode::INTERNAL_SERVER_ERROR,
-        )
+        ApiError::InternalServerError("Error getting state for the database".to_string())
+            .error_response()
     }
 }

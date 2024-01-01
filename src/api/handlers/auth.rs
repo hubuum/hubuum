@@ -1,4 +1,4 @@
-use actix_web::{get, http::StatusCode, post, web, Responder};
+use actix_web::{get, http::StatusCode, post, web, Responder, ResponseError};
 use diesel::prelude::*;
 
 use crate::extractors::BearerToken;
@@ -7,9 +7,9 @@ use crate::utilities::response::json_response;
 
 use crate::db::connection::DbPool;
 
+use crate::errors::ApiError;
 use crate::models::user::User;
 use crate::utilities::auth::{generate_token, verify_password};
-
 use serde_json::json;
 
 use tracing::{debug, warn};
@@ -36,10 +36,7 @@ pub async fn login(pool: web::Data<DbPool>, req_input: web::Form<LoginUser>) -> 
                 user = req_input.username,
                 error = e.to_string()
             );
-            return json_response(
-                json!({ "message": "Authentication failure"}),
-                StatusCode::UNAUTHORIZED,
-            );
+            return ApiError::Unauthorized("Authentication failure".to_string()).error_response();
         }
     };
 
@@ -53,10 +50,7 @@ pub async fn login(pool: web::Data<DbPool>, req_input: web::Form<LoginUser>) -> 
             hash = db_user_data.password,
             error = password_check.err().unwrap().to_string()
         );
-        return json_response(
-            json!({ "message": "Authentication failure"}),
-            StatusCode::UNAUTHORIZED,
-        );
+        return ApiError::Unauthorized("Authentication failure".to_string()).error_response();
     }
 
     let generated_token = generate_token();
@@ -76,10 +70,12 @@ pub async fn login(pool: web::Data<DbPool>, req_input: web::Form<LoginUser>) -> 
         .execute(&mut conn);
 
     if token_insert_result.is_err() {
-        return json_response(
-            json!({ "message": "Internal authentication failure, please try again later."}),
-            StatusCode::UNAUTHORIZED,
+        warn!(
+            message = "Login failed (token insert failed)",
+            user = req_input.username,
+            error = token_insert_result.err().unwrap().to_string()
         );
+        return ApiError::Unauthorized("Authentication failure".to_string()).error_response();
     }
 
     debug!(
@@ -113,10 +109,8 @@ pub async fn logout(pool: web::Data<DbPool>, bearer_token: BearerToken) -> impl 
                 token = token_value,
                 error = e.to_string()
             );
-            return json_response(
-                json!({ "message": "Internal authentication failure, please try again later."}),
-                StatusCode::INTERNAL_SERVER_ERROR,
-            );
+            ApiError::InternalServerError("Internal authentication failure".to_string())
+                .error_response()
         }
     }
 }
@@ -148,10 +142,8 @@ pub async fn logout_all(pool: web::Data<DbPool>, bearer_token: BearerToken) -> i
                 user_id = token_user_id,
                 error = e.to_string()
             );
-            return json_response(
-                json!({ "message": "Internal authentication failure, please try again later."}),
-                StatusCode::INTERNAL_SERVER_ERROR,
-            );
+            ApiError::InternalServerError("Internal authentication failure.".to_string())
+                .error_response()
         }
     }
 }

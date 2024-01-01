@@ -1,9 +1,10 @@
+use actix_web::ResponseError;
 use actix_web::{delete, get, http::StatusCode, patch, post, web, Responder};
 
 use crate::models::group::{Group, NewGroup, UpdateGroup};
 use crate::models::user::{NewUser, UpdateUser, User, UserID};
 
-use crate::utilities::response::{handle_result, json_response};
+use crate::utilities::response::{handle_result, json_response, json_response_created};
 
 use crate::models::user::PasswordHashable;
 use serde_json::json;
@@ -13,6 +14,9 @@ use crate::db::connection::DbPool;
 use crate::extractors::{AdminAccess, AdminOrSelfAccess, UserAccess};
 
 use tracing::debug;
+
+use crate::errors::ApiError;
+use crate::utilities::db::handle_diesel_error;
 
 use diesel::prelude::*;
 use diesel::QueryDsl;
@@ -29,7 +33,9 @@ pub async fn get_users(pool: web::Data<DbPool>, requestor: UserAccess) -> impl R
 
     let mut conn = pool.get().expect("couldn't get db connection from pool");
 
-    let result = users.load::<User>(&mut conn);
+    let result = users
+        .load::<User>(&mut conn)
+        .map_err(|e| ApiError::DatabaseError(e.to_string()));
 
     return handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR);
 }
@@ -59,13 +65,16 @@ pub async fn create_user(
 
     let result = diesel::insert_into(crate::schema::users::table)
         .values(&new_user)
-        .execute(&mut conn);
+        .returning(crate::schema::users::columns::id)
+        .get_result::<i32>(&mut conn)
+        .map_err(|e| handle_diesel_error(e, "Username already exists"));
 
-    return handle_result(
-        result,
-        StatusCode::CREATED,
-        StatusCode::INTERNAL_SERVER_ERROR,
-    );
+    match result {
+        Ok(res) => {
+            return json_response_created(format!("/api/v1/iam/users/{}", res).as_str());
+        }
+        Err(e) => e.error_response(),
+    }
 }
 
 #[get("/users/{user_id}/tokens")]
@@ -93,7 +102,8 @@ pub async fn get_user_tokens(
     let token_result = tokens
         .filter(user_id_column.eq(uid))
         .filter(expires.gt(now))
-        .load::<crate::models::token::Token>(&mut conn);
+        .load::<crate::models::token::Token>(&mut conn)
+        .map_err(|e| ApiError::DatabaseError(e.to_string()));
 
     return handle_result(
         token_result,
@@ -120,7 +130,10 @@ pub async fn get_user(
     );
 
     let mut conn = pool.get().expect("couldn't get db connection from pool");
-    let result = users.find(user_id).first::<User>(&mut conn);
+    let result = users
+        .find(user_id)
+        .first::<User>(&mut conn)
+        .map_err(|e| ApiError::DatabaseError(e.to_string()));
 
     return handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR);
 }
@@ -153,7 +166,8 @@ pub async fn update_user(
 
     let result = diesel::update(users.filter(id.eq(user_id)))
         .set(&updated_user)
-        .execute(&mut conn);
+        .execute(&mut conn)
+        .map_err(|e| ApiError::DatabaseError(e.to_string()));
 
     return handle_result(
         result,
@@ -180,7 +194,9 @@ pub async fn delete_user(
     );
 
     // Perform the delete operation
-    let result = diesel::delete(users.filter(id.eq(user_id))).execute(&mut conn);
+    let result = diesel::delete(users.filter(id.eq(user_id)))
+        .execute(&mut conn)
+        .map_err(|e| ApiError::DatabaseError(e.to_string()));
     return handle_result(
         result,
         StatusCode::NO_CONTENT,
@@ -204,13 +220,15 @@ pub async fn create_group(
 
     let result = diesel::insert_into(crate::schema::groups::table)
         .values(&*new_group)
-        .execute(&mut conn);
+        .execute(&mut conn)
+        .map_err(|e| handle_diesel_error(e, "Groupname already exists"));
 
-    return handle_result(
-        result,
-        StatusCode::CREATED,
-        StatusCode::INTERNAL_SERVER_ERROR,
-    );
+    match result {
+        Ok(res) => {
+            return json_response_created(format!("/api/v1/iam/groups/{}", res).as_str());
+        }
+        Err(e) => e.error_response(),
+    }
 }
 
 #[get("/groups/{group_id}")]
@@ -231,7 +249,10 @@ pub async fn get_group(
         requestor = requestor.user.id
     );
 
-    let result = groups.find(group_id).first::<Group>(&mut conn);
+    let result = groups
+        .find(group_id)
+        .first::<Group>(&mut conn)
+        .map_err(|e| ApiError::DatabaseError(e.to_string()));
 
     return handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR);
 }
@@ -247,7 +268,9 @@ pub async fn get_groups(pool: web::Data<DbPool>, requestor: UserAccess) -> impl 
     );
 
     let mut conn = pool.get().expect("couldn't get db connection from pool");
-    let result = groups.load::<Group>(&mut conn);
+    let result = groups
+        .load::<Group>(&mut conn)
+        .map_err(|e| ApiError::DatabaseError(e.to_string()));
     return handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR);
 }
 
@@ -270,7 +293,8 @@ pub async fn update_group(
 
     let result = diesel::update(crate::schema::groups::table.find(group_id))
         .set(&*updated_group)
-        .execute(&mut conn);
+        .execute(&mut conn)
+        .map_err(|e| ApiError::DatabaseError(e.to_string()));
 
     return handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR);
 }
@@ -291,7 +315,9 @@ pub async fn delete_group(
         requestor = requestor.user.id
     );
 
-    let result = diesel::delete(crate::schema::groups::table.find(group_id)).execute(&mut conn);
+    let result = diesel::delete(crate::schema::groups::table.find(group_id))
+        .execute(&mut conn)
+        .map_err(|e| ApiError::DatabaseError(e.to_string()));
     handle_result(
         result,
         StatusCode::NO_CONTENT,

@@ -138,7 +138,7 @@ jobs:
           HUBUUM_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
         run: |
           cargo install diesel_cli --no-default-features --features postgres
-          diesel database setup
+          diesel database setup --migration-dir migrations
       - uses: actions/checkout@v3
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
