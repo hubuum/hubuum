@@ -3,9 +3,8 @@ mod tests {
     use crate::api::handlers::auth::login;
     use crate::config::get_config;
     use crate::db::connection::init_pool;
-    use crate::models::user::{LoginUser, NewUser};
-    use crate::utilities::auth::hash_password;
-    use crate::utilities::iam::add_user;
+    use crate::models::user::LoginUser;
+    use crate::tests::create_test_user;
     use actix_web::{http::StatusCode, test, web, App};
     use diesel::prelude::*;
 
@@ -15,20 +14,7 @@ mod tests {
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let mut conn = pool.get().expect("Failed to get db connection");
 
-        // Create a test user
-        let hashed_password = hash_password("testpassword").unwrap();
-        let new_user = NewUser {
-            username: "testuser".to_string(),
-            email: Some("test@foo.com".to_string()),
-            password: hashed_password,
-        };
-        add_user(&mut conn, &new_user).expect("Failed to create test user");
-
-        let new_user_id = users
-            .filter(username.eq(&new_user.username))
-            .select(id)
-            .first::<i32>(&mut conn)
-            .expect("Failed to get user id");
+        let new_user_id = create_test_user(&mut conn, "testuser", "testpassword").await;
 
         let app = test::init_service(
             App::new()
