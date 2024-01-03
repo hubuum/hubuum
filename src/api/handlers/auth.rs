@@ -43,14 +43,26 @@ pub async fn login(pool: web::Data<DbPool>, req_input: web::Form<LoginUser>) -> 
     // We have a user, now check the password
     let password_check = verify_password(&req_input.password, &db_user_data.password);
 
-    if password_check.is_err() {
-        warn!(
-            message = "Login failed (password mismatch)",
-            user = req_input.username,
-            hash = db_user_data.password,
-            error = password_check.err().unwrap().to_string()
-        );
-        return ApiError::Unauthorized("Authentication failure".to_string()).error_response();
+    match password_check {
+        Ok(status) => {
+            if !status {
+                warn!(
+                    message = "Login failed (password mismatch)",
+                    user = req_input.username,
+                    hash = db_user_data.password
+                );
+                return ApiError::Unauthorized("Authentication failure".to_string())
+                    .error_response();
+            }
+        }
+        Err(e) => {
+            warn!(
+                message = "Login failed (password validation failure)",
+                user = req_input.username,
+                error = e.to_string()
+            );
+            return ApiError::Unauthorized("Authentication failure".to_string()).error_response();
+        }
     }
 
     let generated_token = generate_token();

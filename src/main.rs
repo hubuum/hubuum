@@ -18,6 +18,8 @@ mod models;
 mod schema;
 mod utilities;
 
+mod tests;
+
 use db::connection::init_pool;
 use tracing::{debug, warn};
 
