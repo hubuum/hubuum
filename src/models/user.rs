@@ -43,10 +43,7 @@ impl User {
             .filter(groupname.eq(groupname_queried)) // Clarify the field and variable
             .first::<(UserGroup, Group)>(&mut conn); // Change the expected type
 
-        match result {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        result.is_ok()
     }
 
     pub fn is_in_group(&self, group_id_queried: i32, pool: &DbPool) -> bool {
@@ -59,14 +56,11 @@ impl User {
             .filter(group_id.eq(group_id_queried))
             .first::<crate::models::user_group::UserGroup>(&mut conn);
 
-        match result {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        result.is_ok()
     }
 
     pub fn is_admin(&self, pool: &DbPool) -> bool {
-        return self.is_in_group_by_name("admin", pool);
+        self.is_in_group_by_name("admin", pool)
     }
 }
 

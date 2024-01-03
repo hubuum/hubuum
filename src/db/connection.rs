@@ -38,9 +38,9 @@ impl DatabaseOps for DbPool {
                     token = token,
                     error = e.to_string()
                 );
-                return Err(ApiError::Unauthorized(
+                Err(ApiError::Unauthorized(
                     "Token validation failed".to_string(),
-                ));
+                ))
             }
         }
     }
@@ -64,12 +64,11 @@ pub fn init_pool(database_url: &str, max_size: u32) -> DbPool {
     }
 
     let manager = ConnectionManager::<PgConnection>::new(database_url);
-    let pool = Pool::builder()
+
+    Pool::builder()
         .max_size(max_size)
         .build(manager)
-        .expect("Failed to create pool");
-
-    return pool;
+        .expect("Failed to create pool")
 }
 
 #[cfg(test)]
@@ -79,7 +78,7 @@ mod tests {
     #[test]
     fn test_init_pool() {
         let database_url = get_config().database_url.clone();
-        let pool_size = get_config().db_pool_size.clone();
+        let pool_size = get_config().db_pool_size;
         let pool = super::init_pool(&database_url, pool_size);
         assert_eq!(pool.max_size(), pool_size);
     }

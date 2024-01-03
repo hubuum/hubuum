@@ -37,7 +37,7 @@ pub async fn get_users(pool: web::Data<DbPool>, requestor: UserAccess) -> impl R
         .load::<User>(&mut conn)
         .map_err(|e| ApiError::DatabaseError(e.to_string()));
 
-    return handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR);
+    handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 #[post("/users")]
@@ -135,7 +135,7 @@ pub async fn get_user(
         .first::<User>(&mut conn)
         .map_err(|e| ApiError::DatabaseError(e.to_string()));
 
-    return handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR);
+    handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 #[patch("/users/{user_id}")]
@@ -169,11 +169,11 @@ pub async fn update_user(
         .execute(&mut conn)
         .map_err(|e| ApiError::DatabaseError(e.to_string()));
 
-    return handle_result(
+    handle_result(
         result,
         StatusCode::NO_CONTENT,
         StatusCode::INTERNAL_SERVER_ERROR,
-    );
+    )
 }
 
 #[delete("/users/{user_id}")]
@@ -197,11 +197,11 @@ pub async fn delete_user(
     let result = diesel::delete(users.filter(id.eq(user_id)))
         .execute(&mut conn)
         .map_err(|e| ApiError::DatabaseError(e.to_string()));
-    return handle_result(
+    handle_result(
         result,
         StatusCode::NO_CONTENT,
         StatusCode::INTERNAL_SERVER_ERROR,
-    );
+    )
 }
 
 #[post("/groups")]
@@ -257,7 +257,7 @@ pub async fn get_group_members(
         .load::<User>(&mut conn)
         .map_err(|e| ApiError::DatabaseError(e.to_string()));
 
-    return handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR);
+    handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 #[post("/groups/{group_id}/members")]
@@ -279,7 +279,7 @@ pub async fn add_group_member(
 
     let mut conn = pool.get().expect("couldn't get db connection from pool");
     let result = crate::utilities::iam::add_user_to_group(&mut conn, user_id, group_id);
-    return handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR);
+    handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 #[delete("/groups/{group_id}/members")]
@@ -301,7 +301,7 @@ pub async fn delete_group_member(
 
     let mut conn = pool.get().expect("couldn't get db connection from pool");
     let result = crate::utilities::iam::delete_user_from_group(&mut conn, user_id, group_id);
-    return handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR);
+    handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 #[get("/groups/{group_id}")]
@@ -327,7 +327,7 @@ pub async fn get_group(
         .first::<Group>(&mut conn)
         .map_err(|e| ApiError::DatabaseError(e.to_string()));
 
-    return handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR);
+    handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 #[get("/groups")]
@@ -344,7 +344,7 @@ pub async fn get_groups(pool: web::Data<DbPool>, requestor: UserAccess) -> impl 
     let result = groups
         .load::<Group>(&mut conn)
         .map_err(|e| ApiError::DatabaseError(e.to_string()));
-    return handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR);
+    handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 #[patch("/groups/{group_id}")]
@@ -369,7 +369,7 @@ pub async fn update_group(
         .execute(&mut conn)
         .map_err(|e| ApiError::DatabaseError(e.to_string()));
 
-    return handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR);
+    handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 #[delete("/groups/{group_id}")]

@@ -2,7 +2,7 @@
 // If we have no users and no groups, create a default admin user and a default admin group.
 
 use crate::models::group::NewGroup;
-use crate::models::user::NewUser;
+use crate::models::user::{NewUser, User};
 
 use diesel::prelude::*;
 
@@ -11,9 +11,32 @@ use crate::schema::users::dsl::*;
 
 use crate::errors::ApiError;
 
+use crate::utilities::auth::generate_token;
+use diesel::r2d2::ConnectionManager;
+use r2d2::PooledConnection;
+
 use tracing::debug;
 
-// Helper function to add a group
+pub fn get_user_by_id(
+    conn: &mut PooledConnection<ConnectionManager<PgConnection>>,
+    user_id: i32,
+) -> Result<User, ApiError> {
+    users
+        .filter(crate::schema::users::dsl::id.eq(user_id))
+        .first::<User>(conn)
+        .map_err(|e| ApiError::DatabaseError(e.to_string()))
+}
+
+pub fn get_user_by_username(
+    conn: &mut PooledConnection<ConnectionManager<PgConnection>>,
+    uname: &str,
+) -> Result<User, ApiError> {
+    crate::schema::users::dsl::users
+        .filter(username.eq(uname))
+        .first::<User>(conn)
+        .map_err(|e| ApiError::DatabaseError(e.to_string()))
+}
+
 pub fn add_group(conn: &mut PgConnection, group_name: &str, desc: &str) -> Result<usize, ApiError> {
     debug!(
         message = "Creating group",
@@ -29,7 +52,6 @@ pub fn add_group(conn: &mut PgConnection, group_name: &str, desc: &str) -> Resul
         .map_err(|e| ApiError::DatabaseError(e.to_string()))
 }
 
-// Helper function to add a user
 pub fn add_user(conn: &mut PgConnection, new_user: &NewUser) -> Result<usize, ApiError> {
     debug!(
         message = "Creating user",
@@ -43,7 +65,6 @@ pub fn add_user(conn: &mut PgConnection, new_user: &NewUser) -> Result<usize, Ap
         .map_err(|e| ApiError::DatabaseError(e.to_string()))
 }
 
-// Helper function to add a user to a group
 pub fn add_user_to_group(
     conn: &mut PgConnection,
     user_id: i32,
@@ -78,4 +99,28 @@ pub fn delete_user_from_group(
         .filter(crate::schema::user_groups::group_id.eq(group_id))
         .execute(conn)
         .map_err(|e| ApiError::DatabaseError(e.to_string()))
+}
+
+pub fn add_token_for_user(
+    conn: &mut PooledConnection<ConnectionManager<PgConnection>>,
+    user_id_for_token: i32,
+) -> Result<String, ApiError> {
+    use crate::schema::tokens::dsl::*;
+
+    let generated_token = generate_token();
+
+    let expire_when = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::days(1))
+        .expect("valid timestamp")
+        .naive_utc();
+
+    diesel::insert_into(crate::schema::tokens::table)
+        .values((
+            user_id.eq(&user_id_for_token),
+            token.eq(&generated_token),
+            expires.eq(&expire_when),
+        ))
+        .execute(conn)
+        .map_err(|e| ApiError::DatabaseError(e.to_string()))
+        .map(|_| generated_token)
 }

@@ -45,7 +45,7 @@ pub fn hash_password(password: &str) -> Result<String, Box<dyn std::error::Error
 /// }
 ///```
 pub fn verify_password(password: &str, hash: &str) -> Result<bool, argon2::Error> {
-    let parsed_hash_result = PasswordHash::new(&hash);
+    let parsed_hash_result = PasswordHash::new(hash);
 
     let parsed_hash = match parsed_hash_result {
         Ok(parsed_hash) => parsed_hash,

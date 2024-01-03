@@ -28,7 +28,9 @@ use crate::utilities::is_valid_log_level;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let config = get_config();
+    // Clone the config to prevent the mutex from being locked
+    // See https://rust-lang.github.io/rust-clippy/master/index.html#await_holding_lock
+    let config = get_config().clone();
     let filter = if is_valid_log_level(&config.log_level) {
         EnvFilter::try_new(&config.log_level).unwrap_or_else(|_e| {
             warn!("Error parsing log level: {}", &config.log_level);
@@ -58,7 +60,7 @@ async fn main() -> std::io::Result<()> {
         db_pool_size = config.db_pool_size,
     );
 
-    let pool = init_pool(&config.database_url.clone(), config.db_pool_size.clone());
+    let pool = init_pool(&config.database_url.clone(), config.db_pool_size);
 
     utilities::init::init(pool.clone()).await;
 
