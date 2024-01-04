@@ -1,12 +1,13 @@
 #[cfg(test)]
 mod tests {
-    use crate::api::handlers::auth::login;
     use crate::config::get_config;
     use crate::db::connection::init_pool;
     use crate::models::user::LoginUser;
     use crate::tests::create_test_user;
     use actix_web::{http::StatusCode, test, web, App};
     use diesel::prelude::*;
+
+    use crate::api;
 
     #[actix_web::test]
     async fn test_valid_login() {
@@ -19,7 +20,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(pool.clone()))
-                .service(login),
+                .configure(api::config),
         )
         .await;
 
@@ -31,7 +32,7 @@ mod tests {
 
         // Perform login request
         let resp = test::TestRequest::post()
-            .uri("/login")
+            .uri("/api/v0/auth/login")
             .set_form(&login_info)
             .send_request(&app)
             .await;
@@ -50,7 +51,7 @@ mod tests {
 
         // Perform login request
         let resp = test::TestRequest::post()
-            .uri("/login")
+            .uri("/api/v0/auth/login")
             .set_form(&login_info_ok)
             .send_request(&app)
             .await;
@@ -115,7 +116,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(pool.clone()))
-                .service(login),
+                .configure(api::config),
         )
         .await;
 
@@ -126,7 +127,7 @@ mod tests {
 
         // Perform login request
         let resp = test::TestRequest::post()
-            .uri("/login")
+            .uri("/api/v0/auth/login")
             .set_form(&login_info)
             .send_request(&app)
             .await;
@@ -147,7 +148,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(pool.clone()))
-                .service(login),
+                .configure(api::config),
         )
         .await;
 
@@ -167,7 +168,7 @@ mod tests {
         });
 
         let resp = test::TestRequest::post()
-            .uri("/login")
+            .uri("/api/v0/auth/login")
             .set_form(&login_info_no_password)
             .send_request(&app)
             .await;
@@ -184,7 +185,7 @@ mod tests {
         });
 
         let resp = test::TestRequest::post()
-            .uri("/login")
+            .uri("/api/v0/auth/login")
             .set_form(&login_info_no_username)
             .send_request(&app)
             .await;
