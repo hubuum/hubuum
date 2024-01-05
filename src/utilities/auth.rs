@@ -1,5 +1,7 @@
 extern crate argon2;
 
+use crate::models::token::Token;
+
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
@@ -69,10 +71,10 @@ pub fn generate_random_password(length: usize) -> String {
         .collect()
 }
 
-pub fn generate_token() -> String {
+pub fn generate_token() -> Token {
     let raw = generate_random_password(64);
     let mut hasher = Sha512::new();
     hasher.update(raw);
     let result = hasher.finalize();
-    format!("{:x}", result)
+    Token(format!("{:x}", result))
 }

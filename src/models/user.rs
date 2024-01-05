@@ -1,4 +1,5 @@
 use crate::models::group::Group;
+use crate::models::token::{Token, UserToken};
 use crate::models::user_group::UserGroup;
 use crate::schema::users;
 use diesel::prelude::*;
@@ -6,7 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::connection::DbPool;
 
-pub type UserID = i32;
+use crate::errors::ApiError;
+
+use tracing::{error, warn};
 
 #[derive(Serialize, Deserialize, Queryable, Insertable)]
 #[diesel(table_name = users)]
@@ -18,6 +21,46 @@ pub struct User {
 }
 
 impl User {
+    pub fn add_token(&self, pool: &DbPool) -> Result<Token, ApiError> {
+        use crate::schema::tokens::dsl::*;
+
+        let mut conn = pool
+            .get()
+            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
+
+        let generated_token = crate::utilities::auth::generate_token();
+
+        diesel::insert_into(crate::schema::tokens::table)
+            .values((
+                user_id.eq(self.id),
+                token.eq(&generated_token.get_token()),
+                issued.eq(chrono::Utc::now().naive_utc()),
+            ))
+            .execute(&mut conn)
+            .map_err(|e| ApiError::DatabaseError(e.to_string()))
+            .map(|_| generated_token)
+    }
+
+    pub fn get_tokens(&self, pool: &DbPool) -> Result<Vec<UserToken>, ApiError> {
+        let mut conn = pool
+            .get()
+            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
+
+        crate::models::token::valid_tokens_for_user(&mut conn, self.id)
+    }
+
+    pub fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
+        use crate::schema::users::dsl::*;
+
+        let mut conn = pool
+            .get()
+            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
+
+        diesel::delete(users.filter(id.eq(self.id)))
+            .execute(&mut conn)
+            .map_err(|e| ApiError::DatabaseError(e.to_string()))
+    }
+
     pub fn groups(&self, pool: &DbPool) -> QueryResult<Vec<Group>> {
         use crate::schema::groups::dsl::*;
         use crate::schema::user_groups::dsl::*;
@@ -73,7 +116,7 @@ pub trait PasswordHashable {
 ///
 /// The password, if present, is expected to be hashed
 /// before being passed to the database.
-#[derive(AsChangeset, Deserialize, Serialize)]
+#[derive(AsChangeset, Deserialize, Serialize, Clone)]
 #[diesel(table_name = users)]
 pub struct UpdateUser {
     pub username: Option<String>,
@@ -81,21 +124,43 @@ pub struct UpdateUser {
     pub email: Option<String>,
 }
 
-impl PasswordHashable for UpdateUser {
-    fn hash_password(&mut self) -> Result<(), String> {
-        if let Some(ref password) = self.password {
-            match crate::utilities::auth::hash_password(password) {
+impl UpdateUser {
+    pub fn hash_password(self) -> Result<Self, ApiError> {
+        if let Some(ref pass) = self.password {
+            match crate::utilities::auth::hash_password(pass) {
                 Ok(hashed_password) => {
-                    self.password = Some(hashed_password);
-                    Ok(())
+                    return Ok(UpdateUser {
+                        password: Some(hashed_password),
+                        ..self
+                    });
                 }
-                Err(e) => Err(format!("Failed to hash password: {}", e)),
+                Err(e) => {
+                    return Err(ApiError::HashError(format!(
+                        "Failed to hash password: {}",
+                        e
+                    )))
+                }
             }
-        } else {
-            Ok(())
         }
+        Ok(self)
+    }
+
+    pub fn save(self, user_id: i32, pool: &DbPool) -> Result<User, ApiError> {
+        use crate::schema::users::dsl::*;
+
+        let hashed = self.hash_password()?;
+
+        let mut conn = pool
+            .get()
+            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
+
+        diesel::update(users.filter(id.eq(user_id)))
+            .set(hashed)
+            .get_result::<User>(&mut conn)
+            .map_err(|_| ApiError::DatabaseError("Error updating user".to_string()))
     }
 }
+
 /// Struct to create a new user.
 ///
 /// The password is expected to be hashed
@@ -108,17 +173,82 @@ pub struct NewUser {
     pub email: Option<String>,
 }
 
-impl PasswordHashable for NewUser {
-    fn hash_password(&mut self) -> Result<(), String> {
-        match crate::utilities::auth::hash_password(&self.password) {
-            Ok(hashed_password) => {
-                self.password = hashed_password;
-                Ok(())
-            }
-            Err(e) => Err(format!("Failed to hash password: {}", e)),
+impl NewUser {
+    pub fn new(username: &str, password: &str, email: Option<&str>) -> Self {
+        NewUser {
+            username: username.to_string(),
+            password: password.to_string(),
+            email: email.map(|s| s.to_string()),
         }
     }
+
+    pub fn save(self, pool: &DbPool) -> Result<User, ApiError> {
+        use crate::schema::users::dsl::*;
+
+        let hashed = self.hash_password()?;
+
+        let mut conn = pool
+            .get()
+            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
+
+        diesel::insert_into(users)
+            .values(&hashed)
+            .get_result::<User>(&mut conn)
+            .map_err(|_| ApiError::DatabaseError("Error creating new user".to_string()))
+    }
+
+    pub fn hash_password(mut self) -> Result<Self, ApiError> {
+        if !self.password.starts_with("$argon2") {
+            match crate::utilities::auth::hash_password(&self.password) {
+                Ok(hashed_password) => {
+                    self.password = hashed_password;
+                }
+                Err(e) => {
+                    return Err(ApiError::HashError(format!(
+                        "Failed to hash password: {}",
+                        e
+                    )))
+                }
+            }
+        }
+        Ok(self)
+    }
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct UserID(pub i32);
+
+impl UserID {
+    pub fn get_id(&self) -> i32 {
+        self.0
+    }
+
+    pub fn get_user(&self, pool: &DbPool) -> Result<User, ApiError> {
+        use crate::schema::users::dsl::*;
+
+        let mut conn = pool
+            .get()
+            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
+
+        users
+            .filter(id.eq(self.0))
+            .first::<User>(&mut conn)
+            .map_err(|e| ApiError::DatabaseError(e.to_string()))
+    }
+
+    pub fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
+        use crate::schema::users::dsl::*;
+
+        let mut conn = pool
+            .get()
+            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
+
+        diesel::delete(users.filter(id.eq(self.0)))
+            .execute(&mut conn)
+            .map_err(|e| ApiError::DatabaseError(e.to_string()))
+    }
+}
+
 /// Struct to log in a user.
 ///
 /// The password is expected to be plaintext.
@@ -127,4 +257,65 @@ impl PasswordHashable for NewUser {
 pub struct LoginUser {
     pub username: String,
     pub password: String,
+}
+
+impl LoginUser {
+    /// Check if the user exists and the plaintext password in the struct
+    /// matches the hashed password in the database.
+    pub fn login(self, pool: &DbPool) -> Result<User, ApiError> {
+        use crate::schema::users::dsl::*;
+
+        let mut conn = pool
+            .get()
+            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
+
+        // We could do .first::<User>(&mut conn)? here, due to the way errors.rs uses "From"
+        // to map diesel errors. But, we specifically map Diesel's NotFound to our own NotFound
+        // which would lead to a 404 instead of a 401, leaking information about the existence
+        // of the user.
+        let user = match {
+            users
+                .filter(username.eq(&self.username))
+                .first::<User>(&mut conn)
+        } {
+            Ok(user) => user,
+            Err(_) => {
+                warn!(
+                    message = "Login failed (user not found)",
+                    user = self.username,
+                );
+
+                return Err(auth_failure());
+            }
+        };
+
+        let plaintext_password = &self.password;
+        let hashed_password = &user.password;
+
+        match crate::utilities::auth::verify_password(plaintext_password, hashed_password) {
+            Ok(true) => Ok(user),
+            Ok(false) => {
+                warn!(
+                    message = "Login failed (password mismatch)",
+                    user = self.username,
+                );
+
+                Err(auth_failure())
+            }
+
+            Err(e) => {
+                error!(
+                    message = "Login failed (hashing error)",
+                    user = self.username,
+                    hash = user.password,
+                    error = e.to_string()
+                );
+                Err(auth_failure())
+            }
+        }
+    }
+}
+
+pub fn auth_failure() -> ApiError {
+    ApiError::Unauthorized("Authentication failure".to_string())
 }

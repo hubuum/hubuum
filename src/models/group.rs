@@ -1,5 +1,6 @@
 // src/models/group.rs
 
+use crate::errors::ApiError;
 use crate::schema::groups;
 use crate::schema::user_groups;
 
@@ -20,17 +21,20 @@ pub struct Group {
 }
 
 impl Group {
-    pub fn users(&self, pool: DbPool) -> QueryResult<Vec<User>> {
+    pub fn users(&self, pool: &DbPool) -> Result<Vec<User>, ApiError> {
         use crate::schema::user_groups::dsl::*;
         use crate::schema::users::dsl::*;
 
-        let mut conn = pool.get().expect("couldn't get db connection from pool");
+        let mut conn = pool
+            .get()
+            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
 
         user_groups
             .filter(group_id.eq(self.id))
             .inner_join(users.on(id.eq(user_id)))
             .select((id, username, password, email))
             .load::<User>(&mut conn)
+            .map_err(|e| ApiError::DbConnectionError(e.to_string()))
     }
 }
 
@@ -38,7 +42,29 @@ impl Group {
 #[diesel(table_name = groups)]
 pub struct NewGroup {
     pub groupname: String,
-    pub description: String,
+    pub description: Option<String>,
+}
+
+impl NewGroup {
+    pub fn new(groupname: &str, description: Option<&str>) -> Self {
+        NewGroup {
+            groupname: groupname.to_string(),
+            description: description.map(|s| s.to_string()),
+        }
+    }
+
+    pub fn save(&self, pool: &DbPool) -> Result<Group, ApiError> {
+        use crate::schema::groups::dsl::*;
+
+        let mut conn = pool
+            .get()
+            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
+
+        diesel::insert_into(groups)
+            .values(self)
+            .get_result::<Group>(&mut conn)
+            .map_err(|e| ApiError::DbConnectionError(e.to_string()))
+    }
 }
 
 #[derive(Deserialize, Serialize, AsChangeset)]

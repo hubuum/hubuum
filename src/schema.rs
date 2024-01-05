@@ -69,7 +69,7 @@ diesel::table! {
     tokens (token, user_id) {
         token -> Varchar,
         user_id -> Int4,
-        expires -> Timestamp,
+        issued -> Timestamp,
     }
 }
 

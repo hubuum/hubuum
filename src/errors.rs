@@ -1,4 +1,6 @@
 use actix_web::{http::StatusCode, HttpResponse, ResponseError};
+use diesel::r2d2::PoolError;
+use diesel::result::{DatabaseErrorKind, Error as DieselError};
 use serde::Serialize;
 use serde_json::json;
 use std::fmt;
@@ -11,17 +13,21 @@ pub enum ApiError {
     DatabaseError(String),
     Conflict(String),
     NotFound(String),
+    DbConnectionError(String),
+    HashError(String),
 }
 
 impl fmt::Display for ApiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            ApiError::HashError(ref message) => write!(f, "{}", message),
             ApiError::NotFound(ref message) => write!(f, "{}", message),
             ApiError::Conflict(ref message) => write!(f, "{}", message),
             ApiError::Forbidden(ref message) => write!(f, "{}", message),
             ApiError::InternalServerError(ref message) => write!(f, "{}", message),
             ApiError::Unauthorized(ref message) => write!(f, "{}", message),
             ApiError::DatabaseError(ref message) => write!(f, "{}", message),
+            ApiError::DbConnectionError(ref message) => write!(f, "{}", message),
         }
     }
 }
@@ -39,8 +45,12 @@ impl ResponseError for ApiError {
                 .json(json!({ "error": "Internal Server Error", "message": message })),
             ApiError::Unauthorized(ref message) => HttpResponse::Unauthorized()
                 .json(json!({ "error": "Unauthorized", "message": message })),
+            ApiError::DbConnectionError(ref message) => HttpResponse::InternalServerError()
+                .json(json!({ "error": "Database Connection Error", "message": message })),
             ApiError::DatabaseError(ref message) => HttpResponse::InternalServerError()
                 .json(json!({ "error": "Database Error", "message": message })),
+            ApiError::HashError(ref message) => HttpResponse::InternalServerError()
+                .json(json!({ "error": "Hash Error", "message": message })),
             ApiError::NotFound(ref message) => {
                 HttpResponse::NotFound().json(json!({ "error": "Not Found", "message": message }))
             }
@@ -54,7 +64,32 @@ impl ResponseError for ApiError {
             ApiError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             ApiError::InternalServerError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::DatabaseError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            ApiError::DbConnectionError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            ApiError::HashError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
+        }
+    }
+}
+
+impl From<argon2::Error> for ApiError {
+    fn from(e: argon2::Error) -> Self {
+        ApiError::HashError(e.to_string())
+    }
+}
+
+impl From<PoolError> for ApiError {
+    fn from(e: PoolError) -> Self {
+        ApiError::DbConnectionError(e.to_string())
+    }
+}
+impl From<DieselError> for ApiError {
+    fn from(e: DieselError) -> Self {
+        match e {
+            DieselError::NotFound => ApiError::NotFound(e.to_string()),
+            DieselError::DatabaseError(DatabaseErrorKind::UniqueViolation, _) => {
+                ApiError::Conflict(e.to_string())
+            }
+            _ => ApiError::DatabaseError(e.to_string()),
         }
     }
 }

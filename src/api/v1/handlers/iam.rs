@@ -1,7 +1,6 @@
 use crate::errors::ApiError;
 use actix_web::ResponseError;
 use actix_web::{delete, get, http::StatusCode, patch, post, web, Responder};
-use chrono::prelude::Utc;
 use diesel::ExpressionMethods;
 use diesel::QueryDsl;
 use diesel::RunQueryDsl;
@@ -12,7 +11,6 @@ use crate::models::user::{NewUser, UpdateUser, User, UserID};
 use crate::utilities::db::handle_diesel_error;
 use crate::utilities::response::{handle_result, json_response, json_response_created};
 
-use crate::models::user::PasswordHashable;
 use serde_json::json;
 
 use crate::db::connection::DbPool;
@@ -22,7 +20,10 @@ use crate::extractors::{AdminAccess, AdminOrSelfAccess, UserAccess};
 use tracing::debug;
 
 #[get("/users")]
-pub async fn get_users(pool: web::Data<DbPool>, requestor: UserAccess) -> impl Responder {
+pub async fn get_users(
+    pool: web::Data<DbPool>,
+    requestor: UserAccess,
+) -> Result<impl Responder, ApiError> {
     use crate::schema::users::dsl::users;
     use diesel::RunQueryDsl;
 
@@ -31,13 +32,9 @@ pub async fn get_users(pool: web::Data<DbPool>, requestor: UserAccess) -> impl R
         requestor = requestor.user.username
     );
 
-    let mut conn = pool.get().expect("couldn't get db connection from pool");
-
-    let result = users
-        .load::<User>(&mut conn)
-        .map_err(|e| ApiError::DatabaseError(e.to_string()));
-
-    handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR)
+    let mut conn = pool.get()?;
+    let result = users.load::<User>(&mut conn)?;
+    Ok(json_response(result, StatusCode::OK))
 }
 
 #[post("/users")]
@@ -46,31 +43,17 @@ pub async fn create_user(
     new_user: web::Json<NewUser>,
     requestor: AdminAccess,
 ) -> impl Responder {
-    use diesel::prelude::*;
-
-    let mut conn = pool.get().expect("couldn't get db connection from pool");
-
     debug!(
         message = "User create requested",
         requestor = requestor.user.id,
         new_user = ?new_user
     );
 
-    let mut new_user = new_user.into_inner();
-
-    if let Err(error_message) = new_user.hash_password() {
-        return ApiError::InternalServerError(error_message).error_response();
-    }
-
-    let result = diesel::insert_into(crate::schema::users::table)
-        .values(&new_user)
-        .returning(crate::schema::users::columns::id)
-        .get_result::<i32>(&mut conn)
-        .map_err(|e| handle_diesel_error(e, "Username already exists"));
+    let result = new_user.into_inner().save(&pool);
 
     match result {
-        Ok(res) => {
-            return json_response_created(format!("/api/v1/iam/users/{}", res).as_str());
+        Ok(user) => {
+            return json_response_created(format!("/api/v1/iam/users/{}", user.id).as_str());
         }
         Err(e) => e.error_response(),
     }
@@ -81,16 +64,10 @@ pub async fn get_user_tokens(
     pool: web::Data<DbPool>,
     user_id: web::Path<UserID>,
     requestor: AdminOrSelfAccess,
-) -> impl Responder {
-    use crate::schema::{
-        tokens::dsl::{expires, tokens, user_id as user_id_column},
-        users::dsl::*,
-    };
-    use diesel::prelude::*;
+) -> Result<impl Responder, ApiError> {
     let mut conn = pool.get().expect("couldn't get db connection from pool");
 
-    let now = Utc::now().naive_utc();
-    let uid = user_id.into_inner();
+    let uid = user_id.get_id();
 
     debug!(
         message = "User tokens requested",
@@ -98,18 +75,11 @@ pub async fn get_user_tokens(
         requestor = requestor.user.id
     );
 
-    match users.find(uid).first::<User>(&mut conn) {
-        Ok(_) => {
-            match tokens
-                .filter(user_id_column.eq(uid))
-                .filter(expires.gt(now))
-                .load::<crate::models::token::Token>(&mut conn)
-            {
-                Ok(token_result) => json_response(token_result, StatusCode::OK),
-                Err(e) => handle_diesel_error(e, "Error loading tokens").error_response(),
-            }
-        }
-        Err(e) => ApiError::NotFound(e.to_string()).error_response(),
+    let valid_tokens = crate::models::token::valid_tokens_for_user(&mut conn, uid);
+
+    match valid_tokens {
+        Ok(token_list) => Ok(json_response(token_list, StatusCode::OK)),
+        Err(e) => Err(e),
     }
 }
 
@@ -118,24 +88,15 @@ pub async fn get_user(
     pool: web::Data<DbPool>,
     user_id: web::Path<UserID>,
     requestor: UserAccess,
-) -> impl Responder {
-    use crate::schema::users::dsl::*;
-
-    let user_id = user_id.into_inner();
-
+) -> Result<impl Responder, ApiError> {
     debug!(
         message = "User get requested",
-        target = user_id,
+        target = user_id.get_id(),
         requestor = requestor.user.id
     );
 
-    let mut conn = pool.get().expect("couldn't get db connection from pool");
-    let result = users
-        .find(user_id)
-        .first::<User>(&mut conn)
-        .map_err(|e| ApiError::DatabaseError(e.to_string()));
-
-    handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR)
+    let user = user_id.get_user(&pool)?;
+    Ok(json_response(user, StatusCode::OK))
 }
 
 #[patch("/users/{user_id}")]
@@ -144,36 +105,15 @@ pub async fn update_user(
     user_id: web::Path<UserID>, // Extracting user_id from path
     updated_user: web::Json<UpdateUser>,
     requestor: AdminAccess,
-) -> impl Responder {
-    use crate::schema::users::dsl::*;
-
-    let mut conn = pool.get().expect("couldn't get db connection from pool");
-    let user_id = user_id.into_inner();
-    let mut updated_user = updated_user.into_inner();
-
+) -> Result<impl Responder, ApiError> {
     debug!(
         message = "User patch requested",
-        target = user_id,
+        target = user_id.get_id(),
         requestor = requestor.user.id
     );
 
-    if let Err(error_message) = updated_user.hash_password() {
-        return json_response(
-            json!({ "message": error_message }),
-            StatusCode::INTERNAL_SERVER_ERROR,
-        );
-    }
-
-    let result = diesel::update(users.filter(id.eq(user_id)))
-        .set(&updated_user)
-        .execute(&mut conn)
-        .map_err(|e| ApiError::DatabaseError(e.to_string()));
-
-    handle_result(
-        result,
-        StatusCode::NO_CONTENT,
-        StatusCode::INTERNAL_SERVER_ERROR,
-    )
+    let user = updated_user.into_inner().save(user_id.get_id(), &pool)?;
+    Ok(json_response(user, StatusCode::OK))
 }
 
 #[delete("/users/{user_id}")]
@@ -181,27 +121,19 @@ pub async fn delete_user(
     pool: web::Data<DbPool>,
     user_id: web::Path<UserID>,
     requestor: AdminAccess,
-) -> impl Responder {
-    use crate::schema::users::dsl::*;
-
-    let mut conn = pool.get().expect("couldn't get db connection from pool");
-    let user_id = user_id.into_inner();
-
+) -> Result<impl Responder, ApiError> {
     debug!(
         message = "User delete requested",
-        target = user_id,
+        target = user_id.get_id(),
         requestor = requestor.user.id
     );
 
-    // Perform the delete operation
-    let result = diesel::delete(users.filter(id.eq(user_id)))
-        .execute(&mut conn)
-        .map_err(|e| ApiError::DatabaseError(e.to_string()));
-    handle_result(
-        result,
-        StatusCode::NO_CONTENT,
-        StatusCode::INTERNAL_SERVER_ERROR,
-    )
+    let delete_result = user_id.delete(&pool);
+
+    match delete_result {
+        Ok(elements) => Ok(json_response(json!(elements), StatusCode::NO_CONTENT)),
+        Err(e) => Err(e),
+    }
 }
 
 #[post("/groups")]
@@ -272,13 +204,13 @@ pub async fn add_group_member(
 
     debug!(
         message = "Adding user to group",
-        user = user_id,
+        user = user_id.get_id(),
         group = group_id,
         requestor = requestor.user.id
     );
 
     let mut conn = pool.get().expect("couldn't get db connection from pool");
-    let result = crate::utilities::iam::add_user_to_group(&mut conn, user_id, group_id);
+    let result = crate::utilities::iam::add_user_to_group(&mut conn, user_id.get_id(), group_id);
     handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR)
 }
 
@@ -294,13 +226,14 @@ pub async fn delete_group_member(
 
     debug!(
         message = "Deleting user from group",
-        user = user_id,
+        user = user_id.get_id(),
         group = group_id,
         requestor = requestor.user.id
     );
 
     let mut conn = pool.get().expect("couldn't get db connection from pool");
-    let result = crate::utilities::iam::delete_user_from_group(&mut conn, user_id, group_id);
+    let result =
+        crate::utilities::iam::delete_user_from_group(&mut conn, user_id.get_id(), group_id);
     handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR)
 }
 

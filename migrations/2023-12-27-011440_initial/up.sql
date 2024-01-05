@@ -21,7 +21,7 @@ CREATE TABLE user_groups (
 CREATE TABLE tokens (
     token VARCHAR NOT NULL,
     user_id INT REFERENCES users (id) ON DELETE CASCADE,
-    expires TIMESTAMP NOT NULL,
+    issued TIMESTAMP NOT NULL,
     PRIMARY KEY (token, user_id)
 );
 
