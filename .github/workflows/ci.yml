@@ -169,10 +169,10 @@ jobs:
       - name: Run tests      
         uses: houseabsolute/actions-rust-cross@v0
         with:
-          command: "test"
+          command: "test -- --database-url ${{ env.DATABASE_URL }}"
           target: ${{ matrix.platform.target }}
           toolchain: ${{ matrix.toolchain }}
-          args: "--locked --release -- --database-url ${{ env.DATABASE_URL }}"
+          args: "--locked --release"
         if: ${{ !matrix.platform.skip_tests }}
       - name: Package as archive
         shell: bash
