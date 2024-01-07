@@ -17,7 +17,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_valid_login() {
-        let config = get_config();
+        let config = get_config().await;
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let mut conn = pool.get().expect("Failed to get db connection");
 
@@ -32,14 +32,14 @@ mod tests {
 
         // Test wrong password
         let login_info = web::Form(LoginUser {
-            username: "testuser".to_string(),
+            username: new_user.username.clone(),
             password: "wrongpassword".to_string(),
         });
 
         // Perform login request
         let resp = test::TestRequest::post()
             .uri(LOGIN_ENDPOINT)
-            .set_form(&login_info)
+            .set_json(&login_info)
             .send_request(&app)
             .await;
 
@@ -51,14 +51,14 @@ mod tests {
         );
 
         let login_info_ok = web::Form(LoginUser {
-            username: "testuser".to_string(),
+            username: new_user.username.clone(),
             password: "testpassword".to_string(),
         });
 
         // Perform login request
         let resp = test::TestRequest::post()
             .uri(LOGIN_ENDPOINT)
-            .set_form(&login_info_ok)
+            .set_json(&login_info_ok)
             .send_request(&app)
             .await;
 
@@ -113,7 +113,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_invalid_login_credentials() {
-        let config = get_config();
+        let config = get_config().await;
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
             App::new()
@@ -130,7 +130,7 @@ mod tests {
         // Perform login request
         let resp = test::TestRequest::post()
             .uri(LOGIN_ENDPOINT)
-            .set_form(&login_info)
+            .set_json(&login_info)
             .send_request(&app)
             .await;
 
@@ -144,7 +144,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_invalid_login_parameters() {
-        let config = get_config();
+        let config = get_config().await;
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
         let app = test::init_service(
@@ -171,7 +171,7 @@ mod tests {
 
         let resp = test::TestRequest::post()
             .uri(LOGIN_ENDPOINT)
-            .set_form(&login_info_no_password)
+            .set_json(&login_info_no_password)
             .send_request(&app)
             .await;
 
@@ -188,7 +188,7 @@ mod tests {
 
         let resp = test::TestRequest::post()
             .uri(LOGIN_ENDPOINT)
-            .set_form(&login_info_no_username)
+            .set_json(&login_info_no_username)
             .send_request(&app)
             .await;
 
@@ -202,7 +202,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_logout_single_token() {
-        let config = get_config();
+        let config = get_config().await;
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
         let new_user = create_test_user(&pool);
@@ -268,7 +268,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_logout_all_tokens() {
-        let config = get_config();
+        let config = get_config().await;
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
         let new_user = create_test_user(&pool);

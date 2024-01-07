@@ -30,7 +30,7 @@ use crate::utilities::is_valid_log_level;
 async fn main() -> std::io::Result<()> {
     // Clone the config to prevent the mutex from being locked
     // See https://rust-lang.github.io/rust-clippy/master/index.html#await_holding_lock
-    let config = get_config().clone();
+    let config = get_config().await.clone();
     let filter = if is_valid_log_level(&config.log_level) {
         EnvFilter::try_new(&config.log_level).unwrap_or_else(|_e| {
             warn!("Error parsing log level: {}", &config.log_level);

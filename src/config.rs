@@ -1,7 +1,7 @@
 use clap::Parser;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+use tokio::sync::Mutex;
 
 #[derive(Parser, Debug, Deserialize, Serialize, Clone)]
 pub struct AppConfig {
@@ -36,6 +36,6 @@ pub struct AppConfig {
 
 pub static CONFIG: Lazy<Mutex<AppConfig>> = Lazy::new(|| Mutex::new(AppConfig::parse()));
 
-pub fn get_config() -> std::sync::MutexGuard<'static, AppConfig> {
-    CONFIG.lock().unwrap()
+pub async fn get_config() -> tokio::sync::MutexGuard<'static, AppConfig> {
+    CONFIG.lock().await
 }

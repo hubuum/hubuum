@@ -18,7 +18,7 @@ use tracing::{debug, warn};
 #[post("/login")]
 pub async fn login(
     pool: web::Data<DbPool>,
-    req_input: web::Form<LoginUser>,
+    req_input: web::Json<LoginUser>,
 ) -> Result<impl Responder, ApiError> {
     debug!(message = "Login started", user = req_input.username);
 
