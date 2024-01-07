@@ -27,6 +27,11 @@ jobs:
         platform:
           - os_name: Linux-x86_64
             os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            bin: hubuum
+            name: hubuum-Linux-x86_64-musl.tar.gz
+          - os_name: Linux-x86_64
+            os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             bin: hubuum
             name: hubuum-Linux-x86_64-gnu.tar.gz
@@ -46,69 +51,69 @@ jobs:
             bin: hubuum
             name: hubuum-Linux-i686-gnu.tar.gz
             skip_tests: true
-          - os_name: Linux-powerpc
-            os: ubuntu-20.04
-            target: powerpc-unknown-linux-gnu
-            bin: hubuum
-            name: hubuum-Linux-powerpc-gnu.tar.gz
-            skip_tests: true
-          - os_name: Linux-powerpc64
-            os: ubuntu-20.04
-            target: powerpc64-unknown-linux-gnu
-            bin: hubuum
-            name: hubuum-Linux-powerpc64-gnu.tar.gz
-            skip_tests: true
+#          - os_name: Linux-powerpc
+#            os: ubuntu-20.04
+#            target: powerpc-unknown-linux-gnu
+#            bin: hubuum
+#            name: hubuum-Linux-powerpc-gnu.tar.gz
+#            skip_tests: true
+#          - os_name: Linux-powerpc64
+#            os: ubuntu-20.04
+#            target: powerpc64-unknown-linux-gnu
+#            bin: hubuum
+#            name: hubuum-Linux-powerpc64-gnu.tar.gz
+#            skip_tests: true
           - os_name: Linux-powerpc64le
             os: ubuntu-20.04
             target: powerpc64le-unknown-linux-gnu
             bin: hubuum
             name: hubuum-Linux-powerpc64le.tar.gz
             skip_tests: true
-          - os_name: Linux-riscv64
-            os: ubuntu-20.04
-            target: riscv64gc-unknown-linux-gnu
-            bin: hubuum
-            name: hubuum-Linux-riscv64gc-gnu.tar.gz
+#          - os_name: Linux-riscv64
+#            os: ubuntu-20.04
+#            target: riscv64gc-unknown-linux-gnu
+#            bin: hubuum
+#            name: hubuum-Linux-riscv64gc-gnu.tar.gz
           - os_name: Linux-s390x
             os: ubuntu-20.04
             target: s390x-unknown-linux-gnu
             bin: hubuum
             name: hubuum-Linux-s390x-gnu.tar.gz
             skip_tests: true
-          - os_name: NetBSD-x86_64
-            os: ubuntu-20.04
-            target: x86_64-unknown-netbsd
-            bin: hubuum
-            name: hubuum-NetBSD-x86_64.tar.gz
-            skip_tests: true
-          - os_name: Windows-aarch64
-            os: windows-latest
-            target: aarch64-pc-windows-msvc
-            bin: hubuum.exe
-            name: hubuum-Windows-aarch64.zip
-            skip_tests: true
-          - os_name: Windows-i686
-            os: windows-latest
-            target: i686-pc-windows-msvc
-            bin: hubuum.exe
-            name: hubuum-Windows-i686.zip
-            skip_tests: true
-          - os_name: Windows-x86_64
-            os: windows-latest
-            target: x86_64-pc-windows-msvc
-            bin: hubuum.exe
-            name: hubuum-Windows-x86_64.zip
-          - os_name: macOS-x86_64
-            os: macOS-latest
-            target: x86_64-apple-darwin
-            bin: hubuum
-            name: hubuum-Darwin-x86_64.tar.gz
-          - os_name: macOS-aarch64
-            os: macOS-latest
-            target: aarch64-apple-darwin
-            bin: hubuum
-            name: hubuum-Darwin-aarch64.tar.gz
-            skip_tests: true
+#          - os_name: NetBSD-x86_64
+#            os: ubuntu-20.04
+#            target: x86_64-unknown-netbsd
+#            bin: hubuum
+#            name: hubuum-NetBSD-x86_64.tar.gz
+#            skip_tests: true
+          # - os_name: Windows-aarch64
+          #   os: windows-latest
+          #   target: aarch64-pc-windows-msvc
+          #   bin: hubuum.exe
+          #   name: hubuum-Windows-aarch64.zip
+          #   skip_tests: true
+          # - os_name: Windows-i686
+          #   os: windows-latest
+          #   target: i686-pc-windows-msvc
+          #   bin: hubuum.exe
+          #   name: hubuum-Windows-i686.zip
+          #   skip_tests: true
+          # - os_name: Windows-x86_64
+          #   os: windows-latest
+          #   target: x86_64-pc-windows-msvc
+          #   bin: hubuum.exe
+          #   name: hubuum-Windows-x86_64.zip
+          # - os_name: macOS-x86_64
+          #   os: macOS-latest
+          #   target: x86_64-apple-darwin
+          #   bin: hubuum
+          #   name: hubuum-Darwin-x86_64.tar.gz
+          # - os_name: macOS-aarch64
+          #   os: macOS-latest
+          #   target: aarch64-apple-darwin
+          #   bin: hubuum
+          #   name: hubuum-Darwin-aarch64.tar.gz
+          #   skip_tests: true
         toolchain:
           - stable
           - beta
@@ -130,11 +135,10 @@ jobs:
         run: |
           docker ps -a
           docker container ls
-          docker container ls --format "table {{.ID}}\t{{.Names}}\t{{.Ports}}" -a
       - name: Set up database
         run: |
           cargo install diesel_cli --no-default-features --features postgres
-          diesel database setup --migration-dir migrations
+          diesel migration run --migration-dir migrations --database-url ${{ env.HUBUUM_DATABASE_URL }}
       - uses: actions/checkout@v3
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
