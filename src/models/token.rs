@@ -30,6 +30,13 @@ impl Token {
             "...".to_string()
         }
     }
+
+    pub fn delete(&self, conn: &mut PgConnection) -> Result<(), ApiError> {
+        use crate::schema::tokens::dsl::{token, tokens};
+
+        diesel::delete(tokens.filter(token.eq(&self.0))).execute(conn)?;
+        Ok(())
+    }
 }
 
 #[derive(Serialize, Deserialize, Queryable, Insertable)]

@@ -6,6 +6,7 @@ use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::db::connection::DbPool;
+use crate::errors::map_error;
 
 use crate::errors::ApiError;
 
@@ -37,7 +38,7 @@ impl User {
                 issued.eq(chrono::Utc::now().naive_utc()),
             ))
             .execute(&mut conn)
-            .map_err(|e| ApiError::DatabaseError(e.to_string()))
+            .map_err(|e| map_error(e, "Failed to create token"))
             .map(|_| generated_token)
     }
 
@@ -49,6 +50,44 @@ impl User {
         crate::models::token::valid_tokens_for_user(&mut conn, self.id)
     }
 
+    pub fn token_is_mine(&self, token_param: Token, pool: &DbPool) -> Result<UserToken, ApiError> {
+        use crate::schema::tokens::dsl::*;
+
+        let mut conn = pool.get()?;
+
+        let result = tokens
+            .filter(user_id.eq(self.id))
+            .filter(token.eq(token_param.get_token()))
+            .first::<crate::models::token::UserToken>(&mut conn)?;
+
+        Ok(result)
+    }
+
+    pub fn delete_token(&self, token_param: Token, pool: &DbPool) -> Result<usize, ApiError> {
+        use crate::schema::tokens::dsl::*;
+
+        let mut conn = pool
+            .get()
+            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
+
+        diesel::delete(tokens.filter(user_id.eq(self.id)))
+            .filter(token.eq(token_param.get_token()))
+            .execute(&mut conn)
+            .map_err(|e| map_error(e, "Failed to delete token"))
+    }
+
+    pub fn delete_all_tokens(&self, pool: &DbPool) -> Result<usize, ApiError> {
+        use crate::schema::tokens::dsl::*;
+
+        let mut conn = pool
+            .get()
+            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
+
+        diesel::delete(tokens.filter(user_id.eq(self.id)))
+            .execute(&mut conn)
+            .map_err(|e| map_error(e, "Failed to delete all tokens"))
+    }
+
     pub fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::users::dsl::*;
 
@@ -58,48 +97,68 @@ impl User {
 
         diesel::delete(users.filter(id.eq(self.id)))
             .execute(&mut conn)
-            .map_err(|e| ApiError::DatabaseError(e.to_string()))
+            .map_err(|e| map_error(e, "Failed to delete user"))
     }
 
     pub fn groups(&self, pool: &DbPool) -> QueryResult<Vec<Group>> {
         use crate::schema::groups::dsl::*;
         use crate::schema::user_groups::dsl::*;
 
-        let mut conn = pool.get().expect("couldn't get db connection from pool");
-
-        user_groups
-            .filter(user_id.eq(self.id))
-            .inner_join(groups.on(id.eq(group_id)))
-            .select((id, groupname, description))
-            .load::<Group>(&mut conn)
+        match pool.get() {
+            Ok(mut conn) => user_groups
+                .filter(user_id.eq(self.id))
+                .inner_join(groups.on(id.eq(group_id)))
+                .select((id, groupname, description))
+                .load::<Group>(&mut conn),
+            Err(e) => {
+                error!(
+                    message = "Failed to get db connection from pool",
+                    error = e.to_string()
+                );
+                // Return an empty vector
+                Ok(vec![])
+            }
+        }
     }
 
     pub fn is_in_group_by_name(&self, groupname_queried: &str, pool: &DbPool) -> bool {
         use crate::schema::groups::dsl::*;
         use crate::schema::user_groups::dsl::*;
 
-        let mut conn = pool.get().expect("couldn't get db connection from pool");
-
-        let result = user_groups
-            .filter(user_id.eq(self.id))
-            .inner_join(groups.on(id.eq(group_id)))
-            .filter(groupname.eq(groupname_queried)) // Clarify the field and variable
-            .first::<(UserGroup, Group)>(&mut conn); // Change the expected type
-
-        result.is_ok()
+        match pool.get() {
+            Ok(mut conn) => user_groups
+                .filter(user_id.eq(self.id))
+                .inner_join(groups.on(id.eq(group_id)))
+                .filter(groupname.eq(groupname_queried)) // Clarify the field and variable
+                .first::<(UserGroup, Group)>(&mut conn) // Change the expected type
+                .is_ok(),
+            Err(e) => {
+                error!(
+                    message = "Failed to get db connection from pool",
+                    error = e.to_string()
+                );
+                false
+            }
+        }
     }
 
     pub fn is_in_group(&self, group_id_queried: i32, pool: &DbPool) -> bool {
         use crate::schema::user_groups::dsl::*;
 
-        let mut conn = pool.get().expect("couldn't get db connection from pool");
-
-        let result = user_groups
-            .filter(user_id.eq(self.id))
-            .filter(group_id.eq(group_id_queried))
-            .first::<crate::models::user_group::UserGroup>(&mut conn);
-
-        result.is_ok()
+        match pool.get() {
+            Ok(mut conn) => user_groups
+                .filter(user_id.eq(self.id))
+                .filter(group_id.eq(group_id_queried))
+                .first::<crate::models::user_group::UserGroup>(&mut conn)
+                .is_ok(),
+            Err(e) => {
+                error!(
+                    message = "Failed to get db connection from pool",
+                    error = e.to_string()
+                );
+                false
+            }
+        }
     }
 
     pub fn is_admin(&self, pool: &DbPool) -> bool {
@@ -157,7 +216,7 @@ impl UpdateUser {
         diesel::update(users.filter(id.eq(user_id)))
             .set(hashed)
             .get_result::<User>(&mut conn)
-            .map_err(|_| ApiError::DatabaseError("Error updating user".to_string()))
+            .map_err(|e| map_error(e, "Failed to save user"))
     }
 }
 
@@ -194,7 +253,7 @@ impl NewUser {
         diesel::insert_into(users)
             .values(&hashed)
             .get_result::<User>(&mut conn)
-            .map_err(|_| ApiError::DatabaseError("Error creating new user".to_string()))
+            .map_err(|e| map_error(e, "Failed to create user"))
     }
 
     pub fn hash_password(mut self) -> Result<Self, ApiError> {
@@ -219,11 +278,7 @@ impl NewUser {
 pub struct UserID(pub i32);
 
 impl UserID {
-    pub fn get_id(&self) -> i32 {
-        self.0
-    }
-
-    pub fn get_user(&self, pool: &DbPool) -> Result<User, ApiError> {
+    pub fn user(&self, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::*;
 
         let mut conn = pool
@@ -233,7 +288,7 @@ impl UserID {
         users
             .filter(id.eq(self.0))
             .first::<User>(&mut conn)
-            .map_err(|e| ApiError::DatabaseError(e.to_string()))
+            .map_err(|e| map_error(e, "User not found"))
     }
 
     pub fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
@@ -245,7 +300,7 @@ impl UserID {
 
         diesel::delete(users.filter(id.eq(self.0)))
             .execute(&mut conn)
-            .map_err(|e| ApiError::DatabaseError(e.to_string()))
+            .map_err(|e| map_error(e, "Failed to delete user"))
     }
 }
 
@@ -273,11 +328,10 @@ impl LoginUser {
         // to map diesel errors. But, we specifically map Diesel's NotFound to our own NotFound
         // which would lead to a 404 instead of a 401, leaking information about the existence
         // of the user.
-        let user = match {
-            users
-                .filter(username.eq(&self.username))
-                .first::<User>(&mut conn)
-        } {
+        let user = match users
+            .filter(username.eq(&self.username))
+            .first::<User>(&mut conn)
+        {
             Ok(user) => user,
             Err(_) => {
                 warn!(

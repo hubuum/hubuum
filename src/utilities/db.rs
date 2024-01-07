@@ -1,17 +1,5 @@
 use urlparse::urlparse;
 
-use crate::errors::ApiError;
-use diesel::result::{DatabaseErrorKind, Error as DieselError};
-
-pub fn handle_diesel_error(e: DieselError, message: &str) -> ApiError {
-    match e {
-        DieselError::NotFound => ApiError::NotFound(message.to_string()),
-        DieselError::DatabaseError(DatabaseErrorKind::UniqueViolation, _) => {
-            ApiError::Conflict(message.to_string())
-        }
-        _ => ApiError::DatabaseError(e.to_string()),
-    }
-}
 #[derive(Debug)]
 pub struct DatabaseUrlComponents {
     pub vendor: String,

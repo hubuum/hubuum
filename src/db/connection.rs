@@ -5,36 +5,9 @@ use diesel::r2d2::Pool;
 use diesel::PgConnection;
 use tracing::debug;
 
-use crate::db::DatabaseOps;
-use crate::errors::ApiError;
-use crate::extractors::BearerToken;
 use crate::utilities::db::DatabaseUrlComponents;
 
 pub type DbPool = Pool<ConnectionManager<PgConnection>>;
-
-impl DatabaseOps for DbPool {
-    fn get_valid_token(&self, token: &str) -> Result<BearerToken, ApiError> {
-        let mut conn = self.get().expect("couldn't get db connection from pool");
-
-        let token = match { crate::models::token::is_valid_token(&mut conn, token) } {
-            Ok(token) => BearerToken {
-                token: token.token,
-                user_id: token.user_id,
-            },
-            Err(e) => {
-                debug!(
-                    message = "Token validation failed",
-                    token = token,
-                    error = e.to_string()
-                );
-                return Err(ApiError::Unauthorized(
-                    "Token validation failed".to_string(),
-                ));
-            }
-        };
-        Ok(token)
-    }
-}
 
 pub fn init_pool(database_url: &str, max_size: u32) -> DbPool {
     let database_url_components = DatabaseUrlComponents::new(database_url);

@@ -23,29 +23,18 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          # Platforms that don't work:
-          #
-          # - sparc64-unknown-linux-gnu - cannot compile openssl-sys
-          # - x86_64-unknown-illumos - weird error compiling openssl - "bin/sh: 1: granlib: not found"
-
-          - os_name: FreeBSD-x86_64
-            os: ubuntu-20.04
-            target: x86_64-unknown-freebsd
-            bin: hubuum
-            name: hubuum-FreeBSD-x86_64.tar.gz
-            skip_tests: true
           - os_name: Linux-x86_64
-            os: ubuntu-20.04
+            os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             bin: hubuum
             name: hubuum-Linux-x86_64-gnu.tar.gz
           - os_name: Linux-aarch64
-            os: ubuntu-20.04
+            os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             bin: hubuum
             name: hubuum-Linux-aarch64-gnu.tar.gz
           - os_name: Linux-arm
-            os: ubuntu-20.04
+            os: ubuntu-20.
             target: arm-unknown-linux-gnueabi
             bin: hubuum
             name: hubuum-Linux-arm-gnu.tar.gz
@@ -134,8 +123,9 @@ jobs:
           --health-retries 5
     steps:
       - env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
-          HUBUUM_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+          # Talking to docker from inside a container usually works on 172.17.0.1...
+          DATABASE_URL: postgres://postgres:postgres@172.17.0.1:5432/postgres
+          HUBUUM_DATABASE_URL: postgres://postgres:postgres@172.17.0.1:5432/postgres
         run: |
           cargo install diesel_cli --no-default-features --features postgres
           diesel database setup --migration-dir migrations

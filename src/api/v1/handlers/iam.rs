@@ -1,15 +1,11 @@
 use crate::errors::ApiError;
-use actix_web::ResponseError;
 use actix_web::{delete, get, http::StatusCode, patch, post, web, Responder};
-use diesel::ExpressionMethods;
-use diesel::QueryDsl;
-use diesel::RunQueryDsl;
 
 use crate::models::group::{Group, GroupID, NewGroup, UpdateGroup};
 use crate::models::user::{NewUser, UpdateUser, User, UserID};
+use crate::models::user_group::UserGroup;
 
-use crate::utilities::db::handle_diesel_error;
-use crate::utilities::response::{handle_result, json_response, json_response_created};
+use crate::utilities::response::{json_response, json_response_created};
 
 use serde_json::json;
 
@@ -42,21 +38,18 @@ pub async fn create_user(
     pool: web::Data<DbPool>,
     new_user: web::Json<NewUser>,
     requestor: AdminAccess,
-) -> impl Responder {
+) -> Result<impl Responder, ApiError> {
     debug!(
         message = "User create requested",
         requestor = requestor.user.id,
-        new_user = ?new_user
+        new_user = new_user.username.as_str()
     );
 
-    let result = new_user.into_inner().save(&pool);
+    let result = new_user.into_inner().save(&pool)?;
 
-    match result {
-        Ok(user) => {
-            return json_response_created(format!("/api/v1/iam/users/{}", user.id).as_str());
-        }
-        Err(e) => e.error_response(),
-    }
+    Ok(json_response_created(
+        format!("/api/v1/iam/users/{}", result.id).as_str(),
+    ))
 }
 
 #[get("/users/{user_id}/tokens")]
@@ -65,22 +58,15 @@ pub async fn get_user_tokens(
     user_id: web::Path<UserID>,
     requestor: AdminOrSelfAccess,
 ) -> Result<impl Responder, ApiError> {
-    let mut conn = pool.get().expect("couldn't get db connection from pool");
-
-    let uid = user_id.get_id();
-
+    let user = user_id.into_inner().user(&pool)?;
     debug!(
         message = "User tokens requested",
-        target = uid,
+        target = user.id,
         requestor = requestor.user.id
     );
 
-    let valid_tokens = crate::models::token::valid_tokens_for_user(&mut conn, uid);
-
-    match valid_tokens {
-        Ok(token_list) => Ok(json_response(token_list, StatusCode::OK)),
-        Err(e) => Err(e),
-    }
+    let valid_tokens = user.get_tokens(&pool)?;
+    Ok(json_response(valid_tokens, StatusCode::OK))
 }
 
 #[get("/users/{user_id}")]
@@ -89,30 +75,34 @@ pub async fn get_user(
     user_id: web::Path<UserID>,
     requestor: UserAccess,
 ) -> Result<impl Responder, ApiError> {
+    let user = user_id.into_inner().user(&pool)?;
     debug!(
         message = "User get requested",
-        target = user_id.get_id(),
+        target = user.id,
         requestor = requestor.user.id
     );
 
-    let user = user_id.get_user(&pool)?;
     Ok(json_response(user, StatusCode::OK))
 }
 
 #[patch("/users/{user_id}")]
 pub async fn update_user(
     pool: web::Data<DbPool>,
-    user_id: web::Path<UserID>, // Extracting user_id from path
+    user_id: web::Path<UserID>,
     updated_user: web::Json<UpdateUser>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
+    let user = user_id.into_inner().user(&pool)?;
     debug!(
         message = "User patch requested",
-        target = user_id.get_id(),
+        target = user.id,
         requestor = requestor.user.id
     );
 
-    let user = updated_user.into_inner().save(user_id.get_id(), &pool)?;
+    let user = updated_user
+        .into_inner()
+        .hash_password()?
+        .save(user.id, &pool)?;
     Ok(json_response(user, StatusCode::OK))
 }
 
@@ -124,7 +114,7 @@ pub async fn delete_user(
 ) -> Result<impl Responder, ApiError> {
     debug!(
         message = "User delete requested",
-        target = user_id.get_id(),
+        target = user_id.0,
         requestor = requestor.user.id
     );
 
@@ -141,100 +131,18 @@ pub async fn create_group(
     pool: web::Data<DbPool>,
     new_group: web::Json<NewGroup>,
     requestor: AdminAccess,
-) -> impl Responder {
-    let mut conn = pool.get().expect("couldn't get db connection from pool");
-
+) -> Result<impl Responder, ApiError> {
     debug!(
         message = "Group create requested",
         requestor = requestor.user.id,
         new_group = ?new_group
     );
 
-    let result = diesel::insert_into(crate::schema::groups::table)
-        .values(&*new_group)
-        .execute(&mut conn)
-        .map_err(|e| handle_diesel_error(e, "Groupname already exists"));
+    let group = new_group.save(&pool)?;
 
-    match result {
-        Ok(res) => {
-            return json_response_created(format!("/api/v1/iam/groups/{}", res).as_str());
-        }
-        Err(e) => e.error_response(),
-    }
-}
-
-#[get("/groups/{group_id}/members")]
-pub async fn get_group_members(
-    pool: web::Data<DbPool>,
-    group_id: web::Path<GroupID>,
-    requestor: UserAccess,
-) -> impl Responder {
-    use crate::schema::user_groups::dsl::{group_id as group_id_column, user_groups, user_id};
-    use crate::schema::users::dsl::*;
-    use diesel::query_dsl::*;
-
-    let mut conn = pool.get().expect("couldn't get db connection from pool");
-    let group_id = group_id.into_inner();
-
-    debug!(
-        message = "Group members requested",
-        target = group_id,
-        requestor = requestor.user.id
-    );
-
-    let result = user_groups
-        .filter(group_id_column.eq(group_id))
-        .inner_join(users.on(id.eq(user_id)))
-        .select((id, username, password, email))
-        .load::<User>(&mut conn)
-        .map_err(|e| ApiError::DatabaseError(e.to_string()));
-
-    handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR)
-}
-
-#[post("/groups/{group_id}/members")]
-pub async fn add_group_member(
-    pool: web::Data<DbPool>,
-    group_id: web::Path<GroupID>,
-    requestor: AdminAccess,
-    user_id: web::Json<UserID>,
-) -> impl Responder {
-    let user_id = user_id.into_inner();
-    let group_id = group_id.into_inner();
-
-    debug!(
-        message = "Adding user to group",
-        user = user_id.get_id(),
-        group = group_id,
-        requestor = requestor.user.id
-    );
-
-    let mut conn = pool.get().expect("couldn't get db connection from pool");
-    let result = crate::utilities::iam::add_user_to_group(&mut conn, user_id.get_id(), group_id);
-    handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR)
-}
-
-#[delete("/groups/{group_id}/members")]
-pub async fn delete_group_member(
-    pool: web::Data<DbPool>,
-    group_id: web::Path<GroupID>,
-    requestor: AdminAccess,
-    user_id: web::Json<UserID>,
-) -> impl Responder {
-    let user_id = user_id.into_inner();
-    let group_id = group_id.into_inner();
-
-    debug!(
-        message = "Deleting user from group",
-        user = user_id.get_id(),
-        group = group_id,
-        requestor = requestor.user.id
-    );
-
-    let mut conn = pool.get().expect("couldn't get db connection from pool");
-    let result =
-        crate::utilities::iam::delete_user_from_group(&mut conn, user_id.get_id(), group_id);
-    handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR)
+    Ok(json_response_created(
+        format!("/api/v1/iam/groups/{}", group.id).as_str(),
+    ))
 }
 
 #[get("/groups/{group_id}")]
@@ -242,29 +150,23 @@ pub async fn get_group(
     pool: web::Data<DbPool>,
     group_id: web::Path<GroupID>,
     requestor: UserAccess,
-) -> impl Responder {
-    use crate::schema::groups::dsl::*;
-    use diesel::RunQueryDsl;
-
-    let mut conn = pool.get().expect("couldn't get db connection from pool");
-    let group_id = group_id.into_inner();
+) -> Result<impl Responder, ApiError> {
+    let group = group_id.group(&pool)?;
 
     debug!(
         message = "Group get requested",
-        target = group_id,
+        target = group.id,
         requestor = requestor.user.id
     );
 
-    let result = groups
-        .find(group_id)
-        .first::<Group>(&mut conn)
-        .map_err(|e| ApiError::DatabaseError(e.to_string()));
-
-    handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR)
+    Ok(json_response(group, StatusCode::OK))
 }
 
 #[get("/groups")]
-pub async fn get_groups(pool: web::Data<DbPool>, requestor: UserAccess) -> impl Responder {
+pub async fn get_groups(
+    pool: web::Data<DbPool>,
+    requestor: UserAccess,
+) -> Result<impl Responder, ApiError> {
     use crate::schema::groups::dsl::*;
     use diesel::RunQueryDsl;
 
@@ -273,11 +175,10 @@ pub async fn get_groups(pool: web::Data<DbPool>, requestor: UserAccess) -> impl 
         requestor = requestor.user.id
     );
 
-    let mut conn = pool.get().expect("couldn't get db connection from pool");
-    let result = groups
-        .load::<Group>(&mut conn)
-        .map_err(|e| ApiError::DatabaseError(e.to_string()));
-    handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR)
+    let mut conn = pool.get()?;
+    let result = groups.load::<Group>(&mut conn)?;
+
+    Ok(json_response(result, StatusCode::OK))
 }
 
 #[patch("/groups/{group_id}")]
@@ -286,23 +187,17 @@ pub async fn update_group(
     group_id: web::Path<GroupID>,
     updated_group: web::Json<UpdateGroup>,
     requestor: AdminAccess,
-) -> impl Responder {
-    let mut conn = pool.get().expect("couldn't get db connection from pool");
-
-    let group_id = group_id.into_inner();
+) -> Result<impl Responder, ApiError> {
+    let group = group_id.group(&pool)?;
 
     debug!(
         message = "Group patch requested",
-        target = group_id,
+        target = group.id,
         requestor = requestor.user.id
     );
 
-    let result = diesel::update(crate::schema::groups::table.find(group_id))
-        .set(&*updated_group)
-        .execute(&mut conn)
-        .map_err(|e| ApiError::DatabaseError(e.to_string()));
-
-    handle_result(result, StatusCode::OK, StatusCode::INTERNAL_SERVER_ERROR)
+    let updated = updated_group.into_inner().save(group.id, &pool)?;
+    Ok(json_response(updated, StatusCode::OK))
 }
 
 #[delete("/groups/{group_id}")]
@@ -310,23 +205,73 @@ pub async fn delete_group(
     pool: web::Data<DbPool>,
     group_id: web::Path<GroupID>,
     requestor: AdminAccess,
-) -> impl Responder {
-    let mut conn = pool.get().expect("couldn't get db connection from pool");
-
-    let group_id = group_id.into_inner();
-
+) -> Result<impl Responder, ApiError> {
     debug!(
         message = "Group delete requested",
-        target = group_id,
+        target = group_id.0,
         requestor = requestor.user.id
     );
 
-    let result = diesel::delete(crate::schema::groups::table.find(group_id))
-        .execute(&mut conn)
-        .map_err(|e| ApiError::DatabaseError(e.to_string()));
-    handle_result(
-        result,
-        StatusCode::NO_CONTENT,
-        StatusCode::INTERNAL_SERVER_ERROR,
-    )
+    group_id.delete(&pool)?;
+    Ok(json_response(json!({}), StatusCode::NO_CONTENT))
+}
+
+#[get("/groups/{group_id}/members")]
+pub async fn get_group_members(
+    pool: web::Data<DbPool>,
+    group_id: web::Path<GroupID>,
+    requestor: UserAccess,
+) -> Result<impl Responder, ApiError> {
+    let group = group_id.group(&pool)?;
+
+    debug!(
+        message = "Group members requested",
+        target = group.id,
+        requestor = requestor.user.id
+    );
+
+    let members = group.members(&pool)?;
+
+    Ok(json_response(members, StatusCode::OK))
+}
+
+#[post("/groups/{group_id}/members/{user_id}")]
+pub async fn add_group_member(
+    pool: web::Data<DbPool>,
+    user_group_ids: web::Path<UserGroup>,
+    requestor: AdminAccess,
+) -> Result<impl Responder, ApiError> {
+    let group = user_group_ids.group(&pool)?;
+    let user = user_group_ids.user(&pool)?;
+
+    debug!(
+        message = "Adding user to group",
+        user = user.id,
+        group = group.id,
+        requestor = requestor.user.id
+    );
+
+    group.add_member(&user, &pool)?;
+
+    Ok(json_response(json!({}), StatusCode::NO_CONTENT))
+}
+
+#[delete("/groups/{group_id}/members/{user_id}")]
+pub async fn delete_group_member(
+    pool: web::Data<DbPool>,
+    user_group_ids: web::Path<UserGroup>,
+    requestor: AdminAccess,
+) -> Result<impl Responder, ApiError> {
+    let group = user_group_ids.group(&pool)?;
+    let user = user_group_ids.user(&pool)?;
+
+    debug!(
+        message = "Deleting user from group",
+        user = user.id,
+        group = group.id,
+        requestor = requestor.user.id
+    );
+
+    user_group_ids.delete(&pool)?;
+    Ok(json_response(json!({}), StatusCode::NO_CONTENT))
 }

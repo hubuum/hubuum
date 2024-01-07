@@ -1,7 +1,6 @@
-use actix_web::{get, http::StatusCode, post, web, Responder, ResponseError};
-use diesel::prelude::*;
+use actix_web::{get, http::StatusCode, post, web, Responder};
 
-use crate::extractors::BearerToken;
+use crate::extractors::UserAccess;
 use crate::models::user::LoginUser;
 use crate::utilities::response::json_response;
 
@@ -55,58 +54,62 @@ pub async fn login(
 }
 
 #[get("/logout")]
-pub async fn logout(pool: web::Data<DbPool>, bearer_token: BearerToken) -> impl Responder {
-    use crate::schema::tokens::dsl::*;
-    use diesel::RunQueryDsl;
+pub async fn logout(
+    pool: web::Data<DbPool>,
+    user_access: UserAccess,
+) -> Result<impl Responder, ApiError> {
+    let token = user_access.token;
 
-    let mut conn = pool.get().expect("couldn't get db connection from pool");
-    let token_value = &bearer_token.token;
+    debug!(message = "Logging out token.", token = token.obfuscate());
 
-    debug!(message = "Logging out token {}.", token_value);
-
-    let result = diesel::delete(tokens.filter(token.eq(token_value))).execute(&mut conn);
+    let mut conn = pool.get()?;
+    let result = token.delete(&mut conn);
 
     match result {
-        Ok(_) => json_response(json!({ "message": "Logout successful."}), StatusCode::OK),
+        Ok(_) => Ok(json_response(
+            json!({ "message": "Logout successful."}),
+            StatusCode::OK,
+        )),
         Err(e) => {
             warn!(
                 message = "Logout failed",
-                token = token_value,
+                token_used = token.obfuscate(),
                 error = e.to_string()
             );
-            ApiError::InternalServerError("Internal authentication failure".to_string())
-                .error_response()
+            Err(ApiError::InternalServerError(
+                "Internal authentication failure".to_string(),
+            ))
         }
     }
 }
 
 #[get("/logout_all")]
-pub async fn logout_all(pool: web::Data<DbPool>, bearer_token: BearerToken) -> impl Responder {
-    use crate::schema::tokens::dsl::*;
-    use diesel::RunQueryDsl;
+pub async fn logout_all(
+    pool: web::Data<DbPool>,
+    user_access: UserAccess,
+) -> Result<impl Responder, ApiError> {
+    debug!(
+        message = "Logging out all tokens for {}.",
+        user_access.user.id
+    );
 
-    let mut conn = pool.get().expect("couldn't get db connection from pool");
-    let token_value = &bearer_token.token;
-    let token_user_id = &bearer_token.user_id;
-
-    debug!(message = "Logging out all tokens for {}.", token_user_id);
-
-    let delete_result = diesel::delete(tokens.filter(user_id.eq(token_user_id))).execute(&mut conn);
+    let delete_result = user_access.user.delete_all_tokens(&pool);
 
     match delete_result {
-        Ok(_) => json_response(
+        Ok(_) => Ok(json_response(
             json!({ "message": "Logout of all tokens successful."}),
             StatusCode::OK,
-        ),
+        )),
         Err(e) => {
             warn!(
-                message = "Logout failed",
-                token = token_value,
-                user_id = token_user_id,
+                message = "Logout of all tokens failed",
+                token_used = user_access.token.obfuscate(),
+                user_id = user_access.user.id,
                 error = e.to_string()
             );
-            ApiError::InternalServerError("Internal authentication failure.".to_string())
-                .error_response()
+            Err(ApiError::InternalServerError(
+                "Internal authentication failure.".to_string(),
+            ))
         }
     }
 }

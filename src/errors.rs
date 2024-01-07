@@ -93,3 +93,35 @@ impl From<DieselError> for ApiError {
         }
     }
 }
+
+pub trait ApiErrorMappable {
+    fn map_to_api_error(&self, message: &str) -> ApiError;
+}
+
+impl ApiErrorMappable for argon2::Error {
+    fn map_to_api_error(&self, message: &str) -> ApiError {
+        ApiError::HashError(message.to_string())
+    }
+}
+
+impl ApiErrorMappable for PoolError {
+    fn map_to_api_error(&self, message: &str) -> ApiError {
+        ApiError::DbConnectionError(message.to_string())
+    }
+}
+
+impl ApiErrorMappable for DieselError {
+    fn map_to_api_error(&self, message: &str) -> ApiError {
+        match self {
+            DieselError::NotFound => ApiError::NotFound(message.to_string()),
+            DieselError::DatabaseError(DatabaseErrorKind::UniqueViolation, _) => {
+                ApiError::Conflict(message.to_string())
+            }
+            _ => ApiError::DatabaseError(self.to_string()),
+        }
+    }
+}
+
+pub fn map_error<E: ApiErrorMappable + std::fmt::Debug>(error: E, message: &str) -> ApiError {
+    error.map_to_api_error(message)
+}

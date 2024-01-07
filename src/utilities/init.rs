@@ -13,8 +13,6 @@ use crate::schema::users::dsl::*;
 use crate::models::group::NewGroup;
 use crate::utilities::auth::generate_random_password;
 
-use crate::utilities::iam::add_user_to_group;
-
 use tracing::{debug, error, trace, warn};
 
 pub async fn init(pool: DbPool) {
@@ -30,13 +28,12 @@ pub async fn init(pool: DbPool) {
 
     debug!(message = "No users or groups found. Creating default admin user and group.");
 
-    let adm_group = match {
-        NewGroup {
-            groupname: "admin".to_string(),
-            description: Some("Default admin group.".to_string()),
-        }
-        .save(&pool)
-    } {
+    let adm_group = match (NewGroup {
+        groupname: "admin".to_string(),
+        description: Some("Default admin group.".to_string()),
+    }
+    .save(&pool))
+    {
         Ok(group) => group,
         Err(e) => {
             error!(
@@ -49,14 +46,13 @@ pub async fn init(pool: DbPool) {
 
     let default_password = generate_random_password(32);
 
-    let adm_user = match {
-        NewUser {
-            username: "admin".to_string(),
-            email: Some("".to_string()),
-            password: default_password.clone(),
-        }
-        .save(&pool)
-    } {
+    let adm_user = match (NewUser {
+        username: "admin".to_string(),
+        email: Some("".to_string()),
+        password: default_password.clone(),
+    }
+    .save(&pool))
+    {
         Ok(user) => user,
         Err(e) => {
             error!(
@@ -67,12 +63,15 @@ pub async fn init(pool: DbPool) {
         }
     };
 
-    if let Err(e) = add_user_to_group(&mut conn, adm_user.id, adm_group.id) {
-        error!(
-            message = "Error adding default admin user to default admin group",
-            error = e.to_string()
-        );
-        return;
+    match adm_group.add_member(&adm_user, &pool) {
+        Ok(_) => {}
+        Err(e) => {
+            error!(
+                message = "Error adding default admin user to default admin group",
+                error = e.to_string()
+            );
+            return;
+        }
     }
 
     warn!(
