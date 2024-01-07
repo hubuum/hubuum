@@ -14,8 +14,8 @@ env:
   CRATE_NAME: hubuum
   GITHUB_TOKEN: ${{ github.token }}
   RUST_BACKTRACE: 1
-  DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
-  HUBUUM_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+  DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_rust_test
+  HUBUUM_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_rust_test
 
 jobs:
   test:
@@ -138,7 +138,12 @@ jobs:
       - name: Set up database
         run: |
           cargo install diesel_cli --no-default-features --features postgres
-          diesel migration run --migration-dir migrations --database-url ${{ env.HUBUUM_DATABASE_URL }}
+          echo "Running database setup and migrations"
+          diesel setup --database-url ${{ env.DATABASE_URL }}
+          echo "Running database migrations, should be up to date"
+          diesel migration run --database-url ${{ env.DATABASE_URL }}
+          echo "Checking database setup"
+          PGPASSWORD=postgres psql -U postgres -h localhost -p 5432 -d hubuum_rust_test -c "select * from users;"
       - uses: actions/checkout@v3
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
