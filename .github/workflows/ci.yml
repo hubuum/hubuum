@@ -14,6 +14,8 @@ env:
   CRATE_NAME: hubuum
   GITHUB_TOKEN: ${{ github.token }}
   RUST_BACKTRACE: 1
+  DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+  HUBUUM_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
 
 jobs:
   test:
@@ -114,6 +116,8 @@ jobs:
     services:
       postgres:
         image: postgres
+        ports:
+          - 5432:5432
         env:
           POSTGRES_PASSWORD: postgres
         options: >-
@@ -122,10 +126,12 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - env:
-          # Talking to docker from inside a container usually works on 172.17.0.1...
-          DATABASE_URL: postgres://postgres:postgres@172.17.0.1:5432/postgres
-          HUBUUM_DATABASE_URL: postgres://postgres:postgres@172.17.0.1:5432/postgres
+      - name: Docker debugging
+        run: |
+          docker ps -a
+          docker container ls
+          docker container ls --format "table {{.ID}}\t{{.Names}}\t{{.Ports}}" -a
+      - name: Set up database
         run: |
           cargo install diesel_cli --no-default-features --features postgres
           diesel database setup --migration-dir migrations
