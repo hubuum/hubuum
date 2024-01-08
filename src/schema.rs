@@ -12,7 +12,7 @@ diesel::table! {
     hubuumclass (id) {
         id -> Int4,
         name -> Varchar,
-        namespace_id -> Nullable<Int4>,
+        namespace_id -> Int4,
         json_schema -> Jsonb,
         validate_schema -> Bool,
         description -> Varchar,
@@ -23,8 +23,8 @@ diesel::table! {
     hubuumobject (id) {
         id -> Int4,
         name -> Varchar,
-        namespace_id -> Nullable<Int4>,
-        hubuum_class_id -> Nullable<Int4>,
+        namespace_id -> Int4,
+        hubuum_class_id -> Int4,
         data -> Jsonb,
         description -> Varchar,
     }
@@ -33,9 +33,9 @@ diesel::table! {
 diesel::table! {
     namespacepermissions (id) {
         id -> Int4,
-        namespace_id -> Nullable<Int4>,
-        group_id -> Nullable<Int4>,
-        user_id -> Nullable<Int4>,
+        namespace_id -> Int4,
+        group_id -> Int4,
+        user_id -> Int4,
         has_create -> Bool,
         has_read -> Bool,
         has_update -> Bool,
@@ -55,9 +55,9 @@ diesel::table! {
 diesel::table! {
     objectpermissions (id) {
         id -> Int4,
-        namespace_id -> Nullable<Int4>,
-        group_id -> Nullable<Int4>,
-        user_id -> Nullable<Int4>,
+        namespace_id -> Int4,
+        group_id -> Int4,
+        user_id -> Int4,
         has_create -> Bool,
         has_read -> Bool,
         has_update -> Bool,

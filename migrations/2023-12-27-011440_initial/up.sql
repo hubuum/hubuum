@@ -13,14 +13,14 @@ CREATE TABLE groups (
 );
 
 CREATE TABLE user_groups (
-    user_id INT REFERENCES users (id) ON DELETE CASCADE,
-    group_id INT REFERENCES groups (id) ON DELETE CASCADE,
+    user_id INT REFERENCES users (id) ON DELETE CASCADE NOT NULL,
+    group_id INT REFERENCES groups (id) ON DELETE CASCADE NOT NULL,
     PRIMARY KEY (user_id, group_id)
 );
 
 CREATE TABLE tokens (
     token VARCHAR NOT NULL,
-    user_id INT REFERENCES users (id) ON DELETE CASCADE,
+    user_id INT REFERENCES users (id) ON DELETE CASCADE NOT NULL,
     issued TIMESTAMP NOT NULL,
     PRIMARY KEY (token, user_id)
 );
@@ -33,9 +33,9 @@ CREATE TABLE namespaces (
 
 CREATE TABLE namespacepermissions (
     id SERIAL PRIMARY KEY,
-    namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE,
-    group_id INT REFERENCES groups (id) ON DELETE CASCADE,
-    user_id INT REFERENCES users (id) ON DELETE CASCADE,
+    namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
+    group_id INT REFERENCES groups (id) ON DELETE CASCADE NOT NULL,
+    user_id INT REFERENCES users (id) ON DELETE CASCADE NOT NULL,
     has_create BOOLEAN NOT NULL,
     has_read BOOLEAN NOT NULL,
     has_update BOOLEAN NOT NULL,
@@ -46,9 +46,9 @@ CREATE TABLE namespacepermissions (
 
 CREATE TABLE objectpermissions (
     id SERIAL PRIMARY KEY,
-    namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE,
-    group_id INT REFERENCES groups (id) ON DELETE CASCADE,
-    user_id INT REFERENCES users (id) ON DELETE CASCADE,
+    namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
+    group_id INT REFERENCES groups (id) ON DELETE CASCADE NOT NULL,
+    user_id INT REFERENCES users (id) ON DELETE CASCADE NOT NULL,
     has_create BOOLEAN NOT NULL,
     has_read BOOLEAN NOT NULL,
     has_update BOOLEAN NOT NULL,
@@ -59,7 +59,7 @@ CREATE TABLE objectpermissions (
 CREATE TABLE hubuumclass (
     id SERIAL PRIMARY KEY,
     name VARCHAR NOT NULL UNIQUE,
-    namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE,
+    namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
     json_schema JSONB NOT NULL,
     validate_schema BOOLEAN NOT NULL,
     description VARCHAR NOT NULL
@@ -68,8 +68,8 @@ CREATE TABLE hubuumclass (
 CREATE TABLE hubuumobject (
     id SERIAL PRIMARY KEY,
     name VARCHAR NOT NULL,
-    namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE,
-    hubuum_class_id INT REFERENCES hubuumclass (id) ON DELETE CASCADE,
+    namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
+    hubuum_class_id INT REFERENCES hubuumclass (id) ON DELETE CASCADE NOT NULL,
     data JSONB NOT NULL,
     description VARCHAR NOT NULL,
     UNIQUE (name, namespace_id)

@@ -5,6 +5,8 @@ use serde::Serialize;
 use serde_json::json;
 use std::fmt;
 
+use tracing::{debug, error};
+
 #[derive(Debug, Serialize)]
 pub enum ApiError {
     Unauthorized(String),
@@ -73,23 +75,36 @@ impl ResponseError for ApiError {
 
 impl From<argon2::Error> for ApiError {
     fn from(e: argon2::Error) -> Self {
+        error!(message = "Error hashing password", error = ?e);
         ApiError::HashError(e.to_string())
     }
 }
 
 impl From<PoolError> for ApiError {
     fn from(e: PoolError) -> Self {
+        error!(message = "Unable to get a connection from the pool", error = ?e);
         ApiError::DbConnectionError(e.to_string())
     }
 }
 impl From<DieselError> for ApiError {
     fn from(e: DieselError) -> Self {
         match e {
-            DieselError::NotFound => ApiError::NotFound(e.to_string()),
+            DieselError::NotFound => {
+                debug!(message = "Entity not found", error = ?e);
+                ApiError::NotFound(e.to_string())
+            }
             DieselError::DatabaseError(DatabaseErrorKind::UniqueViolation, _) => {
+                debug!(message = "Unique constraint not met", error = ?e);
                 ApiError::Conflict(e.to_string())
             }
-            _ => ApiError::DatabaseError(e.to_string()),
+            DieselError::DatabaseError(DatabaseErrorKind::ForeignKeyViolation, _) => {
+                debug!(message = "Unable to resolve foreign key", error = ?e);
+                ApiError::Conflict(e.to_string())
+            }
+            _ => {
+                error!(message = "Database error", error = ?e);
+                ApiError::DatabaseError(e.to_string())
+            }
         }
     }
 }
@@ -117,11 +132,30 @@ impl ApiErrorMappable for DieselError {
             DieselError::DatabaseError(DatabaseErrorKind::UniqueViolation, _) => {
                 ApiError::Conflict(message.to_string())
             }
+            DieselError::DatabaseError(DatabaseErrorKind::ForeignKeyViolation, _) => {
+                ApiError::Conflict(message.to_string())
+            }
             _ => ApiError::DatabaseError(self.to_string()),
         }
     }
 }
 
 pub fn map_error<E: ApiErrorMappable + std::fmt::Debug>(error: E, message: &str) -> ApiError {
-    error.map_to_api_error(message)
+    let new_error = error.map_to_api_error(message);
+    if new_error.status_code().as_u16() >= 500 {
+        error!(
+            message = "Mapped error to api error",
+            original_error = ?error,
+            new_error = ?new_error,
+            new_error_message = new_error.to_string()
+        );
+    } else {
+        debug!(
+            message = "Mapped error to api error",
+            original_error = ?error,
+            new_error = ?new_error,
+            new_error_message = new_error.to_string()
+        );
+    }
+    new_error
 }
