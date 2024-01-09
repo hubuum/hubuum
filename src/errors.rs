@@ -140,16 +140,14 @@ impl ApiErrorMappable for DieselError {
         match self {
             DieselError::NotFound => ApiError::NotFound(message.to_string()),
             DieselError::DatabaseError(DatabaseErrorKind::UniqueViolation, _) => {
-                ApiError::Conflict(format!("{} ({})", message.to_string(), self.to_string()))
+                ApiError::Conflict(format!("{} ({})", message, self))
             }
             DieselError::DatabaseError(DatabaseErrorKind::ForeignKeyViolation, _) => {
-                ApiError::Conflict(format!("{} ({})", message.to_string(), self.to_string()))
+                ApiError::Conflict(format!("{} ({})", message, self))
             }
-            DieselError::QueryBuilderError(_) => ApiError::BadRequest(format!(
-                "{} (Check your query fields: {})",
-                message,
-                self.to_string(),
-            )),
+            DieselError::QueryBuilderError(_) => {
+                ApiError::BadRequest(format!("{} (Check your query fields: {})", message, self,))
+            }
             _ => ApiError::DatabaseError(message.to_string()),
         }
     }
