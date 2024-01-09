@@ -59,7 +59,7 @@ where
             async move {
                 let res = fut.await?;
                 let elapsed_time = start_time.elapsed();
-                info!(message = "Request end", run_time = ?elapsed_time, method = &method, path = &path);
+                info!(message = "Request end", method = &method, path = &path, run_time = ?elapsed_time);
 
                 Ok(res)
             }

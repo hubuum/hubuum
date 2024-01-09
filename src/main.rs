@@ -1,4 +1,4 @@
-use actix_web::{web::Data, App, HttpServer};
+use actix_web::{web::Data, web::JsonConfig, App, HttpServer};
 
 use tracing_subscriber::filter::EnvFilter;
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -24,6 +24,7 @@ use db::connection::init_pool;
 use tracing::{debug, warn};
 
 use crate::config::get_config;
+use crate::errors::json_error_handler;
 use crate::utilities::is_valid_log_level;
 
 #[actix_web::main]
@@ -68,6 +69,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .wrap(middlewares::tracing::TracingMiddleware)
             .wrap(Logger::default())
+            .app_data(JsonConfig::default().error_handler(json_error_handler))
             .app_data(Data::new(pool.clone()))
             .configure(api::config)
     })

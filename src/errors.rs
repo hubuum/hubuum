@@ -1,11 +1,13 @@
-use actix_web::{http::StatusCode, HttpResponse, ResponseError};
+use actix_web::{
+    error::JsonPayloadError, http::StatusCode, HttpRequest, HttpResponse, ResponseError,
+};
 use diesel::r2d2::PoolError;
 use diesel::result::{DatabaseErrorKind, Error as DieselError};
 use serde::Serialize;
 use serde_json::json;
 use std::fmt;
 
-use tracing::{debug, error};
+use tracing::{debug, error, trace};
 
 #[derive(Debug, Serialize)]
 pub enum ApiError {
@@ -17,6 +19,7 @@ pub enum ApiError {
     NotFound(String),
     DbConnectionError(String),
     HashError(String),
+    BadRequest(String),
 }
 
 impl fmt::Display for ApiError {
@@ -30,6 +33,7 @@ impl fmt::Display for ApiError {
             ApiError::Unauthorized(ref message) => write!(f, "{}", message),
             ApiError::DatabaseError(ref message) => write!(f, "{}", message),
             ApiError::DbConnectionError(ref message) => write!(f, "{}", message),
+            ApiError::BadRequest(ref message) => write!(f, "{}", message),
         }
     }
 }
@@ -38,7 +42,7 @@ impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
         match self {
             ApiError::Conflict(ref message) => {
-                HttpResponse::Conflict().json(json!({ "error": "Conflict", "message": message }))
+                HttpResponse::Conflict().json(json!({ "error": "Conflict", "message": message}))
             }
             ApiError::Forbidden(ref message) => {
                 HttpResponse::Forbidden().json(json!({ "error": "Forbidden", "message": message }))
@@ -56,6 +60,8 @@ impl ResponseError for ApiError {
             ApiError::NotFound(ref message) => {
                 HttpResponse::NotFound().json(json!({ "error": "Not Found", "message": message }))
             }
+            ApiError::BadRequest(ref message) => HttpResponse::BadRequest()
+                .json(json!({ "error": "Bad Request", "message": message })),
         }
     }
 
@@ -69,6 +75,7 @@ impl ResponseError for ApiError {
             ApiError::DbConnectionError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::HashError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
+            ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
         }
     }
 }
@@ -101,6 +108,9 @@ impl From<DieselError> for ApiError {
                 debug!(message = "Unable to resolve foreign key", error = ?e);
                 ApiError::Conflict(e.to_string())
             }
+            DieselError::DatabaseError(DatabaseErrorKind::CheckViolation, _) => {
+                ApiError::BadRequest(e.to_string())
+            }
             _ => {
                 error!(message = "Database error", error = ?e);
                 ApiError::DatabaseError(e.to_string())
@@ -130,12 +140,17 @@ impl ApiErrorMappable for DieselError {
         match self {
             DieselError::NotFound => ApiError::NotFound(message.to_string()),
             DieselError::DatabaseError(DatabaseErrorKind::UniqueViolation, _) => {
-                ApiError::Conflict(message.to_string())
+                ApiError::Conflict(format!("{} ({})", message.to_string(), self.to_string()))
             }
             DieselError::DatabaseError(DatabaseErrorKind::ForeignKeyViolation, _) => {
-                ApiError::Conflict(message.to_string())
+                ApiError::Conflict(format!("{} ({})", message.to_string(), self.to_string()))
             }
-            _ => ApiError::DatabaseError(self.to_string()),
+            DieselError::QueryBuilderError(_) => ApiError::BadRequest(format!(
+                "{} (Check your query fields: {})",
+                message,
+                self.to_string(),
+            )),
+            _ => ApiError::DatabaseError(message.to_string()),
         }
     }
 }
@@ -143,19 +158,29 @@ impl ApiErrorMappable for DieselError {
 pub fn map_error<E: ApiErrorMappable + std::fmt::Debug>(error: E, message: &str) -> ApiError {
     let new_error = error.map_to_api_error(message);
     if new_error.status_code().as_u16() >= 500 {
-        error!(
+        trace!(
             message = "Mapped error to api error",
             original_error = ?error,
+            original_message = message,
+            original_error_type = ?std::any::type_name::<E>(),
             new_error = ?new_error,
             new_error_message = new_error.to_string()
         );
     } else {
-        debug!(
+        trace!(
             message = "Mapped error to api error",
             original_error = ?error,
+            original_message = message,
             new_error = ?new_error,
             new_error_message = new_error.to_string()
         );
     }
     new_error
+}
+
+/// Ensure that json deserialization errors are reported as a bad request and
+/// that the error itself is returned as json.
+pub fn json_error_handler(err: JsonPayloadError, _: &HttpRequest) -> actix_web::Error {
+    let error_message = format!("Json deserialize error: {}", err);
+    ApiError::BadRequest(error_message).into()
 }

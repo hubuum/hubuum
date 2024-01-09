@@ -1,11 +1,13 @@
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::schema::namespacepermissions;
+use crate::schema::group_datapermissions;
+use crate::schema::group_namespacepermissions;
 use crate::schema::namespaces;
-use crate::schema::objectpermissions;
+use crate::schema::user_datapermissions;
+use crate::schema::user_namespacepermissions;
 
-use crate::errors::{map_error, ApiError};
+use crate::errors::ApiError;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum PermissionsForNamespaces {
@@ -28,7 +30,7 @@ impl PermissionsForNamespaces {
     }
 }
 
-#[derive(Serialize, Deserialize, Queryable, Insertable)]
+#[derive(Serialize, Deserialize, Queryable)]
 #[diesel(table_name = namespaces)]
 pub struct Namespace {
     pub id: i32,
@@ -37,35 +39,252 @@ pub struct Namespace {
 }
 
 impl Namespace {
+    /// Check if a user has a specific permission to this namespace
+    ///
+    /// ## Arguments
+    /// * pool - Database connection pool
+    /// * user_id - ID of the user to check permissions for
+    /// * permission_type - Type of permission to check
+    ///
+    /// ## Returns
+    /// * Ok(Namespace) - Namespace if the user has the requested permission
+    /// * Err(ApiError) - Always returns 404 if there is no match (we never do 403/401)
     pub fn user_can(
         &self,
         pool: &crate::db::connection::DbPool,
         user_id: i32,
         permission_type: PermissionsForNamespaces,
-    ) -> Result<bool, ApiError> {
+    ) -> Result<Self, ApiError> {
         user_can_on(pool, user_id, permission_type, self.id)
     }
 
-    pub fn save(
-        self,
+    /// Update a namespace
+    ///
+    /// This does not check for permissions, it only updates the namespace.
+    /// It is assumed that permissions are already checked before calling this method.
+    /// See `user_can` for permission checking.
+    ///
+    /// ## Arguments
+    /// * pool - Database connection pool
+    /// * new_data - New data to update the namespace with
+    ///
+    /// ## Returns
+    /// * Ok(Namespace) - Updated namespace
+    /// * Err(ApiError) - On query errors only.
+    pub fn update(
+        &self,
         pool: &crate::db::connection::DbPool,
-    ) -> Result<Self, crate::errors::ApiError> {
+        new_data: UpdateNamespace,
+    ) -> Result<Self, ApiError> {
         use crate::schema::namespaces::dsl::*;
 
         let mut conn = pool.get()?;
-        diesel::insert_into(namespaces)
-            .values(&self)
-            .get_result::<Namespace>(&mut conn)
-            .map_err(|e| map_error(e, "Failed to save namespace"))
+        let namespace = diesel::update(namespaces.filter(id.eq(self.id)))
+            .set(&new_data)
+            .get_result::<Namespace>(&mut conn)?;
+
+        Ok(namespace)
+    }
+
+    /// Delete a namespace
+    ///
+    /// This does not check for permissions, it only deletes the namespace.
+    /// It is assumed that permissions are already checked before calling this method.
+    /// See `user_can` for permission checking.
+    ///
+    /// ## Arguments
+    /// * pool - Database connection pool
+    ///
+    /// ## Returns
+    /// * Ok(usize) - Number of deleted namespaces
+    /// * Err(ApiError) - On query errors only.
+    pub fn delete(&self, pool: &crate::db::connection::DbPool) -> Result<usize, ApiError> {
+        use crate::schema::namespaces::dsl::*;
+
+        let mut conn = pool.get()?;
+        let result = diesel::delete(namespaces.filter(id.eq(self.id))).execute(&mut conn)?;
+
+        Ok(result)
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct NamespaceID(pub i32);
+
+impl NamespaceID {
+    pub fn user_can(
+        &self,
+        pool: &crate::db::connection::DbPool,
+        user_id: i32,
+        permission_type: PermissionsForNamespaces,
+    ) -> Result<Namespace, ApiError> {
+        user_can_on(pool, user_id, permission_type, self.0)
+    }
+}
+
+#[derive(Serialize, Deserialize, AsChangeset)]
+#[diesel(table_name = namespaces)]
+pub struct UpdateNamespace {
+    pub name: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct NewNamespaceRequest {
+    pub name: String,
+    pub description: String,
+    pub assign_to_user_id: Option<i32>,
+    pub assign_to_group_id: Option<i32>,
+}
+
+impl NewNamespaceRequest {
+    pub fn validate(&self) -> Result<(), crate::errors::ApiError> {
+        match (self.assign_to_user_id, self.assign_to_group_id) {
+            (Some(_), None) | (None, Some(_)) => Ok(()),
+            _ => Err(ApiError::BadRequest(
+                "Exactly one of assign_to_user_id or assign_to_group_id must be set".to_string(),
+            )),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Insertable)]
+#[diesel(table_name = namespaces)]
+pub struct NewNamespace {
+    pub name: String,
+    pub description: String,
+}
+
+impl NewNamespace {
+    pub fn save_with_permissions(
+        self,
+        pool: &crate::db::connection::DbPool,
+        permissions: NewNamespaceRequest,
+    ) -> Result<Namespace, ApiError> {
+        use crate::schema::namespaces::dsl::*;
+
+        permissions.validate()?;
+
+        let mut conn = pool.get()?;
+        conn.transaction::<_, ApiError, _>(|conn| {
+            let namespace = diesel::insert_into(namespaces)
+                .values(&self)
+                .get_result::<Namespace>(conn)?;
+
+            // Check if permissions are assigned to a user
+            if let Some(user_id) = permissions.assign_to_user_id {
+                let user_permission = UserNamespacePermission {
+                    id: 0,
+                    namespace_id: namespace.id,
+                    user_id,
+                    has_create: true,
+                    has_read: true,
+                    has_update: true,
+                    has_delete: true,
+                    has_delegate: true,
+                };
+
+                diesel::insert_into(user_namespacepermissions::table)
+                    .values(&user_permission)
+                    .execute(conn)?;
+            }
+
+            // Check if permissions are assigned to a group
+            if let Some(group_id) = permissions.assign_to_group_id {
+                let group_permission = GroupNamespacePermission {
+                    id: 0,
+                    namespace_id: namespace.id,
+                    group_id,
+                    has_create: true,
+                    has_read: true,
+                    has_update: true,
+                    has_delete: true,
+                    has_delegate: true,
+                };
+
+                diesel::insert_into(group_namespacepermissions::table)
+                    .values(&group_permission)
+                    .execute(conn)?;
+            }
+
+            Ok(namespace)
+        })
+    }
+
+    pub fn update_with_permissions(
+        self,
+        pool: &crate::db::connection::DbPool,
+        permissions: NewNamespaceRequest,
+    ) -> Result<Namespace, ApiError> {
+        use crate::schema::namespaces::dsl::*;
+
+        permissions.validate()?;
+
+        let mut conn = pool.get()?;
+        conn.transaction::<_, ApiError, _>(|conn| {
+            let namespace = diesel::insert_into(namespaces)
+                .values(&self)
+                .get_result::<Namespace>(conn)?;
+
+            // Check if permissions are assigned to a user
+            if let Some(user_id) = permissions.assign_to_user_id {
+                let user_permission = UserNamespacePermission {
+                    id: 0,
+                    namespace_id: namespace.id,
+                    user_id,
+                    has_create: true,
+                    has_read: true,
+                    has_update: true,
+                    has_delete: true,
+                    has_delegate: true,
+                };
+
+                diesel::insert_into(user_namespacepermissions::table)
+                    .values(&user_permission)
+                    .execute(conn)?;
+            }
+
+            // Check if permissions are assigned to a group
+            if let Some(group_id) = permissions.assign_to_group_id {
+                let group_permission = GroupNamespacePermission {
+                    id: 0,
+                    namespace_id: namespace.id,
+                    group_id,
+                    has_create: true,
+                    has_read: true,
+                    has_update: true,
+                    has_delete: true,
+                    has_delegate: true,
+                };
+
+                diesel::insert_into(group_namespacepermissions::table)
+                    .values(&group_permission)
+                    .execute(conn)?;
+            }
+
+            Ok(namespace)
+        })
     }
 }
 
 #[derive(Serialize, Deserialize, Queryable, Insertable)]
-#[diesel(table_name = namespacepermissions)]
-pub struct NamespacePermission {
+#[diesel(table_name = user_namespacepermissions)]
+pub struct UserNamespacePermission {
     pub id: i32,
     pub namespace_id: i32,
     pub user_id: i32,
+    pub has_create: bool,
+    pub has_read: bool,
+    pub has_update: bool,
+    pub has_delete: bool,
+    pub has_delegate: bool,
+}
+
+#[derive(Serialize, Deserialize, Queryable, Insertable)]
+#[diesel(table_name = group_namespacepermissions)]
+pub struct GroupNamespacePermission {
+    pub id: i32,
+    pub namespace_id: i32,
     pub group_id: i32,
     pub has_create: bool,
     pub has_read: bool,
@@ -75,11 +294,22 @@ pub struct NamespacePermission {
 }
 
 #[derive(Serialize, Deserialize, Queryable, Insertable)]
-#[diesel(table_name = objectpermissions)]
-pub struct ObjectPermission {
+#[diesel(table_name = user_datapermissions)]
+pub struct UserDataPermission {
     pub id: i32,
     pub namespace_id: i32,
     pub user_id: i32,
+    pub has_create: bool,
+    pub has_read: bool,
+    pub has_update: bool,
+    pub has_delete: bool,
+}
+
+#[derive(Serialize, Deserialize, Queryable, Insertable)]
+#[diesel(table_name = group_datapermissions)]
+pub struct GroupDataPermission {
+    pub id: i32,
+    pub namespace_id: i32,
     pub group_id: i32,
     pub has_create: bool,
     pub has_read: bool,
@@ -87,76 +317,135 @@ pub struct ObjectPermission {
     pub has_delete: bool,
 }
 
+/// Check if a user has a specific permission to a given namespace ID
+///
+/// ## Arguments
+///
+/// * pool - Database connection pool
+/// * user_id - ID of the user to check permissions for
+/// * permission_type - Type of permission to check
+/// * namespace_target_id - ID of the namespace to check permissions for
+///
+/// ## Returns
+/// * Ok(Namespace) - Namespace if the user has the requested permission
+/// * Err(ApiError) - Always returns 404 if there is no match (we never do 403/401)
 pub fn user_can_on(
     pool: &crate::db::connection::DbPool,
     user_id: i32,
     permission_type: PermissionsForNamespaces,
     namespace_target_id: i32,
-) -> Result<bool, ApiError> {
+) -> Result<Namespace, ApiError> {
     use crate::schema::user_groups;
     use diesel::prelude::*;
 
     let mut conn = pool.get()?;
-
-    // Construct the permission field string based on the enum
     let permission_field = permission_type.db_field();
 
-    // Construct the query
-    let has_permission: bool = namespacepermissions::table
-        // Join with user_groups on group_id, allowing for user_id or group_id to be 0
-        .left_outer_join(
-            user_groups::table.on(namespacepermissions::group_id.eq(user_groups::group_id)),
-        )
-        // Filter for the specific namespace
-        .filter(namespacepermissions::namespace_id.eq(namespace_target_id))
-        // Check for direct user permissions or permissions through group membership
-        .filter(
-            namespacepermissions::user_id
-                .eq(user_id)
-                .or(user_groups::user_id
-                    .eq(user_id)
-                    .and(namespacepermissions::group_id.ne(0))),
-        )
-        // Check for the specific permission type
+    // Check direct user permissions
+    let user_permission: bool = user_namespacepermissions::table
+        .filter(user_namespacepermissions::namespace_id.eq(namespace_target_id))
+        .filter(user_namespacepermissions::user_id.eq(user_id))
         .select(diesel::dsl::sql::<diesel::sql_types::Bool>(&format!(
             "bool_or({})",
             permission_field
         )))
-        // Execute the query
-        .first(&mut conn)?;
+        .first(&mut conn)
+        .unwrap_or(false);
 
-    Ok(has_permission)
+    // If user has direct permissions, return the namespace
+    if user_permission {
+        let namespace = namespaces::table
+            .filter(namespaces::id.eq(namespace_target_id))
+            .first(&mut conn)?;
+        return Ok(namespace);
+    }
+
+    // Check group permissions only if direct user permission check failed
+    let group_permission: bool = group_namespacepermissions::table
+        .inner_join(
+            user_groups::table.on(group_namespacepermissions::group_id.eq(user_groups::group_id)),
+        )
+        .filter(group_namespacepermissions::namespace_id.eq(namespace_target_id))
+        .filter(user_groups::user_id.eq(user_id))
+        .select(diesel::dsl::sql::<diesel::sql_types::Bool>(&format!(
+            "bool_or({})",
+            permission_field
+        )))
+        .first(&mut conn)
+        .unwrap_or(false);
+
+    if group_permission {
+        let namespace = namespaces::table
+            .filter(namespaces::id.eq(namespace_target_id))
+            .first(&mut conn)?;
+        return Ok(namespace);
+    }
+
+    // If neither direct nor group permissions are found, return an error
+    Err(ApiError::NotFound("Not found".to_string()))
 }
 
-pub fn user_can_on_all(
+/// Check if a user has a specific permission to any namespace
+///
+/// ## Arguments
+/// * pool - Database connection pool
+/// * user_id - ID of the user to check permissions for
+/// * permission_type - Type of permission to check
+///
+/// ## Returns
+/// * Ok(Vec<Namespace>) - List of namespaces the user has the requested permission for.
+///                        If no matching namespaces are found, an empty list is returned
+/// * Err(ApiError) - On query errors only.
+pub fn user_can_on_any(
     pool: &crate::db::connection::DbPool,
     user_id: i32,
     permission_type: PermissionsForNamespaces,
 ) -> Result<Vec<Namespace>, ApiError> {
     use crate::schema::user_groups;
     use diesel::prelude::*;
+    use std::collections::HashSet;
 
     let mut conn = pool.get()?;
-
     let permission_field = permission_type.db_field();
 
-    let namespaces_with_permission = namespaces::table
+    // Subquery for direct user permissions
+    let direct_user_permissions = user_namespacepermissions::table
+        .filter(user_namespacepermissions::user_id.eq(user_id))
+        .filter(diesel::dsl::sql::<diesel::sql_types::Bool>(&format!(
+            "{} = true",
+            permission_field
+        )))
+        .select(user_namespacepermissions::namespace_id);
+
+    // Subquery for group permissions
+    let group_permissions = group_namespacepermissions::table
         .inner_join(
-            namespacepermissions::table.on(namespaces::id.eq(namespacepermissions::namespace_id)),
+            user_groups::table.on(group_namespacepermissions::group_id.eq(user_groups::group_id)),
         )
-        .left_outer_join(
-            user_groups::table.on(namespacepermissions::group_id.eq(user_groups::group_id)),
-        )
-        .filter(
-            namespacepermissions::user_id
-                .eq(user_id)
-                .or(user_groups::user_id
-                    .eq(user_id)
-                    .and(namespacepermissions::group_id.ne(0))),
-        )
-        .select(namespaces::all_columns)
-        .distinct()
+        .filter(user_groups::user_id.eq(user_id))
+        .filter(diesel::dsl::sql::<diesel::sql_types::Bool>(&format!(
+            "{} = true",
+            permission_field
+        )))
+        .select(group_namespacepermissions::namespace_id);
+
+    // Fetch IDs for both queries
+    let mut user_namespace_ids: Vec<i32> = direct_user_permissions.load(&mut conn)?;
+    let mut group_namespace_ids: Vec<i32> = group_permissions.load(&mut conn)?;
+
+    // Combine and deduplicate namespace IDs in Rust, this is mostly to avoid issues
+    // with the query planner and .distinct() and typing not playing ball.
+    user_namespace_ids.append(&mut group_namespace_ids);
+    let unique_namespace_ids: HashSet<i32> = user_namespace_ids.into_iter().collect();
+
+    // Fetch the namespaces
+    let accessible_namespaces = namespaces::table
+        .filter(namespaces::id.eq_any(unique_namespace_ids))
         .load::<Namespace>(&mut conn)?;
 
-    Ok(namespaces_with_permission)
+    if accessible_namespaces.is_empty() {
+        return Ok(vec![]);
+    }
+
+    Ok(accessible_namespaces)
 }
