@@ -146,7 +146,7 @@ impl ApiErrorMappable for DieselError {
                 ApiError::Conflict(format!("{} ({})", message, self))
             }
             DieselError::QueryBuilderError(_) => {
-                ApiError::BadRequest(format!("{} (Check your query fields: {})", message, self,))
+                ApiError::BadRequest(format!("{} (Check your query fields: {})", message, self))
             }
             _ => ApiError::DatabaseError(message.to_string()),
         }
