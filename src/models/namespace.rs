@@ -1,6 +1,10 @@
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::models::user::UserID;
+
+use crate::db::connection::DbPool;
+
 use crate::schema::group_datapermissions;
 use crate::schema::group_namespacepermissions;
 use crate::schema::namespaces;
@@ -9,26 +13,7 @@ use crate::schema::user_namespacepermissions;
 
 use crate::errors::ApiError;
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum PermissionsForNamespaces {
-    Create,
-    Read,
-    Update,
-    Delete,
-    Delegate,
-}
-
-impl PermissionsForNamespaces {
-    fn db_field(&self) -> &'static str {
-        match self {
-            PermissionsForNamespaces::Create => "has_create",
-            PermissionsForNamespaces::Read => "has_read",
-            PermissionsForNamespaces::Update => "has_update",
-            PermissionsForNamespaces::Delete => "has_delete",
-            PermissionsForNamespaces::Delegate => "has_delegate",
-        }
-    }
-}
+use crate::models::permissions::{Assignee, NamespacePermissions};
 
 #[derive(Serialize, Deserialize, Queryable)]
 #[diesel(table_name = namespaces)]
@@ -51,11 +36,11 @@ impl Namespace {
     /// * Err(ApiError) - Always returns 404 if there is no match (we never do 403/401)
     pub fn user_can(
         &self,
-        pool: &crate::db::connection::DbPool,
-        user_id: i32,
-        permission_type: PermissionsForNamespaces,
+        pool: &DbPool,
+        user_id: UserID,
+        permission_type: NamespacePermissions,
     ) -> Result<Self, ApiError> {
-        user_can_on(pool, user_id, permission_type, self.id)
+        user_can_on(pool, user_id, permission_type, NamespaceID(self.id))
     }
 
     /// Update a namespace
@@ -71,11 +56,7 @@ impl Namespace {
     /// ## Returns
     /// * Ok(Namespace) - Updated namespace
     /// * Err(ApiError) - On query errors only.
-    pub fn update(
-        &self,
-        pool: &crate::db::connection::DbPool,
-        new_data: UpdateNamespace,
-    ) -> Result<Self, ApiError> {
+    pub fn update(&self, pool: &DbPool, new_data: UpdateNamespace) -> Result<Self, ApiError> {
         use crate::schema::namespaces::dsl::*;
 
         let mut conn = pool.get()?;
@@ -98,7 +79,7 @@ impl Namespace {
     /// ## Returns
     /// * Ok(usize) - Number of deleted namespaces
     /// * Err(ApiError) - On query errors only.
-    pub fn delete(&self, pool: &crate::db::connection::DbPool) -> Result<usize, ApiError> {
+    pub fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::namespaces::dsl::*;
 
         let mut conn = pool.get()?;
@@ -114,11 +95,11 @@ pub struct NamespaceID(pub i32);
 impl NamespaceID {
     pub fn user_can(
         &self,
-        pool: &crate::db::connection::DbPool,
-        user_id: i32,
-        permission_type: PermissionsForNamespaces,
+        pool: &DbPool,
+        user_id: UserID,
+        permission_type: NamespacePermissions,
     ) -> Result<Namespace, ApiError> {
-        user_can_on(pool, user_id, permission_type, self.0)
+        user_can_on(pool, user_id, permission_type, NamespaceID(self.0))
     }
 }
 
@@ -129,7 +110,7 @@ pub struct UpdateNamespace {
     pub description: Option<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct NewNamespaceRequest {
     pub name: String,
     pub description: String,
@@ -146,6 +127,60 @@ impl NewNamespaceRequest {
             )),
         }
     }
+
+    pub fn save_and_grant_all(self, pool: &DbPool) -> Result<Namespace, ApiError> {
+        self.validate()?;
+
+        let new_namespace = NewNamespace {
+            name: self.name,
+            description: self.description,
+        };
+
+        let mut conn = pool.get()?;
+        conn.transaction::<_, ApiError, _>(|conn| {
+            // Insert the new namespace
+            let namespace = diesel::insert_into(crate::schema::namespaces::table)
+                .values(&new_namespace)
+                .get_result::<Namespace>(conn)?;
+
+            // Grant all permissions to the user or group
+            match (self.assign_to_user_id, self.assign_to_group_id) {
+                (Some(user_id), None) => {
+                    let user_permission = UserNamespacePermission {
+                        id: 0,
+                        namespace_id: namespace.id,
+                        user_id,
+                        has_create: true,
+                        has_read: true,
+                        has_update: true,
+                        has_delete: true,
+                        has_delegate: true,
+                    };
+                    diesel::insert_into(crate::schema::user_namespacepermissions::table)
+                        .values(&user_permission)
+                        .execute(conn)?;
+                }
+                (None, Some(group_id)) => {
+                    let group_permission = GroupNamespacePermission {
+                        id: 0,
+                        namespace_id: namespace.id,
+                        group_id,
+                        has_create: true,
+                        has_read: true,
+                        has_update: true,
+                        has_delete: true,
+                        has_delegate: true,
+                    };
+                    diesel::insert_into(crate::schema::group_namespacepermissions::table)
+                        .values(&group_permission)
+                        .execute(conn)?;
+                }
+                _ => return Err(ApiError::BadRequest("Invalid assignee".to_string())),
+            }
+
+            Ok(namespace)
+        })
+    }
 }
 
 #[derive(Serialize, Deserialize, Insertable)]
@@ -156,14 +191,12 @@ pub struct NewNamespace {
 }
 
 impl NewNamespace {
-    pub fn save_with_permissions(
+    pub fn save_and_grant_all_to(
         self,
-        pool: &crate::db::connection::DbPool,
-        permissions: NewNamespaceRequest,
+        pool: &DbPool,
+        assignee: Assignee,
     ) -> Result<Namespace, ApiError> {
         use crate::schema::namespaces::dsl::*;
-
-        permissions.validate()?;
 
         let mut conn = pool.get()?;
         conn.transaction::<_, ApiError, _>(|conn| {
@@ -171,40 +204,39 @@ impl NewNamespace {
                 .values(&self)
                 .get_result::<Namespace>(conn)?;
 
-            // Check if permissions are assigned to a user
-            if let Some(user_id) = permissions.assign_to_user_id {
-                let user_permission = UserNamespacePermission {
-                    id: 0,
-                    namespace_id: namespace.id,
-                    user_id,
-                    has_create: true,
-                    has_read: true,
-                    has_update: true,
-                    has_delete: true,
-                    has_delegate: true,
-                };
+            match assignee {
+                Assignee::Group(group_id) => {
+                    let group_permission = GroupNamespacePermission {
+                        id: 0,
+                        namespace_id: namespace.id,
+                        group_id: group_id.0,
+                        has_create: true,
+                        has_read: true,
+                        has_update: true,
+                        has_delete: true,
+                        has_delegate: true,
+                    };
 
-                diesel::insert_into(user_namespacepermissions::table)
-                    .values(&user_permission)
-                    .execute(conn)?;
-            }
+                    diesel::insert_into(group_namespacepermissions::table)
+                        .values(&group_permission)
+                        .execute(conn)?;
+                }
+                Assignee::User(user_id) => {
+                    let user_permission = UserNamespacePermission {
+                        id: 0,
+                        namespace_id: namespace.id,
+                        user_id: user_id.0,
+                        has_create: true,
+                        has_read: true,
+                        has_update: true,
+                        has_delete: true,
+                        has_delegate: true,
+                    };
 
-            // Check if permissions are assigned to a group
-            if let Some(group_id) = permissions.assign_to_group_id {
-                let group_permission = GroupNamespacePermission {
-                    id: 0,
-                    namespace_id: namespace.id,
-                    group_id,
-                    has_create: true,
-                    has_read: true,
-                    has_update: true,
-                    has_delete: true,
-                    has_delegate: true,
-                };
-
-                diesel::insert_into(group_namespacepermissions::table)
-                    .values(&group_permission)
-                    .execute(conn)?;
+                    diesel::insert_into(user_namespacepermissions::table)
+                        .values(&user_permission)
+                        .execute(conn)?;
+                }
             }
 
             Ok(namespace)
@@ -213,7 +245,7 @@ impl NewNamespace {
 
     pub fn update_with_permissions(
         self,
-        pool: &crate::db::connection::DbPool,
+        pool: &DbPool,
         permissions: NewNamespaceRequest,
     ) -> Result<Namespace, ApiError> {
         use crate::schema::namespaces::dsl::*;
@@ -330,21 +362,23 @@ pub struct GroupDataPermission {
 /// * Ok(Namespace) - Namespace if the user has the requested permission
 /// * Err(ApiError) - Always returns 404 if there is no match (we never do 403/401)
 pub fn user_can_on(
-    pool: &crate::db::connection::DbPool,
-    user_id: i32,
-    permission_type: PermissionsForNamespaces,
-    namespace_target_id: i32,
+    pool: &DbPool,
+    user_id: UserID,
+    permission_type: NamespacePermissions,
+    namespace_target: NamespaceID,
 ) -> Result<Namespace, ApiError> {
     use crate::schema::user_groups;
     use diesel::prelude::*;
 
     let mut conn = pool.get()?;
     let permission_field = permission_type.db_field();
+    let namespace_target_id = namespace_target.0;
+    let uid = user_id.0;
 
     // Check direct user permissions
     let user_permission: bool = user_namespacepermissions::table
         .filter(user_namespacepermissions::namespace_id.eq(namespace_target_id))
-        .filter(user_namespacepermissions::user_id.eq(user_id))
+        .filter(user_namespacepermissions::user_id.eq(uid))
         .select(diesel::dsl::sql::<diesel::sql_types::Bool>(&format!(
             "bool_or({})",
             permission_field
@@ -366,7 +400,7 @@ pub fn user_can_on(
             user_groups::table.on(group_namespacepermissions::group_id.eq(user_groups::group_id)),
         )
         .filter(group_namespacepermissions::namespace_id.eq(namespace_target_id))
-        .filter(user_groups::user_id.eq(user_id))
+        .filter(user_groups::user_id.eq(uid))
         .select(diesel::dsl::sql::<diesel::sql_types::Bool>(&format!(
             "bool_or({})",
             permission_field
@@ -397,9 +431,9 @@ pub fn user_can_on(
 ///                        If no matching namespaces are found, an empty list is returned
 /// * Err(ApiError) - On query errors only.
 pub fn user_can_on_any(
-    pool: &crate::db::connection::DbPool,
-    user_id: i32,
-    permission_type: PermissionsForNamespaces,
+    pool: &DbPool,
+    user_id: UserID,
+    permission_type: NamespacePermissions,
 ) -> Result<Vec<Namespace>, ApiError> {
     use crate::schema::user_groups;
     use diesel::prelude::*;
@@ -408,9 +442,11 @@ pub fn user_can_on_any(
     let mut conn = pool.get()?;
     let permission_field = permission_type.db_field();
 
+    let uid = user_id.0;
+
     // Subquery for direct user permissions
     let direct_user_permissions = user_namespacepermissions::table
-        .filter(user_namespacepermissions::user_id.eq(user_id))
+        .filter(user_namespacepermissions::user_id.eq(uid))
         .filter(diesel::dsl::sql::<diesel::sql_types::Bool>(&format!(
             "{} = true",
             permission_field
@@ -422,7 +458,7 @@ pub fn user_can_on_any(
         .inner_join(
             user_groups::table.on(group_namespacepermissions::group_id.eq(user_groups::group_id)),
         )
-        .filter(user_groups::user_id.eq(user_id))
+        .filter(user_groups::user_id.eq(uid))
         .filter(diesel::dsl::sql::<diesel::sql_types::Bool>(&format!(
             "{} = true",
             permission_field

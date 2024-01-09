@@ -63,7 +63,7 @@ pub fn is_valid_token(conn: &mut PgConnection, token: &str) -> Result<UserToken,
 
     match token_result {
         Ok(token) => Ok(token),
-        Err(_) => Err(ApiError::NotFound("Token not found".to_string())),
+        Err(_) => Err(ApiError::Unauthorized("Invalid token".to_string())),
     }
 }
 

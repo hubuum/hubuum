@@ -37,6 +37,7 @@ async fn test_endpoint_access() {
 
     let normal_user = crate::tests::create_test_user(&pool);
     let admin_user = crate::tests::create_test_admin(&pool);
+    let admin_user_endpoint = &format!("/api/v1/iam/users/{}", admin_user.id);
 
     let endpoints = vec![
         ("/api/v0/auth/logout", Method::GET, AccessLevel::User, None),
@@ -55,6 +56,10 @@ async fn test_endpoint_access() {
                 password: "testpassword".to_string(),
             })),
         ),
+        ("/api/v0/meta/db", Method::GET, AccessLevel::Admin, None),
+        ("/api/v1/iam/users", Method::GET, AccessLevel::User, None),
+        (admin_user_endpoint, Method::GET, AccessLevel::User, None),
+        ("/api/v1/namespaces", Method::GET, AccessLevel::User, None),
     ];
 
     let access_levels = vec![AccessLevel::Open, AccessLevel::User, AccessLevel::Admin];

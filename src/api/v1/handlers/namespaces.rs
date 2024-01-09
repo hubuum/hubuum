@@ -2,9 +2,10 @@ use crate::errors::ApiError;
 use actix_web::{delete, get, http::StatusCode, patch, post, web, Responder};
 
 use crate::models::namespace::{
-    user_can_on_any, NamespaceID, NewNamespace, NewNamespaceRequest, PermissionsForNamespaces,
-    UpdateNamespace,
+    user_can_on_any, NamespaceID, NewNamespaceRequest, UpdateNamespace,
 };
+use crate::models::permissions::NamespacePermissions;
+use crate::models::user::UserID;
 
 use serde_json::json;
 
@@ -26,7 +27,7 @@ pub async fn get_namespaces(
         requestor = requestor.user.username
     );
 
-    let result = user_can_on_any(&pool, requestor.user.id, PermissionsForNamespaces::Read)?;
+    let result = user_can_on_any(&pool, UserID(requestor.user.id), NamespacePermissions::Read)?;
     Ok(json_response(result, StatusCode::OK))
 }
 
@@ -36,19 +37,14 @@ pub async fn create_namespace(
     new_namespace_request: web::Json<NewNamespaceRequest>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
+    let new_namespace_request = new_namespace_request.into_inner();
     debug!(
         message = "Namespace create requested",
         requestor = requestor.user.id,
-        new_namespace = new_namespace_request.name.as_str()
+        new_namespace = new_namespace_request.name
     );
 
-    let new_namespace = NewNamespace {
-        name: new_namespace_request.name.clone(),
-        description: new_namespace_request.description.clone(),
-    };
-
-    let created_namespace =
-        new_namespace.save_with_permissions(&pool, new_namespace_request.into_inner())?;
+    let created_namespace = new_namespace_request.save_and_grant_all(&pool)?;
 
     Ok(json_response_created(
         format!("/api/v1/namespaces/{}", created_namespace.id).as_str(),
@@ -68,7 +64,7 @@ pub async fn get_namespace(
     );
 
     let namespace =
-        namespace_id.user_can(&pool, requestor.user.id, PermissionsForNamespaces::Read)?;
+        namespace_id.user_can(&pool, UserID(requestor.user.id), NamespacePermissions::Read)?;
 
     Ok(json_response(namespace, StatusCode::OK))
 }
@@ -86,8 +82,11 @@ pub async fn update_namespace(
         namespace_id = namespace_id.0
     );
 
-    let namespace =
-        namespace_id.user_can(&pool, requestor.user.id, PermissionsForNamespaces::Update)?;
+    let namespace = namespace_id.user_can(
+        &pool,
+        UserID(requestor.user.id),
+        NamespacePermissions::Update,
+    )?;
 
     let updated_namespace = namespace.update(&pool, update_data.into_inner())?;
 
@@ -106,8 +105,11 @@ pub async fn delete_namespace(
         namespace_id = namespace_id.0
     );
 
-    let namespace =
-        namespace_id.user_can(&pool, requestor.user.id, PermissionsForNamespaces::Delete)?;
+    let namespace = namespace_id.user_can(
+        &pool,
+        UserID(requestor.user.id),
+        NamespacePermissions::Delete,
+    )?;
 
     let delete_result = namespace.delete(&pool);
 

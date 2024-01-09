@@ -7,7 +7,7 @@ mod tests {
     use actix_web::{http::StatusCode, test, web, App};
     use diesel::prelude::*;
 
-    use crate::tests::{cleanup, create_test_user};
+    use crate::tests::create_test_user;
 
     use crate::api;
 
@@ -107,8 +107,6 @@ mod tests {
             .is_ok();
 
         assert!(token_exists, "Token not found in database");
-
-        cleanup(&pool).expect("Failed to clean up database");
     }
 
     #[actix_web::test]
@@ -263,7 +261,6 @@ mod tests {
         // Verify token is gone from database
         let user_tokens = new_user.get_tokens(&pool).unwrap();
         assert_eq!(user_tokens.len(), 0, "User still has tokens");
-        cleanup(&pool).expect("Failed to clean up database");
     }
 
     #[actix_web::test]
@@ -341,6 +338,5 @@ mod tests {
 
         let user_tokens = new_user.get_tokens(&pool).unwrap();
         assert_eq!(user_tokens.len(), 0, "User still has tokens");
-        cleanup(&pool).expect("Failed to clean up database");
     }
 }

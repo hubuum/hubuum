@@ -4,7 +4,6 @@
 
 pub mod acl;
 pub mod api;
-pub mod db;
 
 use diesel::prelude::*;
 
@@ -12,7 +11,10 @@ use crate::config::{get_config, AppConfig};
 
 use crate::db::connection::DbPool;
 use crate::errors::ApiError;
+use crate::models::group::GroupID;
 use crate::models::group::{Group, NewGroup};
+use crate::models::namespace::{Namespace, NewNamespace};
+use crate::models::permissions::Assignee;
 use crate::models::user::{NewUser, User};
 
 use crate::utilities::auth::generate_random_password;
@@ -98,4 +100,16 @@ pub fn get_config_sync() -> AppConfig {
         .build()
         .expect("Failed to create Tokio runtime");
     rt.block_on(async { get_config().await }).clone()
+}
+
+pub fn create_namespace(pool: &DbPool, ns_name: &str) -> Result<Namespace, ApiError> {
+    let admin_group = ensure_admin_group(pool);
+    let assignee = Assignee::Group(GroupID(admin_group.id));
+
+    let ns = NewNamespace {
+        name: ns_name.to_string(),
+        description: "Test namespace".to_string(),
+    }
+    .save_and_grant_all_to(pool, assignee);
+    ns
 }
