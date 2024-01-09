@@ -106,10 +106,9 @@ pub fn create_namespace(pool: &DbPool, ns_name: &str) -> Result<Namespace, ApiEr
     let admin_group = ensure_admin_group(pool);
     let assignee = Assignee::Group(GroupID(admin_group.id));
 
-    let ns = NewNamespace {
+    NewNamespace {
         name: ns_name.to_string(),
         description: "Test namespace".to_string(),
     }
-    .save_and_grant_all_to(pool, assignee);
-    ns
+    .save_and_grant_all_to(pool, assignee)
 }
