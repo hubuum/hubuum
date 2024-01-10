@@ -1,10 +1,8 @@
 use crate::errors::ApiError;
 use actix_web::{delete, get, http::StatusCode, patch, post, web, Responder};
 
-use crate::models::namespace::{
-    user_can_on_any, NamespaceID, NewNamespaceRequest, UpdateNamespace,
-};
-use crate::models::permissions::NamespacePermissions;
+use crate::models::namespace::{NamespaceID, NewNamespaceRequest, UpdateNamespace};
+use crate::models::permissions::{user_can_on_any, NamespacePermissions};
 use crate::models::user::UserID;
 
 use serde_json::json;
