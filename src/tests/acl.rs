@@ -57,6 +57,7 @@ async fn test_endpoint_access() {
             })),
         ),
         ("/api/v0/meta/db", Method::GET, AccessLevel::Admin, None),
+        ("/api/v0/meta/counts", Method::GET, AccessLevel::Admin, None),
         ("/api/v1/iam/users", Method::GET, AccessLevel::User, None),
         (admin_user_endpoint, Method::GET, AccessLevel::User, None),
         ("/api/v1/namespaces", Method::GET, AccessLevel::User, None),
@@ -93,28 +94,25 @@ async fn test_endpoint_access() {
             match required_access {
                 AccessLevel::Open => assert!(
                     !resp.status().is_client_error(),
-                    "Open endpoint {} returned {}, expected {} for Open access ({:?})",
+                    "Expected {} open, returned {} ({:?})",
                     endpoint,
                     resp.status(),
-                    *access_level == AccessLevel::Open,
                     test::read_body(resp).await
                 ),
                 AccessLevel::User => assert_eq!(
                     resp.status().is_client_error(),
                     *access_level == AccessLevel::Open,
-                    "User endpoint {} returned {}, expected {} for User access ({:?})",
+                    "Expected {} open to users, returned {} ({:?})",
                     endpoint,
                     resp.status(),
-                    *access_level == AccessLevel::Open,
                     test::read_body(resp).await
                 ),
                 AccessLevel::Admin => assert_eq!(
                     resp.status().is_client_error(),
                     *access_level != AccessLevel::Admin,
-                    "Admin endpoint {} returned {}, expected {} for non-Admin access ({:?})",
+                    "Expected {} admin endpoint, returned {} ({:?})",
                     endpoint,
                     resp.status(),
-                    *access_level == AccessLevel::Open,
                     test::read_body(resp).await
                 ),
             }
