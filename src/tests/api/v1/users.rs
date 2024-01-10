@@ -5,7 +5,7 @@ mod tests {
     use crate::models::user::User;
     use actix_web::{http::StatusCode, test, web, App};
 
-    use crate::tests::{cleanup, create_test_admin, create_test_user};
+    use crate::tests::{create_test_admin, create_test_user};
 
     use crate::api;
 
@@ -126,7 +126,5 @@ mod tests {
 
             assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
         }
-
-        let _ = cleanup(&pool);
     }
 }

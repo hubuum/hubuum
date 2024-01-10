@@ -15,7 +15,7 @@ use crate::errors::ApiError;
 
 use crate::models::permissions::{Assignee, NamespacePermissions};
 
-#[derive(Serialize, Deserialize, Queryable)]
+#[derive(Serialize, Deserialize, Queryable, PartialEq)]
 #[diesel(table_name = namespaces)]
 pub struct Namespace {
     pub id: i32,
@@ -147,7 +147,7 @@ impl NewNamespaceRequest {
             match (self.assign_to_user_id, self.assign_to_group_id) {
                 (Some(user_id), None) => {
                     let user_permission = UserNamespacePermission {
-                        id: 0,
+                        id: None,
                         namespace_id: namespace.id,
                         user_id,
                         has_create: true,
@@ -162,7 +162,7 @@ impl NewNamespaceRequest {
                 }
                 (None, Some(group_id)) => {
                     let group_permission = GroupNamespacePermission {
-                        id: 0,
+                        id: None,
                         namespace_id: namespace.id,
                         group_id,
                         has_create: true,
@@ -207,7 +207,7 @@ impl NewNamespace {
             match assignee {
                 Assignee::Group(group_id) => {
                     let group_permission = GroupNamespacePermission {
-                        id: 0,
+                        id: None,
                         namespace_id: namespace.id,
                         group_id: group_id.0,
                         has_create: true,
@@ -223,7 +223,7 @@ impl NewNamespace {
                 }
                 Assignee::User(user_id) => {
                     let user_permission = UserNamespacePermission {
-                        id: 0,
+                        id: None,
                         namespace_id: namespace.id,
                         user_id: user_id.0,
                         has_create: true,
@@ -258,10 +258,9 @@ impl NewNamespace {
                 .values(&self)
                 .get_result::<Namespace>(conn)?;
 
-            // Check if permissions are assigned to a user
             if let Some(user_id) = permissions.assign_to_user_id {
                 let user_permission = UserNamespacePermission {
-                    id: 0,
+                    id: None,
                     namespace_id: namespace.id,
                     user_id,
                     has_create: true,
@@ -276,10 +275,9 @@ impl NewNamespace {
                     .execute(conn)?;
             }
 
-            // Check if permissions are assigned to a group
             if let Some(group_id) = permissions.assign_to_group_id {
                 let group_permission = GroupNamespacePermission {
-                    id: 0,
+                    id: None,
                     namespace_id: namespace.id,
                     group_id,
                     has_create: true,
@@ -302,7 +300,7 @@ impl NewNamespace {
 #[derive(Serialize, Deserialize, Queryable, Insertable)]
 #[diesel(table_name = user_namespacepermissions)]
 pub struct UserNamespacePermission {
-    pub id: i32,
+    pub id: Option<i32>,
     pub namespace_id: i32,
     pub user_id: i32,
     pub has_create: bool,
@@ -315,7 +313,7 @@ pub struct UserNamespacePermission {
 #[derive(Serialize, Deserialize, Queryable, Insertable)]
 #[diesel(table_name = group_namespacepermissions)]
 pub struct GroupNamespacePermission {
-    pub id: i32,
+    pub id: Option<i32>,
     pub namespace_id: i32,
     pub group_id: i32,
     pub has_create: bool,
@@ -328,7 +326,7 @@ pub struct GroupNamespacePermission {
 #[derive(Serialize, Deserialize, Queryable, Insertable)]
 #[diesel(table_name = user_datapermissions)]
 pub struct UserDataPermission {
-    pub id: i32,
+    pub id: Option<i32>,
     pub namespace_id: i32,
     pub user_id: i32,
     pub has_create: bool,
@@ -340,7 +338,7 @@ pub struct UserDataPermission {
 #[derive(Serialize, Deserialize, Queryable, Insertable)]
 #[diesel(table_name = group_datapermissions)]
 pub struct GroupDataPermission {
-    pub id: i32,
+    pub id: Option<i32>,
     pub namespace_id: i32,
     pub group_id: i32,
     pub has_create: bool,
