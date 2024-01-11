@@ -12,7 +12,7 @@ use crate::errors::ApiError;
 
 use tracing::{error, warn};
 
-#[derive(Serialize, Deserialize, Queryable, Insertable)]
+#[derive(Serialize, Deserialize, Queryable, Insertable, PartialEq, Debug)]
 #[diesel(table_name = users)]
 pub struct User {
     pub id: i32,
