@@ -7,10 +7,11 @@ pub mod api;
 pub mod api_operations;
 pub mod asserts;
 
+use actix_web::web;
 use diesel::prelude::*;
 
 use crate::config::{get_config, AppConfig};
-
+use crate::db::connection::init_pool;
 use crate::db::connection::DbPool;
 use crate::errors::ApiError;
 use crate::models::group::GroupID;
@@ -18,9 +19,6 @@ use crate::models::group::{Group, NewGroup};
 use crate::models::namespace::{Namespace, NewNamespace};
 use crate::models::permissions::Assignee;
 use crate::models::user::{NewUser, User};
-
-use crate::db::connection::init_pool;
-use actix_web::web;
 
 use crate::utilities::auth::generate_random_password;
 
@@ -60,29 +58,50 @@ fn create_test_admin(pool: &DbPool) -> User {
     }
 }
 
-fn ensure_admin_user(pool: &DbPool) -> User {
+fn ensure_user(pool: &DbPool, uname: &str) -> User {
     use crate::schema::users::dsl::*;
 
     let mut conn = pool.get().expect("Failed to get db connection");
 
-    let result = users.filter(username.eq("admin")).first::<User>(&mut conn);
+    let result = users.filter(username.eq(uname)).first::<User>(&mut conn);
 
     if let Ok(user) = result {
         return user;
     }
 
     let result = NewUser {
-        username: "admin".to_string(),
+        username: uname.to_string(),
         password: "testpassword".to_string(),
         email: None,
     }
     .save(pool);
 
     if let Err(e) = result {
-        panic!("Failed to create admin user: {:?}", e);
+        match e {
+            ApiError::Conflict(_) => {
+                return users
+                    .filter(username.eq(uname))
+                    .first::<User>(&mut conn)
+                    .expect("Failed to fetch user after conflict");
+            }
+            _ => panic!("Failed to create user '{}': {:?}", uname, e),
+        }
     }
 
     result.unwrap()
+}
+
+fn ensure_admin_user(pool: &DbPool) -> User {
+    let user = ensure_user(pool, "admin");
+
+    let admin_group = ensure_admin_group(pool);
+    let _ = admin_group.add_member(&user, pool).unwrap();
+
+    user
+}
+
+fn ensure_normal_user(pool: &DbPool) -> User {
+    ensure_user(pool, "normal")
 }
 
 fn ensure_admin_group(pool: &DbPool) -> Group {
@@ -105,7 +124,15 @@ fn ensure_admin_group(pool: &DbPool) -> Group {
     .save(pool);
 
     if let Err(e) = result {
-        panic!("Failed to create admin group: {:?}", e);
+        match e {
+            ApiError::Conflict(_) => {
+                return groups
+                    .filter(groupname.eq("admin"))
+                    .first::<Group>(&mut conn)
+                    .expect("Failed to fetch user after conflict");
+            }
+            _ => panic!("Failed to create admin group: {:?}", e),
+        }
     }
 
     result.unwrap()
@@ -130,15 +157,30 @@ pub fn create_namespace(pool: &DbPool, ns_name: &str) -> Result<Namespace, ApiEr
     .save_and_grant_all_to(pool, assignee)
 }
 
-async fn setup_pool_and_admin_user() -> (web::Data<crate::db::connection::DbPool>, String) {
+/// Initialize useful data for tests
+///
+/// This function will ensure that the following exists:
+/// * An admin user (with the username "admin")
+/// * A normal user (with the username "normal")
+///
+/// However, as the users are not that interesting, we simply
+/// return the tokens for the users.
+///
+/// ## Returns
+/// * pool - The database pool
+/// * admin_token_string - The token for the admin user
+/// * normal_token_string - The token for the normal user
+async fn setup_pool_and_tokens() -> (web::Data<DbPool>, String, String) {
     let config = get_config().await;
-    let pool = web::Data::new(init_pool(&config.database_url, config.db_pool_size));
-    let new_user = create_test_admin(pool.get_ref());
-
-    let token_string = new_user
-        .add_token(pool.get_ref())
-        .expect("Failed to add token to user")
+    let pool = web::Data::new(init_pool(&config.database_url, 3));
+    let admin_token_string = ensure_admin_user(&pool)
+        .add_token(&pool)
+        .unwrap()
+        .get_token();
+    let normal_token_string = ensure_normal_user(&pool)
+        .add_token(&pool)
+        .unwrap()
         .get_token();
 
-    (pool, token_string)
+    (pool, admin_token_string, normal_token_string)
 }

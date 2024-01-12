@@ -66,6 +66,17 @@ impl Group {
             .map_err(|e| map_error(e, "Group not found"))
     }
 
+    /// Add a member to a group. If the user is already a member, do nothing.
+    ///
+    /// ## Arguments
+    /// * `user` - The user to add to the group
+    /// * `pool` - The database connection pool
+    ///
+    /// ## Returns
+    /// * `Ok(())` if the user was added to the group
+    /// * `Err(ApiError)` if the user was not added to the group
+    ///
+    /// If the user is already a member of the group, this function is a safe noop.
     pub fn add_member(&self, user: &User, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::user_groups::dsl::*;
 
@@ -80,6 +91,7 @@ impl Group {
 
         diesel::insert_into(user_groups)
             .values(&new_user_group)
+            .on_conflict_do_nothing()
             .execute(&mut conn)
             .map_err(|e| map_error(e, "Group not found"))?;
 
