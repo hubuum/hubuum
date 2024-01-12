@@ -95,7 +95,7 @@ fn ensure_admin_user(pool: &DbPool) -> User {
     let user = ensure_user(pool, "admin");
 
     let admin_group = ensure_admin_group(pool);
-    let _ = admin_group.add_member(&user, pool).unwrap();
+    admin_group.add_member(&user, pool).unwrap();
 
     user
 }

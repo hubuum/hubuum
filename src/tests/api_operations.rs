@@ -20,7 +20,7 @@ pub async fn get_request(
     .await;
 
     test::TestRequest::get()
-        .insert_header(create_token_header(&token))
+        .insert_header(create_token_header(token))
         .uri(endpoint)
         .send_request(&app)
         .await
@@ -43,7 +43,7 @@ where
     .await;
 
     test::TestRequest::post()
-        .insert_header(create_token_header(&token))
+        .insert_header(create_token_header(token))
         .uri(endpoint)
         .set_json(&content) // Make sure to reference content
         .send_request(&app)
@@ -63,7 +63,7 @@ pub async fn delete_request(
     .await;
 
     test::TestRequest::delete()
-        .insert_header(create_token_header(&token))
+        .insert_header(create_token_header(token))
         .uri(endpoint)
         .send_request(&app)
         .await
@@ -86,7 +86,7 @@ where
     .await;
 
     test::TestRequest::patch()
-        .insert_header(create_token_header(&token))
+        .insert_header(create_token_header(token))
         .uri(endpoint)
         .set_json(&content) // Make sure to reference content
         .send_request(&app)
