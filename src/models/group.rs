@@ -15,7 +15,7 @@ use crate::db::connection::DbPool;
 pub struct GroupID(pub i32);
 
 impl GroupID {
-    pub fn group(&self, pool: &DbPool) -> Result<Group, ApiError> {
+    pub async fn group(&self, pool: &DbPool) -> Result<Group, ApiError> {
         use crate::schema::groups::dsl::*;
 
         let mut conn = pool
@@ -28,7 +28,7 @@ impl GroupID {
             .map_err(|e| map_error(e, "Group not found"))
     }
 
-    pub fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
+    pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::groups::dsl::*;
 
         let mut conn = pool
@@ -50,7 +50,7 @@ pub struct Group {
 }
 
 impl Group {
-    pub fn members(&self, pool: &DbPool) -> Result<Vec<User>, ApiError> {
+    pub async fn members(&self, pool: &DbPool) -> Result<Vec<User>, ApiError> {
         use crate::schema::user_groups::dsl::*;
         use crate::schema::users::dsl::*;
 
@@ -77,7 +77,7 @@ impl Group {
     /// * `Err(ApiError)` if the user was not added to the group
     ///
     /// If the user is already a member of the group, this function is a safe noop.
-    pub fn add_member(&self, user: &User, pool: &DbPool) -> Result<(), ApiError> {
+    pub async fn add_member(&self, user: &User, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::user_groups::dsl::*;
 
         let mut conn = pool
@@ -98,7 +98,7 @@ impl Group {
         Ok(())
     }
 
-    pub fn remove_member(&self, user: &User, pool: &DbPool) -> Result<(), ApiError> {
+    pub async fn remove_member(&self, user: &User, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::user_groups::dsl::*;
 
         let mut conn = pool
@@ -112,7 +112,7 @@ impl Group {
         Ok(())
     }
 
-    pub fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
+    pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::groups::dsl::*;
 
         let mut conn = pool
@@ -133,14 +133,14 @@ pub struct NewGroup {
 }
 
 impl NewGroup {
-    pub fn new(groupname: &str, description: Option<&str>) -> Self {
+    pub async fn new(groupname: &str, description: Option<&str>) -> Self {
         NewGroup {
             groupname: groupname.to_string(),
             description: description.map(|s| s.to_string()),
         }
     }
 
-    pub fn save(&self, pool: &DbPool) -> Result<Group, ApiError> {
+    pub async fn save(&self, pool: &DbPool) -> Result<Group, ApiError> {
         use crate::schema::groups::dsl::*;
 
         let mut conn = pool
@@ -161,7 +161,7 @@ pub struct UpdateGroup {
 }
 
 impl UpdateGroup {
-    pub fn save(&self, group_id: i32, pool: &DbPool) -> Result<Group, ApiError> {
+    pub async fn save(&self, group_id: i32, pool: &DbPool) -> Result<Group, ApiError> {
         use crate::schema::groups::dsl::*;
 
         let mut conn = pool

@@ -16,13 +16,17 @@ mod tests {
         let resp = get_request(&pool, "", NAMESPACE_ENDPOINT).await;
         let _ = assert_response_status(resp, http::StatusCode::UNAUTHORIZED).await;
 
-        let created_namespace1 = create_namespace(&pool, "test_namespace_lookup1").unwrap();
+        let created_namespace1 = create_namespace(&pool, "test_namespace_lookup1")
+            .await
+            .unwrap();
         let resp = get_request(&pool, &admin_token, NAMESPACE_ENDPOINT).await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
         let namespaces: Vec<crate::models::namespace::Namespace> = test::read_body_json(resp).await;
         assert_contains(&namespaces, &created_namespace1);
 
-        let created_namespace2 = create_namespace(&pool, "test_namespace_lookup2").unwrap();
+        let created_namespace2 = create_namespace(&pool, "test_namespace_lookup2")
+            .await
+            .unwrap();
         let resp = get_request(&pool, &admin_token, NAMESPACE_ENDPOINT).await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
         let updated_namespaces: Vec<crate::models::namespace::Namespace> =

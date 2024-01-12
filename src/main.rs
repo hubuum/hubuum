@@ -1,4 +1,4 @@
-use actix_web::{web::Data, web::JsonConfig, App, HttpServer};
+use actix_web::{web::JsonConfig, App, HttpServer};
 
 use tracing_subscriber::filter::EnvFilter;
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -69,8 +69,8 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .wrap(middlewares::tracing::TracingMiddleware)
             .wrap(Logger::default())
+            .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
             .app_data(JsonConfig::default().error_handler(json_error_handler))
-            .app_data(Data::new(pool.clone()))
             .configure(api::config)
     })
     .bind(format!("{}:{}", config.bind_ip, config.port))?

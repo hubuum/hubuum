@@ -28,7 +28,7 @@ impl UserGroup {
         }
     }
 
-    pub fn user(&self, pool: &DbPool) -> Result<User, ApiError> {
+    pub async fn user(&self, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::*;
 
         let mut conn = pool
@@ -41,7 +41,7 @@ impl UserGroup {
             .map_err(|e| map_error(e, "User not found"))
     }
 
-    pub fn group(&self, pool: &DbPool) -> Result<Group, ApiError> {
+    pub async fn group(&self, pool: &DbPool) -> Result<Group, ApiError> {
         use crate::schema::groups::dsl::*;
 
         let mut conn = pool
@@ -54,7 +54,7 @@ impl UserGroup {
             .map_err(|e| map_error(e, "Group not found"))
     }
 
-    pub fn save(&self, pool: &DbPool) -> Result<(), ApiError> {
+    pub async fn save(&self, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::user_groups::dsl::*;
 
         let mut conn = pool
@@ -69,7 +69,7 @@ impl UserGroup {
         Ok(())
     }
 
-    pub fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
+    pub async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::user_groups::dsl::*;
 
         let mut conn = pool

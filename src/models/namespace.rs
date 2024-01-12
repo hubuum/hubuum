@@ -36,13 +36,13 @@ impl Namespace {
     /// ## Returns
     /// * Ok(Namespace) - Namespace if the user has the requested permission
     /// * Err(ApiError) - Always returns 404 if there is no match (we never do 403/401)
-    pub fn user_can(
+    pub async fn user_can(
         &self,
         pool: &DbPool,
         user_id: UserID,
         permission_type: NamespacePermissions,
     ) -> Result<Self, ApiError> {
-        user_can_on(pool, user_id, permission_type, NamespaceID(self.id))
+        user_can_on(pool, user_id, permission_type, NamespaceID(self.id)).await
     }
 
     /// Update a namespace
@@ -58,7 +58,7 @@ impl Namespace {
     /// ## Returns
     /// * Ok(Namespace) - Updated namespace
     /// * Err(ApiError) - On query errors only.
-    pub fn update(&self, pool: &DbPool, new_data: UpdateNamespace) -> Result<Self, ApiError> {
+    pub async fn update(&self, pool: &DbPool, new_data: UpdateNamespace) -> Result<Self, ApiError> {
         use crate::schema::namespaces::dsl::*;
 
         let mut conn = pool.get()?;
@@ -81,7 +81,7 @@ impl Namespace {
     /// ## Returns
     /// * Ok(usize) - Number of deleted namespaces
     /// * Err(ApiError) - On query errors only.
-    pub fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
+    pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::namespaces::dsl::*;
 
         let mut conn = pool.get()?;
@@ -95,13 +95,13 @@ impl Namespace {
 pub struct NamespaceID(pub i32);
 
 impl NamespaceID {
-    pub fn user_can(
+    pub async fn user_can(
         &self,
         pool: &DbPool,
         user_id: UserID,
         permission_type: NamespacePermissions,
     ) -> Result<Namespace, ApiError> {
-        user_can_on(pool, user_id, permission_type, NamespaceID(self.0))
+        user_can_on(pool, user_id, permission_type, NamespaceID(self.0)).await
     }
 }
 
@@ -121,7 +121,7 @@ pub struct NewNamespaceRequest {
 }
 
 impl NewNamespaceRequest {
-    pub fn validate(&self) -> Result<(), crate::errors::ApiError> {
+    pub fn validate(&self) -> Result<(), ApiError> {
         match (self.assign_to_user_id, self.assign_to_group_id) {
             (Some(_), None) | (None, Some(_)) => Ok(()),
             _ => Err(ApiError::BadRequest(
@@ -130,7 +130,7 @@ impl NewNamespaceRequest {
         }
     }
 
-    pub fn save_and_grant_all(self, pool: &DbPool) -> Result<Namespace, ApiError> {
+    pub async fn save_and_grant_all(self, pool: &DbPool) -> Result<Namespace, ApiError> {
         self.validate()?;
 
         let new_namespace = NewNamespace {
@@ -191,7 +191,7 @@ pub struct NewNamespace {
 }
 
 impl NewNamespace {
-    pub fn save_and_grant_all_to(
+    pub async fn save_and_grant_all_to(
         self,
         pool: &DbPool,
         assignee: Assignee,
@@ -241,7 +241,7 @@ impl NewNamespace {
         })
     }
 
-    pub fn update_with_permissions(
+    pub async fn update_with_permissions(
         self,
         pool: &DbPool,
         permissions: NewNamespaceRequest,

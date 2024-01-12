@@ -1,5 +1,4 @@
-use actix_web::ResponseError;
-use actix_web::{get, http::StatusCode, web, Responder};
+use actix_web::{get, http::StatusCode, HttpRequest, Responder, ResponseError};
 
 use diesel::sql_query;
 use diesel::sql_types::{BigInt, Nullable, Timestamp};
@@ -8,7 +7,7 @@ use diesel::RunQueryDsl;
 
 use crate::utilities::response::json_response;
 
-use crate::db::connection::DbPool;
+use crate::db::get_db_pool;
 use crate::models::class::total_class_count;
 use crate::models::object::{objects_per_class_count, total_object_count};
 
@@ -40,7 +39,8 @@ struct DbState {
 }
 
 #[get("db")]
-pub async fn get_db_state(pool: web::Data<DbPool>, requestor: AdminAccess) -> impl Responder {
+pub async fn get_db_state(req: HttpRequest, requestor: AdminAccess) -> impl Responder {
+    let pool = get_db_pool(&req).await.unwrap();
     let state = pool.state();
 
     let query = r#"
@@ -77,9 +77,11 @@ pub async fn get_db_state(pool: web::Data<DbPool>, requestor: AdminAccess) -> im
 
 #[get("counts")]
 pub async fn get_object_and_class_count(
-    pool: web::Data<DbPool>,
+    req: HttpRequest,
     requestor: AdminAccess,
 ) -> impl Responder {
+    let pool = get_db_pool(&req).await.unwrap();
+
     let total_objects = total_object_count(&pool).await;
     let total_classes = total_class_count(&pool).await;
     let objects_per_class = objects_per_class_count(&pool).await;

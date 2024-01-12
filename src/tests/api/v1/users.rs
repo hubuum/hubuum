@@ -11,7 +11,7 @@ mod tests {
 
     async fn check_show_user(target: &User, requester: &User, expected_status: StatusCode) {
         let (pool, _, _) = setup_pool_and_tokens().await;
-        let token = requester.add_token(&pool).unwrap().get_token();
+        let token = requester.create_token(&pool).await.unwrap().get_token();
 
         let resp = get_request(&pool, &token, &format!("{}/{}", USERS_ENDPOINT, &target.id)).await;
         let resp = assert_response_status(resp, expected_status).await;
@@ -24,7 +24,7 @@ mod tests {
 
     async fn check_show_user_tokens(target: &User, requester: &User, expected_status: StatusCode) {
         let (pool, _, _) = setup_pool_and_tokens().await;
-        let token = requester.add_token(&pool).unwrap().get_token();
+        let token = requester.create_token(&pool).await.unwrap().get_token();
 
         let resp = get_request(
             &pool,
@@ -38,8 +38,8 @@ mod tests {
     #[actix_web::test]
     async fn test_show_user() {
         let (pool, _, _) = setup_pool_and_tokens().await;
-        let test_user = create_test_user(&pool);
-        let test_admin_user = create_test_admin(&pool);
+        let test_user = create_test_user(&pool).await;
+        let test_admin_user = create_test_admin(&pool).await;
 
         // The format here is (target, requester, expected_status).
         check_show_user(&test_user, &test_user, StatusCode::OK).await;
@@ -102,15 +102,15 @@ mod tests {
             email: None,
         };
 
-        let test_user = create_test_user(&pool);
+        let test_user = create_test_user(&pool).await;
         let patch_url = format!("{}/{}", USERS_ENDPOINT, test_user.id);
 
         // Only admins can patch users...
-        let resp = patch_request(&pool, &user_token, &patch_url, &updated_user);
-        let _ = assert_response_status(resp.await, StatusCode::FORBIDDEN).await;
+        let resp = patch_request(&pool, &user_token, &patch_url, &updated_user).await;
+        let _ = assert_response_status(resp, StatusCode::FORBIDDEN).await;
 
-        let resp = patch_request(&pool, &admin_token, &patch_url, &updated_user);
-        let resp = assert_response_status(resp.await, StatusCode::OK).await;
+        let resp = patch_request(&pool, &admin_token, &patch_url, &updated_user).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
         let patched_user: User = test::read_body_json(resp).await;
 
         assert_eq!(patched_user.username, test_user.username);

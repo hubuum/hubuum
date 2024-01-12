@@ -15,8 +15,8 @@ impl Token {
         self.0.clone()
     }
 
-    pub fn is_valid(&self, conn: &mut PgConnection) -> Result<UserToken, ApiError> {
-        is_valid_token(conn, &self.0)
+    pub async fn is_valid(&self, conn: &mut PgConnection) -> Result<UserToken, ApiError> {
+        is_valid_token(conn, &self.0).await
     }
     /// Return a string where we only expose the first three and last three characters.
     /// The middle part is replaced with "..."
@@ -31,7 +31,7 @@ impl Token {
         }
     }
 
-    pub fn delete(&self, conn: &mut PgConnection) -> Result<(), ApiError> {
+    pub async fn delete(&self, conn: &mut PgConnection) -> Result<(), ApiError> {
         use crate::schema::tokens::dsl::{token, tokens};
 
         diesel::delete(tokens.filter(token.eq(&self.0))).execute(conn)?;
@@ -51,7 +51,7 @@ fn timestamp_for_valid_token() -> chrono::NaiveDateTime {
     Utc::now().naive_utc() - Duration::hours(24)
 }
 
-pub fn is_valid_token(conn: &mut PgConnection, token: &str) -> Result<UserToken, ApiError> {
+pub async fn is_valid_token(conn: &mut PgConnection, token: &str) -> Result<UserToken, ApiError> {
     use crate::schema::tokens::dsl::{issued, token as token_column, tokens};
 
     let since = timestamp_for_valid_token();
@@ -67,7 +67,7 @@ pub fn is_valid_token(conn: &mut PgConnection, token: &str) -> Result<UserToken,
     }
 }
 
-pub fn valid_tokens_for_user(
+pub async fn valid_tokens_for_user(
     conn: &mut PgConnection,
     user_id: i32,
 ) -> Result<Vec<UserToken>, ApiError> {

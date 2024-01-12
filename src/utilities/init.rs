@@ -33,6 +33,7 @@ pub async fn init(pool: DbPool) {
         description: Some("Default admin group.".to_string()),
     }
     .save(&pool))
+    .await
     {
         Ok(group) => group,
         Err(e) => {
@@ -52,6 +53,7 @@ pub async fn init(pool: DbPool) {
         password: default_password.clone(),
     }
     .save(&pool))
+    .await
     {
         Ok(user) => user,
         Err(e) => {
@@ -63,7 +65,7 @@ pub async fn init(pool: DbPool) {
         }
     };
 
-    match adm_group.add_member(&adm_user, &pool) {
+    match adm_group.add_member(&adm_user, &pool).await {
         Ok(_) => {}
         Err(e) => {
             error!(

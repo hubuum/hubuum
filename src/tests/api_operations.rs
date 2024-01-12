@@ -1,6 +1,7 @@
 use crate::api as prod_api;
 use crate::db::connection::DbPool;
-use actix_web::{http, test, web, App};
+use crate::middlewares;
+use actix_web::{http, test, App};
 use serde::Serialize;
 
 fn create_token_header(token: &str) -> (http::header::HeaderName, String) {
@@ -8,13 +9,13 @@ fn create_token_header(token: &str) -> (http::header::HeaderName, String) {
 }
 
 pub async fn get_request(
-    pool: &web::Data<DbPool>,
+    pool: &DbPool,
     token: &str,
     endpoint: &str,
 ) -> actix_web::dev::ServiceResponse {
     let app = test::init_service(
         App::new()
-            .app_data(pool.clone())
+            .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
             .configure(prod_api::config),
     )
     .await;
@@ -27,7 +28,7 @@ pub async fn get_request(
 }
 
 pub async fn post_request<T>(
-    pool: &web::Data<DbPool>,
+    pool: &DbPool,
     token: &str,
     endpoint: &str,
     content: T,
@@ -37,7 +38,7 @@ where
 {
     let app = test::init_service(
         App::new()
-            .app_data(pool.clone())
+            .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
             .configure(prod_api::config),
     )
     .await;
@@ -51,13 +52,13 @@ where
 }
 
 pub async fn delete_request(
-    pool: &web::Data<DbPool>,
+    pool: &DbPool,
     token: &str,
     endpoint: &str,
 ) -> actix_web::dev::ServiceResponse {
     let app = test::init_service(
         App::new()
-            .app_data(pool.clone())
+            .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
             .configure(prod_api::config),
     )
     .await;
@@ -70,7 +71,7 @@ pub async fn delete_request(
 }
 
 pub async fn patch_request<T>(
-    pool: &web::Data<DbPool>,
+    pool: &DbPool,
     token: &str,
     endpoint: &str,
     content: T,
@@ -80,7 +81,7 @@ where
 {
     let app = test::init_service(
         App::new()
-            .app_data(pool.clone())
+            .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
             .configure(prod_api::config),
     )
     .await;

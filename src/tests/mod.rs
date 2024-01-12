@@ -22,13 +22,14 @@ use crate::models::user::{NewUser, User};
 
 use crate::utilities::auth::generate_random_password;
 
-fn create_user_with_params(pool: &DbPool, username: &str, password: &str) -> User {
+async fn create_user_with_params(pool: &DbPool, username: &str, password: &str) -> User {
     let result = NewUser {
         username: username.to_string(),
         password: password.to_string(),
         email: None,
     }
-    .save(pool);
+    .save(pool)
+    .await;
 
     assert!(
         result.is_ok(),
@@ -39,17 +40,17 @@ fn create_user_with_params(pool: &DbPool, username: &str, password: &str) -> Use
     result.unwrap()
 }
 
-fn create_test_user(pool: &DbPool) -> User {
+async fn create_test_user(pool: &DbPool) -> User {
     let username = "admin".to_string() + &generate_random_password(16);
-    create_user_with_params(pool, &username, "testpassword")
+    create_user_with_params(pool, &username, "testpassword").await
 }
 
-fn create_test_admin(pool: &DbPool) -> User {
+async fn create_test_admin(pool: &DbPool) -> User {
     let username = "user".to_string() + &generate_random_password(16);
-    let user = create_user_with_params(pool, &username, "testadminpassword");
-    let admin_group = ensure_admin_group(pool);
+    let user = create_user_with_params(pool, &username, "testadminpassword").await;
+    let admin_group = ensure_admin_group(pool).await;
 
-    let result = admin_group.add_member(&user, pool);
+    let result = admin_group.add_member(&user, pool).await;
 
     if result.is_ok() {
         user
@@ -58,7 +59,7 @@ fn create_test_admin(pool: &DbPool) -> User {
     }
 }
 
-fn ensure_user(pool: &DbPool, uname: &str) -> User {
+async fn ensure_user(pool: &DbPool, uname: &str) -> User {
     use crate::schema::users::dsl::*;
 
     let mut conn = pool.get().expect("Failed to get db connection");
@@ -74,7 +75,8 @@ fn ensure_user(pool: &DbPool, uname: &str) -> User {
         password: "testpassword".to_string(),
         email: None,
     }
-    .save(pool);
+    .save(pool)
+    .await;
 
     if let Err(e) = result {
         match e {
@@ -91,20 +93,21 @@ fn ensure_user(pool: &DbPool, uname: &str) -> User {
     result.unwrap()
 }
 
-fn ensure_admin_user(pool: &DbPool) -> User {
-    let user = ensure_user(pool, "admin");
+async fn ensure_admin_user(pool: &DbPool) -> User {
+    let user = ensure_user(pool, "admin").await;
 
-    let admin_group = ensure_admin_group(pool);
-    admin_group.add_member(&user, pool).unwrap();
+    let admin_group = ensure_admin_group(pool).await;
+
+    let _ = admin_group.add_member(&user, pool).await;
 
     user
 }
 
-fn ensure_normal_user(pool: &DbPool) -> User {
-    ensure_user(pool, "normal")
+async fn ensure_normal_user(pool: &DbPool) -> User {
+    ensure_user(pool, "normal").await
 }
 
-fn ensure_admin_group(pool: &DbPool) -> Group {
+async fn ensure_admin_group(pool: &DbPool) -> Group {
     use crate::schema::groups::dsl::*;
 
     let mut conn = pool.get().expect("Failed to get db connection");
@@ -121,7 +124,8 @@ fn ensure_admin_group(pool: &DbPool) -> Group {
         groupname: "admin".to_string(),
         description: Some("Admin group".to_string()),
     }
-    .save(pool);
+    .save(pool)
+    .await;
 
     if let Err(e) = result {
         match e {
@@ -146,8 +150,8 @@ pub fn get_config_sync() -> AppConfig {
     rt.block_on(async { get_config().await }).clone()
 }
 
-pub fn create_namespace(pool: &DbPool, ns_name: &str) -> Result<Namespace, ApiError> {
-    let admin_group = ensure_admin_group(pool);
+pub async fn create_namespace(pool: &DbPool, ns_name: &str) -> Result<Namespace, ApiError> {
+    let admin_group = ensure_admin_group(pool).await;
     let assignee = Assignee::Group(GroupID(admin_group.id));
 
     NewNamespace {
@@ -155,6 +159,7 @@ pub fn create_namespace(pool: &DbPool, ns_name: &str) -> Result<Namespace, ApiEr
         description: "Test namespace".to_string(),
     }
     .save_and_grant_all_to(pool, assignee)
+    .await
 }
 
 /// Initialize useful data for tests
@@ -174,11 +179,15 @@ async fn setup_pool_and_tokens() -> (web::Data<DbPool>, String, String) {
     let config = get_config().await;
     let pool = web::Data::new(init_pool(&config.database_url, 3));
     let admin_token_string = ensure_admin_user(&pool)
-        .add_token(&pool)
+        .await
+        .create_token(&pool)
+        .await
         .unwrap()
         .get_token();
     let normal_token_string = ensure_normal_user(&pool)
-        .add_token(&pool)
+        .await
+        .create_token(&pool)
+        .await
         .unwrap()
         .get_token();
 

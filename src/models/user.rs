@@ -22,7 +22,7 @@ pub struct User {
 }
 
 impl User {
-    pub fn add_token(&self, pool: &DbPool) -> Result<Token, ApiError> {
+    pub async fn create_token(&self, pool: &DbPool) -> Result<Token, ApiError> {
         use crate::schema::tokens::dsl::*;
 
         let mut conn = pool
@@ -42,15 +42,19 @@ impl User {
             .map(|_| generated_token)
     }
 
-    pub fn get_tokens(&self, pool: &DbPool) -> Result<Vec<UserToken>, ApiError> {
+    pub async fn get_tokens(&self, pool: &DbPool) -> Result<Vec<UserToken>, ApiError> {
         let mut conn = pool
             .get()
             .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
 
-        crate::models::token::valid_tokens_for_user(&mut conn, self.id)
+        crate::models::token::valid_tokens_for_user(&mut conn, self.id).await
     }
 
-    pub fn token_is_mine(&self, token_param: Token, pool: &DbPool) -> Result<UserToken, ApiError> {
+    pub async fn token_is_mine(
+        &self,
+        token_param: Token,
+        pool: &DbPool,
+    ) -> Result<UserToken, ApiError> {
         use crate::schema::tokens::dsl::*;
 
         let mut conn = pool.get()?;
@@ -63,7 +67,7 @@ impl User {
         Ok(result)
     }
 
-    pub fn delete_token(&self, token_param: Token, pool: &DbPool) -> Result<usize, ApiError> {
+    pub async fn delete_token(&self, token_param: Token, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::tokens::dsl::*;
 
         let mut conn = pool
@@ -76,7 +80,7 @@ impl User {
             .map_err(|e| map_error(e, "Failed to delete token"))
     }
 
-    pub fn delete_all_tokens(&self, pool: &DbPool) -> Result<usize, ApiError> {
+    pub async fn delete_all_tokens(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::tokens::dsl::*;
 
         let mut conn = pool
@@ -88,7 +92,7 @@ impl User {
             .map_err(|e| map_error(e, "Failed to delete all tokens"))
     }
 
-    pub fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
+    pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::users::dsl::*;
 
         let mut conn = pool
@@ -100,7 +104,7 @@ impl User {
             .map_err(|e| map_error(e, "Failed to delete user"))
     }
 
-    pub fn groups(&self, pool: &DbPool) -> QueryResult<Vec<Group>> {
+    pub async fn groups(&self, pool: &DbPool) -> QueryResult<Vec<Group>> {
         use crate::schema::groups::dsl::*;
         use crate::schema::user_groups::dsl::*;
 
@@ -121,7 +125,7 @@ impl User {
         }
     }
 
-    pub fn is_in_group_by_name(&self, groupname_queried: &str, pool: &DbPool) -> bool {
+    pub async fn is_in_group_by_name(&self, groupname_queried: &str, pool: &DbPool) -> bool {
         use crate::schema::groups::dsl::*;
         use crate::schema::user_groups::dsl::*;
 
@@ -142,7 +146,7 @@ impl User {
         }
     }
 
-    pub fn is_in_group(&self, group_id_queried: i32, pool: &DbPool) -> bool {
+    pub async fn is_in_group(&self, group_id_queried: i32, pool: &DbPool) -> bool {
         use crate::schema::user_groups::dsl::*;
 
         match pool.get() {
@@ -161,8 +165,8 @@ impl User {
         }
     }
 
-    pub fn is_admin(&self, pool: &DbPool) -> bool {
-        self.is_in_group_by_name("admin", pool)
+    pub async fn is_admin(&self, pool: &DbPool) -> bool {
+        self.is_in_group_by_name("admin", pool).await
     }
 }
 
@@ -204,7 +208,7 @@ impl UpdateUser {
         Ok(self)
     }
 
-    pub fn save(self, user_id: i32, pool: &DbPool) -> Result<User, ApiError> {
+    pub async fn save(self, user_id: i32, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::*;
 
         let hashed = self.hash_password()?;
@@ -233,7 +237,7 @@ pub struct NewUser {
 }
 
 impl NewUser {
-    pub fn new(username: &str, password: &str, email: Option<&str>) -> Self {
+    pub async fn new(username: &str, password: &str, email: Option<&str>) -> Self {
         NewUser {
             username: username.to_string(),
             password: password.to_string(),
@@ -241,7 +245,7 @@ impl NewUser {
         }
     }
 
-    pub fn save(self, pool: &DbPool) -> Result<User, ApiError> {
+    pub async fn save(self, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::*;
 
         let hashed = self.hash_password()?;
@@ -278,7 +282,7 @@ impl NewUser {
 pub struct UserID(pub i32);
 
 impl UserID {
-    pub fn user(&self, pool: &DbPool) -> Result<User, ApiError> {
+    pub async fn user(&self, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::*;
 
         let mut conn = pool
@@ -291,7 +295,7 @@ impl UserID {
             .map_err(|e| map_error(e, "User not found"))
     }
 
-    pub fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
+    pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::users::dsl::*;
 
         let mut conn = pool
@@ -317,7 +321,7 @@ pub struct LoginUser {
 impl LoginUser {
     /// Check if the user exists and the plaintext password in the struct
     /// matches the hashed password in the database.
-    pub fn login(self, pool: &DbPool) -> Result<User, ApiError> {
+    pub async fn login(self, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::*;
 
         let mut conn = pool

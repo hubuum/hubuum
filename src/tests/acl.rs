@@ -21,22 +21,23 @@ async fn test_endpoint_access() {
     use crate::config::get_config;
     use crate::db::connection::init_pool;
 
+    use crate::middlewares;
     use crate::models::user::LoginUser;
 
-    use actix_web::{http::Method, test, web, App};
+    use actix_web::{http::Method, test, App};
 
     let config = get_config().await;
     let pool = init_pool(&config.database_url, config.db_pool_size);
 
     let app = test::init_service(
         App::new()
-            .app_data(web::Data::new(pool.clone()))
+            .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
             .configure(crate::api::config),
     )
     .await;
 
-    let normal_user = crate::tests::create_test_user(&pool);
-    let admin_user = crate::tests::create_test_admin(&pool);
+    let normal_user = crate::tests::create_test_user(&pool).await;
+    let admin_user = crate::tests::create_test_admin(&pool).await;
     let admin_user_endpoint = &format!("/api/v1/iam/users/{}", admin_user.id);
 
     let endpoints = vec![
@@ -74,8 +75,8 @@ async fn test_endpoint_access() {
                 req = req.set_json(login_user);
             }
 
-            let normal_token = normal_user.add_token(&pool).unwrap().get_token();
-            let admin_token = admin_user.add_token(&pool).unwrap().get_token();
+            let normal_token = normal_user.create_token(&pool).await.unwrap().get_token();
+            let admin_token = admin_user.create_token(&pool).await.unwrap().get_token();
 
             // Adding auth token based on access level
             match access_level {

@@ -1,7 +1,6 @@
-use actix_web::dev::Payload;
-use actix_web::FromRequest;
-use actix_web::{web::Data, HttpRequest};
-use futures_util::future::{ready, Ready};
+use actix_web::{dev::Payload, FromRequest, HttpMessage, HttpRequest};
+use futures_util::future::{self, FutureExt};
+use std::pin::Pin;
 
 use crate::db::connection::DbPool;
 use crate::errors::ApiError;
@@ -43,21 +42,19 @@ fn extract_token(req: &HttpRequest) -> Result<Token, ApiError> {
         .ok_or_else(|| ApiError::Unauthorized("No token provided".to_string()))
 }
 
-fn get_db_pool(req: &HttpRequest) -> Result<&Data<DbPool>, ApiError> {
-    req.app_data::<Data<DbPool>>()
-        .ok_or_else(|| ApiError::InternalServerError("Pool not found".to_string()))
-}
-
-fn extract_user_from_token(pool: &Data<DbPool>, token: &Token) -> Result<User, ApiError> {
+async fn extract_user_from_token(pool: &DbPool, token: &Token) -> Result<User, ApiError> {
     let mut conn = pool.get()?;
-    let user_token = token.is_valid(&mut conn)?;
+    let user_token = token.is_valid(&mut conn).await?;
 
     get_user_by_id(&mut conn, user_token.user_id)
         .map_err(|_| ApiError::Unauthorized("Invalid token".to_string()))
 }
 
-fn get_user_and_path(req: &HttpRequest, pool: &Data<DbPool>) -> Result<(User, String), ApiError> {
-    let user_id = match req.match_info().query("user_id").parse::<i32>() {
+async fn get_user_and_path(
+    path: &actix_web::dev::Path<actix_web::dev::Url>,
+    pool: &DbPool,
+) -> Result<(User, String), ApiError> {
+    let user_id = match path.query("user_id").parse::<i32>() {
         Ok(id) => id,
         Err(_) => {
             return Err(ApiError::InternalServerError(
@@ -66,7 +63,7 @@ fn get_user_and_path(req: &HttpRequest, pool: &Data<DbPool>) -> Result<(User, St
         }
     };
 
-    let path = req.path().to_string();
+    let path = path.as_str().to_string();
 
     let mut conn = pool.get()?;
     let user = get_user_by_id(&mut conn, user_id)?;
@@ -76,77 +73,100 @@ fn get_user_and_path(req: &HttpRequest, pool: &Data<DbPool>) -> Result<(User, St
 
 impl FromRequest for UserAccess {
     type Error = ApiError;
-    type Future = Ready<Result<Self, Self::Error>>;
+    type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
-        let pool = match get_db_pool(req) {
-            Ok(pool) => pool,
-            Err(e) => return ready(Err(e)),
+        let pool = match req.extensions().get::<DbPool>() {
+            Some(pool) => pool.clone(),
+            None => {
+                return future::ready(Err(ApiError::InternalServerError(
+                    "Pool not found".to_string(),
+                )))
+                .boxed_local()
+            }
         };
 
-        match extract_token(req) {
-            Ok(token) => match extract_user_from_token(pool, &token) {
-                Ok(user) => ready(Ok(UserAccess { token, user })),
-                Err(e) => ready(Err(e)),
-            },
-            Err(e) => ready(Err(e)),
+        let token_result = extract_token(req);
+
+        async move {
+            let token = token_result?;
+            let user = extract_user_from_token(&pool, &token).await?;
+
+            Ok(UserAccess { token, user })
         }
+        .boxed_local()
     }
 }
 
 impl FromRequest for AdminAccess {
     type Error = ApiError;
-    type Future = Ready<Result<Self, Self::Error>>;
+    type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
-        let pool = match get_db_pool(req) {
-            Ok(pool) => pool,
-            Err(e) => return ready(Err(e)),
+        let pool = match req.extensions().get::<DbPool>() {
+            Some(pool) => pool.clone(),
+            None => {
+                return future::ready(Err(ApiError::InternalServerError(
+                    "Pool not found for admin request".to_string(),
+                )))
+                .boxed_local()
+            }
         };
 
-        match extract_token(req) {
-            Ok(token) => match extract_user_from_token(pool, &token) {
-                Ok(user) if user.is_admin(pool) => ready(Ok(AdminAccess { token, user })),
-                Ok(_) => ready(Err(ApiError::Forbidden("Permission denied".to_string()))),
-                Err(e) => ready(Err(e)),
-            },
-            Err(e) => ready(Err(e)),
+        let token_result = extract_token(req);
+
+        async move {
+            let token = token_result?;
+            let user = extract_user_from_token(&pool, &token).await?;
+
+            if user.is_admin(&pool).await {
+                Ok(AdminAccess { token, user })
+            } else {
+                Err(ApiError::Forbidden("Permission denied".to_string()))
+            }
         }
+        .boxed_local()
     }
 }
 
 impl FromRequest for AdminOrSelfAccess {
     type Error = ApiError;
-    type Future = Ready<Result<Self, Self::Error>>;
+    type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
-        let pool = match get_db_pool(req) {
-            Ok(pool) => pool,
-            Err(e) => return ready(Err(e)),
+        let pool = match req.extensions().get::<DbPool>() {
+            Some(pool) => pool.clone(),
+            None => {
+                return future::ready(Err(ApiError::InternalServerError(
+                    "Pool not found".to_string(),
+                )))
+                .boxed_local()
+            }
         };
 
-        match extract_token(req) {
-            Ok(token) => match extract_user_from_token(pool, &token) {
-                Ok(user) => {
-                    let (user_from_path, path) = match get_user_and_path(req, pool) {
-                        Ok((user_from_path, path)) => (user_from_path, path),
-                        Err(e) => return ready(Err(e)),
-                    };
+        let token_result = extract_token(req);
 
-                    if user.is_admin(pool) || user.id == user_from_path.id {
-                        ready(Ok(AdminOrSelfAccess { token, user }))
-                    } else {
-                        debug! {
-                            message = "User attempted to access an admin-only resource.",
-                            user_id = user.id,
-                            path = path,
-                        };
-                        ready(Err(ApiError::Forbidden("Permission denied".to_string())))
-                    }
-                }
-                Err(e) => ready(Err(e)),
-            },
-            Err(e) => ready(Err(e)),
+        // Extract necessary information from `req` here
+        let path_info = req.match_info().clone();
+
+        async move {
+            let token = token_result?;
+            let user = extract_user_from_token(&pool, &token).await?;
+
+            // Use the extracted information instead of `req`
+            let (user_from_path, path) = get_user_and_path(&path_info, &pool).await?;
+
+            if user.is_admin(&pool).await || user.id == user_from_path.id {
+                Ok(AdminOrSelfAccess { token, user })
+            } else {
+                debug! {
+                    message = "User attempted to access an admin-only resource.",
+                    user_id = user.id,
+                    path = path,
+                };
+                Err(ApiError::Forbidden("Permission denied".to_string()))
+            }
         }
+        .boxed_local()
     }
 }

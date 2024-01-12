@@ -185,7 +185,7 @@ pub struct NewGroupDataPermission {
 /// ## Returns
 /// * Ok(Namespace) - Namespace if the user has the requested permission
 /// * Err(ApiError) - Always returns 404 if there is no match (we never do 403/401)
-pub fn user_can_on(
+pub async fn user_can_on(
     pool: &DbPool,
     user_id: UserID,
     permission_type: NamespacePermissions,
@@ -254,7 +254,7 @@ pub fn user_can_on(
 /// * Ok(Vec<Namespace>) - List of namespaces the user has the requested permission for.
 ///                        If no matching namespaces are found, an empty list is returned
 /// * Err(ApiError) - On query errors only.
-pub fn user_can_on_any(
+pub async fn user_can_on_any(
     pool: &DbPool,
     user_id: UserID,
     permission_type: NamespacePermissions,

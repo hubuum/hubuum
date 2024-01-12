@@ -2,6 +2,7 @@
 mod tests {
     use crate::config::get_config;
     use crate::db::connection::init_pool;
+    use crate::middlewares;
     use crate::models::user::LoginUser;
     use actix_web::http::header;
     use actix_web::{http::StatusCode, test, web, App};
@@ -21,11 +22,11 @@ mod tests {
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let mut conn = pool.get().expect("Failed to get db connection");
 
-        let new_user = create_test_user(&pool);
+        let new_user = create_test_user(&pool).await;
 
         let app = test::init_service(
             App::new()
-                .app_data(web::Data::new(pool.clone()))
+                .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
                 .configure(api::config),
         )
         .await;
@@ -115,7 +116,7 @@ mod tests {
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
             App::new()
-                .app_data(web::Data::new(pool.clone()))
+                .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
                 .configure(api::config),
         )
         .await;
@@ -147,7 +148,7 @@ mod tests {
 
         let app = test::init_service(
             App::new()
-                .app_data(web::Data::new(pool.clone()))
+                .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
                 .configure(api::config),
         )
         .await;
@@ -203,21 +204,21 @@ mod tests {
         let config = get_config().await;
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
-        let new_user = create_test_user(&pool);
+        let new_user = create_test_user(&pool).await;
 
-        let token_string = match { new_user.add_token(&pool) } {
+        let token_string = match { new_user.create_token(&pool).await } {
             Ok(ret_token) => ret_token.get_token(),
             Err(e) => panic!("Failed to add token to user: {:?}", e),
         };
 
         let app = test::init_service(
             App::new()
-                .app_data(web::Data::new(pool.clone()))
+                .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
                 .configure(api::config),
         )
         .await;
 
-        let user_tokens = new_user.get_tokens(&pool).unwrap();
+        let user_tokens = new_user.get_tokens(&pool).await.unwrap();
         assert_eq!(user_tokens.len(), 1, "Token count mismatch");
 
         let resp_without_token = test::TestRequest::get()
@@ -259,7 +260,7 @@ mod tests {
         );
 
         // Verify token is gone from database
-        let user_tokens = new_user.get_tokens(&pool).unwrap();
+        let user_tokens = new_user.get_tokens(&pool).await.unwrap();
         assert_eq!(user_tokens.len(), 0, "User still has tokens");
     }
 
@@ -268,25 +269,25 @@ mod tests {
         let config = get_config().await;
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
-        let new_user = create_test_user(&pool);
+        let new_user = create_test_user(&pool).await;
 
-        let token_string = match { new_user.add_token(&pool) } {
+        let token_string = match { new_user.create_token(&pool).await } {
             Ok(ret_token) => ret_token.get_token(),
             Err(e) => panic!("Failed to add token to user: {:?}", e),
         };
 
-        let _ = match { new_user.add_token(&pool) } {
+        let _ = match { new_user.create_token(&pool).await } {
             Ok(ret_token) => ret_token.get_token(),
             Err(e) => panic!("Failed to add token to user: {:?}", e),
         };
 
         // Verify that we have two tokens for the user
-        let user_tokens = new_user.get_tokens(&pool).unwrap();
+        let user_tokens = new_user.get_tokens(&pool).await.unwrap();
         assert_eq!(user_tokens.len(), 2, "User has wrong number of tokens");
 
         let app = test::init_service(
             App::new()
-                .app_data(web::Data::new(pool.clone()))
+                .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
                 .configure(api::config),
         )
         .await;
@@ -303,7 +304,7 @@ mod tests {
             "{:?}",
             test::read_body(resp_without_token).await
         );
-        let user_tokens = new_user.get_tokens(&pool).unwrap();
+        let user_tokens = new_user.get_tokens(&pool).await.unwrap();
         assert_eq!(user_tokens.len(), 2, "User has wrong number of tokens");
 
         // Try removing tokens with broken authorization
@@ -319,7 +320,7 @@ mod tests {
             "{:?}",
             test::read_body(resp_with_broken_token).await
         );
-        let user_tokens = new_user.get_tokens(&pool).unwrap();
+        let user_tokens = new_user.get_tokens(&pool).await.unwrap();
         assert_eq!(user_tokens.len(), 2, "User has wrong number of tokens");
 
         // Remove tokens with valid authorization
@@ -336,7 +337,7 @@ mod tests {
             test::read_body(resp).await
         );
 
-        let user_tokens = new_user.get_tokens(&pool).unwrap();
+        let user_tokens = new_user.get_tokens(&pool).await.unwrap();
         assert_eq!(user_tokens.len(), 0, "User still has tokens");
     }
 }
