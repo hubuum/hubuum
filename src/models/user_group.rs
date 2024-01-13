@@ -40,12 +40,11 @@ impl UserGroup {
             .first::<Group>(&mut pool.get()?)?)
     }
 
-    pub async fn save(&self, pool: &DbPool) -> Result<(), ApiError> {
+    pub async fn save(&self, pool: &DbPool) -> Result<UserGroup, ApiError> {
         use crate::schema::user_groups::dsl::*;
-        diesel::insert_into(user_groups)
+        Ok(diesel::insert_into(user_groups)
             .values(self)
-            .execute(&mut pool.get()?)?;
-        Ok(())
+            .get_result(&mut pool.get()?)?)
     }
 
     pub async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
