@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use serde_json::Value as JsonValue;
 
-use crate::db::connection::DbPool;
+use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::schema::hubuumclass;
 

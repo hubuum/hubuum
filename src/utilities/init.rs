@@ -3,7 +3,7 @@
 
 use crate::models::user::NewUser;
 
-use crate::db::connection::DbPool;
+use crate::db::DbPool;
 
 use diesel::prelude::*;
 

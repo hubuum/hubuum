@@ -1,13 +1,11 @@
-use actix_web::{dev::Payload, FromRequest, HttpMessage, HttpRequest};
-use futures_util::future::{self, FutureExt};
-use std::pin::Pin;
-
-use crate::db::connection::DbPool;
+use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::token::Token;
 use crate::models::user::User;
 use crate::utilities::iam::get_user_by_id;
-
+use actix_web::{dev::Payload, web::Data, FromRequest, HttpRequest};
+use futures_util::future::{self, FutureExt};
+use std::pin::Pin;
 use tracing::debug;
 
 pub struct AdminAccess {
@@ -76,8 +74,8 @@ impl FromRequest for UserAccess {
     type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
-        let pool = match req.extensions().get::<DbPool>() {
-            Some(pool) => pool.clone(),
+        let pool = match req.app_data::<Data<DbPool>>() {
+            Some(data) => data.clone(),
             None => {
                 return future::ready(Err(ApiError::InternalServerError(
                     "Pool not found".to_string(),
@@ -103,11 +101,11 @@ impl FromRequest for AdminAccess {
     type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
-        let pool = match req.extensions().get::<DbPool>() {
-            Some(pool) => pool.clone(),
+        let pool = match req.app_data::<Data<DbPool>>() {
+            Some(data) => data.clone(),
             None => {
                 return future::ready(Err(ApiError::InternalServerError(
-                    "Pool not found for admin request".to_string(),
+                    "Pool not found".to_string(),
                 )))
                 .boxed_local()
             }
@@ -134,8 +132,8 @@ impl FromRequest for AdminOrSelfAccess {
     type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
-        let pool = match req.extensions().get::<DbPool>() {
-            Some(pool) => pool.clone(),
+        let pool = match req.app_data::<Data<DbPool>>() {
+            Some(data) => data.clone(),
             None => {
                 return future::ready(Err(ApiError::InternalServerError(
                     "Pool not found".to_string(),

@@ -1,24 +1,19 @@
+use crate::db::DbPool;
 use crate::errors::ApiError;
-use actix_web::{delete, get, http::StatusCode, patch, post, web, HttpRequest, Responder};
-
+use crate::extractors::{AdminAccess, UserAccess};
 use crate::models::namespace::{NamespaceID, NewNamespaceRequest, UpdateNamespace};
 use crate::models::permissions::{user_can_on_any, NamespacePermissions};
 use crate::models::user::UserID;
-
-use serde_json::json;
-
-use crate::db::get_db_pool;
-use crate::extractors::{AdminAccess, UserAccess};
 use crate::utilities::response::{json_response, json_response_created};
-
+use actix_web::{delete, get, http::StatusCode, patch, post, web, Responder};
+use serde_json::json;
 use tracing::debug;
 
 #[get("")]
 pub async fn get_namespaces(
-    req: HttpRequest,
+    pool: web::Data<DbPool>,
     requestor: UserAccess,
 ) -> Result<impl Responder, ApiError> {
-    let pool = get_db_pool(&req).await?;
     debug!(
         message = "Namespace list requested",
         requestor = requestor.user.username
@@ -31,11 +26,10 @@ pub async fn get_namespaces(
 
 #[post("")]
 pub async fn create_namespace(
-    req: HttpRequest,
+    pool: web::Data<DbPool>,
     new_namespace_request: web::Json<NewNamespaceRequest>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    let pool = get_db_pool(&req).await?;
     let new_namespace_request = new_namespace_request.into_inner();
     debug!(
         message = "Namespace create requested",
@@ -52,11 +46,10 @@ pub async fn create_namespace(
 
 #[get("/{namespace_id}")]
 pub async fn get_namespace(
-    req: HttpRequest,
+    pool: web::Data<DbPool>,
     requestor: UserAccess,
     namespace_id: web::Path<NamespaceID>,
 ) -> Result<impl Responder, ApiError> {
-    let pool = get_db_pool(&req).await?;
     debug!(
         message = "Namespace get requested",
         requestor = requestor.user.username,
@@ -72,12 +65,11 @@ pub async fn get_namespace(
 
 #[patch("/{namespace_id}")]
 pub async fn update_namespace(
-    req: HttpRequest,
+    pool: web::Data<DbPool>,
     requestor: UserAccess,
     namespace_id: web::Path<NamespaceID>,
     update_data: web::Json<UpdateNamespace>,
 ) -> Result<impl Responder, ApiError> {
-    let pool = get_db_pool(&req).await?;
     debug!(
         message = "Namespace update requested",
         requestor = requestor.user.username,
@@ -99,11 +91,10 @@ pub async fn update_namespace(
 
 #[delete("/{namespace_id}")]
 pub async fn delete_namespace(
-    req: HttpRequest,
+    pool: web::Data<DbPool>,
     requestor: UserAccess,
     namespace_id: web::Path<NamespaceID>,
 ) -> Result<impl Responder, ApiError> {
-    let pool = get_db_pool(&req).await?;
     debug!(
         message = "Namespace delete requested",
         requestor = requestor.user.username,

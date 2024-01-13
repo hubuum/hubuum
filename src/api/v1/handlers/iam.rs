@@ -1,27 +1,22 @@
+use crate::db::DbPool;
 use crate::errors::ApiError;
-use actix_web::{delete, get, http::StatusCode, patch, post, web, HttpRequest, Responder};
-
+use crate::extractors::{AdminAccess, AdminOrSelfAccess, UserAccess};
 use crate::models::group::{Group, GroupID, NewGroup, UpdateGroup};
 use crate::models::user::{NewUser, UpdateUser, User, UserID};
 use crate::models::user_group::UserGroup;
-
 use crate::utilities::response::{json_response, json_response_created};
-
+use actix_web::{delete, get, http::StatusCode, patch, post, web, Responder};
 use serde_json::json;
-
-use crate::db::get_db_pool;
-use crate::extractors::{AdminAccess, AdminOrSelfAccess, UserAccess};
-
 use tracing::debug;
 
 #[get("/users")]
 pub async fn get_users(
-    req: HttpRequest,
+    pool: web::Data<DbPool>,
     requestor: UserAccess,
 ) -> Result<impl Responder, ApiError> {
     use crate::schema::users::dsl::users;
     use diesel::RunQueryDsl;
-    let mut conn = get_db_pool(&req).await?.get()?;
+    let mut conn = pool.get()?;
 
     debug!(
         message = "User list requested",
@@ -34,11 +29,10 @@ pub async fn get_users(
 
 #[post("/users")]
 pub async fn create_user(
-    req: HttpRequest,
+    pool: web::Data<DbPool>,
     new_user: web::Json<NewUser>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    let pool = get_db_pool(&req).await?;
     debug!(
         message = "User create requested",
         requestor = requestor.user.id,
@@ -54,11 +48,10 @@ pub async fn create_user(
 
 #[get("/users/{user_id}/tokens")]
 pub async fn get_user_tokens(
-    req: HttpRequest,
+    pool: web::Data<DbPool>,
     user_id: web::Path<UserID>,
     requestor: AdminOrSelfAccess,
 ) -> Result<impl Responder, ApiError> {
-    let pool = get_db_pool(&req).await?;
     let user = user_id.into_inner().user(&pool).await?;
     debug!(
         message = "User tokens requested",
@@ -72,11 +65,10 @@ pub async fn get_user_tokens(
 
 #[get("/users/{user_id}")]
 pub async fn get_user(
-    req: HttpRequest,
+    pool: web::Data<DbPool>,
     user_id: web::Path<UserID>,
     requestor: UserAccess,
 ) -> Result<impl Responder, ApiError> {
-    let pool = get_db_pool(&req).await?;
     let user = user_id.into_inner().user(&pool).await?;
     debug!(
         message = "User get requested",
@@ -89,12 +81,11 @@ pub async fn get_user(
 
 #[patch("/users/{user_id}")]
 pub async fn update_user(
-    req: HttpRequest,
+    pool: web::Data<DbPool>,
     user_id: web::Path<UserID>,
     updated_user: web::Json<UpdateUser>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    let pool = get_db_pool(&req).await?;
     let user = user_id.into_inner().user(&pool).await?;
     debug!(
         message = "User patch requested",
@@ -112,11 +103,10 @@ pub async fn update_user(
 
 #[delete("/users/{user_id}")]
 pub async fn delete_user(
-    req: HttpRequest,
+    pool: web::Data<DbPool>,
     user_id: web::Path<UserID>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    let pool = get_db_pool(&req).await?;
     debug!(
         message = "User delete requested",
         target = user_id.0,
@@ -133,11 +123,10 @@ pub async fn delete_user(
 
 #[post("/groups")]
 pub async fn create_group(
-    req: HttpRequest,
+    pool: web::Data<DbPool>,
     new_group: web::Json<NewGroup>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    let pool = get_db_pool(&req).await?;
     debug!(
         message = "Group create requested",
         requestor = requestor.user.id,
@@ -153,11 +142,10 @@ pub async fn create_group(
 
 #[get("/groups/{group_id}")]
 pub async fn get_group(
-    req: HttpRequest,
+    pool: web::Data<DbPool>,
     group_id: web::Path<GroupID>,
     requestor: UserAccess,
 ) -> Result<impl Responder, ApiError> {
-    let pool = get_db_pool(&req).await?;
     let group = group_id.group(&pool).await?;
 
     debug!(
@@ -171,12 +159,12 @@ pub async fn get_group(
 
 #[get("/groups")]
 pub async fn get_groups(
-    req: HttpRequest,
+    pool: web::Data<DbPool>,
     requestor: UserAccess,
 ) -> Result<impl Responder, ApiError> {
     use crate::schema::groups::dsl::*;
     use diesel::RunQueryDsl;
-    let mut conn = get_db_pool(&req).await?.get()?;
+    let mut conn = pool.get()?;
 
     debug!(
         message = "Group list requested",
@@ -190,12 +178,11 @@ pub async fn get_groups(
 
 #[patch("/groups/{group_id}")]
 pub async fn update_group(
-    req: HttpRequest,
+    pool: web::Data<DbPool>,
     group_id: web::Path<GroupID>,
     updated_group: web::Json<UpdateGroup>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    let pool = get_db_pool(&req).await?;
     let group = group_id.group(&pool).await?;
 
     debug!(
@@ -210,11 +197,10 @@ pub async fn update_group(
 
 #[delete("/groups/{group_id}")]
 pub async fn delete_group(
-    req: HttpRequest,
+    pool: web::Data<DbPool>,
     group_id: web::Path<GroupID>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    let pool = get_db_pool(&req).await?;
     debug!(
         message = "Group delete requested",
         target = group_id.0,
@@ -227,11 +213,10 @@ pub async fn delete_group(
 
 #[get("/groups/{group_id}/members")]
 pub async fn get_group_members(
-    req: HttpRequest,
+    pool: web::Data<DbPool>,
     group_id: web::Path<GroupID>,
     requestor: UserAccess,
 ) -> Result<impl Responder, ApiError> {
-    let pool = get_db_pool(&req).await?;
     let group = group_id.group(&pool).await?;
 
     debug!(
@@ -247,11 +232,10 @@ pub async fn get_group_members(
 
 #[post("/groups/{group_id}/members/{user_id}")]
 pub async fn add_group_member(
-    req: HttpRequest,
+    pool: web::Data<DbPool>,
     user_group_ids: web::Path<UserGroup>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    let pool = get_db_pool(&req).await?;
     let group = user_group_ids.group(&pool).await?;
     let user = user_group_ids.user(&pool).await?;
 
@@ -269,11 +253,10 @@ pub async fn add_group_member(
 
 #[delete("/groups/{group_id}/members/{user_id}")]
 pub async fn delete_group_member(
-    req: HttpRequest,
+    pool: web::Data<DbPool>,
     user_group_ids: web::Path<UserGroup>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    let pool = get_db_pool(&req).await?;
     let group = user_group_ids.group(&pool).await?;
     let user = user_group_ids.user(&pool).await?;
 

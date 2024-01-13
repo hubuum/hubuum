@@ -1,12 +1,3 @@
-use actix_web::{web::JsonConfig, App, HttpServer};
-
-use tracing_subscriber::filter::EnvFilter;
-use tracing_subscriber::fmt::format::FmtSpan;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
-
-use actix_web::middleware::Logger;
-
 mod api;
 mod config;
 mod db;
@@ -16,12 +7,15 @@ mod logger;
 mod middlewares;
 mod models;
 mod schema;
+mod tests;
 mod utilities;
 
-mod tests;
-
-use db::connection::init_pool;
+use actix_web::{middleware::Logger, web::Data, web::JsonConfig, App, HttpServer};
+use db::init_pool;
 use tracing::{debug, warn};
+use tracing_subscriber::{
+    filter::EnvFilter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
+};
 
 use crate::config::get_config;
 use crate::errors::json_error_handler;
@@ -69,7 +63,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .wrap(middlewares::tracing::TracingMiddleware)
             .wrap(Logger::default())
-            .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
+            .app_data(Data::new(pool.clone()))
             .app_data(JsonConfig::default().error_handler(json_error_handler))
             .configure(api::config)
     })

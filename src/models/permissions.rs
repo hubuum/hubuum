@@ -5,7 +5,7 @@ use crate::models::group::GroupID;
 use crate::models::namespace::{Namespace, NamespaceID};
 use crate::models::user::UserID;
 
-use crate::db::connection::DbPool;
+use crate::db::DbPool;
 
 use crate::schema::group_datapermissions;
 use crate::schema::group_namespacepermissions;

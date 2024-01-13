@@ -11,8 +11,8 @@ use actix_web::web;
 use diesel::prelude::*;
 
 use crate::config::{get_config, AppConfig};
-use crate::db::connection::init_pool;
-use crate::db::connection::DbPool;
+use crate::db::init_pool;
+use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::group::GroupID;
 use crate::models::group::{Group, NewGroup};

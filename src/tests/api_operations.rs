@@ -1,7 +1,6 @@
 use crate::api as prod_api;
-use crate::db::connection::DbPool;
-use crate::middlewares;
-use actix_web::{http, test, App};
+use crate::db::DbPool;
+use actix_web::{http, test, web::Data, App};
 use serde::Serialize;
 
 fn create_token_header(token: &str) -> (http::header::HeaderName, String) {
@@ -15,7 +14,7 @@ pub async fn get_request(
 ) -> actix_web::dev::ServiceResponse {
     let app = test::init_service(
         App::new()
-            .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
+            .app_data(Data::new(pool.clone()))
             .configure(prod_api::config),
     )
     .await;
@@ -38,7 +37,7 @@ where
 {
     let app = test::init_service(
         App::new()
-            .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
+            .app_data(Data::new(pool.clone()))
             .configure(prod_api::config),
     )
     .await;
@@ -58,7 +57,7 @@ pub async fn delete_request(
 ) -> actix_web::dev::ServiceResponse {
     let app = test::init_service(
         App::new()
-            .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
+            .app_data(Data::new(pool.clone()))
             .configure(prod_api::config),
     )
     .await;
@@ -81,7 +80,7 @@ where
 {
     let app = test::init_service(
         App::new()
-            .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
+            .app_data(Data::new(pool.clone()))
             .configure(prod_api::config),
     )
     .await;

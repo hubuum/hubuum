@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::user::UserID;
 
-use crate::db::connection::DbPool;
+use crate::db::DbPool;
 
 use crate::schema::group_namespacepermissions;
 use crate::schema::namespaces;

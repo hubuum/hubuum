@@ -9,7 +9,7 @@ use crate::models::user::User;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::db::connection::DbPool;
+use crate::db::DbPool;
 
 #[derive(Serialize, Deserialize)]
 pub struct GroupID(pub i32);

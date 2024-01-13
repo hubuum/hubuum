@@ -4,7 +4,7 @@ use diesel::QueryableByName;
 
 use serde::{Deserialize, Serialize};
 
-use crate::db::connection::DbPool;
+use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::schema::hubuumobject;
 

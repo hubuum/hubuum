@@ -1,16 +1,13 @@
 #[cfg(test)]
 mod tests {
-    use crate::config::get_config;
-    use crate::db::connection::init_pool;
-    use crate::middlewares;
-    use crate::models::user::LoginUser;
-    use actix_web::http::header;
-    use actix_web::{http::StatusCode, test, web, App};
-    use diesel::prelude::*;
-
-    use crate::tests::create_test_user;
-
     use crate::api;
+    use crate::config::get_config;
+    use crate::db::init_pool;
+    use crate::models::user::LoginUser;
+    use crate::tests::create_test_user;
+    use actix_web::http::header;
+    use actix_web::{http::StatusCode, test, web, web::Data, App};
+    use diesel::prelude::*;
 
     const LOGIN_ENDPOINT: &str = "/api/v0/auth/login";
     const LOGOUT_ENDPOINT: &str = "/api/v0/auth/logout";
@@ -26,7 +23,7 @@ mod tests {
 
         let app = test::init_service(
             App::new()
-                .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
+                .app_data(Data::new(pool.clone()))
                 .configure(api::config),
         )
         .await;
@@ -116,7 +113,7 @@ mod tests {
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
             App::new()
-                .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
+                .app_data(Data::new(pool.clone()))
                 .configure(api::config),
         )
         .await;
@@ -148,7 +145,7 @@ mod tests {
 
         let app = test::init_service(
             App::new()
-                .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
+                .app_data(Data::new(pool.clone()))
                 .configure(api::config),
         )
         .await;
@@ -213,7 +210,7 @@ mod tests {
 
         let app = test::init_service(
             App::new()
-                .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
+                .app_data(Data::new(pool.clone()))
                 .configure(api::config),
         )
         .await;
@@ -287,7 +284,7 @@ mod tests {
 
         let app = test::init_service(
             App::new()
-                .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
+                .app_data(Data::new(pool.clone()))
                 .configure(api::config),
         )
         .await;

@@ -5,7 +5,7 @@ use crate::schema::users;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::db::connection::DbPool;
+use crate::db::DbPool;
 use crate::errors::map_error;
 
 use crate::errors::ApiError;

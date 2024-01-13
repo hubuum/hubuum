@@ -1,13 +1,10 @@
-use actix_web::{get, http::StatusCode, post, web, HttpRequest, Responder};
-
+use crate::db::DbPool;
+use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::user::LoginUser;
 use crate::utilities::response::json_response;
-
-use crate::db::get_db_pool;
-use crate::errors::ApiError;
+use actix_web::{get, http::StatusCode, post, web, Responder};
 use serde_json::json;
-
 use tracing::{debug, warn};
 
 // During auth, no matter what the error is, we return a 401 Unauthorized
@@ -16,10 +13,9 @@ use tracing::{debug, warn};
 
 #[post("/login")]
 pub async fn login(
-    req: HttpRequest,
+    pool: web::Data<DbPool>,
     req_input: web::Json<LoginUser>,
 ) -> Result<impl Responder, ApiError> {
-    let pool = get_db_pool(&req).await?;
     debug!(message = "Login started", user = req_input.username);
 
     let user = req_input.into_inner().login(&pool).await?;
@@ -54,8 +50,10 @@ pub async fn login(
 }
 
 #[get("/logout")]
-pub async fn logout(req: HttpRequest, user_access: UserAccess) -> Result<impl Responder, ApiError> {
-    let pool = get_db_pool(&req).await?;
+pub async fn logout(
+    pool: web::Data<DbPool>,
+    user_access: UserAccess,
+) -> Result<impl Responder, ApiError> {
     let token = user_access.token;
 
     debug!(message = "Logging out token.", token = token.obfuscate());
@@ -83,10 +81,9 @@ pub async fn logout(req: HttpRequest, user_access: UserAccess) -> Result<impl Re
 
 #[get("/logout_all")]
 pub async fn logout_all(
-    req: HttpRequest,
+    pool: web::Data<DbPool>,
     user_access: UserAccess,
 ) -> Result<impl Responder, ApiError> {
-    let pool = get_db_pool(&req).await?;
     debug!(
         message = "Logging out all tokens for {}.",
         user_access.user.id

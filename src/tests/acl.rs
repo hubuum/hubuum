@@ -19,19 +19,16 @@ enum TestDataForEndpoint {
 #[actix_web::test]
 async fn test_endpoint_access() {
     use crate::config::get_config;
-    use crate::db::connection::init_pool;
-
-    use crate::middlewares;
+    use crate::db::init_pool;
     use crate::models::user::LoginUser;
-
-    use actix_web::{http::Method, test, App};
+    use actix_web::{http::Method, test, web::Data, App};
 
     let config = get_config().await;
     let pool = init_pool(&config.database_url, config.db_pool_size);
 
     let app = test::init_service(
         App::new()
-            .wrap(middlewares::dbpool::DbPoolMiddleware::new(pool.clone()))
+            .app_data(Data::new(pool.clone()))
             .configure(crate::api::config),
     )
     .await;
