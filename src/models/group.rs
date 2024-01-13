@@ -1,6 +1,5 @@
 // src/models/group.rs
 
-use crate::errors::map_error;
 use crate::errors::ApiError;
 use crate::models::user_group::UserGroup;
 use crate::schema::groups;
@@ -17,27 +16,14 @@ pub struct GroupID(pub i32);
 impl GroupID {
     pub async fn group(&self, pool: &DbPool) -> Result<Group, ApiError> {
         use crate::schema::groups::dsl::*;
-
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
-        groups
+        Ok(groups
             .filter(id.eq(self.0))
-            .first::<Group>(&mut conn)
-            .map_err(|e| map_error(e, "Group not found"))
+            .first::<Group>(&mut pool.get()?)?)
     }
 
     pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::groups::dsl::*;
-
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
-        diesel::delete(groups.filter(id.eq(self.0)))
-            .execute(&mut conn)
-            .map_err(|e| map_error(e, "Group not found"))
+        Ok(diesel::delete(groups.filter(id.eq(self.0))).execute(&mut pool.get()?)?)
     }
 }
 
@@ -54,16 +40,11 @@ impl Group {
         use crate::schema::user_groups::dsl::*;
         use crate::schema::users::dsl::*;
 
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
-        user_groups
+        Ok(user_groups
             .filter(group_id.eq(self.id))
             .inner_join(users.on(id.eq(user_id)))
             .select((id, username, password, email))
-            .load::<User>(&mut conn)
-            .map_err(|e| map_error(e, "Group not found"))
+            .load::<User>(&mut pool.get()?)?)
     }
 
     /// Add a member to a group. If the user is already a member, do nothing.
@@ -80,10 +61,6 @@ impl Group {
     pub async fn add_member(&self, user: &User, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::user_groups::dsl::*;
 
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
         let new_user_group = UserGroup {
             user_id: user.id,
             group_id: self.id,
@@ -92,8 +69,7 @@ impl Group {
         diesel::insert_into(user_groups)
             .values(&new_user_group)
             .on_conflict_do_nothing()
-            .execute(&mut conn)
-            .map_err(|e| map_error(e, "Group not found"))?;
+            .execute(&mut pool.get()?)?;
 
         Ok(())
     }
@@ -101,27 +77,13 @@ impl Group {
     pub async fn remove_member(&self, user: &User, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::user_groups::dsl::*;
 
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
-        diesel::delete(user_groups.filter(user_id.eq(user.id)))
-            .execute(&mut conn)
-            .map_err(|e| map_error(e, "Group not found"))?;
-
+        diesel::delete(user_groups.filter(user_id.eq(user.id))).execute(&mut pool.get()?)?;
         Ok(())
     }
 
     pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::groups::dsl::*;
-
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
-        diesel::delete(groups.filter(id.eq(self.id)))
-            .execute(&mut conn)
-            .map_err(|e| map_error(e, "Group not found"))
+        Ok(diesel::delete(groups.filter(id.eq(self.id))).execute(&mut pool.get()?)?)
     }
 }
 
@@ -142,15 +104,9 @@ impl NewGroup {
 
     pub async fn save(&self, pool: &DbPool) -> Result<Group, ApiError> {
         use crate::schema::groups::dsl::*;
-
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
-        diesel::insert_into(groups)
+        Ok(diesel::insert_into(groups)
             .values(self)
-            .get_result::<Group>(&mut conn)
-            .map_err(|e| map_error(e, "Group not found"))
+            .get_result::<Group>(&mut pool.get()?)?)
     }
 }
 
@@ -163,14 +119,8 @@ pub struct UpdateGroup {
 impl UpdateGroup {
     pub async fn save(&self, group_id: i32, pool: &DbPool) -> Result<Group, ApiError> {
         use crate::schema::groups::dsl::*;
-
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
-        diesel::update(groups.filter(id.eq(group_id)))
+        Ok(diesel::update(groups.filter(id.eq(group_id)))
             .set(self)
-            .get_result::<Group>(&mut conn)
-            .map_err(|e| map_error(e, "Group not found"))
+            .get_result::<Group>(&mut pool.get()?)?)
     }
 }

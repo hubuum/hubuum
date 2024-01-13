@@ -6,7 +6,6 @@ use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::db::DbPool;
-use crate::errors::map_error;
 
 use crate::errors::ApiError;
 
@@ -24,22 +23,16 @@ pub struct User {
 impl User {
     pub async fn create_token(&self, pool: &DbPool) -> Result<Token, ApiError> {
         use crate::schema::tokens::dsl::*;
-
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
         let generated_token = crate::utilities::auth::generate_token();
 
-        diesel::insert_into(crate::schema::tokens::table)
+        Ok(diesel::insert_into(crate::schema::tokens::table)
             .values((
                 user_id.eq(self.id),
                 token.eq(&generated_token.get_token()),
                 issued.eq(chrono::Utc::now().naive_utc()),
             ))
-            .execute(&mut conn)
-            .map_err(|e| map_error(e, "Failed to create token"))
-            .map(|_| generated_token)
+            .execute(&mut pool.get()?)
+            .map(|_| generated_token)?)
     }
 
     pub async fn get_tokens(&self, pool: &DbPool) -> Result<Vec<UserToken>, ApiError> {
@@ -69,60 +62,30 @@ impl User {
 
     pub async fn delete_token(&self, token_param: Token, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::tokens::dsl::*;
-
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
-        diesel::delete(tokens.filter(user_id.eq(self.id)))
+        Ok(diesel::delete(tokens.filter(user_id.eq(self.id)))
             .filter(token.eq(token_param.get_token()))
-            .execute(&mut conn)
-            .map_err(|e| map_error(e, "Failed to delete token"))
+            .execute(&mut pool.get()?)?)
     }
 
     pub async fn delete_all_tokens(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::tokens::dsl::*;
-
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
-        diesel::delete(tokens.filter(user_id.eq(self.id)))
-            .execute(&mut conn)
-            .map_err(|e| map_error(e, "Failed to delete all tokens"))
+        Ok(diesel::delete(tokens.filter(user_id.eq(self.id))).execute(&mut pool.get()?)?)
     }
 
     pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::users::dsl::*;
-
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
-        diesel::delete(users.filter(id.eq(self.id)))
-            .execute(&mut conn)
-            .map_err(|e| map_error(e, "Failed to delete user"))
+        Ok(diesel::delete(users.filter(id.eq(self.id))).execute(&mut pool.get()?)?)
     }
 
-    pub async fn groups(&self, pool: &DbPool) -> QueryResult<Vec<Group>> {
+    pub async fn groups(&self, pool: &DbPool) -> Result<Vec<Group>, ApiError> {
         use crate::schema::groups::dsl::*;
         use crate::schema::user_groups::dsl::*;
 
-        match pool.get() {
-            Ok(mut conn) => user_groups
-                .filter(user_id.eq(self.id))
-                .inner_join(groups.on(id.eq(group_id)))
-                .select((id, groupname, description))
-                .load::<Group>(&mut conn),
-            Err(e) => {
-                error!(
-                    message = "Failed to get db connection from pool",
-                    error = e.to_string()
-                );
-                // Return an empty vector
-                Ok(vec![])
-            }
-        }
+        Ok(user_groups
+            .filter(user_id.eq(self.id))
+            .inner_join(groups.on(id.eq(group_id)))
+            .select((id, groupname, description))
+            .load::<Group>(&mut pool.get()?)?)
     }
 
     pub async fn is_in_group_by_name(&self, groupname_queried: &str, pool: &DbPool) -> bool {
@@ -210,17 +173,9 @@ impl UpdateUser {
 
     pub async fn save(self, user_id: i32, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::*;
-
-        let hashed = self.hash_password()?;
-
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
-        diesel::update(users.filter(id.eq(user_id)))
-            .set(hashed)
-            .get_result::<User>(&mut conn)
-            .map_err(|e| map_error(e, "Failed to save user"))
+        Ok(diesel::update(users.filter(id.eq(user_id)))
+            .set(self.hash_password()?)
+            .get_result::<User>(&mut pool.get()?)?)
     }
 }
 
@@ -247,17 +202,9 @@ impl NewUser {
 
     pub async fn save(self, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::*;
-
-        let hashed = self.hash_password()?;
-
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
-        diesel::insert_into(users)
-            .values(&hashed)
-            .get_result::<User>(&mut conn)
-            .map_err(|e| map_error(e, "Failed to create user"))
+        Ok(diesel::insert_into(users)
+            .values(&self.hash_password()?)
+            .get_result::<User>(&mut pool.get()?)?)
     }
 
     pub fn hash_password(mut self) -> Result<Self, ApiError> {
@@ -284,27 +231,14 @@ pub struct UserID(pub i32);
 impl UserID {
     pub async fn user(&self, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::*;
-
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
-        users
+        Ok(users
             .filter(id.eq(self.0))
-            .first::<User>(&mut conn)
-            .map_err(|e| map_error(e, "User not found"))
+            .first::<User>(&mut pool.get()?)?)
     }
 
     pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::users::dsl::*;
-
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
-        diesel::delete(users.filter(id.eq(self.0)))
-            .execute(&mut conn)
-            .map_err(|e| map_error(e, "Failed to delete user"))
+        Ok(diesel::delete(users.filter(id.eq(self.0))).execute(&mut pool.get()?)?)
     }
 }
 

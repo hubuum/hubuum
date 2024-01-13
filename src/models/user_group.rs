@@ -1,10 +1,8 @@
 use crate::models::group::Group;
 use crate::models::user::User;
 
-use crate::schema::user_groups;
-
-use crate::errors::map_error;
 use crate::errors::ApiError;
+use crate::schema::user_groups;
 
 use crate::db::DbPool;
 
@@ -30,59 +28,34 @@ impl UserGroup {
 
     pub async fn user(&self, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::*;
-
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
-        users
+        Ok(users
             .filter(id.eq(self.user_id))
-            .first::<User>(&mut conn)
-            .map_err(|e| map_error(e, "User not found"))
+            .first::<User>(&mut pool.get()?)?)
     }
 
     pub async fn group(&self, pool: &DbPool) -> Result<Group, ApiError> {
         use crate::schema::groups::dsl::*;
-
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
-        groups
+        Ok(groups
             .filter(id.eq(self.group_id))
-            .first::<Group>(&mut conn)
-            .map_err(|e| map_error(e, "Group not found"))
+            .first::<Group>(&mut pool.get()?)?)
     }
 
     pub async fn save(&self, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::user_groups::dsl::*;
-
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
         diesel::insert_into(user_groups)
             .values(self)
-            .execute(&mut conn)
-            .map_err(|e| map_error(e, "Failed to save user user_group"))?;
-
+            .execute(&mut pool.get()?)?;
         Ok(())
     }
 
     pub async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::user_groups::dsl::*;
-
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
         diesel::delete(
             user_groups
                 .filter(user_id.eq(self.user_id))
                 .filter(group_id.eq(self.group_id)),
         )
-        .execute(&mut conn)
-        .map_err(|e| map_error(e, "Failed to delete user_group"))?;
+        .execute(&mut pool.get()?)?;
 
         Ok(())
     }
