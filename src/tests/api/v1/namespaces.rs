@@ -2,10 +2,13 @@
 mod tests {
     use std::vec;
 
-    use crate::tests::api_operations::get_request;
+    use crate::models::namespace::{Namespace, NewNamespaceRequest, UpdateNamespace};
+
+    use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_contains, assert_contains_all, assert_response_status};
-    use crate::tests::{create_namespace, setup_pool_and_tokens};
+    use crate::tests::{create_namespace, ensure_admin_user, setup_pool_and_tokens};
     use actix_web::{http, test};
+    use serde::de;
 
     const NAMESPACE_ENDPOINT: &str = "/api/v1/namespaces";
 
@@ -35,5 +38,62 @@ mod tests {
             &updated_namespaces,
             &vec![created_namespace1, created_namespace2],
         );
+    }
+
+    #[actix_web::test]
+    async fn test_create_patch_delete_namespace() {
+        let (pool, admin_token, normal_token) = setup_pool_and_tokens().await;
+
+        let resp = get_request(&pool, "", NAMESPACE_ENDPOINT).await;
+        let _ = assert_response_status(resp, http::StatusCode::UNAUTHORIZED).await;
+
+        let content = NewNamespaceRequest {
+            name: "test_namespace_create".to_string(),
+            description: "test namespace create description".to_string(),
+            assign_to_user_id: Some(ensure_admin_user(&pool).await.id),
+            assign_to_group_id: None,
+        };
+
+        let resp = post_request(&pool, &normal_token, NAMESPACE_ENDPOINT, &content).await;
+        let _ = assert_response_status(resp, http::StatusCode::FORBIDDEN).await;
+
+        let resp = post_request(&pool, &admin_token, NAMESPACE_ENDPOINT, &content).await;
+        let resp = assert_response_status(resp, http::StatusCode::CREATED).await;
+
+        let created_ns_url = resp.headers().get("Location").unwrap().to_str().unwrap();
+
+        let resp = get_request(&pool, &admin_token, &created_ns_url).await;
+        let resp = assert_response_status(resp, http::StatusCode::OK).await;
+
+        let created_ns: Namespace = test::read_body_json(resp).await;
+        assert_eq!(created_ns.name, content.name);
+        assert_eq!(created_ns.description, content.description);
+
+        let patch_content = UpdateNamespace {
+            name: Some("test_namespace_patch".to_string()),
+            description: Some("test namespace patch description".to_string()),
+        };
+
+        let resp = patch_request(&pool, &normal_token, created_ns_url, &patch_content).await;
+        let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;
+
+        let resp = patch_request(&pool, &admin_token, created_ns_url, &patch_content).await;
+        let _ = assert_response_status(resp, http::StatusCode::ACCEPTED).await;
+
+        let resp = get_request(&pool, &admin_token, created_ns_url).await;
+        let resp = assert_response_status(resp, http::StatusCode::OK).await;
+
+        let patched_ns: Namespace = test::read_body_json(resp).await;
+        assert_eq!(patched_ns.name, patch_content.name.unwrap());
+        assert_eq!(patched_ns.description, patch_content.description.unwrap());
+
+        let resp = delete_request(&pool, &normal_token, created_ns_url).await;
+        let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;
+
+        let resp = delete_request(&pool, &admin_token, created_ns_url).await;
+        let _ = assert_response_status(resp, http::StatusCode::NO_CONTENT).await;
+
+        let resp = get_request(&pool, &admin_token, created_ns_url).await;
+        let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;
     }
 }

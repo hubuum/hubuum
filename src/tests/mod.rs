@@ -59,6 +59,24 @@ async fn create_test_admin(pool: &DbPool) -> User {
     }
 }
 
+async fn create_test_group(pool: &DbPool) -> Group {
+    let groupname = "group".to_string() + &generate_random_password(16);
+    let result = NewGroup {
+        groupname: groupname.to_string(),
+        description: Some("Test group".to_string()),
+    }
+    .save(pool)
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "Failed to create group: {:?}",
+        result.err().unwrap()
+    );
+
+    result.unwrap()
+}
+
 async fn ensure_user(pool: &DbPool, uname: &str) -> User {
     use crate::schema::users::dsl::*;
 

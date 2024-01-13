@@ -27,7 +27,7 @@ impl GroupID {
     }
 }
 
-#[derive(Serialize, Deserialize, Queryable, Insertable)]
+#[derive(Serialize, Deserialize, Queryable, Insertable, PartialEq, Debug)]
 #[diesel(table_name = groups)]
 pub struct Group {
     pub id: i32,
