@@ -17,7 +17,7 @@ use crate::errors::ApiError;
 
 use crate::models::permissions::{Assignee, NamespacePermissions};
 
-#[derive(Serialize, Deserialize, Queryable, PartialEq)]
+#[derive(Serialize, Deserialize, Queryable, PartialEq, Debug)]
 #[diesel(table_name = namespaces)]
 pub struct Namespace {
     pub id: i32,

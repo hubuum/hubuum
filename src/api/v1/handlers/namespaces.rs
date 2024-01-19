@@ -40,6 +40,7 @@ pub async fn create_namespace(
     let created_namespace = new_namespace_request.save_and_grant_all(&pool).await?;
 
     Ok(json_response_created(
+        &created_namespace,
         format!("/api/v1/namespaces/{}", created_namespace.id).as_str(),
     ))
 }
@@ -109,10 +110,6 @@ pub async fn delete_namespace(
         )
         .await?;
 
-    let delete_result = namespace.delete(&pool).await;
-
-    match delete_result {
-        Ok(elements) => Ok(json_response(json!(elements), StatusCode::NO_CONTENT)),
-        Err(e) => Err(e),
-    }
+    let delete_result = namespace.delete(&pool).await?;
+    Ok(json_response(json!(delete_result), StatusCode::NO_CONTENT))
 }

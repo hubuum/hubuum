@@ -8,7 +8,6 @@ mod tests {
     use crate::tests::asserts::{assert_contains, assert_contains_all, assert_response_status};
     use crate::tests::{create_namespace, ensure_admin_user, setup_pool_and_tokens};
     use actix_web::{http, test};
-    use serde::de;
 
     const NAMESPACE_ENDPOINT: &str = "/api/v1/namespaces";
 
@@ -60,14 +59,17 @@ mod tests {
         let resp = post_request(&pool, &admin_token, NAMESPACE_ENDPOINT, &content).await;
         let resp = assert_response_status(resp, http::StatusCode::CREATED).await;
 
-        let created_ns_url = resp.headers().get("Location").unwrap().to_str().unwrap();
+        let headers = resp.headers().clone();
+        let created_ns_url = headers.get("Location").unwrap().to_str().unwrap();
+        let created_ns_from_create: Namespace = test::read_body_json(resp).await;
 
         let resp = get_request(&pool, &admin_token, &created_ns_url).await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
 
-        let created_ns: Namespace = test::read_body_json(resp).await;
-        assert_eq!(created_ns.name, content.name);
-        assert_eq!(created_ns.description, content.description);
+        let created_ns_from_get: Namespace = test::read_body_json(resp).await;
+        assert_eq!(created_ns_from_get.name, content.name);
+        assert_eq!(created_ns_from_get.description, content.description);
+        assert_eq!(created_ns_from_create, created_ns_from_get);
 
         let patch_content = UpdateNamespace {
             name: Some("test_namespace_patch".to_string()),

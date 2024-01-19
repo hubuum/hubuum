@@ -7,7 +7,7 @@ use serde::Serialize;
 use serde_json::json;
 use std::fmt;
 
-use tracing::{debug, error, trace};
+use tracing::{debug, error};
 
 #[derive(Debug, Serialize)]
 pub enum ApiError {
@@ -117,63 +117,6 @@ impl From<DieselError> for ApiError {
             }
         }
     }
-}
-
-pub trait ApiErrorMappable {
-    fn map_to_api_error(&self, message: &str) -> ApiError;
-}
-
-impl ApiErrorMappable for argon2::Error {
-    fn map_to_api_error(&self, message: &str) -> ApiError {
-        ApiError::HashError(message.to_string())
-    }
-}
-
-impl ApiErrorMappable for PoolError {
-    fn map_to_api_error(&self, message: &str) -> ApiError {
-        ApiError::DbConnectionError(message.to_string())
-    }
-}
-
-impl ApiErrorMappable for DieselError {
-    fn map_to_api_error(&self, message: &str) -> ApiError {
-        match self {
-            DieselError::NotFound => ApiError::NotFound(message.to_string()),
-            DieselError::DatabaseError(DatabaseErrorKind::UniqueViolation, _) => {
-                ApiError::Conflict(format!("{} ({})", message, self))
-            }
-            DieselError::DatabaseError(DatabaseErrorKind::ForeignKeyViolation, _) => {
-                ApiError::Conflict(format!("{} ({})", message, self))
-            }
-            DieselError::QueryBuilderError(_) => {
-                ApiError::BadRequest(format!("{} (Check your query fields: {})", message, self))
-            }
-            _ => ApiError::DatabaseError(message.to_string()),
-        }
-    }
-}
-
-pub fn map_error<E: ApiErrorMappable + std::fmt::Debug>(error: E, message: &str) -> ApiError {
-    let new_error = error.map_to_api_error(message);
-    if new_error.status_code().as_u16() >= 500 {
-        trace!(
-            message = "Mapped error to api error",
-            original_error = ?error,
-            original_message = message,
-            original_error_type = ?std::any::type_name::<E>(),
-            new_error = ?new_error,
-            new_error_message = new_error.to_string()
-        );
-    } else {
-        trace!(
-            message = "Mapped error to api error",
-            original_error = ?error,
-            original_message = message,
-            new_error = ?new_error,
-            new_error_message = new_error.to_string()
-        );
-    }
-    new_error
 }
 
 /// Ensure that json deserialization errors are reported as a bad request and

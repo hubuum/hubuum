@@ -12,7 +12,6 @@ lazy_static! {
     static ref NO_CONTENT_STATUS_CODES: HashSet<StatusCode> = {
         let mut m = HashSet::new();
         m.insert(StatusCode::NO_CONTENT);
-        m.insert(StatusCode::CREATED);
         m.insert(StatusCode::RESET_CONTENT);
         m.insert(StatusCode::NOT_MODIFIED);
         m
@@ -52,9 +51,9 @@ pub fn json_response_with_header<T: Serialize>(
     }
 }
 
-pub fn json_response_created(location: &str) -> HttpResponse {
+pub fn json_response_created<T: Serialize>(object: T, location: &str) -> HttpResponse {
     let mut headers = HashMap::new();
     headers.insert("Location", location);
 
-    json_response_with_header(serde_json::Value::Null, StatusCode::CREATED, Some(headers))
+    json_response_with_header(object, StatusCode::CREATED, Some(headers))
 }

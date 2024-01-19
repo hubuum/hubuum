@@ -42,6 +42,7 @@ pub async fn create_group(
     let group = new_group.save(&pool).await?;
 
     Ok(json_response_created(
+        &group,
         format!("/api/v1/iam/groups/{}", group.id).as_str(),
     ))
 }

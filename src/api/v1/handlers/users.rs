@@ -37,10 +37,11 @@ pub async fn create_user(
         new_user = new_user.username.as_str()
     );
 
-    let result = new_user.into_inner().save(&pool).await?;
+    let user = new_user.into_inner().save(&pool).await?;
 
     Ok(json_response_created(
-        format!("/api/v1/iam/users/{}", result.id).as_str(),
+        &user,
+        format!("/api/v1/iam/users/{}", user.id).as_str(),
     ))
 }
 

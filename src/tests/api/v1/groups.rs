@@ -65,7 +65,9 @@ mod tests {
         let resp = post_request(&pool, &admin_token, GROUPS_ENDPOINT, &new_group).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
 
-        let created_group_url = resp.headers().get("Location").unwrap().to_str().unwrap();
+        let headers = resp.headers().clone();
+        let created_group_url = headers.get("Location").unwrap().to_str().unwrap();
+        let created_group_from_create: Group = test::read_body_json(resp).await;
         let resp = get_request(&pool, &admin_token, created_group_url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let created_group: Group = test::read_body_json(resp).await;
@@ -75,6 +77,10 @@ mod tests {
             created_group_url,
             &format!("{}/{}", GROUPS_ENDPOINT, created_group.id)
         );
+
+        assert_eq!(created_group, created_group_from_create);
+        assert_eq!(new_group.groupname, created_group_from_create.groupname);
+        assert_eq!(new_group.description, Some(created_group.description));
 
         // And only admins can delete groups...
         let resp = delete_request(&pool, &normal_token, &created_group_url).await;

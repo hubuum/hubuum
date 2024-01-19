@@ -69,15 +69,20 @@ mod tests {
         let resp = post_request(&pool, &admin_token, USERS_ENDPOINT, &new_user).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
 
-        let created_user_url = resp.headers().get("Location").unwrap().to_str().unwrap();
+        let headers = resp.headers().clone();
+        let created_user_url = headers.get("Location").unwrap().to_str().unwrap();
+        let created_user_from_create: User = test::read_body_json(resp).await;
+
         let resp = get_request(&pool, &admin_token, created_user_url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let created_user: User = test::read_body_json(resp).await;
+        let created_user_from_get: User = test::read_body_json(resp).await;
+
+        assert_eq!(created_user_from_create, created_user_from_get);
 
         // Validate that the location is what we expect
         assert_eq!(
             created_user_url,
-            &format!("{}/{}", USERS_ENDPOINT, created_user.id)
+            &format!("{}/{}", USERS_ENDPOINT, created_user_from_get.id)
         );
 
         // And only admins can delete users...
