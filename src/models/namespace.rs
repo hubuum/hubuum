@@ -125,7 +125,7 @@ impl NamespaceGenerics for NamespaceID {
     }
 
     async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        use crate::schema::namespaces::dsl::*;
+        use crate::schema::namespaces::dsl::{id, namespaces};
 
         let mut conn = pool.get()?;
         let namespace = namespaces

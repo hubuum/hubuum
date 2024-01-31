@@ -70,7 +70,7 @@ CREATE TABLE hubuumclass (
     id SERIAL PRIMARY KEY,
     name VARCHAR NOT NULL UNIQUE,
     namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
-    json_schema JSONB NOT NULL,
+    json_schema JSONB DEFAULT '{}'::jsonb NOT NULL,
     validate_schema BOOLEAN NOT NULL,
     description VARCHAR NOT NULL
 );
@@ -80,7 +80,7 @@ CREATE TABLE hubuumobject (
     name VARCHAR NOT NULL,
     namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
     hubuum_class_id INT REFERENCES hubuumclass (id) ON DELETE CASCADE NOT NULL,
-    data JSONB NOT NULL,
+    data JSONB DEFAULT '{}'::jsonb NOT NULL,
     description VARCHAR NOT NULL,
     UNIQUE (name, namespace_id)
 );
