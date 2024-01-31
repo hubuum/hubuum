@@ -31,51 +31,40 @@ CREATE TABLE namespaces (
     description VARCHAR NOT NULL
 );
 
-CREATE TABLE user_namespacepermissions (
-    id SERIAL PRIMARY KEY,
-    namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
-    user_id INT REFERENCES users (id) ON DELETE CASCADE NOT NULL,
-    has_create BOOLEAN NOT NULL,
-    has_read BOOLEAN NOT NULL,
-    has_update BOOLEAN NOT NULL,
-    has_delete BOOLEAN NOT NULL,
-    has_delegate BOOLEAN NOT NULL,
-    UNIQUE (namespace_id, user_id)
-);
-
-CREATE TABLE group_namespacepermissions (
+CREATE TABLE namespacepermissions (
     id SERIAL PRIMARY KEY,
     namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
     group_id INT REFERENCES groups (id) ON DELETE CASCADE NOT NULL,
-    has_create BOOLEAN NOT NULL,
-    has_read BOOLEAN NOT NULL,
-    has_update BOOLEAN NOT NULL,
-    has_delete BOOLEAN NOT NULL,
-    has_delegate BOOLEAN NOT NULL,
+    has_create_object BOOLEAN NOT NULL,
+    has_create_class BOOLEAN NOT NULL,
+    has_read_namespace BOOLEAN NOT NULL,
+    has_update_namespace BOOLEAN NOT NULL,
+    has_delete_namespace BOOLEAN NOT NULL,
+    has_delegate_namespace BOOLEAN NOT NULL,
     UNIQUE (namespace_id, group_id)
 );
 
-CREATE TABLE user_datapermissions (
-    id SERIAL PRIMARY KEY,
-    namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
-    user_id INT DEFAULT NULL REFERENCES users (id) ON DELETE CASCADE NOT NULL,
-    has_create BOOLEAN NOT NULL,
-    has_read BOOLEAN NOT NULL,
-    has_update BOOLEAN NOT NULL,
-    has_delete BOOLEAN NOT NULL,
-    UNIQUE (namespace_id, user_id)
-);
-
-CREATE TABLE group_datapermissions (
+CREATE TABLE classpermissions (
     id SERIAL PRIMARY KEY,
     namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
     group_id INT DEFAULT NULL REFERENCES groups (id) ON DELETE CASCADE NOT NULL,
-    has_create BOOLEAN NOT NULL,
-    has_read BOOLEAN NOT NULL,
-    has_update BOOLEAN NOT NULL,
-    has_delete BOOLEAN NOT NULL,
+    has_create_object BOOLEAN NOT NULL,
+    has_read_class BOOLEAN NOT NULL,
+    has_update_class BOOLEAN NOT NULL,
+    has_delete_class BOOLEAN NOT NULL,
     UNIQUE (namespace_id, group_id)
 );
+
+CREATE TABLE objectpermissions (
+    id SERIAL PRIMARY KEY,
+    namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
+    group_id INT DEFAULT NULL REFERENCES groups (id) ON DELETE CASCADE NOT NULL,
+    has_read_object BOOLEAN NOT NULL,
+    has_update_object BOOLEAN NOT NULL,
+    has_delete_object BOOLEAN NOT NULL,
+    UNIQUE (namespace_id, group_id)
+);
+
 
 CREATE TABLE hubuumclass (
     id SERIAL PRIMARY KEY,
@@ -96,26 +85,32 @@ CREATE TABLE hubuumobject (
     UNIQUE (name, namespace_id)
 );
 
+----------------------
+---- Indexes
+----------------------
+
+---- Users and groups
 CREATE INDEX idx_users_username ON users(username);
 CREATE INDEX idx_groups_groupname ON groups(groupname);
-CREATE INDEX idx_namespaces_name ON namespaces(name);
 CREATE INDEX idx_user_groups_user_id ON user_groups(user_id);
 CREATE INDEX idx_user_groups_group_id ON user_groups(group_id);
+
+---- Namespaces and tokens
+CREATE INDEX idx_namespaces_name ON namespaces(name);
 CREATE INDEX idx_tokens_user_id ON tokens(user_id);
 
-CREATE INDEX idx_user_namespacepermissions_namespace_id ON user_namespacepermissions(namespace_id);
-CREATE INDEX idx_user_namespacepermissions_user_id ON user_namespacepermissions(user_id);
-
-CREATE INDEX idx_user_datapermissions_namespace_id ON user_datapermissions(namespace_id);
-CREATE INDEX idx_user_datapermissions_user_id ON user_datapermissions(user_id);
-
-CREATE INDEX idx_group_namespacepermissions_namespace_id ON group_namespacepermissions(namespace_id);
-CREATE INDEX idx_group_namespacepermissions_group_id ON group_namespacepermissions(group_id);
-
-CREATE INDEX idx_group_datapermissions_namespace_id ON group_datapermissions(namespace_id);
-CREATE INDEX idx_group_datapermissions_group_id ON group_datapermissions(group_id);
-
+---- Classes and objects
 CREATE INDEX idx_hubuumclass_namespace_id ON hubuumclass(namespace_id);
 CREATE INDEX idx_hubuumobject_namespace_id ON hubuumobject(namespace_id);
 CREATE INDEX idx_hubuumobject_hubuum_class_id ON hubuumobject(hubuum_class_id);
+
+---- Permissions
+CREATE INDEX idx_namespacepermissions_namespace_id ON namespacepermissions(namespace_id);
+CREATE INDEX idx_namespacepermissions_group_id ON namespacepermissions(group_id);
+
+CREATE INDEX idx_classpermissions_namespace_id ON classpermissions(namespace_id);
+CREATE INDEX idx_classpermissions_group_id ON classpermissions(group_id);
+
+CREATE INDEX idx_objectpermissions_namespace_id ON classpermissions(namespace_id);
+CREATE INDEX idx_objectpermissions_group_id ON classpermissions(group_id);
 

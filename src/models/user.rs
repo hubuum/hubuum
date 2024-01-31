@@ -236,9 +236,53 @@ impl UserID {
             .first::<User>(&mut pool.get()?)?)
     }
 
+    pub async fn group_ids(&self, pool: &DbPool) -> Result<Vec<i32>, ApiError> {
+        use crate::schema::user_groups::dsl::*;
+
+        let mut conn = pool.get()?;
+        let result = user_groups
+            .filter(user_id.eq(self.0))
+            .select(group_id)
+            .load::<i32>(&mut conn)?;
+
+        Ok(result)
+    }
+
     pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::users::dsl::*;
         Ok(diesel::delete(users.filter(id.eq(self.0))).execute(&mut pool.get()?)?)
+    }
+
+    /// Generate a subquery to get all group IDs for a user.
+    ///
+    /// Note that this does not execute the query, it only creates it.
+    ///
+    /// ## Example
+    ///
+    /// Check if a user has a specific class permission to a given namespace ID
+    ///
+    /// ```
+    /// let group_id_subquery = user_id.group_ids_subquery();
+    ///
+    /// let base_query = classpermissions
+    /// .into_boxed()
+    /// .filter(namespace_id.eq(self.namespace_id))
+    /// .filter(group_id.eq_any(group_id_subquery));
+    ///
+    /// let result = PermissionFilter::filter(permission, base_query)
+    /// .first::<ClassPermission>(&mut conn)
+    /// .optional()?;
+    /// ```
+    ///
+    pub fn group_ids_subquery<'a>(
+        &self,
+    ) -> crate::schema::user_groups::BoxedQuery<'a, diesel::pg::Pg, diesel::sql_types::Integer>
+    {
+        use crate::schema::user_groups::dsl::*;
+        user_groups
+            .filter(user_id.eq(self.0))
+            .select(group_id)
+            .into_boxed()
     }
 }
 

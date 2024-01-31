@@ -6,7 +6,7 @@ mod tests {
 
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_contains, assert_contains_all, assert_response_status};
-    use crate::tests::{create_namespace, ensure_admin_user, setup_pool_and_tokens};
+    use crate::tests::{create_namespace, ensure_admin_group, setup_pool_and_tokens};
     use actix_web::{http, test};
 
     const NAMESPACE_ENDPOINT: &str = "/api/v1/namespaces";
@@ -42,6 +42,7 @@ mod tests {
     #[actix_web::test]
     async fn test_create_patch_delete_namespace() {
         let (pool, admin_token, normal_token) = setup_pool_and_tokens().await;
+        let admin_group = ensure_admin_group(&pool).await;
 
         let resp = get_request(&pool, "", NAMESPACE_ENDPOINT).await;
         let _ = assert_response_status(resp, http::StatusCode::UNAUTHORIZED).await;
@@ -49,8 +50,7 @@ mod tests {
         let content = NewNamespaceRequest {
             name: "test_namespace_create".to_string(),
             description: "test namespace create description".to_string(),
-            assign_to_user_id: Some(ensure_admin_user(&pool).await.id),
-            assign_to_group_id: None,
+            group_id: admin_group.id,
         };
 
         let resp = post_request(&pool, &normal_token, NAMESPACE_ENDPOINT, &content).await;

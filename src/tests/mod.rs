@@ -17,7 +17,6 @@ use crate::errors::ApiError;
 use crate::models::group::GroupID;
 use crate::models::group::{Group, NewGroup};
 use crate::models::namespace::{Namespace, NewNamespace};
-use crate::models::permissions::Assignee;
 use crate::models::user::{NewUser, User};
 
 use crate::utilities::auth::generate_random_password;
@@ -170,7 +169,7 @@ pub fn get_config_sync() -> AppConfig {
 
 pub async fn create_namespace(pool: &DbPool, ns_name: &str) -> Result<Namespace, ApiError> {
     let admin_group = ensure_admin_group(pool).await;
-    let assignee = Assignee::Group(GroupID(admin_group.id));
+    let assignee = GroupID(admin_group.id);
 
     NewNamespace {
         name: ns_name.to_string(),

@@ -1,310 +1,181 @@
 use diesel::prelude::*;
+
 use serde::{Deserialize, Serialize};
 
-use crate::models::group::GroupID;
-use crate::models::namespace::{Namespace, NamespaceID};
-use crate::models::user::UserID;
-
-use crate::db::DbPool;
-
-use crate::schema::group_datapermissions;
-use crate::schema::group_namespacepermissions;
-use crate::schema::namespaces;
-use crate::schema::user_datapermissions;
-use crate::schema::user_namespacepermissions;
-
-use crate::errors::ApiError;
-
-use std::collections::HashSet;
+use crate::schema::classpermissions;
+use crate::schema::namespacepermissions;
+use crate::schema::objectpermissions;
 
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NamespacePermissions {
-    Create,
-    Read,
-    Update,
-    Delete,
-    Delegate,
+    CreateClass,
+    CreateObject,
+    ReadCollection,
+    UpdateCollection,
+    DeleteCollection,
+    DelegateCollection,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum DataPermissions {
-    Create,
-    Read,
-    Update,
-    Delete,
+pub enum ClassPermissions {
+    CreateObject,
+    ReadClass,
+    UpdateClass,
+    DeleteClass,
 }
 
-#[derive(Serialize, Deserialize)]
-pub enum Assignee {
-    Group(GroupID),
-    User(UserID),
+#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ObjectPermissions {
+    ReadObject,
+    UpdateObject,
+    DeleteObject,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct NamespacePermissionAssignment {
-    pub assignee: Assignee,
-    pub permissions: HashSet<NamespacePermissions>,
+pub trait PermissionFilter<'a, Q> {
+    fn filter(self, query: Q) -> Q;
 }
 
-impl NamespacePermissions {
-    pub fn db_field(&self) -> &'static str {
+impl<'a> PermissionFilter<'a, classpermissions::BoxedQuery<'a, diesel::pg::Pg>>
+    for ClassPermissions
+{
+    fn filter(
+        self,
+        query: classpermissions::BoxedQuery<diesel::pg::Pg>,
+    ) -> classpermissions::BoxedQuery<diesel::pg::Pg> {
         match self {
-            NamespacePermissions::Create => "has_create",
-            NamespacePermissions::Read => "has_read",
-            NamespacePermissions::Update => "has_update",
-            NamespacePermissions::Delete => "has_delete",
-            NamespacePermissions::Delegate => "has_delegate",
+            ClassPermissions::CreateObject => {
+                query.filter(classpermissions::has_create_object.eq(true))
+            }
+            ClassPermissions::ReadClass => query.filter(classpermissions::has_read_class.eq(true)),
+            ClassPermissions::UpdateClass => {
+                query.filter(classpermissions::has_update_class.eq(true))
+            }
+            ClassPermissions::DeleteClass => {
+                query.filter(classpermissions::has_delete_class.eq(true))
+            }
         }
     }
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct DataPermission {
-    pub assignee: Assignee,
-    pub permissions: HashSet<DataPermissions>,
-}
-
-impl DataPermissions {
-    pub fn db_field(&self) -> &'static str {
+impl<'a> PermissionFilter<'a, objectpermissions::BoxedQuery<'a, diesel::pg::Pg>>
+    for ObjectPermissions
+{
+    fn filter(
+        self,
+        query: objectpermissions::BoxedQuery<diesel::pg::Pg>,
+    ) -> objectpermissions::BoxedQuery<diesel::pg::Pg> {
         match self {
-            DataPermissions::Create => "has_create",
-            DataPermissions::Read => "has_read",
-            DataPermissions::Update => "has_update",
-            DataPermissions::Delete => "has_delete",
+            ObjectPermissions::ReadObject => {
+                query.filter(objectpermissions::has_read_object.eq(true))
+            }
+            ObjectPermissions::UpdateObject => {
+                query.filter(objectpermissions::has_update_object.eq(true))
+            }
+            ObjectPermissions::DeleteObject => {
+                query.filter(objectpermissions::has_delete_object.eq(true))
+            }
         }
     }
 }
 
-// Base permission models.
-#[derive(Serialize, Deserialize, Queryable)]
-#[diesel(table_name = user_namespacepermissions)]
-pub struct UserNamespacePermission {
-    pub id: i32,
-    pub namespace_id: i32,
-    pub user_id: i32,
-    pub has_create: bool,
-    pub has_read: bool,
-    pub has_update: bool,
-    pub has_delete: bool,
-    pub has_delegate: bool,
+impl<'a> PermissionFilter<'a, namespacepermissions::BoxedQuery<'a, diesel::pg::Pg>>
+    for NamespacePermissions
+{
+    fn filter(
+        self,
+        query: namespacepermissions::BoxedQuery<diesel::pg::Pg>,
+    ) -> namespacepermissions::BoxedQuery<diesel::pg::Pg> {
+        match self {
+            NamespacePermissions::CreateClass => {
+                query.filter(namespacepermissions::has_create_class.eq(true))
+            }
+            NamespacePermissions::CreateObject => {
+                query.filter(namespacepermissions::has_create_object.eq(true))
+            }
+            NamespacePermissions::ReadCollection => {
+                query.filter(namespacepermissions::has_read_namespace.eq(true))
+            }
+            NamespacePermissions::UpdateCollection => {
+                query.filter(namespacepermissions::has_update_namespace.eq(true))
+            }
+            NamespacePermissions::DeleteCollection => {
+                query.filter(namespacepermissions::has_delete_namespace.eq(true))
+            }
+            NamespacePermissions::DelegateCollection => {
+                query.filter(namespacepermissions::has_delegate_namespace.eq(true))
+            }
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Queryable)]
-#[diesel(table_name = group_namespacepermissions)]
-pub struct GroupNamespacePermission {
+#[diesel(table_name = namespacepermissions)]
+pub struct NamespacePermission {
     pub id: i32,
     pub namespace_id: i32,
     pub group_id: i32,
-    pub has_create: bool,
-    pub has_read: bool,
-    pub has_update: bool,
-    pub has_delete: bool,
-    pub has_delegate: bool,
+    pub has_create_object: bool,
+    pub has_create_class: bool,
+    pub has_read_namespace: bool,
+    pub has_update_namespace: bool,
+    pub has_delete_namespace: bool,
+    pub has_delegate_namespace: bool,
 }
 
 #[derive(Serialize, Deserialize, Queryable)]
-#[diesel(table_name = user_datapermissions)]
-pub struct UserDataPermission {
-    pub id: i32,
-    pub namespace_id: i32,
-    pub user_id: i32,
-    pub has_create: bool,
-    pub has_read: bool,
-    pub has_update: bool,
-    pub has_delete: bool,
-}
-
-#[derive(Serialize, Deserialize, Queryable)]
-#[diesel(table_name = group_datapermissions)]
-pub struct GroupDataPermission {
+#[diesel(table_name = classpermissions)]
+pub struct ClassPermission {
     pub id: i32,
     pub namespace_id: i32,
     pub group_id: i32,
-    pub has_create: bool,
-    pub has_read: bool,
-    pub has_update: bool,
-    pub has_delete: bool,
+    pub has_create_object: bool,
+    pub has_read_class: bool,
+    pub has_update_class: bool,
+    pub has_delete_class: bool,
+}
+
+#[derive(Serialize, Deserialize, Queryable)]
+#[diesel(table_name = objectpermissions)]
+pub struct ObjectPermission {
+    pub id: i32,
+    pub namespace_id: i32,
+    pub group_id: i32,
+    pub has_read_object: bool,
+    pub has_update_object: bool,
+    pub has_delete_object: bool,
 }
 
 // Insertable permission models.
 #[derive(Serialize, Deserialize, Insertable)]
-#[diesel(table_name = user_namespacepermissions)]
-pub struct NewUserNamespacePermission {
-    pub namespace_id: i32,
-    pub user_id: i32,
-    pub has_create: bool,
-    pub has_read: bool,
-    pub has_update: bool,
-    pub has_delete: bool,
-    pub has_delegate: bool,
-}
-
-#[derive(Serialize, Deserialize, Insertable)]
-#[diesel(table_name = group_namespacepermissions)]
-pub struct NewGroupNamespacePermission {
+#[diesel(table_name = namespacepermissions)]
+pub struct NewNamespacePermission {
     pub namespace_id: i32,
     pub group_id: i32,
-    pub has_create: bool,
-    pub has_read: bool,
-    pub has_update: bool,
-    pub has_delete: bool,
-    pub has_delegate: bool,
+    pub has_create_object: bool,
+    pub has_create_class: bool,
+    pub has_read_namespace: bool,
+    pub has_update_namespace: bool,
+    pub has_delete_namespace: bool,
+    pub has_delegate_namespace: bool,
 }
 
 #[derive(Serialize, Deserialize, Insertable)]
-#[diesel(table_name = user_datapermissions)]
-pub struct NewUserDataPermission {
-    pub namespace_id: i32,
-    pub user_id: i32,
-    pub has_create: bool,
-    pub has_read: bool,
-    pub has_update: bool,
-    pub has_delete: bool,
-}
-
-#[derive(Serialize, Deserialize, Insertable)]
-#[diesel(table_name = group_datapermissions)]
-pub struct NewGroupDataPermission {
+#[diesel(table_name = classpermissions)]
+pub struct NewClassPermission {
     pub namespace_id: i32,
     pub group_id: i32,
-    pub has_create: bool,
-    pub has_read: bool,
-    pub has_update: bool,
-    pub has_delete: bool,
+    pub has_create_object: bool,
+    pub has_read_class: bool,
+    pub has_update_class: bool,
+    pub has_delete_class: bool,
 }
 
-/// Check if a user has a specific permission to a given namespace ID
-///
-/// ## Arguments
-///
-/// * pool - Database connection pool
-/// * user_id - ID of the user to check permissions for
-/// * permission_type - Type of permission to check
-/// * namespace_target_id - ID of the namespace to check permissions for
-///
-/// ## Returns
-/// * Ok(Namespace) - Namespace if the user has the requested permission
-/// * Err(ApiError) - Always returns 404 if there is no match (we never do 403/401)
-pub async fn user_can_on(
-    pool: &DbPool,
-    user_id: UserID,
-    permission_type: NamespacePermissions,
-    namespace_target: NamespaceID,
-) -> Result<Namespace, ApiError> {
-    use crate::schema::user_groups;
-    use diesel::prelude::*;
-
-    let mut conn = pool.get()?;
-    let permission_field = permission_type.db_field();
-    let namespace_target_id = namespace_target.0;
-    let uid = user_id.0;
-
-    // Check direct user permissions
-    let user_permission: bool = user_namespacepermissions::table
-        .filter(user_namespacepermissions::namespace_id.eq(namespace_target_id))
-        .filter(user_namespacepermissions::user_id.eq(uid))
-        .select(diesel::dsl::sql::<diesel::sql_types::Bool>(&format!(
-            "bool_or({})",
-            permission_field
-        )))
-        .first(&mut conn)
-        .unwrap_or(false);
-
-    // If user has direct permissions, return the namespace
-    if user_permission {
-        let namespace = namespaces::table
-            .filter(namespaces::id.eq(namespace_target_id))
-            .first(&mut conn)?;
-        return Ok(namespace);
-    }
-
-    // Check group permissions only if direct user permission check failed
-    let group_permission: bool = group_namespacepermissions::table
-        .inner_join(
-            user_groups::table.on(group_namespacepermissions::group_id.eq(user_groups::group_id)),
-        )
-        .filter(group_namespacepermissions::namespace_id.eq(namespace_target_id))
-        .filter(user_groups::user_id.eq(uid))
-        .select(diesel::dsl::sql::<diesel::sql_types::Bool>(&format!(
-            "bool_or({})",
-            permission_field
-        )))
-        .first(&mut conn)
-        .unwrap_or(false);
-
-    if group_permission {
-        let namespace = namespaces::table
-            .filter(namespaces::id.eq(namespace_target_id))
-            .first(&mut conn)?;
-        return Ok(namespace);
-    }
-
-    // If neither direct nor group permissions are found, return an error
-    Err(ApiError::NotFound("Not found".to_string()))
-}
-
-/// Check if a user has a specific permission to any namespace
-///
-/// ## Arguments
-/// * pool - Database connection pool
-/// * user_id - ID of the user to check permissions for
-/// * permission_type - Type of permission to check
-///
-/// ## Returns
-/// * Ok(Vec<Namespace>) - List of namespaces the user has the requested permission for.
-///                        If no matching namespaces are found, an empty list is returned
-/// * Err(ApiError) - On query errors only.
-pub async fn user_can_on_any(
-    pool: &DbPool,
-    user_id: UserID,
-    permission_type: NamespacePermissions,
-) -> Result<Vec<Namespace>, ApiError> {
-    use crate::schema::user_groups;
-    use diesel::prelude::*;
-
-    let mut conn = pool.get()?;
-    let permission_field = permission_type.db_field();
-
-    let uid = user_id.0;
-
-    // Subquery for direct user permissions
-    let direct_user_permissions = user_namespacepermissions::table
-        .filter(user_namespacepermissions::user_id.eq(uid))
-        .filter(diesel::dsl::sql::<diesel::sql_types::Bool>(&format!(
-            "{} = true",
-            permission_field
-        )))
-        .select(user_namespacepermissions::namespace_id);
-
-    // Subquery for group permissions
-    let group_permissions = group_namespacepermissions::table
-        .inner_join(
-            user_groups::table.on(group_namespacepermissions::group_id.eq(user_groups::group_id)),
-        )
-        .filter(user_groups::user_id.eq(uid))
-        .filter(diesel::dsl::sql::<diesel::sql_types::Bool>(&format!(
-            "{} = true",
-            permission_field
-        )))
-        .select(group_namespacepermissions::namespace_id);
-
-    // Fetch IDs for both queries
-    let mut user_namespace_ids: Vec<i32> = direct_user_permissions.load(&mut conn)?;
-    let mut group_namespace_ids: Vec<i32> = group_permissions.load(&mut conn)?;
-
-    // Combine and deduplicate namespace IDs in Rust, this is mostly to avoid issues
-    // with the query planner and .distinct() and typing not playing ball.
-    user_namespace_ids.append(&mut group_namespace_ids);
-    let unique_namespace_ids: HashSet<i32> = user_namespace_ids.into_iter().collect();
-
-    // Fetch the namespaces
-    let accessible_namespaces = namespaces::table
-        .filter(namespaces::id.eq_any(unique_namespace_ids))
-        .load::<Namespace>(&mut conn)?;
-
-    if accessible_namespaces.is_empty() {
-        return Ok(vec![]);
-    }
-
-    Ok(accessible_namespaces)
+#[derive(Serialize, Deserialize, Insertable)]
+#[diesel(table_name = objectpermissions)]
+pub struct NewObjectPermission {
+    pub namespace_id: i32,
+    pub group_id: i32,
+    pub has_read_object: bool,
+    pub has_update_object: bool,
+    pub has_delete_object: bool,
 }
