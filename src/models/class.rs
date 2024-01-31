@@ -21,6 +21,62 @@ pub struct HubuumClass {
     pub description: String,
 }
 
+impl HubuumClass {
+    async fn delete(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
+        use crate::schema::hubuumclass::dsl::*;
+
+        let mut conn = pool.get()?;
+        let result = diesel::delete(hubuumclass.filter(id.eq(self.id))).get_result(&mut conn)?;
+
+        Ok(result)
+    }
+}
+
+#[derive(Serialize, Deserialize, Insertable, Clone)]
+#[diesel(table_name = hubuumclass)]
+pub struct NewHubuumClass {
+    pub name: String,
+    pub namespace_id: i32,
+    pub json_schema: serde_json::Value,
+    pub validate_schema: bool,
+    pub description: String,
+}
+
+impl NewHubuumClass {
+    async fn save(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
+        use crate::schema::hubuumclass::dsl::*;
+
+        let mut conn = pool.get()?;
+        let result = diesel::insert_into(hubuumclass)
+            .values(self)
+            .get_result(&mut conn)?;
+
+        Ok(result)
+    }
+}
+#[derive(Serialize, Deserialize, AsChangeset, Clone)]
+#[diesel(table_name = hubuumclass)]
+pub struct UpdateHubuumClass {
+    pub name: Option<String>,
+    pub namespace_id: Option<i32>,
+    pub json_schema: Option<serde_json::Value>,
+    pub validate_schema: Option<bool>,
+    pub description: Option<String>,
+}
+
+impl UpdateHubuumClass {
+    async fn update(&self, class_id: i32, pool: &DbPool) -> Result<HubuumClass, ApiError> {
+        use crate::schema::hubuumclass::dsl::*;
+
+        let mut conn = pool.get()?;
+        let result = diesel::update(hubuumclass.filter(id.eq(class_id)))
+            .set(self)
+            .get_result(&mut conn)?;
+
+        Ok(result)
+    }
+}
+
 pub struct HubuumClassID(pub i32);
 
 pub trait ClassGenerics {
@@ -159,4 +215,48 @@ pub async fn total_class_count(pool: &DbPool) -> Result<i64, ApiError> {
     let count = hubuumclass.count().get_result::<i64>(&mut conn)?;
 
     Ok(count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::{create_namespace, get_pool_and_config};
+    //     use crate::tests::ensure_admin_group;
+
+    async fn verify_no_such_class(id: i32, pool: &DbPool) {
+        match HubuumClassID(id).class(pool).await {
+            Ok(_) => panic!("Class should not exist"),
+            Err(e) => match e {
+                ApiError::NotFound(_) => {}
+                _ => panic!("Unexpected error: {:?}", e),
+            },
+        }
+    }
+
+    #[actix_rt::test]
+    async fn test_creating_class_and_cascade_delete() {
+        let (pool, _) = get_pool_and_config().await;
+
+        let namespace = create_namespace(&pool, "test").await.unwrap();
+        //        let admin_group = ensure_admin_group(&pool).await;
+
+        let class = NewHubuumClass {
+            name: "test".to_string(),
+            namespace_id: namespace.id,
+            json_schema: serde_json::Value::Null,
+            validate_schema: false,
+            description: "test".to_string(),
+        };
+
+        let class = class.save(&pool).await.unwrap();
+
+        assert_eq!(class.namespace_id(&pool).await.unwrap(), namespace.id);
+        assert_eq!(class.name, "test");
+        assert_eq!(class.description, "test");
+        assert_eq!(class.json_schema, serde_json::Value::Null);
+
+        // Deleting the namespace should cascade away the class
+        namespace.delete(&pool).await.unwrap();
+        verify_no_such_class(class.id, &pool).await;
+    }
 }

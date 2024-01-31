@@ -21,7 +21,7 @@ use crate::models::user::{NewUser, User};
 
 use crate::utilities::auth::generate_random_password;
 
-async fn create_user_with_params(pool: &DbPool, username: &str, password: &str) -> User {
+pub async fn create_user_with_params(pool: &DbPool, username: &str, password: &str) -> User {
     let result = NewUser {
         username: username.to_string(),
         password: password.to_string(),
@@ -39,12 +39,12 @@ async fn create_user_with_params(pool: &DbPool, username: &str, password: &str) 
     result.unwrap()
 }
 
-async fn create_test_user(pool: &DbPool) -> User {
+pub async fn create_test_user(pool: &DbPool) -> User {
     let username = "admin".to_string() + &generate_random_password(16);
     create_user_with_params(pool, &username, "testpassword").await
 }
 
-async fn create_test_admin(pool: &DbPool) -> User {
+pub async fn create_test_admin(pool: &DbPool) -> User {
     let username = "user".to_string() + &generate_random_password(16);
     let user = create_user_with_params(pool, &username, "testadminpassword").await;
     let admin_group = ensure_admin_group(pool).await;
@@ -58,7 +58,7 @@ async fn create_test_admin(pool: &DbPool) -> User {
     }
 }
 
-async fn create_test_group(pool: &DbPool) -> Group {
+pub async fn create_test_group(pool: &DbPool) -> Group {
     let groupname = "group".to_string() + &generate_random_password(16);
     let result = NewGroup {
         groupname: groupname.to_string(),
@@ -76,7 +76,7 @@ async fn create_test_group(pool: &DbPool) -> Group {
     result.unwrap()
 }
 
-async fn ensure_user(pool: &DbPool, uname: &str) -> User {
+pub async fn ensure_user(pool: &DbPool, uname: &str) -> User {
     use crate::schema::users::dsl::*;
 
     let mut conn = pool.get().expect("Failed to get db connection");
@@ -110,7 +110,7 @@ async fn ensure_user(pool: &DbPool, uname: &str) -> User {
     result.unwrap()
 }
 
-async fn ensure_admin_user(pool: &DbPool) -> User {
+pub async fn ensure_admin_user(pool: &DbPool) -> User {
     let user = ensure_user(pool, "admin").await;
 
     let admin_group = ensure_admin_group(pool).await;
@@ -120,11 +120,11 @@ async fn ensure_admin_user(pool: &DbPool) -> User {
     user
 }
 
-async fn ensure_normal_user(pool: &DbPool) -> User {
+pub async fn ensure_normal_user(pool: &DbPool) -> User {
     ensure_user(pool, "normal").await
 }
 
-async fn ensure_admin_group(pool: &DbPool) -> Group {
+pub async fn ensure_admin_group(pool: &DbPool) -> Group {
     use crate::schema::groups::dsl::*;
 
     let mut conn = pool.get().expect("Failed to get db connection");
@@ -165,6 +165,13 @@ pub fn get_config_sync() -> AppConfig {
         .build()
         .expect("Failed to create Tokio runtime");
     rt.block_on(async { get_config().await }).clone()
+}
+
+pub async fn get_pool_and_config() -> (DbPool, AppConfig) {
+    let config = get_config().await.clone();
+    let pool = init_pool(&config.database_url, 3);
+
+    (pool, config)
 }
 
 pub async fn create_namespace(pool: &DbPool, ns_name: &str) -> Result<Namespace, ApiError> {
