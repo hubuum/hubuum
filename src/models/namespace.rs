@@ -41,13 +41,7 @@ impl Namespace {
         user_id: UserID,
         permission_type: NamespacePermissions,
     ) -> Result<Self, ApiError> {
-        user_can_on(
-            pool,
-            user_id,
-            permission_type,
-            NamespaceOrId::Namespace(self.clone()),
-        )
-        .await
+        user_can_on(pool, user_id, permission_type, self.clone()).await
     }
 
     /// Update a namespace
@@ -106,16 +100,31 @@ impl NamespaceID {
         user_id: UserID,
         permission_type: NamespacePermissions,
     ) -> Result<Namespace, ApiError> {
-        user_can_on(
-            pool,
-            user_id,
-            permission_type,
-            NamespaceOrId::NamespaceId(*self),
-        )
-        .await
+        user_can_on(pool, user_id, permission_type, self.clone()).await
+    }
+}
+
+pub trait NamespaceGenerics {
+    fn id(&self) -> i32;
+    async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError>;
+}
+
+impl NamespaceGenerics for Namespace {
+    fn id(&self) -> i32 {
+        self.id
     }
 
-    pub async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
+    async fn namespace(&self, _: &DbPool) -> Result<Namespace, ApiError> {
+        Ok(self.clone())
+    }
+}
+
+impl NamespaceGenerics for NamespaceID {
+    fn id(&self) -> i32 {
+        self.0
+    }
+
+    async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
         use crate::schema::namespaces::dsl::*;
 
         let mut conn = pool.get()?;
@@ -124,32 +133,6 @@ impl NamespaceID {
             .first::<Namespace>(&mut conn)?;
 
         Ok(namespace)
-    }
-}
-
-pub enum NamespaceOrId {
-    Namespace(Namespace),
-    NamespaceId(NamespaceID),
-}
-
-pub trait NamespaceRef {
-    fn id(&self) -> i32;
-    async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError>;
-}
-
-impl NamespaceRef for NamespaceOrId {
-    fn id(&self) -> i32 {
-        match self {
-            NamespaceOrId::Namespace(ns) => ns.id,
-            NamespaceOrId::NamespaceId(id) => id.0,
-        }
-    }
-
-    async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        match self {
-            NamespaceOrId::Namespace(ns) => Ok(ns.clone()),
-            NamespaceOrId::NamespaceId(id) => id.namespace(pool).await,
-        }
     }
 }
 
@@ -286,11 +269,11 @@ impl NewNamespace {
 /// ## Returns
 /// * Ok(Namespace) - Namespace if the user has the requested permission
 /// * Err(ApiError) - Always returns 404 if there is no match (we never do 403/401)
-pub async fn user_can_on(
+pub async fn user_can_on<T: NamespaceGenerics>(
     pool: &DbPool,
     user_id: UserID,
     permission_type: NamespacePermissions,
-    namespace_ref: NamespaceOrId,
+    namespace_ref: T,
 ) -> Result<Namespace, ApiError> {
     use crate::models::permissions::{NamespacePermission, PermissionFilter};
     use crate::schema::namespacepermissions::dsl::*;
