@@ -19,7 +19,7 @@ pub struct ObjectsByClass {
     pub count: i64,
 }
 
-#[derive(Serialize, Deserialize, Queryable, Insertable, Clone)]
+#[derive(Serialize, Deserialize, Queryable, Clone, PartialEq, Debug)]
 #[diesel(table_name = hubuumobject )]
 pub struct HubuumObject {
     pub id: i32,
@@ -28,6 +28,75 @@ pub struct HubuumObject {
     pub hubuum_class_id: i32,
     pub data: serde_json::Value,
     pub description: String,
+}
+
+impl HubuumObject {
+    pub async fn save(&self, pool: &DbPool) -> Result<HubuumObject, ApiError> {
+        let updated_object = UpdateHubuumObject {
+            name: Some(self.name.clone()),
+            namespace_id: Some(self.namespace_id),
+            hubuum_class_id: Some(self.hubuum_class_id),
+            data: Some(self.data.clone()),
+            description: Some(self.description.clone()),
+        };
+        updated_object.update(self.id, pool).await
+    }
+
+    pub async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
+        use crate::schema::hubuumobject::dsl::*;
+
+        let mut conn = pool.get()?;
+        diesel::delete(hubuumobject.filter(id.eq(self.id))).execute(&mut conn)?;
+
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Insertable)]
+#[diesel(table_name = hubuumobject)]
+pub struct NewHubuumObject {
+    pub name: String,
+    pub namespace_id: i32,
+    pub hubuum_class_id: i32,
+    pub data: serde_json::Value,
+    pub description: String,
+}
+
+impl NewHubuumObject {
+    pub async fn save(&self, pool: &DbPool) -> Result<HubuumObject, ApiError> {
+        use crate::schema::hubuumobject::dsl::*;
+
+        let mut conn = pool.get()?;
+        let result = diesel::insert_into(hubuumobject)
+            .values(self)
+            .get_result::<HubuumObject>(&mut conn)?;
+
+        Ok(result)
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, AsChangeset)]
+#[diesel(table_name = hubuumobject)]
+pub struct UpdateHubuumObject {
+    pub name: Option<String>,
+    pub namespace_id: Option<i32>,
+    pub hubuum_class_id: Option<i32>,
+    pub data: Option<serde_json::Value>,
+    pub description: Option<String>,
+}
+
+impl UpdateHubuumObject {
+    pub async fn update(&self, object_id: i32, pool: &DbPool) -> Result<HubuumObject, ApiError> {
+        use crate::schema::hubuumobject::dsl::*;
+
+        let mut conn = pool.get()?;
+        let result = diesel::update(hubuumobject)
+            .filter(id.eq(object_id))
+            .set(self)
+            .get_result::<HubuumObject>(&mut conn)?;
+
+        Ok(result)
+    }
 }
 
 pub struct HubuumObjectID(pub i32);
@@ -212,4 +281,75 @@ pub async fn objects_per_class_count(pool: &DbPool) -> Result<Vec<ObjectsByClass
     let results = sql_query(raw_query).load::<ObjectsByClass>(&mut conn)?;
 
     Ok(results)
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use crate::models::class::tests::{create_class, get_class, verify_no_such_class};
+    use crate::tests::{create_namespace, get_pool_and_config};
+
+    pub async fn verify_no_such_object(pool: &DbPool, object_id: i32) {
+        use crate::schema::hubuumobject::dsl::*;
+
+        let mut conn = pool.get().unwrap();
+        let result = hubuumobject
+            .filter(id.eq(object_id))
+            .first::<HubuumObject>(&mut conn);
+
+        match result {
+            Ok(_) => panic!("Object {} should not exist", object_id),
+            Err(diesel::result::Error::NotFound) => (),
+            Err(e) => panic!("Error: {}", e),
+        }
+    }
+
+    pub async fn create_object(
+        pool: &DbPool,
+        hubuum_class_id: i32,
+        namespace_id: i32,
+        object_name: &str,
+    ) -> Result<HubuumObject, ApiError> {
+        let object = NewHubuumObject {
+            name: object_name.to_string(),
+            namespace_id,
+            hubuum_class_id,
+            data: serde_json::json!({"test": "data"}),
+            description: "Test object".to_string(),
+        };
+        object.save(pool).await
+    }
+
+    pub async fn get_object(pool: &DbPool, object_id: i32) -> HubuumObject {
+        let object = HubuumObjectID(object_id);
+        let object = object.object(pool).await.unwrap();
+        object
+    }
+
+    #[actix_rt::test]
+    async fn test_creating_object_manual_delete() {
+        let (pool, _) = get_pool_and_config().await;
+        let namespace = create_namespace(&pool, "object_manual_test").await.unwrap();
+        let class = create_class(&pool, &namespace, "test creating object").await;
+
+        let obj_name = "test manual object creation";
+
+        let object = create_object(&pool, class.id, namespace.id, obj_name)
+            .await
+            .unwrap();
+        assert_eq!(object.name, obj_name);
+
+        let fetched_object = get_object(&pool, object.id).await;
+        assert_eq!(fetched_object.name, obj_name);
+        assert_eq!(fetched_object, object);
+        assert_eq!(fetched_object.data, serde_json::json!({"test": "data"}));
+
+        fetched_object.delete(&pool).await.unwrap();
+        verify_no_such_object(&pool, object.id).await;
+
+        class.delete(&pool).await.unwrap();
+        verify_no_such_class(&pool, class.id).await;
+
+        namespace.delete(&pool).await.unwrap();
+    }
 }
