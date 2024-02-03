@@ -35,7 +35,7 @@ export HUBUUM_DATABASE_URL="postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$
 diesel migration run --migration-dir $MIGRATIONS_DIR --database-url $HUBUUM_DATABASE_URL
 
 # Run the tests
-cargo test
+cargo test $@
 
 # Optional: Drop the test database after tests are complete
 PGPASSWORD=$DB_PASSWORD dropdb -h $DB_HOST -p $DB_PORT -U $DB_USER $TEST_DB_NAME

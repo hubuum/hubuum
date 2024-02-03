@@ -292,7 +292,7 @@ pub mod tests {
     #[actix_rt::test]
     async fn test_updating_class_and_deleting_it() {
         let (pool, _) = get_pool_and_config().await;
-        let namespace = create_namespace(&pool, "test").await.unwrap();
+        let namespace = create_namespace(&pool, "updating_class").await.unwrap();
         let class = create_class(&pool, &namespace, "test_updating_class").await;
 
         let update = UpdateHubuumClass {
@@ -321,7 +321,9 @@ pub mod tests {
     #[actix_rt::test]
     async fn test_saving_after_changing_class() {
         let (pool, _) = get_pool_and_config().await;
-        let namespace = create_namespace(&pool, "test").await.unwrap();
+        let namespace = create_namespace(&pool, "test_saving_after_changing_class")
+            .await
+            .unwrap();
         let mut class = create_class(&pool, &namespace, "test saving").await;
 
         class.description = "new description".to_string();

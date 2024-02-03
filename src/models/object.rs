@@ -1,5 +1,6 @@
 use diesel::prelude::*;
-use diesel::sql_types::{BigInt, Integer};
+use diesel::sql_query;
+use diesel::sql_types::{BigInt, Integer, Jsonb, Text};
 use serde::{Deserialize, Serialize};
 
 use crate::db::DbPool;
@@ -19,14 +20,20 @@ pub struct ObjectsByClass {
     pub count: i64,
 }
 
-#[derive(Serialize, Deserialize, Queryable, Clone, PartialEq, Debug)]
-#[diesel(table_name = hubuumobject )]
+#[derive(Serialize, Deserialize, Queryable, Clone, PartialEq, Debug, QueryableByName)]
+#[diesel(table_name = hubuumobject)]
 pub struct HubuumObject {
+    #[diesel(sql_type = Integer)]
     pub id: i32,
+    #[diesel(sql_type = Text)]
     pub name: String,
+    #[diesel(sql_type = Integer)]
     pub namespace_id: i32,
+    #[diesel(sql_type = Integer)]
     pub hubuum_class_id: i32,
+    #[diesel(sql_type = Jsonb)]
     pub data: serde_json::Value,
+    #[diesel(sql_type = Text)]
     pub description: String,
 }
 
@@ -262,6 +269,52 @@ impl ObjectGenerics for HubuumObjectID {
     }
 }
 
+/// Search for HubuumObjects based on a JSON key and value.
+///
+/// Note: This currently only supports searching for a single key and value pair.
+/// Matches are exact, and only strings are supported.
+///
+/// ## Arguments
+///
+/// * `pool` - The database pool to use for the query.
+/// * `key` - The key to search for in the JSON data. Nested keys are supported using dot notation.
+/// * `value` - The value to search for in the JSON data.
+///
+/// ## Returns
+///
+/// * `Ok(Vec<HubuumObject>)` - A vector of HubuumObjects that match the search criteria.
+pub async fn search_data(
+    pool: &DbPool,
+    key: &str,
+    value: &str,
+) -> Result<Vec<HubuumObject>, ApiError> {
+    let mut conn = pool.get()?;
+
+    // Correctly splitting the nested keys and converting them into a PostgreSQL array representation
+    let nested_keys: Vec<&str> = key.split('.').collect();
+    let nested_keys_array = format!(
+        "{{{}}}",
+        nested_keys
+            .iter()
+            .map(|k| format!("\"{}\"", k))
+            .collect::<Vec<String>>()
+            .join(",")
+    );
+
+    let query = diesel::sql_query(format!(
+        "SELECT * FROM hubuumobject WHERE data #>> '{}' = $1",
+        nested_keys_array
+    ))
+    .bind::<Text, _>(value);
+
+    println!(
+        "Query: SELECT * FROM hubuumobject WHERE data #>> '{}' = '{}'",
+        nested_keys_array, value
+    );
+
+    Ok(query.load::<HubuumObject>(&mut conn)?)
+}
+
 pub async fn total_object_count(pool: &DbPool) -> Result<i64, ApiError> {
     use crate::schema::hubuumobject::dsl::*;
 
@@ -272,8 +325,6 @@ pub async fn total_object_count(pool: &DbPool) -> Result<i64, ApiError> {
 }
 
 pub async fn objects_per_class_count(pool: &DbPool) -> Result<Vec<ObjectsByClass>, ApiError> {
-    use diesel::sql_query;
-
     let mut conn = pool.get()?;
 
     let raw_query =
@@ -285,9 +336,43 @@ pub async fn objects_per_class_count(pool: &DbPool) -> Result<Vec<ObjectsByClass
 
 #[cfg(test)]
 pub mod tests {
+
     use super::*;
-    use crate::models::class::tests::{create_class, get_class, verify_no_such_class};
+    use crate::models::class::tests::{create_class, verify_no_such_class};
     use crate::tests::{create_namespace, get_pool_and_config};
+
+    async fn setup_test_objects(
+        pool: &DbPool,
+        namespace: &Namespace,
+        class: &HubuumClass,
+    ) -> Vec<HubuumObject> {
+        let simple_data = serde_json::json!({"key": "value"});
+        let nested_data = serde_json::json!({"key": "value", "nested": {"key": "nested_value"}});
+        let list_data = serde_json::json!({"key": "value", "list": [1, 2, 3]});
+
+        let nid = namespace.id;
+        let hid = class.id;
+
+        let test_objects = vec![
+            ("Object 1", hid, nid, simple_data.clone()),
+            ("Object 2", hid, nid, simple_data.clone()),
+            ("Object 3", hid, nid, simple_data.clone()),
+            ("Object 4", hid, nid, nested_data.clone()),
+            ("Object 5", hid, nid, nested_data.clone()),
+            ("Object 6", hid, nid, list_data.clone()),
+        ];
+
+        let mut ret_vec = Vec::new();
+
+        for (name, hid, nid, object_data) in test_objects {
+            ret_vec.push(
+                create_object(pool, hid, nid, name, object_data)
+                    .await
+                    .unwrap(),
+            );
+        }
+        ret_vec
+    }
 
     pub async fn verify_no_such_object(pool: &DbPool, object_id: i32) {
         use crate::schema::hubuumobject::dsl::*;
@@ -309,12 +394,13 @@ pub mod tests {
         hubuum_class_id: i32,
         namespace_id: i32,
         object_name: &str,
+        object_data: serde_json::Value,
     ) -> Result<HubuumObject, ApiError> {
         let object = NewHubuumObject {
             name: object_name.to_string(),
             namespace_id,
             hubuum_class_id,
-            data: serde_json::json!({"test": "data"}),
+            data: object_data,
             description: "Test object".to_string(),
         };
         object.save(pool).await
@@ -334,7 +420,9 @@ pub mod tests {
 
         let obj_name = "test manual object creation";
 
-        let object = create_object(&pool, class.id, namespace.id, obj_name)
+        let object_data = serde_json::json!({"test": "data"});
+
+        let object = create_object(&pool, class.id, namespace.id, obj_name, object_data.clone())
             .await
             .unwrap();
         assert_eq!(object.name, obj_name);
@@ -342,13 +430,32 @@ pub mod tests {
         let fetched_object = get_object(&pool, object.id).await;
         assert_eq!(fetched_object.name, obj_name);
         assert_eq!(fetched_object, object);
-        assert_eq!(fetched_object.data, serde_json::json!({"test": "data"}));
+        assert_eq!(fetched_object.data, object_data);
 
         fetched_object.delete(&pool).await.unwrap();
         verify_no_such_object(&pool, object.id).await;
 
         class.delete(&pool).await.unwrap();
         verify_no_such_class(&pool, class.id).await;
+
+        namespace.delete(&pool).await.unwrap();
+    }
+
+    #[actix_rt::test]
+    async fn test_json_filtering() {
+        let (pool, _) = get_pool_and_config().await;
+        let namespace = create_namespace(&pool, "json_filtering").await.unwrap();
+        let class = create_class(&pool, &namespace, "json_filtering").await;
+
+        let _ = setup_test_objects(&pool, &namespace, &class).await;
+
+        let simple_objects = search_data(&pool, "key", "value").await.unwrap();
+        assert_eq!(simple_objects.len(), 6);
+
+        let nested_objects = search_data(&pool, "nested.key", "nested_value")
+            .await
+            .unwrap();
+        assert_eq!(nested_objects.len(), 2);
 
         namespace.delete(&pool).await.unwrap();
     }
