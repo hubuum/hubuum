@@ -4,8 +4,9 @@ Hubuum divides user-created structures into classes and their objects. Objects a
 
 Permissions within Hubuum are based on the following principles:
 
-- Permissions are granted to groups and users on collections. Permissions are never granted to individual classes or objects.
-- Permissions are not inherited from any structure to any other. If a user has read access to a class, they do not automatically have read access to the objects of that class.
+- Permissions are granted to groups (only). If one wishes to grant permissions to a specific user only, create a group with a single member.
+- Permissions are granted on collections. Permissions are never granted to individual classes or objects.
+- Permissions are not inherited from any structure to any other. If a user (through a group membership) has read access to a class, they do not automatically have read access to the objects of that class.
 
 ## Permission types
 
@@ -27,7 +28,6 @@ The following permissions are available for collections:
 | `create_collection`   | Allows creating collections within the collection. |
 | `create_class`        | Allows creating classes within the collection. |
 | `create_object`       | Allows creating objects within the collection. |
-| ---------- | ----------- |
 
 The permission to grant groups (or users) access to the collection itself is done by the parent collection. Every collection has a parent collection and the root collection is created when the Hubuum instance is created.
 
@@ -41,7 +41,6 @@ The following permissions are available for classes:
 | `update_class`   | Allows updating the class (ie, change its name, its definition, validation requirements, etc). |
 | `delete_class`   | Allows deleting the class. Note that deleting a class deletes all objects belonging to that class. |
 | `create_object`  | Allows creating new objects of the class. |
-| ---------- | ----------- |
 
 ### Permissions for objects
 
@@ -52,7 +51,6 @@ The following permissions are available for objects:
 | `read_object`     | Allows reading the object. |
 | `update_object`   | Allows updating the object. |
 | `delete_object`   | Allows deleting the object. |
-| ---------- | ----------- |
 
 ## Example
 

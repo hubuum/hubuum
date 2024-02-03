@@ -1,8 +1,10 @@
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, UserAccess};
-use crate::models::namespace::{NamespaceID, NewNamespaceRequest, UpdateNamespace};
-use crate::models::permissions::{user_can_on_any, NamespacePermissions};
+use crate::models::namespace::{
+    user_can_on_any, NamespaceID, NewNamespaceRequest, UpdateNamespace,
+};
+use crate::models::permissions::NamespacePermissions;
 use crate::models::user::UserID;
 use crate::utilities::response::{json_response, json_response_created};
 use actix_web::{delete, get, http::StatusCode, patch, post, web, Responder};
@@ -19,8 +21,12 @@ pub async fn get_namespaces(
         requestor = requestor.user.username
     );
 
-    let result =
-        user_can_on_any(&pool, UserID(requestor.user.id), NamespacePermissions::Read).await?;
+    let result = user_can_on_any(
+        &pool,
+        UserID(requestor.user.id),
+        NamespacePermissions::ReadCollection,
+    )
+    .await?;
     Ok(json_response(result, StatusCode::OK))
 }
 
@@ -58,7 +64,11 @@ pub async fn get_namespace(
     );
 
     let namespace = namespace_id
-        .user_can(&pool, UserID(requestor.user.id), NamespacePermissions::Read)
+        .user_can(
+            &pool,
+            UserID(requestor.user.id),
+            NamespacePermissions::ReadCollection,
+        )
         .await?;
 
     Ok(json_response(namespace, StatusCode::OK))
@@ -81,7 +91,7 @@ pub async fn update_namespace(
         .user_can(
             &pool,
             UserID(requestor.user.id),
-            NamespacePermissions::Update,
+            NamespacePermissions::UpdateCollection,
         )
         .await?;
 
@@ -106,7 +116,7 @@ pub async fn delete_namespace(
         .user_can(
             &pool,
             UserID(requestor.user.id),
-            NamespacePermissions::Delete,
+            NamespacePermissions::DeleteCollection,
         )
         .await?;
 
