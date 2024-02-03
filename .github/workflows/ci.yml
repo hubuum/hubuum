@@ -139,7 +139,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Set up database
         run: |
-          cargo install diesel_cli --no-default-features --features postgres
+          cargo install diesel_cli --no-default-features --features postgres --force
           echo "Creating database"
           PGPASSWORD=postgres createdb -U postgres -h localhost -p 5432 hubuum_rust_test
           echo "Running database setup and migrations"
