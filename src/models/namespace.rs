@@ -172,6 +172,55 @@ pub async fn user_can_on_any(
     Ok(accessible_namespaces)
 }
 
+/// Check if a group has a specific permission to a given namespace ID
+///
+/// ## Arguments
+/// * pool - Database connection pool
+/// * gid - ID of the group to check permissions for
+/// * permission_type - Type of permission to check
+/// * namespace_ref - Namespace or NamespaceID to check permissions for
+///
+/// ## Returns
+/// * Ok(bool) - True if the group has the requested permission
+/// * Err(ApiError) - On query errors only.
+pub async fn group_can_on<T: NamespaceAccessors>(
+    pool: &DbPool,
+    gid: i32,
+    permission_type: NamespacePermissions,
+    namespace_ref: T,
+) -> Result<bool, ApiError> {
+    use crate::models::permissions::PermissionFilter;
+    use crate::schema::namespacepermissions::dsl::*;
+    use diesel::prelude::*;
+
+    let mut conn = pool.get()?;
+
+    let base_query = namespacepermissions
+        .into_boxed()
+        .filter(group_id.eq(gid))
+        .filter(namespace_id.eq(namespace_ref.namespace_id(pool).await?));
+
+    let filtered_query = PermissionFilter::filter(permission_type, base_query);
+
+    let result = filtered_query.execute(&mut conn)?;
+
+    if result == 0 {
+        return Ok(false);
+    }
+
+    Ok(true)
+}
+
+/// Check what groups have a specific permission to a given namespace ID
+///
+/// ## Arguments
+/// * pool - Database connection pool
+/// * nid - ID of the namespace to check permissions for
+/// * permission_type - Type of permission to check
+///
+/// ## Returns
+/// * Ok(Vec<crate::models::group::Group>) - List of groups that have the requested permission
+/// * Err(ApiError) - On query errors only.
 pub async fn groups_can_on(
     pool: &DbPool,
     nid: i32,
@@ -229,9 +278,23 @@ mod tests {
 
         for group in groups {
             namespace
+                .clone()
                 .grant(pool, group.id, permissions.clone())
                 .await
                 .unwrap();
+
+            // Validate that the permissions were granted
+            for permission in permissions.iter() {
+                assert!(
+                    group_can_on(pool, group.id, permission.clone(), namespace.clone())
+                        .await
+                        .unwrap(),
+                    "Group {} does not have permission {:?} on namespace {}",
+                    group.id,
+                    permission,
+                    namespace.id
+                );
+            }
         }
     }
 
@@ -303,7 +366,16 @@ mod tests {
         groups_can_on_count(&pool, namespace.id, NP::ReadCollection, 5).await;
         groups_can_on_count(&pool, namespace.id, NP::UpdateCollection, 3).await;
         groups_can_on_count(&pool, namespace.id, NP::DeleteCollection, 1).await;
-        groups_can_on_count(&pool, namespace.id, NP::DelegateCollection, 1).await;
+
+        assign_to_groups(
+            &pool,
+            &namespace,
+            &groups[3..4],
+            vec![NP::DelegateCollection],
+        )
+        .await;
+
+        groups_can_on_count(&pool, namespace.id, NP::DelegateCollection, 2).await;
         groups_can_on_count(&pool, namespace.id, NP::CreateClass, 1).await;
         groups_can_on_count(&pool, namespace.id, NP::CreateObject, 1).await;
 
