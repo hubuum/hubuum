@@ -51,7 +51,7 @@ impl NamespaceID {
         user_id: UserID,
         permission_type: NamespacePermissions,
     ) -> Result<Namespace, ApiError> {
-        user_can_on(pool, user_id, permission_type, self.clone()).await
+        user_can_on(pool, user_id, permission_type, *self).await
     }
 }
 
@@ -121,8 +121,8 @@ pub async fn user_can_on<T: NamespaceAccessors>(
         .first::<NamespacePermission>(&mut conn)
         .optional()?;
 
-    if let Some(_) = result {
-        return Ok(namespace_ref.namespace(pool).await?);
+    if result.is_some() {
+        return namespace_ref.namespace(pool).await;
     }
 
     Err(ApiError::NotFound("Not found".to_string()))

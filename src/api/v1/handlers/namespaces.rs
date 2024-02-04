@@ -122,6 +122,6 @@ pub async fn delete_namespace(
         )
         .await?;
 
-    let delete_result = namespace.delete(&pool).await?;
-    Ok(json_response(json!(delete_result), StatusCode::NO_CONTENT))
+    namespace.delete(&pool).await?;
+    Ok(json_response(json!(()), StatusCode::NO_CONTENT))
 }

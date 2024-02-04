@@ -24,6 +24,8 @@ pub enum ClassPermissions {
     DeleteClass,
 }
 
+// We use the object suffix for consistency with other models.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone)]
 pub enum ObjectPermissions {
     ReadObject,
