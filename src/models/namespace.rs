@@ -235,7 +235,7 @@ mod tests {
         }
     }
 
-    async fn groups_can_on_number(
+    async fn groups_can_on_count(
         pool: &DbPool,
         nid: i32,
         permission_type: NamespacePermissions,
@@ -284,43 +284,28 @@ mod tests {
         // via create_namespace, so we have one extra group for all permissions
         let namespace = create_namespace(&pool, "test_list_groups").await.unwrap();
 
-        // Note: Slicing is *NOT* inclusive, so this will assign to groups 0, 1, and 2
-        assign_to_groups(
-            &pool,
-            &namespace,
-            &groups[0..3],
-            vec![NamespacePermissions::ReadCollection],
-        )
-        .await;
+        type NP = NamespacePermissions;
 
-        groups_can_on_number(&pool, namespace.id, NamespacePermissions::ReadCollection, 4).await;
-        groups_can_on_number(
-            &pool,
-            namespace.id,
-            NamespacePermissions::UpdateCollection,
-            1,
-        )
-        .await;
+        // Note: Slicing is *NOT* inclusive, so this will assign to groups 0, 1, and 2
+        assign_to_groups(&pool, &namespace, &groups[0..3], vec![NP::ReadCollection]).await;
+
+        groups_can_on_count(&pool, namespace.id, NP::ReadCollection, 4).await;
+        groups_can_on_count(&pool, namespace.id, NP::UpdateCollection, 1).await;
 
         assign_to_groups(
             &pool,
             &namespace,
             &groups[2..4],
-            vec![
-                NamespacePermissions::ReadCollection,
-                NamespacePermissions::UpdateCollection,
-            ],
+            vec![NP::ReadCollection, NP::UpdateCollection],
         )
         .await;
 
-        groups_can_on_number(&pool, namespace.id, NamespacePermissions::ReadCollection, 5).await;
-        groups_can_on_number(
-            &pool,
-            namespace.id,
-            NamespacePermissions::UpdateCollection,
-            3,
-        )
-        .await;
+        groups_can_on_count(&pool, namespace.id, NP::ReadCollection, 5).await;
+        groups_can_on_count(&pool, namespace.id, NP::UpdateCollection, 3).await;
+        groups_can_on_count(&pool, namespace.id, NP::DeleteCollection, 1).await;
+        groups_can_on_count(&pool, namespace.id, NP::DelegateCollection, 1).await;
+        groups_can_on_count(&pool, namespace.id, NP::CreateClass, 1).await;
+        groups_can_on_count(&pool, namespace.id, NP::CreateObject, 1).await;
 
         namespace.delete(&pool).await.unwrap();
         for group in groups {
