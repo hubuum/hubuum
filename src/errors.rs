@@ -97,19 +97,24 @@ impl From<DieselError> for ApiError {
     fn from(e: DieselError) -> Self {
         match e {
             DieselError::NotFound => {
-                debug!(message = "Entity not found", error = ?e);
-                ApiError::NotFound(e.to_string())
+                let message = "Entity not found".to_string();
+                debug!(message = message, error = ?e);
+                ApiError::NotFound(message)
             }
             DieselError::DatabaseError(DatabaseErrorKind::UniqueViolation, _) => {
-                debug!(message = "Unique constraint not met", error = ?e);
-                ApiError::Conflict(e.to_string())
+                let message = "Unique constraint not met".to_string();
+                debug!(message = message, error = ?e);
+                ApiError::Conflict(message)
             }
             DieselError::DatabaseError(DatabaseErrorKind::ForeignKeyViolation, _) => {
-                debug!(message = "Unable to resolve foreign key", error = ?e);
-                ApiError::Conflict(e.to_string())
+                let message = "Attempt to associate to a non-existent entity".to_string();
+                debug!(message = message, error = ?e);
+                ApiError::NotFound(message)
             }
             DieselError::DatabaseError(DatabaseErrorKind::CheckViolation, _) => {
-                ApiError::BadRequest(e.to_string())
+                let message = "Check constraint not met".to_string();
+                debug!(message = message, error = ?e);
+                ApiError::BadRequest(message)
             }
             _ => {
                 error!(message = "Database error", error = ?e);

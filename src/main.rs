@@ -8,6 +8,7 @@ mod middlewares;
 mod models;
 mod schema;
 mod tests;
+mod traits;
 mod utilities;
 
 use actix_web::{middleware::Logger, web::Data, web::JsonConfig, App, HttpServer};

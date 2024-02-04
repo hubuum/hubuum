@@ -6,7 +6,7 @@ use crate::schema::classpermissions;
 use crate::schema::namespacepermissions;
 use crate::schema::objectpermissions;
 
-#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone)]
 pub enum NamespacePermissions {
     CreateClass,
     CreateObject,
@@ -16,7 +16,7 @@ pub enum NamespacePermissions {
     DelegateCollection,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone)]
 pub enum ClassPermissions {
     CreateObject,
     ReadClass,
@@ -24,7 +24,7 @@ pub enum ClassPermissions {
     DeleteClass,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone)]
 pub enum ObjectPermissions {
     ReadObject,
     UpdateObject,
@@ -108,7 +108,7 @@ impl<'a> PermissionFilter<'a, namespacepermissions::BoxedQuery<'a, diesel::pg::P
     }
 }
 
-#[derive(Serialize, Deserialize, Queryable)]
+#[derive(Debug, Serialize, Deserialize, Queryable)]
 #[diesel(table_name = namespacepermissions)]
 pub struct NamespacePermission {
     pub id: i32,
@@ -122,7 +122,7 @@ pub struct NamespacePermission {
     pub has_delegate_namespace: bool,
 }
 
-#[derive(Serialize, Deserialize, Queryable)]
+#[derive(Debug, Serialize, Deserialize, Queryable)]
 #[diesel(table_name = classpermissions)]
 pub struct ClassPermission {
     pub id: i32,
@@ -134,7 +134,7 @@ pub struct ClassPermission {
     pub has_delete_class: bool,
 }
 
-#[derive(Serialize, Deserialize, Queryable)]
+#[derive(Debug, Serialize, Deserialize, Queryable)]
 #[diesel(table_name = objectpermissions)]
 pub struct ObjectPermission {
     pub id: i32,
@@ -146,7 +146,7 @@ pub struct ObjectPermission {
 }
 
 // Insertable permission models.
-#[derive(Serialize, Deserialize, Insertable)]
+#[derive(Debug, Serialize, Deserialize, Insertable)]
 #[diesel(table_name = namespacepermissions)]
 pub struct NewNamespacePermission {
     pub namespace_id: i32,
@@ -159,7 +159,7 @@ pub struct NewNamespacePermission {
     pub has_delegate_namespace: bool,
 }
 
-#[derive(Serialize, Deserialize, Insertable)]
+#[derive(Debug, Serialize, Deserialize, Insertable)]
 #[diesel(table_name = classpermissions)]
 pub struct NewClassPermission {
     pub namespace_id: i32,
@@ -170,7 +170,7 @@ pub struct NewClassPermission {
     pub has_delete_class: bool,
 }
 
-#[derive(Serialize, Deserialize, Insertable)]
+#[derive(Debug, Serialize, Deserialize, Insertable)]
 #[diesel(table_name = objectpermissions)]
 pub struct NewObjectPermission {
     pub namespace_id: i32,

@@ -16,10 +16,12 @@ use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::group::GroupID;
 use crate::models::group::{Group, NewGroup};
-use crate::models::namespace::{Namespace, NewNamespace};
+use crate::models::namespace::{Namespace, NewNamespaceWithAssignee};
 use crate::models::user::{NewUser, User};
 
 use crate::utilities::auth::generate_random_password;
+
+use crate::traits::CanSave;
 
 pub async fn create_user_with_params(pool: &DbPool, username: &str, password: &str) -> User {
     let result = NewUser {
@@ -178,11 +180,12 @@ pub async fn create_namespace(pool: &DbPool, ns_name: &str) -> Result<Namespace,
     let admin_group = ensure_admin_group(pool).await;
     let assignee = GroupID(admin_group.id);
 
-    NewNamespace {
+    NewNamespaceWithAssignee {
         name: ns_name.to_string(),
         description: "Test namespace".to_string(),
+        group_id: assignee.0,
     }
-    .save_and_grant_all_to(pool, assignee)
+    .save(pool)
     .await
 }
 
