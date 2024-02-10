@@ -220,3 +220,25 @@ async fn setup_pool_and_tokens() -> (web::Data<DbPool>, String, String) {
 
     (pool, admin_token_string, normal_token_string)
 }
+
+pub fn generate_all_subsets<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
+    let num_items = items.len();
+    let num_subsets = 2usize.pow(num_items as u32);
+    let mut subsets: Vec<Vec<T>> = Vec::with_capacity(num_subsets);
+
+    // Iterate over each possible subset
+    for subset_index in 0..num_subsets {
+        let mut current_subset: Vec<T> = Vec::new();
+
+        // Determine which items are in the current subset
+        for (offset, item) in items.iter().enumerate() {
+            if subset_index & (1 << offset) != 0 {
+                current_subset.push(item.clone());
+            }
+        }
+
+        subsets.push(current_subset);
+    }
+
+    subsets
+}

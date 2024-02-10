@@ -376,7 +376,7 @@ mod tests {
 
     use super::*;
     use crate::models::group::NewGroup;
-    use crate::tests::create_namespace;
+    use crate::tests::{create_namespace, generate_all_subsets};
     use crate::traits::CanDelete;
 
     async fn assign_to_groups(
@@ -497,5 +497,228 @@ mod tests {
         for group in groups {
             group.delete(&pool).await.unwrap();
         }
+    }
+
+    #[actix_rt::test]
+    async fn test_permission_grant_combinations() {
+        let (pool, _) = crate::tests::get_pool_and_config().await;
+
+        let permissions = vec![
+            NamespacePermissions::ReadCollection,
+            NamespacePermissions::UpdateCollection,
+            NamespacePermissions::DeleteCollection,
+            NamespacePermissions::DelegateCollection,
+            NamespacePermissions::CreateClass,
+            NamespacePermissions::CreateObject,
+        ];
+
+        let subsets = generate_all_subsets(&permissions);
+
+        for subset in subsets.iter() {
+            let namespace = create_namespace(&pool, "test_perm_grant_combinations")
+                .await
+                .unwrap();
+
+            let group = NewGroup {
+                groupname: "test_perm_grant_combinations".to_string(),
+                description: Some("Test group for combinations".to_string()),
+            }
+            .save(&pool)
+            .await
+            .unwrap();
+
+            let group_id = group.id;
+            // Grant this subset of permissions
+            namespace
+                .grant(&pool, group_id, subset.clone())
+                .await
+                .unwrap();
+
+            // Test that only the granted permissions are set
+            for permission in permissions.iter() {
+                let expected = subset.contains(permission);
+                let actual = group_can_on(&pool, group_id, namespace.clone(), permission.clone())
+                    .await
+                    .unwrap();
+                assert_eq!(expected, actual, "Mismatch for permission {:?}", permission);
+            }
+
+            namespace.delete(&pool).await.unwrap();
+            group.delete(&pool).await.unwrap();
+        }
+    }
+
+    #[actix_rt::test]
+    async fn test_permission_revoke_combinations() {
+        let (pool, _) = crate::tests::get_pool_and_config().await;
+
+        type NP = NamespacePermissions;
+
+        let permissions = vec![
+            NP::ReadCollection,
+            NP::UpdateCollection,
+            NP::DeleteCollection,
+            NP::DelegateCollection,
+            NP::CreateClass,
+            NP::CreateObject,
+        ];
+
+        // Generate all permission permutations, but filter out the empty set as that update will
+        // cause diesel to complain that there is nothing to do.
+        let subsets = generate_all_subsets(&permissions)
+            .into_iter()
+            .filter(|x| !x.is_empty());
+
+        for subset in subsets {
+            let namespace = create_namespace(&pool, "test_perm_revoke_ombinations")
+                .await
+                .unwrap();
+
+            let group = NewGroup {
+                groupname: "test_perm_revoke_combinations".to_string(),
+                description: Some("Test group for combinations".to_string()),
+            }
+            .save(&pool)
+            .await
+            .unwrap();
+
+            let group_id = group.id;
+            // Grant all permissions
+            namespace
+                .grant(&pool, group_id, permissions.clone())
+                .await
+                .unwrap();
+
+            // Revoke this subset of permissions
+            namespace
+                .revoke(&pool, group_id, subset.clone())
+                .await
+                .unwrap();
+
+            // Test that only the revoked permissions are set
+            for permission in permissions.iter() {
+                let expected = !subset.contains(permission);
+                let actual = group_can_on(&pool, group_id, namespace.clone(), permission.clone())
+                    .await
+                    .unwrap();
+                assert_eq!(expected, actual, "Mismatch for permission {:?}", permission);
+            }
+
+            namespace.delete(&pool).await.unwrap();
+            group.delete(&pool).await.unwrap();
+        }
+    }
+
+    /// Test to ensure that we can grant and revoke permissions without losing or gaining
+    /// any other permissions.
+    #[actix_rt::test]
+    async fn test_permission_grant_without_side_effects() {
+        let (pool, _) = crate::tests::get_pool_and_config().await;
+
+        type NP = NamespacePermissions;
+
+        let namespace = create_namespace(&pool, "test_perm_grant_without_side_effects")
+            .await
+            .unwrap();
+
+        let group = NewGroup {
+            groupname: "test_perm_grant_without_side_effects".to_string(),
+            description: Some("Test group for combinations".to_string()),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        let group_id = group.id;
+
+        namespace
+            .grant(&pool, group_id, vec![NP::ReadCollection])
+            .await
+            .unwrap();
+
+        assert!(
+            group_can_on(&pool, group_id, namespace.clone(), NP::ReadCollection)
+                .await
+                .unwrap(),
+            "Permission {:?} should be set",
+            NP::ReadCollection
+        );
+
+        for permission in vec![
+            NP::UpdateCollection,
+            NP::DeleteCollection,
+            NP::DelegateCollection,
+            NP::CreateClass,
+            NP::CreateObject,
+        ] {
+            assert!(
+                !group_can_on(&pool, group_id, namespace.clone(), permission.clone())
+                    .await
+                    .unwrap(),
+                "Permission {:?} should not be set",
+                permission
+            );
+        }
+
+        namespace
+            .grant(&pool, group_id, vec![NP::UpdateCollection])
+            .await
+            .unwrap();
+
+        for permission in vec![NP::ReadCollection, NP::UpdateCollection] {
+            assert!(
+                group_can_on(&pool, group_id, namespace.clone(), permission.clone())
+                    .await
+                    .unwrap(),
+                "Permission {:?} should be set",
+                permission
+            );
+        }
+
+        for permission in vec![
+            NP::DeleteCollection,
+            NP::DelegateCollection,
+            NP::CreateClass,
+            NP::CreateObject,
+        ] {
+            assert!(
+                !group_can_on(&pool, group_id, namespace.clone(), permission.clone())
+                    .await
+                    .unwrap(),
+                "Permission {:?} should not be set",
+                permission
+            );
+        }
+
+        namespace
+            .revoke(&pool, group_id, vec![NP::UpdateCollection])
+            .await
+            .unwrap();
+
+        assert!(
+            group_can_on(&pool, group_id, namespace.clone(), NP::ReadCollection)
+                .await
+                .unwrap(),
+            "Permission {:?} should be set",
+            NP::ReadCollection
+        );
+
+        for permission in vec![
+            NP::UpdateCollection,
+            NP::DeleteCollection,
+            NP::DelegateCollection,
+            NP::CreateClass,
+            NP::CreateObject,
+        ] {
+            assert!(
+                !group_can_on(&pool, group_id, namespace.clone(), permission.clone())
+                    .await
+                    .unwrap(),
+                "Permission {:?} should not be set",
+                permission
+            );
+        }
+        namespace.delete(&pool).await.unwrap();
+        group.delete(&pool).await.unwrap();
     }
 }

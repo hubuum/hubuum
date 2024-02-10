@@ -240,6 +240,7 @@ impl Namespace {
         group_id_for_grant: i32,
         permissions: Vec<NamespacePermissions>,
     ) -> Result<NamespacePermission, ApiError> {
+        use crate::models::permissions::UpdateNamespacePermission;
         use crate::schema::namespacepermissions::dsl::*;
         use diesel::prelude::*;
 
@@ -254,24 +255,37 @@ impl Namespace {
                 .optional()?;
 
             match existing_entry {
-                Some(_) => Ok(diesel::update(namespacepermissions)
-                    .filter(namespace_id.eq(self.id))
-                    .filter(group_id.eq(group_id_for_grant))
-                    .set((
-                        has_create_object
-                            .eq(permissions.contains(&NamespacePermissions::CreateObject)),
-                        has_create_class
-                            .eq(permissions.contains(&NamespacePermissions::CreateClass)),
-                        has_read_namespace
-                            .eq(permissions.contains(&NamespacePermissions::ReadCollection)),
-                        has_update_namespace
-                            .eq(permissions.contains(&NamespacePermissions::UpdateCollection)),
-                        has_delete_namespace
-                            .eq(permissions.contains(&NamespacePermissions::DelegateCollection)),
-                        has_delegate_namespace
-                            .eq(permissions.contains(&NamespacePermissions::DelegateCollection)),
-                    ))
-                    .get_result(conn)?),
+                Some(_) => {
+                    let mut update_permissions = UpdateNamespacePermission::default();
+                    for permission in permissions {
+                        match permission {
+                            NamespacePermissions::CreateObject => {
+                                update_permissions.has_create_object = Some(true);
+                            }
+                            NamespacePermissions::CreateClass => {
+                                update_permissions.has_create_class = Some(true);
+                            }
+                            NamespacePermissions::ReadCollection => {
+                                update_permissions.has_read_namespace = Some(true);
+                            }
+                            NamespacePermissions::UpdateCollection => {
+                                update_permissions.has_update_namespace = Some(true);
+                            }
+                            NamespacePermissions::DeleteCollection => {
+                                update_permissions.has_delete_namespace = Some(true);
+                            }
+                            NamespacePermissions::DelegateCollection => {
+                                update_permissions.has_delegate_namespace = Some(true);
+                            }
+                        }
+                    }
+
+                    Ok(diesel::update(namespacepermissions)
+                        .filter(namespace_id.eq(self.id))
+                        .filter(group_id.eq(group_id_for_grant))
+                        .set(&update_permissions)
+                        .get_result(conn)?)
+                }
                 None => {
                     let new_entry = NewNamespacePermission {
                         namespace_id: self.id,
@@ -303,7 +317,8 @@ impl Namespace {
         pool: &DbPool,
         group_id_for_revoke: i32,
         permissions: Vec<NamespacePermissions>,
-    ) -> Result<(), ApiError> {
+    ) -> Result<NamespacePermission, ApiError> {
+        use crate::models::permissions::UpdateNamespacePermission;
         use crate::schema::namespacepermissions::dsl::*;
         use diesel::prelude::*;
 
@@ -315,25 +330,95 @@ impl Namespace {
                 .filter(group_id.eq(group_id_for_revoke))
                 .first::<NamespacePermission>(conn)?;
 
-            diesel::update(namespacepermissions)
+            let mut update_permissions = UpdateNamespacePermission::default();
+            for permission in permissions {
+                match permission {
+                    NamespacePermissions::CreateObject => {
+                        update_permissions.has_create_object = Some(false);
+                    }
+                    NamespacePermissions::CreateClass => {
+                        update_permissions.has_create_class = Some(false);
+                    }
+                    NamespacePermissions::ReadCollection => {
+                        update_permissions.has_read_namespace = Some(false);
+                    }
+                    NamespacePermissions::UpdateCollection => {
+                        update_permissions.has_update_namespace = Some(false);
+                    }
+                    NamespacePermissions::DeleteCollection => {
+                        update_permissions.has_delete_namespace = Some(false);
+                    }
+                    NamespacePermissions::DelegateCollection => {
+                        update_permissions.has_delegate_namespace = Some(false);
+                    }
+                }
+            }
+            Ok(diesel::update(namespacepermissions)
                 .filter(namespace_id.eq(self.id))
                 .filter(group_id.eq(group_id_for_revoke))
-                .set((
-                    has_create_object
-                        .eq(!permissions.contains(&NamespacePermissions::CreateObject)),
-                    has_create_class.eq(!permissions.contains(&NamespacePermissions::CreateClass)),
-                    has_read_namespace
-                        .eq(!permissions.contains(&NamespacePermissions::ReadCollection)),
-                    has_update_namespace
-                        .eq(!permissions.contains(&NamespacePermissions::UpdateCollection)),
-                    has_delete_namespace
-                        .eq(!permissions.contains(&NamespacePermissions::DeleteCollection)),
-                    has_delegate_namespace
-                        .eq(!permissions.contains(&NamespacePermissions::DelegateCollection)),
-                ))
-                .execute(conn)?;
-            Ok(())
-        })?;
-        Ok(())
+                .set(&update_permissions)
+                .get_result(conn)?)
+        })
+    }
+
+    pub async fn set_permissions(
+        &self,
+        pool: &DbPool,
+        group_id_for_set: i32,
+        permissions: Vec<NamespacePermissions>,
+    ) -> Result<NamespacePermission, ApiError> {
+        use crate::schema::namespacepermissions::dsl::*;
+        use diesel::prelude::*;
+
+        let mut conn = pool.get()?;
+
+        conn.transaction::<_, ApiError, _>(|conn| {
+            let existing_entry = namespacepermissions
+                .filter(namespace_id.eq(self.id))
+                .filter(group_id.eq(group_id_for_set))
+                .first::<NamespacePermission>(conn)
+                .optional()?;
+
+            match existing_entry {
+                Some(_) => Ok(diesel::update(namespacepermissions)
+                    .filter(namespace_id.eq(self.id))
+                    .filter(group_id.eq(group_id_for_set))
+                    .set((
+                        has_create_object
+                            .eq(permissions.contains(&NamespacePermissions::CreateObject)),
+                        has_create_class
+                            .eq(permissions.contains(&NamespacePermissions::CreateClass)),
+                        has_read_namespace
+                            .eq(permissions.contains(&NamespacePermissions::ReadCollection)),
+                        has_update_namespace
+                            .eq(permissions.contains(&NamespacePermissions::UpdateCollection)),
+                        has_delete_namespace
+                            .eq(permissions.contains(&NamespacePermissions::DeleteCollection)),
+                        has_delegate_namespace
+                            .eq(permissions.contains(&NamespacePermissions::DelegateCollection)),
+                    ))
+                    .get_result(conn)?),
+                None => {
+                    let new_entry = NewNamespacePermission {
+                        namespace_id: self.id,
+                        group_id: group_id_for_set,
+                        has_create_object: permissions
+                            .contains(&NamespacePermissions::CreateObject),
+                        has_create_class: permissions.contains(&NamespacePermissions::CreateClass),
+                        has_read_namespace: permissions
+                            .contains(&NamespacePermissions::ReadCollection),
+                        has_update_namespace: permissions
+                            .contains(&NamespacePermissions::UpdateCollection),
+                        has_delete_namespace: permissions
+                            .contains(&NamespacePermissions::DeleteCollection),
+                        has_delegate_namespace: permissions
+                            .contains(&NamespacePermissions::DelegateCollection),
+                    };
+                    Ok(diesel::insert_into(namespacepermissions)
+                        .values(&new_entry)
+                        .get_result(conn)?)
+                }
+            }
+        })
     }
 }

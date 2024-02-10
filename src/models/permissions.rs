@@ -6,7 +6,7 @@ use crate::schema::classpermissions;
 use crate::schema::namespacepermissions;
 use crate::schema::objectpermissions;
 
-#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
 pub enum NamespacePermissions {
     CreateClass,
     CreateObject,
@@ -16,7 +16,7 @@ pub enum NamespacePermissions {
     DelegateCollection,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
 pub enum ClassPermissions {
     CreateObject,
     ReadClass,
@@ -26,7 +26,7 @@ pub enum ClassPermissions {
 
 // We use the object suffix for consistency with other models.
 #[allow(clippy::enum_variant_names)]
-#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
 pub enum ObjectPermissions {
     ReadObject,
     UpdateObject,
@@ -180,4 +180,32 @@ pub struct NewObjectPermission {
     pub has_read_object: bool,
     pub has_update_object: bool,
     pub has_delete_object: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, AsChangeset, Default)]
+#[diesel(table_name = namespacepermissions)]
+pub struct UpdateNamespacePermission {
+    pub has_create_object: Option<bool>,
+    pub has_create_class: Option<bool>,
+    pub has_read_namespace: Option<bool>,
+    pub has_update_namespace: Option<bool>,
+    pub has_delete_namespace: Option<bool>,
+    pub has_delegate_namespace: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize, AsChangeset, Default)]
+#[diesel(table_name = classpermissions)]
+pub struct UpdateClassPermission {
+    pub has_create_object: Option<bool>,
+    pub has_read_class: Option<bool>,
+    pub has_update_class: Option<bool>,
+    pub has_delete_class: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize, AsChangeset, Default)]
+#[diesel(table_name = objectpermissions)]
+pub struct UpdateObjectPermission {
+    pub has_read_object: Option<bool>,
+    pub has_update_object: Option<bool>,
+    pub has_delete_object: Option<bool>,
 }
