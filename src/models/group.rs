@@ -8,10 +8,22 @@ use crate::models::user::User;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::traits::SelfAccessors;
+
 use crate::db::DbPool;
 
 #[derive(Serialize, Deserialize)]
 pub struct GroupID(pub i32);
+
+impl SelfAccessors<Group> for GroupID {
+    fn id(&self) -> i32 {
+        self.0
+    }
+
+    async fn instance(&self, pool: &DbPool) -> Result<Group, ApiError> {
+        self.group(pool).await
+    }
+}
 
 impl GroupID {
     pub async fn group(&self, pool: &DbPool) -> Result<Group, ApiError> {
@@ -27,12 +39,22 @@ impl GroupID {
     }
 }
 
-#[derive(Serialize, Deserialize, Queryable, Insertable, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Queryable, Insertable, PartialEq, Debug, Clone)]
 #[diesel(table_name = groups)]
 pub struct Group {
     pub id: i32,
     pub groupname: String,
     pub description: String,
+}
+
+impl SelfAccessors<Group> for Group {
+    fn id(&self) -> i32 {
+        self.id
+    }
+
+    async fn instance(&self, _pool: &DbPool) -> Result<Group, ApiError> {
+        Ok(self.clone())
+    }
 }
 
 impl Group {

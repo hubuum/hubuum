@@ -11,5 +11,9 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(namespaces_handlers::get_namespace_group_permissions)
         .service(namespaces_handlers::get_namespace_group_permission)
         .service(namespaces_handlers::get_namespace_user_permissions)
-        .service(namespaces_handlers::get_namespace_groups_with_permission);
+        .service(namespaces_handlers::get_namespace_groups_with_permission)
+        .service(namespaces_handlers::grant_namespace_group_permissions)
+        .service(namespaces_handlers::revoke_namespace_group_permissions)
+        .service(namespaces_handlers::grant_namespace_group_permission)
+        .service(namespaces_handlers::revoke_namespace_group_permission);
 }

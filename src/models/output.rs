@@ -7,19 +7,19 @@ use crate::models::group::Group;
 use crate::models::permissions::{ClassPermission, NamespacePermission, ObjectPermission};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct GroupNamespacePermission {
     pub group: Group,
     pub namespace_permission: NamespacePermission,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct GroupClassPermission {
     pub group: Group,
     pub class_permission: ClassPermission,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct GroupObjectPermission {
     pub group: Group,
     pub object_permission: ObjectPermission,

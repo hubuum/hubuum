@@ -421,4 +421,22 @@ impl Namespace {
             }
         })
     }
+
+    pub async fn revoke_all(
+        &self,
+        pool: &DbPool,
+        group_id_for_revoke: i32,
+    ) -> Result<(), ApiError> {
+        use crate::schema::namespacepermissions::dsl::*;
+        use diesel::prelude::*;
+
+        let mut conn = pool.get()?;
+
+        diesel::delete(namespacepermissions)
+            .filter(namespace_id.eq(self.id))
+            .filter(group_id.eq(group_id_for_revoke))
+            .execute(&mut conn)?;
+
+        Ok(())
+    }
 }

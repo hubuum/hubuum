@@ -110,7 +110,7 @@ impl<'a> PermissionFilter<'a, namespacepermissions::BoxedQuery<'a, diesel::pg::P
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Queryable)]
+#[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy)]
 #[diesel(table_name = namespacepermissions)]
 pub struct NamespacePermission {
     pub id: i32,
@@ -124,7 +124,7 @@ pub struct NamespacePermission {
     pub has_delegate_namespace: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, Queryable)]
+#[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy)]
 #[diesel(table_name = classpermissions)]
 pub struct ClassPermission {
     pub id: i32,
@@ -136,7 +136,7 @@ pub struct ClassPermission {
     pub has_delete_class: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, Queryable)]
+#[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy)]
 #[diesel(table_name = objectpermissions)]
 pub struct ObjectPermission {
     pub id: i32,
