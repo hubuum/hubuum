@@ -16,10 +16,12 @@ use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::group::GroupID;
 use crate::models::group::{Group, NewGroup};
-use crate::models::namespace::{Namespace, NewNamespace};
+use crate::models::namespace::{Namespace, NewNamespaceWithAssignee};
 use crate::models::user::{NewUser, User};
 
 use crate::utilities::auth::generate_random_password;
+
+use crate::traits::CanSave;
 
 pub async fn create_user_with_params(pool: &DbPool, username: &str, password: &str) -> User {
     let result = NewUser {
@@ -178,11 +180,12 @@ pub async fn create_namespace(pool: &DbPool, ns_name: &str) -> Result<Namespace,
     let admin_group = ensure_admin_group(pool).await;
     let assignee = GroupID(admin_group.id);
 
-    NewNamespace {
+    NewNamespaceWithAssignee {
         name: ns_name.to_string(),
         description: "Test namespace".to_string(),
+        group_id: assignee.0,
     }
-    .save_and_grant_all_to(pool, assignee)
+    .save(pool)
     .await
 }
 
@@ -216,4 +219,26 @@ async fn setup_pool_and_tokens() -> (web::Data<DbPool>, String, String) {
         .get_token();
 
     (pool, admin_token_string, normal_token_string)
+}
+
+pub fn generate_all_subsets<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
+    let num_items = items.len();
+    let num_subsets = 2usize.pow(num_items as u32);
+    let mut subsets: Vec<Vec<T>> = Vec::with_capacity(num_subsets);
+
+    // Iterate over each possible subset
+    for subset_index in 0..num_subsets {
+        let mut current_subset: Vec<T> = Vec::new();
+
+        // Determine which items are in the current subset
+        for (offset, item) in items.iter().enumerate() {
+            if subset_index & (1 << offset) != 0 {
+                current_subset.push(item.clone());
+            }
+        }
+
+        subsets.push(current_subset);
+    }
+
+    subsets
 }

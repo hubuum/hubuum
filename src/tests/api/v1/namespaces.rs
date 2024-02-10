@@ -2,7 +2,7 @@
 mod tests {
     use std::vec;
 
-    use crate::models::namespace::{Namespace, NewNamespaceRequest, UpdateNamespace};
+    use crate::models::namespace::{Namespace, NewNamespaceWithAssignee, UpdateNamespace};
 
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_contains, assert_contains_all, assert_response_status};
@@ -47,7 +47,7 @@ mod tests {
         let resp = get_request(&pool, "", NAMESPACE_ENDPOINT).await;
         let _ = assert_response_status(resp, http::StatusCode::UNAUTHORIZED).await;
 
-        let content = NewNamespaceRequest {
+        let content = NewNamespaceWithAssignee {
             name: "test_namespace_create".to_string(),
             description: "test namespace create description".to_string(),
             group_id: admin_group.id,

@@ -1,20 +1,21 @@
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::models::group::Group;
 use crate::models::user::UserID;
 
 use crate::db::DbPool;
 
-use crate::schema::namespacepermissions;
 use crate::schema::namespaces;
-
-use crate::models::permissions::NewNamespacePermission;
 
 use crate::errors::ApiError;
 
+use crate::models::permissions::NamespacePermission;
 use crate::models::permissions::NamespacePermissions;
 
-use super::group::GroupID;
+use crate::models::output::GroupNamespacePermission;
+
+use crate::traits::NamespaceAccessors;
 
 #[derive(Serialize, Deserialize, Queryable, PartialEq, Debug, Clone)]
 #[diesel(table_name = namespaces)]
@@ -41,52 +42,7 @@ impl Namespace {
         user_id: UserID,
         permission_type: NamespacePermissions,
     ) -> Result<Self, ApiError> {
-        user_can_on(pool, user_id, permission_type, self.clone()).await
-    }
-
-    /// Update a namespace
-    ///
-    /// This does not check for permissions, it only updates the namespace.
-    /// It is assumed that permissions are already checked before calling this method.
-    /// See `user_can` for permission checking.
-    ///
-    /// ## Arguments
-    /// * pool - Database connection pool
-    /// * new_data - New data to update the namespace with
-    ///
-    /// ## Returns
-    /// * Ok(Namespace) - Updated namespace
-    /// * Err(ApiError) - On query errors only.
-    pub async fn update(&self, pool: &DbPool, new_data: UpdateNamespace) -> Result<Self, ApiError> {
-        use crate::schema::namespaces::dsl::*;
-
-        let mut conn = pool.get()?;
-        let namespace = diesel::update(namespaces.filter(id.eq(self.id)))
-            .set(&new_data)
-            .get_result::<Namespace>(&mut conn)?;
-
-        Ok(namespace)
-    }
-
-    /// Delete a namespace
-    ///
-    /// This does not check for permissions, it only deletes the namespace.
-    /// It is assumed that permissions are already checked before calling this method.
-    /// See `user_can` for permission checking.
-    ///
-    /// ## Arguments
-    /// * pool - Database connection pool
-    ///
-    /// ## Returns
-    /// * Ok(usize) - Number of deleted namespaces
-    /// * Err(ApiError) - On query errors only.
-    pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
-        use crate::schema::namespaces::dsl::*;
-
-        let mut conn = pool.get()?;
-        let result = diesel::delete(namespaces.filter(id.eq(self.id))).execute(&mut conn)?;
-
-        Ok(result)
+        user_can_on(pool, user_id, self.clone(), permission_type).await
     }
 }
 
@@ -100,161 +56,38 @@ impl NamespaceID {
         user_id: UserID,
         permission_type: NamespacePermissions,
     ) -> Result<Namespace, ApiError> {
-        user_can_on(pool, user_id, permission_type, self.clone()).await
+        user_can_on(pool, user_id, *self, permission_type).await
     }
 }
 
-pub trait NamespaceGenerics {
-    fn id(&self) -> i32;
-    async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError>;
-}
-
-impl NamespaceGenerics for Namespace {
-    fn id(&self) -> i32 {
-        self.id
-    }
-
-    async fn namespace(&self, _: &DbPool) -> Result<Namespace, ApiError> {
-        Ok(self.clone())
-    }
-}
-
-impl NamespaceGenerics for NamespaceID {
-    fn id(&self) -> i32 {
-        self.0
-    }
-
-    async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        use crate::schema::namespaces::dsl::{id, namespaces};
-
-        let mut conn = pool.get()?;
-        let namespace = namespaces
-            .filter(id.eq(self.0))
-            .first::<Namespace>(&mut conn)?;
-
-        Ok(namespace)
-    }
-}
-
-#[derive(Serialize, Deserialize, AsChangeset)]
+#[derive(Serialize, Deserialize, Clone, AsChangeset)]
 #[diesel(table_name = namespaces)]
 pub struct UpdateNamespace {
     pub name: Option<String>,
     pub description: Option<String>,
 }
 
+/// A new namespace, with an assignee. Used for creating new namespace entries
+/// into the database and assign all permissions to the group given as group_id.
+///
+/// This wraps the NewNamespace struct and uses the group_id to grant all permissions
+/// to the group in a single transaction.
 #[derive(Serialize, Deserialize, Clone)]
-pub struct NewNamespaceRequest {
+pub struct NewNamespaceWithAssignee {
     pub name: String,
     pub description: String,
     pub group_id: i32,
 }
 
-impl NewNamespaceRequest {
-    pub async fn save_and_grant_all(self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        let new_namespace = NewNamespace {
-            name: self.name,
-            description: self.description,
-        };
-
-        let mut conn = pool.get()?;
-        conn.transaction::<_, ApiError, _>(|conn| {
-            // Insert the new namespace
-            let namespace = diesel::insert_into(crate::schema::namespaces::table)
-                .values(&new_namespace)
-                .get_result::<Namespace>(conn)?;
-
-            let group_permission = NewNamespacePermission {
-                namespace_id: namespace.id,
-                group_id: self.group_id,
-                has_create_object: true,
-                has_create_class: true,
-                has_read_namespace: true,
-                has_update_namespace: true,
-                has_delete_namespace: true,
-                has_delegate_namespace: true,
-            };
-
-            diesel::insert_into(crate::schema::namespacepermissions::table)
-                .values(&group_permission)
-                .execute(conn)?;
-
-            Ok(namespace)
-        })
-    }
-}
-
+/// A new namespace, without an assignee. Used for creating new namespace entries
+/// into the database.
+///
+/// Odds are pretty good that you want to use NewNamespaceWithAssignee instead.
 #[derive(Serialize, Deserialize, Insertable)]
 #[diesel(table_name = namespaces)]
 pub struct NewNamespace {
     pub name: String,
     pub description: String,
-}
-
-impl NewNamespace {
-    pub async fn save_and_grant_all_to(
-        self,
-        pool: &DbPool,
-        assignee: GroupID,
-    ) -> Result<Namespace, ApiError> {
-        use crate::schema::namespaces::dsl::*;
-
-        let mut conn = pool.get()?;
-        conn.transaction::<_, ApiError, _>(|conn| {
-            let namespace = diesel::insert_into(namespaces)
-                .values(&self)
-                .get_result::<Namespace>(conn)?;
-
-            let group_permission = NewNamespacePermission {
-                namespace_id: namespace.id,
-                group_id: assignee.0,
-                has_create_object: true,
-                has_create_class: true,
-                has_read_namespace: true,
-                has_update_namespace: true,
-                has_delete_namespace: true,
-                has_delegate_namespace: true,
-            };
-
-            diesel::insert_into(namespacepermissions::table)
-                .values(&group_permission)
-                .execute(conn)?;
-
-            Ok(namespace)
-        })
-    }
-
-    pub async fn update_with_permissions(
-        self,
-        pool: &DbPool,
-        permissions: NewNamespaceRequest,
-    ) -> Result<Namespace, ApiError> {
-        use crate::schema::namespaces::dsl::*;
-
-        let mut conn = pool.get()?;
-        conn.transaction::<_, ApiError, _>(|conn| {
-            let namespace = diesel::insert_into(namespaces)
-                .values(&self)
-                .get_result::<Namespace>(conn)?;
-
-            let group_permission = NewNamespacePermission {
-                namespace_id: namespace.id,
-                group_id: permissions.group_id,
-                has_create_object: true,
-                has_create_class: true,
-                has_read_namespace: true,
-                has_update_namespace: true,
-                has_delete_namespace: true,
-                has_delegate_namespace: true,
-            };
-
-            diesel::insert_into(namespacepermissions::table)
-                .values(&group_permission)
-                .execute(conn)?;
-
-            Ok(namespace)
-        })
-    }
 }
 
 /// Check if a user has a specific permission to a given namespace ID
@@ -263,41 +96,88 @@ impl NewNamespace {
 ///
 /// * pool - Database connection pool
 /// * user_id - ID of the user to check permissions for
-/// * permission_type - Type of permission to check
 /// * namespace_ref - Namespace or NamespaceID to check permissions for
+/// * permission_type - Type of permission to check
 ///
 /// ## Returns
 /// * Ok(Namespace) - Namespace if the user has the requested permission
 /// * Err(ApiError) - Always returns 404 if there is no match (we never do 403/401)
-pub async fn user_can_on<T: NamespaceGenerics>(
+pub async fn user_can_on<T: NamespaceAccessors>(
     pool: &DbPool,
     user_id: UserID,
-    permission_type: NamespacePermissions,
     namespace_ref: T,
+    permission_type: NamespacePermissions,
 ) -> Result<Namespace, ApiError> {
-    use crate::models::permissions::{NamespacePermission, PermissionFilter};
+    use crate::models::permissions::PermissionFilter;
     use crate::schema::namespacepermissions::dsl::*;
     use diesel::prelude::*;
 
     let mut conn = pool.get()?;
-    let namespace_target_id = namespace_ref.id();
+    let namespace_target_id = namespace_ref.namespace_id(pool).await?;
 
-    let group_ids_subquery = user_id.group_ids_subquery();
+    let base_query = if user_id.user(&pool).await?.is_admin(&pool).await {
+        namespacepermissions
+            .into_boxed()
+            .filter(namespace_id.eq(namespace_target_id))
+    } else {
+        let group_ids_subquery = user_id.group_ids_subquery();
 
-    let base_query = namespacepermissions
-        .into_boxed()
-        .filter(namespace_id.eq(namespace_target_id))
-        .filter(group_id.eq_any(group_ids_subquery));
+        namespacepermissions
+            .into_boxed()
+            .filter(namespace_id.eq(namespace_target_id))
+            .filter(group_id.eq_any(group_ids_subquery))
+    };
 
     let result = PermissionFilter::filter(permission_type, base_query)
         .first::<NamespacePermission>(&mut conn)
         .optional()?;
 
-    if let Some(_) = result {
-        return Ok(namespace_ref.namespace(pool).await?);
+    if result.is_some() {
+        return namespace_ref.namespace(pool).await;
     }
 
     Err(ApiError::NotFound("Not found".to_string()))
+}
+
+/// Check what permissions a user has to a given namespace
+///
+/// ## Arguments
+/// * pool - Database connection pool
+/// * user_id - ID of the user to check permissions for
+/// * namespace_ref - Namespace or NamespaceID to check permissions for
+///
+/// ## Returns
+/// * Ok(Vec(Group, NamespacePermissions)) - List of groups and their permissions
+/// * Err(ApiError) - On query errors only.
+pub async fn user_on<T: NamespaceAccessors>(
+    pool: &DbPool,
+    user_id: UserID,
+    namespace_ref: T,
+) -> Result<Vec<GroupNamespacePermission>, ApiError> {
+    use crate::models::traits::output::FromTuple;
+    use crate::schema::groups::dsl::{groups, id as group_table_id};
+    use crate::schema::namespacepermissions::dsl::{group_id, namespace_id, namespacepermissions};
+    use diesel::prelude::*;
+
+    let mut conn = pool.get()?;
+    let namespace_target_id = namespace_ref.namespace_id(pool).await?;
+
+    let group_ids_subquery = user_id.group_ids_subquery();
+
+    let query = groups
+        .inner_join(namespacepermissions.on(group_table_id.eq(group_id)))
+        .filter(namespace_id.eq(namespace_target_id))
+        .filter(group_id.eq_any(group_ids_subquery))
+        .select((groups::all_columns(), namespacepermissions::all_columns()))
+        //        .distinct()
+        .load::<(Group, NamespacePermission)>(&mut conn)?;
+
+    let structured_results: Vec<GroupNamespacePermission> = query
+        .into_iter()
+        .map(GroupNamespacePermission::from_tuple)
+        .collect();
+
+    Ok(structured_results)
 }
 
 /// Check if a user has a specific permission to any namespace
@@ -323,11 +203,15 @@ pub async fn user_can_on_any(
 
     let mut conn = pool.get()?;
 
-    let group_ids_subquery = user_id.group_ids_subquery();
+    let base_query = if user_id.user(&pool).await?.is_admin(&pool).await {
+        namespacepermissions.into_boxed()
+    } else {
+        let group_ids_subquery = user_id.group_ids_subquery();
 
-    let base_query = namespacepermissions
-        .into_boxed()
-        .filter(group_id.eq_any(group_ids_subquery));
+        namespacepermissions
+            .into_boxed()
+            .filter(group_id.eq_any(group_ids_subquery))
+    };
 
     let filtered_query = PermissionFilter::filter(permission_type, base_query);
 
@@ -342,4 +226,499 @@ pub async fn user_can_on_any(
     };
 
     Ok(accessible_namespaces)
+}
+
+/// Check if a group has a specific permission to a given namespace ID
+///
+/// ## Arguments
+/// * pool - Database connection pool
+/// * gid - ID of the group to check permissions for
+/// * permission_type - Type of permission to check
+/// * namespace_ref - Namespace or NamespaceID to check permissions for
+///
+/// ## Returns
+/// * Ok(bool) - True if the group has the requested permission
+/// * Err(ApiError) - On query errors only.
+pub async fn group_can_on<T: NamespaceAccessors>(
+    pool: &DbPool,
+    gid: i32,
+    namespace_ref: T,
+    permission_type: NamespacePermissions,
+) -> Result<bool, ApiError> {
+    use crate::models::permissions::PermissionFilter;
+    use crate::schema::namespacepermissions::dsl::*;
+    use diesel::prelude::*;
+
+    let mut conn = pool.get()?;
+
+    let base_query = namespacepermissions
+        .into_boxed()
+        .filter(group_id.eq(gid))
+        .filter(namespace_id.eq(namespace_ref.namespace_id(pool).await?));
+
+    let filtered_query = PermissionFilter::filter(permission_type, base_query);
+
+    let result = filtered_query.execute(&mut conn)?;
+
+    if result == 0 {
+        return Ok(false);
+    }
+
+    Ok(true)
+}
+
+/// Check what groups have a specific permission to a given namespace ID
+///
+/// ## Arguments
+/// * pool - Database connection pool
+/// * nid - ID of the namespace to check permissions for
+/// * permission_type - Type of permission to check
+///
+/// ## Returns
+/// * Ok(Vec<Group>) - List of groups that have the requested permission
+/// * Err(ApiError) - On query errors only.
+pub async fn groups_can_on(
+    pool: &DbPool,
+    nid: i32,
+    permission_type: NamespacePermissions,
+) -> Result<Vec<Group>, ApiError> {
+    use crate::models::permissions::PermissionFilter;
+    use crate::schema::groups::dsl::{groups, id as group_table_id};
+    use crate::schema::namespacepermissions::dsl::*;
+    use diesel::prelude::*;
+
+    let mut conn = pool.get()?;
+
+    // Adapted to start with a base query that might include a subquery for group IDs
+    let base_query = namespacepermissions
+        .into_boxed()
+        .filter(namespace_id.eq(nid));
+
+    // Then filter on the given permission type using the PermissionFilter
+    let filtered_query = PermissionFilter::filter(permission_type, base_query);
+
+    // Selecting namespace IDs from the filtered query
+    let group_ids = filtered_query
+        .select(group_id)
+        .distinct() // Ensuring distinct group IDs to avoid duplicates
+        .load::<i32>(&mut conn)?;
+
+    // Finally, fetching groups based on the obtained group IDs
+    let results = if !group_ids.is_empty() {
+        groups
+            .filter(group_table_id.eq_any(group_ids))
+            .load::<Group>(&mut conn)?
+    } else {
+        Vec::new() // Returning an empty vector if no group IDs were found
+    };
+
+    Ok(results)
+}
+
+/// List all groups and their permissions for a namespace
+///
+/// ## Arguments
+/// * pool - Database connection pool
+/// * nid - ID of the namespace to check permissions for
+///
+/// ## Returns
+/// * Ok(Vec<(Group, NamespacePermissions)>) - List of groups and their permissions
+/// * Err(ApiError) - On query errors only.
+pub async fn groups_on<T: NamespaceAccessors>(
+    pool: &DbPool,
+    namespace_ref: T,
+) -> Result<Vec<GroupNamespacePermission>, ApiError> {
+    use crate::models::traits::output::FromTuple;
+    use crate::schema::groups::dsl::{groups, id as group_table_id};
+    use crate::schema::namespacepermissions::dsl::*;
+    use diesel::prelude::*;
+
+    let mut conn = pool.get()?;
+    let namespace_target_id = namespace_ref.namespace_id(pool).await?;
+
+    let query = groups
+        .inner_join(namespacepermissions.on(group_table_id.eq(group_id)))
+        .filter(namespace_id.eq(namespace_target_id))
+        .select((groups::all_columns(), namespacepermissions::all_columns()))
+        //        .distinct()
+        .load::<(Group, NamespacePermission)>(&mut conn)?;
+
+    let structured_results: Vec<GroupNamespacePermission> = query
+        .into_iter()
+        .map(GroupNamespacePermission::from_tuple)
+        .collect();
+
+    Ok(structured_results)
+}
+
+/// List all permissions for a given group on a namespace
+pub async fn group_on(
+    pool: &DbPool,
+    nid: i32,
+    gid: i32,
+) -> Result<Vec<NamespacePermission>, ApiError> {
+    use crate::schema::namespacepermissions::dsl::*;
+    use diesel::prelude::*;
+
+    let mut conn = pool.get()?;
+
+    let results = namespacepermissions
+        .filter(namespace_id.eq(nid))
+        .filter(group_id.eq(gid))
+        .load::<NamespacePermission>(&mut conn)?;
+
+    Ok(results)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::vec;
+
+    use super::*;
+    use crate::models::group::NewGroup;
+    use crate::tests::{create_namespace, generate_all_subsets};
+    use crate::traits::CanDelete;
+
+    async fn assign_to_groups(
+        pool: &DbPool,
+        namespace: &Namespace,
+        groups: &[Group],
+        permissions: Vec<NamespacePermissions>,
+    ) {
+        let namespace = namespace.clone();
+
+        for group in groups {
+            namespace
+                .clone()
+                .grant(pool, group.id, permissions.clone())
+                .await
+                .unwrap();
+
+            // Validate that the permissions were granted
+            for permission in permissions.iter() {
+                assert!(
+                    group_can_on(pool, group.id, namespace.clone(), permission.clone())
+                        .await
+                        .unwrap(),
+                    "Group {} does not have permission {:?} on namespace {}",
+                    group.id,
+                    permission,
+                    namespace.id
+                );
+            }
+        }
+    }
+
+    async fn groups_can_on_count(
+        pool: &DbPool,
+        nid: i32,
+        permission_type: NamespacePermissions,
+        expected_count: i32,
+    ) {
+        let groups = groups_can_on(pool, nid, permission_type).await.unwrap();
+        assert_eq!(groups.len() as i32, expected_count);
+    }
+
+    #[actix_rt::test]
+    async fn grant_to_nonexistent_group() {
+        let (pool, _) = crate::tests::get_pool_and_config().await;
+
+        let namespace = create_namespace(&pool, "grant_to_nonexistent_group")
+            .await
+            .unwrap();
+
+        // This should return an ApiError::NotFound
+        let result = namespace
+            .grant(&pool, 99999999, vec![NamespacePermissions::ReadCollection])
+            .await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ApiError::NotFound(_)));
+    }
+
+    #[actix_rt::test]
+    async fn test_list_groups_who_can() {
+        let (pool, _) = crate::tests::get_pool_and_config().await;
+
+        let mut groups = Vec::new();
+        for group_number in vec![1, 2, 3, 4, 5] {
+            let group_name = format!("test_list_group_{}", group_number);
+            groups.push(
+                NewGroup {
+                    groupname: group_name.to_string(),
+                    description: Some("Test group".to_string()),
+                }
+                .save(&pool)
+                .await
+                .unwrap(),
+            );
+        }
+
+        // Note, the admin group createed automatically gets all permissions to namespaces created
+        // via create_namespace, so we have one extra group for all permissions
+        let namespace = create_namespace(&pool, "test_list_groups").await.unwrap();
+
+        type NP = NamespacePermissions;
+
+        // Note: Slicing is *NOT* inclusive, so this will assign to groups 0, 1, and 2
+        assign_to_groups(&pool, &namespace, &groups[0..3], vec![NP::ReadCollection]).await;
+
+        groups_can_on_count(&pool, namespace.id, NP::ReadCollection, 4).await;
+        groups_can_on_count(&pool, namespace.id, NP::UpdateCollection, 1).await;
+
+        assign_to_groups(
+            &pool,
+            &namespace,
+            &groups[2..4],
+            vec![NP::ReadCollection, NP::UpdateCollection],
+        )
+        .await;
+
+        groups_can_on_count(&pool, namespace.id, NP::ReadCollection, 5).await;
+        groups_can_on_count(&pool, namespace.id, NP::UpdateCollection, 3).await;
+        groups_can_on_count(&pool, namespace.id, NP::DeleteCollection, 1).await;
+
+        assign_to_groups(
+            &pool,
+            &namespace,
+            &groups[3..4],
+            vec![NP::DelegateCollection],
+        )
+        .await;
+
+        groups_can_on_count(&pool, namespace.id, NP::DelegateCollection, 2).await;
+        groups_can_on_count(&pool, namespace.id, NP::CreateClass, 1).await;
+        groups_can_on_count(&pool, namespace.id, NP::CreateObject, 1).await;
+
+        let all_on = groups_on(&pool, namespace.clone()).await.unwrap();
+        assert_eq!(all_on.len(), 5);
+
+        namespace.delete(&pool).await.unwrap();
+        for group in groups {
+            group.delete(&pool).await.unwrap();
+        }
+    }
+
+    #[actix_rt::test]
+    async fn test_permission_grant_combinations() {
+        let (pool, _) = crate::tests::get_pool_and_config().await;
+
+        let permissions = vec![
+            NamespacePermissions::ReadCollection,
+            NamespacePermissions::UpdateCollection,
+            NamespacePermissions::DeleteCollection,
+            NamespacePermissions::DelegateCollection,
+            NamespacePermissions::CreateClass,
+            NamespacePermissions::CreateObject,
+        ];
+
+        let subsets = generate_all_subsets(&permissions);
+
+        for subset in subsets.iter() {
+            let namespace = create_namespace(&pool, "test_perm_grant_combinations")
+                .await
+                .unwrap();
+
+            let group = NewGroup {
+                groupname: "test_perm_grant_combinations".to_string(),
+                description: Some("Test group for combinations".to_string()),
+            }
+            .save(&pool)
+            .await
+            .unwrap();
+
+            let group_id = group.id;
+            // Grant this subset of permissions
+            namespace
+                .grant(&pool, group_id, subset.clone())
+                .await
+                .unwrap();
+
+            // Test that only the granted permissions are set
+            for permission in permissions.iter() {
+                let expected = subset.contains(permission);
+                let actual = group_can_on(&pool, group_id, namespace.clone(), permission.clone())
+                    .await
+                    .unwrap();
+                assert_eq!(expected, actual, "Mismatch for permission {:?}", permission);
+            }
+
+            namespace.delete(&pool).await.unwrap();
+            group.delete(&pool).await.unwrap();
+        }
+    }
+
+    #[actix_rt::test]
+    async fn test_permission_revoke_combinations() {
+        let (pool, _) = crate::tests::get_pool_and_config().await;
+
+        type NP = NamespacePermissions;
+
+        let permissions = vec![
+            NP::ReadCollection,
+            NP::UpdateCollection,
+            NP::DeleteCollection,
+            NP::DelegateCollection,
+            NP::CreateClass,
+            NP::CreateObject,
+        ];
+
+        // Generate all permission permutations, but filter out the empty set as that update will
+        // cause diesel to complain that there is nothing to do.
+        let subsets = generate_all_subsets(&permissions)
+            .into_iter()
+            .filter(|x| !x.is_empty());
+
+        for subset in subsets {
+            let namespace = create_namespace(&pool, "test_perm_revoke_ombinations")
+                .await
+                .unwrap();
+
+            let group = NewGroup {
+                groupname: "test_perm_revoke_combinations".to_string(),
+                description: Some("Test group for combinations".to_string()),
+            }
+            .save(&pool)
+            .await
+            .unwrap();
+
+            let group_id = group.id;
+            // Grant all permissions
+            namespace
+                .grant(&pool, group_id, permissions.clone())
+                .await
+                .unwrap();
+
+            // Revoke this subset of permissions
+            namespace
+                .revoke(&pool, group_id, subset.clone())
+                .await
+                .unwrap();
+
+            // Test that only the revoked permissions are set
+            for permission in permissions.iter() {
+                let expected = !subset.contains(permission);
+                let actual = group_can_on(&pool, group_id, namespace.clone(), permission.clone())
+                    .await
+                    .unwrap();
+                assert_eq!(expected, actual, "Mismatch for permission {:?}", permission);
+            }
+
+            namespace.delete(&pool).await.unwrap();
+            group.delete(&pool).await.unwrap();
+        }
+    }
+
+    /// Test to ensure that we can grant and revoke permissions without losing or gaining
+    /// any other permissions.
+    #[actix_rt::test]
+    async fn test_permission_grant_without_side_effects() {
+        let (pool, _) = crate::tests::get_pool_and_config().await;
+
+        type NP = NamespacePermissions;
+
+        let namespace = create_namespace(&pool, "test_perm_grant_without_side_effects")
+            .await
+            .unwrap();
+
+        let group = NewGroup {
+            groupname: "test_perm_grant_without_side_effects".to_string(),
+            description: Some("Test group for combinations".to_string()),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        let group_id = group.id;
+
+        namespace
+            .grant(&pool, group_id, vec![NP::ReadCollection])
+            .await
+            .unwrap();
+
+        assert!(
+            group_can_on(&pool, group_id, namespace.clone(), NP::ReadCollection)
+                .await
+                .unwrap(),
+            "Permission {:?} should be set",
+            NP::ReadCollection
+        );
+
+        for permission in vec![
+            NP::UpdateCollection,
+            NP::DeleteCollection,
+            NP::DelegateCollection,
+            NP::CreateClass,
+            NP::CreateObject,
+        ] {
+            assert!(
+                !group_can_on(&pool, group_id, namespace.clone(), permission.clone())
+                    .await
+                    .unwrap(),
+                "Permission {:?} should not be set",
+                permission
+            );
+        }
+
+        namespace
+            .grant(&pool, group_id, vec![NP::UpdateCollection])
+            .await
+            .unwrap();
+
+        for permission in vec![NP::ReadCollection, NP::UpdateCollection] {
+            assert!(
+                group_can_on(&pool, group_id, namespace.clone(), permission.clone())
+                    .await
+                    .unwrap(),
+                "Permission {:?} should be set",
+                permission
+            );
+        }
+
+        for permission in vec![
+            NP::DeleteCollection,
+            NP::DelegateCollection,
+            NP::CreateClass,
+            NP::CreateObject,
+        ] {
+            assert!(
+                !group_can_on(&pool, group_id, namespace.clone(), permission.clone())
+                    .await
+                    .unwrap(),
+                "Permission {:?} should not be set",
+                permission
+            );
+        }
+
+        namespace
+            .revoke(&pool, group_id, vec![NP::UpdateCollection])
+            .await
+            .unwrap();
+
+        assert!(
+            group_can_on(&pool, group_id, namespace.clone(), NP::ReadCollection)
+                .await
+                .unwrap(),
+            "Permission {:?} should be set",
+            NP::ReadCollection
+        );
+
+        for permission in vec![
+            NP::UpdateCollection,
+            NP::DeleteCollection,
+            NP::DelegateCollection,
+            NP::CreateClass,
+            NP::CreateObject,
+        ] {
+            assert!(
+                !group_can_on(&pool, group_id, namespace.clone(), permission.clone())
+                    .await
+                    .unwrap(),
+                "Permission {:?} should not be set",
+                permission
+            );
+        }
+        namespace.delete(&pool).await.unwrap();
+        group.delete(&pool).await.unwrap();
+    }
 }
