@@ -229,8 +229,11 @@ impl NewNamespace {
 }
 
 // Grants
-
 impl Namespace {
+    /// Grant permissions to a group on a namespace
+    /// This only grants the permissions that are passed in the permissions vector.
+    /// If the group previously had no permissions, a new entry is created.
+    /// If the group already has permissions, the permissions are updated.
     pub async fn grant(
         &self,
         pool: &DbPool,
@@ -281,7 +284,7 @@ impl Namespace {
                         has_update_namespace: permissions
                             .contains(&NamespacePermissions::UpdateCollection),
                         has_delete_namespace: permissions
-                            .contains(&NamespacePermissions::DelegateCollection),
+                            .contains(&NamespacePermissions::DeleteCollection),
                         has_delegate_namespace: permissions
                             .contains(&NamespacePermissions::DelegateCollection),
                     };
@@ -291,5 +294,46 @@ impl Namespace {
                 }
             }
         })
+    }
+
+    // Revoke permissions from a group on a namespace
+    // This only revokes the permissions that are passed in the permissions vector.
+    pub async fn revoke(
+        &self,
+        pool: &DbPool,
+        group_id_for_revoke: i32,
+        permissions: Vec<NamespacePermissions>,
+    ) -> Result<(), ApiError> {
+        use crate::schema::namespacepermissions::dsl::*;
+        use diesel::prelude::*;
+
+        let mut conn = pool.get()?;
+
+        conn.transaction::<_, ApiError, _>(|conn| {
+            namespacepermissions
+                .filter(namespace_id.eq(self.id))
+                .filter(group_id.eq(group_id_for_revoke))
+                .first::<NamespacePermission>(conn)?;
+
+            diesel::update(namespacepermissions)
+                .filter(namespace_id.eq(self.id))
+                .filter(group_id.eq(group_id_for_revoke))
+                .set((
+                    has_create_object
+                        .eq(!permissions.contains(&NamespacePermissions::CreateObject)),
+                    has_create_class.eq(!permissions.contains(&NamespacePermissions::CreateClass)),
+                    has_read_namespace
+                        .eq(!permissions.contains(&NamespacePermissions::ReadCollection)),
+                    has_update_namespace
+                        .eq(!permissions.contains(&NamespacePermissions::UpdateCollection)),
+                    has_delete_namespace
+                        .eq(!permissions.contains(&NamespacePermissions::DeleteCollection)),
+                    has_delegate_namespace
+                        .eq(!permissions.contains(&NamespacePermissions::DelegateCollection)),
+                ))
+                .execute(conn)?;
+            Ok(())
+        })?;
+        Ok(())
     }
 }
