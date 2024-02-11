@@ -246,3 +246,35 @@ pub fn generate_all_subsets<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
 
     subsets
 }
+
+#[cfg(test)]
+
+mod test {
+
+    use super::*;
+    use crate::{models::namespace::UpdateNamespace, traits::CanDelete, traits::CanUpdate};
+
+    #[actix_rt::test]
+    async fn test_updated_and_created_at() {
+        let (pool, _) = get_pool_and_config().await;
+        let namespace = create_namespace(&pool, "test_updated_at").await.unwrap();
+        let original_updated_at = namespace.updated_at;
+        let original_created_at = namespace.created_at;
+
+        let update = UpdateNamespace {
+            name: Some("test update 2".to_string()),
+            description: None,
+        };
+
+        let updated_namespace = update.update(&pool, namespace.id).await.unwrap();
+        let new_created_at = updated_namespace.created_at;
+        let new_updated_at = updated_namespace.updated_at;
+
+        assert_eq!(updated_namespace.id, namespace.id);
+        assert_eq!(updated_namespace.name, "test update 2");
+        assert_eq!(original_created_at, new_created_at);
+        assert!(new_updated_at > original_updated_at);
+
+        updated_namespace.delete(&pool).await.unwrap();
+    }
+}
