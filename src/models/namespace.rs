@@ -16,6 +16,7 @@ use crate::models::permissions::NamespacePermissions;
 use crate::models::output::GroupNamespacePermission;
 
 use crate::traits::NamespaceAccessors;
+use tracing::info;
 
 #[derive(Serialize, Deserialize, Queryable, PartialEq, Debug, Clone)]
 #[diesel(table_name = namespaces)]
@@ -136,7 +137,27 @@ pub async fn user_can_on<T: NamespaceAccessors>(
         return namespace_ref.namespace(pool).await;
     }
 
-    Err(ApiError::NotFound("Not found".to_string()))
+    // Try to fetch the namespace to see if it exists,
+    // if fetching fail, the NotFound error will be propagated
+    // as an ApiError::NotFound, meaning that the namespace
+    // really does not exist. If it however does exist, we
+    // can return a 403.
+    let ns = namespace_ref.namespace(pool).await?;
+
+    info!(
+        message = "Access denied",
+        requestor = user_id.0,
+        namespace = ns.id,
+        permission = ?permission_type
+    );
+    Err(ApiError::Forbidden(format!(
+        "User '{}' ({}) does not have '{:?}' on namespace '{}' ({})",
+        user_id.user(&pool).await?.username,
+        user_id.0,
+        permission_type,
+        ns.name,
+        ns.id
+    )))
 }
 
 /// Check what permissions a user has to a given namespace
@@ -352,11 +373,7 @@ pub async fn groups_on<T: NamespaceAccessors>(
 }
 
 /// List all permissions for a given group on a namespace
-pub async fn group_on(
-    pool: &DbPool,
-    nid: i32,
-    gid: i32,
-) -> Result<Vec<NamespacePermission>, ApiError> {
+pub async fn group_on(pool: &DbPool, nid: i32, gid: i32) -> Result<NamespacePermission, ApiError> {
     use crate::schema::namespacepermissions::dsl::*;
     use diesel::prelude::*;
 
@@ -365,7 +382,7 @@ pub async fn group_on(
     let results = namespacepermissions
         .filter(namespace_id.eq(nid))
         .filter(group_id.eq(gid))
-        .load::<NamespacePermission>(&mut conn)?;
+        .first::<NamespacePermission>(&mut conn)?;
 
     Ok(results)
 }

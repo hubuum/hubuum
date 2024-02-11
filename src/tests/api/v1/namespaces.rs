@@ -4,10 +4,15 @@ mod tests {
 
     use crate::models::namespace::{Namespace, NewNamespaceWithAssignee, UpdateNamespace};
     use crate::models::output::GroupNamespacePermission;
+    use crate::models::permissions::{NamespacePermission, NamespacePermissions};
 
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_contains, assert_contains_all, assert_response_status};
-    use crate::tests::{create_namespace, ensure_admin_group, setup_pool_and_tokens};
+    use crate::tests::{
+        create_namespace, create_test_group, create_test_user, ensure_admin_group,
+        setup_pool_and_tokens,
+    };
+    use crate::traits::CanDelete;
     use actix_web::{http, test};
 
     const NAMESPACE_ENDPOINT: &str = "/api/v1/namespaces";
@@ -78,7 +83,7 @@ mod tests {
         };
 
         let resp = patch_request(&pool, &normal_token, created_ns_url, &patch_content).await;
-        let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;
+        let _ = assert_response_status(resp, http::StatusCode::FORBIDDEN).await;
 
         let resp = patch_request(&pool, &admin_token, created_ns_url, &patch_content).await;
         let _ = assert_response_status(resp, http::StatusCode::ACCEPTED).await;
@@ -91,7 +96,7 @@ mod tests {
         assert_eq!(patched_ns.description, patch_content.description.unwrap());
 
         let resp = delete_request(&pool, &normal_token, created_ns_url).await;
-        let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;
+        let _ = assert_response_status(resp, http::StatusCode::FORBIDDEN).await;
 
         let resp = delete_request(&pool, &admin_token, created_ns_url).await;
         let _ = assert_response_status(resp, http::StatusCode::NO_CONTENT).await;
@@ -122,7 +127,7 @@ mod tests {
         let created_ns: Namespace = test::read_body_json(resp).await;
 
         let resp = get_request(&pool, &normal_token, created_ns_url).await;
-        let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;
+        let _ = assert_response_status(resp, http::StatusCode::FORBIDDEN).await;
 
         let resp = get_request(
             &pool,
@@ -171,5 +176,136 @@ mod tests {
         assert_eq!(np.has_delete_namespace, true);
         assert_eq!(np.has_delegate_namespace, true);
         assert_eq!(permissions[0].group.id, admin_group.id);
+
+        created_ns.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_api_namespace_permissions_grant_and_delete_all() {
+        let (pool, admin_token, _normal_token) = setup_pool_and_tokens().await;
+        let _admin_group = ensure_admin_group(&pool).await;
+
+        let ns = create_namespace(&pool, "test_namespace_permissions_grant")
+            .await
+            .unwrap();
+
+        let normal_group = create_test_group(&pool).await;
+
+        // Check that normal group has no permissions
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!(
+                "{}/{}/permissions/group/{}",
+                NAMESPACE_ENDPOINT, ns.id, normal_group.id
+            ),
+        )
+        .await;
+        let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;
+
+        // Grant read permission to normal group
+        let endpoint = &format!(
+            "{}/{}/permissions/group/{}/ReadCollection",
+            NAMESPACE_ENDPOINT, ns.id, normal_group.id
+        );
+
+        let resp = post_request(&pool, &admin_token, endpoint, &()).await;
+        let _ = assert_response_status(resp, http::StatusCode::CREATED).await;
+
+        // Check that normal group has read permission
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!(
+                "{}/{}/permissions/group/{}",
+                NAMESPACE_ENDPOINT, ns.id, normal_group.id
+            ),
+        )
+        .await;
+
+        let resp = assert_response_status(resp, http::StatusCode::OK).await;
+        let np: NamespacePermission = test::read_body_json(resp).await;
+        assert_eq!(np.group_id, normal_group.id);
+        assert_eq!(np.namespace_id, ns.id);
+        assert_eq!(np.has_read_namespace, true);
+        assert_eq!(np.has_update_namespace, false);
+        assert_eq!(np.has_delete_namespace, false);
+        assert_eq!(np.has_delegate_namespace, false);
+        assert_eq!(np.has_create_object, false);
+        assert_eq!(np.has_create_class, false);
+
+        // Delete all permissions for normal group
+        let resp = delete_request(
+            &pool,
+            &admin_token,
+            &format!(
+                "{}/{}/permissions/group/{}",
+                NAMESPACE_ENDPOINT, ns.id, normal_group.id
+            ),
+        )
+        .await;
+
+        let _ = assert_response_status(resp, http::StatusCode::NO_CONTENT).await;
+
+        // Check that normal group has no permissions
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!(
+                "{}/{}/permissions/group/{}",
+                NAMESPACE_ENDPOINT, ns.id, normal_group.id
+            ),
+        )
+        .await;
+        let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;
+
+        ns.delete(&pool).await.unwrap();
+        normal_group.delete(&pool).await.unwrap();
+    }
+
+    /// Test that after granting a permission to a group, the API allows us to perform
+    /// the action that the permission grants.
+    #[actix_web::test]
+    async fn test_api_namespace_grants_work() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let ns = create_namespace(&pool, "test_namespace_grants")
+            .await
+            .unwrap();
+        let test_group = create_test_group(&pool).await;
+        let test_user = create_test_user(&pool).await;
+
+        test_group.add_member(&pool, &test_user).await.unwrap();
+        let token = test_user.create_token(&pool).await.unwrap().get_token();
+
+        let ns_endpoint = &format!("{}/{}", NAMESPACE_ENDPOINT, ns.id);
+        // First, let us verify that test_user can't read the namespace.
+        let resp = get_request(&pool, &token, &ns_endpoint).await;
+        let _ = assert_response_status(resp, http::StatusCode::FORBIDDEN).await;
+
+        // We can verify this by checking the permissions for the user
+        let endpoint = &format!(
+            "{}/{}/permissions/user/{}",
+            NAMESPACE_ENDPOINT, ns.id, test_user.id
+        );
+        let resp = get_request(&pool, &admin_token, &endpoint).await;
+        let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;
+
+        // Now, let us grant test_group read permission to the namespace
+        let np_read = NamespacePermissions::ReadCollection;
+        ns.grant(&pool, test_group.id, vec![np_read]).await.unwrap();
+
+        // Let's try reading the namespace again
+        let resp = get_request(&pool, &token, &ns_endpoint).await;
+        let resp = assert_response_status(resp, http::StatusCode::OK).await;
+        let ns_fetched: Namespace = test::read_body_json(resp).await;
+        assert_eq!(ns, ns_fetched);
+
+        // We can verify this by checking the permissions for the user, as the user.
+        let resp = get_request(&pool, &token, &endpoint).await;
+        let _ = assert_response_status(resp, http::StatusCode::OK).await;
+
+        // Verify that the user doesn't have permission to delete the namespace
+        let resp = delete_request(&pool, &token, &ns_endpoint).await;
+        let _ = assert_response_status(resp, http::StatusCode::FORBIDDEN).await;
     }
 }

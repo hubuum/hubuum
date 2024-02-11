@@ -65,7 +65,7 @@ pub async fn init(pool: DbPool) {
         }
     };
 
-    match adm_group.add_member(&adm_user, &pool).await {
+    match adm_group.add_member(&pool, &adm_user).await {
         Ok(_) => {}
         Err(e) => {
             error!(

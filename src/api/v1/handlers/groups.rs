@@ -134,7 +134,7 @@ pub async fn add_group_member(
         requestor = requestor.user.id
     );
 
-    group.add_member(&user, &pool).await?;
+    group.add_member(&pool, &user).await?;
 
     Ok(json_response(json!({}), StatusCode::NO_CONTENT))
 }

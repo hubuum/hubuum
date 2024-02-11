@@ -391,6 +391,10 @@ pub async fn get_namespace_user_permissions(
 
     let permissions = user_on(&pool, user_id, namespace).await?;
 
+    if permissions.is_empty() {
+        return Ok(json_response((), StatusCode::NOT_FOUND));
+    }
+
     Ok(json_response(permissions, StatusCode::OK))
 }
 

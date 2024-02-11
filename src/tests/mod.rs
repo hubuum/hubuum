@@ -41,17 +41,21 @@ pub async fn create_user_with_params(pool: &DbPool, username: &str, password: &s
     result.unwrap()
 }
 
+/// Create a test user with a random username
 pub async fn create_test_user(pool: &DbPool) -> User {
-    let username = "admin".to_string() + &generate_random_password(16);
+    let username = "user".to_string() + &generate_random_password(16);
     create_user_with_params(pool, &username, "testpassword").await
 }
 
+/// Create a test admin user with a random username.
+///
+/// The user will be added to the admin group.
 pub async fn create_test_admin(pool: &DbPool) -> User {
-    let username = "user".to_string() + &generate_random_password(16);
+    let username = "admin".to_string() + &generate_random_password(16);
     let user = create_user_with_params(pool, &username, "testadminpassword").await;
     let admin_group = ensure_admin_group(pool).await;
 
-    let result = admin_group.add_member(&user, pool).await;
+    let result = admin_group.add_member(pool, &user).await;
 
     if result.is_ok() {
         user
@@ -117,7 +121,7 @@ pub async fn ensure_admin_user(pool: &DbPool) -> User {
 
     let admin_group = ensure_admin_group(pool).await;
 
-    let _ = admin_group.add_member(&user, pool).await;
+    let _ = admin_group.add_member(pool, &user).await;
 
     user
 }

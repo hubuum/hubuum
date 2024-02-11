@@ -37,7 +37,7 @@ mod tests {
         let test_admin = create_test_admin(&pool).await;
 
         let test_group = create_test_group(&pool).await;
-        test_group.add_member(&test_user, &pool).await.unwrap();
+        test_group.add_member(&pool, &test_user).await.unwrap();
 
         let test_admin_group = create_test_group(&pool).await;
 

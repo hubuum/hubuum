@@ -80,7 +80,7 @@ impl Group {
     /// * `Err(ApiError)` if the user was not added to the group
     ///
     /// If the user is already a member of the group, this function is a safe noop.
-    pub async fn add_member(&self, user: &User, pool: &DbPool) -> Result<(), ApiError> {
+    pub async fn add_member(&self, pool: &DbPool, user: &User) -> Result<(), ApiError> {
         use crate::schema::user_groups::dsl::*;
 
         let new_user_group = UserGroup {
