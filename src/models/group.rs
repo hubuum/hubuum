@@ -1,14 +1,14 @@
 // src/models/group.rs
 
 use crate::errors::ApiError;
-use crate::models::user_group::UserGroup;
+use crate::models::user_group::NewUserGroup;
 use crate::schema::groups;
 
 use crate::models::user::User;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::traits::SelfAccessors;
+use crate::traits::{CanSave, SelfAccessors};
 
 use crate::db::DbPool;
 
@@ -45,6 +45,8 @@ pub struct Group {
     pub id: i32,
     pub groupname: String,
     pub description: String,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
 }
 
 impl SelfAccessors<Group> for Group {
@@ -59,13 +61,13 @@ impl SelfAccessors<Group> for Group {
 
 impl Group {
     pub async fn members(&self, pool: &DbPool) -> Result<Vec<User>, ApiError> {
-        use crate::schema::user_groups::dsl::*;
+        use crate::schema::user_groups::dsl::{group_id, user_groups, user_id};
         use crate::schema::users::dsl::*;
 
         Ok(user_groups
             .filter(group_id.eq(self.id))
             .inner_join(users.on(id.eq(user_id)))
-            .select((id, username, password, email))
+            .select((id, username, password, email, created_at, updated_at))
             .load::<User>(&mut pool.get()?)?)
     }
 
@@ -81,17 +83,12 @@ impl Group {
     ///
     /// If the user is already a member of the group, this function is a safe noop.
     pub async fn add_member(&self, pool: &DbPool, user: &User) -> Result<(), ApiError> {
-        use crate::schema::user_groups::dsl::*;
-
-        let new_user_group = UserGroup {
+        NewUserGroup {
             user_id: user.id,
             group_id: self.id,
-        };
-
-        diesel::insert_into(user_groups)
-            .values(&new_user_group)
-            .on_conflict_do_nothing()
-            .execute(&mut pool.get()?)?;
+        }
+        .save(pool)
+        .await?;
 
         Ok(())
     }

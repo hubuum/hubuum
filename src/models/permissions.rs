@@ -122,6 +122,8 @@ pub struct NamespacePermission {
     pub has_update_namespace: bool,
     pub has_delete_namespace: bool,
     pub has_delegate_namespace: bool,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
 }
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy)]
@@ -134,6 +136,8 @@ pub struct ClassPermission {
     pub has_read_class: bool,
     pub has_update_class: bool,
     pub has_delete_class: bool,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
 }
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy)]
@@ -145,6 +149,8 @@ pub struct ObjectPermission {
     pub has_read_object: bool,
     pub has_update_object: bool,
     pub has_delete_object: bool,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
 }
 
 // Insertable permission models.

@@ -1,6 +1,6 @@
 use diesel::prelude::*;
 use diesel::sql_query;
-use diesel::sql_types::{BigInt, Integer, Jsonb, Text};
+use diesel::sql_types::{BigInt, Integer, Jsonb, Text, Timestamp};
 use serde::{Deserialize, Serialize};
 
 use crate::db::DbPool;
@@ -22,6 +22,11 @@ pub struct HubuumObject {
     pub data: serde_json::Value,
     #[diesel(sql_type = Text)]
     pub description: String,
+
+    #[diesel(sql_type = Timestamp)]
+    pub created_at: chrono::NaiveDateTime,
+    #[diesel(sql_type = Timestamp)]
+    pub updated_at: chrono::NaiveDateTime,
 }
 
 #[derive(Serialize, Deserialize, Clone, Insertable)]

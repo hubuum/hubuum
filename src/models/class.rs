@@ -14,6 +14,8 @@ pub struct HubuumClass {
     pub json_schema: serde_json::Value,
     pub validate_schema: bool,
     pub description: String,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
 }
 
 #[derive(Serialize, Deserialize, Insertable, Clone)]

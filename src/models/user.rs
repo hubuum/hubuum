@@ -18,6 +18,8 @@ pub struct User {
     pub username: String,
     pub password: String,
     pub email: Option<String>,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
 }
 
 impl User {
@@ -79,12 +81,12 @@ impl User {
 
     pub async fn groups(&self, pool: &DbPool) -> Result<Vec<Group>, ApiError> {
         use crate::schema::groups::dsl::*;
-        use crate::schema::user_groups::dsl::*;
+        use crate::schema::user_groups::dsl::{group_id, user_groups, user_id};
 
         Ok(user_groups
             .filter(user_id.eq(self.id))
             .inner_join(groups.on(id.eq(group_id)))
-            .select((id, groupname, description))
+            .select((id, groupname, description, created_at, updated_at))
             .load::<Group>(&mut pool.get()?)?)
     }
 

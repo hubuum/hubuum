@@ -1,5 +1,5 @@
-use crate::models::group::Group;
 use crate::models::user::User;
+use crate::{models::group::Group, traits::CanSave};
 
 use crate::errors::ApiError;
 use crate::schema::user_groups;
@@ -16,16 +16,28 @@ use serde::{Deserialize, Serialize};
 pub struct UserGroup {
     pub user_id: i32,
     pub group_id: i32,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+}
+
+#[derive(Serialize, Deserialize, Insertable)]
+#[diesel(table_name = user_groups)]
+pub struct NewUserGroup {
+    pub user_id: i32,
+    pub group_id: i32,
+}
+
+impl CanSave for NewUserGroup {
+    type Output = UserGroup;
+    async fn save(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
+        use crate::schema::user_groups::dsl::*;
+        Ok(diesel::insert_into(user_groups)
+            .values(self)
+            .get_result(&mut pool.get()?)?)
+    }
 }
 
 impl UserGroup {
-    pub fn new(user: &User, group: &Group) -> Self {
-        UserGroup {
-            user_id: user.id,
-            group_id: group.id,
-        }
-    }
-
     pub async fn user(&self, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::*;
         Ok(users

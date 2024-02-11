@@ -24,6 +24,8 @@ pub struct Namespace {
     pub id: i32,
     pub name: String,
     pub description: String,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
 }
 
 impl Namespace {

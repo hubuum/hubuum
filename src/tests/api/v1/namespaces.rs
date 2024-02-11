@@ -283,11 +283,11 @@ mod tests {
         let _ = assert_response_status(resp, http::StatusCode::FORBIDDEN).await;
 
         // We can verify this by checking the permissions for the user
-        let endpoint = &format!(
+        let user_perm_endpoint = &format!(
             "{}/{}/permissions/user/{}",
             NAMESPACE_ENDPOINT, ns.id, test_user.id
         );
-        let resp = get_request(&pool, &admin_token, &endpoint).await;
+        let resp = get_request(&pool, &admin_token, &user_perm_endpoint).await;
         let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;
 
         // Now, let us grant test_group read permission to the namespace
@@ -301,11 +301,58 @@ mod tests {
         assert_eq!(ns, ns_fetched);
 
         // We can verify this by checking the permissions for the user, as the user.
-        let resp = get_request(&pool, &token, &endpoint).await;
+        let resp = get_request(&pool, &token, &user_perm_endpoint).await;
         let _ = assert_response_status(resp, http::StatusCode::OK).await;
+
+        // Now, let us grant test_group update permission to the namespace
+        let np_update = NamespacePermissions::UpdateCollection;
+        ns.grant(&pool, test_group.id, vec![np_update])
+            .await
+            .unwrap();
+
+        // Let's try updating the namespace
+        let update_content = UpdateNamespace {
+            name: Some("test_namespace_grants_update".to_string()),
+            description: Some("test namespace grants update description".to_string()),
+        };
+
+        let resp = patch_request(&pool, &token, &ns_endpoint, &update_content).await;
+        let _ = assert_response_status(resp, http::StatusCode::ACCEPTED).await;
+
+        // We can verify this by fetching the namespace again
+        let resp = get_request(&pool, &token, &ns_endpoint).await;
+        let resp = assert_response_status(resp, http::StatusCode::OK).await;
+        let ns_fetched: Namespace = test::read_body_json(resp).await;
+        assert_eq!(ns_fetched.name, update_content.name.unwrap());
+        assert_eq!(ns_fetched.description, update_content.description.unwrap());
 
         // Verify that the user doesn't have permission to delete the namespace
         let resp = delete_request(&pool, &token, &ns_endpoint).await;
         let _ = assert_response_status(resp, http::StatusCode::FORBIDDEN).await;
+
+        // Grant test_group delegate permission to the namespace
+        let np_delegate = NamespacePermissions::DelegateCollection;
+        ns.grant(&pool, test_group.id, vec![np_delegate])
+            .await
+            .unwrap();
+
+        // And now give ourselves permission to delete the namespace
+        let grant_endpoint = &format!(
+            "{}/{}/permissions/group/{}/DeleteCollection",
+            NAMESPACE_ENDPOINT, ns.id, test_group.id
+        );
+        let resp = post_request(&pool, &token, &grant_endpoint, &()).await;
+        let _ = assert_response_status(resp, http::StatusCode::CREATED).await;
+
+        // Let's try deleting the namespace
+        let resp = delete_request(&pool, &token, &ns_endpoint).await;
+        let _ = assert_response_status(resp, http::StatusCode::NO_CONTENT).await;
+
+        // Verify that the namespace is gone
+        let resp = get_request(&pool, &admin_token, &ns_endpoint).await;
+        let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;
+
+        test_group.delete(&pool).await.unwrap();
+        test_user.delete(&pool).await.unwrap();
     }
 }

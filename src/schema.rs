@@ -9,6 +9,8 @@ diesel::table! {
         has_read_class -> Bool,
         has_update_class -> Bool,
         has_delete_class -> Bool,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
     }
 }
 
@@ -17,6 +19,8 @@ diesel::table! {
         id -> Int4,
         groupname -> Varchar,
         description -> Varchar,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
     }
 }
 
@@ -28,6 +32,8 @@ diesel::table! {
         json_schema -> Jsonb,
         validate_schema -> Bool,
         description -> Varchar,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
     }
 }
 
@@ -39,6 +45,8 @@ diesel::table! {
         hubuum_class_id -> Int4,
         data -> Jsonb,
         description -> Varchar,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
     }
 }
 
@@ -53,6 +61,8 @@ diesel::table! {
         has_update_namespace -> Bool,
         has_delete_namespace -> Bool,
         has_delegate_namespace -> Bool,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
     }
 }
 
@@ -61,6 +71,8 @@ diesel::table! {
         id -> Int4,
         name -> Varchar,
         description -> Varchar,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
     }
 }
 
@@ -72,6 +84,8 @@ diesel::table! {
         has_read_object -> Bool,
         has_update_object -> Bool,
         has_delete_object -> Bool,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
     }
 }
 
@@ -87,6 +101,8 @@ diesel::table! {
     user_groups (user_id, group_id) {
         user_id -> Int4,
         group_id -> Int4,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
     }
 }
 
@@ -96,6 +112,8 @@ diesel::table! {
         username -> Varchar,
         password -> Varchar,
         email -> Nullable<Varchar>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
     }
 }
 
