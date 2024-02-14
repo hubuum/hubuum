@@ -292,7 +292,7 @@ mod tests {
 
         // Now, let us grant test_group read permission to the namespace
         let np_read = NamespacePermissions::ReadCollection;
-        ns.grant(&pool, test_group.id, vec![np_read]).await.unwrap();
+        ns.grant_one(&pool, test_group.id, np_read).await.unwrap();
 
         // Let's try reading the namespace again
         let resp = get_request(&pool, &token, &ns_endpoint).await;
@@ -306,9 +306,7 @@ mod tests {
 
         // Now, let us grant test_group update permission to the namespace
         let np_update = NamespacePermissions::UpdateCollection;
-        ns.grant(&pool, test_group.id, vec![np_update])
-            .await
-            .unwrap();
+        ns.grant_one(&pool, test_group.id, np_update).await.unwrap();
 
         // Let's try updating the namespace
         let update_content = UpdateNamespace {
@@ -332,7 +330,7 @@ mod tests {
 
         // Grant test_group delegate permission to the namespace
         let np_delegate = NamespacePermissions::DelegateCollection;
-        ns.grant(&pool, test_group.id, vec![np_delegate])
+        ns.grant_one(&pool, test_group.id, np_delegate)
             .await
             .unwrap();
 

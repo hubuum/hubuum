@@ -5,10 +5,11 @@ use crate::models::namespace::{
     Namespace, NamespaceID, NewNamespace, NewNamespaceWithAssignee, UpdateNamespace,
 };
 use crate::models::permissions::{
-    NamespacePermission, NamespacePermissions, NewNamespacePermission,
+    NamespacePermission, NamespacePermissions, NewNamespacePermission, PermissionsList,
 };
 use crate::traits::{CanDelete, CanSave, CanUpdate, NamespaceAccessors, SelfAccessors};
 use diesel::prelude::*;
+use tracing::debug;
 
 impl CanSave for Namespace {
     type Output = Namespace;
@@ -234,11 +235,21 @@ impl Namespace {
     /// This only grants the permissions that are passed in the permissions vector.
     /// If the group previously had no permissions, a new entry is created.
     /// If the group already has permissions, the permissions are updated.
+    pub async fn grant_one(
+        &self,
+        pool: &DbPool,
+        group_id_for_grant: i32,
+        permission: NamespacePermissions,
+    ) -> Result<NamespacePermission, ApiError> {
+        self.grant(pool, group_id_for_grant, PermissionsList::new([permission]))
+            .await
+    }
+
     pub async fn grant(
         &self,
         pool: &DbPool,
         group_id_for_grant: i32,
-        permissions: Vec<NamespacePermissions>,
+        permissions: PermissionsList<NamespacePermissions>,
     ) -> Result<NamespacePermission, ApiError> {
         use crate::models::permissions::UpdateNamespacePermission;
         use crate::schema::namespacepermissions::dsl::*;
@@ -256,8 +267,10 @@ impl Namespace {
 
             match existing_entry {
                 Some(_) => {
+                    debug!(message = "Granting permissions", update = true, new_entry = false, namespace_id = self.id, group_id = group_id_for_grant, permissions = ?permissions);
+
                     let mut update_permissions = UpdateNamespacePermission::default();
-                    for permission in permissions {
+                    for permission in permissions.iter() {
                         match permission {
                             NamespacePermissions::CreateObject => {
                                 update_permissions.has_create_object = Some(true);
@@ -287,6 +300,8 @@ impl Namespace {
                         .get_result(conn)?)
                 }
                 None => {
+                    debug!(message = "Granting permissions", update = false, new_entry = true, namespace_id = self.id, group_id = group_id_for_grant, permissions = ?permissions);
+
                     let new_entry = NewNamespacePermission {
                         namespace_id: self.id,
                         group_id: group_id_for_grant,
@@ -310,13 +325,27 @@ impl Namespace {
         })
     }
 
+    pub async fn revoke_one(
+        &self,
+        pool: &DbPool,
+        group_id_for_revoke: i32,
+        permission: NamespacePermissions,
+    ) -> Result<NamespacePermission, ApiError> {
+        self.revoke(
+            pool,
+            group_id_for_revoke,
+            PermissionsList::new([permission]),
+        )
+        .await
+    }
+
     // Revoke permissions from a group on a namespace
     // This only revokes the permissions that are passed in the permissions vector.
     pub async fn revoke(
         &self,
         pool: &DbPool,
         group_id_for_revoke: i32,
-        permissions: Vec<NamespacePermissions>,
+        permissions: PermissionsList<NamespacePermissions>,
     ) -> Result<NamespacePermission, ApiError> {
         use crate::models::permissions::UpdateNamespacePermission;
         use crate::schema::namespacepermissions::dsl::*;
@@ -330,8 +359,10 @@ impl Namespace {
                 .filter(group_id.eq(group_id_for_revoke))
                 .first::<NamespacePermission>(conn)?;
 
+            debug!(message = "Revoking permissions", namespace_id = self.id, group_id = group_id_for_revoke, permissions = ?permissions);
+
             let mut update_permissions = UpdateNamespacePermission::default();
-            for permission in permissions {
+            for permission in permissions.into_iter() {
                 match permission {
                     NamespacePermissions::CreateObject => {
                         update_permissions.has_create_object = Some(false);
@@ -365,7 +396,7 @@ impl Namespace {
         &self,
         pool: &DbPool,
         group_id_for_set: i32,
-        permissions: Vec<NamespacePermissions>,
+        permissions: PermissionsList<NamespacePermissions>,
     ) -> Result<NamespacePermission, ApiError> {
         use crate::schema::namespacepermissions::dsl::*;
         use diesel::prelude::*;

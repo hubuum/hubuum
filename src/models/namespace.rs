@@ -395,6 +395,7 @@ mod tests {
 
     use super::*;
     use crate::models::group::NewGroup;
+    use crate::models::permissions::PermissionsList;
     use crate::tests::{create_namespace, generate_all_subsets};
     use crate::traits::CanDelete;
 
@@ -402,7 +403,7 @@ mod tests {
         pool: &DbPool,
         namespace: &Namespace,
         groups: &[Group],
-        permissions: Vec<NamespacePermissions>,
+        permissions: PermissionsList<NamespacePermissions>,
     ) {
         let namespace = namespace.clone();
 
@@ -448,7 +449,7 @@ mod tests {
 
         // This should return an ApiError::NotFound
         let result = namespace
-            .grant(&pool, 99999999, vec![NamespacePermissions::ReadCollection])
+            .grant_one(&pool, 99999999, NamespacePermissions::ReadCollection)
             .await;
 
         assert!(result.is_err());
@@ -478,9 +479,16 @@ mod tests {
         let namespace = create_namespace(&pool, "test_list_groups").await.unwrap();
 
         type NP = NamespacePermissions;
+        type PL = PermissionsList<NamespacePermissions>;
 
         // Note: Slicing is *NOT* inclusive, so this will assign to groups 0, 1, and 2
-        assign_to_groups(&pool, &namespace, &groups[0..3], vec![NP::ReadCollection]).await;
+        assign_to_groups(
+            &pool,
+            &namespace,
+            &groups[0..3],
+            PL::new([NP::ReadCollection]),
+        )
+        .await;
 
         groups_can_on_count(&pool, namespace.id, NP::ReadCollection, 4).await;
         groups_can_on_count(&pool, namespace.id, NP::UpdateCollection, 1).await;
@@ -489,7 +497,7 @@ mod tests {
             &pool,
             &namespace,
             &groups[2..4],
-            vec![NP::ReadCollection, NP::UpdateCollection],
+            PL::new([NP::ReadCollection, NP::UpdateCollection]),
         )
         .await;
 
@@ -501,7 +509,7 @@ mod tests {
             &pool,
             &namespace,
             &groups[3..4],
-            vec![NP::DelegateCollection],
+            PL::new([NP::DelegateCollection]),
         )
         .await;
 
@@ -549,7 +557,7 @@ mod tests {
             let group_id = group.id;
             // Grant this subset of permissions
             namespace
-                .grant(&pool, group_id, subset.clone())
+                .grant(&pool, group_id, PermissionsList::new(subset.clone()))
                 .await
                 .unwrap();
 
@@ -604,13 +612,13 @@ mod tests {
             let group_id = group.id;
             // Grant all permissions
             namespace
-                .grant(&pool, group_id, permissions.clone())
+                .grant(&pool, group_id, PermissionsList::new(permissions.clone()))
                 .await
                 .unwrap();
 
             // Revoke this subset of permissions
             namespace
-                .revoke(&pool, group_id, subset.clone())
+                .revoke(&pool, group_id, PermissionsList::new(subset.clone()))
                 .await
                 .unwrap();
 
@@ -651,7 +659,7 @@ mod tests {
         let group_id = group.id;
 
         namespace
-            .grant(&pool, group_id, vec![NP::ReadCollection])
+            .grant_one(&pool, group_id, NP::ReadCollection)
             .await
             .unwrap();
 
@@ -680,7 +688,7 @@ mod tests {
         }
 
         namespace
-            .grant(&pool, group_id, vec![NP::UpdateCollection])
+            .grant_one(&pool, group_id, NP::UpdateCollection)
             .await
             .unwrap();
 
@@ -710,7 +718,7 @@ mod tests {
         }
 
         namespace
-            .revoke(&pool, group_id, vec![NP::UpdateCollection])
+            .revoke_one(&pool, group_id, NP::UpdateCollection)
             .await
             .unwrap();
 

@@ -1,4 +1,5 @@
 use diesel::prelude::*;
+use std::{fmt, fmt::Display, slice};
 
 use serde::{Deserialize, Serialize};
 
@@ -31,6 +32,54 @@ pub enum ObjectPermissions {
     ReadObject,
     UpdateObject,
     DeleteObject,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PermissionsList<T: Serialize>(Vec<T>);
+
+impl<T: Serialize + PartialEq> PermissionsList<T> {
+    // Constructor that accepts a generic IntoIterator so we can create a PermissionsList from any
+    // collection of items that can be converted into an iterator.
+    pub fn new<I: IntoIterator<Item = T>>(items: I) -> Self {
+        PermissionsList(items.into_iter().collect())
+    }
+
+    pub fn contains(&self, item: &T) -> bool {
+        self.0.contains(item)
+    }
+
+    // Method to get an iterator over references to the items in the Vec<T>
+    pub fn iter(&self) -> slice::Iter<'_, T> {
+        self.0.iter()
+    }
+}
+
+impl<T: Serialize> Display for PermissionsList<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let formatted = self
+            .0
+            .iter()
+            .map(|item| {
+                // Serialize each item using serde_json, removing quotes for cleaner output.
+                // This approach assumes that the serialized form is a simple string.
+                serde_json::to_string(item)
+                    .unwrap_or_else(|_| "Serialization failure".to_string())
+                    .trim_matches('"')
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        write!(f, "{}", formatted)
+    }
+}
+
+impl<'a, T: Serialize + PartialEq> IntoIterator for &'a PermissionsList<T> {
+    type Item = &'a T;
+    type IntoIter = slice::Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
 }
 
 pub trait PermissionFilter<'a, Q> {

@@ -10,7 +10,7 @@ use crate::models::user::UserID;
 use crate::utilities::response::{json_response, json_response_created};
 use actix_web::{delete, get, http::StatusCode, patch, post, web, Responder};
 use serde_json::json;
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::traits::{CanDelete, CanSave, CanUpdate, SelfAccessors};
 
@@ -136,7 +136,7 @@ pub async fn get_namespace_permissions(
 ) -> Result<impl Responder, ApiError> {
     use crate::models::namespace::groups_on;
 
-    debug!(
+    info!(
         message = "Namespace permissions list requested",
         requestor = requestor.user.username,
         namespace_id = namespace_id.id()
@@ -166,7 +166,7 @@ pub async fn get_namespace_group_permissions(
 
     let (namespace_id, group_id) = params.into_inner();
 
-    debug!(
+    info!(
         message = "Namespace group permissions list requested",
         requestor = requestor.user.username,
         namespace_id = namespace_id.id(),
@@ -202,14 +202,14 @@ pub async fn grant_namespace_group_permissions(
     params: web::Path<(NamespaceID, GroupID)>,
     permissions: web::Json<Vec<NamespacePermissions>>,
 ) -> Result<impl Responder, ApiError> {
-    use crate::models::permissions::NamespacePermissions;
+    use crate::models::permissions::{NamespacePermissions, PermissionsList};
 
     let (namespace_id, group_id) = params.into_inner();
-    let permissions = permissions.into_inner();
+    let permissions = PermissionsList::new(permissions.into_inner());
 
-    debug!(
+    info!(
         message = "Namespace group permissions grant requested",
-        requestor = requestor.user.username,
+        requestor = requestor.user.id,
         namespace_id = namespace_id.id(),
         group_id = group_id.id(),
         permissions = ?permissions
@@ -239,7 +239,7 @@ pub async fn revoke_namespace_group_permissions(
 
     let (namespace_id, group_id) = params.into_inner();
 
-    debug!(
+    info!(
         message = "Namespace group permissions revoke requested",
         requestor = requestor.user.username,
         namespace_id = namespace_id.id(),
@@ -271,7 +271,7 @@ pub async fn get_namespace_group_permission(
 
     let (namespace_id, group_id, permission) = params.into_inner();
 
-    debug!(
+    info!(
         message = "Namespace group permission check requested",
         requestor = requestor.user.username,
         namespace_id = namespace_id.id(),
@@ -301,11 +301,11 @@ pub async fn grant_namespace_group_permission(
     requestor: UserAccess,
     params: web::Path<(NamespaceID, GroupID, NamespacePermissions)>,
 ) -> Result<impl Responder, ApiError> {
-    use crate::models::permissions::NamespacePermissions;
+    use crate::models::permissions::{NamespacePermissions, PermissionsList};
 
     let (namespace_id, group_id, permission) = params.into_inner();
 
-    debug!(
+    info!(
         message = "Namespace group permission grant requested",
         requestor = requestor.user.username,
         namespace_id = namespace_id.id(),
@@ -322,7 +322,7 @@ pub async fn grant_namespace_group_permission(
         .await?;
 
     namespace
-        .grant(&pool, group_id.id(), vec![permission])
+        .grant(&pool, group_id.id(), PermissionsList::new([permission]))
         .await?;
 
     Ok(json_response((), StatusCode::CREATED))
@@ -335,11 +335,11 @@ pub async fn revoke_namespace_group_permission(
     requestor: UserAccess,
     params: web::Path<(NamespaceID, GroupID, NamespacePermissions)>,
 ) -> Result<impl Responder, ApiError> {
-    use crate::models::permissions::NamespacePermissions;
+    use crate::models::permissions::{NamespacePermissions, PermissionsList};
 
     let (namespace_id, group_id, permission) = params.into_inner();
 
-    debug!(
+    info!(
         message = "Namespace group permission revoke requested",
         requestor = requestor.user.username,
         namespace_id = namespace_id.id(),
@@ -356,7 +356,7 @@ pub async fn revoke_namespace_group_permission(
         .await?;
 
     namespace
-        .revoke(&pool, group_id.id(), vec![permission])
+        .revoke(&pool, group_id.id(), PermissionsList::new([permission]))
         .await?;
 
     Ok(json_response((), StatusCode::NO_CONTENT))
@@ -374,7 +374,7 @@ pub async fn get_namespace_user_permissions(
 
     let (namespace_id, user_id) = params.into_inner();
 
-    debug!(
+    info!(
         message = "Namespace user permissions list requested",
         requestor = requestor.user.username,
         namespace_id = namespace_id.id(),
@@ -410,7 +410,7 @@ pub async fn get_namespace_groups_with_permission(
 
     let (namespace_id, permission) = params.into_inner();
 
-    debug!(
+    info!(
         message = "Namespace groups with permission list requested",
         requestor = requestor.user.username,
         namespace_id = namespace_id.id(),
