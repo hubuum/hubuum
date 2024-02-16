@@ -1,11 +1,44 @@
 use actix_web::{http, test};
 
-pub fn assert_contains<T: PartialEq>(vec: &[T], item: &T) {
-    assert!(vec.iter().any(|v| v == item));
+#[macro_export]
+macro_rules! assert_contains {
+    ($vec:expr, $item:expr) => {
+        if !$vec.iter().any(|v| v == $item) {
+            panic!(
+                "Assertion failed: item not found in vec. Called from: {}:{}",
+                file!(),
+                line!()
+            );
+        }
+    };
 }
 
-pub fn assert_contains_all<T: PartialEq>(vec: &[T], items: &[T]) {
-    assert!(items.iter().all(|item| vec.contains(item)));
+#[macro_export]
+macro_rules! assert_not_contains {
+    ($vec:expr, $item:expr) => {
+        if $vec.iter().any(|v| v == $item) {
+            panic!(
+                "Assertion failed: item found in vec. Called from: {}:{}",
+                file!(),
+                line!()
+            );
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! assert_contains_all {
+    ($vec:expr, $items:expr) => {
+        for item in $items {
+            if !$vec.iter().any(|v| v == item) {
+                panic!(
+                    "Assertion failed: item not found in vec. Called from: {}:{}",
+                    file!(),
+                    line!()
+                );
+            }
+        }
+    };
 }
 
 pub async fn assert_response_status(

@@ -35,7 +35,7 @@ pub enum ObjectPermissions {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct PermissionsList<T: Serialize>(Vec<T>);
+pub struct PermissionsList<T: Serialize + PartialEq>(Vec<T>);
 
 impl<T: Serialize + PartialEq> PermissionsList<T> {
     // Constructor that accepts a generic IntoIterator so we can create a PermissionsList from any
@@ -54,7 +54,7 @@ impl<T: Serialize + PartialEq> PermissionsList<T> {
     }
 }
 
-impl<T: Serialize> Display for PermissionsList<T> {
+impl<T: Serialize + PartialEq> Display for PermissionsList<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let formatted = self
             .0

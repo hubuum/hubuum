@@ -411,24 +411,40 @@ impl Namespace {
                 .optional()?;
 
             match existing_entry {
-                Some(_) => Ok(diesel::update(namespacepermissions)
-                    .filter(namespace_id.eq(self.id))
-                    .filter(group_id.eq(group_id_for_set))
-                    .set((
-                        has_create_object
-                            .eq(permissions.contains(&NamespacePermissions::CreateObject)),
-                        has_create_class
-                            .eq(permissions.contains(&NamespacePermissions::CreateClass)),
-                        has_read_namespace
-                            .eq(permissions.contains(&NamespacePermissions::ReadCollection)),
-                        has_update_namespace
-                            .eq(permissions.contains(&NamespacePermissions::UpdateCollection)),
-                        has_delete_namespace
-                            .eq(permissions.contains(&NamespacePermissions::DeleteCollection)),
-                        has_delegate_namespace
-                            .eq(permissions.contains(&NamespacePermissions::DelegateCollection)),
-                    ))
-                    .get_result(conn)?),
+                Some(_) => {
+                    debug!(
+                        message = "Namespace: Set permissions",
+                        existing_entry = true,
+                        namespace_id = self.id,
+                        group_id = group_id_for_set,
+                        permissions = ?permissions
+                    );
+                    Ok(
+                        diesel::update(namespacepermissions)
+                            .filter(namespace_id.eq(self.id))
+                            .filter(group_id.eq(group_id_for_set))
+                            .set(
+                                (
+                                    has_create_object
+                                        .eq(permissions
+                                            .contains(&NamespacePermissions::CreateObject)),
+                                    has_create_class
+                                        .eq(permissions
+                                            .contains(&NamespacePermissions::CreateClass)),
+                                    has_read_namespace
+                                        .eq(permissions
+                                            .contains(&NamespacePermissions::ReadCollection)),
+                                    has_update_namespace.eq(permissions
+                                        .contains(&NamespacePermissions::UpdateCollection)),
+                                    has_delete_namespace.eq(permissions
+                                        .contains(&NamespacePermissions::DeleteCollection)),
+                                    has_delegate_namespace.eq(permissions
+                                        .contains(&NamespacePermissions::DelegateCollection)),
+                                ),
+                            )
+                            .get_result(conn)?,
+                    )
+                }
                 None => {
                     let new_entry = NewNamespacePermission {
                         namespace_id: self.id,

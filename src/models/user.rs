@@ -11,7 +11,7 @@ use crate::errors::ApiError;
 
 use tracing::{error, warn};
 
-#[derive(Serialize, Deserialize, Queryable, Insertable, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Queryable, Insertable, PartialEq, Debug, Clone)]
 #[diesel(table_name = users)]
 pub struct User {
     pub id: i32,
@@ -79,17 +79,6 @@ impl User {
         Ok(diesel::delete(users.filter(id.eq(self.id))).execute(&mut pool.get()?)?)
     }
 
-    pub async fn groups(&self, pool: &DbPool) -> Result<Vec<Group>, ApiError> {
-        use crate::schema::groups::dsl::*;
-        use crate::schema::user_groups::dsl::{group_id, user_groups, user_id};
-
-        Ok(user_groups
-            .filter(user_id.eq(self.id))
-            .inner_join(groups.on(id.eq(group_id)))
-            .select((id, groupname, description, created_at, updated_at))
-            .load::<Group>(&mut pool.get()?)?)
-    }
-
     pub async fn is_in_group_by_name(&self, groupname_queried: &str, pool: &DbPool) -> bool {
         use crate::schema::groups::dsl::*;
         use crate::schema::user_groups::dsl::*;
@@ -133,11 +122,6 @@ impl User {
     pub async fn is_admin(&self, pool: &DbPool) -> bool {
         self.is_in_group_by_name("admin", pool).await
     }
-}
-
-/// Trait to hash a password.
-pub trait PasswordHashable {
-    fn hash_password(&mut self) -> Result<(), String>;
 }
 
 /// Struct to update a user.
@@ -227,7 +211,7 @@ impl NewUser {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct UserID(pub i32);
 
 impl UserID {
@@ -253,38 +237,6 @@ impl UserID {
     pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::users::dsl::*;
         Ok(diesel::delete(users.filter(id.eq(self.0))).execute(&mut pool.get()?)?)
-    }
-
-    /// Generate a subquery to get all group IDs for a user.
-    ///
-    /// Note that this does not execute the query, it only creates it.
-    ///
-    /// ## Example
-    ///
-    /// Check if a user has a specific class permission to a given namespace ID
-    ///
-    /// ```
-    /// let group_id_subquery = user_id.group_ids_subquery();
-    ///
-    /// let base_query = classpermissions
-    /// .into_boxed()
-    /// .filter(namespace_id.eq(self.namespace_id))
-    /// .filter(group_id.eq_any(group_id_subquery));
-    ///
-    /// let result = PermissionFilter::filter(permission, base_query)
-    /// .first::<ClassPermission>(&mut conn)
-    /// .optional()?;
-    /// ```
-    ///
-    pub fn group_ids_subquery<'a>(
-        &self,
-    ) -> crate::schema::user_groups::BoxedQuery<'a, diesel::pg::Pg, diesel::sql_types::Integer>
-    {
-        use crate::schema::user_groups::dsl::*;
-        user_groups
-            .filter(user_id.eq(self.0))
-            .select(group_id)
-            .into_boxed()
     }
 }
 

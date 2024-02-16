@@ -78,6 +78,25 @@ pub async fn get_user(
     Ok(json_response(user, StatusCode::OK))
 }
 
+#[get("/{user_id}/groups")]
+pub async fn get_user_groups(
+    pool: web::Data<DbPool>,
+    user_id: web::Path<UserID>,
+    requestor: AdminOrSelfAccess,
+) -> Result<impl Responder, ApiError> {
+    use crate::models::traits::user::GroupAccessors;
+
+    let user = user_id.into_inner().user(&pool).await?;
+    debug!(
+        message = "User groups requested",
+        target = user.id,
+        requestor = requestor.user.id
+    );
+
+    let groups = user.groups(&pool).await?;
+    Ok(json_response(groups, StatusCode::OK))
+}
+
 #[patch("/{user_id}")]
 pub async fn update_user(
     pool: web::Data<DbPool>,

@@ -1,18 +1,17 @@
 #[cfg(test)]
 mod tests {
-    use std::vec;
-
     use crate::models::namespace::{Namespace, NewNamespaceWithAssignee, UpdateNamespace};
     use crate::models::output::GroupNamespacePermission;
     use crate::models::permissions::{NamespacePermission, NamespacePermissions};
 
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
-    use crate::tests::asserts::{assert_contains, assert_contains_all, assert_response_status};
+    use crate::tests::asserts::assert_response_status;
     use crate::tests::{
         create_namespace, create_test_group, create_test_user, ensure_admin_group,
         setup_pool_and_tokens,
     };
     use crate::traits::CanDelete;
+    use crate::{assert_contains, assert_contains_all};
     use actix_web::{http, test};
 
     const NAMESPACE_ENDPOINT: &str = "/api/v1/namespaces";
@@ -30,7 +29,7 @@ mod tests {
         let resp = get_request(&pool, &admin_token, NAMESPACE_ENDPOINT).await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
         let namespaces: Vec<crate::models::namespace::Namespace> = test::read_body_json(resp).await;
-        assert_contains(&namespaces, &created_namespace1);
+        assert_contains!(&namespaces, &created_namespace1);
 
         let created_namespace2 = create_namespace(&pool, "test_namespace_lookup2")
             .await
@@ -39,9 +38,10 @@ mod tests {
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
         let updated_namespaces: Vec<crate::models::namespace::Namespace> =
             test::read_body_json(resp).await;
-        assert_contains_all(
+
+        assert_contains_all!(
             &updated_namespaces,
-            &vec![created_namespace1, created_namespace2],
+            &vec![created_namespace1, created_namespace2]
         );
     }
 

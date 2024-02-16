@@ -206,7 +206,7 @@ pub async fn create_namespace(pool: &DbPool, ns_name: &str) -> Result<Namespace,
 /// * pool - The database pool
 /// * admin_token_string - The token for the admin user
 /// * normal_token_string - The token for the normal user
-async fn setup_pool_and_tokens() -> (web::Data<DbPool>, String, String) {
+pub async fn setup_pool_and_tokens() -> (web::Data<DbPool>, String, String) {
     let config = get_config().await;
     let pool = web::Data::new(init_pool(&config.database_url, 3));
     let admin_token_string = ensure_admin_user(&pool)
@@ -273,6 +273,7 @@ mod test {
         assert_eq!(updated_namespace.id, namespace.id);
         assert_eq!(updated_namespace.name, "test update 2");
         assert_eq!(original_created_at, new_created_at);
+        assert_ne!(original_updated_at, new_updated_at);
         assert!(new_updated_at > original_updated_at);
 
         updated_namespace.delete(&pool).await.unwrap();

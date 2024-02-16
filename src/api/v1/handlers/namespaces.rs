@@ -290,7 +290,7 @@ pub async fn get_namespace_group_permission(
     if group_can_on(&pool, group_id.id(), namespace, permission).await? {
         return Ok(json_response((), StatusCode::NO_CONTENT));
     }
-    return Ok(json_response((), StatusCode::NOT_FOUND));
+    Ok(json_response((), StatusCode::NOT_FOUND))
 }
 
 /// Grant a specific permission to a group on a namespace

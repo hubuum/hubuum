@@ -15,7 +15,9 @@ use crate::models::permissions::NamespacePermissions;
 
 use crate::models::output::GroupNamespacePermission;
 
+use crate::models::traits::user::GroupAccessors;
 use crate::traits::NamespaceAccessors;
+
 use tracing::info;
 
 #[derive(Serialize, Deserialize, Queryable, PartialEq, Debug, Clone)]
@@ -118,7 +120,7 @@ pub async fn user_can_on<T: NamespaceAccessors>(
     let mut conn = pool.get()?;
     let namespace_target_id = namespace_ref.namespace_id(pool).await?;
 
-    let base_query = if user_id.user(&pool).await?.is_admin(&pool).await {
+    let base_query = if user_id.user(pool).await?.is_admin(pool).await {
         namespacepermissions
             .into_boxed()
             .filter(namespace_id.eq(namespace_target_id))
@@ -154,7 +156,7 @@ pub async fn user_can_on<T: NamespaceAccessors>(
     );
     Err(ApiError::Forbidden(format!(
         "User '{}' ({}) does not have '{:?}' on namespace '{}' ({})",
-        user_id.user(&pool).await?.username,
+        user_id.user(pool).await?.username,
         user_id.0,
         permission_type,
         ns.name,
@@ -226,7 +228,7 @@ pub async fn user_can_on_any(
 
     let mut conn = pool.get()?;
 
-    let base_query = if user_id.user(&pool).await?.is_admin(&pool).await {
+    let base_query = if user_id.user(pool).await?.is_admin(pool).await {
         namespacepermissions.into_boxed()
     } else {
         let group_ids_subquery = user_id.group_ids_subquery();

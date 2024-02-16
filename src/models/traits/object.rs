@@ -1,13 +1,17 @@
 use crate::db::DbPool;
 use crate::errors::ApiError;
+use crate::models::traits::user::GroupAccessors;
+
 use crate::models::class::HubuumClass;
 use crate::models::namespace::Namespace;
 use crate::models::object::{HubuumObject, HubuumObjectID, NewHubuumObject, UpdateHubuumObject};
-use crate::models::permissions::ObjectPermissions;
+use crate::models::permissions::{
+    NewObjectPermission, ObjectPermission, ObjectPermissions, PermissionsList,
+};
 use crate::models::user::UserID;
 use crate::traits::{
     CanDelete, CanSave, CanUpdate, ClassAccessors, NamespaceAccessors, ObjectAccessors,
-    PermissionCheck, SelfAccessors,
+    PermissionInterface, SelfAccessors,
 };
 use diesel::prelude::*;
 
@@ -190,8 +194,9 @@ impl ObjectAccessors for HubuumObjectID {
     }
 }
 
-impl PermissionCheck for HubuumObject {
-    type PermissionType = ObjectPermissions;
+impl PermissionInterface for HubuumObject {
+    type PermissionType = ObjectPermission;
+    type PermissionEnum = ObjectPermissions;
 
     /// Check if the user has the given permission on this object.
     ///
@@ -234,9 +239,8 @@ impl PermissionCheck for HubuumObject {
         &self,
         pool: &DbPool,
         user_id: UserID,
-        permission: Self::PermissionType,
+        permission: Self::PermissionEnum,
     ) -> Result<bool, ApiError> {
-        use crate::models::permissions::ObjectPermission;
         use crate::models::permissions::PermissionFilter;
         use crate::schema::objectpermissions::dsl::*;
 
@@ -255,5 +259,166 @@ impl PermissionCheck for HubuumObject {
             .optional()?;
 
         Ok(result.is_some())
+    }
+
+    async fn grant(
+        &self,
+        pool: &DbPool,
+        group_id_for_grant: i32,
+        permissions: PermissionsList<Self::PermissionEnum>,
+    ) -> Result<Self::PermissionType, ApiError> {
+        use crate::models::permissions::UpdateObjectPermission;
+        use crate::schema::objectpermissions::dsl::*;
+        use diesel::prelude::*;
+
+        // If the group already has permissions, update the permissions in permissions. Otherwise, insert a new row.
+        let mut conn = pool.get()?;
+
+        conn.transaction::<_, ApiError, _>(|conn| {
+            let existing_entry = objectpermissions
+                .filter(namespace_id.eq(self.id))
+                .filter(group_id.eq(group_id_for_grant))
+                .first::<ObjectPermission>(conn)
+                .optional()?;
+
+            match existing_entry {
+                Some(_) => {
+                    let mut update_permissions = UpdateObjectPermission::default();
+                    for permission in permissions.into_iter() {
+                        match permission {
+                            ObjectPermissions::ReadObject => {
+                                update_permissions.has_read_object = Some(true);
+                            }
+                            ObjectPermissions::UpdateObject => {
+                                update_permissions.has_update_object = Some(true);
+                            }
+                            ObjectPermissions::DeleteObject => {
+                                update_permissions.has_delete_object = Some(true);
+                            }
+                        }
+                    }
+
+                    Ok(diesel::update(objectpermissions)
+                        .filter(namespace_id.eq(self.id))
+                        .filter(group_id.eq(group_id_for_grant))
+                        .set(&update_permissions)
+                        .get_result(conn)?)
+                }
+                None => {
+                    let new_entry = NewObjectPermission {
+                        namespace_id: self.id,
+                        group_id: group_id_for_grant,
+                        has_read_object: permissions.contains(&ObjectPermissions::ReadObject),
+                        has_update_object: permissions.contains(&ObjectPermissions::UpdateObject),
+                        has_delete_object: permissions.contains(&ObjectPermissions::DeleteObject),
+                    };
+                    Ok(diesel::insert_into(objectpermissions)
+                        .values(&new_entry)
+                        .get_result(conn)?)
+                }
+            }
+        })
+    }
+
+    // Revoke permissions from a group on a namespace
+    // This only revokes the permissions that are passed in the permissions vector.
+    async fn revoke(
+        &self,
+        pool: &DbPool,
+        group_id_for_revoke: i32,
+        permissions: PermissionsList<Self::PermissionEnum>,
+    ) -> Result<Self::PermissionType, ApiError> {
+        use crate::models::permissions::UpdateObjectPermission;
+        use crate::schema::objectpermissions::dsl::*;
+        use diesel::prelude::*;
+
+        let mut conn = pool.get()?;
+
+        conn.transaction::<_, ApiError, _>(|conn| {
+            objectpermissions
+                .filter(namespace_id.eq(self.id))
+                .filter(group_id.eq(group_id_for_revoke))
+                .first::<ObjectPermission>(conn)?;
+
+            let mut update_permissions = UpdateObjectPermission::default();
+            for permission in permissions.into_iter() {
+                match permission {
+                    ObjectPermissions::ReadObject => {
+                        update_permissions.has_read_object = Some(true);
+                    }
+                    ObjectPermissions::UpdateObject => {
+                        update_permissions.has_update_object = Some(true);
+                    }
+                    ObjectPermissions::DeleteObject => {
+                        update_permissions.has_delete_object = Some(true);
+                    }
+                }
+            }
+            Ok(diesel::update(objectpermissions)
+                .filter(namespace_id.eq(self.id))
+                .filter(group_id.eq(group_id_for_revoke))
+                .set(&update_permissions)
+                .get_result(conn)?)
+        })
+    }
+
+    async fn set_permissions(
+        &self,
+        pool: &DbPool,
+        group_id_for_set: i32,
+        permissions: PermissionsList<Self::PermissionEnum>,
+    ) -> Result<Self::PermissionType, ApiError> {
+        use crate::schema::objectpermissions::dsl::*;
+        use diesel::prelude::*;
+
+        let mut conn = pool.get()?;
+
+        conn.transaction::<_, ApiError, _>(|conn| {
+            let existing_entry = objectpermissions
+                .filter(namespace_id.eq(self.id))
+                .filter(group_id.eq(group_id_for_set))
+                .first::<ObjectPermission>(conn)
+                .optional()?;
+
+            match existing_entry {
+                Some(_) => Ok(diesel::update(objectpermissions)
+                    .filter(namespace_id.eq(self.id))
+                    .filter(group_id.eq(group_id_for_set))
+                    .set((
+                        has_read_object.eq(permissions.contains(&ObjectPermissions::ReadObject)),
+                        has_delete_object
+                            .eq(permissions.contains(&ObjectPermissions::DeleteObject)),
+                        has_update_object
+                            .eq(permissions.contains(&ObjectPermissions::UpdateObject)),
+                    ))
+                    .get_result(conn)?),
+                None => {
+                    let new_entry = NewObjectPermission {
+                        namespace_id: self.id,
+                        group_id: group_id_for_set,
+                        has_read_object: permissions.contains(&ObjectPermissions::ReadObject),
+                        has_update_object: permissions.contains(&ObjectPermissions::UpdateObject),
+                        has_delete_object: permissions.contains(&ObjectPermissions::DeleteObject),
+                    };
+                    Ok(diesel::insert_into(objectpermissions)
+                        .values(&new_entry)
+                        .get_result(conn)?)
+                }
+            }
+        })
+    }
+
+    async fn revoke_all(&self, pool: &DbPool, group_id_for_revoke: i32) -> Result<(), ApiError> {
+        use crate::schema::objectpermissions::dsl::*;
+        use diesel::prelude::*;
+
+        let mut conn = pool.get()?;
+
+        diesel::delete(objectpermissions)
+            .filter(namespace_id.eq(self.id))
+            .filter(group_id.eq(group_id_for_revoke))
+            .execute(&mut conn)?;
+
+        Ok(())
     }
 }
