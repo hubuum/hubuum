@@ -21,6 +21,17 @@ pub enum Permissions {
     DeleteObject,
 }
 
+impl Display for Permissions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let formatted = serde_json::to_string(self)
+            .unwrap_or_else(|_| "Serialization failure".to_string())
+            .trim_matches('"')
+            .to_string();
+
+        write!(f, "{}", formatted)
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PermissionsList<T: Serialize + PartialEq>(Vec<T>);
 
@@ -41,19 +52,12 @@ impl<T: Serialize + PartialEq> PermissionsList<T> {
     }
 }
 
-impl<T: Serialize + PartialEq> Display for PermissionsList<T> {
+impl<T: Serialize + PartialEq + Display> Display for PermissionsList<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let formatted = self
             .0
             .iter()
-            .map(|item| {
-                // Serialize each item using serde_json, removing quotes for cleaner output.
-                // This approach assumes that the serialized form is a simple string.
-                serde_json::to_string(item)
-                    .unwrap_or_else(|_| "Serialization failure".to_string())
-                    .trim_matches('"')
-                    .to_string()
-            })
+            .map(|item| item.to_string())
             .collect::<Vec<_>>()
             .join(", ");
         write!(f, "{}", formatted)

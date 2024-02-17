@@ -11,6 +11,8 @@ use actix_web::{delete, get, http::StatusCode, patch, post, web, Responder};
 use serde_json::json;
 use tracing::{debug, info};
 
+use crate::check_permissions;
+
 use crate::traits::{CanDelete, CanSave, CanUpdate, PermissionController, SelfAccessors};
 
 #[get("")]
@@ -61,12 +63,8 @@ pub async fn get_namespace(
     );
 
     let namespace = namespace_id.instance(&pool).await?;
-    if !namespace
-        .user_can(&pool, requestor.user, Permissions::ReadCollection)
-        .await?
-    {
-        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
-    }
+
+    check_permissions!(namespace, pool, requestor.user, Permissions::ReadCollection);
 
     Ok(json_response(namespace, StatusCode::OK))
 }
@@ -85,12 +83,12 @@ pub async fn update_namespace(
     );
 
     let namespace = namespace_id.instance(&pool).await?;
-    if !namespace
-        .user_can(&pool, requestor.user, Permissions::UpdateCollection)
-        .await?
-    {
-        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
-    }
+    check_permissions!(
+        namespace,
+        pool,
+        requestor.user,
+        Permissions::UpdateCollection
+    );
 
     let updated_namespace = update_data.into_inner().update(&pool, namespace.id).await?;
     Ok(json_response(updated_namespace, StatusCode::ACCEPTED))
@@ -109,12 +107,12 @@ pub async fn delete_namespace(
     );
 
     let namespace = namespace_id.instance(&pool).await?;
-    if !namespace
-        .user_can(&pool, requestor.user, Permissions::DeleteCollection)
-        .await?
-    {
-        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
-    }
+    check_permissions!(
+        namespace,
+        pool,
+        requestor.user,
+        Permissions::DeleteCollection
+    );
 
     namespace.delete(&pool).await?;
     Ok(json_response(json!(()), StatusCode::NO_CONTENT))
@@ -136,12 +134,7 @@ pub async fn get_namespace_permissions(
     );
 
     let namespace = namespace_id.instance(&pool).await?;
-    if !namespace
-        .user_can(&pool, requestor.user, Permissions::ReadCollection)
-        .await?
-    {
-        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
-    }
+    check_permissions!(namespace, pool, requestor.user, Permissions::ReadCollection);
 
     let permissions = groups_on(&pool, namespace).await?;
     Ok(json_response(permissions, StatusCode::OK))
@@ -167,12 +160,7 @@ pub async fn get_namespace_group_permissions(
     );
 
     let namespace = namespace_id.instance(&pool).await?;
-    if !namespace
-        .user_can(&pool, requestor.user, Permissions::ReadCollection)
-        .await?
-    {
-        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
-    }
+    check_permissions!(namespace, pool, requestor.user, Permissions::ReadCollection);
 
     let permissions = group_on(&pool, namespace.id, group_id.id()).await?;
 
@@ -207,12 +195,12 @@ pub async fn grant_namespace_group_permissions(
     );
 
     let namespace = namespace_id.instance(&pool).await?;
-    if !namespace
-        .user_can(&pool, requestor.user, Permissions::DelegateCollection)
-        .await?
-    {
-        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
-    }
+    check_permissions!(
+        namespace,
+        pool,
+        requestor.user,
+        Permissions::DelegateCollection
+    );
 
     namespace.grant(&pool, group_id.id(), permissions).await?;
 
@@ -236,12 +224,12 @@ pub async fn revoke_namespace_group_permissions(
     );
 
     let namespace = namespace_id.instance(&pool).await?;
-    if !namespace
-        .user_can(&pool, requestor.user, Permissions::DelegateCollection)
-        .await?
-    {
-        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
-    }
+    check_permissions!(
+        namespace,
+        pool,
+        requestor.user,
+        Permissions::DelegateCollection
+    );
 
     namespace.revoke_all(&pool, group_id.id()).await?;
 
@@ -268,12 +256,7 @@ pub async fn get_namespace_group_permission(
     );
 
     let namespace = namespace_id.instance(&pool).await?;
-    if !namespace
-        .user_can(&pool, requestor.user, Permissions::ReadCollection)
-        .await?
-    {
-        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
-    }
+    check_permissions!(namespace, pool, requestor.user, Permissions::ReadCollection);
 
     if group_can_on(&pool, group_id.id(), namespace, permission).await? {
         return Ok(json_response((), StatusCode::NO_CONTENT));
@@ -300,12 +283,12 @@ pub async fn grant_namespace_group_permission(
     );
 
     let namespace = namespace_id.instance(&pool).await?;
-    if !namespace
-        .user_can(&pool, requestor.user, Permissions::DelegateCollection)
-        .await?
-    {
-        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
-    }
+    check_permissions!(
+        namespace,
+        pool,
+        requestor.user,
+        Permissions::DelegateCollection
+    );
 
     namespace
         .grant(&pool, group_id.id(), PermissionsList::new([permission]))
@@ -332,12 +315,12 @@ pub async fn revoke_namespace_group_permission(
     );
 
     let namespace = namespace_id.instance(&pool).await?;
-    if !namespace
-        .user_can(&pool, requestor.user, Permissions::DelegateCollection)
-        .await?
-    {
-        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
-    }
+    check_permissions!(
+        namespace,
+        pool,
+        requestor.user,
+        Permissions::DelegateCollection
+    );
 
     namespace
         .revoke(&pool, group_id.id(), PermissionsList::new([permission]))
@@ -365,12 +348,7 @@ pub async fn get_namespace_user_permissions(
     );
 
     let namespace = namespace_id.instance(&pool).await?;
-    if !namespace
-        .user_can(&pool, requestor.user, Permissions::ReadCollection)
-        .await?
-    {
-        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
-    }
+    check_permissions!(namespace, pool, requestor.user, Permissions::ReadCollection);
 
     let permissions = user_on(&pool, user_id, namespace).await?;
 
@@ -400,12 +378,7 @@ pub async fn get_namespace_groups_with_permission(
     );
 
     let namespace = namespace_id.instance(&pool).await?;
-    if !namespace
-        .user_can(&pool, requestor.user, Permissions::ReadCollection)
-        .await?
-    {
-        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
-    }
+    check_permissions!(namespace, pool, requestor.user, Permissions::ReadCollection);
 
     let groups = groups_can_on(&pool, namespace.id, permission).await?;
 

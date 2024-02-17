@@ -4,6 +4,7 @@ mod db;
 mod errors;
 mod extractors;
 mod logger;
+mod macros;
 mod middlewares;
 mod models;
 mod schema;

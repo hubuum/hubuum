@@ -1,7 +1,7 @@
+use crate::check_permissions;
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
-use crate::models::namespace::NamespaceID;
 use crate::utilities::response::{json_response, json_response_created};
 use actix_web::delete;
 use actix_web::{get, http::StatusCode, patch, post, web, Responder};
@@ -39,15 +39,8 @@ async fn create_class(
         class_name = class_data.name
     );
 
-    let namespace_id = NamespaceID(class_data.namespace_id);
-    if !namespace_id
-        .user_can(&pool, user, Permissions::CreateClass)
-        .await?
-    {
-        return Ok(json_response((), StatusCode::FORBIDDEN));
-    }
-
     let class = class_data.save(&pool).await?;
+    check_permissions!(class, pool, user, Permissions::CreateClass);
 
     Ok(json_response_created(
         &class,
@@ -71,9 +64,7 @@ async fn get_class(
     );
 
     let class = class.instance(&pool).await?;
-    if !class.user_can(&pool, user, Permissions::ReadClass).await? {
-        return Ok(json_response((), StatusCode::FORBIDDEN));
-    }
+    check_permissions!(class, pool, user, Permissions::ReadClass);
 
     Ok(json_response(class, StatusCode::OK))
 }
@@ -96,12 +87,7 @@ async fn update_class(
     );
 
     let class = class_id.instance(&pool).await?;
-    if !class
-        .user_can(&pool, user, Permissions::UpdateClass)
-        .await?
-    {
-        return Ok(json_response((), StatusCode::FORBIDDEN));
-    }
+    check_permissions!(class, pool, user, Permissions::UpdateClass);
 
     let class = class_data.update(&pool, class.id).await?;
     Ok(json_response(class, StatusCode::OK))
@@ -123,12 +109,7 @@ async fn delete_class(
     );
 
     let class = class_id.instance(&pool).await?;
-    if !class
-        .user_can(&pool, user, Permissions::DeleteClass)
-        .await?
-    {
-        return Ok(json_response((), StatusCode::FORBIDDEN));
-    }
+    check_permissions!(class, pool, user, Permissions::DeleteClass);
 
     class.delete(&pool).await?;
     Ok(json_response((), StatusCode::NO_CONTENT))
@@ -150,9 +131,7 @@ async fn get_class_permissions(
     );
 
     let class = class_id.instance(&pool).await?;
-    if !class.user_can(&pool, user, Permissions::ReadClass).await? {
-        return Ok(json_response((), StatusCode::FORBIDDEN));
-    }
+    check_permissions!(class, pool, user, Permissions::ReadClass);
 
     // We need a groups_on for class.
 
