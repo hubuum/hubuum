@@ -8,7 +8,7 @@ use actix_web::{get, http::StatusCode, patch, post, web, Responder};
 use tracing::debug;
 
 use crate::models::traits::user::ClassAccessors;
-use crate::models::{HubuumClassID, NewHubuumClass, Permissions, UpdateHubuumClass};
+use crate::models::{HubuumClassID, NamespaceID, NewHubuumClass, Permissions, UpdateHubuumClass};
 use crate::traits::{CanDelete, CanSave, CanUpdate, PermissionController, SelfAccessors};
 
 // GET /api/v1/classes, list all classes the user may see.
@@ -121,6 +121,9 @@ async fn get_class_permissions(
     requestor: UserAccess,
     class_id: web::Path<HubuumClassID>,
 ) -> Result<impl Responder, ApiError> {
+    use crate::models::groups_on;
+    use crate::traits::NamespaceAccessors;
+
     let user = requestor.user;
     let class_id = class_id.into_inner();
 
@@ -133,7 +136,18 @@ async fn get_class_permissions(
     let class = class_id.instance(&pool).await?;
     check_permissions!(class, pool, user, Permissions::ReadClass);
 
-    // We need a groups_on for class.
+    let nid = class.namespace_id(&pool).await?;
+    let permissions = groups_on(
+        &pool,
+        NamespaceID(nid),
+        vec![
+            Permissions::CreateClass,
+            Permissions::UpdateClass,
+            Permissions::ReadClass,
+            Permissions::DeleteClass,
+        ],
+    )
+    .await?;
 
-    Ok(json_response((), StatusCode::NOT_IMPLEMENTED))
+    Ok(json_response(permissions, StatusCode::OK))
 }

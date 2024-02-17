@@ -136,7 +136,17 @@ pub async fn get_namespace_permissions(
     let namespace = namespace_id.instance(&pool).await?;
     check_permissions!(namespace, pool, requestor.user, Permissions::ReadCollection);
 
-    let permissions = groups_on(&pool, namespace).await?;
+    let permissions = groups_on(
+        &pool,
+        namespace,
+        vec![
+            Permissions::ReadCollection,
+            Permissions::UpdateCollection,
+            Permissions::DeleteCollection,
+            Permissions::DelegateCollection,
+        ],
+    )
+    .await?;
     Ok(json_response(permissions, StatusCode::OK))
 }
 

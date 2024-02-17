@@ -18,6 +18,8 @@ use crate::traits::{NamespaceAccessors, SelfAccessors};
 
 use tracing::info;
 
+use super::PermissionsList;
+
 #[derive(Serialize, Deserialize, Queryable, PartialEq, Debug, Clone)]
 #[diesel(table_name = namespaces)]
 pub struct Namespace {
@@ -91,7 +93,6 @@ pub async fn user_on<T: NamespaceAccessors>(
         .filter(namespace_id.eq(namespace_target_id))
         .filter(group_id.eq_any(group_ids_subquery))
         .select((groups::all_columns(), permissions::all_columns()))
-        //        .distinct()
         .load::<(Group, Permission)>(&mut conn)?;
 
     let structured_results: Vec<GroupPermission> =
@@ -245,8 +246,10 @@ pub async fn groups_can_on(
 pub async fn groups_on<T: NamespaceAccessors>(
     pool: &DbPool,
     namespace_ref: T,
+    permissions_filter: Vec<Permissions>,
 ) -> Result<Vec<GroupPermission>, ApiError> {
     use crate::models::traits::output::FromTuple;
+    use crate::models::PermissionFilter;
     use crate::schema::groups::dsl::{groups, id as group_table_id};
     use crate::schema::permissions::dsl::*;
     use diesel::prelude::*;
@@ -254,11 +257,17 @@ pub async fn groups_on<T: NamespaceAccessors>(
     let mut conn = pool.get()?;
     let namespace_target_id = namespace_ref.namespace_id(pool).await?;
 
-    let query = groups
-        .inner_join(permissions.on(group_table_id.eq(group_id)))
+    let mut base_query = permissions
         .filter(namespace_id.eq(namespace_target_id))
+        .into_boxed();
+
+    for perm in permissions_filter.into_iter() {
+        base_query = PermissionFilter::filter(perm, base_query);
+    }
+
+    let query = base_query
+        .inner_join(groups.on(group_table_id.eq(group_id)))
         .select((groups::all_columns(), permissions::all_columns()))
-        //        .distinct()
         .load::<(Group, Permission)>(&mut conn)?;
 
     let structured_results: Vec<GroupPermission> =
@@ -410,7 +419,7 @@ mod tests {
         groups_can_on_count(&pool, namespace.id, NP::CreateClass, 1).await;
         groups_can_on_count(&pool, namespace.id, NP::CreateObject, 1).await;
 
-        let all_on = groups_on(&pool, namespace.clone()).await.unwrap();
+        let all_on = groups_on(&pool, namespace.clone(), vec![]).await.unwrap();
         assert_eq!(all_on.len(), 5);
 
         namespace.delete(&pool).await.unwrap();
