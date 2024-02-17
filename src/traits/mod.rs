@@ -97,6 +97,61 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
         user: U,
         permission: Permissions,
     ) -> Result<bool, ApiError> {
+        self.user_can_all(pool, user, vec![permission]).await
+    }
+
+    /// Check if the user has all the given permissions on the object.
+    ///
+    /// - If the trait is called on a namespace, check against self.
+    /// - If the trait is called on a HubuumClass or a HubuumObject,
+    ///   check against the namespace of the class or object.
+    /// - If the trait is called on a HubuumClassID or a HubuumObjectID,
+    ///   create a HubuumClass or HubuumObject and check against the namespace
+    ///   of the class or object.
+    ///
+    /// If this is called on a *ID, a full class is created to extract
+    /// the namespace_id. To avoid creating the class multiple times during use
+    /// do this:
+    /// ```
+    /// permissions = vec![Permissions::ReadClass, Permissions::UpdateClass];
+    /// class = class_id.class(pool).await?;
+    /// if (class.user_can(pool, userid, permissions).await?) {
+    ///     return Ok(class);
+    /// }
+    /// ```
+    /// And not this:
+    /// ```
+    /// permissions = vec![Permissions::ReadClass, Permissions::UpdateClass];
+    /// if (class_id.user_can(pool, userid, permissions).await?) {
+    ///    return Ok(class_id.class(pool).await?);
+    /// }
+    /// ```
+    ///
+    /// ## Arguments
+    ///
+    /// * `pool` - The database pool to use for the query.
+    /// * `user_id` - The user to check permissions for.
+    /// * `permission` - The permission to check.
+    ///
+    /// ## Returns
+    ///
+    /// * `Ok(true)` if the user has the given permission on this class.
+    /// * `Ok(false)` if the user does not have the given permission on this class.
+    /// * `Err(_)` if the user does not have the given permission on this class, or if the
+    ///  permission is invalid.
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// if (hubuum_class_or_classid.user_can(pool, userid, ClassPermissions::ReadClass).await?) {
+    ///     // Do something
+    /// }
+    async fn user_can_all<U: SelfAccessors<User> + GroupAccessors>(
+        &self,
+        pool: &DbPool,
+        user: U,
+        permission: Vec<Permissions>,
+    ) -> Result<bool, ApiError> {
         let lookup_table = crate::schema::permissions::dsl::permissions;
         let group_id_field = crate::schema::permissions::dsl::group_id;
         let namespace_id_field = crate::schema::permissions::dsl::namespace_id;
@@ -106,14 +161,16 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
 
         // Note that self.namespace_id(pool).await? is only a query if the caller is a HubuumClassID, otherwise
         // it's a simple field access (which ignores the passed pool).
-        let base_query = lookup_table
+        let mut base_query = lookup_table
             .into_boxed()
             .filter(namespace_id_field.eq(self.namespace_id(pool).await?))
             .filter(group_id_field.eq_any(group_id_subquery));
 
-        let result = PermissionFilter::filter(permission, base_query)
-            .first::<Permission>(&mut conn)
-            .optional()?;
+        for perm in permission {
+            base_query = PermissionFilter::filter(perm, base_query);
+        }
+
+        let result = base_query.first::<Permission>(&mut conn).optional()?;
 
         Ok(result.is_some())
     }

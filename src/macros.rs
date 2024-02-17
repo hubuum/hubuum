@@ -19,25 +19,29 @@
 ///  check_permissions!(namespace, pool, requestor.user, Permissions::ReadCollection);
 /// ```
 macro_rules! check_permissions {
-    ($request_obj:expr, $pool:expr, $user:expr, $permission:expr) => {{
+    // Captures any number of permissions passed after the user argument and converts them into a vector
+    ($request_obj:expr, $pool:expr, $user:expr, $($permissions:expr),+ $(,)?) => {{
+        use crate::errors::ApiError;
+        use crate::traits::NamespaceAccessors;
+        use tracing::warn;
+
+        let permissions_vec = vec![$($permissions),+];
+
         if !$request_obj
-            .user_can(&$pool, $user.clone(), $permission)
+            .user_can_all(&$pool, $user.clone(), permissions_vec.clone())
             .await?
         {
-            use crate::errors::ApiError;
-            use crate::traits::NamespaceAccessors;
-            use tracing::warn;
             let namespace_id = $request_obj.namespace_id(&$pool).await?;
             let user_id = $user.id();
             warn!(
                 message = "Permission denied",
                 user_id = user_id,
                 namespace_id = namespace_id,
-                permission = ?$permission,
+                permissions = ?permissions_vec,
             );
             return Err(ApiError::Forbidden(format!(
-                "User {} does not have permission {} on namespace {}",
-                user_id, $permission, namespace_id
+                "User {} does not have permissions {:?} on namespace {}",
+                user_id, permissions_vec, namespace_id
             )));
         }
     }};
