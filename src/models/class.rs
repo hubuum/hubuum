@@ -38,6 +38,7 @@ pub struct UpdateHubuumClass {
     pub description: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
 pub struct HubuumClassID(pub i32);
 
 pub async fn total_class_count(pool: &DbPool) -> Result<i64, ApiError> {

@@ -6,7 +6,8 @@ use crate::models::class::HubuumClass;
 use crate::models::namespace::Namespace;
 use crate::models::object::HubuumObject;
 use crate::models::permissions::PermissionsList;
-use crate::models::user::UserID;
+use crate::models::traits::user::GroupAccessors;
+use crate::models::user::User;
 
 pub trait CanDelete {
     async fn delete(&self, pool: &DbPool) -> Result<(), ApiError>;
@@ -45,7 +46,7 @@ pub trait ObjectAccessors {
     async fn object_id(&self, pool: &DbPool) -> Result<i32, ApiError>;
 }
 
-pub trait PermissionInterface: Serialize {
+pub trait PermissionController: Serialize {
     type PermissionEnum;
     type PermissionType;
 
@@ -71,10 +72,10 @@ pub trait PermissionInterface: Serialize {
     ///    // Do something
     /// }
     /// ```
-    async fn user_can(
+    async fn user_can<U: SelfAccessors<User> + GroupAccessors>(
         &self,
         pool: &DbPool,
-        user_id: UserID,
+        user_id: U,
         permission: Self::PermissionEnum,
     ) -> Result<bool, ApiError>;
 
@@ -105,7 +106,7 @@ pub trait PermissionInterface: Serialize {
         permission_list: PermissionsList<Self::PermissionEnum>,
     ) -> Result<Self::PermissionType, ApiError>
     where
-        <Self as PermissionInterface>::PermissionEnum: Serialize + PartialEq;
+        <Self as PermissionController>::PermissionEnum: Serialize + PartialEq;
 
     /// Revoke a set of permissions from a group.
     ///
@@ -133,7 +134,7 @@ pub trait PermissionInterface: Serialize {
         permission_list: PermissionsList<Self::PermissionEnum>,
     ) -> Result<Self::PermissionType, ApiError>
     where
-        <Self as PermissionInterface>::PermissionEnum: Serialize + PartialEq;
+        <Self as PermissionController>::PermissionEnum: Serialize + PartialEq;
 
     /// Grant a specific permission to a group.
     ///
@@ -162,7 +163,7 @@ pub trait PermissionInterface: Serialize {
         permission: Self::PermissionEnum,
     ) -> Result<Self::PermissionType, ApiError>
     where
-        <Self as PermissionInterface>::PermissionEnum: Serialize + PartialEq,
+        <Self as PermissionController>::PermissionEnum: Serialize + PartialEq,
     {
         self.grant(
             pool,
@@ -198,7 +199,7 @@ pub trait PermissionInterface: Serialize {
         permission: Self::PermissionEnum,
     ) -> Result<Self::PermissionType, ApiError>
     where
-        <Self as PermissionInterface>::PermissionEnum: Serialize + PartialEq,
+        <Self as PermissionController>::PermissionEnum: Serialize + PartialEq,
     {
         self.revoke(
             pool,
@@ -233,7 +234,7 @@ pub trait PermissionInterface: Serialize {
         permission_list: PermissionsList<Self::PermissionEnum>,
     ) -> Result<Self::PermissionType, ApiError>
     where
-        <Self as PermissionInterface>::PermissionEnum: Serialize + PartialEq;
+        <Self as PermissionController>::PermissionEnum: Serialize + PartialEq;
 
     /// Revoke all permissions from a group.
     ///

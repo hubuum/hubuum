@@ -8,10 +8,10 @@ use crate::models::object::{HubuumObject, HubuumObjectID, NewHubuumObject, Updat
 use crate::models::permissions::{
     NewObjectPermission, ObjectPermission, ObjectPermissions, PermissionsList,
 };
-use crate::models::user::UserID;
+use crate::models::user::User;
 use crate::traits::{
     CanDelete, CanSave, CanUpdate, ClassAccessors, NamespaceAccessors, ObjectAccessors,
-    PermissionInterface, SelfAccessors,
+    PermissionController, SelfAccessors,
 };
 use diesel::prelude::*;
 
@@ -194,7 +194,7 @@ impl ObjectAccessors for HubuumObjectID {
     }
 }
 
-impl PermissionInterface for HubuumObject {
+impl PermissionController for HubuumObject {
     type PermissionType = ObjectPermission;
     type PermissionEnum = ObjectPermissions;
 
@@ -235,17 +235,17 @@ impl PermissionInterface for HubuumObject {
     /// if (hubuum_object_or_objectid.user_can(pool, userid, ObjectPermissions::ReadObject).await?) {
     ///     // Do something
     /// }    
-    async fn user_can(
+    async fn user_can<U: SelfAccessors<User> + GroupAccessors>(
         &self,
         pool: &DbPool,
-        user_id: UserID,
+        user: U,
         permission: Self::PermissionEnum,
     ) -> Result<bool, ApiError> {
         use crate::models::permissions::PermissionFilter;
         use crate::schema::objectpermissions::dsl::*;
 
         let mut conn = pool.get()?;
-        let group_id_subquery = user_id.group_ids_subquery();
+        let group_id_subquery = user.group_ids_subquery();
 
         // Note that self.namespace_id(pool).await? is only a query if the caller is a HubuumObjectID, otherwise
         // it's a simple field access (which ignores the passed pool).

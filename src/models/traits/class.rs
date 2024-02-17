@@ -2,7 +2,7 @@ use diesel::prelude::*;
 
 use crate::models::class::{HubuumClass, HubuumClassID, NewHubuumClass, UpdateHubuumClass};
 use crate::traits::{
-    CanDelete, CanSave, CanUpdate, ClassAccessors, NamespaceAccessors, PermissionInterface,
+    CanDelete, CanSave, CanUpdate, ClassAccessors, NamespaceAccessors, PermissionController,
     SelfAccessors,
 };
 
@@ -14,7 +14,7 @@ use crate::models::traits::user::GroupAccessors;
 use crate::models::permissions::{
     ClassPermission, ClassPermissions, NewClassPermission, PermissionsList,
 };
-use crate::models::user::UserID;
+use crate::models::user::User;
 
 impl CanSave for HubuumClass {
     type Output = HubuumClass;
@@ -155,7 +155,7 @@ impl NamespaceAccessors for HubuumClassID {
     }
 }
 
-impl PermissionInterface for HubuumClass {
+impl PermissionController for HubuumClass {
     type PermissionType = ClassPermission;
     type PermissionEnum = ClassPermissions;
 
@@ -196,10 +196,10 @@ impl PermissionInterface for HubuumClass {
     /// if (hubuum_class_or_classid.user_can(pool, userid, ClassPermissions::ReadClass).await?) {
     ///     // Do something
     /// }
-    async fn user_can(
+    async fn user_can<U: SelfAccessors<User> + GroupAccessors>(
         &self,
         pool: &DbPool,
-        user_id: UserID,
+        user: U,
         permission: Self::PermissionEnum,
     ) -> Result<bool, ApiError> {
         use crate::models::permissions::PermissionFilter;
@@ -209,7 +209,7 @@ impl PermissionInterface for HubuumClass {
         let namespace_id_field = crate::schema::classpermissions::dsl::namespace_id;
 
         let mut conn = pool.get()?;
-        let group_id_subquery = user_id.group_ids_subquery();
+        let group_id_subquery = user.group_ids_subquery();
 
         // Note that self.namespace_id(pool).await? is only a query if the caller is a HubuumClassID, otherwise
         // it's a simple field access (which ignores the passed pool).

@@ -12,7 +12,7 @@ use actix_web::{delete, get, http::StatusCode, patch, post, web, Responder};
 use serde_json::json;
 use tracing::{debug, info};
 
-use crate::traits::{CanDelete, CanSave, CanUpdate, SelfAccessors};
+use crate::traits::{CanDelete, CanSave, CanUpdate, PermissionController, SelfAccessors};
 
 #[get("")]
 pub async fn get_namespaces(

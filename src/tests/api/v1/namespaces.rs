@@ -10,7 +10,7 @@ mod tests {
         create_namespace, create_test_group, create_test_user, ensure_admin_group,
         setup_pool_and_tokens,
     };
-    use crate::traits::CanDelete;
+    use crate::traits::{CanDelete, PermissionController};
     use crate::{assert_contains, assert_contains_all};
     use actix_web::{http, test};
 

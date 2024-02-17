@@ -113,7 +113,7 @@ pub trait NamespaceAccessors: SelfAccessors<User> + GroupAccessors {
 }
 
 pub trait ClassAccessors: NamespaceAccessors {
-    // Return all classes that the user has ClassPermissions::ReadClass on.
+    /// Return all classes that the user has ClassPermissions::ReadClass on.
     async fn classes_read(&self, pool: &DbPool) -> Result<Vec<HubuumClass>, ApiError> {
         self.classes(pool, vec![ClassPermissions::ReadClass]).await
     }
@@ -195,7 +195,7 @@ mod test {
     use crate::models::group::GroupID;
     use crate::models::permissions::{ClassPermissions, NamespacePermissions, PermissionsList};
     use crate::tests::{create_test_group, create_test_user, setup_pool_and_tokens};
-    use crate::traits::PermissionInterface;
+    use crate::traits::PermissionController;
     use crate::traits::{CanDelete, CanSave};
     use crate::{assert_contains, assert_not_contains};
 

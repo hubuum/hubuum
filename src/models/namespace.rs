@@ -2,7 +2,7 @@ use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::models::group::Group;
-use crate::models::user::UserID;
+use crate::models::user::{User, UserID};
 
 use crate::db::DbPool;
 
@@ -16,7 +16,7 @@ use crate::models::permissions::NamespacePermissions;
 use crate::models::output::GroupNamespacePermission;
 
 use crate::models::traits::user::GroupAccessors;
-use crate::traits::NamespaceAccessors;
+use crate::traits::{NamespaceAccessors, SelfAccessors};
 
 use tracing::info;
 
@@ -41,13 +41,13 @@ impl Namespace {
     /// ## Returns
     /// * Ok(Namespace) - Namespace if the user has the requested permission
     /// * Err(ApiError) - Always returns 404 if there is no match (we never do 403/401)
-    pub async fn user_can(
+    pub async fn user_can<U: SelfAccessors<User> + GroupAccessors>(
         &self,
         pool: &DbPool,
-        user_id: UserID,
+        user: U,
         permission_type: NamespacePermissions,
     ) -> Result<Self, ApiError> {
-        user_can_on(pool, user_id, self.clone(), permission_type).await
+        user_can_on(pool, user, self.clone(), permission_type).await
     }
 }
 
@@ -55,13 +55,13 @@ impl Namespace {
 pub struct NamespaceID(pub i32);
 
 impl NamespaceID {
-    pub async fn user_can(
+    pub async fn user_can<U: SelfAccessors<User> + GroupAccessors>(
         &self,
         pool: &DbPool,
-        user_id: UserID,
+        user: U,
         permission_type: NamespacePermissions,
     ) -> Result<Namespace, ApiError> {
-        user_can_on(pool, user_id, *self, permission_type).await
+        user_can_on(pool, user, *self, permission_type).await
     }
 }
 
@@ -107,9 +107,9 @@ pub struct NewNamespace {
 /// ## Returns
 /// * Ok(Namespace) - Namespace if the user has the requested permission
 /// * Err(ApiError) - Always returns 404 if there is no match (we never do 403/401)
-pub async fn user_can_on<T: NamespaceAccessors>(
+pub async fn user_can_on<U: SelfAccessors<User> + GroupAccessors, T: NamespaceAccessors>(
     pool: &DbPool,
-    user_id: UserID,
+    user: U,
     namespace_ref: T,
     permission_type: NamespacePermissions,
 ) -> Result<Namespace, ApiError> {
@@ -120,12 +120,12 @@ pub async fn user_can_on<T: NamespaceAccessors>(
     let mut conn = pool.get()?;
     let namespace_target_id = namespace_ref.namespace_id(pool).await?;
 
-    let base_query = if user_id.user(pool).await?.is_admin(pool).await {
+    let base_query = if user.instance(pool).await?.is_admin(pool).await {
         namespacepermissions
             .into_boxed()
             .filter(namespace_id.eq(namespace_target_id))
     } else {
-        let group_ids_subquery = user_id.group_ids_subquery();
+        let group_ids_subquery = user.group_ids_subquery();
 
         namespacepermissions
             .into_boxed()
@@ -150,14 +150,14 @@ pub async fn user_can_on<T: NamespaceAccessors>(
 
     info!(
         message = "Access denied",
-        requestor = user_id.0,
+        requestor = user.id(),
         namespace = ns.id,
         permission = ?permission_type
     );
     Err(ApiError::Forbidden(format!(
         "User '{}' ({}) does not have '{:?}' on namespace '{}' ({})",
-        user_id.user(pool).await?.username,
-        user_id.0,
+        user.instance(pool).await?.username,
+        user.id(),
         permission_type,
         ns.name,
         ns.id
@@ -399,7 +399,7 @@ mod tests {
     use crate::models::group::NewGroup;
     use crate::models::permissions::PermissionsList;
     use crate::tests::{create_namespace, generate_all_subsets};
-    use crate::traits::CanDelete;
+    use crate::traits::{CanDelete, PermissionController};
 
     async fn assign_to_groups(
         pool: &DbPool,

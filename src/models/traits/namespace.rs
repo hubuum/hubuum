@@ -7,7 +7,11 @@ use crate::models::namespace::{
 use crate::models::permissions::{
     NamespacePermission, NamespacePermissions, NewNamespacePermission, PermissionsList,
 };
-use crate::traits::{CanDelete, CanSave, CanUpdate, NamespaceAccessors, SelfAccessors};
+use crate::models::traits::user::GroupAccessors;
+use crate::models::user::User;
+use crate::traits::{
+    CanDelete, CanSave, CanUpdate, NamespaceAccessors, PermissionController, SelfAccessors,
+};
 use diesel::prelude::*;
 use tracing::debug;
 
@@ -229,13 +233,40 @@ impl NewNamespace {
     }
 }
 
-// Grants
-impl Namespace {
-    /// Grant permissions to a group on a namespace
-    /// This only grants the permissions that are passed in the permissions vector.
-    /// If the group previously had no permissions, a new entry is created.
-    /// If the group already has permissions, the permissions are updated.
-    pub async fn grant_one(
+impl PermissionController for Namespace {
+    type PermissionEnum = NamespacePermissions;
+    type PermissionType = NamespacePermission;
+
+    async fn user_can<U: SelfAccessors<User> + GroupAccessors>(
+        &self,
+        pool: &DbPool,
+        user: U,
+        permission: Self::PermissionEnum,
+    ) -> Result<bool, ApiError> {
+        use crate::models::permissions::PermissionFilter;
+
+        let lookup_table = crate::schema::namespacepermissions::dsl::namespacepermissions;
+        let group_id_field = crate::schema::namespacepermissions::dsl::group_id;
+        let namespace_id_field = crate::schema::namespacepermissions::dsl::id;
+
+        let mut conn = pool.get()?;
+        let group_id_subquery = user.group_ids_subquery();
+
+        // Note that self.namespace_id(pool).await? is only a query if the caller is a HubuumClassID, otherwise
+        // it's a simple field access (which ignores the passed pool).
+        let base_query = lookup_table
+            .into_boxed()
+            .filter(namespace_id_field.eq(self.namespace_id(pool).await?))
+            .filter(group_id_field.eq_any(group_id_subquery));
+
+        let result = PermissionFilter::filter(permission, base_query)
+            .first::<Self::PermissionType>(&mut conn)
+            .optional()?;
+
+        Ok(result.is_some())
+    }
+
+    async fn grant_one(
         &self,
         pool: &DbPool,
         group_id_for_grant: i32,
@@ -245,7 +276,7 @@ impl Namespace {
             .await
     }
 
-    pub async fn grant(
+    async fn grant(
         &self,
         pool: &DbPool,
         group_id_for_grant: i32,
@@ -325,7 +356,7 @@ impl Namespace {
         })
     }
 
-    pub async fn revoke_one(
+    async fn revoke_one(
         &self,
         pool: &DbPool,
         group_id_for_revoke: i32,
@@ -341,7 +372,7 @@ impl Namespace {
 
     // Revoke permissions from a group on a namespace
     // This only revokes the permissions that are passed in the permissions vector.
-    pub async fn revoke(
+    async fn revoke(
         &self,
         pool: &DbPool,
         group_id_for_revoke: i32,
@@ -392,7 +423,7 @@ impl Namespace {
         })
     }
 
-    pub async fn set_permissions(
+    async fn set_permissions(
         &self,
         pool: &DbPool,
         group_id_for_set: i32,
@@ -469,11 +500,7 @@ impl Namespace {
         })
     }
 
-    pub async fn revoke_all(
-        &self,
-        pool: &DbPool,
-        group_id_for_revoke: i32,
-    ) -> Result<(), ApiError> {
+    async fn revoke_all(&self, pool: &DbPool, group_id_for_revoke: i32) -> Result<(), ApiError> {
         use crate::schema::namespacepermissions::dsl::*;
         use diesel::prelude::*;
 
