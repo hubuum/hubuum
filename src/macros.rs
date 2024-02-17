@@ -6,7 +6,7 @@
 /// * `request_obj` - The request object (namespace, class, or object).
 /// * `pool` - The database pool.
 /// * `user` - The user to check permissions for (will be cloned).
-/// * `permission` - The permission to check for.
+/// * `permission+` - The permissions to check for, one or more.
 ///
 /// ## Returns
 ///
@@ -16,7 +16,9 @@
 /// ## Example
 ///
 /// ```
-///  check_permissions!(namespace, pool, requestor.user, Permissions::ReadCollection);
+/// check_permissions!(namespace, pool, requestor.user, Permissions::ReadCollection);
+/// check_permissions!(namespace, pool, requestor.user, Permissions::ReadCollection, Permissions::UpdateCollection);
+///
 /// ```
 macro_rules! check_permissions {
     // Captures any number of permissions passed after the user argument and converts them into a vector
