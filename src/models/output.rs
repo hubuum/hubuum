@@ -4,23 +4,11 @@
 // A typical use is to combine the output of multiple models into a single response
 
 use crate::models::group::Group;
-use crate::models::permissions::{ClassPermission, NamespacePermission, ObjectPermission};
+use crate::models::permissions::Permission;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct GroupNamespacePermission {
+pub struct GroupPermission {
     pub group: Group,
-    pub namespace_permission: NamespacePermission,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct GroupClassPermission {
-    pub group: Group,
-    pub class_permission: ClassPermission,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct GroupObjectPermission {
-    pub group: Group,
-    pub object_permission: ObjectPermission,
+    pub permission: Permission,
 }

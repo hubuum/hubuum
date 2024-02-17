@@ -1,12 +1,11 @@
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, UserAccess};
-use crate::models::group::GroupID;
-use crate::models::namespace::{
-    user_can_on_any, NamespaceID, NewNamespaceWithAssignee, UpdateNamespace,
+use crate::models::{
+    user_can_on_any, GroupID, NamespaceID, NewNamespaceWithAssignee, Permissions, PermissionsList,
+    UpdateNamespace, UserID,
 };
-use crate::models::permissions::NamespacePermissions;
-use crate::models::user::UserID;
+
 use crate::utilities::response::{json_response, json_response_created};
 use actix_web::{delete, get, http::StatusCode, patch, post, web, Responder};
 use serde_json::json;
@@ -27,7 +26,7 @@ pub async fn get_namespaces(
     let result = user_can_on_any(
         &pool,
         UserID(requestor.user.id),
-        NamespacePermissions::ReadCollection,
+        Permissions::ReadCollection,
     )
     .await?;
     Ok(json_response(result, StatusCode::OK))
@@ -66,13 +65,17 @@ pub async fn get_namespace(
         namespace_id = namespace_id.id()
     );
 
-    let namespace = namespace_id
+    let namespace = namespace_id.instance(&pool).await?;
+    if !namespace
         .user_can(
             &pool,
             UserID(requestor.user.id),
-            NamespacePermissions::ReadCollection,
+            Permissions::ReadCollection,
         )
-        .await?;
+        .await?
+    {
+        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
+    }
 
     Ok(json_response(namespace, StatusCode::OK))
 }
@@ -90,16 +93,19 @@ pub async fn update_namespace(
         namespace_id = namespace_id.id()
     );
 
-    let namespace = namespace_id
+    let namespace = namespace_id.instance(&pool).await?;
+    if !namespace
         .user_can(
             &pool,
             UserID(requestor.user.id),
-            NamespacePermissions::UpdateCollection,
+            Permissions::UpdateCollection,
         )
-        .await?;
+        .await?
+    {
+        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
+    }
 
     let updated_namespace = update_data.into_inner().update(&pool, namespace.id).await?;
-
     Ok(json_response(updated_namespace, StatusCode::ACCEPTED))
 }
 
@@ -115,13 +121,17 @@ pub async fn delete_namespace(
         namespace_id = namespace_id.id()
     );
 
-    let namespace = namespace_id
+    let namespace = namespace_id.instance(&pool).await?;
+    if !namespace
         .user_can(
             &pool,
             UserID(requestor.user.id),
-            NamespacePermissions::DeleteCollection,
+            Permissions::DeleteCollection,
         )
-        .await?;
+        .await?
+    {
+        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
+    }
 
     namespace.delete(&pool).await?;
     Ok(json_response(json!(()), StatusCode::NO_CONTENT))
@@ -142,13 +152,17 @@ pub async fn get_namespace_permissions(
         namespace_id = namespace_id.id()
     );
 
-    let namespace = namespace_id
+    let namespace = namespace_id.instance(&pool).await?;
+    if !namespace
         .user_can(
             &pool,
             UserID(requestor.user.id),
-            NamespacePermissions::ReadCollection,
+            Permissions::ReadCollection,
         )
-        .await?;
+        .await?
+    {
+        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
+    }
 
     let permissions = groups_on(&pool, namespace).await?;
     Ok(json_response(permissions, StatusCode::OK))
@@ -162,7 +176,7 @@ pub async fn get_namespace_group_permissions(
     params: web::Path<(NamespaceID, GroupID)>,
 ) -> Result<impl Responder, ApiError> {
     use crate::models::namespace::group_on;
-    use crate::models::permissions::NamespacePermissions;
+    use crate::models::permissions::Permissions;
 
     let (namespace_id, group_id) = params.into_inner();
 
@@ -173,13 +187,17 @@ pub async fn get_namespace_group_permissions(
         group_id = group_id.id()
     );
 
-    let namespace = namespace_id
+    let namespace = namespace_id.instance(&pool).await?;
+    if !namespace
         .user_can(
             &pool,
             UserID(requestor.user.id),
-            NamespacePermissions::ReadCollection,
+            Permissions::ReadCollection,
         )
-        .await?;
+        .await?
+    {
+        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
+    }
 
     let permissions = group_on(&pool, namespace.id, group_id.id()).await?;
 
@@ -200,10 +218,8 @@ pub async fn grant_namespace_group_permissions(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
     params: web::Path<(NamespaceID, GroupID)>,
-    permissions: web::Json<Vec<NamespacePermissions>>,
+    permissions: web::Json<Vec<Permissions>>,
 ) -> Result<impl Responder, ApiError> {
-    use crate::models::permissions::{NamespacePermissions, PermissionsList};
-
     let (namespace_id, group_id) = params.into_inner();
     let permissions = PermissionsList::new(permissions.into_inner());
 
@@ -215,13 +231,17 @@ pub async fn grant_namespace_group_permissions(
         permissions = ?permissions
     );
 
-    let namespace = namespace_id
+    let namespace = namespace_id.instance(&pool).await?;
+    if !namespace
         .user_can(
             &pool,
             UserID(requestor.user.id),
-            NamespacePermissions::DelegateCollection,
+            Permissions::DelegateCollection,
         )
-        .await?;
+        .await?
+    {
+        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
+    }
 
     namespace.grant(&pool, group_id.id(), permissions).await?;
 
@@ -235,8 +255,6 @@ pub async fn revoke_namespace_group_permissions(
     requestor: UserAccess,
     params: web::Path<(NamespaceID, GroupID)>,
 ) -> Result<impl Responder, ApiError> {
-    use crate::models::permissions::NamespacePermissions;
-
     let (namespace_id, group_id) = params.into_inner();
 
     info!(
@@ -246,13 +264,17 @@ pub async fn revoke_namespace_group_permissions(
         group_id = group_id.id()
     );
 
-    let namespace = namespace_id
+    let namespace = namespace_id.instance(&pool).await?;
+    if !namespace
         .user_can(
             &pool,
             UserID(requestor.user.id),
-            NamespacePermissions::DelegateCollection,
+            Permissions::DelegateCollection,
         )
-        .await?;
+        .await?
+    {
+        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
+    }
 
     namespace.revoke_all(&pool, group_id.id()).await?;
 
@@ -264,10 +286,9 @@ pub async fn revoke_namespace_group_permissions(
 pub async fn get_namespace_group_permission(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
-    params: web::Path<(NamespaceID, GroupID, NamespacePermissions)>,
+    params: web::Path<(NamespaceID, GroupID, Permissions)>,
 ) -> Result<impl Responder, ApiError> {
     use crate::models::namespace::group_can_on;
-    use crate::models::permissions::NamespacePermissions;
 
     let (namespace_id, group_id, permission) = params.into_inner();
 
@@ -279,13 +300,17 @@ pub async fn get_namespace_group_permission(
         permission = ?permission
     );
 
-    let namespace = namespace_id
+    let namespace = namespace_id.instance(&pool).await?;
+    if !namespace
         .user_can(
             &pool,
             UserID(requestor.user.id),
-            NamespacePermissions::ReadCollection,
+            Permissions::ReadCollection,
         )
-        .await?;
+        .await?
+    {
+        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
+    }
 
     if group_can_on(&pool, group_id.id(), namespace, permission).await? {
         return Ok(json_response((), StatusCode::NO_CONTENT));
@@ -299,10 +324,8 @@ pub async fn get_namespace_group_permission(
 pub async fn grant_namespace_group_permission(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
-    params: web::Path<(NamespaceID, GroupID, NamespacePermissions)>,
+    params: web::Path<(NamespaceID, GroupID, Permissions)>,
 ) -> Result<impl Responder, ApiError> {
-    use crate::models::permissions::{NamespacePermissions, PermissionsList};
-
     let (namespace_id, group_id, permission) = params.into_inner();
 
     info!(
@@ -313,13 +336,17 @@ pub async fn grant_namespace_group_permission(
         permission = ?permission
     );
 
-    let namespace = namespace_id
+    let namespace = namespace_id.instance(&pool).await?;
+    if !namespace
         .user_can(
             &pool,
             UserID(requestor.user.id),
-            NamespacePermissions::DelegateCollection,
+            Permissions::DelegateCollection,
         )
-        .await?;
+        .await?
+    {
+        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
+    }
 
     namespace
         .grant(&pool, group_id.id(), PermissionsList::new([permission]))
@@ -333,10 +360,8 @@ pub async fn grant_namespace_group_permission(
 pub async fn revoke_namespace_group_permission(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
-    params: web::Path<(NamespaceID, GroupID, NamespacePermissions)>,
+    params: web::Path<(NamespaceID, GroupID, Permissions)>,
 ) -> Result<impl Responder, ApiError> {
-    use crate::models::permissions::{NamespacePermissions, PermissionsList};
-
     let (namespace_id, group_id, permission) = params.into_inner();
 
     info!(
@@ -347,13 +372,17 @@ pub async fn revoke_namespace_group_permission(
         permission = ?permission
     );
 
-    let namespace = namespace_id
+    let namespace = namespace_id.instance(&pool).await?;
+    if !namespace
         .user_can(
             &pool,
             UserID(requestor.user.id),
-            NamespacePermissions::DelegateCollection,
+            Permissions::DelegateCollection,
         )
-        .await?;
+        .await?
+    {
+        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
+    }
 
     namespace
         .revoke(&pool, group_id.id(), PermissionsList::new([permission]))
@@ -370,7 +399,6 @@ pub async fn get_namespace_user_permissions(
     params: web::Path<(NamespaceID, UserID)>,
 ) -> Result<impl Responder, ApiError> {
     use crate::models::namespace::user_on;
-    use crate::models::permissions::NamespacePermissions;
 
     let (namespace_id, user_id) = params.into_inner();
 
@@ -381,13 +409,17 @@ pub async fn get_namespace_user_permissions(
         user_id = user_id.0
     );
 
-    let namespace = namespace_id
+    let namespace = namespace_id.instance(&pool).await?;
+    if !namespace
         .user_can(
             &pool,
             UserID(requestor.user.id),
-            NamespacePermissions::ReadCollection,
+            Permissions::ReadCollection,
         )
-        .await?;
+        .await?
+    {
+        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
+    }
 
     let permissions = user_on(&pool, user_id, namespace).await?;
 
@@ -403,10 +435,9 @@ pub async fn get_namespace_user_permissions(
 pub async fn get_namespace_groups_with_permission(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
-    params: web::Path<(NamespaceID, NamespacePermissions)>,
+    params: web::Path<(NamespaceID, Permissions)>,
 ) -> Result<impl Responder, ApiError> {
     use crate::models::namespace::groups_can_on;
-    use crate::models::permissions::NamespacePermissions;
 
     let (namespace_id, permission) = params.into_inner();
 
@@ -417,13 +448,17 @@ pub async fn get_namespace_groups_with_permission(
         permission = ?permission
     );
 
-    let namespace = namespace_id
+    let namespace = namespace_id.instance(&pool).await?;
+    if !namespace
         .user_can(
             &pool,
             UserID(requestor.user.id),
-            NamespacePermissions::ReadCollection,
+            Permissions::ReadCollection,
         )
-        .await?;
+        .await?
+    {
+        return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
+    }
 
     let groups = groups_can_on(&pool, namespace.id, permission).await?;
 

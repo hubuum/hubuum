@@ -1,14 +1,10 @@
 use diesel::{ExpressionMethods, JoinOnDsl, QueryDsl, RunQueryDsl, Table};
 
-use crate::models::namespace::Namespace;
-use crate::models::permissions::{ClassPermissions, NamespacePermissions};
+use crate::models::{Group, HubuumClass, Namespace, Permission, Permissions, User, UserID};
 use crate::traits::SelfAccessors;
 
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::models::class::HubuumClass;
-use crate::models::group::Group;
-use crate::models::user::{User, UserID};
 
 pub trait GroupAccessors: SelfAccessors<User> {
     /// Return all groups that the user is a member of.
@@ -76,30 +72,28 @@ pub trait GroupAccessors: SelfAccessors<User> {
 pub trait NamespaceAccessors: SelfAccessors<User> + GroupAccessors {
     /// Return all namespaces that the user has NamespacePermissions::ReadCollection on.
     async fn namespaces_read(&self, pool: &DbPool) -> Result<Vec<Namespace>, ApiError> {
-        self.namespaces(pool, vec![NamespacePermissions::ReadCollection])
+        self.namespaces(pool, vec![Permissions::ReadCollection])
             .await
     }
 
     async fn namespaces(
         &self,
         pool: &DbPool,
-        permissions: Vec<NamespacePermissions>,
+        permissions_list: Vec<Permissions>,
     ) -> Result<Vec<Namespace>, ApiError> {
-        use crate::models::permissions::PermissionFilter;
-        use crate::schema::namespacepermissions::dsl::{
-            group_id, namespace_id, namespacepermissions,
-        };
+        use crate::models::PermissionFilter;
         use crate::schema::namespaces::dsl::{id as namespaces_table_id, namespaces};
+        use crate::schema::permissions::dsl::{group_id, namespace_id, permissions};
 
         let mut conn = pool.get()?;
 
         let groups_id_subquery = self.group_ids_subquery();
 
-        let mut base_query = namespacepermissions
+        let mut base_query = permissions
             .into_boxed()
             .filter(group_id.eq_any(groups_id_subquery));
 
-        for perm in permissions {
+        for perm in permissions_list {
             base_query = PermissionFilter::filter(perm, base_query);
         }
 
@@ -115,17 +109,17 @@ pub trait NamespaceAccessors: SelfAccessors<User> + GroupAccessors {
 pub trait ClassAccessors: NamespaceAccessors {
     /// Return all classes that the user has ClassPermissions::ReadClass on.
     async fn classes_read(&self, pool: &DbPool) -> Result<Vec<HubuumClass>, ApiError> {
-        self.classes(pool, vec![ClassPermissions::ReadClass]).await
+        self.classes(pool, vec![Permissions::ReadClass]).await
     }
 
     async fn classes(
         &self,
         pool: &DbPool,
-        permissions: Vec<ClassPermissions>,
+        permissions_list: Vec<Permissions>,
     ) -> Result<Vec<HubuumClass>, ApiError> {
-        use crate::models::permissions::PermissionFilter;
-        use crate::schema::classpermissions::dsl::*;
+        use crate::models::PermissionFilter;
         use crate::schema::hubuumclass::dsl::{hubuumclass, namespace_id as hubuum_classes_nid};
+        use crate::schema::permissions::dsl::*;
 
         let mut conn = pool.get()?;
         let group_id_subquery = self.group_ids_subquery();
@@ -137,12 +131,12 @@ pub trait ClassAccessors: NamespaceAccessors {
             .map(|n| n.id)
             .collect();
 
-        let mut base_query = classpermissions
+        let mut base_query = permissions
             .into_boxed()
             .filter(namespace_id.eq_any(namespace_ids.clone()))
             .filter(group_id.eq_any(group_id_subquery));
 
-        for perm in permissions {
+        for perm in permissions_list {
             base_query = PermissionFilter::filter(perm, base_query);
         }
 
@@ -191,9 +185,7 @@ impl SelfAccessors<User> for UserID {
 mod test {
 
     use super::*;
-    use crate::models::class::NewHubuumClass;
-    use crate::models::group::GroupID;
-    use crate::models::permissions::{ClassPermissions, NamespacePermissions, PermissionsList};
+    use crate::models::{GroupID, NewHubuumClass, Permissions, PermissionsList};
     use crate::tests::{create_test_group, create_test_user, setup_pool_and_tokens};
     use crate::traits::PermissionController;
     use crate::traits::{CanDelete, CanSave};
@@ -236,10 +228,10 @@ mod test {
                 &pool,
                 test_group_1.id,
                 PermissionsList::new([
-                    ClassPermissions::ReadClass,
-                    ClassPermissions::UpdateClass,
-                    ClassPermissions::DeleteClass,
-                    ClassPermissions::CreateObject,
+                    Permissions::ReadClass,
+                    Permissions::UpdateClass,
+                    Permissions::DeleteClass,
+                    Permissions::CreateObject,
                 ]),
             )
             .await
@@ -257,7 +249,7 @@ mod test {
         let classlist = test_user_2.classes_read(&pool).await.unwrap();
         assert_not_contains!(&classlist, &class);
 
-        ns.grant_one(&pool, test_group_2.id, NamespacePermissions::ReadCollection)
+        ns.grant_one(&pool, test_group_2.id, Permissions::ReadCollection)
             .await
             .unwrap();
 
@@ -268,7 +260,7 @@ mod test {
         assert_contains!(&classlist, &class);
 
         class
-            .grant_one(&pool, test_group_2.id, ClassPermissions::ReadClass)
+            .grant_one(&pool, test_group_2.id, Permissions::ReadClass)
             .await
             .unwrap();
 
@@ -276,7 +268,7 @@ mod test {
         assert_contains!(&classlist, &class);
 
         class
-            .revoke_one(&pool, test_group_2.id, ClassPermissions::ReadClass)
+            .revoke_one(&pool, test_group_2.id, Permissions::ReadClass)
             .await
             .unwrap();
 

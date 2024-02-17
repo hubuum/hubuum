@@ -1,13 +1,13 @@
+use diesel::prelude::*;
 use serde::Serialize;
 
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::models::class::HubuumClass;
-use crate::models::namespace::Namespace;
-use crate::models::object::HubuumObject;
-use crate::models::permissions::PermissionsList;
-use crate::models::traits::user::GroupAccessors;
-use crate::models::user::User;
+use crate::models::traits::GroupAccessors;
+use crate::models::{
+    HubuumClass, HubuumObject, Namespace, NewPermission, Permission, PermissionFilter, Permissions,
+    PermissionsList, UpdatePermission, User,
+};
 
 pub trait CanDelete {
     async fn delete(&self, pool: &DbPool) -> Result<(), ApiError>;
@@ -46,48 +46,85 @@ pub trait ObjectAccessors {
     async fn object_id(&self, pool: &DbPool) -> Result<i32, ApiError>;
 }
 
-pub trait PermissionController: Serialize {
-    type PermissionEnum;
-    type PermissionType;
-
-    /// Check if a user has a specific permission on the current object.
+pub trait PermissionController: Serialize + NamespaceAccessors {
+    /// Check if the user has the given permission on the object.
     ///
     /// - If the trait is called on a namespace, check against self.
     /// - If the trait is called on a HubuumClass or a HubuumObject,
     ///   check against the namespace of the class or object.
+    /// - If the trait is called on a HubuumClassID or a HubuumObjectID,
+    ///   create a HubuumClass or HubuumObject and check against the namespace
+    ///   of the class or object.
+    ///
+    /// If this is called on a *ID, a full class is created to extract
+    /// the namespace_id. To avoid creating the class multiple times during use
+    /// do this:
+    /// ```
+    /// class = class_id.class(pool).await?;
+    /// if (class.user_can(pool, userid, Permissions::ReadClass).await?) {
+    ///     return Ok(class);
+    /// }
+    /// ```
+    /// And not this:
+    /// ```
+    /// if (class_id.user_can(pool, userid, Permissions::ReadClass).await?) {
+    ///    return Ok(class_id.class(pool).await?);
+    /// }
+    /// ```
     ///
     /// ## Arguments
     ///
-    /// - `pool` - A connection pool to the database.
-    /// - `user_id` - The user ID to check.
+    /// * `pool` - The database pool to use for the query.
+    /// * `user_id` - The user to check permissions for.
+    /// * `permission` - The permission to check.
     ///
     /// ## Returns
     ///
-    /// A boolean indicating if the user has the permission.
+    /// * `Ok(true)` if the user has the given permission on this class.
+    /// * `Ok(false)` if the user does not have the given permission on this class.
+    /// * `Err(_)` if the user does not have the given permission on this class, or if the
+    ///  permission is invalid.
     ///
     /// ## Example
     ///
     /// ```
-    /// if (namespace.user_can(pool, user_id, NamespacePermissions::ReadCollection).await?) {
-    ///    // Do something
+    /// if (hubuum_class_or_classid.user_can(pool, userid, ClassPermissions::ReadClass).await?) {
+    ///     // Do something
     /// }
-    /// ```
     async fn user_can<U: SelfAccessors<User> + GroupAccessors>(
         &self,
         pool: &DbPool,
-        user_id: U,
-        permission: Self::PermissionEnum,
-    ) -> Result<bool, ApiError>;
+        user: U,
+        permission: Permissions,
+    ) -> Result<bool, ApiError> {
+        let lookup_table = crate::schema::permissions::dsl::permissions;
+        let group_id_field = crate::schema::permissions::dsl::group_id;
+        let namespace_id_field = crate::schema::permissions::dsl::namespace_id;
+
+        let mut conn = pool.get()?;
+        let group_id_subquery = user.group_ids_subquery();
+
+        // Note that self.namespace_id(pool).await? is only a query if the caller is a HubuumClassID, otherwise
+        // it's a simple field access (which ignores the passed pool).
+        let base_query = lookup_table
+            .into_boxed()
+            .filter(namespace_id_field.eq(self.namespace_id(pool).await?))
+            .filter(group_id_field.eq_any(group_id_subquery));
+
+        let result = PermissionFilter::filter(permission, base_query)
+            .first::<Permission>(&mut conn)
+            .optional()?;
+
+        Ok(result.is_some())
+    }
 
     /// Grant a set of permissions to a group.
     ///
     /// - If the group previously had any permissions, the requested
     /// permissions are added to the existing permission object for
     /// the group.
-    ///
     /// - If the group did not have any permissions, a new permission
     /// object is created for the group, with the requested permissions.
-    ///
     /// - No permissions are removed from the group.
     ///
     /// ## Arguments
@@ -102,11 +139,100 @@ pub trait PermissionController: Serialize {
     async fn grant(
         &self,
         pool: &DbPool,
-        group_identifier: i32,
-        permission_list: PermissionsList<Self::PermissionEnum>,
-    ) -> Result<Self::PermissionType, ApiError>
-    where
-        <Self as PermissionController>::PermissionEnum: Serialize + PartialEq;
+        group_id_for_grant: i32,
+        permission_list: PermissionsList<Permissions>,
+    ) -> Result<Permission, ApiError> {
+        use crate::schema::permissions::dsl::*;
+
+        // If the group already has permissions, update the permissions in permissions. Otherwise, insert a new row.
+        let mut conn = pool.get()?;
+
+        let nid = self.namespace_id(pool).await?;
+
+        conn.transaction::<_, ApiError, _>(|conn| {
+            let existing_entry = permissions
+                .filter(namespace_id.eq(nid))
+                .filter(group_id.eq(group_id_for_grant))
+                .first::<Permission>(conn)
+                .optional()?;
+
+            match existing_entry {
+                Some(_) => {
+                    let mut update_perm = UpdatePermission::default();
+                    for permission in permission_list.into_iter() {
+                        match permission {
+                            Permissions::ReadCollection => {
+                                update_perm.has_read_namespace = Some(true);
+                            }
+                            Permissions::UpdateCollection => {
+                                update_perm.has_update_namespace = Some(true);
+                            }
+                            Permissions::DeleteCollection => {
+                                update_perm.has_delete_namespace = Some(true);
+                            }
+                            Permissions::DelegateCollection => {
+                                update_perm.has_delegate_namespace = Some(true);
+                            }
+                            Permissions::CreateClass => {
+                                update_perm.has_create_class = Some(true);
+                            }
+                            Permissions::ReadClass => {
+                                update_perm.has_read_class = Some(true);
+                            }
+                            Permissions::UpdateClass => {
+                                update_perm.has_update_class = Some(true);
+                            }
+                            Permissions::DeleteClass => {
+                                update_perm.has_delete_class = Some(true);
+                            }
+                            Permissions::CreateObject => {
+                                update_perm.has_create_object = Some(true);
+                            }
+                            Permissions::ReadObject => {
+                                update_perm.has_read_object = Some(true);
+                            }
+                            Permissions::UpdateObject => {
+                                update_perm.has_update_object = Some(true);
+                            }
+                            Permissions::DeleteObject => {
+                                update_perm.has_delete_object = Some(true);
+                            }
+                        }
+                    }
+
+                    Ok(diesel::update(permissions)
+                        .filter(namespace_id.eq(nid))
+                        .filter(group_id.eq(group_id_for_grant))
+                        .set(&update_perm)
+                        .get_result(conn)?)
+                }
+                None => {
+                    let new_entry = NewPermission {
+                        namespace_id: nid,
+                        group_id: group_id_for_grant,
+                        has_read_namespace: permission_list.contains(&Permissions::ReadCollection),
+                        has_update_namespace: permission_list
+                            .contains(&Permissions::UpdateCollection),
+                        has_delete_namespace: permission_list
+                            .contains(&Permissions::DeleteCollection),
+                        has_delegate_namespace: permission_list
+                            .contains(&Permissions::DelegateCollection),
+                        has_create_class: permission_list.contains(&Permissions::CreateClass),
+                        has_read_class: permission_list.contains(&Permissions::ReadClass),
+                        has_update_class: permission_list.contains(&Permissions::UpdateClass),
+                        has_delete_class: permission_list.contains(&Permissions::DeleteClass),
+                        has_create_object: permission_list.contains(&Permissions::CreateObject),
+                        has_read_object: permission_list.contains(&Permissions::ReadObject),
+                        has_update_object: permission_list.contains(&Permissions::UpdateObject),
+                        has_delete_object: permission_list.contains(&Permissions::DeleteObject),
+                    };
+                    Ok(diesel::insert_into(permissions)
+                        .values(&new_entry)
+                        .get_result(conn)?)
+                }
+            }
+        })
+    }
 
     /// Revoke a set of permissions from a group.
     ///
@@ -130,11 +256,69 @@ pub trait PermissionController: Serialize {
     async fn revoke(
         &self,
         pool: &DbPool,
-        group_identifier: i32,
-        permission_list: PermissionsList<Self::PermissionEnum>,
-    ) -> Result<Self::PermissionType, ApiError>
-    where
-        <Self as PermissionController>::PermissionEnum: Serialize + PartialEq;
+        group_id_for_revoke: i32,
+        permission_list: PermissionsList<Permissions>,
+    ) -> Result<Permission, ApiError> {
+        use crate::schema::permissions::dsl::*;
+
+        let mut conn = pool.get()?;
+
+        let nid = self.namespace_id(pool).await?;
+
+        conn.transaction::<_, ApiError, _>(|conn| {
+            permissions
+                .filter(namespace_id.eq(nid))
+                .filter(group_id.eq(group_id_for_revoke))
+                .first::<Permission>(conn)?;
+
+            let mut update_perm = UpdatePermission::default();
+            for permission in permission_list.into_iter() {
+                match permission {
+                    Permissions::ReadCollection => {
+                        update_perm.has_read_namespace = Some(false);
+                    }
+                    Permissions::UpdateCollection => {
+                        update_perm.has_update_namespace = Some(false);
+                    }
+                    Permissions::DeleteCollection => {
+                        update_perm.has_delete_namespace = Some(false);
+                    }
+                    Permissions::DelegateCollection => {
+                        update_perm.has_delegate_namespace = Some(false);
+                    }
+                    Permissions::CreateClass => {
+                        update_perm.has_create_class = Some(false);
+                    }
+                    Permissions::ReadClass => {
+                        update_perm.has_read_class = Some(false);
+                    }
+                    Permissions::UpdateClass => {
+                        update_perm.has_update_class = Some(false);
+                    }
+                    Permissions::DeleteClass => {
+                        update_perm.has_delete_class = Some(false);
+                    }
+                    Permissions::CreateObject => {
+                        update_perm.has_create_object = Some(false);
+                    }
+                    Permissions::ReadObject => {
+                        update_perm.has_read_object = Some(false);
+                    }
+                    Permissions::UpdateObject => {
+                        update_perm.has_update_object = Some(false);
+                    }
+                    Permissions::DeleteObject => {
+                        update_perm.has_delete_object = Some(false);
+                    }
+                }
+            }
+            Ok(diesel::update(permissions)
+                .filter(namespace_id.eq(nid))
+                .filter(group_id.eq(group_id_for_revoke))
+                .set(&update_perm)
+                .get_result(conn)?)
+        })
+    }
 
     /// Grant a specific permission to a group.
     ///
@@ -160,11 +344,8 @@ pub trait PermissionController: Serialize {
         &self,
         pool: &DbPool,
         group_identifier: i32,
-        permission: Self::PermissionEnum,
-    ) -> Result<Self::PermissionType, ApiError>
-    where
-        <Self as PermissionController>::PermissionEnum: Serialize + PartialEq,
-    {
+        permission: Permissions,
+    ) -> Result<Permission, ApiError> {
         self.grant(
             pool,
             group_identifier,
@@ -196,11 +377,8 @@ pub trait PermissionController: Serialize {
         &self,
         pool: &DbPool,
         group_identifier: i32,
-        permission: Self::PermissionEnum,
-    ) -> Result<Self::PermissionType, ApiError>
-    where
-        <Self as PermissionController>::PermissionEnum: Serialize + PartialEq,
-    {
+        permission: Permissions,
+    ) -> Result<Permission, ApiError> {
         self.revoke(
             pool,
             group_identifier,
@@ -231,10 +409,70 @@ pub trait PermissionController: Serialize {
         &self,
         pool: &DbPool,
         group_identifier: i32,
-        permission_list: PermissionsList<Self::PermissionEnum>,
-    ) -> Result<Self::PermissionType, ApiError>
-    where
-        <Self as PermissionController>::PermissionEnum: Serialize + PartialEq;
+        permission_list: PermissionsList<Permissions>,
+    ) -> Result<Permission, ApiError> {
+        use crate::schema::permissions::dsl::*;
+
+        let mut conn = pool.get()?;
+        let nid = self.namespace_id(pool).await?;
+
+        conn.transaction::<_, ApiError, _>(|conn| {
+            let existing_entry = permissions
+                .filter(namespace_id.eq(nid))
+                .filter(group_id.eq(group_identifier))
+                .first::<Permission>(conn)
+                .optional()?;
+
+            match existing_entry {
+                Some(_) => Ok(diesel::update(permissions)
+                    .filter(namespace_id.eq(nid))
+                    .filter(group_id.eq(group_identifier))
+                    .set((
+                        has_read_namespace
+                            .eq(permission_list.contains(&Permissions::ReadCollection)),
+                        has_update_namespace
+                            .eq(permission_list.contains(&Permissions::UpdateCollection)),
+                        has_delete_namespace
+                            .eq(permission_list.contains(&Permissions::DeleteCollection)),
+                        has_delegate_namespace
+                            .eq(permission_list.contains(&Permissions::DelegateCollection)),
+                        has_create_class.eq(permission_list.contains(&Permissions::CreateClass)),
+                        has_read_class.eq(permission_list.contains(&Permissions::ReadClass)),
+                        has_update_class.eq(permission_list.contains(&Permissions::UpdateClass)),
+                        has_delete_class.eq(permission_list.contains(&Permissions::DeleteClass)),
+                        has_create_object.eq(permission_list.contains(&Permissions::CreateObject)),
+                        has_read_object.eq(permission_list.contains(&Permissions::ReadObject)),
+                        has_update_object.eq(permission_list.contains(&Permissions::UpdateObject)),
+                        has_delete_object.eq(permission_list.contains(&Permissions::DeleteObject)),
+                    ))
+                    .get_result(conn)?),
+                None => {
+                    let new_entry = NewPermission {
+                        namespace_id: nid,
+                        group_id: group_identifier,
+                        has_read_namespace: permission_list.contains(&Permissions::ReadCollection),
+                        has_update_namespace: permission_list
+                            .contains(&Permissions::UpdateCollection),
+                        has_delete_namespace: permission_list
+                            .contains(&Permissions::DeleteCollection),
+                        has_delegate_namespace: permission_list
+                            .contains(&Permissions::DelegateCollection),
+                        has_create_class: permission_list.contains(&Permissions::CreateClass),
+                        has_read_class: permission_list.contains(&Permissions::ReadClass),
+                        has_update_class: permission_list.contains(&Permissions::UpdateClass),
+                        has_delete_class: permission_list.contains(&Permissions::DeleteClass),
+                        has_create_object: permission_list.contains(&Permissions::CreateObject),
+                        has_read_object: permission_list.contains(&Permissions::ReadObject),
+                        has_update_object: permission_list.contains(&Permissions::UpdateObject),
+                        has_delete_object: permission_list.contains(&Permissions::DeleteObject),
+                    };
+                    Ok(diesel::insert_into(permissions)
+                        .values(&new_entry)
+                        .get_result(conn)?)
+                }
+            }
+        })
+    }
 
     /// Revoke all permissions from a group.
     ///
@@ -250,6 +488,16 @@ pub trait PermissionController: Serialize {
     /// ## Returns
     ///
     /// An empty result.
+    async fn revoke_all(&self, pool: &DbPool, group_id_for_revoke: i32) -> Result<(), ApiError> {
+        use crate::schema::permissions::dsl::*;
 
-    async fn revoke_all(&self, pool: &DbPool, group_identifier: i32) -> Result<(), ApiError>;
+        let mut conn = pool.get()?;
+
+        diesel::delete(permissions)
+            .filter(namespace_id.eq(self.namespace_id(pool).await?))
+            .filter(group_id.eq(group_id_for_revoke))
+            .execute(&mut conn)?;
+
+        Ok(())
+    }
 }

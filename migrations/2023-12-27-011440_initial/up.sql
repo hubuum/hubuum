@@ -39,38 +39,19 @@ CREATE TABLE namespaces (
     updated_at TIMESTAMP NOT NULL DEFAULT now()
 );
 
-CREATE TABLE namespacepermissions (
+CREATE TABLE permissions (
     id SERIAL PRIMARY KEY,
     namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
     group_id INT REFERENCES groups (id) ON DELETE CASCADE NOT NULL,
-    has_create_object BOOLEAN NOT NULL,
-    has_create_class BOOLEAN NOT NULL,
     has_read_namespace BOOLEAN NOT NULL,
     has_update_namespace BOOLEAN NOT NULL,
     has_delete_namespace BOOLEAN NOT NULL,
     has_delegate_namespace BOOLEAN NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT now(),
-    updated_at TIMESTAMP NOT NULL DEFAULT now(),
-    UNIQUE (namespace_id, group_id)
-);
-
-CREATE TABLE classpermissions (
-    id SERIAL PRIMARY KEY,
-    namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
-    group_id INT DEFAULT NULL REFERENCES groups (id) ON DELETE CASCADE NOT NULL,
-    has_create_object BOOLEAN NOT NULL,
+    has_create_class BOOLEAN NOT NULL,
     has_read_class BOOLEAN NOT NULL,
     has_update_class BOOLEAN NOT NULL,
     has_delete_class BOOLEAN NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT now(),
-    updated_at TIMESTAMP NOT NULL DEFAULT now(),
-    UNIQUE (namespace_id, group_id)
-);
-
-CREATE TABLE objectpermissions (
-    id SERIAL PRIMARY KEY,
-    namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
-    group_id INT DEFAULT NULL REFERENCES groups (id) ON DELETE CASCADE NOT NULL,
+    has_create_object BOOLEAN NOT NULL,
     has_read_object BOOLEAN NOT NULL,
     has_update_object BOOLEAN NOT NULL,
     has_delete_object BOOLEAN NOT NULL,
@@ -124,15 +105,8 @@ CREATE INDEX idx_hubuumobject_namespace_id ON hubuumobject(namespace_id);
 CREATE INDEX idx_hubuumobject_hubuum_class_id ON hubuumobject(hubuum_class_id);
 
 ---- Permissions
-CREATE INDEX idx_namespacepermissions_namespace_id ON namespacepermissions(namespace_id);
-CREATE INDEX idx_namespacepermissions_group_id ON namespacepermissions(group_id);
-
-CREATE INDEX idx_classpermissions_namespace_id ON classpermissions(namespace_id);
-CREATE INDEX idx_classpermissions_group_id ON classpermissions(group_id);
-
-CREATE INDEX idx_objectpermissions_namespace_id ON classpermissions(namespace_id);
-CREATE INDEX idx_objectpermissions_group_id ON classpermissions(group_id);
-
+CREATE INDEX idx_permissions_namespace_id ON permissions(namespace_id);
+CREATE INDEX idx_permissions_group_id ON permissions(group_id);
 
 ----------------------
 ---- Triggers
@@ -162,16 +136,8 @@ CREATE TRIGGER update_namespaces_updated_at
 BEFORE UPDATE ON namespaces
 FOR EACH ROW EXECUTE FUNCTION update_modified_column();
 
-CREATE TRIGGER update_namespacepermissions_updated_at
-BEFORE UPDATE ON namespacepermissions
-FOR EACH ROW EXECUTE FUNCTION update_modified_column();
-
-CREATE TRIGGER update_classpermissions_updated_at
-BEFORE UPDATE ON classpermissions
-FOR EACH ROW EXECUTE FUNCTION update_modified_column();
-
-CREATE TRIGGER update_objectpermissions_updated_at
-BEFORE UPDATE ON objectpermissions
+CREATE TRIGGER update_permissions_updated_at
+BEFORE UPDATE ON permissions
 FOR EACH ROW EXECUTE FUNCTION update_modified_column();
 
 CREATE TRIGGER update_hubuumclass_updated_at

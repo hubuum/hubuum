@@ -1,8 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use crate::models::namespace::{Namespace, NewNamespaceWithAssignee, UpdateNamespace};
-    use crate::models::output::GroupNamespacePermission;
-    use crate::models::permissions::{NamespacePermission, NamespacePermissions};
+    use crate::models::{
+        GroupPermission, Namespace, NewNamespaceWithAssignee, Permission, Permissions,
+        UpdateNamespace,
+    };
 
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::assert_response_status;
@@ -136,18 +137,24 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
-        let permissions: Vec<GroupNamespacePermission> = test::read_body_json(resp).await;
+        let permissions: Vec<GroupPermission> = test::read_body_json(resp).await;
         assert_eq!(permissions.len(), 1);
-        let np = permissions[0].namespace_permission;
+        let np = permissions[0].permission;
         assert_eq!(np.group_id, admin_group.id);
         assert_eq!(np.namespace_id, created_ns.id);
-        assert_eq!(np.has_create_object, true);
-        assert_eq!(np.has_create_class, true);
         assert_eq!(np.has_read_namespace, true);
         assert_eq!(np.has_update_namespace, true);
         assert_eq!(np.has_delete_namespace, true);
         assert_eq!(np.has_delegate_namespace, true);
-        assert_eq!(permissions[0].group.id, admin_group.id);
+        assert_eq!(np.has_create_class, true);
+        assert_eq!(np.has_read_class, true);
+        assert_eq!(np.has_update_class, true);
+        assert_eq!(np.has_delete_class, true);
+        assert_eq!(np.has_create_object, true);
+        assert_eq!(np.has_read_object, true);
+        assert_eq!(np.has_update_object, true);
+        assert_eq!(np.has_delete_object, true);
+        assert_eq!(permissions[0].group, admin_group);
 
         // Revoke create object permission
         let endpoint = &format!(
@@ -164,18 +171,24 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
-        let permissions: Vec<GroupNamespacePermission> = test::read_body_json(resp).await;
+        let permissions: Vec<GroupPermission> = test::read_body_json(resp).await;
         assert_eq!(permissions.len(), 1);
-        let np = permissions[0].namespace_permission;
+        let np = permissions[0].permission;
         assert_eq!(np.group_id, admin_group.id);
         assert_eq!(np.namespace_id, created_ns.id);
-        assert_eq!(np.has_create_object, false);
-        assert_eq!(np.has_create_class, true);
         assert_eq!(np.has_read_namespace, true);
         assert_eq!(np.has_update_namespace, true);
         assert_eq!(np.has_delete_namespace, true);
         assert_eq!(np.has_delegate_namespace, true);
-        assert_eq!(permissions[0].group.id, admin_group.id);
+        assert_eq!(np.has_create_class, true);
+        assert_eq!(np.has_read_class, true);
+        assert_eq!(np.has_update_class, true);
+        assert_eq!(np.has_delete_class, true);
+        assert_eq!(np.has_create_object, false);
+        assert_eq!(np.has_read_object, true);
+        assert_eq!(np.has_update_object, true);
+        assert_eq!(np.has_delete_object, true);
+        assert_eq!(permissions[0].group, admin_group);
 
         created_ns.delete(&pool).await.unwrap();
     }
@@ -224,15 +237,21 @@ mod tests {
         .await;
 
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
-        let np: NamespacePermission = test::read_body_json(resp).await;
+        let np: Permission = test::read_body_json(resp).await;
         assert_eq!(np.group_id, normal_group.id);
         assert_eq!(np.namespace_id, ns.id);
         assert_eq!(np.has_read_namespace, true);
         assert_eq!(np.has_update_namespace, false);
         assert_eq!(np.has_delete_namespace, false);
         assert_eq!(np.has_delegate_namespace, false);
-        assert_eq!(np.has_create_object, false);
         assert_eq!(np.has_create_class, false);
+        assert_eq!(np.has_read_class, false);
+        assert_eq!(np.has_update_class, false);
+        assert_eq!(np.has_delete_class, false);
+        assert_eq!(np.has_create_object, false);
+        assert_eq!(np.has_read_object, false);
+        assert_eq!(np.has_update_object, false);
+        assert_eq!(np.has_delete_object, false);
 
         // Delete all permissions for normal group
         let resp = delete_request(
@@ -291,7 +310,7 @@ mod tests {
         let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;
 
         // Now, let us grant test_group read permission to the namespace
-        let np_read = NamespacePermissions::ReadCollection;
+        let np_read = Permissions::ReadCollection;
         ns.grant_one(&pool, test_group.id, np_read).await.unwrap();
 
         // Let's try reading the namespace again
@@ -305,7 +324,7 @@ mod tests {
         let _ = assert_response_status(resp, http::StatusCode::OK).await;
 
         // Now, let us grant test_group update permission to the namespace
-        let np_update = NamespacePermissions::UpdateCollection;
+        let np_update = Permissions::UpdateCollection;
         ns.grant_one(&pool, test_group.id, np_update).await.unwrap();
 
         // Let's try updating the namespace
@@ -329,7 +348,7 @@ mod tests {
         let _ = assert_response_status(resp, http::StatusCode::FORBIDDEN).await;
 
         // Grant test_group delegate permission to the namespace
-        let np_delegate = NamespacePermissions::DelegateCollection;
+        let np_delegate = Permissions::DelegateCollection;
         ns.grant_one(&pool, test_group.id, np_delegate)
             .await
             .unwrap();

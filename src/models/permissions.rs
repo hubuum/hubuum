@@ -3,32 +3,19 @@ use std::{fmt, fmt::Display, slice};
 
 use serde::{Deserialize, Serialize};
 
-use crate::schema::classpermissions;
-use crate::schema::namespacepermissions;
-use crate::schema::objectpermissions;
+use crate::schema::permissions;
 
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
-pub enum NamespacePermissions {
-    CreateClass,
-    CreateObject,
+pub enum Permissions {
     ReadCollection,
     UpdateCollection,
     DeleteCollection,
     DelegateCollection,
-}
-
-#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
-pub enum ClassPermissions {
-    CreateObject,
+    CreateClass,
     ReadClass,
     UpdateClass,
     DeleteClass,
-}
-
-// We use the object suffix for consistency with other models.
-#[allow(clippy::enum_variant_names)]
-#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
-pub enum ObjectPermissions {
+    CreateObject,
     ReadObject,
     UpdateObject,
     DeleteObject,
@@ -86,115 +73,49 @@ pub trait PermissionFilter<'a, Q> {
     fn filter(self, query: Q) -> Q;
 }
 
-impl<'a> PermissionFilter<'a, classpermissions::BoxedQuery<'a, diesel::pg::Pg>>
-    for ClassPermissions
-{
+impl<'a> PermissionFilter<'a, permissions::BoxedQuery<'a, diesel::pg::Pg>> for Permissions {
     fn filter(
         self,
-        query: classpermissions::BoxedQuery<diesel::pg::Pg>,
-    ) -> classpermissions::BoxedQuery<diesel::pg::Pg> {
+        query: permissions::BoxedQuery<diesel::pg::Pg>,
+    ) -> permissions::BoxedQuery<diesel::pg::Pg> {
         match self {
-            ClassPermissions::CreateObject => {
-                query.filter(classpermissions::has_create_object.eq(true))
+            Permissions::ReadCollection => query.filter(permissions::has_read_namespace.eq(true)),
+            Permissions::UpdateCollection => {
+                query.filter(permissions::has_update_namespace.eq(true))
             }
-            ClassPermissions::ReadClass => query.filter(classpermissions::has_read_class.eq(true)),
-            ClassPermissions::UpdateClass => {
-                query.filter(classpermissions::has_update_class.eq(true))
+            Permissions::DeleteCollection => {
+                query.filter(permissions::has_delete_namespace.eq(true))
             }
-            ClassPermissions::DeleteClass => {
-                query.filter(classpermissions::has_delete_class.eq(true))
+            Permissions::DelegateCollection => {
+                query.filter(permissions::has_delegate_namespace.eq(true))
             }
-        }
-    }
-}
-
-impl<'a> PermissionFilter<'a, objectpermissions::BoxedQuery<'a, diesel::pg::Pg>>
-    for ObjectPermissions
-{
-    fn filter(
-        self,
-        query: objectpermissions::BoxedQuery<diesel::pg::Pg>,
-    ) -> objectpermissions::BoxedQuery<diesel::pg::Pg> {
-        match self {
-            ObjectPermissions::ReadObject => {
-                query.filter(objectpermissions::has_read_object.eq(true))
-            }
-            ObjectPermissions::UpdateObject => {
-                query.filter(objectpermissions::has_update_object.eq(true))
-            }
-            ObjectPermissions::DeleteObject => {
-                query.filter(objectpermissions::has_delete_object.eq(true))
-            }
-        }
-    }
-}
-
-impl<'a> PermissionFilter<'a, namespacepermissions::BoxedQuery<'a, diesel::pg::Pg>>
-    for NamespacePermissions
-{
-    fn filter(
-        self,
-        query: namespacepermissions::BoxedQuery<diesel::pg::Pg>,
-    ) -> namespacepermissions::BoxedQuery<diesel::pg::Pg> {
-        match self {
-            NamespacePermissions::CreateClass => {
-                query.filter(namespacepermissions::has_create_class.eq(true))
-            }
-            NamespacePermissions::CreateObject => {
-                query.filter(namespacepermissions::has_create_object.eq(true))
-            }
-            NamespacePermissions::ReadCollection => {
-                query.filter(namespacepermissions::has_read_namespace.eq(true))
-            }
-            NamespacePermissions::UpdateCollection => {
-                query.filter(namespacepermissions::has_update_namespace.eq(true))
-            }
-            NamespacePermissions::DeleteCollection => {
-                query.filter(namespacepermissions::has_delete_namespace.eq(true))
-            }
-            NamespacePermissions::DelegateCollection => {
-                query.filter(namespacepermissions::has_delegate_namespace.eq(true))
-            }
+            Permissions::CreateClass => query.filter(permissions::has_create_class.eq(true)),
+            Permissions::ReadClass => query.filter(permissions::has_read_class.eq(true)),
+            Permissions::UpdateClass => query.filter(permissions::has_update_class.eq(true)),
+            Permissions::DeleteClass => query.filter(permissions::has_delete_class.eq(true)),
+            Permissions::CreateObject => query.filter(permissions::has_create_object.eq(true)),
+            Permissions::ReadObject => query.filter(permissions::has_read_object.eq(true)),
+            Permissions::UpdateObject => query.filter(permissions::has_update_object.eq(true)),
+            Permissions::DeleteObject => query.filter(permissions::has_delete_object.eq(true)),
         }
     }
 }
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy)]
-#[diesel(table_name = namespacepermissions)]
-pub struct NamespacePermission {
+#[diesel(table_name = permissions)]
+pub struct Permission {
     pub id: i32,
     pub namespace_id: i32,
     pub group_id: i32,
-    pub has_create_object: bool,
-    pub has_create_class: bool,
     pub has_read_namespace: bool,
     pub has_update_namespace: bool,
     pub has_delete_namespace: bool,
     pub has_delegate_namespace: bool,
-    pub created_at: chrono::NaiveDateTime,
-    pub updated_at: chrono::NaiveDateTime,
-}
-
-#[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy)]
-#[diesel(table_name = classpermissions)]
-pub struct ClassPermission {
-    pub id: i32,
-    pub namespace_id: i32,
-    pub group_id: i32,
-    pub has_create_object: bool,
+    pub has_create_class: bool,
     pub has_read_class: bool,
     pub has_update_class: bool,
     pub has_delete_class: bool,
-    pub created_at: chrono::NaiveDateTime,
-    pub updated_at: chrono::NaiveDateTime,
-}
-
-#[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy)]
-#[diesel(table_name = objectpermissions)]
-pub struct ObjectPermission {
-    pub id: i32,
-    pub namespace_id: i32,
-    pub group_id: i32,
+    pub has_create_object: bool,
     pub has_read_object: bool,
     pub has_update_object: bool,
     pub has_delete_object: bool,
@@ -204,62 +125,36 @@ pub struct ObjectPermission {
 
 // Insertable permission models.
 #[derive(Debug, Serialize, Deserialize, Insertable)]
-#[diesel(table_name = namespacepermissions)]
-pub struct NewNamespacePermission {
+#[diesel(table_name = permissions)]
+pub struct NewPermission {
     pub namespace_id: i32,
     pub group_id: i32,
-    pub has_create_object: bool,
-    pub has_create_class: bool,
     pub has_read_namespace: bool,
     pub has_update_namespace: bool,
     pub has_delete_namespace: bool,
     pub has_delegate_namespace: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize, Insertable)]
-#[diesel(table_name = classpermissions)]
-pub struct NewClassPermission {
-    pub namespace_id: i32,
-    pub group_id: i32,
-    pub has_create_object: bool,
+    pub has_create_class: bool,
     pub has_read_class: bool,
     pub has_update_class: bool,
     pub has_delete_class: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize, Insertable)]
-#[diesel(table_name = objectpermissions)]
-pub struct NewObjectPermission {
-    pub namespace_id: i32,
-    pub group_id: i32,
+    pub has_create_object: bool,
     pub has_read_object: bool,
     pub has_update_object: bool,
     pub has_delete_object: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, AsChangeset, Default)]
-#[diesel(table_name = namespacepermissions)]
-pub struct UpdateNamespacePermission {
-    pub has_create_object: Option<bool>,
-    pub has_create_class: Option<bool>,
+#[diesel(table_name = permissions)]
+pub struct UpdatePermission {
     pub has_read_namespace: Option<bool>,
     pub has_update_namespace: Option<bool>,
     pub has_delete_namespace: Option<bool>,
     pub has_delegate_namespace: Option<bool>,
-}
-
-#[derive(Debug, Serialize, Deserialize, AsChangeset, Default)]
-#[diesel(table_name = classpermissions)]
-pub struct UpdateClassPermission {
-    pub has_create_object: Option<bool>,
+    pub has_create_class: Option<bool>,
     pub has_read_class: Option<bool>,
     pub has_update_class: Option<bool>,
     pub has_delete_class: Option<bool>,
-}
-
-#[derive(Debug, Serialize, Deserialize, AsChangeset, Default)]
-#[diesel(table_name = objectpermissions)]
-pub struct UpdateObjectPermission {
+    pub has_create_object: Option<bool>,
     pub has_read_object: Option<bool>,
     pub has_update_object: Option<bool>,
     pub has_delete_object: Option<bool>,

@@ -48,6 +48,7 @@ pub struct UpdateHubuumObject {
     pub description: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
 pub struct HubuumObjectID(pub i32);
 
 // For objects per class.

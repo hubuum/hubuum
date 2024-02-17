@@ -1,20 +1,6 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
-    classpermissions (id) {
-        id -> Int4,
-        namespace_id -> Int4,
-        group_id -> Int4,
-        has_create_object -> Bool,
-        has_read_class -> Bool,
-        has_update_class -> Bool,
-        has_delete_class -> Bool,
-        created_at -> Timestamp,
-        updated_at -> Timestamp,
-    }
-}
-
-diesel::table! {
     groups (id) {
         id -> Int4,
         groupname -> Varchar,
@@ -51,22 +37,6 @@ diesel::table! {
 }
 
 diesel::table! {
-    namespacepermissions (id) {
-        id -> Int4,
-        namespace_id -> Int4,
-        group_id -> Int4,
-        has_create_object -> Bool,
-        has_create_class -> Bool,
-        has_read_namespace -> Bool,
-        has_update_namespace -> Bool,
-        has_delete_namespace -> Bool,
-        has_delegate_namespace -> Bool,
-        created_at -> Timestamp,
-        updated_at -> Timestamp,
-    }
-}
-
-diesel::table! {
     namespaces (id) {
         id -> Int4,
         name -> Varchar,
@@ -77,10 +47,19 @@ diesel::table! {
 }
 
 diesel::table! {
-    objectpermissions (id) {
+    permissions (id) {
         id -> Int4,
         namespace_id -> Int4,
         group_id -> Int4,
+        has_read_namespace -> Bool,
+        has_update_namespace -> Bool,
+        has_delete_namespace -> Bool,
+        has_delegate_namespace -> Bool,
+        has_create_class -> Bool,
+        has_read_class -> Bool,
+        has_update_class -> Bool,
+        has_delete_class -> Bool,
+        has_create_object -> Bool,
         has_read_object -> Bool,
         has_update_object -> Bool,
         has_delete_object -> Bool,
@@ -117,27 +96,21 @@ diesel::table! {
     }
 }
 
-diesel::joinable!(classpermissions -> groups (group_id));
-diesel::joinable!(classpermissions -> namespaces (namespace_id));
 diesel::joinable!(hubuumclass -> namespaces (namespace_id));
 diesel::joinable!(hubuumobject -> hubuumclass (hubuum_class_id));
 diesel::joinable!(hubuumobject -> namespaces (namespace_id));
-diesel::joinable!(namespacepermissions -> groups (group_id));
-diesel::joinable!(namespacepermissions -> namespaces (namespace_id));
-diesel::joinable!(objectpermissions -> groups (group_id));
-diesel::joinable!(objectpermissions -> namespaces (namespace_id));
+diesel::joinable!(permissions -> groups (group_id));
+diesel::joinable!(permissions -> namespaces (namespace_id));
 diesel::joinable!(tokens -> users (user_id));
 diesel::joinable!(user_groups -> groups (group_id));
 diesel::joinable!(user_groups -> users (user_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
-    classpermissions,
     groups,
     hubuumclass,
     hubuumobject,
-    namespacepermissions,
     namespaces,
-    objectpermissions,
+    permissions,
     tokens,
     user_groups,
     users,
