@@ -111,9 +111,9 @@ pub async fn user_on<T: NamespaceAccessors>(
 /// * Ok(Vec<Namespace>) - List of namespaces the user has the requested permission for.
 ///                        If no matching namespaces are found, an empty list is returned
 /// * Err(ApiError) - On query errors only.
-pub async fn user_can_on_any(
+pub async fn user_can_on_any<U: SelfAccessors<User> + GroupAccessors>(
     pool: &DbPool,
-    user_id: UserID,
+    user_id: U,
     permission_type: Permissions,
 ) -> Result<Vec<Namespace>, ApiError> {
     use crate::models::permissions::PermissionFilter;
@@ -123,7 +123,7 @@ pub async fn user_can_on_any(
 
     let mut conn = pool.get()?;
 
-    let base_query = if user_id.user(pool).await?.is_admin(pool).await {
+    let base_query = if user_id.instance(pool).await?.is_admin(pool).await {
         permissions.into_boxed()
     } else {
         let group_ids_subquery = user_id.group_ids_subquery();

@@ -23,12 +23,7 @@ pub async fn get_namespaces(
         requestor = requestor.user.username
     );
 
-    let result = user_can_on_any(
-        &pool,
-        UserID(requestor.user.id),
-        Permissions::ReadCollection,
-    )
-    .await?;
+    let result = user_can_on_any(&pool, requestor.user, Permissions::ReadCollection).await?;
     Ok(json_response(result, StatusCode::OK))
 }
 
@@ -67,11 +62,7 @@ pub async fn get_namespace(
 
     let namespace = namespace_id.instance(&pool).await?;
     if !namespace
-        .user_can(
-            &pool,
-            UserID(requestor.user.id),
-            Permissions::ReadCollection,
-        )
+        .user_can(&pool, requestor.user, Permissions::ReadCollection)
         .await?
     {
         return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
@@ -95,11 +86,7 @@ pub async fn update_namespace(
 
     let namespace = namespace_id.instance(&pool).await?;
     if !namespace
-        .user_can(
-            &pool,
-            UserID(requestor.user.id),
-            Permissions::UpdateCollection,
-        )
+        .user_can(&pool, requestor.user, Permissions::UpdateCollection)
         .await?
     {
         return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
@@ -123,11 +110,7 @@ pub async fn delete_namespace(
 
     let namespace = namespace_id.instance(&pool).await?;
     if !namespace
-        .user_can(
-            &pool,
-            UserID(requestor.user.id),
-            Permissions::DeleteCollection,
-        )
+        .user_can(&pool, requestor.user, Permissions::DeleteCollection)
         .await?
     {
         return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
@@ -154,11 +137,7 @@ pub async fn get_namespace_permissions(
 
     let namespace = namespace_id.instance(&pool).await?;
     if !namespace
-        .user_can(
-            &pool,
-            UserID(requestor.user.id),
-            Permissions::ReadCollection,
-        )
+        .user_can(&pool, requestor.user, Permissions::ReadCollection)
         .await?
     {
         return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
@@ -189,11 +168,7 @@ pub async fn get_namespace_group_permissions(
 
     let namespace = namespace_id.instance(&pool).await?;
     if !namespace
-        .user_can(
-            &pool,
-            UserID(requestor.user.id),
-            Permissions::ReadCollection,
-        )
+        .user_can(&pool, requestor.user, Permissions::ReadCollection)
         .await?
     {
         return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
@@ -233,11 +208,7 @@ pub async fn grant_namespace_group_permissions(
 
     let namespace = namespace_id.instance(&pool).await?;
     if !namespace
-        .user_can(
-            &pool,
-            UserID(requestor.user.id),
-            Permissions::DelegateCollection,
-        )
+        .user_can(&pool, requestor.user, Permissions::DelegateCollection)
         .await?
     {
         return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
@@ -266,11 +237,7 @@ pub async fn revoke_namespace_group_permissions(
 
     let namespace = namespace_id.instance(&pool).await?;
     if !namespace
-        .user_can(
-            &pool,
-            UserID(requestor.user.id),
-            Permissions::DelegateCollection,
-        )
+        .user_can(&pool, requestor.user, Permissions::DelegateCollection)
         .await?
     {
         return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
@@ -302,11 +269,7 @@ pub async fn get_namespace_group_permission(
 
     let namespace = namespace_id.instance(&pool).await?;
     if !namespace
-        .user_can(
-            &pool,
-            UserID(requestor.user.id),
-            Permissions::ReadCollection,
-        )
+        .user_can(&pool, requestor.user, Permissions::ReadCollection)
         .await?
     {
         return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
@@ -338,11 +301,7 @@ pub async fn grant_namespace_group_permission(
 
     let namespace = namespace_id.instance(&pool).await?;
     if !namespace
-        .user_can(
-            &pool,
-            UserID(requestor.user.id),
-            Permissions::DelegateCollection,
-        )
+        .user_can(&pool, requestor.user, Permissions::DelegateCollection)
         .await?
     {
         return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
@@ -374,11 +333,7 @@ pub async fn revoke_namespace_group_permission(
 
     let namespace = namespace_id.instance(&pool).await?;
     if !namespace
-        .user_can(
-            &pool,
-            UserID(requestor.user.id),
-            Permissions::DelegateCollection,
-        )
+        .user_can(&pool, requestor.user, Permissions::DelegateCollection)
         .await?
     {
         return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
@@ -411,11 +366,7 @@ pub async fn get_namespace_user_permissions(
 
     let namespace = namespace_id.instance(&pool).await?;
     if !namespace
-        .user_can(
-            &pool,
-            UserID(requestor.user.id),
-            Permissions::ReadCollection,
-        )
+        .user_can(&pool, requestor.user, Permissions::ReadCollection)
         .await?
     {
         return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
@@ -450,11 +401,7 @@ pub async fn get_namespace_groups_with_permission(
 
     let namespace = namespace_id.instance(&pool).await?;
     if !namespace
-        .user_can(
-            &pool,
-            UserID(requestor.user.id),
-            Permissions::ReadCollection,
-        )
+        .user_can(&pool, requestor.user, Permissions::ReadCollection)
         .await?
     {
         return Ok(json_response(json!(()), StatusCode::FORBIDDEN));
