@@ -13,7 +13,7 @@ use crate::traits::{CanDelete, CanSave, CanUpdate, PermissionController, SelfAcc
 
 // GET /api/v1/classes, list all classes the user may see.
 #[get("")]
-async fn list_classes(
+async fn get_classes(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
 ) -> Result<impl Responder, ApiError> {
