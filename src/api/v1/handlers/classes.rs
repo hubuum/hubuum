@@ -1,27 +1,51 @@
+use actix_web::delete;
+use actix_web::{get, http::StatusCode, patch, post, web, Responder};
+use tracing::debug;
+
+use serde::Deserialize;
+
 use crate::check_permissions;
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::utilities::response::{json_response, json_response_created};
-use actix_web::delete;
-use actix_web::{get, http::StatusCode, patch, post, web, Responder};
-use tracing::debug;
 
-use crate::models::traits::user::ClassAccessors;
+use crate::models::traits::user::SearchClasses;
 use crate::models::{HubuumClassID, NamespaceID, NewHubuumClass, Permissions, UpdateHubuumClass};
 use crate::traits::{CanDelete, CanSave, CanUpdate, PermissionController, SelfAccessors};
+
+#[derive(Debug, Deserialize)]
+struct GetClassParams {
+    namespaces: Option<Vec<NamespaceID>>,
+    permissions: Option<Vec<Permissions>>,
+}
 
 // GET /api/v1/classes, list all classes the user may see.
 #[get("")]
 async fn get_classes(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
+    params: web::Query<GetClassParams>,
 ) -> Result<impl Responder, ApiError> {
     let user = requestor.user;
+
     debug!(message = "Listing classes", user_id = user.id());
 
-    let classes = user.classes_read(&pool).await?;
-    Ok(json_response(classes, StatusCode::OK))
+    let namespace_ids = match &params.namespaces {
+        Some(namespaces) => namespaces.into_iter().map(|n| n.id()).collect(),
+        None => vec![],
+    };
+
+    let selected_permissions = match &params.permissions {
+        Some(permissions) => permissions.clone(),
+        None => vec![],
+    };
+
+    let classes = user
+        .search_classes(&pool, namespace_ids, selected_permissions)
+        .await?;
+
+    return Ok(json_response(classes, StatusCode::OK));
 }
 
 #[post("")]

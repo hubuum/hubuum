@@ -30,7 +30,7 @@ pub struct Namespace {
     pub updated_at: chrono::NaiveDateTime,
 }
 
-#[derive(Serialize, Deserialize, Copy, Clone)]
+#[derive(Serialize, Debug, Deserialize, Copy, Clone)]
 pub struct NamespaceID(pub i32);
 
 #[derive(Serialize, Deserialize, Clone, AsChangeset)]

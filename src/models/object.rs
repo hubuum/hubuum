@@ -98,11 +98,6 @@ pub async fn search_data(
     ))
     .bind::<Text, _>(value);
 
-    println!(
-        "Query: SELECT * FROM hubuumobject WHERE data #>> '{}' = '{}'",
-        nested_keys_array, value
-    );
-
     Ok(query.load::<HubuumObject>(&mut conn)?)
 }
 

@@ -34,7 +34,7 @@ fn extract_token(req: &HttpRequest) -> Result<Token, ApiError> {
         .and_then(|header_str| {
             header_str
                 .strip_prefix("Bearer ")
-                .map(|header_str| header_str.to_string())
+                .map(|header_str: &str| header_str.to_string())
         })
         .map(Token)
         .ok_or_else(|| ApiError::Unauthorized("No token provided".to_string()))
