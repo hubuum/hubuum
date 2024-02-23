@@ -53,7 +53,7 @@ pub trait SearchClasses: SelfAccessors<User> + GroupAccessors + UserNamespaceAcc
             return Ok(vec![]);
         }
 
-        debug!(message = "Searching classes, filtered namespaces", namespace_ids = ?namespace_ids);
+        debug!(message = "Searching classes", stage = "Filtered namespaces", namespace_ids = ?namespace_ids);
 
         let mut base_query = permissions
             .into_boxed()
