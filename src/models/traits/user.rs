@@ -43,10 +43,7 @@ pub trait SearchClasses: SelfAccessors<User> + GroupAccessors + UserNamespaceAcc
             .collect::<Vec<i32>>();
 
         if !selected_namespaces.is_empty() {
-            namespace_ids = namespace_ids
-                .into_iter()
-                .filter(|nid| selected_namespaces.contains(nid))
-                .collect();
+            namespace_ids.retain(|nid| selected_namespaces.contains(nid));
         }
 
         if namespace_ids.is_empty() {

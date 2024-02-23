@@ -32,7 +32,7 @@ async fn get_classes(
     debug!(message = "Listing classes", user_id = user.id());
 
     let namespace_ids = match &params.namespaces {
-        Some(namespaces) => namespaces.into_iter().map(|n| n.id()).collect(),
+        Some(namespaces) => namespaces.iter().map(|n| n.id()).collect(),
         None => vec![],
     };
 
@@ -45,7 +45,7 @@ async fn get_classes(
         .search_classes(&pool, namespace_ids, selected_permissions)
         .await?;
 
-    return Ok(json_response(classes, StatusCode::OK));
+    Ok(json_response(classes, StatusCode::OK))
 }
 
 #[post("")]
