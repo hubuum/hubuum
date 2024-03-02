@@ -27,6 +27,7 @@ pub trait SearchClasses: SelfAccessors<User> + GroupAccessors + UserNamespaceAcc
 
         debug!(
             message = "Searching classes",
+            stage = "Starting",
             user_id = self.id(),
             selected_namespaces = ?selected_namespaces,
             selected_permissions = ?selected_permissions
@@ -35,22 +36,15 @@ pub trait SearchClasses: SelfAccessors<User> + GroupAccessors + UserNamespaceAcc
         let mut conn = pool.get()?;
         let group_id_subquery = self.group_ids_subquery();
 
-        let mut namespace_ids: Vec<i32> = self
+        let namespace_ids: Vec<i32> = self
             .namespaces_read(pool)
             .await?
-            .iter()
+            .into_iter()
+            .filter(|n| selected_namespaces.is_empty() || selected_namespaces.contains(&n.id))
             .map(|n| n.id)
-            .collect::<Vec<i32>>();
+            .collect();
 
-        if !selected_namespaces.is_empty() {
-            namespace_ids.retain(|nid| selected_namespaces.contains(nid));
-        }
-
-        if namespace_ids.is_empty() {
-            return Ok(vec![]);
-        }
-
-        debug!(message = "Searching classes", stage = "Filtered namespaces", namespace_ids = ?namespace_ids);
+        debug!(message = "Searching classes", stage = "Filtered namespaces", filtered_namespaces = ?namespace_ids);
 
         let mut base_query = permissions
             .into_boxed()
