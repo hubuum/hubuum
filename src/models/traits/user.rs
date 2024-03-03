@@ -14,12 +14,13 @@ use crate::errors::ApiError;
 use futures::future::try_join_all;
 use tracing::debug;
 
+use crate::models::search::{ParsedQueryParam, QueryParamsExt};
+
 pub trait SearchClasses: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors {
     async fn search_classes(
         &self,
         pool: &DbPool,
-        selected_namespaces: Vec<i32>,
-        selected_permissions: Vec<Permissions>,
+        query_params: Vec<ParsedQueryParam>,
     ) -> Result<Vec<HubuumClass>, ApiError> {
         use crate::models::PermissionFilter;
         use crate::schema::hubuumclass::dsl::{hubuumclass, namespace_id as hubuum_classes_nid};
@@ -29,13 +30,14 @@ pub trait SearchClasses: SelfAccessors<User> + GroupAccessors + UserNamespaceAcc
             message = "Searching classes",
             stage = "Starting",
             user_id = self.id(),
-            selected_namespaces = ?selected_namespaces,
-            selected_permissions = ?selected_permissions
+            query_params = ?query_params
         );
 
         let mut conn = pool.get()?;
         let group_id_subquery = self.group_ids_subquery();
+        let selected_namespaces = query_params.namespaces()?;
 
+        // Get all namespace IDs that the user has read permissions on, and if we have a list of selected namespaces, filter on those.
         let namespace_ids: Vec<i32> = self
             .namespaces_read(pool)
             .await?
@@ -44,13 +46,11 @@ pub trait SearchClasses: SelfAccessors<User> + GroupAccessors + UserNamespaceAcc
             .map(|n| n.id)
             .collect();
 
-        debug!(message = "Searching classes", stage = "Filtered namespaces", filtered_namespaces = ?namespace_ids);
-
         let mut base_query = permissions
             .into_boxed()
             .filter(group_id.eq_any(group_id_subquery));
 
-        for perm in selected_permissions {
+        for perm in query_params.permissions()? {
             base_query = PermissionFilter::filter(perm, base_query);
         }
 
@@ -165,8 +165,11 @@ pub trait UserNamespaceAccessors: SelfAccessors<User> + GroupAccessors {
 
 pub trait UserClassAccessors: SearchClasses {
     async fn classes_read(&self, pool: &DbPool) -> Result<Vec<HubuumClass>, ApiError> {
-        self.search_classes(pool, vec![], vec![Permissions::ReadClass])
-            .await
+        self.search_classes(
+            pool,
+            vec![ParsedQueryParam::new("permission", None, "ReadClass")],
+        )
+        .await
     }
 
     async fn classes_read_within_namespaces<N: NamespaceAccessors>(
@@ -183,8 +186,12 @@ pub trait UserClassAccessors: SearchClasses {
             .collect();
         let namespace_ids: Vec<i32> = try_join_all(futures).await?;
 
-        self.search_classes(pool, namespace_ids, vec![Permissions::ReadClass])
-            .await
+        let mut queries = vec![ParsedQueryParam::new("permission", None, "ReadClass")];
+        for nid in namespace_ids {
+            queries.push(ParsedQueryParam::new("namespace", None, &nid.to_string()));
+        }
+
+        self.search_classes(pool, queries).await
     }
 
     async fn classes_within_namespaces_with_permissions<N: NamespaceAccessors>(
@@ -202,8 +209,16 @@ pub trait UserClassAccessors: SearchClasses {
             .collect();
         let namespace_ids: Vec<i32> = try_join_all(futures).await?;
 
-        self.search_classes(pool, namespace_ids, permissions_list)
-            .await
+        let mut queries = vec![];
+        for nid in namespace_ids {
+            queries.push(ParsedQueryParam::new("namespace", None, &nid.to_string()));
+        }
+
+        for perm in permissions_list {
+            queries.push(ParsedQueryParam::new("permission", None, &perm.to_string()));
+        }
+
+        self.search_classes(pool, queries).await
     }
 
     async fn classes_with_permissions(
@@ -211,11 +226,17 @@ pub trait UserClassAccessors: SearchClasses {
         pool: &DbPool,
         permissions_list: Vec<Permissions>,
     ) -> Result<Vec<HubuumClass>, ApiError> {
-        self.search_classes(pool, vec![], permissions_list).await
+        let mut queries = vec![];
+
+        for perm in permissions_list {
+            queries.push(ParsedQueryParam::new("permission", None, &perm.to_string()));
+        }
+
+        self.search_classes(pool, queries).await
     }
 
     async fn classes(&self, pool: &DbPool) -> Result<Vec<HubuumClass>, ApiError> {
-        self.search_classes(pool, vec![], vec![]).await
+        self.search_classes(pool, vec![]).await
     }
 }
 

@@ -3,7 +3,7 @@ use std::{fmt, fmt::Display, slice};
 
 use serde::{Deserialize, Serialize};
 
-use crate::schema::permissions;
+use crate::{errors::ApiError, schema::permissions};
 
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
 pub enum Permissions {
@@ -21,14 +21,45 @@ pub enum Permissions {
     DeleteObject,
 }
 
+impl Permissions {
+    pub fn from_string(s: &str) -> Result<Permissions, ApiError> {
+        match s {
+            "ReadCollection" => Ok(Permissions::ReadCollection),
+            "UpdateColletion" => Ok(Permissions::UpdateCollection),
+            "DeleteCollection" => Ok(Permissions::DeleteCollection),
+            "DelegateCollection" => Ok(Permissions::DelegateCollection),
+            "CreateClass" => Ok(Permissions::CreateClass),
+            "ReadClass" => Ok(Permissions::ReadClass),
+            "UpdateClass" => Ok(Permissions::UpdateClass),
+            "DeleteClass" => Ok(Permissions::DeleteClass),
+            "CreateObject" => Ok(Permissions::CreateObject),
+            "ReadObject" => Ok(Permissions::ReadObject),
+            "UpdateObject" => Ok(Permissions::UpdateObject),
+            "DeleteObject" => Ok(Permissions::DeleteObject),
+            _ => Err(ApiError::BadRequest(format!("Invalid permission: '{}'", s))),
+        }
+    }
+}
 impl Display for Permissions {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let formatted = serde_json::to_string(self)
-            .unwrap_or_else(|_| "Serialization failure".to_string())
-            .trim_matches('"')
-            .to_string();
-
-        write!(f, "{}", formatted)
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Permissions::ReadCollection => "ReadCollection",
+                Permissions::UpdateCollection => "UpdateCollection",
+                Permissions::DeleteCollection => "DeleteCollection",
+                Permissions::DelegateCollection => "DelegateCollection",
+                Permissions::CreateClass => "CreateClass",
+                Permissions::ReadClass => "ReadClass",
+                Permissions::UpdateClass => "UpdateClass",
+                Permissions::DeleteClass => "DeleteClass",
+                Permissions::CreateObject => "CreateObject",
+                Permissions::ReadObject => "ReadObject",
+                Permissions::UpdateObject => "UpdateObject",
+                Permissions::DeleteObject => "DeleteObject",
+            }
+        )
     }
 }
 

@@ -6,10 +6,11 @@ use diesel::result::{DatabaseErrorKind, Error as DieselError};
 use serde::Serialize;
 use serde_json::json;
 use std::fmt;
+use std::num::ParseIntError;
 
 use tracing::{debug, error};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, PartialEq)]
 pub enum ApiError {
     Unauthorized(String),
     InternalServerError(String),
@@ -93,6 +94,14 @@ impl From<PoolError> for ApiError {
         ApiError::DbConnectionError(e.to_string())
     }
 }
+
+impl From<ParseIntError> for ApiError {
+    fn from(e: ParseIntError) -> Self {
+        error!(message = "Error parsing integer", error = ?e);
+        ApiError::BadRequest(e.to_string())
+    }
+}
+
 impl From<DieselError> for ApiError {
     fn from(e: DieselError) -> Self {
         match e {
