@@ -108,6 +108,7 @@ pub trait PermissionFilter<'a, Q> {
     fn filter(self, query: Q) -> Q;
 }
 
+/// TODO: Add boolean support (true/false)
 impl<'a> PermissionFilter<'a, permissions::BoxedQuery<'a, diesel::pg::Pg>> for Permissions {
     fn filter(
         self,

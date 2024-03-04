@@ -64,6 +64,15 @@ pub fn parse_query_parameter(query_string: &str) -> Result<Vec<ParsedQueryParam>
 /// ## A struct that represents a parsed query parameter
 ///  
 /// This struct holds a field, operator, and values for a search.
+///
+/// The field is the name of the field to search on, the operator is the type of search to perform,
+/// and the value is the value to search for.
+///
+/// The reason the data in this struct is stored as strings is because it is parsed from a query
+/// string, which is always a string. Parsing the data into the correct types is done in the
+/// functions that use this struct as they have some context about the data based on the type of
+/// the field involved. This may or may not involve parsing the data into a different type, such as
+/// parsing the value into an integer, a date, or a permission.
 #[derive(Debug, PartialEq, Clone)]
 pub struct ParsedQueryParam {
     pub field: String,
@@ -72,6 +81,21 @@ pub struct ParsedQueryParam {
 }
 
 impl ParsedQueryParam {
+    /// ## Create a new ParsedQueryParam
+    ///
+    /// Note:
+    ///   * If no operator is provided, the default is "equals".
+    ///   * For permissions the operator is always "equals" and the value is "true".
+    ///
+    /// ### Arguments
+    ///
+    /// * `field` - The name of the field to search on
+    /// * `operator` - The type of search to perform
+    /// * `value` - The value to search for
+    ///
+    /// ### Returns
+    ///
+    /// * A new ParsedQueryParam instance
     pub fn new(field: &str, operator: Option<SearchOperator>, value: &str) -> Self {
         let operator =
             operator.unwrap_or(SearchOperator::Universal(UniversialSearchOperator::Equals));
