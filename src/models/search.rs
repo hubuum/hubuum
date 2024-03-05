@@ -126,6 +126,17 @@ impl ParsedQueryParam {
 
         parsed_dates
     }
+
+    pub fn value_as_boolean(&self) -> Result<bool, ApiError> {
+        match self.value.to_lowercase().as_str() {
+            "true" => Ok(true),
+            "false" => Ok(false),
+            _ => Err(ApiError::BadRequest(format!(
+                "Invalid boolean value: '{}'",
+                self.value
+            ))),
+        }
+    }
 }
 
 pub trait QueryParamsExt {
@@ -308,7 +319,8 @@ pub enum SearchOperator {
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum DataType {
     String,
-    Numeric, // Numeric and Date are treated the same
+    NumericOrDate,
+    Boolean,
 }
 
 impl SearchOperator {
@@ -449,23 +461,23 @@ impl SearchOperator {
                 is_negated: negated,
             }),
             "gt" => Ok(SO::Gt {
-                data_type: DataType::Numeric,
+                data_type: DataType::NumericOrDate,
                 is_negated: negated,
             }),
             "gte" => Ok(SO::Gte {
-                data_type: DataType::Numeric,
+                data_type: DataType::NumericOrDate,
                 is_negated: negated,
             }),
             "lt" => Ok(SO::Lt {
-                data_type: DataType::Numeric,
+                data_type: DataType::NumericOrDate,
                 is_negated: negated,
             }),
             "lte" => Ok(SO::Lte {
-                data_type: DataType::Numeric,
+                data_type: DataType::NumericOrDate,
                 is_negated: negated,
             }),
             "between" => Ok(SO::Between {
-                data_type: DataType::Numeric,
+                data_type: DataType::NumericOrDate,
                 is_negated: negated,
             }),
 
@@ -547,8 +559,17 @@ mod test {
                 expected: vec![
                     pq("name", SearchOperator::Contains{ data_type: DataType::String, is_negated: false}, "foo"),
                     pq("description", SearchOperator::IContains{ data_type: DataType::String, is_negated: false}, "bar"),
-                    pq("created_at", SearchOperator::Gte{ data_type: DataType::Numeric, is_negated: false}, "2021-01-01"),
-                    pq("updated_at", SearchOperator::Lte{ data_type: DataType::Numeric, is_negated: false}, "2021-12-31"),
+                    pq("created_at", SearchOperator::Gte{ data_type: DataType::NumericOrDate, is_negated: false}, "2021-01-01"),
+                    pq("updated_at", SearchOperator::Lte{ data_type: DataType::NumericOrDate, is_negated: false}, "2021-12-31"),
+                ],
+            },
+            TestCase {
+                query_string: "name__not_icontains=foo&description=bar&permission=CanRead&validate_schema=true",
+                expected: vec![
+                    pq("name", SearchOperator::IContains{ data_type: DataType::String, is_negated: true}, "foo"),
+                    pq("description", SearchOperator::Equals{ is_negated: false}, "bar"),
+                    pq("permission", SearchOperator::Equals{ is_negated: false}, "CanRead"),
+                    pq("validate_schema", SearchOperator::Equals{ is_negated: false}, "true"),
                 ],
             },
         ];

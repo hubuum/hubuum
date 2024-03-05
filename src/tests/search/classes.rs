@@ -91,6 +91,49 @@ mod test {
     }
 
     #[actix_rt::test]
+    async fn test_equals() {
+        let (namespaces, classes) = setup_test_structure("test_user_class_equals").await;
+
+        let testcases = vec![
+            TestCase {
+                query: vec![ParsedQueryParam::new(
+                    "id",
+                    Some(SearchOperator::Equals { is_negated: false }),
+                    &classes[0].id.to_string(),
+                )],
+                expected: 1,
+            },
+            TestCase {
+                query: vec![ParsedQueryParam::new(
+                    "name",
+                    Some(SearchOperator::Equals { is_negated: false }),
+                    &classes[0].name,
+                )],
+                expected: 1,
+            },
+            TestCase {
+                query: vec![ParsedQueryParam::new(
+                    "namespaces",
+                    Some(SearchOperator::Equals { is_negated: false }),
+                    &namespaces[2].id.to_string(),
+                )],
+                expected: 1,
+            },
+            TestCase {
+                query: vec![ParsedQueryParam::new(
+                    "validate_schema",
+                    Some(SearchOperator::Equals { is_negated: false }),
+                    "true",
+                )],
+                expected: 0,
+            },
+        ];
+
+        check_test_cases(testcases).await;
+        cleanup(namespaces).await;
+    }
+
+    #[actix_rt::test]
     async fn test_class_search() {
         let (namespaces, classes) = setup_test_structure("test_user_class_search").await;
 
@@ -116,7 +159,7 @@ mod test {
                     ParsedQueryParam::new(
                         "id",
                         Some(SearchOperator::Gt {
-                            data_type: DataType::Numeric,
+                            data_type: DataType::NumericOrDate,
                             is_negated: false,
                         }),
                         &classes[1].id.to_string(),
@@ -124,7 +167,7 @@ mod test {
                     ParsedQueryParam::new(
                         "id",
                         Some(SearchOperator::Lt {
-                            data_type: DataType::Numeric,
+                            data_type: DataType::NumericOrDate,
                             is_negated: false,
                         }),
                         &classes[3].id.to_string(),
@@ -161,10 +204,86 @@ mod test {
                 ],
                 expected: 3,
             },
+            TestCase {
+                query: vec![
+                    ParsedQueryParam::new(
+                        "description",
+                        Some(SearchOperator::Contains {
+                            data_type: DataType::String,
+                            is_negated: false,
+                        }),
+                        "class search",
+                    ),
+                    ParsedQueryParam::new(
+                        "validate_schema",
+                        Some(SearchOperator::Equals { is_negated: false }),
+                        "true",
+                    ),
+                ],
+                expected: 0,
+            },
         ];
 
         check_test_cases(testcases).await;
+        cleanup(namespaces).await;
+    }
 
+    #[actix_rt::test]
+    async fn test_search_int_ranges() {
+        let (namespaces, _) = setup_test_structure("test_user_class_int_ranges").await;
+
+        let testcases = vec![
+            TestCase {
+                query: vec![ParsedQueryParam::new(
+                    "namespaces",
+                    Some(SearchOperator::Equals { is_negated: false }),
+                    format!("{}-{}", namespaces[1].id, namespaces[2].id).as_str(),
+                )],
+                expected: 4,
+            },
+            TestCase {
+                query: vec![ParsedQueryParam::new(
+                    "namespaces",
+                    Some(SearchOperator::Equals { is_negated: false }),
+                    format!("{},{}", namespaces[0].id, namespaces[2].id).as_str(),
+                )],
+                expected: 7,
+            },
+            TestCase {
+                query: vec![ParsedQueryParam::new(
+                    "namespaces",
+                    Some(SearchOperator::Equals { is_negated: false }),
+                    format!(
+                        "{},{},{}",
+                        namespaces[0].id, namespaces[1].id, namespaces[2].id
+                    )
+                    .as_str(),
+                )],
+                expected: 10,
+            },
+            TestCase {
+                query: vec![ParsedQueryParam::new(
+                    "namespaces",
+                    Some(SearchOperator::Equals { is_negated: false }),
+                    format!("{}-{}", namespaces[0].id, namespaces[2].id).as_str(),
+                )],
+                expected: 10,
+            },
+            TestCase {
+                query: vec![ParsedQueryParam::new(
+                    "namespaces",
+                    Some(SearchOperator::Equals { is_negated: false }),
+                    format!(
+                        "{}-{},{}",
+                        namespaces[0].id, namespaces[1].id, namespaces[2].id
+                    )
+                    .as_str(),
+                )],
+                expected: 10,
+            },
+        ];
+
+        check_test_cases(testcases).await;
         cleanup(namespaces).await;
     }
 }

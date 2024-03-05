@@ -59,7 +59,7 @@ pub trait SearchClasses: SelfAccessors<User> + GroupAccessors + UserNamespaceAcc
 
         for param in query_params {
             use crate::models::search::{DataType, SearchOperator};
-            use crate::{date_search, numeric_search, string_search};
+            use crate::{boolean_search, date_search, numeric_search, string_search};
             let field = param.field.as_str();
             let operator = param.operator.clone();
             match field {
@@ -98,6 +98,12 @@ pub trait SearchClasses: SelfAccessors<User> + GroupAccessors + UserNamespaceAcc
                     param,
                     operator,
                     crate::schema::hubuumclass::dsl::description
+                ),
+                "validate_schema" => boolean_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumclass::dsl::validate_schema
                 ),
 
                 "permission" => {} // Handled above

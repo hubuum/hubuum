@@ -52,25 +52,24 @@ macro_rules! check_permissions {
 #[macro_export]
 /// A numeric search macro
 macro_rules! numeric_search {
-    ($base_query:expr, $field:expr, $operator:expr, $diesel_field:expr) => {{
+    ($base_query:expr, $parsed_query_param:expr, $operator:expr, $diesel_field:expr) => {{
         use diesel::dsl::not;
         use $crate::errors::ApiError;
         use $crate::models::search::{DataType, Operator, SearchOperator};
-        let values = $field.value_as_integer()?;
+        let values = $parsed_query_param.value_as_integer()?;
 
-        if !$operator.is_applicable_to(DataType::Numeric) {
+        if !$operator.is_applicable_to(DataType::NumericOrDate) {
             return Err(ApiError::OperatorMismatch(format!(
-                "Operator {:?} is not applicable to field {}",
-                $operator,
-                stringify!($diesel_field)
+                "Operator '{:?}' is not applicable to field '{}'",
+                $operator, $parsed_query_param.field
             )));
         }
 
         // The values shouldn't be empty at this point, but we can make sure.
         if values.is_empty() {
             return Err(ApiError::BadRequest(format!(
-                "Searching on field {} requires a value",
-                stringify!($diesel_field)
+                "Searching on field '{}' requires a value",
+                $parsed_query_param.field,
             )));
         }
 
@@ -81,9 +80,8 @@ macro_rules! numeric_search {
 
         if op == Operator::Between && values.len() != 2 {
             return Err(ApiError::OperatorMismatch(format!(
-                "Operator {:?} requires 2 values for field {}",
+                "Operator 'between' requires 2 values (min,max) for field '{:?}'",
                 $operator,
-                stringify!($diesel_field)
             )));
         }
 
@@ -122,9 +120,8 @@ macro_rules! numeric_search {
             }
             _ => {
                 return Err(ApiError::OperatorMismatch(format!(
-                    "Operator {:?} not implemented for field {}",
-                    $operator,
-                    stringify!($diesel_field)
+                    "Operator '{:?}' not implemented for field '{}'",
+                    $operator, $parsed_query_param.field
                 )))
             }
         };
@@ -134,27 +131,26 @@ macro_rules! numeric_search {
 #[macro_export]
 /// A date search macro
 macro_rules! date_search {
-    ($base_query:expr, $field:expr, $operator:expr, $diesel_field:expr) => {{
+    ($base_query:expr, $parsed_query_param:expr, $operator:expr, $diesel_field:expr) => {{
         use diesel::dsl::not;
         use diesel::prelude::*;
         use $crate::errors::ApiError;
         use $crate::models::search::{DataType, Operator, SearchOperator};
 
-        let values = $field.value_as_date()?;
+        let values = $parsed_query_param.value_as_date()?;
 
-        if !$operator.is_applicable_to(DataType::Numeric) {
+        if !$operator.is_applicable_to(DataType::NumericOrDate) {
             return Err(ApiError::OperatorMismatch(format!(
-                "Operator {:?} is not applicable to field {}",
-                $operator,
-                stringify!($diesel_field)
+                "Operator '{:?}' is not applicable to field '{}'",
+                $operator, $parsed_query_param.field
             )));
         }
 
         // The values shouldn't be empty at this point, but we can make sure.
         if values.is_empty() {
             return Err(ApiError::BadRequest(format!(
-                "Searching on field {} requires a value",
-                stringify!($diesel_field)
+                "Searching on field '{}' requires a value",
+                $parsed_query_param.field
             )));
         }
 
@@ -165,9 +161,8 @@ macro_rules! date_search {
 
         if op == Operator::Between && values.len() != 2 {
             return Err(ApiError::OperatorMismatch(format!(
-                "Operator {:?} requires 2 values for field {}",
-                $operator,
-                stringify!($diesel_field)
+                "Operator 'between' requires 2 values (min,max) for field '{}'",
+                $parsed_query_param.field
             )));
         }
 
@@ -206,9 +201,8 @@ macro_rules! date_search {
             }
             _ => {
                 return Err(ApiError::OperatorMismatch(format!(
-                    "Operator {:?} not implemented for field {}",
-                    $operator,
-                    stringify!($diesel_field)
+                    "Operator '{:?}' not implemented for field '{}'",
+                    $operator, $parsed_query_param.field
                 )))
             }
         };
@@ -228,17 +222,16 @@ macro_rules! string_search {
 
         if !$operator.is_applicable_to(DataType::String) {
             return Err(ApiError::OperatorMismatch(format!(
-                "Operator {:?} is not applicable to field {}",
-                $operator,
-                stringify!($diesel_field)
+                "Operator '{:?}' is not applicable to field '{}'",
+                $operator, $param.field
             )));
         }
 
         // The value shouldn't be empty at this point, but we can make sure.
         if value.is_empty() {
             return Err(ApiError::BadRequest(format!(
-                "Searching on field {} requires a value",
-                stringify!($diesel_field)
+                "Searching on field '{}' requires a value",
+                $param.field
             )));
         }
 
@@ -275,9 +268,42 @@ macro_rules! string_search {
             }
             _ => {
                 return Err(ApiError::OperatorMismatch(format!(
-                    "Operator {:?} not implemented for field {}",
-                    $operator,
-                    stringify!($diesel_field)
+                    "Operator '{:?}' not implemented for field '{}'",
+                    $operator, $param.field
+                )))
+            }
+        }
+    }};
+}
+
+#[macro_export]
+/// A boolean search macro
+macro_rules! boolean_search {
+    ($base_query:expr, $param:expr, $operator:expr, $diesel_field:expr) => {{
+        use diesel::dsl::not;
+        use $crate::errors::ApiError;
+        use $crate::models::search::{DataType, Operator, SearchOperator};
+
+        let value = $param.value_as_boolean()?;
+
+        if !$operator.is_applicable_to(DataType::Boolean) {
+            return Err(ApiError::OperatorMismatch(format!(
+                "Operator '{:?}' is not applicable to field '{}'",
+                $operator, $param.field
+            )));
+        }
+
+        let (op, negated) = $operator.op_and_neg();
+
+        match (op, negated) {
+            (Operator::Equals, false) => $base_query = $base_query.filter($diesel_field.eq(value)),
+            (Operator::Equals, true) => {
+                $base_query = $base_query.filter(not($diesel_field.eq(value)))
+            }
+            _ => {
+                return Err(ApiError::OperatorMismatch(format!(
+                    "Operator '{:?}' not implemented for field '{}'",
+                    $operator, $param.field
                 )))
             }
         }
