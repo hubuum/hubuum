@@ -3,6 +3,7 @@ use tracing::field;
 
 use crate::errors::ApiError;
 use crate::models::permissions::Permissions;
+use chrono::{DateTime, NaiveDateTime, Utc};
 
 /// ## Parse a query string into search parameters
 ///
@@ -26,10 +27,9 @@ pub fn parse_query_parameter(query_string: &str) -> Result<Vec<ParsedQueryParam>
             )));
         }
 
-        let field_and_op: Vec<&str> = query_param_parts[0].split("__").collect();
+        let field_and_op: Vec<&str> = query_param_parts[0].splitn(2, "__").collect();
         let value = query_param_parts[1].to_string();
         let field = field_and_op[0].to_string();
-        let operator;
 
         if value.is_empty() {
             return Err(ApiError::BadRequest(format!(
@@ -38,20 +38,17 @@ pub fn parse_query_parameter(query_string: &str) -> Result<Vec<ParsedQueryParam>
             )));
         }
 
-        if field_and_op.len() == 1 {
-            operator = "equals";
-        } else if field_and_op.len() == 2 {
-            operator = field_and_op[1];
+        let operator = if field_and_op.len() == 1 {
+            "equals"
         } else {
-            return Err(ApiError::BadRequest(format!(
-                "Invalid query parameter: '{}', multiple elementens, unable to parse value and operator",
-                query_param
-            )));
-        }
+            field_and_op[1]
+        };
+
+        let operator = SearchOperator::new_from_string(operator)?;
 
         let parsed_query_param = ParsedQueryParam {
             field,
-            operator: SearchOperator::new_from_string(operator)?,
+            operator,
             value,
         };
 
@@ -97,8 +94,7 @@ impl ParsedQueryParam {
     ///
     /// * A new ParsedQueryParam instance
     pub fn new(field: &str, operator: Option<SearchOperator>, value: &str) -> Self {
-        let operator =
-            operator.unwrap_or(SearchOperator::Universal(UniversialSearchOperator::Equals));
+        let operator = operator.unwrap_or(SearchOperator::Equals { is_negated: false });
 
         ParsedQueryParam {
             field: field.to_string(),
@@ -109,6 +105,26 @@ impl ParsedQueryParam {
 
     pub fn is_permission(&self) -> bool {
         self.field == "permission"
+    }
+
+    pub fn value_as_integer(&self) -> Result<Vec<i32>, ApiError> {
+        parse_integer_list(&self.value)
+    }
+
+    pub fn value_as_date(&self) -> Result<Vec<NaiveDateTime>, ApiError> {
+        let parsed_dates: Result<Vec<NaiveDateTime>, _> = self
+            .value
+            .split(',')
+            .map(|part| part.trim())
+            .map(|part| {
+                DateTime::parse_from_rfc3339(part)
+                    .map(|dt| dt.with_timezone(&Utc)) // Convert to Utc
+                    .map(|utc_dt| utc_dt.naive_utc()) // Convert to NaiveDateTime
+                    .map_err(|e| e.into()) // Convert chrono::ParseError (or any error) into ApiError
+            })
+            .collect(); // Collect into a Result<Vec<NaiveDateTime>, ApiError>
+
+        parsed_dates
     }
 }
 
@@ -201,14 +217,12 @@ pub fn parse_integer_list(input: &str) -> Result<Vec<i32>, ApiError> {
     }
     Ok(result)
 }
-
+/// Operators
+///
+/// These are operators without metadata, just their names.
 #[derive(Debug, PartialEq, Clone)]
-pub enum UniversialSearchOperator {
+pub enum Operator {
     Equals,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum StringSearchOperator {
     IEquals,
     Contains,
     IContains,
@@ -216,23 +230,13 @@ pub enum StringSearchOperator {
     IStartsWith,
     EndsWith,
     IEndsWith,
+    Like,
     Regex,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum NumericOrDateSearchOperator {
     Gt,
     Gte,
     Lt,
     Lte,
     Between,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum JsonSearchOperator {
-    String(StringSearchOperator),
-    NumericOrDate(NumericOrDateSearchOperator),
-    UniversialOperator(UniversialSearchOperator),
 }
 
 /// ## An enum that represents a search operator
@@ -241,39 +245,230 @@ pub enum JsonSearchOperator {
 /// such as equals, greater than, less than, etc, and the different types of data they can be used on.
 #[derive(Debug, PartialEq, Clone)]
 pub enum SearchOperator {
-    String(StringSearchOperator),
-    NumericOrDate(NumericOrDateSearchOperator),
-    Universal(UniversialSearchOperator),
-    Json(JsonSearchOperator),
+    Equals {
+        is_negated: bool,
+    },
+    IEquals {
+        data_type: DataType,
+        is_negated: bool,
+    },
+    Contains {
+        data_type: DataType,
+        is_negated: bool,
+    },
+    IContains {
+        data_type: DataType,
+        is_negated: bool,
+    },
+    StartsWith {
+        data_type: DataType,
+        is_negated: bool,
+    },
+    IStartsWith {
+        data_type: DataType,
+        is_negated: bool,
+    },
+    EndsWith {
+        data_type: DataType,
+        is_negated: bool,
+    },
+    IEndsWith {
+        data_type: DataType,
+        is_negated: bool,
+    },
+    Like {
+        data_type: DataType,
+        is_negated: bool,
+    },
+    Regex {
+        data_type: DataType,
+        is_negated: bool,
+    },
+    Gt {
+        data_type: DataType,
+        is_negated: bool,
+    },
+    Gte {
+        data_type: DataType,
+        is_negated: bool,
+    },
+    Lt {
+        data_type: DataType,
+        is_negated: bool,
+    },
+    Lte {
+        data_type: DataType,
+        is_negated: bool,
+    },
+    Between {
+        data_type: DataType,
+        is_negated: bool,
+    },
+}
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum DataType {
+    String,
+    Numeric, // Numeric and Date are treated the same
 }
 
 impl SearchOperator {
+    /// Checks if the operator is applicable to a given data type.
+    pub fn is_applicable_to(&self, data_type: DataType) -> bool {
+        match self {
+            SearchOperator::Equals { is_negated: _ } => true,
+            SearchOperator::IEquals {
+                data_type: dt,
+                is_negated: _,
+            }
+            | SearchOperator::Contains {
+                data_type: dt,
+                is_negated: _,
+            }
+            | SearchOperator::IContains {
+                data_type: dt,
+                is_negated: _,
+            }
+            | SearchOperator::StartsWith {
+                data_type: dt,
+                is_negated: _,
+            }
+            | SearchOperator::IStartsWith {
+                data_type: dt,
+                is_negated: _,
+            }
+            | SearchOperator::EndsWith {
+                data_type: dt,
+                is_negated: _,
+            }
+            | SearchOperator::IEndsWith {
+                data_type: dt,
+                is_negated: _,
+            }
+            | SearchOperator::Like {
+                data_type: dt,
+                is_negated: _,
+            }
+            | SearchOperator::Regex {
+                data_type: dt,
+                is_negated: _,
+            }
+            | SearchOperator::Gt {
+                data_type: dt,
+                is_negated: _,
+            }
+            | SearchOperator::Gte {
+                data_type: dt,
+                is_negated: _,
+            }
+            | SearchOperator::Lt {
+                data_type: dt,
+                is_negated: _,
+            }
+            | SearchOperator::Lte {
+                data_type: dt,
+                is_negated: _,
+            }
+            | SearchOperator::Between {
+                data_type: dt,
+                is_negated: _,
+            } => *dt == data_type,
+        }
+    }
+
+    pub fn op_and_neg(&self) -> (Operator, bool) {
+        match self {
+            SearchOperator::Equals { is_negated } => (Operator::Equals, *is_negated),
+            SearchOperator::IEquals { is_negated, .. } => (Operator::IEquals, *is_negated),
+            SearchOperator::Contains { is_negated, .. } => (Operator::Contains, *is_negated),
+            SearchOperator::IContains { is_negated, .. } => (Operator::IContains, *is_negated),
+            SearchOperator::StartsWith { is_negated, .. } => (Operator::StartsWith, *is_negated),
+            SearchOperator::IStartsWith { is_negated, .. } => (Operator::IStartsWith, *is_negated),
+            SearchOperator::EndsWith { is_negated, .. } => (Operator::EndsWith, *is_negated),
+            SearchOperator::IEndsWith { is_negated, .. } => (Operator::IEndsWith, *is_negated),
+            SearchOperator::Like { is_negated, .. } => (Operator::Like, *is_negated),
+            SearchOperator::Regex { is_negated, .. } => (Operator::Regex, *is_negated),
+            SearchOperator::Gt { is_negated, .. } => (Operator::Gt, *is_negated),
+            SearchOperator::Gte { is_negated, .. } => (Operator::Gte, *is_negated),
+            SearchOperator::Lt { is_negated, .. } => (Operator::Lt, *is_negated),
+            SearchOperator::Lte { is_negated, .. } => (Operator::Lte, *is_negated),
+            SearchOperator::Between { is_negated, .. } => (Operator::Between, *is_negated),
+        }
+    }
+
     pub fn new_from_string(operator: &str) -> Result<SearchOperator, ApiError> {
+        type SO = SearchOperator;
+
+        let mut negated = false;
+
+        let operator = match operator {
+            operator if operator.starts_with("not_") => {
+                negated = true;
+                operator.trim_start_matches("not_")
+            }
+            operator => operator,
+        };
+
         match operator {
-            "equals" => Ok(SearchOperator::Universal(UniversialSearchOperator::Equals)),
-            "iequals" => Ok(SearchOperator::String(StringSearchOperator::IEquals)),
-            "contains" => Ok(SearchOperator::String(StringSearchOperator::Contains)),
-            "icontains" => Ok(SearchOperator::String(StringSearchOperator::IContains)),
-            "startswith" => Ok(SearchOperator::String(StringSearchOperator::StartsWith)),
-            "istartswith" => Ok(SearchOperator::String(StringSearchOperator::IStartsWith)),
-            "endswith" => Ok(SearchOperator::String(StringSearchOperator::EndsWith)),
-            "iendswith" => Ok(SearchOperator::String(StringSearchOperator::IEndsWith)),
-            "regex" => Ok(SearchOperator::String(StringSearchOperator::Regex)),
-            "gt" => Ok(SearchOperator::NumericOrDate(
-                NumericOrDateSearchOperator::Gt,
-            )),
-            "gte" => Ok(SearchOperator::NumericOrDate(
-                NumericOrDateSearchOperator::Gte,
-            )),
-            "lt" => Ok(SearchOperator::NumericOrDate(
-                NumericOrDateSearchOperator::Lt,
-            )),
-            "lte" => Ok(SearchOperator::NumericOrDate(
-                NumericOrDateSearchOperator::Lte,
-            )),
-            "within" => Ok(SearchOperator::NumericOrDate(
-                NumericOrDateSearchOperator::Between,
-            )),
+            "equals" => Ok(SO::Equals {
+                is_negated: negated,
+            }),
+            "iequals" => Ok(SO::IEquals {
+                data_type: DataType::String,
+                is_negated: negated,
+            }),
+            "contains" => Ok(SO::Contains {
+                data_type: DataType::String,
+                is_negated: negated,
+            }),
+            "icontains" => Ok(SO::IContains {
+                data_type: DataType::String,
+                is_negated: negated,
+            }),
+            "startswith" => Ok(SO::StartsWith {
+                data_type: DataType::String,
+                is_negated: negated,
+            }),
+            "istartswith" => Ok(SO::IStartsWith {
+                data_type: DataType::String,
+                is_negated: negated,
+            }),
+            "endswith" => Ok(SO::EndsWith {
+                data_type: DataType::String,
+                is_negated: negated,
+            }),
+            "iendswith" => Ok(SO::IEndsWith {
+                data_type: DataType::String,
+                is_negated: negated,
+            }),
+            "like" => Ok(SO::Like {
+                data_type: DataType::String,
+                is_negated: negated,
+            }),
+            "regex" => Ok(SO::Regex {
+                data_type: DataType::String,
+                is_negated: negated,
+            }),
+            "gt" => Ok(SO::Gt {
+                data_type: DataType::Numeric,
+                is_negated: negated,
+            }),
+            "gte" => Ok(SO::Gte {
+                data_type: DataType::Numeric,
+                is_negated: negated,
+            }),
+            "lt" => Ok(SO::Lt {
+                data_type: DataType::Numeric,
+                is_negated: negated,
+            }),
+            "lte" => Ok(SO::Lte {
+                data_type: DataType::Numeric,
+                is_negated: negated,
+            }),
+            "between" => Ok(SO::Between {
+                data_type: DataType::Numeric,
+                is_negated: negated,
+            }),
+
             _ => Err(ApiError::BadRequest(format!(
                 "Invalid search operator: '{}'",
                 operator
@@ -318,12 +513,20 @@ mod test {
         let mut i = 0;
         for case in test_cases {
             let result = parse_query_parameter(case);
-            assert!(result.is_err(), "Failed test case for query: {}", case);
+            assert!(
+                result.is_err(),
+                "Failed test case for query: {} (no error) {:?}",
+                case,
+                result
+            );
+            let result_err = result.unwrap_err();
             assert_eq!(
-                result.unwrap_err(),
+                result_err,
                 ApiError::BadRequest(test_case_errors[i].to_string()),
-                "Failed test case for query: {}",
-                case
+                "Failed test case for query: {} ({} vs {})",
+                case,
+                result_err,
+                test_case_errors[i]
             );
             i += 1;
         }
@@ -335,17 +538,17 @@ mod test {
             TestCase {
                 query_string: "name__icontains=foo&description=bar",
                 expected: vec![
-                    pq("name", SearchOperator::String(StringSearchOperator::IContains), "foo"),
-                    pq("description", SearchOperator::Universal(UniversialSearchOperator::Equals), "bar"),
+                    pq("name", SearchOperator::IContains{ data_type: DataType::String, is_negated: false }, "foo"),
+                    pq("description", SearchOperator::Equals{ is_negated: false}, "bar"),
                 ],
             },
             TestCase {
                 query_string: "name__contains=foo&description__icontains=bar&created_at__gte=2021-01-01&updated_at__lte=2021-12-31",
                 expected: vec![
-                    pq("name", SearchOperator::String(StringSearchOperator::Contains), "foo"),
-                    pq("description", SearchOperator::String(StringSearchOperator::IContains), "bar"),
-                    pq("created_at", SearchOperator::NumericOrDate(NumericOrDateSearchOperator::Gte), "2021-01-01"),
-                    pq("updated_at", SearchOperator::NumericOrDate(NumericOrDateSearchOperator::Lte), "2021-12-31"),
+                    pq("name", SearchOperator::Contains{ data_type: DataType::String, is_negated: false}, "foo"),
+                    pq("description", SearchOperator::IContains{ data_type: DataType::String, is_negated: false}, "bar"),
+                    pq("created_at", SearchOperator::Gte{ data_type: DataType::Numeric, is_negated: false}, "2021-01-01"),
+                    pq("updated_at", SearchOperator::Lte{ data_type: DataType::Numeric, is_negated: false}, "2021-12-31"),
                 ],
             },
         ];

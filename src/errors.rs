@@ -21,6 +21,7 @@ pub enum ApiError {
     DbConnectionError(String),
     HashError(String),
     BadRequest(String),
+    OperatorMismatch(String),
 }
 
 impl fmt::Display for ApiError {
@@ -35,6 +36,7 @@ impl fmt::Display for ApiError {
             ApiError::DatabaseError(ref message) => write!(f, "{}", message),
             ApiError::DbConnectionError(ref message) => write!(f, "{}", message),
             ApiError::BadRequest(ref message) => write!(f, "{}", message),
+            ApiError::OperatorMismatch(ref message) => write!(f, "{}", message),
         }
     }
 }
@@ -63,6 +65,8 @@ impl ResponseError for ApiError {
             }
             ApiError::BadRequest(ref message) => HttpResponse::BadRequest()
                 .json(json!({ "error": "Bad Request", "message": message })),
+            ApiError::OperatorMismatch(ref message) => HttpResponse::BadRequest()
+                .json(json!({ "error": "Operator Mismatch", "message": message })),
         }
     }
 
@@ -77,7 +81,15 @@ impl ResponseError for ApiError {
             ApiError::HashError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
             ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            ApiError::OperatorMismatch(_) => StatusCode::BAD_REQUEST,
         }
+    }
+}
+
+impl From<chrono::ParseError> for ApiError {
+    fn from(e: chrono::ParseError) -> Self {
+        error!(message = "Error parsing date", error = ?e);
+        ApiError::BadRequest(e.to_string())
     }
 }
 

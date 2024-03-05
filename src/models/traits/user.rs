@@ -1,10 +1,12 @@
 use diesel::{ExpressionMethods, JoinOnDsl, QueryDsl, RunQueryDsl, Table};
 
 use crate::api::v1::handlers::namespaces;
+use crate::models::search::SearchOperator;
 use crate::models::{
     class, permissions, Group, HubuumClass, HubuumObject, Namespace, Permission, Permissions, User,
     UserID,
 };
+
 use crate::schema::{hubuumclass, hubuumobject};
 use crate::traits::{ClassAccessors, NamespaceAccessors, SelfAccessors};
 
@@ -35,14 +37,12 @@ pub trait SearchClasses: SelfAccessors<User> + GroupAccessors + UserNamespaceAcc
 
         let mut conn = pool.get()?;
         let group_id_subquery = self.group_ids_subquery();
-        let selected_namespaces = query_params.namespaces()?;
 
         // Get all namespace IDs that the user has read permissions on, and if we have a list of selected namespaces, filter on those.
         let namespace_ids: Vec<i32> = self
             .namespaces_read(pool)
             .await?
             .into_iter()
-            .filter(|n| selected_namespaces.is_empty() || selected_namespaces.contains(&n.id))
             .map(|n| n.id)
             .collect();
 
@@ -54,9 +54,65 @@ pub trait SearchClasses: SelfAccessors<User> + GroupAccessors + UserNamespaceAcc
             base_query = PermissionFilter::filter(perm, base_query);
         }
 
+        let mut base_query =
+            base_query.inner_join(hubuumclass.on(hubuum_classes_nid.eq_any(namespace_ids)));
+
+        for param in query_params {
+            use crate::models::search::{DataType, SearchOperator};
+            use crate::{date_search, numeric_search, string_search};
+            let field = param.field.as_str();
+            let operator = param.operator.clone();
+            match field {
+                "id" => numeric_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumclass::dsl::id
+                ),
+                "namespaces" => numeric_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumclass::dsl::namespace_id
+                ),
+                "created_at" => date_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumclass::dsl::created_at
+                ),
+                "updated_at" => date_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumclass::dsl::updated_at
+                ),
+                "name" => string_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumclass::dsl::name
+                ),
+                "description" => string_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumclass::dsl::description
+                ),
+
+                "permission" => {} // Handled above
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist)",
+                        field
+                    )))
+                }
+            }
+        }
+
         let result = base_query
-            .inner_join(hubuumclass.on(hubuum_classes_nid.eq_any(namespace_ids)))
             .select(hubuumclass::all_columns())
+            .distinct() // TODO: Is it the joins that makes this required?
             .load::<HubuumClass>(&mut conn)?;
 
         Ok(result)
@@ -345,7 +401,10 @@ mod test {
 
     use super::*;
     use crate::models::{GroupID, NewHubuumClass, Permissions, PermissionsList};
-    use crate::tests::{create_test_group, create_test_user, setup_pool_and_tokens};
+    use crate::tests::{
+        create_test_group, create_test_user, ensure_admin_group, ensure_admin_user,
+        setup_pool_and_tokens,
+    };
     use crate::traits::PermissionController;
     use crate::traits::{CanDelete, CanSave};
     use crate::{assert_contains, assert_not_contains};
@@ -447,5 +506,143 @@ mod test {
         test_group_1.delete(&pool).await.unwrap();
         test_group_2.delete(&pool).await.unwrap();
         ns.delete(&pool).await.unwrap();
+    }
+
+    #[actix_rt::test]
+    async fn test_class_search() {
+        use crate::models::namespace::NewNamespace;
+        use crate::models::search::{DataType, ParsedQueryParam, SearchOperator};
+
+        let (pool, _, _) = setup_pool_and_tokens().await;
+        let admin_group = ensure_admin_group(&pool).await;
+        let admin_user = ensure_admin_user(&pool).await;
+
+        let mut namespaces = vec![];
+
+        for i in 0..3 {
+            let padded_i = format!("{:02}", i);
+            namespaces.push(
+                NewNamespace {
+                    name: format!("test_user_class_search_{}", padded_i),
+                    description: format!("Test namespace searching {}", padded_i),
+                }
+                .save_and_grant_all_to(&pool, GroupID(admin_group.id))
+                .await
+                .unwrap(),
+            );
+        }
+
+        let mut classes = vec![];
+
+        for i in 0..10 {
+            let padded_i = format!("{:02}", i);
+            let mut nid = namespaces[0].id;
+            if i > 8 {
+                nid = namespaces[2].id; // We'll get one class in this namespace (9)
+            } else if i > 5 {
+                nid = namespaces[1].id; // We'll get three classes in this namespace (6,7,8)
+            }
+
+            classes.push(
+                NewHubuumClass {
+                    name: format!("test_user_class_search_{}", padded_i),
+                    description: format!("Test class searching {}", padded_i),
+                    json_schema: serde_json::json!({}),
+                    validate_schema: false,
+                    namespace_id: nid,
+                }
+                .save(&pool)
+                .await
+                .unwrap(),
+            );
+        }
+
+        struct TestCase {
+            query: Vec<ParsedQueryParam>,
+            expected: usize,
+        }
+
+        let testcases = vec![
+            TestCase {
+                query: vec![ParsedQueryParam::new(
+                    "id",
+                    Some(SearchOperator::Equals { is_negated: false }),
+                    &classes[0].id.to_string(),
+                )],
+                expected: 1,
+            },
+            TestCase {
+                query: vec![ParsedQueryParam::new(
+                    "namespaces",
+                    Some(SearchOperator::Equals { is_negated: false }),
+                    &namespaces[2].id.to_string(),
+                )],
+                expected: 1,
+            },
+            TestCase {
+                query: vec![
+                    ParsedQueryParam::new(
+                        "id",
+                        Some(SearchOperator::Gt {
+                            data_type: DataType::Numeric,
+                            is_negated: false,
+                        }),
+                        &classes[1].id.to_string(),
+                    ),
+                    ParsedQueryParam::new(
+                        "id",
+                        Some(SearchOperator::Lt {
+                            data_type: DataType::Numeric,
+                            is_negated: false,
+                        }),
+                        &classes[3].id.to_string(),
+                    ),
+                ],
+                expected: 1,
+            },
+            TestCase {
+                query: vec![ParsedQueryParam::new(
+                    "name",
+                    Some(SearchOperator::Contains {
+                        data_type: DataType::String,
+                        is_negated: false,
+                    }),
+                    "class_search",
+                )],
+                expected: 10,
+            },
+            TestCase {
+                query: vec![
+                    ParsedQueryParam::new(
+                        "name",
+                        Some(SearchOperator::IContains {
+                            data_type: DataType::String,
+                            is_negated: false,
+                        }),
+                        "CLASS_search",
+                    ),
+                    ParsedQueryParam::new(
+                        "namespaces",
+                        Some(SearchOperator::Equals { is_negated: false }),
+                        &namespaces[1].id.to_string(),
+                    ),
+                ],
+                expected: 3,
+            },
+        ];
+
+        for tc in testcases {
+            let hits = admin_user
+                .search_classes(&pool, tc.query.clone())
+                .await
+                .unwrap();
+            assert_eq!(
+                hits.len(),
+                tc.expected,
+                "Query: {:?}, Hits: {:?}",
+                tc.query,
+                hits
+            );
+        }
     }
 }
