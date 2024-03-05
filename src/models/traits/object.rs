@@ -1,6 +1,6 @@
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::models::traits::user::GroupAccessors;
+use crate::models::traits::GroupAccessors;
 
 use crate::models::class::HubuumClass;
 use crate::models::namespace::Namespace;

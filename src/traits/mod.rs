@@ -9,6 +9,9 @@ use crate::models::{
     PermissionsList, UpdatePermission, User,
 };
 
+#[allow(unused_imports)]
+pub use crate::models::traits::user::{SearchClasses, UserClassAccessors, UserNamespaceAccessors};
+
 pub trait CanDelete {
     async fn delete(&self, pool: &DbPool) -> Result<(), ApiError>;
 }

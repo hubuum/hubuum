@@ -5,7 +5,7 @@ use crate::models::namespace::{
     Namespace, NamespaceID, NewNamespace, NewNamespaceWithAssignee, UpdateNamespace,
 };
 use crate::models::permissions::{NewPermission, Permission, Permissions, PermissionsList};
-use crate::models::traits::user::GroupAccessors;
+use crate::models::traits::GroupAccessors;
 use crate::models::user::User;
 use crate::traits::{
     CanDelete, CanSave, CanUpdate, NamespaceAccessors, PermissionController, SelfAccessors,

@@ -6,6 +6,7 @@ pub mod acl;
 pub mod api;
 pub mod api_operations;
 pub mod asserts;
+pub mod search;
 
 use actix_web::web;
 use diesel::prelude::*;

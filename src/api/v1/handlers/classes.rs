@@ -8,9 +8,10 @@ use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::utilities::response::{json_response, json_response_created};
 
-use crate::models::traits::user::SearchClasses;
 use crate::models::{HubuumClassID, NamespaceID, NewHubuumClass, Permissions, UpdateHubuumClass};
-use crate::traits::{CanDelete, CanSave, CanUpdate, PermissionController, SelfAccessors};
+use crate::traits::{
+    CanDelete, CanSave, CanUpdate, PermissionController, SearchClasses, SelfAccessors,
+};
 
 use crate::models::search::parse_query_parameter;
 

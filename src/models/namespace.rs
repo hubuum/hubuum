@@ -13,7 +13,7 @@ use crate::errors::ApiError;
 use crate::models::output::GroupPermission;
 use crate::models::{Permission, Permissions};
 
-use crate::models::traits::user::GroupAccessors;
+use crate::models::traits::GroupAccessors;
 use crate::traits::{NamespaceAccessors, SelfAccessors};
 
 use tracing::info;

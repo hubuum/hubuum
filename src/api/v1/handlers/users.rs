@@ -84,7 +84,7 @@ pub async fn get_user_groups(
     user_id: web::Path<UserID>,
     requestor: AdminOrSelfAccess,
 ) -> Result<impl Responder, ApiError> {
-    use crate::models::traits::user::GroupAccessors;
+    use crate::models::traits::GroupAccessors;
 
     let user = user_id.into_inner().user(&pool).await?;
     debug!(
