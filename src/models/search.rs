@@ -107,6 +107,10 @@ impl ParsedQueryParam {
         self.field == "permission"
     }
 
+    pub fn value_as_permission(&self) -> Result<Permissions, ApiError> {
+        Permissions::from_string(&self.value)
+    }
+
     pub fn value_as_integer(&self) -> Result<Vec<i32>, ApiError> {
         parse_integer_list(&self.value)
     }
@@ -174,7 +178,7 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
     fn permissions(&self) -> Result<Vec<Permissions>, ApiError> {
         self.iter()
             .filter(|p| p.is_permission())
-            .map(|p| Permissions::from_string(&p.value))
+            .map(|p| p.value_as_permission())
             .collect()
     }
     fn namespaces(&self) -> Result<Vec<i32>, ApiError> {
