@@ -1,4 +1,4 @@
-use diesel::{ExpressionMethods, JoinOnDsl, QueryDsl, RunQueryDsl, Table};
+use diesel::{debug_query, pg::Pg, ExpressionMethods, JoinOnDsl, QueryDsl, RunQueryDsl, Table};
 
 use crate::api::v1::handlers::namespaces;
 use crate::models::search::SearchOperator;
@@ -17,6 +17,8 @@ use futures::future::try_join_all;
 use tracing::debug;
 
 use crate::models::search::{ParsedQueryParam, QueryParamsExt};
+
+use crate::trace_query;
 
 pub trait SearchClasses: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors {
     async fn search_classes(
@@ -115,6 +117,8 @@ pub trait SearchClasses: SelfAccessors<User> + GroupAccessors + UserNamespaceAcc
                 }
             }
         }
+
+        trace_query!(base_query, "Searching classes");
 
         let result = base_query
             .select(hubuumclass::all_columns())

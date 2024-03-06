@@ -1,3 +1,33 @@
+/// ## Trace log a (boxed) diesel query.
+///
+/// ### Arguments
+///
+/// * `base_query` - The base query to debug.
+#[macro_export]
+macro_rules! trace_query {
+    ($base_query:expr, $context:expr) => {
+        if tracing::level_enabled!(tracing::Level::TRACE) {
+            let debug_query = diesel::debug_query::<diesel::pg::Pg, _>(&$base_query).to_string();
+            tracing::trace!(message = "Query", context = $context, query = %debug_query);
+        }
+    };
+}
+
+/// ## Debug log a (boxed) diesel query.
+///
+/// ### Arguments
+///
+/// * `base_query` - The base query to debug.
+#[macro_export]
+macro_rules! debug_query {
+    ($base_query:expr, $context:expr) => {{
+        if tracing::level_enabled!(tracing::Level::DEBUG) {
+            let debug_query = diesel::debug_query::<diesel::pg::Pg, _>(&$base_query).to_string();
+            tracing::debug!(message = "Query", context = $context, query = %debug_query);
+        }
+    }};
+}
+
 #[macro_export]
 /// Check permissions for a user on a namespace, class, or object.
 ///

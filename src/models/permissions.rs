@@ -22,6 +22,15 @@ pub enum Permissions {
 }
 
 impl Permissions {
+    /// ## Convert a string to a Permissions enum.
+    ///
+    /// ### Arguments
+    ///
+    /// * `s` - A string slice to convert to a Permissions enum.
+    ///
+    /// ### Returns
+    ///
+    /// * `Result<Permissions, ApiError>` - The Permissions enum if the string is a valid permission.
     pub fn from_string(s: &str) -> Result<Permissions, ApiError> {
         match s {
             "ReadCollection" => Ok(Permissions::ReadCollection),

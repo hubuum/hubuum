@@ -18,7 +18,7 @@ pub fn parse_query_parameter(query_string: &str) -> Result<Vec<ParsedQueryParam>
     let mut parsed_query_params = Vec::new();
 
     for query_param in query_string.split('&') {
-        let query_param_parts: Vec<&str> = query_param.split('=').collect();
+        let query_param_parts: Vec<&str> = query_param.splitn(2, '=').collect();
 
         if query_param_parts.len() != 2 {
             return Err(ApiError::BadRequest(format!(
@@ -107,14 +107,34 @@ impl ParsedQueryParam {
         self.field == "permission"
     }
 
+    /// ## Coerce the value into a Permissions enum
+    ///
+    /// ### Returns
+    ///
+    /// * A Permissions enum or ApiError::BadRequest if the value is invalid
     pub fn value_as_permission(&self) -> Result<Permissions, ApiError> {
         Permissions::from_string(&self.value)
     }
 
+    /// ## Coerce the value into a list of integers
+    ///
+    /// Accepts the format given to the [`parse_integer_list`] function.
+    ///
+    /// ### Returns
+    ///
+    /// * A vector of integers or ApiError::BadRequest if the value is invalid
     pub fn value_as_integer(&self) -> Result<Vec<i32>, ApiError> {
         parse_integer_list(&self.value)
     }
 
+    /// ## Coerce the value into a list of dates
+    ///
+    /// Accepts a comma separated list of RFC3339 dates.
+    /// https://www.rfc-editor.org/rfc/rfc3339
+    ///     
+    /// ### Returns
+    ///
+    /// * A vector of NaiveDateTime or ApiError::BadRequest if the value is invalid
     pub fn value_as_date(&self) -> Result<Vec<NaiveDateTime>, ApiError> {
         let parsed_dates: Result<Vec<NaiveDateTime>, _> = self
             .value
@@ -131,6 +151,13 @@ impl ParsedQueryParam {
         parsed_dates
     }
 
+    /// ## Coerce the value into a boolean
+    ///
+    /// Accepted values are "true" and "false" (case insensitive)
+    ///
+    /// ### Returns
+    ///
+    /// * A boolean or ApiError::BadRequest if the value is invalid
     pub fn value_as_boolean(&self) -> Result<bool, ApiError> {
         match self.value.to_lowercase().as_str() {
             "true" => Ok(true),
@@ -175,12 +202,27 @@ pub trait QueryParamsExt {
 }
 
 impl QueryParamsExt for Vec<ParsedQueryParam> {
+    /// ## Get a list of all Permissions in a list of parsed query parameters
+    ///
+    /// Iterate over the parsed query parameters and filter out the ones that are permissions,
+    /// defined as having the `field` set as "permission". For each value of a matching parsed query
+    /// parameter, attempt to parse it into a Permissions enum.
+    ///
+    /// If any value is not a valid permission, return an ApiError::BadRequest.
     fn permissions(&self) -> Result<Vec<Permissions>, ApiError> {
         self.iter()
             .filter(|p| p.is_permission())
             .map(|p| p.value_as_permission())
             .collect()
     }
+
+    /// ## Get a sorted list of namespace ids from a list of parsed query parameters
+    ///
+    /// Iterate over the parsed query parameters and filter out the ones that are namespaces,
+    /// defined as having the `field` set as "namespace". For each value of a matching parsed query
+    /// parameter, attempt to parse it into a list of integers via [`parse_integer_list`].
+    ///
+    /// If any value is not a valid list of integers, return an ApiError::BadRequest.
     fn namespaces(&self) -> Result<Vec<i32>, ApiError> {
         let mut nids = vec![];
 
