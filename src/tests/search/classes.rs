@@ -127,6 +127,21 @@ mod test {
                 )],
                 expected: 0,
             },
+            TestCase {
+                query: vec![
+                    ParsedQueryParam::new(
+                        "validate_schema",
+                        Some(SearchOperator::Equals { is_negated: true }), // so true becomes false
+                        "true",
+                    ),
+                    ParsedQueryParam::new(
+                        "namespaces",
+                        Some(SearchOperator::Equals { is_negated: false }),
+                        &namespaces[2].id.to_string(),
+                    ),
+                ],
+                expected: 1,
+            },
         ];
 
         check_test_cases(testcases).await;

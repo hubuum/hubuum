@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+use std::collections::HashSet;
 use tracing::field;
 
 use crate::errors::ApiError;
@@ -208,14 +209,23 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
     /// defined as having the `field` set as "permission". For each value of a matching parsed query
     /// parameter, attempt to parse it into a Permissions enum.
     ///
+    /// Note that the list is not sorted and duplicates are removed.
+    ///
     /// If any value is not a valid permission, return an ApiError::BadRequest.
     fn permissions(&self) -> Result<Vec<Permissions>, ApiError> {
-        self.iter()
-            .filter(|p| p.is_permission())
-            .map(|p| p.value_as_permission())
-            .collect()
-    }
+        let mut unique_permissions = HashSet::new();
 
+        for param in self.iter().filter(|p| p.is_permission()) {
+            match param.value_as_permission() {
+                Ok(permission) => {
+                    unique_permissions.insert(permission);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(unique_permissions.into_iter().collect())
+    }
     /// ## Get a sorted list of namespace ids from a list of parsed query parameters
     ///
     /// Iterate over the parsed query parameters and filter out the ones that are namespaces,
@@ -250,7 +260,7 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
 ///
 /// ### Returns
 ///
-/// * A vector of integers or ApiError::BadRequest if the input is invalid
+/// * A sorted vector of unique integers or ApiError::BadRequest if the input is invalid
 pub fn parse_integer_list(input: &str) -> Result<Vec<i32>, ApiError> {
     let mut result = Vec::new();
     for part in input.split(',') {
@@ -263,7 +273,18 @@ pub fn parse_integer_list(input: &str) -> Result<Vec<i32>, ApiError> {
             }
             2 => {
                 if let (Ok(start), Ok(end)) = (range[0].parse::<i32>(), range[1].parse::<i32>()) {
-                    result.extend((start..=end).collect::<Vec<i32>>());
+                    if end < start {
+                        Err(ApiError::BadRequest(format!(
+                            "Invalid integer range: '{}'",
+                            part
+                        )))?;
+                    }
+
+                    if end == start {
+                        result.push(start);
+                    } else {
+                        result.extend((start..=end).collect::<Vec<i32>>());
+                    }
                 }
             }
             _ => Err(ApiError::BadRequest(format!(
@@ -272,6 +293,8 @@ pub fn parse_integer_list(input: &str) -> Result<Vec<i32>, ApiError> {
             )))?,
         }
     }
+    result.sort_unstable();
+    result.dedup();
     Ok(result)
 }
 /// Operators
