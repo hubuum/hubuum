@@ -137,8 +137,7 @@ impl ParsedQueryParam {
     ///
     /// * A vector of NaiveDateTime or ApiError::BadRequest if the value is invalid
     pub fn value_as_date(&self) -> Result<Vec<NaiveDateTime>, ApiError> {
-        let parsed_dates: Result<Vec<NaiveDateTime>, _> = self
-            .value
+        self.value
             .split(',')
             .map(|part| part.trim())
             .map(|part| {
@@ -147,9 +146,7 @@ impl ParsedQueryParam {
                     .map(|utc_dt| utc_dt.naive_utc()) // Convert to NaiveDateTime
                     .map_err(|e| e.into()) // Convert chrono::ParseError (or any error) into ApiError
             })
-            .collect(); // Collect into a Result<Vec<NaiveDateTime>, ApiError>
-
-        parsed_dates
+            .collect() // Collect into a Result<Vec<NaiveDateTime>, ApiError>
     }
 
     /// ## Coerce the value into a boolean
@@ -260,41 +257,44 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
 ///
 /// ### Returns
 ///
-/// * A sorted vector of unique integers or ApiError::BadRequest if the input is invalid
+/// * A sorted vector of unique integers or ApiError::InvalidIntegerRange if the input is invalid
 pub fn parse_integer_list(input: &str) -> Result<Vec<i32>, ApiError> {
     let mut result = Vec::new();
     for part in input.split(',') {
         let range: Vec<&str> = part.split('-').collect();
         match range.len() {
             1 => {
-                if let Ok(num) = range[0].parse::<i32>() {
-                    result.push(num);
-                }
+                let num = range[0].parse::<i32>().map_err(|_| {
+                    ApiError::InvalidIntegerRange(format!("Invalid number: '{}'", part))
+                })?;
+                result.push(num);
             }
             2 => {
-                if let (Ok(start), Ok(end)) = (range[0].parse::<i32>(), range[1].parse::<i32>()) {
-                    if end < start {
-                        Err(ApiError::BadRequest(format!(
-                            "Invalid integer range: '{}'",
-                            part
-                        )))?;
-                    }
-
-                    if end == start {
-                        result.push(start);
-                    } else {
-                        result.extend((start..=end).collect::<Vec<i32>>());
-                    }
+                let start = range[0].parse::<i32>().map_err(|_| {
+                    ApiError::InvalidIntegerRange(format!("Invalid start of range: '{}'", part))
+                })?;
+                let end = range[1].parse::<i32>().map_err(|_| {
+                    ApiError::InvalidIntegerRange(format!("Invalid end of range: '{}'", part))
+                })?;
+                if end < start {
+                    return Err(ApiError::InvalidIntegerRange(format!(
+                        "Invalid integer range, start greater than end: '{}'",
+                        part
+                    )));
                 }
+                result.extend(start..=end);
             }
-            _ => Err(ApiError::BadRequest(format!(
-                "Invalid integer range: '{}'",
-                part
-            )))?,
+            _ => {
+                return Err(ApiError::InvalidIntegerRange(format!(
+                    "Invalid integer range, parse error: '{}'",
+                    part
+                )))
+            }
         }
     }
     result.sort_unstable();
     result.dedup();
+
     Ok(result)
 }
 /// Operators
@@ -574,6 +574,81 @@ mod test {
             field: field.to_string(),
             operator,
             value: value.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_parse_integer_list_single() {
+        let test_cases = vec![
+            ("1", vec![1]),
+            ("2,4", vec![2, 4]),
+            ("3,3,3,6", vec![3, 6]),
+            ("4,1,4,1,5", vec![1, 4, 5]),
+        ];
+
+        for (input, expected) in test_cases {
+            let result = parse_integer_list(input);
+            assert_eq!(
+                result,
+                Ok(expected),
+                "Failed test case for input: {}",
+                input
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_integer_list_range() {
+        let test_cases = vec![
+            ("1-4", vec![1, 2, 3, 4]),
+            ("2-4", vec![2, 3, 4]),
+            ("3-4", vec![3, 4]),
+            ("4-4", vec![4]),
+        ];
+
+        for (input, expected) in test_cases {
+            let result = parse_integer_list(input);
+            assert_eq!(
+                result,
+                Ok(expected),
+                "Failed test case for input: {}",
+                input
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_integer_list_mixed() {
+        let test_cases = vec![
+            ("1,2,3,4", vec![1, 2, 3, 4]),
+            ("1-4,6-8", vec![1, 2, 3, 4, 6, 7, 8]),
+            ("1,2,3-5,7", vec![1, 2, 3, 4, 5, 7]),
+            ("1-4,3,3,8", vec![1, 2, 3, 4, 8]),
+        ];
+
+        for (input, expected) in test_cases {
+            let result = parse_integer_list(input);
+            assert_eq!(
+                result,
+                Ok(expected),
+                "Failed test case for input: {}",
+                input
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_integer_list_failures() {
+        let test_cases = vec!["1-", "-1", "1-2-3"];
+
+        for input in test_cases {
+            let result = parse_integer_list(input);
+            assert!(
+                result.is_err(),
+                "Failed test case for input: {} (no error) {:?}",
+                input,
+                result
+            );
         }
     }
 

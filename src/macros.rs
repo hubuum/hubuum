@@ -115,6 +115,19 @@ macro_rules! numeric_search {
             )));
         }
 
+        // Sadly a sanity check. We want to use ranges and between for large sets,
+        // but diesel is making it hard to create an or block inside the query.
+        // Ie, we want return a list of ints and a list of ranges and combine them
+        // along the lines of
+        // "WHERE field = any([1,2,3]) or (field BETWEEN 4 AND 5 OR field BETWEEN 7 AND 9)"
+        // while merging with the rest of the filters via AND.
+        if op == Operator::Equals && values.len() > 50 {
+            return Err(ApiError::OperatorMismatch(format!(
+                "Operator 'equals' is limited to 50 values, got {} (use between?)",
+                values.len()
+            )));
+        }
+
         match (op, negated) {
             (Operator::Equals, false) => {
                 $base_query = $base_query.filter($diesel_field.eq_any(values.clone()))

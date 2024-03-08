@@ -22,6 +22,7 @@ pub enum ApiError {
     HashError(String),
     BadRequest(String),
     OperatorMismatch(String),
+    InvalidIntegerRange(String),
 }
 
 impl fmt::Display for ApiError {
@@ -37,6 +38,7 @@ impl fmt::Display for ApiError {
             ApiError::DbConnectionError(ref message) => write!(f, "{}", message),
             ApiError::BadRequest(ref message) => write!(f, "{}", message),
             ApiError::OperatorMismatch(ref message) => write!(f, "{}", message),
+            ApiError::InvalidIntegerRange(ref message) => write!(f, "{}", message),
         }
     }
 }
@@ -67,6 +69,8 @@ impl ResponseError for ApiError {
                 .json(json!({ "error": "Bad Request", "message": message })),
             ApiError::OperatorMismatch(ref message) => HttpResponse::BadRequest()
                 .json(json!({ "error": "Operator Mismatch", "message": message })),
+            ApiError::InvalidIntegerRange(ref message) => HttpResponse::BadRequest()
+                .json(json!({ "error": "Invalid Integer Range", "message": message })),
         }
     }
 
@@ -82,6 +86,7 @@ impl ResponseError for ApiError {
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
             ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
             ApiError::OperatorMismatch(_) => StatusCode::BAD_REQUEST,
+            ApiError::InvalidIntegerRange(_) => StatusCode::BAD_REQUEST,
         }
     }
 }

@@ -64,7 +64,7 @@ impl CanUpdate for UpdateHubuumObject {
 
 impl CanDelete for HubuumObject {
     async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
-        use crate::schema::hubuumobject::dsl::*;
+        use crate::schema::hubuumobject::dsl::{hubuumobject, id};
 
         let mut conn = pool.get()?;
         diesel::delete(hubuumobject.filter(id.eq(self.id))).execute(&mut conn)?;
