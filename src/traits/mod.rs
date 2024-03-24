@@ -170,7 +170,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
             .filter(group_id_field.eq_any(group_id_subquery));
 
         for perm in permission {
-            base_query = PermissionFilter::filter(perm, base_query);
+            base_query = perm.create_boxed_filter(base_query, true);
         }
 
         let result = base_query.first::<Permission>(&mut conn).optional()?;

@@ -91,6 +91,13 @@ impl ResponseError for ApiError {
     }
 }
 
+impl From<serde_json::Error> for ApiError {
+    fn from(e: serde_json::Error) -> Self {
+        error!(message = "Error parsing input as json", error = ?e);
+        ApiError::BadRequest(e.to_string())
+    }
+}
+
 impl From<chrono::ParseError> for ApiError {
     fn from(e: chrono::ParseError) -> Self {
         error!(message = "Error parsing date", error = ?e);

@@ -3,7 +3,7 @@
 mod test {
     use crate::models::class::NewHubuumClass;
     use crate::models::group::GroupID;
-    use crate::models::search::{DataType, ParsedQueryParam, SearchOperator};
+    use crate::models::search::{ParsedQueryParam, SearchOperator};
     use crate::models::{HubuumClass, Namespace, NewNamespace};
     use crate::tests::{ensure_admin_group, ensure_admin_user, setup_pool_and_tokens};
     use crate::traits::{CanDelete, CanSave, SearchClasses};
@@ -173,18 +173,12 @@ mod test {
                 query: vec![
                     ParsedQueryParam::new(
                         "id",
-                        Some(SearchOperator::Gt {
-                            data_type: DataType::NumericOrDate,
-                            is_negated: false,
-                        }),
+                        Some(SearchOperator::Gt { is_negated: false }),
                         &classes[1].id.to_string(),
                     ),
                     ParsedQueryParam::new(
                         "id",
-                        Some(SearchOperator::Lt {
-                            data_type: DataType::NumericOrDate,
-                            is_negated: false,
-                        }),
+                        Some(SearchOperator::Lt { is_negated: false }),
                         &classes[3].id.to_string(),
                     ),
                 ],
@@ -193,10 +187,7 @@ mod test {
             TestCase {
                 query: vec![ParsedQueryParam::new(
                     "name",
-                    Some(SearchOperator::Contains {
-                        data_type: DataType::String,
-                        is_negated: false,
-                    }),
+                    Some(SearchOperator::Contains { is_negated: false }),
                     "class_search",
                 )],
                 expected: 10,
@@ -205,10 +196,7 @@ mod test {
                 query: vec![
                     ParsedQueryParam::new(
                         "name",
-                        Some(SearchOperator::IContains {
-                            data_type: DataType::String,
-                            is_negated: false,
-                        }),
+                        Some(SearchOperator::IContains { is_negated: false }),
                         "CLASS_search",
                     ),
                     ParsedQueryParam::new(
@@ -223,10 +211,7 @@ mod test {
                 query: vec![
                     ParsedQueryParam::new(
                         "description",
-                        Some(SearchOperator::Contains {
-                            data_type: DataType::String,
-                            is_negated: false,
-                        }),
+                        Some(SearchOperator::Contains { is_negated: false }),
                         "class search",
                     ),
                     ParsedQueryParam::new(

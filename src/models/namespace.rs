@@ -134,7 +134,7 @@ pub async fn user_can_on_any<U: SelfAccessors<User> + GroupAccessors>(
             .filter(group_id.eq_any(group_ids_subquery))
     };
 
-    let filtered_query = PermissionFilter::filter(permission_type, base_query);
+    let filtered_query = permission_type.create_boxed_filter(base_query, true);
 
     let accessible_namespace_ids = filtered_query.select(namespace_id).load::<i32>(&mut conn)?;
 
@@ -177,7 +177,7 @@ pub async fn group_can_on<T: NamespaceAccessors>(
         .filter(group_id.eq(gid))
         .filter(namespace_id.eq(namespace_ref.namespace_id(pool).await?));
 
-    let filtered_query = PermissionFilter::filter(permission_type, base_query);
+    let filtered_query = permission_type.create_boxed_filter(base_query, true);
 
     let result = filtered_query.execute(&mut conn)?;
 
@@ -214,7 +214,7 @@ pub async fn groups_can_on(
     let base_query = permissions.into_boxed().filter(namespace_id.eq(nid));
 
     // Then filter on the given permission type using the PermissionFilter
-    let filtered_query = PermissionFilter::filter(permission_type, base_query);
+    let filtered_query = permission_type.create_boxed_filter(base_query, true);
 
     // Selecting namespace IDs from the filtered query
     let group_ids = filtered_query
@@ -262,7 +262,7 @@ pub async fn groups_on<T: NamespaceAccessors>(
         .into_boxed();
 
     for perm in permissions_filter.into_iter() {
-        base_query = PermissionFilter::filter(perm, base_query);
+        base_query = perm.create_boxed_filter(base_query, true);
     }
 
     let query = base_query

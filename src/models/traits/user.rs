@@ -1,3 +1,4 @@
+use diesel::sql_types::Integer;
 use diesel::{debug_query, pg::Pg, ExpressionMethods, JoinOnDsl, QueryDsl, RunQueryDsl, Table};
 
 use crate::api::v1::handlers::namespaces;
@@ -27,7 +28,9 @@ pub trait SearchClasses: SelfAccessors<User> + GroupAccessors + UserNamespaceAcc
         query_params: Vec<ParsedQueryParam>,
     ) -> Result<Vec<HubuumClass>, ApiError> {
         use crate::models::PermissionFilter;
-        use crate::schema::hubuumclass::dsl::{hubuumclass, namespace_id as hubuum_classes_nid};
+        use crate::schema::hubuumclass::dsl::{
+            hubuumclass, id as hubuum_class_id, namespace_id as hubuum_classes_nid,
+        };
         use crate::schema::permissions::dsl::*;
 
         debug!(
@@ -48,16 +51,56 @@ pub trait SearchClasses: SelfAccessors<User> + GroupAccessors + UserNamespaceAcc
             .map(|n| n.id)
             .collect();
 
+        debug!(
+            message = "Searching classes",
+            stage = "Namespace IDs",
+            user_id = self.id(),
+            namespace_ids = ?namespace_ids
+        );
+
         let mut base_query = permissions
             .into_boxed()
             .filter(group_id.eq_any(group_id_subquery));
 
+        // Handle permissions
         for perm in query_params.permissions()? {
-            base_query = PermissionFilter::filter(perm, base_query);
+            base_query = perm.create_boxed_filter(base_query, true);
         }
 
         let mut base_query =
             base_query.inner_join(hubuumclass.on(hubuum_classes_nid.eq_any(namespace_ids)));
+
+        let json_schema_queries = query_params.json_schemas()?;
+        if !json_schema_queries.is_empty() {
+            debug!(
+                message = "Searching classes",
+                stage = "JSON Schema",
+                user_id = self.id(),
+                query_params = ?json_schema_queries
+            );
+
+            let json_schema_integers = self.json_schema_subquery(pool, json_schema_queries)?;
+
+            if json_schema_integers.is_empty() {
+                debug!(
+                    message = "Searching classes",
+                    stage = "JSON Schema",
+                    user_id = self.id(),
+                    result = "No classe IDs found, returning empty result"
+                );
+                return Ok(vec![]);
+            }
+
+            debug!(
+                message = "Searching classes",
+                stage = "JSON Schema",
+                user_id = self.id(),
+                result = "Found class IDs",
+                class_ids = ?json_schema_integers
+            );
+
+            base_query = base_query.filter(hubuum_class_id.eq_any(json_schema_integers));
+        }
 
         for param in query_params {
             use crate::models::search::{DataType, SearchOperator};
@@ -107,8 +150,8 @@ pub trait SearchClasses: SelfAccessors<User> + GroupAccessors + UserNamespaceAcc
                     operator,
                     crate::schema::hubuumclass::dsl::validate_schema
                 ),
-
-                "permission" => {} // Handled above
+                "json_schema" => {} // Handled above
+                "permission" => {}  // Handled above
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist)",
@@ -190,6 +233,45 @@ pub trait GroupAccessors: SelfAccessors<User> {
             .select(group_id)
             .into_boxed()
     }
+
+    fn json_schema_subquery(
+        &self,
+        pool: &DbPool,
+        json_schema_query_params: Vec<&ParsedQueryParam>,
+    ) -> Result<Vec<i32>, ApiError> {
+        use crate::models::class::ClassIdResult;
+        use crate::models::search::Operator;
+
+        if json_schema_query_params.is_empty() {
+            return Err(ApiError::BadRequest(
+                "No json_schema query parameters provided".to_string(),
+            ));
+        }
+
+        let raw_sql_prefix = "select id from hubuum_class where";
+        let mut raw_sql_clauses: Vec<String> = vec![];
+
+        for param in json_schema_query_params {
+            let clause = param.as_json_sql()?;
+            debug!(message = "JSON Schema subquery", stage = "Clause", clause = ?clause);
+            raw_sql_clauses.push(clause);
+        }
+
+        let raw_sql = format!("{} {}", raw_sql_prefix, raw_sql_clauses.join(" and "));
+
+        debug!(message = "JSON Schema subquery", stage = "Complete", raw_sql = ?raw_sql);
+
+        let mut connection = pool.get()?;
+
+        let result_ids =
+            diesel::sql_query(raw_sql).get_results::<ClassIdResult>(&mut connection)?;
+        let ids: Vec<i32> = result_ids
+            .into_iter()
+            .map(|r: ClassIdResult| r.id)
+            .collect();
+
+        Ok(ids)
+    }
 }
 
 pub trait UserNamespaceAccessors: SelfAccessors<User> + GroupAccessors {
@@ -217,7 +299,7 @@ pub trait UserNamespaceAccessors: SelfAccessors<User> + GroupAccessors {
             .filter(group_id.eq_any(groups_id_subquery));
 
         for perm in permissions_list {
-            base_query = PermissionFilter::filter(perm, base_query);
+            base_query = perm.create_boxed_filter(base_query, true);
         }
 
         let result = base_query
@@ -352,7 +434,7 @@ pub trait ObjectAccessors: UserClassAccessors + UserNamespaceAccessors {
             .filter(group_id.eq_any(group_id_subquery));
 
         for perm in permissions_list {
-            base_query = PermissionFilter::filter(perm, base_query);
+            base_query = perm.create_boxed_filter(base_query, true);
         }
 
         let mut joined_query =
