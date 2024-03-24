@@ -1,8 +1,6 @@
 #[cfg(test)]
 
 mod test {
-    use futures::join;
-
     use crate::models::class::NewHubuumClass;
     use crate::models::group::GroupID;
     use crate::models::search::{ParsedQueryParam, SearchOperator};
