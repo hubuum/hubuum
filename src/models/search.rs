@@ -697,12 +697,11 @@ fn get_jsonb_field_type_from_json_schema(
 
     // If we have a specific format, we can use that to determine the type from a set of
     // predefined formats.
-    match current_schema.get("format") {
-        Some(Value::String(format_str)) => match format_str.as_ref() {
+    if let Some(Value::String(format_str)) = current_schema.get("format") {
+        match format_str.as_ref() {
             "date-time" | "date" => return Some(SQLMappedType::Date),
             _ => {}
-        },
-        _ => {}
+        }
     };
 
     // We do not have a specific format, we rely on the more generic type.
@@ -737,28 +736,24 @@ pub fn get_jsonb_field_type_from_value_and_operator(
     operator: Operator,
 ) -> Option<SQLMappedType> {
     match operator {
-        Operator::Equals => {
-            return get_sql_mapped_type_from_value(
-                value,
-                &[
-                    SQLMappedType::Date,
-                    SQLMappedType::Boolean,
-                    SQLMappedType::Numeric,
-                    SQLMappedType::None,
-                    SQLMappedType::String,
-                ],
-            );
-        }
-        Operator::Contains => {
-            return get_sql_mapped_type_from_value(
-                value,
-                &[
-                    SQLMappedType::Date,
-                    SQLMappedType::Numeric,
-                    SQLMappedType::String,
-                ],
-            );
-        }
+        Operator::Equals => get_sql_mapped_type_from_value(
+            value,
+            &[
+                SQLMappedType::Date,
+                SQLMappedType::Boolean,
+                SQLMappedType::Numeric,
+                SQLMappedType::None,
+                SQLMappedType::String,
+            ],
+        ),
+        Operator::Contains => get_sql_mapped_type_from_value(
+            value,
+            &[
+                SQLMappedType::Date,
+                SQLMappedType::Numeric,
+                SQLMappedType::String,
+            ],
+        ),
         Operator::Gt | Operator::Gte | Operator::Lt | Operator::Lte => {
             get_sql_mapped_type_from_value(value, &[SQLMappedType::Date, SQLMappedType::Numeric])
         }
@@ -778,7 +773,7 @@ pub fn get_jsonb_field_type_from_value_and_operator(
             if lval.is_none() || rval.is_none() || lval != rval {
                 return None;
             }
-            return lval; // Already a Some() from get_sql_mapped_type_from_value
+            lval // Already a Some() from get_sql_mapped_type_from_value
         }
         Operator::IEquals
         | Operator::IContains
