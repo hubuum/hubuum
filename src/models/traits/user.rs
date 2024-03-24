@@ -248,7 +248,7 @@ pub trait GroupAccessors: SelfAccessors<User> {
             ));
         }
 
-        let raw_sql_prefix = "select id from hubuum_class where";
+        let raw_sql_prefix = "select id from hubuumclass where";
         let mut raw_sql_clauses: Vec<String> = vec![];
 
         for param in json_schema_query_params {

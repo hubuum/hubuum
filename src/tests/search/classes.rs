@@ -1,6 +1,8 @@
 #[cfg(test)]
 
 mod test {
+    use futures::join;
+
     use crate::models::class::NewHubuumClass;
     use crate::models::group::GroupID;
     use crate::models::search::{ParsedQueryParam, SearchOperator};
@@ -38,20 +40,114 @@ mod test {
             );
         }
 
+        let blog_schema = serde_json::json!(
+        {
+            "$id": "https://example.com/blog-post.schema.json",
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "description": "A representation of a blog post",
+            "type": "object",
+            "required": ["title", "content", "author"],
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "content": {
+                "type": "string"
+              },
+              "publishedDate": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "author": {
+                "$ref": "https://example.com/user-profile.schema.json"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+        });
+
+        let address_schema = serde_json::json!(
+            {
+                "$id": "https://example.com/address.schema.json",
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "description": "An address similar to http://microformats.org/wiki/h-card",
+                "type": "object",
+                "properties": {
+                  "postOfficeBox": {
+                    "type": "string"
+                  },
+                  "extendedAddress": {
+                    "type": "string"
+                  },
+                  "streetAddress": {
+                    "type": "string"
+                  },
+                  "locality": {
+                    "type": "string"
+                  },
+                  "region": {
+                    "type": "string"
+                  },
+                  "postalCode": {
+                    "type": "string"
+                  },
+                  "countryName": {
+                    "type": "string"
+                  }
+                },
+                "required": [ "locality", "region", "countryName" ],
+                "dependentRequired": {
+                  "postOfficeBox": [ "streetAddress" ],
+                  "extendedAddress": [ "streetAddress" ]
+                }
+              }
+        );
+
+        let geo_schema = serde_json::json!(
+            {
+                "$id": "https://example.com/geographical-location.schema.json",
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "title": "Geographical Location",
+                "description": "A geographical location",
+                "required": [ "latitude", "longitude" ],
+                "type": "object",
+                "properties": {
+                  "latitude": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90
+                  },
+                  "longitude": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  }
+                },
+                "required": [ "latitude", "longitude" ]
+              }
+        );
+
         for i in 0..10 {
             let padded_i = format!("{:02}", i);
             let mut nid = namespaces[0].id;
+            let mut schema = blog_schema.clone();
             if i > 8 {
                 nid = namespaces[2].id; // We'll get one class in this namespace (9)
+                schema = geo_schema.clone();
             } else if i > 5 {
                 nid = namespaces[1].id; // We'll get three classes in this namespace (6,7,8)
+                schema = address_schema.clone();
             }
 
             classes.push(
                 NewHubuumClass {
                     name: format!("{}_class_{}", prefix, padded_i),
                     description: format!("{} class {}", pretty_prefix, padded_i),
-                    json_schema: serde_json::json!({}),
+                    json_schema: schema,
                     validate_schema: false,
                     namespace_id: nid,
                 }
@@ -284,6 +380,86 @@ mod test {
         ];
 
         check_test_cases(testcases).await;
+        cleanup(namespaces).await;
+    }
+
+    #[actix_rt::test]
+    async fn test_class_search_json_schema() {
+        let (namespaces, _) = setup_test_structure("test_user_class_json_schema").await;
+
+        // To ensure we're only searching within our namespaces, we bind the namespaces to the query (or
+        // vice versa, depending on how you look at it). This is required as we run async tests and use the
+        // same test data for a number of tests.
+        let binding_pgp_to_our_namespace = ParsedQueryParam::new(
+            "namespaces",
+            Some(SearchOperator::Equals { is_negated: false }),
+            &namespaces
+                .iter()
+                .map(|ns| ns.id.to_string())
+                .collect::<Vec<String>>()
+                .join(","),
+        );
+
+        let testcases = vec![
+            TestCase {
+                query: vec![
+                    ParsedQueryParam::new(
+                        "json_schema",
+                        Some(SearchOperator::Contains { is_negated: false }),
+                        "title=Geographical",
+                    ),
+                    binding_pgp_to_our_namespace.clone(),
+                ],
+                expected: 1,
+            },
+            TestCase {
+                query: vec![
+                    ParsedQueryParam::new(
+                        "json_schema",
+                        Some(SearchOperator::Lt { is_negated: false }),
+                        "properties,latitude,minimum=0",
+                    ),
+                    binding_pgp_to_our_namespace.clone(),
+                ],
+                expected: 1,
+            },
+            TestCase {
+                query: vec![
+                    ParsedQueryParam::new(
+                        "json_schema",
+                        Some(SearchOperator::Equals { is_negated: false }),
+                        "properties,latitude,maximum=90",
+                    ),
+                    binding_pgp_to_our_namespace.clone(),
+                ],
+                expected: 1,
+            },
+            TestCase {
+                query: vec![
+                    ParsedQueryParam::new(
+                        "json_schema",
+                        Some(SearchOperator::IContains { is_negated: false }),
+                        "description=address",
+                    ),
+                    binding_pgp_to_our_namespace.clone(),
+                ],
+                expected: 3,
+            },
+            TestCase {
+                query: vec![
+                    ParsedQueryParam::new(
+                        "json_schema",
+                        Some(SearchOperator::Like { is_negated: false }),
+                        "description=blog",
+                    ),
+                    binding_pgp_to_our_namespace.clone(),
+                ],
+                expected: 6,
+            },
+        ];
+
+        check_test_cases(testcases).await;
+
         cleanup(namespaces).await;
     }
 }

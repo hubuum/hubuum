@@ -242,11 +242,11 @@ impl ParsedQueryParam {
                 )))
             }
             Some(SQLMappedType::String) | Some(SQLMappedType::None) => {
-                format!("{}#>>{}", field, key)
+                format!("{} #>> {}", field, key)
             }
-            Some(SQLMappedType::Numeric) => format!("({}#>>{}::text)::numeric", field, key),
-            Some(SQLMappedType::Date) => format!("({}#>>{}::text)::date", field, key),
-            Some(SQLMappedType::Boolean) => format!("({}#>>{}::text)::boolean", field, key),
+            Some(SQLMappedType::Numeric) => format!("({} #>> {})::numeric", field, key),
+            Some(SQLMappedType::Date) => format!("({} #>> {})::date", field, key),
+            Some(SQLMappedType::Boolean) => format!("({} #>> {})::boolean", field, key),
         };
 
         let (sql_op, value) = match op {
@@ -271,6 +271,8 @@ impl ParsedQueryParam {
                 )))
             }
         };
+
+        println!("{}{} {} {}", neg_str, search_key, sql_op, value);
 
         if sql_type.is_some() {
             let sql_type = sql_type.unwrap();
@@ -1025,7 +1027,7 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key=foo",
                 ),
-                format!("{}#>>'{{key}}' = 'foo'", field),
+                format!("{} #>> '{{key}}' = 'foo'", field),
             ),
             (
                 pq(
@@ -1033,7 +1035,7 @@ mod test {
                     SearchOperator::IEquals { is_negated: true },
                     "key=foo",
                 ),
-                format!("NOT {}#>>'{{key}}' ILIKE 'foo'", field),
+                format!("NOT {} #>> '{{key}}' ILIKE 'foo'", field),
             ),
             (
                 pq(
@@ -1041,7 +1043,7 @@ mod test {
                     SearchOperator::Gt { is_negated: false },
                     "key,subkey=3",
                 ),
-                format!("({}#>>'{{key,subkey}}'::text)::numeric > 3", field),
+                format!("({} #>> '{{key,subkey}}')::numeric > 3", field),
             ),
         ];
 
@@ -1066,7 +1068,7 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key=2021-01-01",
                 ),
-                format!("({}#>>'{{key}}'::text)::date = '2021-01-01'", field),
+                format!("({} #>> '{{key}}')::date = '2021-01-01'", field),
             ),
             (
                 pq(
@@ -1074,7 +1076,7 @@ mod test {
                     SearchOperator::Gt { is_negated: false },
                     "key,subkey=2021-01-01",
                 ),
-                format!("({}#>>'{{key,subkey}}'::text)::date > '2021-01-01'", field),
+                format!("({} #>> '{{key,subkey}}')::date > '2021-01-01'", field),
             ),
             (
                 pq(
@@ -1082,10 +1084,7 @@ mod test {
                     SearchOperator::Gt { is_negated: true },
                     "key,subkey=2021-01-01",
                 ),
-                format!(
-                    "NOT ({}#>>'{{key,subkey}}'::text)::date > '2021-01-01'",
-                    field
-                ),
+                format!("NOT ({} #>> '{{key,subkey}}')::date > '2021-01-01'", field),
             ),
         ];
 
@@ -1110,7 +1109,7 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key=3",
                 ),
-                format!("({}#>>'{{key}}'::text)::numeric = 3", field),
+                format!("({} #>> '{{key}}')::numeric = 3", field),
             ),
             (
                 pq(
@@ -1118,7 +1117,7 @@ mod test {
                     SearchOperator::Gt { is_negated: false },
                     "key,subkey=3",
                 ),
-                format!("({}#>>'{{key,subkey}}'::text)::numeric > 3", field),
+                format!("({} #>> '{{key,subkey}}')::numeric > 3", field),
             ),
             (
                 pq(
@@ -1126,7 +1125,7 @@ mod test {
                     SearchOperator::Gt { is_negated: true },
                     "key,subkey=3",
                 ),
-                format!("NOT ({}#>>'{{key,subkey}}'::text)::numeric > 3", field),
+                format!("NOT ({} #>> '{{key,subkey}}')::numeric > 3", field),
             ),
         ];
 
@@ -1151,7 +1150,7 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key,subkey=3",
                 ),
-                format!("({}#>>'{{key,subkey}}'::text)::numeric = 3", field),
+                format!("({} #>> '{{key,subkey}}')::numeric = 3", field),
             ),
             (
                 pq(
@@ -1159,10 +1158,7 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key,subkey,subsubkey=3",
                 ),
-                format!(
-                    "({}#>>'{{key,subkey,subsubkey}}'::text)::numeric = 3",
-                    field
-                ),
+                format!("({} #>> '{{key,subkey,subsubkey}}')::numeric = 3", field),
             ),
             (
                 pq(
@@ -1171,7 +1167,7 @@ mod test {
                     "key,subkey,subsubkey,subsubsubkey=3",
                 ),
                 format!(
-                    "NOT ({}#>>'{{key,subkey,subsubkey,subsubsubkey}}'::text)::numeric = 3",
+                    "NOT ({} #>> '{{key,subkey,subsubkey,subsubsubkey}}')::numeric = 3",
                     field
                 ),
             ),
