@@ -381,10 +381,12 @@ mod test {
         cleanup(namespaces).await;
     }
 
-    #[actix_rt::test]
-    async fn test_class_search_json_schema() {
-        let (namespaces, _) = setup_test_structure("test_user_class_json_schema").await;
-
+    fn generate_test_case_for_json_schema(
+        operator: SearchOperator,
+        value: &str,
+        namespaces: Vec<Namespace>,
+        expected_hits: usize,
+    ) -> TestCase {
         // To ensure we're only searching within our namespaces, we bind the namespaces to the query (or
         // vice versa, depending on how you look at it). This is required as we run async tests and use the
         // same test data for a number of tests.
@@ -398,62 +400,62 @@ mod test {
                 .join(","),
         );
 
+        TestCase {
+            query: vec![
+                ParsedQueryParam::new("json_schema", Some(operator), value),
+                binding_pgp_to_our_namespace.clone(),
+            ],
+            expected: expected_hits,
+        }
+    }
+
+    #[actix_rt::test]
+    async fn test_class_search_json_schema() {
+        let (namespaces, _) = setup_test_structure("test_user_class_json_schema").await;
+
         let testcases = vec![
-            TestCase {
-                query: vec![
-                    ParsedQueryParam::new(
-                        "json_schema",
-                        Some(SearchOperator::Contains { is_negated: false }),
-                        "title=Geographical",
-                    ),
-                    binding_pgp_to_our_namespace.clone(),
-                ],
-                expected: 1,
-            },
-            TestCase {
-                query: vec![
-                    ParsedQueryParam::new(
-                        "json_schema",
-                        Some(SearchOperator::Lt { is_negated: false }),
-                        "properties,latitude,minimum=0",
-                    ),
-                    binding_pgp_to_our_namespace.clone(),
-                ],
-                expected: 1,
-            },
-            TestCase {
-                query: vec![
-                    ParsedQueryParam::new(
-                        "json_schema",
-                        Some(SearchOperator::Equals { is_negated: false }),
-                        "properties,latitude,maximum=90",
-                    ),
-                    binding_pgp_to_our_namespace.clone(),
-                ],
-                expected: 1,
-            },
-            TestCase {
-                query: vec![
-                    ParsedQueryParam::new(
-                        "json_schema",
-                        Some(SearchOperator::IContains { is_negated: false }),
-                        "description=address",
-                    ),
-                    binding_pgp_to_our_namespace.clone(),
-                ],
-                expected: 3,
-            },
-            TestCase {
-                query: vec![
-                    ParsedQueryParam::new(
-                        "json_schema",
-                        Some(SearchOperator::Like { is_negated: false }),
-                        "description=blog",
-                    ),
-                    binding_pgp_to_our_namespace.clone(),
-                ],
-                expected: 6,
-            },
+            generate_test_case_for_json_schema(
+                SearchOperator::Contains { is_negated: false },
+                "title=Geographical",
+                namespaces.clone(),
+                1,
+            ),
+            generate_test_case_for_json_schema(
+                SearchOperator::Lt { is_negated: false },
+                "properties,latitude,minimum=0",
+                namespaces.clone(),
+                1,
+            ),
+            generate_test_case_for_json_schema(
+                SearchOperator::Gte { is_negated: false },
+                "properties,latitude,maximum=90",
+                namespaces.clone(),
+                1,
+            ),
+            generate_test_case_for_json_schema(
+                SearchOperator::Equals { is_negated: false },
+                "properties,latitude,minimum=0",
+                namespaces.clone(),
+                0,
+            ),
+            generate_test_case_for_json_schema(
+                SearchOperator::IContains { is_negated: false },
+                "description=address",
+                namespaces.clone(),
+                3,
+            ),
+            generate_test_case_for_json_schema(
+                SearchOperator::Like { is_negated: false },
+                "description=blog",
+                namespaces.clone(),
+                6,
+            ),
+            generate_test_case_for_json_schema(
+                SearchOperator::Regex { is_negated: false },
+                "$id=.*ple\\.com.*loc",
+                namespaces.clone(),
+                1,
+            ),
         ];
 
         check_test_cases(testcases).await;
