@@ -225,6 +225,9 @@ impl ParsedQueryParam {
             }
         };
 
+        // TODO: Optionally validate that the keys exist:
+        // https://github.com/terjekv/hubuum_rust/issues/4
+
         let key = format!("'{{{}}}'", key);
 
         let (op, neg) = self.operator.op_and_neg();
@@ -271,8 +274,6 @@ impl ParsedQueryParam {
                 )))
             }
         };
-
-        println!("{}{} {} {}", neg_str, search_key, sql_op, value);
 
         if sql_type.is_some() {
             let sql_type = sql_type.unwrap();
