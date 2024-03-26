@@ -5,6 +5,7 @@ use std::{collections::HashSet, f32::consts::E};
 use tracing::field;
 
 use crate::models::permissions::Permissions;
+use crate::utilities::extensions::CustomStringExtensions;
 use crate::{errors::ApiError, schema::hubuumobject::data};
 use chrono::{format, DateTime, NaiveDateTime, Utc};
 
@@ -139,18 +140,18 @@ impl ParsedQueryParam {
     ///
     /// * A Permissions enum or ApiError::BadRequest if the value is invalid
     pub fn value_as_permission(&self) -> Result<Permissions, ApiError> {
-        Permissions::from_string(&self.value)
+        self.value.as_permission()
     }
 
     /// ## Coerce the value into a list of integers
     ///
-    /// Accepts the format given to the [`parse_integer_list`] function.
+    /// Accepts the format given to the [`as_integer`] trait.
     ///
     /// ### Returns
     ///
     /// * A vector of integers or ApiError::BadRequest if the value is invalid
     pub fn value_as_integer(&self) -> Result<Vec<i32>, ApiError> {
-        parse_integer_list(&self.value)
+        self.value.as_integer()
     }
 
     /// ## Coerce the value into a list of dates
@@ -162,16 +163,7 @@ impl ParsedQueryParam {
     ///
     /// * A vector of NaiveDateTime or ApiError::BadRequest if the value is invalid
     pub fn value_as_date(&self) -> Result<Vec<NaiveDateTime>, ApiError> {
-        self.value
-            .split(',')
-            .map(|part| part.trim())
-            .map(|part| {
-                DateTime::parse_from_rfc3339(part)
-                    .map(|dt| dt.with_timezone(&Utc)) // Convert to Utc
-                    .map(|utc_dt| utc_dt.naive_utc()) // Convert to NaiveDateTime
-                    .map_err(|e| e.into()) // Convert chrono::ParseError (or any error) into ApiError
-            })
-            .collect() // Collect into a Result<Vec<NaiveDateTime>, ApiError>
+        self.value.as_date()
     }
 
     /// ## Coerce the value into a boolean
@@ -182,14 +174,7 @@ impl ParsedQueryParam {
     ///
     /// * A boolean or ApiError::BadRequest if the value is invalid
     pub fn value_as_boolean(&self) -> Result<bool, ApiError> {
-        match self.value.to_lowercase().as_str() {
-            "true" => Ok(true),
-            "false" => Ok(false),
-            _ => Err(ApiError::BadRequest(format!(
-                "Invalid boolean value: '{}'",
-                self.value
-            ))),
-        }
+        self.value.as_boolean()
     }
 
     pub fn as_json_sql(&self) -> Result<String, ApiError> {
@@ -206,8 +191,6 @@ impl ParsedQueryParam {
         }
 
         // TODO: Avoid SQL injections by validating the key and value
-        // TODO: Validate the key
-        // TODO: Validate the value
         // TODO: Since we have a schema, we have typing info, so we can also validate
         //       the value and the operator against the defined type in the schema
 
@@ -224,6 +207,22 @@ impl ParsedQueryParam {
                 ))
             }
         };
+
+        // Validate the key
+        if !key.is_valid_jsonb_search_key() {
+            return Err(ApiError::BadRequest(format!(
+                "Invalid JSON search key: '{}'",
+                key
+            )));
+        }
+
+        // Validate the value
+        if !value.is_valid_jsonb_search_value() {
+            return Err(ApiError::BadRequest(format!(
+                "Invalid JSON search value: '{}'",
+                value
+            )));
+        }
 
         // TODO: Optionally validate that the keys exist:
         // https://github.com/terjekv/hubuum_rust/issues/4
