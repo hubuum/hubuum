@@ -74,7 +74,7 @@ pub fn parse_query_parameter(query_string: &str) -> Result<Vec<ParsedQueryParam>
 /// functions that use this struct as they have some context about the data based on the type of
 /// the field involved. This may or may not involve parsing the data into a different type, such as
 /// parsing the value into an integer, a date, or a permission.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ParsedQueryParam {
     pub field: String,
     pub operator: SearchOperator,
@@ -91,7 +91,7 @@ pub struct ParsedQueryParam {
 ///
 /// replace_question_mark_with_indexed_n does this on &str and string via
 /// crate::utilities::extensions::CustomStringExtensions.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SQLComponent {
     pub sql: String,
     pub bind_variables: Vec<SQLValue>,
@@ -101,7 +101,7 @@ pub struct SQLComponent {
 ///
 /// This enum represents the different types of values that can be bound to a SQL query. The types
 /// are defined as we need to bind the correct type in Diesel.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SQLValue {
     String(String),
     Float(f64),
@@ -1077,6 +1077,7 @@ mod test {
                     "key=foo",
                 ),
                 format!("{} #>> '{{key}}' = ?", field),
+                SQLValue::String("foo".to_string()),
             ),
             (
                 pq(
@@ -1085,6 +1086,7 @@ mod test {
                     "key=foo",
                 ),
                 format!("NOT {} #>> '{{key}}' ILIKE ?", field),
+                SQLValue::String("foo".to_string()),
             ),
             (
                 pq(
@@ -1093,14 +1095,18 @@ mod test {
                     "key,subkey=3",
                 ),
                 format!("({} #>> '{{key,subkey}}')::numeric > ?", field),
+                SQLValue::Integer(3),
             ),
         ];
 
-        for (param, expected) in test_cases {
+        for (param, expected, sqlvalue) in test_cases {
             let result = param.as_json_sql();
             assert_eq!(
-                result.unwrap().sql,
-                expected.to_string(),
+                result.unwrap(),
+                SQLComponent {
+                    sql: expected.to_string(),
+                    bind_variables: vec![sqlvalue]
+                },
                 "Failed test case for param: {:?}",
                 param,
             );
@@ -1118,6 +1124,7 @@ mod test {
                     "key=2021-01-01",
                 ),
                 format!("({} #>> '{{key}}')::date = ?", field),
+                SQLValue::Date("2021-01-01".as_date().unwrap()[0]),
             ),
             (
                 pq(
@@ -1126,6 +1133,7 @@ mod test {
                     "key,subkey=2021-01-01",
                 ),
                 format!("({} #>> '{{key,subkey}}')::date > ?", field),
+                SQLValue::Date("2021-01-01".as_date().unwrap()[0]),
             ),
             (
                 pq(
@@ -1134,14 +1142,18 @@ mod test {
                     "key,subkey=2021-01-01",
                 ),
                 format!("NOT ({} #>> '{{key,subkey}}')::date > ?", field),
+                SQLValue::Date("2021-01-01".as_date().unwrap()[0]),
             ),
         ];
 
-        for (param, expected) in test_cases {
+        for (param, expected, sqlvalue) in test_cases {
             let result = param.as_json_sql();
             assert_eq!(
-                result.unwrap().sql,
-                expected.to_string(),
+                result.unwrap(),
+                SQLComponent {
+                    sql: expected.to_string(),
+                    bind_variables: vec![sqlvalue]
+                },
                 "Failed test case for param: {:?}",
                 param,
             );
@@ -1159,6 +1171,7 @@ mod test {
                     "key=3",
                 ),
                 format!("({} #>> '{{key}}')::numeric = ?", field),
+                SQLValue::Integer(3),
             ),
             (
                 pq(
@@ -1167,6 +1180,7 @@ mod test {
                     "key,subkey=3",
                 ),
                 format!("({} #>> '{{key,subkey}}')::numeric > ?", field),
+                SQLValue::Integer(3),
             ),
             (
                 pq(
@@ -1175,14 +1189,18 @@ mod test {
                     "key,subkey=3",
                 ),
                 format!("NOT ({} #>> '{{key,subkey}}')::numeric > ?", field),
+                SQLValue::Integer(3),
             ),
         ];
 
-        for (param, expected) in test_cases {
+        for (param, expected, sqlvalue) in test_cases {
             let result = param.as_json_sql();
             assert_eq!(
-                result.unwrap().sql,
-                expected.to_string(),
+                result.unwrap(),
+                SQLComponent {
+                    sql: expected.to_string(),
+                    bind_variables: vec![sqlvalue]
+                },
                 "Failed test case for param: {:?}",
                 param,
             );
