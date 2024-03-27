@@ -78,7 +78,7 @@ impl CustomStringExtensions for str {
     fn replace_question_mark_with_indexed_n(&self) -> String {
         let mut n = 1;
         let mut result = self.to_string();
-        while let Some(pos) = result.find("?") {
+        while let Some(pos) = result.find('?') {
             // Replace '?' with '$n'
             result.replace_range(pos..pos + 1, &format!("${}", n));
             n += 1;
@@ -112,7 +112,7 @@ impl CustomStringExtensions for str {
     }
 
     fn as_integer(&self) -> Result<Vec<i32>, ApiError> {
-        parse_integer_list(&self)
+        parse_integer_list(self)
     }
 
     fn as_boolean(&self) -> Result<bool, ApiError> {
