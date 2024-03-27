@@ -1,5 +1,5 @@
 use diesel::sql_types::Integer;
-use diesel::{debug_query, pg::Pg, ExpressionMethods, JoinOnDsl, QueryDsl, RunQueryDsl, Table};
+use diesel::{pg::Pg, ExpressionMethods, JoinOnDsl, QueryDsl, RunQueryDsl, Table};
 
 use crate::api::v1::handlers::namespaces;
 use crate::models::search::SearchOperator;
@@ -13,6 +13,7 @@ use crate::traits::{ClassAccessors, NamespaceAccessors, SelfAccessors};
 
 use crate::db::DbPool;
 use crate::errors::ApiError;
+use crate::utilities::extensions::CustomStringExtensions;
 
 use futures::future::try_join_all;
 use tracing::debug;
@@ -240,7 +241,7 @@ pub trait GroupAccessors: SelfAccessors<User> {
         json_schema_query_params: Vec<&ParsedQueryParam>,
     ) -> Result<Vec<i32>, ApiError> {
         use crate::models::class::ClassIdResult;
-        use crate::models::search::Operator;
+        use crate::models::search::{Operator, SQLValue};
 
         if json_schema_query_params.is_empty() {
             return Err(ApiError::BadRequest(
@@ -250,21 +251,37 @@ pub trait GroupAccessors: SelfAccessors<User> {
 
         let raw_sql_prefix = "select id from hubuumclass where";
         let mut raw_sql_clauses: Vec<String> = vec![];
+        let mut bind_varaibles: Vec<SQLValue> = vec![];
 
         for param in json_schema_query_params {
             let clause = param.as_json_sql()?;
             debug!(message = "JSON Schema subquery", stage = "Clause", clause = ?clause);
-            raw_sql_clauses.push(clause);
+            raw_sql_clauses.push(clause.sql);
+            bind_varaibles.extend(clause.bind_variables);
         }
 
-        let raw_sql = format!("{} {}", raw_sql_prefix, raw_sql_clauses.join(" and "));
+        let raw_sql = format!("{} {}", raw_sql_prefix, raw_sql_clauses.join(" and "))
+            .replace_question_mark_with_indexed_n();
 
-        debug!(message = "JSON Schema subquery", stage = "Complete", raw_sql = ?raw_sql);
+        debug!(message = "JSON Schema subquery", stage = "Complete", raw_sql = ?raw_sql, bind_variables = ?bind_varaibles);
 
         let mut connection = pool.get()?;
 
-        let result_ids =
-            diesel::sql_query(raw_sql).get_results::<ClassIdResult>(&mut connection)?;
+        let mut query = diesel::sql_query(raw_sql).into_boxed();
+
+        for bind_var in bind_varaibles {
+            match bind_var {
+                SQLValue::Integer(i) => query = query.bind::<diesel::sql_types::Integer, _>(i),
+                SQLValue::String(s) => query = query.bind::<diesel::sql_types::Text, _>(s),
+                SQLValue::Boolean(b) => query = query.bind::<diesel::sql_types::Bool, _>(b),
+                SQLValue::Float(f) => query = query.bind::<diesel::sql_types::Float8, _>(f),
+                SQLValue::Date(d) => query = query.bind::<diesel::sql_types::Timestamp, _>(d),
+            }
+        }
+
+        trace_query!(query, "JSONB Schema subquery");
+
+        let result_ids = query.get_results::<ClassIdResult>(&mut connection)?;
         let ids: Vec<i32> = result_ids
             .into_iter()
             .map(|r: ClassIdResult| r.id)

@@ -2,7 +2,7 @@
 use actix_web::web::Json;
 use diesel::sql_types::Bool;
 use std::{collections::HashSet, f32::consts::E};
-use tracing::field;
+use tracing::debug;
 
 use crate::models::permissions::Permissions;
 use crate::utilities::extensions::CustomStringExtensions;
@@ -62,13 +62,6 @@ pub fn parse_query_parameter(query_string: &str) -> Result<Vec<ParsedQueryParam>
     Ok(parsed_query_params)
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub struct SQLComponent {
-    pub sql: String,
-    pub value: String,
-    pub mapped_type: SQLMappedType,
-}
-
 /// ## A struct that represents a parsed query parameter
 ///  
 /// This struct holds a field, operator, and values for a search.
@@ -86,6 +79,35 @@ pub struct ParsedQueryParam {
     pub field: String,
     pub operator: SearchOperator,
     pub value: String,
+}
+
+/// ## A struct that represents a SQL query component.
+///
+/// This struct holds a SQL query and a list of bind variables. The SQL query is a string that
+/// represents a part of a SQL query, and the bind variables are the values that should be bound to
+/// the query when it is executed. Note that the place holders used are ?, which is not what you want
+/// for sql_query in diesel (you need $1, $2, etc.). But, as we don't know what part we are in the final
+/// query, we don't know our indexes, so this needs replacing later.
+///
+/// replace_question_mark_with_indexed_n does this on &str and string via
+/// crate::utilities::extensions::CustomStringExtensions.
+#[derive(Debug, Clone)]
+pub struct SQLComponent {
+    pub sql: String,
+    pub bind_variables: Vec<SQLValue>,
+}
+
+/// ## An sql value for bind variables
+///
+/// This enum represents the different types of values that can be bound to a SQL query. The types
+/// are defined as we need to bind the correct type in Diesel.
+#[derive(Debug, Clone)]
+pub enum SQLValue {
+    String(String),
+    Float(f64),
+    Integer(i32),
+    Date(NaiveDateTime),
+    Boolean(bool),
 }
 
 impl ParsedQueryParam {
@@ -177,7 +199,28 @@ impl ParsedQueryParam {
         self.value.as_boolean()
     }
 
-    pub fn as_json_sql(&self) -> Result<String, ApiError> {
+    /// ## Coerce the entire ParsedQueryParam into a JSONB SQLComponent
+    ///
+    /// This is creates a JSONB SQLComponent from a ParsedQueryParam.
+    ///
+    /// ### Constraints on the ParseQueryParam
+    ///
+    /// * The field must be a JSONB field (see `is_json`).
+    /// * The value must be a key=value pair. The key is the JSONB
+    ///   key to search in and the value is the value to search for.
+    ///
+    /// The operator is used to determine the type of search to perform. In the future we
+    /// may also use the schema to determine the type of the value.
+    ///
+    /// Note that the key is not validated against the schema, this is something that may be
+    /// added in the future. Right now, having a typo in the key will just result in no matches.
+    ///
+    /// ### Returns
+    ///
+    /// * A SQLComponent or:
+    ///   * ApiError::InternalServerError if the field is not JSONB
+    ///   * ApiError::BadRequest if the value is not a key=value pair
+    pub fn as_json_sql(&self) -> Result<SQLComponent, ApiError> {
         use diesel::dsl::sql;
         use diesel::expression::AsExpression;
         use diesel::prelude::*;
@@ -190,9 +233,8 @@ impl ParsedQueryParam {
             )));
         }
 
-        // TODO: Avoid SQL injections by validating the key and value
-        // TODO: Since we have a schema, we have typing info, so we can also validate
-        //       the value and the operator against the defined type in the schema
+        // TODO: Since we may have a schema, we may have typing info, so we can also
+        // validatethe value and the operator against the defined type in the schema.
 
         let field = self.field.clone();
 
@@ -216,18 +258,24 @@ impl ParsedQueryParam {
             )));
         }
 
-        // Validate the value
+        // Validate the value, no longer needed as we're using bind variables
+        /*
         if !value.is_valid_jsonb_search_value() {
             return Err(ApiError::BadRequest(format!(
                 "Invalid JSON search value: '{}'",
                 value
             )));
         }
+        */
+
+        let key = format!("'{{{}}}'", key);
+
+        // The bind variables for the SQL query. We can't bind the key as using
+        // bind variables for the key itself is not supported in Postgres.
+        let mut bind_variables = vec![];
 
         // TODO: Optionally validate that the keys exist:
         // https://github.com/terjekv/hubuum_rust/issues/4
-
-        let key = format!("'{{{}}}'", key);
 
         let (op, neg) = self.operator.op_and_neg();
         let neg_str = if neg { "NOT " } else { "" };
@@ -236,20 +284,6 @@ impl ParsedQueryParam {
 
         // TODO: Add JSON Schema usage type support via
         // get_jsonb_field_type_from_json_schema(schema, key)
-        let search_key = match sql_type {
-            None => {
-                return Err(ApiError::BadRequest(format!(
-                    "Invalid JSON type mapping between key '{}' and operator '{:?}'",
-                    key, self.operator
-                )))
-            }
-            Some(SQLMappedType::String) | Some(SQLMappedType::None) => {
-                format!("{} #>> {}", field, key)
-            }
-            Some(SQLMappedType::Numeric) => format!("({} #>> {})::numeric", field, key),
-            Some(SQLMappedType::Date) => format!("({} #>> {})::date", field, key),
-            Some(SQLMappedType::Boolean) => format!("({} #>> {})::boolean", field, key),
-        };
 
         let (sql_op, value) = match op {
             Operator::Equals => ("=", (*value).to_string()),
@@ -274,20 +308,40 @@ impl ParsedQueryParam {
             }
         };
 
-        if sql_type.is_some() {
-            let sql_type = sql_type.unwrap();
-            if sql_type == SQLMappedType::String || sql_type == SQLMappedType::Date {
-                return Ok(format!("{}{} {} '{}'", neg_str, search_key, sql_op, value));
+        let sql = match sql_type {
+            None => {
+                return Err(ApiError::BadRequest(format!(
+                    "Invalid JSON type mapping between key '{}' and operator '{:?}'",
+                    key, self.operator
+                )))
             }
-        }
+            Some(SQLMappedType::String) | Some(SQLMappedType::None) => {
+                bind_variables.push(SQLValue::String(value));
+                format!("{}{} #>> {} {} ?", neg_str, field, key, sql_op)
+            }
+            Some(SQLMappedType::Numeric) => {
+                let ints = value.as_integer()?;
+                bind_variables.push(SQLValue::Integer(ints[0]));
+                format!("{}({} #>> {})::numeric {} ?", neg_str, field, key, sql_op)
+            }
+            Some(SQLMappedType::Date) => {
+                let dates = value.as_date()?;
+                bind_variables.push(SQLValue::Date(dates[0]));
+                format!("{}({} #>> {})::date {} ?", neg_str, field, key, sql_op)
+            }
+            Some(SQLMappedType::Boolean) => {
+                let boolean = value.as_boolean()?;
+                bind_variables.push(SQLValue::Boolean(boolean));
+                format!("{}({} #>> {})::boolean {} ?", neg_str, field, key, sql_op)
+            }
+        };
 
-        Ok(format!("{}{} {} {}", neg_str, search_key, sql_op, value))
+        debug!(message = "SQL JSONB generation", sql = %sql, bind_varaibles = ?bind_variables);
 
-        //        Ok(SQLComponent {
-        //            sql: format!("{}{} {} ?", neg_str, search_key, sql_op),
-        //            value,
-        //            mapped_type: sql_type.unwrap(), // Safe to unwrap, we checked for None above
-        //        })
+        Ok(SQLComponent {
+            sql,
+            bind_variables,
+        })
     }
 }
 
@@ -1022,7 +1076,7 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key=foo",
                 ),
-                format!("{} #>> '{{key}}' = 'foo'", field),
+                format!("{} #>> '{{key}}' = ?", field),
             ),
             (
                 pq(
@@ -1030,7 +1084,7 @@ mod test {
                     SearchOperator::IEquals { is_negated: true },
                     "key=foo",
                 ),
-                format!("NOT {} #>> '{{key}}' ILIKE 'foo'", field),
+                format!("NOT {} #>> '{{key}}' ILIKE ?", field),
             ),
             (
                 pq(
@@ -1038,15 +1092,15 @@ mod test {
                     SearchOperator::Gt { is_negated: false },
                     "key,subkey=3",
                 ),
-                format!("({} #>> '{{key,subkey}}')::numeric > 3", field),
+                format!("({} #>> '{{key,subkey}}')::numeric > ?", field),
             ),
         ];
 
         for (param, expected) in test_cases {
             let result = param.as_json_sql();
             assert_eq!(
-                result,
-                Ok(expected.to_string()),
+                result.unwrap().sql,
+                expected.to_string(),
                 "Failed test case for param: {:?}",
                 param,
             );
@@ -1063,7 +1117,7 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key=2021-01-01",
                 ),
-                format!("({} #>> '{{key}}')::date = '2021-01-01'", field),
+                format!("({} #>> '{{key}}')::date = ?", field),
             ),
             (
                 pq(
@@ -1071,7 +1125,7 @@ mod test {
                     SearchOperator::Gt { is_negated: false },
                     "key,subkey=2021-01-01",
                 ),
-                format!("({} #>> '{{key,subkey}}')::date > '2021-01-01'", field),
+                format!("({} #>> '{{key,subkey}}')::date > ?", field),
             ),
             (
                 pq(
@@ -1079,15 +1133,15 @@ mod test {
                     SearchOperator::Gt { is_negated: true },
                     "key,subkey=2021-01-01",
                 ),
-                format!("NOT ({} #>> '{{key,subkey}}')::date > '2021-01-01'", field),
+                format!("NOT ({} #>> '{{key,subkey}}')::date > ?", field),
             ),
         ];
 
         for (param, expected) in test_cases {
             let result = param.as_json_sql();
             assert_eq!(
-                result,
-                Ok(expected.to_string()),
+                result.unwrap().sql,
+                expected.to_string(),
                 "Failed test case for param: {:?}",
                 param,
             );
@@ -1104,7 +1158,7 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key=3",
                 ),
-                format!("({} #>> '{{key}}')::numeric = 3", field),
+                format!("({} #>> '{{key}}')::numeric = ?", field),
             ),
             (
                 pq(
@@ -1112,7 +1166,7 @@ mod test {
                     SearchOperator::Gt { is_negated: false },
                     "key,subkey=3",
                 ),
-                format!("({} #>> '{{key,subkey}}')::numeric > 3", field),
+                format!("({} #>> '{{key,subkey}}')::numeric > ?", field),
             ),
             (
                 pq(
@@ -1120,15 +1174,15 @@ mod test {
                     SearchOperator::Gt { is_negated: true },
                     "key,subkey=3",
                 ),
-                format!("NOT ({} #>> '{{key,subkey}}')::numeric > 3", field),
+                format!("NOT ({} #>> '{{key,subkey}}')::numeric > ?", field),
             ),
         ];
 
         for (param, expected) in test_cases {
             let result = param.as_json_sql();
             assert_eq!(
-                result,
-                Ok(expected.to_string()),
+                result.unwrap().sql,
+                expected.to_string(),
                 "Failed test case for param: {:?}",
                 param,
             );
@@ -1145,7 +1199,7 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key,subkey=3",
                 ),
-                format!("({} #>> '{{key,subkey}}')::numeric = 3", field),
+                format!("({} #>> '{{key,subkey}}')::numeric = ?", field),
             ),
             (
                 pq(
@@ -1153,7 +1207,7 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key,subkey,subsubkey=3",
                 ),
-                format!("({} #>> '{{key,subkey,subsubkey}}')::numeric = 3", field),
+                format!("({} #>> '{{key,subkey,subsubkey}}')::numeric = ?", field),
             ),
             (
                 pq(
@@ -1162,7 +1216,7 @@ mod test {
                     "key,subkey,subsubkey,subsubsubkey=3",
                 ),
                 format!(
-                    "NOT ({} #>> '{{key,subkey,subsubkey,subsubsubkey}}')::numeric = 3",
+                    "NOT ({} #>> '{{key,subkey,subsubkey,subsubsubkey}}')::numeric = ?",
                     field
                 ),
             ),
@@ -1171,8 +1225,8 @@ mod test {
         for (param, expected) in test_cases {
             let result = param.as_json_sql();
             assert_eq!(
-                result,
-                Ok(expected.to_string()),
+                result.unwrap().sql,
+                expected.to_string(),
                 "Failed test case for param: {:?}",
                 param,
             );

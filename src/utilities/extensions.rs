@@ -1,6 +1,6 @@
 use crate::errors::ApiError;
 use crate::models::permissions::Permissions;
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 
 pub trait CustomStringExtensions {
     /// ## Check if the value is a valid json key for hubuum
@@ -62,10 +62,30 @@ pub trait CustomStringExtensions {
     ///
     /// * A vector of integers or ApiError::BadRequest if the value is invalid
     fn as_integer(&self) -> Result<Vec<i32>, ApiError>;
+
+    /// ## Replace ? with $n in a string
+    ///
+    /// This is used to replace the ? placeholders in a query with the $n placeholders
+    ///
+    /// ### Returns
+    ///
+    /// * A string with the ? placeholders replaced with $n
+    fn replace_question_mark_with_indexed_n(&self) -> String;
 }
 
 // Implement the trait for the `str` type
 impl CustomStringExtensions for str {
+    fn replace_question_mark_with_indexed_n(&self) -> String {
+        let mut n = 1;
+        let mut result = self.to_string();
+        while let Some(pos) = result.find("?") {
+            // Replace '?' with '$n'
+            result.replace_range(pos..pos + 1, &format!("${}", n));
+            n += 1;
+        }
+        result
+    }
+
     fn is_valid_jsonb_search_key(&self) -> bool {
         self.chars()
             .all(|c| c.is_alphanumeric() || c == '_' || c == ',' || c == '$')
@@ -106,6 +126,7 @@ impl CustomStringExtensions for str {
         }
     }
 
+    /*
     fn as_date(&self) -> Result<Vec<NaiveDateTime>, ApiError> {
         self.split(',')
             .map(|part| part.trim())
@@ -117,6 +138,23 @@ impl CustomStringExtensions for str {
             })
             .collect()
     }
+    */
+
+    fn as_date(&self) -> Result<Vec<NaiveDateTime>, ApiError> {
+        self.split(',')
+            .map(|part| part.trim())
+            .map(|part| {
+                DateTime::parse_from_rfc3339(part)
+                    .map(|dt| dt.with_timezone(&Utc).naive_utc())
+                    .or_else(|_| {
+                        NaiveDate::parse_from_str(part, "%Y-%m-%d")
+                            .map(|date| date.and_hms_opt(0, 0, 0).unwrap())
+                            .map_err(Into::<ApiError>::into)
+                    })
+                    .map_err(Into::<ApiError>::into)
+            })
+            .collect()
+    }
 
     fn as_permission(&self) -> Result<Permissions, ApiError> {
         Permissions::from_string(self)
@@ -125,6 +163,10 @@ impl CustomStringExtensions for str {
 
 // Also implement the trait for the `String` type
 impl CustomStringExtensions for String {
+    fn replace_question_mark_with_indexed_n(&self) -> String {
+        self.as_str().replace_question_mark_with_indexed_n()
+    }
+
     fn is_valid_jsonb_search_key(&self) -> bool {
         self.as_str().is_valid_jsonb_search_key()
     }
