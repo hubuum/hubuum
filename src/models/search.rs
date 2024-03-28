@@ -48,12 +48,10 @@ pub fn parse_query_parameter(query_string: &str) -> Result<Vec<ParsedQueryParam>
         }
 
         let operator = if field_and_op.len() == 1 {
-            "equals"
+            SearchOperator::new_from_string("equals")?
         } else {
-            field_and_op[1]
+            SearchOperator::new_from_string(field_and_op[1])?
         };
-
-        let operator = SearchOperator::new_from_string(operator)?;
 
         let parsed_query_param = ParsedQueryParam {
             field,
