@@ -21,6 +21,11 @@ use chrono::{format, DateTime, NaiveDateTime, Utc};
 pub fn parse_query_parameter(query_string: &str) -> Result<Vec<ParsedQueryParam>, ApiError> {
     let mut parsed_query_params = Vec::new();
 
+    // Return empty if the query string is empty
+    if query_string.is_empty() {
+        return Ok(parsed_query_params);
+    }
+
     for query_param in query_string.split('&') {
         let query_param_parts: Vec<&str> = query_param.splitn(2, '=').collect();
 

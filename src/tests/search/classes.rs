@@ -5,6 +5,7 @@ mod test {
     use crate::models::group::GroupID;
     use crate::models::search::{ParsedQueryParam, SearchOperator};
     use crate::models::{HubuumClass, Namespace, NewNamespace};
+    use crate::tests::constants::{get_schema, SchemaType};
     use crate::tests::{ensure_admin_group, ensure_admin_user, setup_pool_and_tokens};
     use crate::traits::{CanDelete, CanSave, SearchClasses};
 
@@ -38,96 +39,9 @@ mod test {
             );
         }
 
-        let blog_schema = serde_json::json!(
-        {
-            "$id": "https://example.com/blog-post.schema.json",
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "description": "A representation of a blog post",
-            "type": "object",
-            "required": ["title", "content", "author"],
-            "properties": {
-              "title": {
-                "type": "string"
-              },
-              "content": {
-                "type": "string"
-              },
-              "publishedDate": {
-                "type": "string",
-                "format": "date-time"
-              },
-              "author": {
-                "$ref": "https://example.com/user-profile.schema.json"
-              },
-              "tags": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              }
-            }
-        });
-
-        let address_schema = serde_json::json!(
-            {
-                "$id": "https://example.com/address.schema.json",
-                "$schema": "https://json-schema.org/draft/2020-12/schema",
-                "description": "An address similar to http://microformats.org/wiki/h-card",
-                "type": "object",
-                "properties": {
-                  "postOfficeBox": {
-                    "type": "string"
-                  },
-                  "extendedAddress": {
-                    "type": "string"
-                  },
-                  "streetAddress": {
-                    "type": "string"
-                  },
-                  "locality": {
-                    "type": "string"
-                  },
-                  "region": {
-                    "type": "string"
-                  },
-                  "postalCode": {
-                    "type": "string"
-                  },
-                  "countryName": {
-                    "type": "string"
-                  }
-                },
-                "required": [ "locality", "region", "countryName" ],
-                "dependentRequired": {
-                  "postOfficeBox": [ "streetAddress" ],
-                  "extendedAddress": [ "streetAddress" ]
-                }
-              }
-        );
-
-        let geo_schema = serde_json::json!(
-            {
-                "$id": "https://example.com/geographical-location.schema.json",
-                "$schema": "https://json-schema.org/draft/2020-12/schema",
-                "title": "Geographical Location",
-                "description": "A geographical location",
-                "required": [ "latitude", "longitude" ],
-                "type": "object",
-                "properties": {
-                  "latitude": {
-                    "type": "number",
-                    "minimum": -90,
-                    "maximum": 90
-                  },
-                  "longitude": {
-                    "type": "number",
-                    "minimum": -180,
-                    "maximum": 180
-                  }
-                },
-                "required": [ "latitude", "longitude" ]
-              }
-        );
+        let blog_schema = get_schema(SchemaType::Blog);
+        let address_schema = get_schema(SchemaType::Address);
+        let geo_schema = get_schema(SchemaType::Geo);
 
         for i in 0..10 {
             let padded_i = format!("{:02}", i);
