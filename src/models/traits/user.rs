@@ -155,7 +155,7 @@ pub trait SearchClasses: SelfAccessors<User> + GroupAccessors + UserNamespaceAcc
                 "permission" => {}  // Handled above
                 _ => {
                     return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't searchable (or does not exist)",
+                        "Field '{}' isn't searchable (or does not exist) for classes",
                         field
                     )))
                 }

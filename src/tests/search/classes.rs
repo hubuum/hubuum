@@ -236,18 +236,24 @@ mod test {
         cleanup(namespaces).await;
     }
 
-    // TODO: Due to async tests, this can potentially fail as the order of the namespaces is not guaranteed.
     #[actix_rt::test]
     async fn test_search_int_ranges() {
         let (namespaces, _) = setup_test_structure("test_user_class_int_ranges").await;
 
         let testcases = vec![
             TestCase {
-                query: vec![ParsedQueryParam::new(
-                    "namespaces",
-                    Some(SearchOperator::Equals { is_negated: false }),
-                    format!("{}-{}", namespaces[1].id, namespaces[2].id).as_str(),
-                )],
+                query: vec![
+                    ParsedQueryParam::new(
+                        "namespaces",
+                        Some(SearchOperator::Equals { is_negated: false }),
+                        format!("{}-{}", namespaces[1].id, namespaces[2].id).as_str(),
+                    ),
+                    ParsedQueryParam::new(
+                        "name",
+                        Some(SearchOperator::Contains { is_negated: false }),
+                        "class_int_ranges",
+                    ),
+                ],
                 expected: 4,
             },
             TestCase {
