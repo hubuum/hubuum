@@ -919,6 +919,18 @@ mod test {
     }
 
     #[test]
+    fn test_empty_query_string_returns_empty_vec() {
+        let result = parse_query_parameter("");
+        assert_eq!(result, Ok(vec![]));
+    }
+
+    #[test]
+    fn test_query_string_without_equal_sign_returns_error() {
+        let result = parse_query_parameter("name");
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_parse_integer_list_single() {
         let test_cases = vec![
             ("1", vec![1]),

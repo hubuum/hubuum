@@ -236,6 +236,7 @@ mod test {
         cleanup(namespaces).await;
     }
 
+    // TODO: Due to async tests, this can potentially fail as the order of the namespaces is not guaranteed.
     #[actix_rt::test]
     async fn test_search_int_ranges() {
         let (namespaces, _) = setup_test_structure("test_user_class_int_ranges").await;
