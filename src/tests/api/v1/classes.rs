@@ -1,14 +1,14 @@
 #[cfg(test)]
 mod tests {
-    use crate::models::class::NewHubuumClass;
+    use crate::models::class::{HubuumClass, NewHubuumClass};
     use crate::traits::CanSave;
     use actix_web::{http, test};
 
-    use crate::assert_contains_all;
     use crate::tests::api_operations::get_request;
     use crate::tests::asserts::assert_response_status;
     use crate::tests::constants::{get_schema, SchemaType};
     use crate::tests::{create_namespace, setup_pool_and_tokens};
+    use crate::{assert_contains_all, assert_contains_same_ids};
 
     const CLASSES_ENDPOINT: &str = "/api/v1/classes";
 
@@ -21,7 +21,7 @@ mod tests {
 
         let mut created_classes = vec![];
 
-        for i in 0..4 {
+        for i in 0..5 {
             let schema = if i == 4 {
                 get_schema(SchemaType::Geo).clone()
             } else if i > 2 {
@@ -43,6 +43,20 @@ mod tests {
         created_classes
     }
 
+    async fn api_get_classes_with_query_string(query_string: &str) -> Vec<HubuumClass> {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{}?{}", CLASSES_ENDPOINT, query_string),
+        )
+        .await;
+
+        let resp = assert_response_status(resp, http::StatusCode::OK).await;
+        let classes: Vec<HubuumClass> = test::read_body_json(resp).await;
+        classes
+    }
+
     #[actix_web::test]
     async fn test_api_classes_get() {
         let created_classes = create_test_classes("get").await;
@@ -52,7 +66,7 @@ mod tests {
         let resp = get_request(&pool, &admin_token, CLASSES_ENDPOINT).await;
 
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
-        let classes: Vec<crate::models::class::HubuumClass> = test::read_body_json(resp).await;
+        let classes: Vec<HubuumClass> = test::read_body_json(resp).await;
 
         // We can't do
         // assert_eq!(classes.len(), created_classes.len());
@@ -61,23 +75,19 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn test_api_classes_get_filtered() {
-        let created_classes = create_test_classes("get_filtered").await;
-
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-
+    async fn test_api_classes_get_filtered_name_equals() {
+        let created_classes = create_test_classes("get_filtered_name_equals").await;
         let query_string = format!("name={}", created_classes[0].name);
-        let resp = get_request(
-            &pool,
-            &admin_token,
-            &format!("{}?{}", CLASSES_ENDPOINT, query_string),
-        )
-        .await;
-
-        let resp = assert_response_status(resp, http::StatusCode::OK).await;
-        let classes: Vec<crate::models::class::HubuumClass> = test::read_body_json(resp).await;
-
+        let classes = api_get_classes_with_query_string(&query_string).await;
         assert_eq!(classes.len(), 1);
         assert_eq!(classes[0].name, created_classes[0].name);
+    }
+
+    #[actix_web::test]
+    async fn test_api_classes_get_filtered_name_contains() {
+        let created_classes = create_test_classes("get_filtered_name_contains").await;
+        let query_string = "name__contains=get_filtered_name_contains";
+        let classes = api_get_classes_with_query_string(&query_string).await;
+        assert_contains_same_ids!(&classes, &created_classes);
     }
 }
