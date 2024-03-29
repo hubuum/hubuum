@@ -90,4 +90,29 @@ mod tests {
         let classes = api_get_classes_with_query_string(&query_string).await;
         assert_contains_same_ids!(&classes, &created_classes);
     }
+
+    #[actix_web::test]
+    async fn test_api_classes_get_filtered_description_contains() {
+        let created_classes = create_test_classes("get_filtered_description_contains").await;
+        let query_string = "description__contains=get_filtered_description_contains";
+        let classes = api_get_classes_with_query_string(&query_string).await;
+        assert_contains_same_ids!(&classes, &created_classes);
+    }
+
+    #[actix_web::test]
+    async fn test_api_classes_get_filtered_description_and_not_name_contains() {
+        create_test_classes("get_filtered_description_and_not_name_contains").await;
+        let query_string =
+            "description__contains=get_filtered_description_and_not_name_contains&name__not_contains=1";
+        let classes = api_get_classes_with_query_string(&query_string).await;
+        assert_eq!(classes.len(), 4);
+    }
+
+    #[actix_web::test]
+    async fn test_api_classes_get_filtered_namespaces_equals() {
+        let created_classes = create_test_classes("get_filtered_namespaces_equals").await;
+        let query_string = format!("namespaces={}", created_classes[0].namespace_id);
+        let classes = api_get_classes_with_query_string(&query_string).await;
+        assert_contains_same_ids!(&classes, &created_classes);
+    }
 }
