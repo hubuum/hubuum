@@ -73,11 +73,14 @@ pub trait CustomStringExtensions {
     fn replace_question_mark_with_indexed_n(&self) -> String;
 }
 
-// Implement the trait for the `str` type
-impl CustomStringExtensions for str {
+impl<T: AsRef<str>> CustomStringExtensions for T {
+    fn as_permission(&self) -> Result<Permissions, ApiError> {
+        Permissions::from_string(self.as_ref())
+    }
+
     fn replace_question_mark_with_indexed_n(&self) -> String {
         let mut n = 1;
-        let mut result = self.to_string();
+        let mut result = self.as_ref().to_string();
         while let Some(pos) = result.find('?') {
             // Replace '?' with '$n'
             result.replace_range(pos..pos + 1, &format!("${}", n));
@@ -87,12 +90,13 @@ impl CustomStringExtensions for str {
     }
 
     fn is_valid_jsonb_search_key(&self) -> bool {
-        self.chars()
+        self.as_ref()
+            .chars()
             .all(|c| c.is_alphanumeric() || c == '_' || c == ',' || c == '$')
     }
 
     fn is_valid_jsonb_search_value(&self) -> bool {
-        self.chars().all(|c| {
+        self.as_ref().chars().all(|c| {
             c.is_alphanumeric()
                 || c.is_whitespace()
                 || c == '_'
@@ -112,16 +116,16 @@ impl CustomStringExtensions for str {
     }
 
     fn as_integer(&self) -> Result<Vec<i32>, ApiError> {
-        parse_integer_list(self)
+        parse_integer_list(self.as_ref())
     }
 
     fn as_boolean(&self) -> Result<bool, ApiError> {
-        match self.to_lowercase().as_str() {
+        match self.as_ref().to_lowercase().as_str() {
             "true" => Ok(true),
             "false" => Ok(false),
             _ => Err(ApiError::BadRequest(format!(
                 "Invalid boolean value: '{}'",
-                self
+                self.as_ref()
             ))),
         }
     }
@@ -141,7 +145,8 @@ impl CustomStringExtensions for str {
     */
 
     fn as_date(&self) -> Result<Vec<NaiveDateTime>, ApiError> {
-        self.split(',')
+        self.as_ref()
+            .split(',')
             .map(|part| part.trim())
             .map(|part| {
                 DateTime::parse_from_rfc3339(part)
@@ -154,41 +159,6 @@ impl CustomStringExtensions for str {
                     .map_err(Into::<ApiError>::into)
             })
             .collect()
-    }
-
-    fn as_permission(&self) -> Result<Permissions, ApiError> {
-        Permissions::from_string(self)
-    }
-}
-
-// Also implement the trait for the `String` type
-impl CustomStringExtensions for String {
-    fn replace_question_mark_with_indexed_n(&self) -> String {
-        self.as_str().replace_question_mark_with_indexed_n()
-    }
-
-    fn is_valid_jsonb_search_key(&self) -> bool {
-        self.as_str().is_valid_jsonb_search_key()
-    }
-
-    fn is_valid_jsonb_search_value(&self) -> bool {
-        self.as_str().is_valid_jsonb_search_value()
-    }
-
-    fn as_integer(&self) -> Result<Vec<i32>, ApiError> {
-        self.as_str().as_integer()
-    }
-
-    fn as_boolean(&self) -> Result<bool, ApiError> {
-        self.as_str().as_boolean()
-    }
-
-    fn as_date(&self) -> Result<Vec<NaiveDateTime>, ApiError> {
-        self.as_str().as_date()
-    }
-
-    fn as_permission(&self) -> Result<Permissions, ApiError> {
-        self.as_str().as_permission()
     }
 }
 
