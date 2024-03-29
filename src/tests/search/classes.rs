@@ -251,49 +251,77 @@ mod test {
                     ParsedQueryParam::new(
                         "name",
                         Some(SearchOperator::Contains { is_negated: false }),
-                        "class_int_ranges",
+                        "test_user_class_int_ranges",
                     ),
                 ],
                 expected: 4,
             },
             TestCase {
-                query: vec![ParsedQueryParam::new(
-                    "namespaces",
-                    Some(SearchOperator::Equals { is_negated: false }),
-                    format!("{},{}", namespaces[0].id, namespaces[2].id).as_str(),
-                )],
+                query: vec![
+                    ParsedQueryParam::new(
+                        "namespaces",
+                        Some(SearchOperator::Equals { is_negated: false }),
+                        format!("{},{}", namespaces[0].id, namespaces[2].id).as_str(),
+                    ),
+                    ParsedQueryParam::new(
+                        "name",
+                        Some(SearchOperator::Contains { is_negated: false }),
+                        "test_user_class_int_ranges",
+                    ),
+                ],
                 expected: 7,
             },
             TestCase {
-                query: vec![ParsedQueryParam::new(
-                    "namespaces",
-                    Some(SearchOperator::Equals { is_negated: false }),
-                    format!(
-                        "{},{},{}",
-                        namespaces[0].id, namespaces[1].id, namespaces[2].id
-                    )
-                    .as_str(),
-                )],
+                query: vec![
+                    ParsedQueryParam::new(
+                        "namespaces",
+                        Some(SearchOperator::Equals { is_negated: false }),
+                        format!(
+                            "{},{},{}",
+                            namespaces[0].id, namespaces[1].id, namespaces[2].id
+                        )
+                        .as_str(),
+                    ),
+                    ParsedQueryParam::new(
+                        "name",
+                        Some(SearchOperator::Contains { is_negated: false }),
+                        "test_user_class_int_ranges",
+                    ),
+                ],
                 expected: 10,
             },
             TestCase {
-                query: vec![ParsedQueryParam::new(
-                    "namespaces",
-                    Some(SearchOperator::Equals { is_negated: false }),
-                    format!("{}-{}", namespaces[0].id, namespaces[2].id).as_str(),
-                )],
+                query: vec![
+                    ParsedQueryParam::new(
+                        "namespaces",
+                        Some(SearchOperator::Equals { is_negated: false }),
+                        format!("{}-{}", namespaces[0].id, namespaces[2].id).as_str(),
+                    ),
+                    ParsedQueryParam::new(
+                        "name",
+                        Some(SearchOperator::Contains { is_negated: false }),
+                        "test_user_class_int_ranges",
+                    ),
+                ],
                 expected: 10,
             },
             TestCase {
-                query: vec![ParsedQueryParam::new(
-                    "namespaces",
-                    Some(SearchOperator::Equals { is_negated: false }),
-                    format!(
-                        "{}-{},{}",
-                        namespaces[0].id, namespaces[1].id, namespaces[2].id
-                    )
-                    .as_str(),
-                )],
+                query: vec![
+                    ParsedQueryParam::new(
+                        "namespaces",
+                        Some(SearchOperator::Equals { is_negated: false }),
+                        format!(
+                            "{}-{},{}",
+                            namespaces[0].id, namespaces[1].id, namespaces[2].id
+                        )
+                        .as_str(),
+                    ),
+                    ParsedQueryParam::new(
+                        "name",
+                        Some(SearchOperator::Contains { is_negated: false }),
+                        "test_user_class_int_ranges",
+                    ),
+                ],
                 expected: 10,
             },
         ];
