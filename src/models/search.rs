@@ -422,7 +422,7 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
 
         for p in self.iter() {
             if p.field == "namespace" {
-                nids.extend(parse_integer_list(&p.value)?);
+                nids.extend(p.value.as_integer()?);
             }
         }
 
@@ -443,58 +443,6 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
     }
 }
 
-/// ## Parse a list of integers from a string
-///
-/// ### Arguments
-///
-/// * `input` - A string that contains a list of integers. The integers can be comma separated or
-///   ranges separated by a hyphen. For example:
-///     * "1,2,3,4"
-///     * "1-4,6-8"
-///     * "1,2,3-5,7"
-///
-/// ### Returns
-///
-/// * A sorted vector of unique integers or ApiError::InvalidIntegerRange if the input is invalid
-pub fn parse_integer_list(input: &str) -> Result<Vec<i32>, ApiError> {
-    let mut result = Vec::new();
-    for part in input.split(',') {
-        let range: Vec<&str> = part.split('-').collect();
-        match range.len() {
-            1 => {
-                let num = range[0].parse::<i32>().map_err(|_| {
-                    ApiError::InvalidIntegerRange(format!("Invalid number: '{}'", part))
-                })?;
-                result.push(num);
-            }
-            2 => {
-                let start = range[0].parse::<i32>().map_err(|_| {
-                    ApiError::InvalidIntegerRange(format!("Invalid start of range: '{}'", part))
-                })?;
-                let end = range[1].parse::<i32>().map_err(|_| {
-                    ApiError::InvalidIntegerRange(format!("Invalid end of range: '{}'", part))
-                })?;
-                if end < start {
-                    return Err(ApiError::InvalidIntegerRange(format!(
-                        "Invalid integer range, start greater than end: '{}'",
-                        part
-                    )));
-                }
-                result.extend(start..=end);
-            }
-            _ => {
-                return Err(ApiError::InvalidIntegerRange(format!(
-                    "Invalid integer range, parse error: '{}'",
-                    part
-                )))
-            }
-        }
-    }
-    result.sort_unstable();
-    result.dedup();
-
-    Ok(result)
-}
 /// Operators
 ///
 /// These are operators without metadata, just their names.
@@ -940,7 +888,7 @@ mod test {
         ];
 
         for (input, expected) in test_cases {
-            let result = parse_integer_list(input);
+            let result = input.as_integer();
             assert_eq!(
                 result,
                 Ok(expected),
@@ -960,7 +908,7 @@ mod test {
         ];
 
         for (input, expected) in test_cases {
-            let result = parse_integer_list(input);
+            let result = input.as_integer();
             assert_eq!(
                 result,
                 Ok(expected),
@@ -977,10 +925,12 @@ mod test {
             ("1-4,6-8", vec![1, 2, 3, 4, 6, 7, 8]),
             ("1,2,3-5,7", vec![1, 2, 3, 4, 5, 7]),
             ("1-4,3,3,8", vec![1, 2, 3, 4, 8]),
+            ("-4--2", vec![-4, -3, -2]),
+            ("-90", vec![-90]),
         ];
 
         for (input, expected) in test_cases {
-            let result = parse_integer_list(input);
+            let result = input.as_integer();
             assert_eq!(
                 result,
                 Ok(expected),
@@ -992,10 +942,10 @@ mod test {
 
     #[test]
     fn test_parse_integer_list_failures() {
-        let test_cases = vec!["1-", "-1", "1-2-3"];
+        let test_cases = vec!["1-", "-4--6", "1-2-3"];
 
         for input in test_cases {
-            let result = parse_integer_list(input);
+            let result = input.as_integer();
             assert!(
                 result.is_err(),
                 "Failed test case for input: {} (no error) {:?}",

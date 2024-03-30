@@ -171,46 +171,73 @@ impl<T: AsRef<str>> CustomStringExtensions for T {
 ///     * "1,2,3,4"
 ///     * "1-4,6-8"
 ///     * "1,2,3-5,7"
+///     * "-90"
+///     * "-6--2"
 ///
 /// ### Returns
 ///
 /// * A sorted vector of unique integers or ApiError::InvalidIntegerRange if the input is invalid
 pub fn parse_integer_list(input: &str) -> Result<Vec<i32>, ApiError> {
-    let mut result = Vec::new();
-    for part in input.split(',') {
-        let range: Vec<&str> = part.split('-').collect();
-        match range.len() {
-            1 => {
-                let num = range[0].parse::<i32>().map_err(|_| {
-                    ApiError::InvalidIntegerRange(format!("Invalid number: '{}'", part))
-                })?;
-                result.push(num);
+    let mut numbers = Vec::new();
+
+    // Split the input string on commas to handle individual numbers or ranges separately.
+    for segment in input.split(',') {
+        // Identify and handle ranges.
+        // For negative ranges, like "-4--2", ensure they are parsed correctly.
+        if segment.contains("--") {
+            let parts: Vec<&str> = segment.split("--").collect();
+            if parts.len() != 2 {
+                return Err(ApiError::InvalidIntegerRange(format!(
+                    "Invalid format: '{}'",
+                    segment
+                )));
             }
-            2 => {
-                let start = range[0].parse::<i32>().map_err(|_| {
-                    ApiError::InvalidIntegerRange(format!("Invalid start of range: '{}'", part))
+            let start = parts[0].parse::<i32>().map_err(|_| {
+                ApiError::InvalidIntegerRange(format!("Invalid start of range: '{}'", parts[0]))
+            })?;
+            let end = format!("-{}", parts[1]).parse::<i32>().map_err(|_| {
+                ApiError::InvalidIntegerRange(format!("Invalid end of range: '{}'", parts[1]))
+            })?;
+            if start > end {
+                return Err(ApiError::InvalidIntegerRange(format!(
+                    "Range start is greater than end: '{}'",
+                    segment
+                )));
+            }
+            numbers.extend(start..=end);
+        } else if let Some(idx) = segment.find('-') {
+            if idx == 0 {
+                // It's a negative number, not a range.
+                numbers.push(segment.parse::<i32>().map_err(|_| {
+                    ApiError::InvalidIntegerRange(format!("Invalid number: '{}'", segment))
+                })?);
+            } else {
+                // It's a positive range.
+                let (start, end) = segment.split_at(idx);
+                let end = &end[1..]; // Skip the hyphen
+                let start = start.parse::<i32>().map_err(|_| {
+                    ApiError::InvalidIntegerRange(format!("Invalid start of range: '{}'", start))
                 })?;
-                let end = range[1].parse::<i32>().map_err(|_| {
-                    ApiError::InvalidIntegerRange(format!("Invalid end of range: '{}'", part))
+                let end = end.parse::<i32>().map_err(|_| {
+                    ApiError::InvalidIntegerRange(format!("Invalid end of range: '{}'", end))
                 })?;
-                if end < start {
+                if start > end {
                     return Err(ApiError::InvalidIntegerRange(format!(
-                        "Invalid integer range, start greater than end: '{}'",
-                        part
+                        "Range start is greater than end: '{}'",
+                        segment
                     )));
                 }
-                result.extend(start..=end);
+                numbers.extend(start..=end);
             }
-            _ => {
-                return Err(ApiError::InvalidIntegerRange(format!(
-                    "Invalid integer range, parse error: '{}'",
-                    part
-                )))
-            }
+        } else {
+            // Handle a single number.
+            numbers.push(segment.parse::<i32>().map_err(|_| {
+                ApiError::InvalidIntegerRange(format!("Invalid number: '{}'", segment))
+            })?);
         }
     }
-    result.sort_unstable();
-    result.dedup();
 
-    Ok(result)
+    numbers.sort_unstable();
+    numbers.dedup();
+    Ok(numbers)
 }

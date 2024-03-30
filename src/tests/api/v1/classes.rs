@@ -21,8 +21,8 @@ mod tests {
 
         let mut created_classes = vec![];
 
-        for i in 0..5 {
-            let schema = if i == 4 {
+        for i in 1..6 {
+            let schema = if i == 5 {
                 get_schema(SchemaType::Geo).clone()
             } else if i > 2 {
                 get_schema(SchemaType::Address).clone()
@@ -114,5 +114,41 @@ mod tests {
         let query_string = format!("namespaces={}", created_classes[0].namespace_id);
         let classes = api_get_classes_with_query_string(&query_string).await;
         assert_contains_same_ids!(&classes, &created_classes);
+    }
+
+    fn combine_query_string(prefix: &String, query_string: &str) -> String {
+        format!("{}&{}", prefix, query_string)
+    }
+
+    #[actix_web::test]
+    async fn test_api_classes_get_filtered_json_schema() {
+        let prefix = "get_filtered_classes_json_schema";
+        let base_filter = format!("name__contains={}", prefix);
+        let created_classes = create_test_classes("get_filtered_classes_json_schema").await;
+        let query_string =
+            combine_query_string(&base_filter, "json_schema__contains=description=blog");
+        let classes = api_get_classes_with_query_string(&query_string).await;
+        assert_eq!(classes.len(), 2);
+        assert_contains_same_ids!(&classes, &created_classes[0..2]);
+
+        let query_string =
+            combine_query_string(&base_filter, "json_schema__not_contains=description=blog");
+        let classes = api_get_classes_with_query_string(&query_string).await;
+        assert_eq!(classes.len(), 3);
+        assert_contains_same_ids!(&classes, &created_classes[2..5]);
+
+        let query_string = combine_query_string(
+            &base_filter,
+            "json_schema__lt=properties,latitude,minimum=0",
+        );
+        let classes = api_get_classes_with_query_string(&query_string).await;
+        assert_eq!(classes.len(), 1);
+        assert_eq!(&classes[0], &created_classes[4]);
+
+        let query_string =
+            combine_query_string(&base_filter, "json_schema=properties,latitude,minimum=-90");
+        let classes = api_get_classes_with_query_string(&query_string).await;
+        assert_eq!(classes.len(), 1);
+        assert_eq!(&classes[0], &created_classes[4]);
     }
 }
