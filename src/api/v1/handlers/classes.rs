@@ -1,5 +1,6 @@
 use actix_web::{delete, HttpRequest};
-use actix_web::{get, http::StatusCode, patch, post, web, Responder};
+use actix_web::{get, http::StatusCode, patch, routes, web, Responder};
+
 use tracing::debug;
 
 use crate::check_permissions;
@@ -16,7 +17,9 @@ use crate::traits::{
 use crate::models::search::parse_query_parameter;
 
 // GET /api/v1/classes, list all classes the user may see.
+#[routes]
 #[get("")]
+#[get("/")]
 async fn get_classes(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
@@ -37,7 +40,9 @@ async fn get_classes(
     Ok(json_response(classes, StatusCode::OK))
 }
 
+#[routes]
 #[post("")]
+#[post("/")]
 async fn create_class(
     pool: web::Data<DbPool>,
     requestor: UserAccess,

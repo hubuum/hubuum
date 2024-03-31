@@ -4,11 +4,13 @@ use crate::extractors::{AdminAccess, UserAccess};
 use crate::models::group::{Group, GroupID, NewGroup, UpdateGroup};
 use crate::models::user_group::UserGroup;
 use crate::utilities::response::{json_response, json_response_created};
-use actix_web::{delete, get, http::StatusCode, patch, post, web, Responder};
+use actix_web::{delete, get, http::StatusCode, patch, post, routes, web, Responder};
 use serde_json::json;
 use tracing::debug;
 
+#[routes]
 #[get("")]
+#[get("/")]
 pub async fn get_groups(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
@@ -27,7 +29,9 @@ pub async fn get_groups(
     Ok(json_response(result, StatusCode::OK))
 }
 
+#[routes]
 #[post("")]
+#[post("/")]
 pub async fn create_group(
     pool: web::Data<DbPool>,
     new_group: web::Json<NewGroup>,

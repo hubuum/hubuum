@@ -7,7 +7,7 @@ use crate::models::{
 };
 
 use crate::utilities::response::{json_response, json_response_created};
-use actix_web::{delete, get, http::StatusCode, patch, post, web, Responder};
+use actix_web::{delete, get, http::StatusCode, patch, post, routes, web, Responder};
 use serde_json::json;
 use tracing::{debug, info};
 
@@ -15,7 +15,9 @@ use crate::check_permissions;
 
 use crate::traits::{CanDelete, CanSave, CanUpdate, PermissionController, SelfAccessors};
 
+#[routes]
 #[get("")]
+#[get("/")]
 pub async fn get_namespaces(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
@@ -29,7 +31,9 @@ pub async fn get_namespaces(
     Ok(json_response(result, StatusCode::OK))
 }
 
+#[routes]
 #[post("")]
+#[post("/")]
 pub async fn create_namespace(
     pool: web::Data<DbPool>,
     new_namespace_request: web::Json<NewNamespaceWithAssignee>,
