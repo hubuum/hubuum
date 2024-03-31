@@ -2,9 +2,9 @@
 mod tests {
     use crate::models::class::{HubuumClass, NewHubuumClass};
     use crate::traits::CanSave;
-    use actix_web::{http, test};
+    use actix_web::{http::StatusCode, test};
 
-    use crate::tests::api_operations::get_request;
+    use crate::tests::api_operations::{get_request, post_request};
     use crate::tests::asserts::assert_response_status;
     use crate::tests::constants::{get_schema, SchemaType};
     use crate::tests::{create_namespace, setup_pool_and_tokens};
@@ -52,7 +52,7 @@ mod tests {
         )
         .await;
 
-        let resp = assert_response_status(resp, http::StatusCode::OK).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
         let classes: Vec<HubuumClass> = test::read_body_json(resp).await;
         classes
     }
@@ -64,7 +64,7 @@ mod tests {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
 
         let resp = get_request(&pool, &admin_token, CLASSES_ENDPOINT).await;
-        let resp = assert_response_status(resp, http::StatusCode::OK).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
         let classes: Vec<HubuumClass> = test::read_body_json(resp).await;
 
         // We can't do
@@ -74,7 +74,7 @@ mod tests {
 
         // Check that we can do api/v1/classes/ as well as api/v1/classes
         let resp = get_request(&pool, &admin_token, &format!("{}/", CLASSES_ENDPOINT)).await;
-        let resp = assert_response_status(resp, http::StatusCode::OK).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
         let classes: Vec<HubuumClass> = test::read_body_json(resp).await;
         assert_contains_all!(&classes, &created_classes);
     }
@@ -163,5 +163,53 @@ mod tests {
         let classes = api_get_classes_with_query_string(&query_string).await;
         assert_eq!(classes.len(), 1);
         assert_eq!(&classes[0], &created_classes[5]);
+
+        let query_string =
+            combine_query_string(&base_filter, "json_schema__contains=required=region");
+        let classes = api_get_classes_with_query_string(&query_string).await;
+        assert_eq!(classes.len(), 2);
+        assert_contains_same_ids!(&classes, &created_classes[3..5]);
+    }
+
+    #[actix_web::test]
+    async fn test_api_classes_create() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+
+        let ns = create_namespace(&pool, "api_create_test_classes")
+            .await
+            .unwrap();
+
+        let new_class = NewHubuumClass {
+            name: "api_create_test_classes".to_string(),
+            description: "api_create_test_classes".to_string(),
+            namespace_id: ns.id,
+            json_schema: get_schema(SchemaType::Blog).clone(),
+            validate_schema: false,
+        };
+
+        let resp = post_request(
+            &pool,
+            &admin_token,
+            &format!("{}/", CLASSES_ENDPOINT),
+            &new_class,
+        )
+        .await;
+
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let headers = resp.headers().clone();
+        let created_class_from_create: HubuumClass = test::read_body_json(resp).await;
+        let created_class_url = headers.get("Location").unwrap().to_str().unwrap();
+
+        let resp = get_request(&pool, &admin_token, created_class_url).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let created_class: HubuumClass = test::read_body_json(resp).await;
+
+        // Validate that the location is what we expect
+        assert_eq!(
+            created_class_url,
+            &format!("{}/{}", CLASSES_ENDPOINT, created_class.id)
+        );
+
+        assert_eq!(created_class, created_class_from_create)
     }
 }

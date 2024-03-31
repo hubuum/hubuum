@@ -62,7 +62,7 @@ async fn create_class(
 
     Ok(json_response_created(
         &class,
-        format!("/api/v1/class/{}", class.id()).as_str(),
+        format!("/api/v1/classes/{}", class.id()).as_str(),
     ))
 }
 
