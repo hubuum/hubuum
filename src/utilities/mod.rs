@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod db;
+pub mod extensions;
 pub mod iam;
 pub mod init;
 pub mod response;

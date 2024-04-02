@@ -3,7 +3,7 @@ use std::{fmt, fmt::Display, slice};
 
 use serde::{Deserialize, Serialize};
 
-use crate::schema::permissions;
+use crate::{errors::ApiError, schema::permissions};
 
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
 pub enum Permissions {
@@ -21,14 +21,54 @@ pub enum Permissions {
     DeleteObject,
 }
 
+impl Permissions {
+    /// ## Convert a string to a Permissions enum.
+    ///
+    /// ### Arguments
+    ///
+    /// * `s` - A string slice to convert to a Permissions enum.
+    ///
+    /// ### Returns
+    ///
+    /// * `Result<Permissions, ApiError>` - The Permissions enum if the string is a valid permission.
+    pub fn from_string(s: &str) -> Result<Permissions, ApiError> {
+        match s {
+            "ReadCollection" => Ok(Permissions::ReadCollection),
+            "UpdateColletion" => Ok(Permissions::UpdateCollection),
+            "DeleteCollection" => Ok(Permissions::DeleteCollection),
+            "DelegateCollection" => Ok(Permissions::DelegateCollection),
+            "CreateClass" => Ok(Permissions::CreateClass),
+            "ReadClass" => Ok(Permissions::ReadClass),
+            "UpdateClass" => Ok(Permissions::UpdateClass),
+            "DeleteClass" => Ok(Permissions::DeleteClass),
+            "CreateObject" => Ok(Permissions::CreateObject),
+            "ReadObject" => Ok(Permissions::ReadObject),
+            "UpdateObject" => Ok(Permissions::UpdateObject),
+            "DeleteObject" => Ok(Permissions::DeleteObject),
+            _ => Err(ApiError::BadRequest(format!("Invalid permission: '{}'", s))),
+        }
+    }
+}
 impl Display for Permissions {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let formatted = serde_json::to_string(self)
-            .unwrap_or_else(|_| "Serialization failure".to_string())
-            .trim_matches('"')
-            .to_string();
-
-        write!(f, "{}", formatted)
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Permissions::ReadCollection => "ReadCollection",
+                Permissions::UpdateCollection => "UpdateCollection",
+                Permissions::DeleteCollection => "DeleteCollection",
+                Permissions::DelegateCollection => "DelegateCollection",
+                Permissions::CreateClass => "CreateClass",
+                Permissions::ReadClass => "ReadClass",
+                Permissions::UpdateClass => "UpdateClass",
+                Permissions::DeleteClass => "DeleteClass",
+                Permissions::CreateObject => "CreateObject",
+                Permissions::ReadObject => "ReadObject",
+                Permissions::UpdateObject => "UpdateObject",
+                Permissions::DeleteObject => "DeleteObject",
+            }
+        )
     }
 }
 
@@ -74,33 +114,63 @@ impl<'a, T: Serialize + PartialEq> IntoIterator for &'a PermissionsList<T> {
 }
 
 pub trait PermissionFilter<'a, Q> {
-    fn filter(self, query: Q) -> Q;
+    /// ## Create a boxed filter to check if a permission is set to true or false.
+    ///
+    /// ### Arguments
+    ///
+    /// * `query` - The query to add the filter to.
+    /// * `target` - The value to check for.
+    ///
+    /// ### Returns
+    ///
+    /// * `BoxedQuery` - The query with the filter added.
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use crate::models::PermissionFilter;
+    /// use crate::schema::permissions::dsl::{permissions, group_id, namespace_id};
+    ///
+    /// let permissions_list = vec![
+    ///  Permissions::ReadCollection,
+    ///  Permissions::UpdateCollection
+    /// ];
+    /// let mut base_query = permissions
+    ///   .into_boxed()
+    ///   .filter(namespace_id.eq_any(vec![1, 2, 3]))
+    ///
+    /// for perm in permissions_list {
+    ///   base_query = perm.create_boxed_filter(base_query, true);
+    /// }
+    /// ```
+    fn create_boxed_filter(self, query: Q, target: bool) -> Q;
 }
 
 impl<'a> PermissionFilter<'a, permissions::BoxedQuery<'a, diesel::pg::Pg>> for Permissions {
-    fn filter(
+    fn create_boxed_filter(
         self,
         query: permissions::BoxedQuery<diesel::pg::Pg>,
+        target: bool,
     ) -> permissions::BoxedQuery<diesel::pg::Pg> {
         match self {
-            Permissions::ReadCollection => query.filter(permissions::has_read_namespace.eq(true)),
+            Permissions::ReadCollection => query.filter(permissions::has_read_namespace.eq(target)),
             Permissions::UpdateCollection => {
-                query.filter(permissions::has_update_namespace.eq(true))
+                query.filter(permissions::has_update_namespace.eq(target))
             }
             Permissions::DeleteCollection => {
-                query.filter(permissions::has_delete_namespace.eq(true))
+                query.filter(permissions::has_delete_namespace.eq(target))
             }
             Permissions::DelegateCollection => {
-                query.filter(permissions::has_delegate_namespace.eq(true))
+                query.filter(permissions::has_delegate_namespace.eq(target))
             }
-            Permissions::CreateClass => query.filter(permissions::has_create_class.eq(true)),
-            Permissions::ReadClass => query.filter(permissions::has_read_class.eq(true)),
-            Permissions::UpdateClass => query.filter(permissions::has_update_class.eq(true)),
-            Permissions::DeleteClass => query.filter(permissions::has_delete_class.eq(true)),
-            Permissions::CreateObject => query.filter(permissions::has_create_object.eq(true)),
-            Permissions::ReadObject => query.filter(permissions::has_read_object.eq(true)),
-            Permissions::UpdateObject => query.filter(permissions::has_update_object.eq(true)),
-            Permissions::DeleteObject => query.filter(permissions::has_delete_object.eq(true)),
+            Permissions::CreateClass => query.filter(permissions::has_create_class.eq(target)),
+            Permissions::ReadClass => query.filter(permissions::has_read_class.eq(target)),
+            Permissions::UpdateClass => query.filter(permissions::has_update_class.eq(target)),
+            Permissions::DeleteClass => query.filter(permissions::has_delete_class.eq(target)),
+            Permissions::CreateObject => query.filter(permissions::has_create_object.eq(target)),
+            Permissions::ReadObject => query.filter(permissions::has_read_object.eq(target)),
+            Permissions::UpdateObject => query.filter(permissions::has_update_object.eq(target)),
+            Permissions::DeleteObject => query.filter(permissions::has_delete_object.eq(target)),
         }
     }
 }

@@ -3,11 +3,13 @@ use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, AdminOrSelfAccess, UserAccess};
 use crate::models::user::{NewUser, UpdateUser, User, UserID};
 use crate::utilities::response::{json_response, json_response_created};
-use actix_web::{delete, get, http::StatusCode, patch, post, web, Responder};
+use actix_web::{delete, get, http::StatusCode, patch, routes, web, Responder};
 use serde_json::json;
 use tracing::debug;
 
+#[routes]
 #[get("")]
+#[get("/")]
 pub async fn get_users(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
@@ -25,7 +27,9 @@ pub async fn get_users(
     Ok(json_response(result, StatusCode::OK))
 }
 
+#[routes]
 #[post("")]
+#[post("/")]
 pub async fn create_user(
     pool: web::Data<DbPool>,
     new_user: web::Json<NewUser>,
@@ -84,7 +88,7 @@ pub async fn get_user_groups(
     user_id: web::Path<UserID>,
     requestor: AdminOrSelfAccess,
 ) -> Result<impl Responder, ApiError> {
-    use crate::models::traits::user::GroupAccessors;
+    use crate::models::traits::GroupAccessors;
 
     let user = user_id.into_inner().user(&pool).await?;
     debug!(

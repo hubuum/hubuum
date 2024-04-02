@@ -6,6 +6,8 @@ pub mod acl;
 pub mod api;
 pub mod api_operations;
 pub mod asserts;
+pub mod constants;
+pub mod search;
 
 use actix_web::web;
 use diesel::prelude::*;
@@ -22,6 +24,30 @@ use crate::models::user::{NewUser, User};
 use crate::utilities::auth::generate_random_password;
 
 use crate::traits::CanSave;
+
+use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
+use std::sync::Arc;
+use tokio::runtime::Builder;
+
+lazy_static! {
+    static ref POOL: DbPool = {
+        let config = get_config_sync();
+        init_pool(&config.database_url, 20)
+    };
+}
+
+static CONFIG: Lazy<Arc<AppConfig>> = Lazy::new(|| {
+    let rt = Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to create Tokio runtime");
+    Arc::new(rt.block_on(async { get_config().await.clone() }))
+});
+
+pub fn get_config_sync() -> Arc<AppConfig> {
+    CONFIG.clone()
+}
 
 pub async fn create_user_with_params(pool: &DbPool, username: &str, password: &str) -> User {
     let result = NewUser {
@@ -165,17 +191,9 @@ pub async fn ensure_admin_group(pool: &DbPool) -> Group {
     result.unwrap()
 }
 
-pub fn get_config_sync() -> AppConfig {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("Failed to create Tokio runtime");
-    rt.block_on(async { get_config().await }).clone()
-}
-
 pub async fn get_pool_and_config() -> (DbPool, AppConfig) {
     let config = get_config().await.clone();
-    let pool = init_pool(&config.database_url, 3);
+    let pool = POOL.clone();
 
     (pool, config)
 }
@@ -207,8 +225,7 @@ pub async fn create_namespace(pool: &DbPool, ns_name: &str) -> Result<Namespace,
 /// * admin_token_string - The token for the admin user
 /// * normal_token_string - The token for the normal user
 pub async fn setup_pool_and_tokens() -> (web::Data<DbPool>, String, String) {
-    let config = get_config().await;
-    let pool = web::Data::new(init_pool(&config.database_url, 3));
+    let pool = web::Data::new(POOL.clone());
     let admin_token_string = ensure_admin_user(&pool)
         .await
         .create_token(&pool)

@@ -6,10 +6,11 @@ use diesel::result::{DatabaseErrorKind, Error as DieselError};
 use serde::Serialize;
 use serde_json::json;
 use std::fmt;
+use std::num::ParseIntError;
 
 use tracing::{debug, error};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, PartialEq)]
 pub enum ApiError {
     Unauthorized(String),
     InternalServerError(String),
@@ -20,6 +21,8 @@ pub enum ApiError {
     DbConnectionError(String),
     HashError(String),
     BadRequest(String),
+    OperatorMismatch(String),
+    InvalidIntegerRange(String),
 }
 
 impl fmt::Display for ApiError {
@@ -34,6 +37,8 @@ impl fmt::Display for ApiError {
             ApiError::DatabaseError(ref message) => write!(f, "{}", message),
             ApiError::DbConnectionError(ref message) => write!(f, "{}", message),
             ApiError::BadRequest(ref message) => write!(f, "{}", message),
+            ApiError::OperatorMismatch(ref message) => write!(f, "{}", message),
+            ApiError::InvalidIntegerRange(ref message) => write!(f, "{}", message),
         }
     }
 }
@@ -62,6 +67,10 @@ impl ResponseError for ApiError {
             }
             ApiError::BadRequest(ref message) => HttpResponse::BadRequest()
                 .json(json!({ "error": "Bad Request", "message": message })),
+            ApiError::OperatorMismatch(ref message) => HttpResponse::BadRequest()
+                .json(json!({ "error": "Operator Mismatch", "message": message })),
+            ApiError::InvalidIntegerRange(ref message) => HttpResponse::BadRequest()
+                .json(json!({ "error": "Invalid Integer Range", "message": message })),
         }
     }
 
@@ -76,7 +85,23 @@ impl ResponseError for ApiError {
             ApiError::HashError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
             ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            ApiError::OperatorMismatch(_) => StatusCode::BAD_REQUEST,
+            ApiError::InvalidIntegerRange(_) => StatusCode::BAD_REQUEST,
         }
+    }
+}
+
+impl From<serde_json::Error> for ApiError {
+    fn from(e: serde_json::Error) -> Self {
+        error!(message = "Error parsing input as json", error = ?e);
+        ApiError::BadRequest(e.to_string())
+    }
+}
+
+impl From<chrono::ParseError> for ApiError {
+    fn from(e: chrono::ParseError) -> Self {
+        error!(message = "Error parsing date", error = ?e);
+        ApiError::BadRequest(e.to_string())
     }
 }
 
@@ -93,6 +118,14 @@ impl From<PoolError> for ApiError {
         ApiError::DbConnectionError(e.to_string())
     }
 }
+
+impl From<ParseIntError> for ApiError {
+    fn from(e: ParseIntError) -> Self {
+        error!(message = "Error parsing integer", error = ?e);
+        ApiError::BadRequest(e.to_string())
+    }
+}
+
 impl From<DieselError> for ApiError {
     fn from(e: DieselError) -> Self {
         match e {
