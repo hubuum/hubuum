@@ -39,13 +39,39 @@ impl CanDelete for Namespace {
     /// * pool - Database connection pool
     ///
     /// ## Returns
-    /// * Ok(usize) - Number of deleted namespaces
+    /// * Ok() - On success
     /// * Err(ApiError) - On query errors only.
     async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::namespaces::dsl::*;
 
         let mut conn = pool.get()?;
         diesel::delete(namespaces.filter(id.eq(self.id))).execute(&mut conn)?;
+
+        Ok(())
+    }
+}
+
+impl CanDelete for NamespaceID {
+    /// Delete a namespace
+    ///
+    /// This does not check for permissions, it only deletes the namespace.
+    /// It is assumed that permissions are already checked before calling this method.
+    /// See `user_can` for permission checking.
+    ///
+    /// Note: This will also delete all objects and classes in the namespace, as well
+    /// as all permissions related to the namespace.
+    ///
+    /// ## Arguments
+    /// * pool - Database connection pool
+    ///
+    /// ## Returns
+    /// * Ok() - On success
+    /// * Err(ApiError) - On query errors only.
+    async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
+        use crate::schema::namespaces::dsl::*;
+
+        let mut conn = pool.get()?;
+        diesel::delete(namespaces.filter(id.eq(self.0))).execute(&mut conn)?;
 
         Ok(())
     }

@@ -160,21 +160,37 @@ mod test {
     async fn test_class_search() {
         let (namespaces, classes) = setup_test_structure("test_user_class_search").await;
 
+        let nspqp = ParsedQueryParam::new(
+            "namespaces",
+            Some(SearchOperator::Equals { is_negated: false }),
+            &namespaces
+                .iter()
+                .map(|ns| ns.id.to_string())
+                .collect::<Vec<String>>()
+                .join(","),
+        );
+
         let testcases = vec![
             TestCase {
-                query: vec![ParsedQueryParam::new(
-                    "id",
-                    Some(SearchOperator::Equals { is_negated: false }),
-                    &classes[0].id.to_string(),
-                )],
+                query: vec![
+                    ParsedQueryParam::new(
+                        "id",
+                        Some(SearchOperator::Equals { is_negated: false }),
+                        &classes[0].id.to_string(),
+                    ),
+                    nspqp.clone(),
+                ],
                 expected: 1,
             },
             TestCase {
-                query: vec![ParsedQueryParam::new(
-                    "namespaces",
-                    Some(SearchOperator::Equals { is_negated: false }),
-                    &namespaces[2].id.to_string(),
-                )],
+                query: vec![
+                    ParsedQueryParam::new(
+                        "namespaces",
+                        Some(SearchOperator::Equals { is_negated: false }),
+                        &namespaces[2].id.to_string(),
+                    ),
+                    nspqp.clone(),
+                ],
                 expected: 1,
             },
             TestCase {
@@ -189,15 +205,19 @@ mod test {
                         Some(SearchOperator::Lt { is_negated: false }),
                         &classes[3].id.to_string(),
                     ),
+                    nspqp.clone(),
                 ],
                 expected: 1,
             },
             TestCase {
-                query: vec![ParsedQueryParam::new(
-                    "name",
-                    Some(SearchOperator::Contains { is_negated: false }),
-                    "class_search",
-                )],
+                query: vec![
+                    ParsedQueryParam::new(
+                        "name",
+                        Some(SearchOperator::Contains { is_negated: false }),
+                        "class_search",
+                    ),
+                    nspqp.clone(),
+                ],
                 expected: 10,
             },
             TestCase {
@@ -212,6 +232,7 @@ mod test {
                         Some(SearchOperator::Equals { is_negated: false }),
                         &namespaces[1].id.to_string(),
                     ),
+                    nspqp.clone(),
                 ],
                 expected: 3,
             },
@@ -227,6 +248,7 @@ mod test {
                         Some(SearchOperator::Equals { is_negated: false }),
                         "true",
                     ),
+                    nspqp.clone(),
                 ],
                 expected: 0,
             },
