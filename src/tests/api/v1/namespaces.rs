@@ -35,7 +35,7 @@ mod tests {
         let created_namespace2 = create_namespace(&pool, "test_namespace_lookup2")
             .await
             .unwrap();
-        let resp = get_request(&pool, &admin_token, NAMESPACE_ENDPOINT).await;
+        let resp = get_request(&pool, &admin_token, &format!("{}/", NAMESPACE_ENDPOINT)).await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
         let updated_namespaces: Vec<crate::models::namespace::Namespace> =
             test::read_body_json(resp).await;
