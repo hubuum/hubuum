@@ -4,7 +4,7 @@ mod tests {
     use crate::traits::{CanDelete, CanSave};
     use actix_web::{http::StatusCode, test};
 
-    use crate::tests::api_operations::{get_request, post_request};
+    use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::assert_response_status;
     use crate::tests::constants::{get_schema, SchemaType};
     use crate::tests::{create_namespace, setup_pool_and_tokens};
@@ -213,6 +213,18 @@ mod tests {
     }
 
     #[actix_web::test]
+    async fn test_api_classes_get_failure() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+
+        // It'd be really nice if we could garantee that this id doesn't exist...
+        for id in 999990..1000000 {
+            let resp =
+                get_request(&pool, &admin_token, &format!("{}/{}", CLASSES_ENDPOINT, id)).await;
+            assert_response_status(resp, StatusCode::NOT_FOUND).await;
+        }
+    }
+
+    #[actix_web::test]
     async fn test_api_classes_create() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
 
@@ -253,5 +265,94 @@ mod tests {
 
         assert_eq!(created_class, created_class_from_create);
         ns.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_api_classes_patch() {
+        use crate::models::UpdateHubuumClass;
+
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+
+        let ns = create_namespace(&pool, "api_patch_test_classes")
+            .await
+            .unwrap();
+
+        let new_class = NewHubuumClass {
+            name: "api_patch_test_classes".to_string(),
+            description: "api_patch_test_classes_desc".to_string(),
+            namespace_id: ns.id,
+            json_schema: get_schema(SchemaType::Blog).clone(),
+            validate_schema: false,
+        };
+        let created_class = new_class.save(&pool).await.unwrap();
+
+        let update_class = UpdateHubuumClass {
+            name: Some("api_patch_test_classes_2".to_string()),
+            namespace_id: None,
+            json_schema: None,
+            validate_schema: None,
+            description: None,
+        };
+
+        let resp = patch_request(
+            &pool,
+            &admin_token,
+            &format!("{}/{}", CLASSES_ENDPOINT, created_class.id),
+            &update_class,
+        )
+        .await;
+
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let updated_class_from_patch: HubuumClass = test::read_body_json(resp).await;
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{}/{}", CLASSES_ENDPOINT, created_class.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let updated_class_from_get: HubuumClass = test::read_body_json(resp).await;
+
+        assert_eq!(updated_class_from_patch, updated_class_from_get);
+        assert_ne!(created_class, updated_class_from_patch);
+
+        assert_eq!(updated_class_from_patch.name, "api_patch_test_classes_2");
+        assert_eq!(
+            updated_class_from_patch.description,
+            created_class.description
+        );
+        assert_eq!(
+            updated_class_from_patch.namespace_id,
+            created_class.namespace_id
+        );
+        assert_eq!(
+            updated_class_from_patch.json_schema,
+            created_class.json_schema
+        );
+        assert_eq!(updated_class_from_patch.validate_schema, false);
+    }
+
+    #[actix_web::test]
+    async fn test_api_classes_delete() {
+        let created_classes = create_test_classes("api_classes_delete").await;
+
+        for class in &created_classes {
+            let (pool, admin_token, _) = setup_pool_and_tokens().await;
+            let resp = delete_request(
+                &pool,
+                &admin_token,
+                &format!("{}/{}", CLASSES_ENDPOINT, class.id),
+            )
+            .await;
+            assert_response_status(resp, StatusCode::NO_CONTENT).await;
+
+            let resp = get_request(
+                &pool,
+                &admin_token,
+                &format!("{}/{}", CLASSES_ENDPOINT, class.id),
+            )
+            .await;
+            assert_response_status(resp, StatusCode::NOT_FOUND).await;
+        }
     }
 }
