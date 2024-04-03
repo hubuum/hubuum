@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::models::{HubuumClass, NamespaceID, NewHubuumClass};
     use crate::traits::{CanDelete, CanSave};
     use actix_web::{http::StatusCode, test};
@@ -12,7 +12,7 @@ mod tests {
 
     const CLASSES_ENDPOINT: &str = "/api/v1/classes";
 
-    async fn create_test_classes(prefix: &str) -> Vec<crate::models::class::HubuumClass> {
+    pub async fn create_test_classes(prefix: &str) -> Vec<crate::models::class::HubuumClass> {
         let (pool, _, _) = setup_pool_and_tokens().await;
 
         let ns = create_namespace(&pool, &format!("{}_{}", prefix, "api_create_test_classes"))
@@ -43,7 +43,7 @@ mod tests {
         created_classes
     }
 
-    async fn cleanup(classes: &Vec<HubuumClass>) {
+    pub async fn cleanup(classes: &Vec<HubuumClass>) {
         let (pool, _, _) = setup_pool_and_tokens().await;
         let namespaces = classes
             .iter()

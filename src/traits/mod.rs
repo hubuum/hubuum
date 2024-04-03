@@ -10,7 +10,7 @@ use crate::models::{
 };
 
 #[allow(unused_imports)]
-pub use crate::models::traits::user::{SearchClasses, UserClassAccessors, UserNamespaceAccessors};
+pub use crate::models::traits::user::{Search, UserClassAccessors, UserNamespaceAccessors};
 
 pub trait CanDelete {
     async fn delete(&self, pool: &DbPool) -> Result<(), ApiError>;

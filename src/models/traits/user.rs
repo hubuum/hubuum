@@ -22,7 +22,7 @@ use crate::models::search::{ParsedQueryParam, QueryParamsExt};
 
 use crate::trace_query;
 
-pub trait SearchClasses: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors {
+pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors {
     async fn search_classes(
         &self,
         pool: &DbPool,
@@ -87,7 +87,7 @@ pub trait SearchClasses: SelfAccessors<User> + GroupAccessors + UserNamespaceAcc
                     message = "Searching classes",
                     stage = "JSON Schema",
                     user_id = self.id(),
-                    result = "No classe IDs found, returning empty result"
+                    result = "No class IDs found, returning empty result"
                 );
                 return Ok(vec![]);
             }
@@ -168,6 +168,156 @@ pub trait SearchClasses: SelfAccessors<User> + GroupAccessors + UserNamespaceAcc
             .select(hubuumclass::all_columns())
             .distinct() // TODO: Is it the joins that makes this required?
             .load::<HubuumClass>(&mut conn)?;
+
+        Ok(result)
+    }
+
+    async fn search_objects(
+        &self,
+        pool: &DbPool,
+        query_params: Vec<ParsedQueryParam>,
+    ) -> Result<Vec<HubuumObject>, ApiError> {
+        use crate::models::PermissionFilter;
+        use crate::schema::hubuumobject::dsl::{
+            hubuum_class_id, hubuumobject, id as hubuum_object_id,
+            namespace_id as hubuum_object_nid,
+        };
+        use crate::schema::permissions::dsl::*;
+
+        debug!(
+            message = "Searching objects",
+            stage = "Starting",
+            user_id = self.id(),
+            query_params = ?query_params
+        );
+
+        let mut conn = pool.get()?;
+        let group_id_subquery = self.group_ids_subquery();
+
+        // Get all namespace IDs that the user has read permissions on, and if we have a list of selected namespaces, filter on those.
+        let namespace_ids: Vec<i32> = self
+            .namespaces_read(pool)
+            .await?
+            .into_iter()
+            .map(|n| n.id)
+            .collect();
+
+        debug!(
+            message = "Searching objects",
+            stage = "Namespace IDs",
+            user_id = self.id(),
+            namespace_ids = ?namespace_ids
+        );
+
+        let mut base_query = permissions
+            .into_boxed()
+            .filter(group_id.eq_any(group_id_subquery));
+
+        // Handle permissions
+        for perm in query_params.permissions()? {
+            base_query = perm.create_boxed_filter(base_query, true);
+        }
+
+        let mut base_query =
+            base_query.inner_join(hubuumobject.on(hubuum_object_nid.eq_any(namespace_ids)));
+
+        let json_data_queries = query_params.json_datas()?;
+        if !json_data_queries.is_empty() {
+            debug!(
+                message = "Searching classes",
+                stage = "JSON Data",
+                user_id = self.id(),
+                query_params = ?json_data_queries
+            );
+
+            let json_data_integers = self.json_data_subquery(pool, json_data_queries)?;
+
+            if json_data_integers.is_empty() {
+                debug!(
+                    message = "Searching objects",
+                    stage = "JSON Data",
+                    user_id = self.id(),
+                    result = "No object IDs found, returning empty result"
+                );
+                return Ok(vec![]);
+            }
+
+            debug!(
+                message = "Searching objects",
+                stage = "JSON Data",
+                user_id = self.id(),
+                result = "Found object IDs",
+                class_ids = ?json_data_integers
+            );
+
+            base_query = base_query.filter(hubuum_class_id.eq_any(json_data_integers));
+        }
+
+        for param in query_params {
+            use crate::models::search::{DataType, SearchOperator};
+            use crate::{boolean_search, date_search, numeric_search, string_search};
+            let field = param.field.as_str();
+            let operator = param.operator.clone();
+            match field {
+                "id" => numeric_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumobject::dsl::id
+                ),
+                "namespaces" => numeric_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumobject::dsl::namespace_id
+                ),
+                "created_at" => date_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumobject::dsl::created_at
+                ),
+                "updated_at" => date_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumobject::dsl::updated_at
+                ),
+                "name" => string_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumobject::dsl::name
+                ),
+                "description" => string_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumobject::dsl::description
+                ),
+                "classes" => numeric_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumobject::dsl::hubuum_class_id
+                ),
+                "json_data" => {}  // Handled above
+                "permission" => {} // Handled above
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for classes",
+                        field
+                    )))
+                }
+            }
+        }
+
+        trace_query!(base_query, "Searching objects");
+
+        let result = base_query
+            .select(hubuumobject::all_columns())
+            .distinct() // TODO: Is it the joins that makes this required?
+            .load::<HubuumObject>(&mut conn)?;
 
         Ok(result)
     }
@@ -289,6 +439,61 @@ pub trait GroupAccessors: SelfAccessors<User> {
 
         Ok(ids)
     }
+
+    fn json_data_subquery(
+        &self,
+        pool: &DbPool,
+        json_schema_query_params: Vec<&ParsedQueryParam>,
+    ) -> Result<Vec<i32>, ApiError> {
+        use crate::models::object::ObjectIDResult;
+        use crate::models::search::{Operator, SQLValue};
+
+        if json_schema_query_params.is_empty() {
+            return Err(ApiError::BadRequest(
+                "No json_data query parameters provided".to_string(),
+            ));
+        }
+
+        let raw_sql_prefix = "select id from hubuumobject where";
+        let mut raw_sql_clauses: Vec<String> = vec![];
+        let mut bind_varaibles: Vec<SQLValue> = vec![];
+
+        for param in json_schema_query_params {
+            let clause = param.as_json_sql()?;
+            debug!(message = "JSON Data subquery", stage = "Clause", clause = ?clause);
+            raw_sql_clauses.push(clause.sql);
+            bind_varaibles.extend(clause.bind_variables);
+        }
+
+        let raw_sql = format!("{} {}", raw_sql_prefix, raw_sql_clauses.join(" and "))
+            .replace_question_mark_with_indexed_n();
+
+        debug!(message = "JSON Data subquery", stage = "Complete", raw_sql = ?raw_sql, bind_variables = ?bind_varaibles);
+
+        let mut connection = pool.get()?;
+
+        let mut query = diesel::sql_query(raw_sql).into_boxed();
+
+        for bind_var in bind_varaibles {
+            match bind_var {
+                SQLValue::Integer(i) => query = query.bind::<diesel::sql_types::Integer, _>(i),
+                SQLValue::String(s) => query = query.bind::<diesel::sql_types::Text, _>(s),
+                SQLValue::Boolean(b) => query = query.bind::<diesel::sql_types::Bool, _>(b),
+                SQLValue::Float(f) => query = query.bind::<diesel::sql_types::Float8, _>(f),
+                SQLValue::Date(d) => query = query.bind::<diesel::sql_types::Timestamp, _>(d),
+            }
+        }
+
+        trace_query!(query, "JSONB Data subquery");
+
+        let result_ids = query.get_results::<ObjectIDResult>(&mut connection)?;
+        let ids: Vec<i32> = result_ids
+            .into_iter()
+            .map(|r: ObjectIDResult| r.id)
+            .collect();
+
+        Ok(ids)
+    }
 }
 
 pub trait UserNamespaceAccessors: SelfAccessors<User> + GroupAccessors {
@@ -328,7 +533,7 @@ pub trait UserNamespaceAccessors: SelfAccessors<User> + GroupAccessors {
     }
 }
 
-pub trait UserClassAccessors: SearchClasses {
+pub trait UserClassAccessors: Search {
     async fn classes_read(&self, pool: &DbPool) -> Result<Vec<HubuumClass>, ApiError> {
         self.search_classes(
             pool,
@@ -479,8 +684,8 @@ impl UserClassAccessors for UserID {}
 impl GroupAccessors for User {}
 impl GroupAccessors for UserID {}
 
-impl SearchClasses for User {}
-impl SearchClasses for UserID {}
+impl Search for User {}
+impl Search for UserID {}
 
 impl SelfAccessors<User> for User {
     fn id(&self) -> i32 {

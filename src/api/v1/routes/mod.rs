@@ -3,7 +3,6 @@ use actix_web::web;
 pub mod classes;
 pub mod groups;
 pub mod namespaces;
-pub mod objects;
 pub mod users;
 
 pub fn config(cfg: &mut web::ServiceConfig) {

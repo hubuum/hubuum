@@ -7,7 +7,7 @@ mod test {
     use crate::models::{HubuumClass, Namespace, NewNamespace};
     use crate::tests::constants::{get_schema, SchemaType};
     use crate::tests::{ensure_admin_group, ensure_admin_user, setup_pool_and_tokens};
-    use crate::traits::{CanDelete, CanSave, SearchClasses};
+    use crate::traits::{CanDelete, CanSave, Search};
 
     struct TestCase {
         query: Vec<ParsedQueryParam>,

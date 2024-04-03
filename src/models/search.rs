@@ -384,6 +384,13 @@ pub trait QueryParamsExt {
     /// defined as having the `field` set as "json_schema". Also validates both keys and values
     /// and their matching to the operator.
     fn json_schemas(&self) -> Result<Vec<&ParsedQueryParam>, ApiError>;
+
+    /// ## Get a list of all JSON Data elements in a list of parsed query parameters
+    ///
+    /// Iterate over the parsed query parameters and filter out the ones that are JSON Data,
+    /// defined as having the `field` set as "json_data". Also validates both keys and values
+    /// and their matching to the operator.
+    fn json_datas(&self) -> Result<Vec<&ParsedQueryParam>, ApiError>;
 }
 
 impl QueryParamsExt for Vec<ParsedQueryParam> {
@@ -438,6 +445,17 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
     fn json_schemas(&self) -> Result<Vec<&ParsedQueryParam>, ApiError> {
         let json_schema: Vec<&ParsedQueryParam> =
             self.iter().filter(|p| p.is_json_schema()).collect();
+
+        Ok(json_schema)
+    }
+
+    /// ## Get a list of all JSON data entries in a list of parsed query parameters
+    ///
+    /// Iterate over the parsed query parameters and filter out the ones that are JSON Schemas,
+    /// defined as having the `field` set as "json_data".
+    fn json_datas(&self) -> Result<Vec<&ParsedQueryParam>, ApiError> {
+        let json_schema: Vec<&ParsedQueryParam> =
+            self.iter().filter(|p| p.is_json_data()).collect();
 
         Ok(json_schema)
     }
