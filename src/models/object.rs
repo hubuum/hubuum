@@ -69,47 +69,6 @@ pub struct ObjectsByClass {
     pub count: i64,
 }
 
-/// Search for HubuumObjects based on a JSON key and value.
-///
-/// Note: This currently only supports searching for a single key and value pair.
-/// Matches are exact, and only strings are supported.
-///
-/// ## Arguments
-///
-/// * `pool` - The database pool to use for the query.
-/// * `key` - The key to search for in the JSON data. Nested keys are supported using dot notation.
-/// * `value` - The value to search for in the JSON data.
-///
-/// ## Returns
-///
-/// * `Ok(Vec<HubuumObject>)` - A vector of HubuumObjects that match the search criteria.
-pub async fn search_data(
-    pool: &DbPool,
-    key: &str,
-    value: &str,
-) -> Result<Vec<HubuumObject>, ApiError> {
-    let mut conn = pool.get()?;
-
-    // Correctly splitting the nested keys and converting them into a PostgreSQL array representation
-    let nested_keys: Vec<&str> = key.split('.').collect();
-    let nested_keys_array = format!(
-        "{{{}}}",
-        nested_keys
-            .iter()
-            .map(|k| format!("\"{}\"", k))
-            .collect::<Vec<String>>()
-            .join(",")
-    );
-
-    let query = diesel::sql_query(format!(
-        "SELECT * FROM hubuumobject WHERE data #>> '{}' = $1",
-        nested_keys_array
-    ))
-    .bind::<Text, _>(value);
-
-    Ok(query.load::<HubuumObject>(&mut conn)?)
-}
-
 pub async fn total_object_count(pool: &DbPool) -> Result<i64, ApiError> {
     use crate::schema::hubuumobject::dsl::*;
 
@@ -140,6 +99,7 @@ pub mod tests {
     use crate::models::namespace::Namespace;
     use crate::traits::{CanDelete, CanSave, SelfAccessors};
 
+    #[allow(dead_code)]
     async fn setup_test_objects(
         pool: &DbPool,
         namespace: &Namespace,
@@ -236,25 +196,6 @@ pub mod tests {
 
         class.delete(&pool).await.unwrap();
         verify_no_such_class(&pool, class.id).await;
-
-        namespace.delete(&pool).await.unwrap();
-    }
-
-    #[actix_rt::test]
-    async fn test_json_filtering() {
-        let (pool, _) = get_pool_and_config().await;
-        let namespace = create_namespace(&pool, "json_filtering").await.unwrap();
-        let class = create_class(&pool, &namespace, "json_filtering").await;
-
-        let _ = setup_test_objects(&pool, &namespace, &class).await;
-
-        let simple_objects = search_data(&pool, "key", "value").await.unwrap();
-        assert_eq!(simple_objects.len(), 6);
-
-        let nested_objects = search_data(&pool, "nested.key", "nested_value")
-            .await
-            .unwrap();
-        assert_eq!(nested_objects.len(), 2);
 
         namespace.delete(&pool).await.unwrap();
     }

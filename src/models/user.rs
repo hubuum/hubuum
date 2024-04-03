@@ -222,6 +222,7 @@ impl UserID {
             .first::<User>(&mut pool.get()?)?)
     }
 
+    /*
     pub async fn group_ids(&self, pool: &DbPool) -> Result<Vec<i32>, ApiError> {
         use crate::schema::user_groups::dsl::*;
 
@@ -233,6 +234,7 @@ impl UserID {
 
         Ok(result)
     }
+    */
 
     pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::users::dsl::*;

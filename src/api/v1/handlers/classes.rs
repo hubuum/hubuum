@@ -10,8 +10,8 @@ use crate::extractors::UserAccess;
 use crate::utilities::response::{json_response, json_response_created};
 
 use crate::models::{
-    object, HubuumClassID, HubuumObjectID, NamespaceID, NewHubuumClass, NewHubuumObject,
-    Permissions, UpdateHubuumClass, UpdateHubuumObject,
+    HubuumClassID, HubuumObjectID, NamespaceID, NewHubuumClass, NewHubuumObject, Permissions,
+    UpdateHubuumClass, UpdateHubuumObject,
 };
 use crate::traits::{CanDelete, CanSave, CanUpdate, PermissionController, Search, SelfAccessors};
 
@@ -58,14 +58,8 @@ async fn create_class(
         class_name = class_data.name
     );
 
-    check_permissions!(
-        HubuumClassID(class_data.namespace_id)
-            .instance(&pool)
-            .await?,
-        pool,
-        user,
-        Permissions::CreateClass
-    );
+    let namespace = NamespaceID(class_data.namespace_id).instance(&pool).await?;
+    check_permissions!(namespace, pool, user, Permissions::CreateClass);
     let class = class_data.save(&pool).await?;
 
     Ok(json_response_created(
@@ -247,11 +241,7 @@ async fn create_object_in_class(
 
     Ok(json_response_created(
         &object,
-        &format!(
-            "/api/v1/classes/{}/{}",
-            class_id.id().to_string(),
-            object.id().to_string(),
-        ),
+        &format!("/api/v1/classes/{}/{}", class_id.id(), object.id()),
     ))
 }
 

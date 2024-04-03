@@ -27,7 +27,7 @@ pub struct ClassIdResult {
     pub id: i32,
 }
 
-#[derive(Serialize, Deserialize, Insertable, Clone)]
+#[derive(Serialize, Deserialize, Insertable, Clone, Debug)]
 #[diesel(table_name = hubuumclass)]
 pub struct NewHubuumClass {
     pub name: String,
@@ -37,7 +37,7 @@ pub struct NewHubuumClass {
     pub description: String,
 }
 
-#[derive(Serialize, Deserialize, AsChangeset, Clone)]
+#[derive(Serialize, Deserialize, AsChangeset, Clone, Debug)]
 #[diesel(table_name = hubuumclass)]
 pub struct UpdateHubuumClass {
     pub name: Option<String>,
@@ -47,7 +47,7 @@ pub struct UpdateHubuumClass {
     pub description: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct HubuumClassID(pub i32);
 
 pub async fn total_class_count(pool: &DbPool) -> Result<i64, ApiError> {

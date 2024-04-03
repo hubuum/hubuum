@@ -7,7 +7,7 @@ mod tests {
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::assert_response_status;
     use crate::tests::{create_namespace, setup_pool_and_tokens};
-    use crate::{assert_contains_all, assert_contains_same_ids};
+    // use crate::{assert_contains_all, assert_contains_same_ids};
 
     use crate::tests::api::v1::classes::tests::{cleanup, create_test_classes};
 

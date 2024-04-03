@@ -243,7 +243,7 @@ pub mod tests {
         let resp = post_request(
             &pool,
             &admin_token,
-            &format!("{}/", CLASSES_ENDPOINT),
+            &format!("{}", CLASSES_ENDPOINT),
             &new_class,
         )
         .await;
