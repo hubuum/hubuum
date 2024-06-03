@@ -60,7 +60,6 @@ CREATE TABLE permissions (
     UNIQUE (namespace_id, group_id)
 );
 
-
 CREATE TABLE hubuumclass (
     id SERIAL PRIMARY KEY,
     name VARCHAR NOT NULL UNIQUE,
@@ -84,6 +83,25 @@ CREATE TABLE hubuumobject (
     UNIQUE (name, namespace_id)
 );
 
+-- A bidirectional relation between classes
+CREATE TABLE hubuumclass_relation (
+    id SERIAL PRIMARY KEY,
+    from_hubuum_class_id INT REFERENCES hubuumclass (id) ON DELETE CASCADE NOT NULL,
+    to_hubuum_class_id INT REFERENCES hubuumclass (id) ON DELETE CASCADE NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP NOT NULL DEFAULT now(),
+    UNIQUE (from_hubuum_class_id, to_hubuum_class_id)
+);
+
+-- A bidirectional relation between objects
+CREATE TABLE hubuumobject_relation (
+    id SERIAL PRIMARY KEY,
+    from_hubuum_object_id INT REFERENCES hubuumobject (id) ON DELETE CASCADE NOT NULL,
+    to_hubuum_object_id INT REFERENCES hubuumobject (id) ON DELETE CASCADE NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP NOT NULL DEFAULT now(),
+    UNIQUE (from_hubuum_object_id, to_hubuum_object_id)
+);
 
 ----------------------
 ---- Indexes
@@ -108,10 +126,53 @@ CREATE INDEX idx_hubuumobject_hubuum_class_id ON hubuumobject(hubuum_class_id);
 CREATE INDEX idx_permissions_namespace_id ON permissions(namespace_id);
 CREATE INDEX idx_permissions_group_id ON permissions(group_id);
 
+---- Relations
+CREATE INDEX idx_hubuumclass_relation_on_from_to ON hubuumclass_relation (from_hubuum_class_id, to_hubuum_class_id);
+CREATE INDEX idx_hubuumobject_relation_on_from_to ON hubuumobject_relation (from_hubuum_object_id, to_hubuum_object_id);
+
+
 ----------------------
 ---- Triggers
 ----------------------
 
+-- In relation tables, ensure that the from entry is always less than the to entry, this ensures
+-- that we don't need to check for both directions when querying the database
+CREATE OR REPLACE FUNCTION enforce_class_relation_order()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.from_hubuum_class_id > NEW.to_hubuum_class_id THEN
+        -- Swap the IDs if they are in the wrong order
+        PERFORM NEW.to_hubuum_class_id = NEW.from_hubuum_class_id;
+        PERFORM NEW.from_hubuum_class_id = NEW.to_hubuum_class_id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION enforce_object_relation_order()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.from_hubuum_object_id > NEW.to_hubuum_object_id THEN
+        -- Swap the IDs if they are in the wrong order
+        PERFORM NEW.to_hubuum_object_id = NEW.from_hubuum_object_id;
+        PERFORM NEW.from_hubuum_object_id = NEW.to_hubuum_object_id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER before_insert_or_update_class_relation
+BEFORE INSERT OR UPDATE ON hubuumclass_relation
+FOR EACH ROW
+EXECUTE FUNCTION enforce_class_relation_order();
+
+CREATE TRIGGER before_insert_or_update_object_relation
+BEFORE INSERT OR UPDATE ON hubuumobject_relation
+FOR EACH ROW
+EXECUTE FUNCTION enforce_object_relation_order();
+
+
+-- Update the updated_at column whenever a row is updated
 CREATE OR REPLACE FUNCTION update_modified_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -146,4 +207,12 @@ FOR EACH ROW EXECUTE FUNCTION update_modified_column();
 
 CREATE TRIGGER update_hubuumobject_updated_at
 BEFORE UPDATE ON hubuumobject
+FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+CREATE TRIGGER update_hubuumclass_relation_updated_at
+BEFORE UPDATE ON hubuumclass_relation
+FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+CREATE TRIGGER update_hubuumobject_relation_updated_at
+BEFORE UPDATE ON hubuumobject_relation
 FOR EACH ROW EXECUTE FUNCTION update_modified_column();

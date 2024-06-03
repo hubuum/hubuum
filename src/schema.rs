@@ -24,6 +24,16 @@ diesel::table! {
 }
 
 diesel::table! {
+    hubuumclass_relation (id) {
+        id -> Int4,
+        from_hubuum_class_id -> Int4,
+        to_hubuum_class_id -> Int4,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     hubuumobject (id) {
         id -> Int4,
         name -> Varchar,
@@ -31,6 +41,16 @@ diesel::table! {
         hubuum_class_id -> Int4,
         data -> Jsonb,
         description -> Varchar,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    hubuumobject_relation (id) {
+        id -> Int4,
+        from_hubuum_object_id -> Int4,
+        to_hubuum_object_id -> Int4,
         created_at -> Timestamp,
         updated_at -> Timestamp,
     }
@@ -108,7 +128,9 @@ diesel::joinable!(user_groups -> users (user_id));
 diesel::allow_tables_to_appear_in_same_query!(
     groups,
     hubuumclass,
+    hubuumclass_relation,
     hubuumobject,
+    hubuumobject_relation,
     namespaces,
     permissions,
     tokens,

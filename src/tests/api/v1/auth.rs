@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use crate::api;
     use crate::config::get_config;
     use crate::db::init_pool;
     use crate::models::user::LoginUser;
-    use crate::tests::create_test_user;
+    use crate::tests::{create_test_admin, create_test_user};
+    use crate::{api, assert_not_contains};
     use actix_web::http::header;
     use actix_web::{http::StatusCode, test, web, web::Data, App};
     use diesel::prelude::*;
@@ -12,6 +12,8 @@ mod tests {
     const LOGIN_ENDPOINT: &str = "/api/v0/auth/login";
     const LOGOUT_ENDPOINT: &str = "/api/v0/auth/logout";
     const LOGOUT_ALL_ENDPOINT: &str = "/api/v0/auth/logout_all";
+    const LOGOUT_ALL_FOR_OTHER_USER_ENDPOINT: &str = "/api/v0/auth/logout/uid/";
+    const LOGOUT_SPECIFIC_TOKEN: &str = "/api/v0/auth/logout/token/";
 
     #[actix_web::test]
     async fn test_valid_login() {
@@ -262,25 +264,27 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn test_logout_all_tokens() {
+    async fn test_logout_all_tokens_from_user() {
         let config = get_config().await;
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
         let new_user = create_test_user(&pool).await;
-
-        let token_string = match { new_user.create_token(&pool).await } {
+        let admin_user = create_test_admin(&pool).await;
+        let admin_token = match { admin_user.create_token(&pool).await } {
             Ok(ret_token) => ret_token.get_token(),
-            Err(e) => panic!("Failed to add token to user: {:?}", e),
+            Err(e) => panic!("Failed to add token to admin: {:?}", e),
         };
 
-        let _ = match { new_user.create_token(&pool).await } {
-            Ok(ret_token) => ret_token.get_token(),
-            Err(e) => panic!("Failed to add token to user: {:?}", e),
-        };
+        for _ in 0..3 {
+            let _ = match { new_user.create_token(&pool).await } {
+                Ok(ret_token) => ret_token.get_token(),
+                Err(e) => panic!("Failed to add token to user: {:?}", e),
+            };
+        }
 
-        // Verify that we have two tokens for the user
+        // Verify that we have three tokens for the user
         let user_tokens = new_user.get_tokens(&pool).await.unwrap();
-        assert_eq!(user_tokens.len(), 2, "User has wrong number of tokens");
+        assert_eq!(user_tokens.len(), 3, "User has wrong number of tokens");
 
         let app = test::init_service(
             App::new()
@@ -289,11 +293,10 @@ mod tests {
         )
         .await;
 
+        let uri = &format!("{}{}", LOGOUT_ALL_FOR_OTHER_USER_ENDPOINT, new_user.id);
+
         // Try removing tokens without authorization
-        let resp_without_token = test::TestRequest::get()
-            .uri(LOGOUT_ALL_ENDPOINT)
-            .send_request(&app)
-            .await;
+        let resp_without_token = test::TestRequest::get().uri(uri).send_request(&app).await;
 
         assert_eq!(
             resp_without_token.status(),
@@ -302,12 +305,12 @@ mod tests {
             test::read_body(resp_without_token).await
         );
         let user_tokens = new_user.get_tokens(&pool).await.unwrap();
-        assert_eq!(user_tokens.len(), 2, "User has wrong number of tokens");
+        assert_eq!(user_tokens.len(), 3, "User has wrong number of tokens");
 
         // Try removing tokens with broken authorization
         let resp_with_broken_token = test::TestRequest::get()
             .insert_header((header::AUTHORIZATION, "nope".to_string()))
-            .uri(LOGOUT_ALL_ENDPOINT)
+            .uri(uri)
             .send_request(&app)
             .await;
 
@@ -318,12 +321,12 @@ mod tests {
             test::read_body(resp_with_broken_token).await
         );
         let user_tokens = new_user.get_tokens(&pool).await.unwrap();
-        assert_eq!(user_tokens.len(), 2, "User has wrong number of tokens");
+        assert_eq!(user_tokens.len(), 3, "User has wrong number of tokens");
 
         // Remove tokens with valid authorization
         let resp = test::TestRequest::get()
-            .insert_header((header::AUTHORIZATION, format!("Bearer {}", token_string)))
-            .uri(LOGOUT_ALL_ENDPOINT)
+            .insert_header((header::AUTHORIZATION, format!("Bearer {}", admin_token)))
+            .uri(uri)
             .send_request(&app)
             .await;
 
@@ -336,5 +339,80 @@ mod tests {
 
         let user_tokens = new_user.get_tokens(&pool).await.unwrap();
         assert_eq!(user_tokens.len(), 0, "User still has tokens");
+        new_user.delete(&pool).await.unwrap();
+        admin_user.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_logout_specific_token() {
+        let config = get_config().await;
+        let pool = init_pool(&config.database_url, config.db_pool_size);
+
+        let new_user = create_test_user(&pool).await;
+        let admin_user = create_test_admin(&pool).await;
+        let admin_token = match { admin_user.create_token(&pool).await } {
+            Ok(ret_token) => ret_token.get_token(),
+            Err(e) => panic!("Failed to add token to admin: {:?}", e),
+        };
+
+        for _ in 0..3 {
+            let _ = match { new_user.create_token(&pool).await } {
+                Ok(ret_token) => ret_token.get_token(),
+                Err(e) => panic!("Failed to add token to user: {:?}", e),
+            };
+        }
+
+        let token = new_user.get_tokens(&pool).await.unwrap()[0].token.clone();
+
+        // Verify that we have three tokens for the user
+        let user_tokens = new_user.get_tokens(&pool).await.unwrap();
+        assert_eq!(user_tokens.len(), 3, "User has wrong number of tokens");
+
+        let app = test::init_service(
+            App::new()
+                .app_data(Data::new(pool.clone()))
+                .configure(api::config),
+        )
+        .await;
+
+        let uri = &format!("{}{}", LOGOUT_SPECIFIC_TOKEN, token);
+
+        // Try to remove the token as a user
+        let resp = test::TestRequest::get()
+            .insert_header((header::AUTHORIZATION, format!("Bearer {}", token.clone())))
+            .uri(uri)
+            .send_request(&app)
+            .await;
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::FORBIDDEN,
+            "{:?}",
+            test::read_body(resp).await
+        );
+
+        // Actually remove the token as admin
+        let resp = test::TestRequest::get()
+            .insert_header((
+                header::AUTHORIZATION,
+                format!("Bearer {}", admin_token.clone()),
+            ))
+            .uri(uri)
+            .send_request(&app)
+            .await;
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "{:?}",
+            test::read_body(resp).await
+        );
+
+        let user_tokens = new_user.get_tokens(&pool).await.unwrap();
+        assert_eq!(user_tokens.len(), 2, "User has wrong number of tokens");
+        let user_token_strings: Vec<String> = user_tokens.iter().map(|t| t.token.clone()).collect();
+        assert_not_contains!(&user_token_strings, &token);
+        new_user.delete(&pool).await.unwrap();
+        admin_user.delete(&pool).await.unwrap();
     }
 }
