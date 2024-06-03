@@ -60,22 +60,9 @@ impl CanSave for NewHubuumClassRelation {
             ));
         }
 
-        // Ensure that the from_hubuum_class_id is always less than the to_hubuum_class_id, this is
-        // simply a convention to simplify queries. self is also RO so we'll use these values to create
-        // the NewHubuumClassRelation during the insert.
-        let (from_hubuum_class_id, to_hubuum_class_id) =
-            if self.from_hubuum_class_id < self.to_hubuum_class_id {
-                (self.from_hubuum_class_id, self.to_hubuum_class_id)
-            } else {
-                (self.to_hubuum_class_id, self.from_hubuum_class_id)
-            };
-
         let mut conn = pool.get()?;
         let result = diesel::insert_into(hubuumclass_relation)
-            .values(NewHubuumClassRelation {
-                from_hubuum_class_id,
-                to_hubuum_class_id,
-            })
+            .values(self)
             .get_result(&mut conn)?;
 
         Ok(result)

@@ -26,11 +26,32 @@ pub struct NewHubuumClassRelation {
     pub to_hubuum_class_id: i32,
 }
 
+pub struct HubuumObjectRelationID(pub i32);
+
+#[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy, PartialEq, Eq)]
+#[diesel(table_name = hubuumobject_relation)]
+pub struct HubuumObjectRelation {
+    pub id: i32,
+    pub class_relation: i32,
+    pub from_hubuum_object_id: i32,
+    pub to_hubuum_object_id: i32,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+}
+
+#[derive(Debug, Serialize, Deserialize, Insertable)]
+#[diesel(table_name = hubuumobject_relation)]
+pub struct NewHubuumObjectRelation {
+    pub class_relation: i32,
+    pub from_hubuum_object_id: i32,
+    pub to_hubuum_object_id: i32,
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
     use crate::models::class::tests::create_class;
-    use crate::models::traits::relation;
+    use crate::models::traits::class_relation;
     use crate::models::{HubuumClass, Namespace};
     use crate::tests::{create_namespace, get_pool_and_config};
     use crate::traits::{
@@ -145,5 +166,70 @@ pub mod tests {
         namespace.delete(&pool).await.unwrap();
 
         verify_no_such_class_relation(&pool, relation.id).await;
+    }
+
+    #[actix_rt::test]
+    async fn test_deleting_class_relation() {
+        let (pool, _) = get_pool_and_config().await;
+
+        let (namespace, class1, class2) = create_namespace_and_classes("delete_class").await;
+        let relation = create_class_relation(&pool, class1, class2).await;
+
+        relation.delete(&pool).await.unwrap();
+        verify_no_such_class_relation(&pool, relation.id).await;
+
+        namespace.delete(&pool).await.unwrap();
+    }
+
+    #[actix_rt::test]
+    async fn test_creating_object_relation() {
+        use crate::models::NewHubuumObject;
+        let (pool, _) = get_pool_and_config().await;
+
+        let (namespace, class1, class2) = create_namespace_and_classes("create_object").await;
+        let object1 = NewHubuumObject {
+            namespace_id: namespace.id,
+            hubuum_class_id: class1.id,
+            data: serde_json::json!({"test": "data"}),
+            name: "object1 for relation".to_string(),
+            description: "object1 description".to_string(),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        let object2 = NewHubuumObject {
+            namespace_id: namespace.id,
+            hubuum_class_id: class2.id,
+            data: serde_json::json!({"test": "data"}),
+            name: "object2 for relation".to_string(),
+            description: "object2 description".to_string(),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        let class_rel = create_class_relation(&pool, class1, class2).await;
+
+        let object_rel = NewHubuumObjectRelation {
+            class_relation: class_rel.id,
+            from_hubuum_object_id: object1.id,
+            to_hubuum_object_id: object2.id,
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(object_rel.class_relation, class_rel.id);
+        assert_eq!(object_rel.from_hubuum_object_id, object1.id);
+        assert_eq!(object_rel.to_hubuum_object_id, object2.id);
+
+        let fetched_relation = HubuumObjectRelationID(object_rel.id)
+            .instance(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(fetched_relation, object_rel);
+        namespace.delete(&pool).await.unwrap();
     }
 }

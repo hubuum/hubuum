@@ -96,8 +96,9 @@ CREATE TABLE hubuumclass_relation (
 -- A bidirectional relation between objects
 CREATE TABLE hubuumobject_relation (
     id SERIAL PRIMARY KEY,
+    class_relation INT REFERENCES hubuumclass_relation (id) ON DELETE CASCADE NOT NULL,
     from_hubuum_object_id INT REFERENCES hubuumobject (id) ON DELETE CASCADE NOT NULL,
-    to_hubuum_object_id INT REFERENCES hubuumobject (id) ON DELETE CASCADE NOT NULL,
+    to_hubuum_object_id INT REFERENCES hubuumobject (id) ON DELETE CASCADE NOT NULL,    
     created_at TIMESTAMP NOT NULL DEFAULT now(),
     updated_at TIMESTAMP NOT NULL DEFAULT now(),
     UNIQUE (from_hubuum_object_id, to_hubuum_object_id)
@@ -139,11 +140,14 @@ CREATE INDEX idx_hubuumobject_relation_on_from_to ON hubuumobject_relation (from
 -- that we don't need to check for both directions when querying the database
 CREATE OR REPLACE FUNCTION enforce_class_relation_order()
 RETURNS TRIGGER AS $$
+DECLARE
+    temp INT;
 BEGIN
     IF NEW.from_hubuum_class_id > NEW.to_hubuum_class_id THEN
         -- Swap the IDs if they are in the wrong order
-        PERFORM NEW.to_hubuum_class_id = NEW.from_hubuum_class_id;
-        PERFORM NEW.from_hubuum_class_id = NEW.to_hubuum_class_id;
+        temp := NEW.from_hubuum_class_id;
+        NEW.from_hubuum_class_id := NEW.to_hubuum_class_id;
+        NEW.to_hubuum_class_id := temp;
     END IF;
     RETURN NEW;
 END;
@@ -151,11 +155,14 @@ $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION enforce_object_relation_order()
 RETURNS TRIGGER AS $$
+DECLARE
+    temp INT;
 BEGIN
     IF NEW.from_hubuum_object_id > NEW.to_hubuum_object_id THEN
         -- Swap the IDs if they are in the wrong order
-        PERFORM NEW.to_hubuum_object_id = NEW.from_hubuum_object_id;
-        PERFORM NEW.from_hubuum_object_id = NEW.to_hubuum_object_id;
+        temp := NEW.from_hubuum_object_id;
+        NEW.from_hubuum_object_id := NEW.to_hubuum_object_id;
+        NEW.to_hubuum_object_id := temp;
     END IF;
     RETURN NEW;
 END;
