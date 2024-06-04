@@ -82,6 +82,14 @@ pub mod tests {
         }
     }
 
+    pub async fn verify_no_such_object_relation(pool: &DbPool, id: i32) {
+        match HubuumObjectRelationID(id).instance(pool).await {
+            Ok(_) => panic!("Found an object relation that should not exist"),
+            Err(ApiError::NotFound(_)) => {}
+            Err(e) => panic!("Unexpected error: {:?}", e),
+        }
+    }
+
     pub async fn create_class_relation(
         pool: &DbPool,
         class1: &HubuumClass,
@@ -299,6 +307,30 @@ pub mod tests {
                 "Should not be able to create object relations when class relation does not exist"
             ),
         }
+
+        namespace.delete(&pool).await.unwrap();
+    }
+
+    #[actix_rt::test]
+    async fn test_deleting_object_relation() {
+        let (pool, _) = get_pool_and_config().await;
+
+        let (namespace, class1, class2) = create_namespace_and_classes("delete_object").await;
+
+        let nid = namespace.id;
+        let json = serde_json::json!({"test": "data"});
+        let object1 = create_object(&pool, class1.id, nid, "o1_delete relation", json.clone())
+            .await
+            .unwrap();
+        let object2 = create_object(&pool, class2.id, nid, "o2_delete relation", json.clone())
+            .await
+            .unwrap();
+
+        let class_rel = create_class_relation(&pool, &class1, &class2).await;
+        let object_rel = create_object_relation(&pool, &class_rel, &object1, &object2).await;
+
+        object_rel.delete(&pool).await.unwrap();
+        verify_no_such_object_relation(&pool, object_rel.id).await;
 
         namespace.delete(&pool).await.unwrap();
     }
