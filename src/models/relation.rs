@@ -51,6 +51,7 @@ pub struct NewHubuumObjectRelation {
 pub mod tests {
     use super::*;
     use crate::models::class::tests::create_class;
+    use crate::models::object::tests::create_object;
     use crate::models::traits::class_relation;
     use crate::models::{HubuumClass, Namespace};
     use crate::tests::{create_namespace, get_pool_and_config};
@@ -187,27 +188,15 @@ pub mod tests {
         let (pool, _) = get_pool_and_config().await;
 
         let (namespace, class1, class2) = create_namespace_and_classes("create_object").await;
-        let object1 = NewHubuumObject {
-            namespace_id: namespace.id,
-            hubuum_class_id: class1.id,
-            data: serde_json::json!({"test": "data"}),
-            name: "object1 for relation".to_string(),
-            description: "object1 description".to_string(),
-        }
-        .save(&pool)
-        .await
-        .unwrap();
 
-        let object2 = NewHubuumObject {
-            namespace_id: namespace.id,
-            hubuum_class_id: class2.id,
-            data: serde_json::json!({"test": "data"}),
-            name: "object2 for relation".to_string(),
-            description: "object2 description".to_string(),
-        }
-        .save(&pool)
-        .await
-        .unwrap();
+        let nid = namespace.id;
+        let json = serde_json::json!({"test": "data"});
+        let object1 = create_object(&pool, class1.id, nid, "o1_create relation", json.clone())
+            .await
+            .unwrap();
+        let object2 = create_object(&pool, class2.id, nid, "o2_create relation", json.clone())
+            .await
+            .unwrap();
 
         let class_rel = create_class_relation(&pool, class1, class2).await;
 
@@ -243,27 +232,14 @@ pub mod tests {
 
         let class3 = create_class(&pool, &namespace, "create_object_class_mismatch3").await;
 
-        let object1 = NewHubuumObject {
-            namespace_id: namespace.id,
-            hubuum_class_id: class1.id,
-            data: serde_json::json!({"test": "data"}),
-            name: "object1 for relation".to_string(),
-            description: "object1 description".to_string(),
-        }
-        .save(&pool)
-        .await
-        .unwrap();
-
-        let object2 = NewHubuumObject {
-            namespace_id: namespace.id,
-            hubuum_class_id: class2.id,
-            data: serde_json::json!({"test": "data"}),
-            name: "object2 for relation".to_string(),
-            description: "object2 description".to_string(),
-        }
-        .save(&pool)
-        .await
-        .unwrap();
+        let nid = namespace.id;
+        let json = serde_json::json!({"test": "data"});
+        let object1 = create_object(&pool, class1.id, nid, "o1_fail relation", json.clone())
+            .await
+            .unwrap();
+        let object2 = create_object(&pool, class2.id, nid, "o2_fail relation", json.clone())
+            .await
+            .unwrap();
 
         // Creating a relation between class1 and class3, the objects are in class1 and class2
         let class_rel = create_class_relation(&pool, class1, class3).await;
