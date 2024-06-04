@@ -53,7 +53,7 @@ pub mod tests {
     use crate::models::class::tests::create_class;
     use crate::models::object::tests::create_object;
     use crate::models::traits::class_relation;
-    use crate::models::{HubuumClass, Namespace};
+    use crate::models::{HubuumClass, HubuumObject, Namespace};
     use crate::tests::{create_namespace, get_pool_and_config};
     use crate::traits::{
         CanDelete, CanSave, CanUpdate, ClassAccessors, NamespaceAccessors, SelfAccessors,
@@ -84,8 +84,8 @@ pub mod tests {
 
     pub async fn create_class_relation(
         pool: &DbPool,
-        class1: HubuumClass,
-        class2: HubuumClass,
+        class1: &HubuumClass,
+        class2: &HubuumClass,
     ) -> HubuumClassRelation {
         let relation = NewHubuumClassRelation {
             from_hubuum_class_id: class1.id,
@@ -94,16 +94,50 @@ pub mod tests {
 
         let relation = relation.save(&pool).await.unwrap();
 
-        assert_eq!(relation.from_hubuum_class_id, class1.id);
-        assert_eq!(relation.to_hubuum_class_id, class2.id);
+        assert!(relation.from_hubuum_class_id < relation.to_hubuum_class_id);
+
+        let correct_relation = if class1.id > class2.id {
+            NewHubuumClassRelation {
+                from_hubuum_class_id: class2.id,
+                to_hubuum_class_id: class1.id,
+            }
+        } else {
+            NewHubuumClassRelation {
+                from_hubuum_class_id: class1.id,
+                to_hubuum_class_id: class2.id,
+            }
+        };
 
         let fetched_relation = HubuumClassRelationID(relation.id)
             .instance(&pool)
             .await
             .unwrap();
 
-        assert_eq!(fetched_relation, relation);
+        assert_eq!(fetched_relation.id, relation.id);
+        assert_eq!(
+            fetched_relation.from_hubuum_class_id,
+            correct_relation.from_hubuum_class_id
+        );
+        assert_eq!(
+            fetched_relation.to_hubuum_class_id,
+            correct_relation.to_hubuum_class_id
+        );
         relation
+    }
+
+    pub async fn create_object_relation(
+        pool: &DbPool,
+        relation: &HubuumClassRelation,
+        object1: &HubuumObject,
+        object2: &HubuumObject,
+    ) -> HubuumObjectRelation {
+        let object_rel = NewHubuumObjectRelation {
+            class_relation: relation.id,
+            from_hubuum_object_id: object1.id,
+            to_hubuum_object_id: object2.id,
+        };
+
+        object_rel.save(&pool).await.unwrap()
     }
 
     #[actix_rt::test]
@@ -111,7 +145,7 @@ pub mod tests {
         let (pool, _) = get_pool_and_config().await;
 
         let (namespace, class1, class2) = create_namespace_and_classes("create_class").await;
-        let relation = create_class_relation(&pool, class1, class2).await;
+        let relation = create_class_relation(&pool, &class1, &class2).await;
         namespace.delete(&pool).await.unwrap();
         verify_no_such_class_relation(&pool, relation.id).await;
     }
@@ -140,14 +174,7 @@ pub mod tests {
         let (pool, _) = get_pool_and_config().await;
 
         let (namespace, class1, class2) = create_namespace_and_classes("lowest_id").await;
-
-        let relation = NewHubuumClassRelation {
-            from_hubuum_class_id: class2.id,
-            to_hubuum_class_id: class1.id,
-        }
-        .save(&pool)
-        .await
-        .unwrap();
+        let relation = create_class_relation(&pool, &class2, &class1).await;
 
         // Check that the database actually swapped the order of the identifiers
         assert_eq!(relation.from_hubuum_class_id, class1.id);
@@ -174,7 +201,7 @@ pub mod tests {
         let (pool, _) = get_pool_and_config().await;
 
         let (namespace, class1, class2) = create_namespace_and_classes("delete_class").await;
-        let relation = create_class_relation(&pool, class1, class2).await;
+        let relation = create_class_relation(&pool, &class1, &class2).await;
 
         relation.delete(&pool).await.unwrap();
         verify_no_such_class_relation(&pool, relation.id).await;
@@ -198,16 +225,8 @@ pub mod tests {
             .await
             .unwrap();
 
-        let class_rel = create_class_relation(&pool, class1, class2).await;
-
-        let object_rel = NewHubuumObjectRelation {
-            class_relation: class_rel.id,
-            from_hubuum_object_id: object1.id,
-            to_hubuum_object_id: object2.id,
-        }
-        .save(&pool)
-        .await
-        .unwrap();
+        let class_rel = create_class_relation(&pool, &class1, &class2).await;
+        let object_rel = create_object_relation(&pool, &class_rel, &object1, &object2).await;
 
         assert_eq!(object_rel.class_relation, class_rel.id);
         assert_eq!(object_rel.from_hubuum_object_id, object1.id);
@@ -224,7 +243,6 @@ pub mod tests {
 
     #[actix_rt::test]
     async fn test_creating_object_relation_failure_class_mismatch() {
-        use crate::models::NewHubuumObject;
         let (pool, _) = get_pool_and_config().await;
 
         let (namespace, class1, class2) =
@@ -242,7 +260,7 @@ pub mod tests {
             .unwrap();
 
         // Creating a relation between class1 and class3, the objects are in class1 and class2
-        let class_rel = create_class_relation(&pool, class1, class3).await;
+        let class_rel = create_class_relation(&pool, &class1, &class3).await;
 
         let object_rel = NewHubuumObjectRelation {
             class_relation: class_rel.id,
