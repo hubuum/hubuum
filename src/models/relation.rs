@@ -232,4 +232,80 @@ pub mod tests {
         assert_eq!(fetched_relation, object_rel);
         namespace.delete(&pool).await.unwrap();
     }
+
+    #[actix_rt::test]
+    async fn test_creating_object_relation_failure_class_mismatch() {
+        use crate::models::NewHubuumObject;
+        let (pool, _) = get_pool_and_config().await;
+
+        let (namespace, class1, class2) =
+            create_namespace_and_classes("create_object_class_mismatch").await;
+
+        let class3 = create_class(&pool, &namespace, "create_object_class_mismatch3").await;
+
+        let object1 = NewHubuumObject {
+            namespace_id: namespace.id,
+            hubuum_class_id: class1.id,
+            data: serde_json::json!({"test": "data"}),
+            name: "object1 for relation".to_string(),
+            description: "object1 description".to_string(),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        let object2 = NewHubuumObject {
+            namespace_id: namespace.id,
+            hubuum_class_id: class2.id,
+            data: serde_json::json!({"test": "data"}),
+            name: "object2 for relation".to_string(),
+            description: "object2 description".to_string(),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        // Creating a relation between class1 and class3, the objects are in class1 and class2
+        let class_rel = create_class_relation(&pool, class1, class3).await;
+
+        let object_rel = NewHubuumObjectRelation {
+            class_relation: class_rel.id,
+            from_hubuum_object_id: object1.id,
+            to_hubuum_object_id: object2.id,
+        };
+
+        match object_rel.save(&pool).await {
+            Err(ApiError::BadRequest(_)) => {}
+            Err(e) => panic!("Unexpected error: {:?}", e),
+            Ok(_) => panic!("Creating a relation should fail when the classes of objects do not match the relation classes"),
+        }
+
+        let object_rel = NewHubuumObjectRelation {
+            class_relation: class_rel.id,
+            from_hubuum_object_id: object2.id,
+            to_hubuum_object_id: object1.id,
+        };
+
+        match object_rel.save(&pool).await {
+            Err(ApiError::BadRequest(_)) => {}
+            Err(e) => panic!("Unexpected error: {:?}", e),
+            Ok(_) => panic!("Creating a relation should fail when the classes of objects do not match the relation classes"),
+        }
+
+        let object_rel = NewHubuumObjectRelation {
+            class_relation: 99999999,
+            from_hubuum_object_id: object1.id,
+            to_hubuum_object_id: object2.id,
+        };
+
+        match object_rel.save(&pool).await {
+            Err(ApiError::NotFound(_)) => {}
+            Err(e) => panic!("Unexpected error: {:?}", e),
+            Ok(_) => panic!(
+                "Should not be able to create object relations when class relation does not exist"
+            ),
+        }
+
+        namespace.delete(&pool).await.unwrap();
+    }
 }
