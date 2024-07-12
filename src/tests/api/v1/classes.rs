@@ -12,6 +12,16 @@ pub mod tests {
 
     const CLASSES_ENDPOINT: &str = "/api/v1/classes";
 
+    /// Create a set of 6 classes for testing
+    ///
+    /// The classes are created in a namespace with the name `prefix`_api_create_test_classes.
+    /// Their names are: `prefix`_api_class_1, `prefix`_api_class_2, etc.
+    /// Their descriptions are: `prefix`_api_description_1, `prefix`_api_description_2, etc.
+    ///
+    /// The classes use the following schemas:
+    /// 1-3: Blog
+    /// 4-5: Address
+    /// 6: Geo
     pub async fn create_test_classes(prefix: &str) -> Vec<crate::models::class::HubuumClass> {
         let (pool, _, _) = setup_pool_and_tokens().await;
 

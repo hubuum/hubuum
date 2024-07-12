@@ -4,10 +4,12 @@ use diesel::sql_types::Bool;
 use std::{collections::HashSet, f32::consts::E};
 use tracing::debug;
 
-use crate::models::permissions::Permissions;
+use crate::models::permissions::{Permissions, PermissionsList};
 use crate::utilities::extensions::CustomStringExtensions;
 use crate::{errors::ApiError, schema::hubuumobject::data};
 use chrono::{format, DateTime, NaiveDateTime, Utc};
+
+use super::Permission;
 
 /// ## Parse a query string into search parameters
 ///
@@ -356,12 +358,10 @@ pub trait QueryParamsExt {
     /// parameter, attempt to parse it into a Permissions enum. If the value is not a valid
     /// permission, return an ApiError::BadRequest.
     ///
-    /// Note that duplicates may occur, it is up to the caller to handle this if necessary.
-    ///
     /// ### Returns    
     ///
-    /// * A vector of Permissions or ApiError::BadRequest if the permissions are invalid
-    fn permissions(&self) -> Result<Vec<Permissions>, ApiError>;
+    /// * A PermissionsList of Permissions or ApiError::BadRequest if the permissions are invalid
+    fn permissions(&self) -> Result<PermissionsList<Permissions>, ApiError>;
 
     /// ## Get a sorted list of namespace ids from a list of parsed query parameters
     ///
@@ -403,9 +403,8 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
     /// Note that the list is not sorted and duplicates are removed.
     ///
     /// If any value is not a valid permission, return an ApiError::BadRequest.
-    fn permissions(&self) -> Result<Vec<Permissions>, ApiError> {
+    fn permissions(&self) -> Result<PermissionsList<Permissions>, ApiError> {
         let mut unique_permissions = HashSet::new();
-
         for param in self.iter().filter(|p| p.is_permission()) {
             match param.value_as_permission() {
                 Ok(permission) => {
@@ -414,8 +413,7 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
                 Err(e) => return Err(e),
             }
         }
-
-        Ok(unique_permissions.into_iter().collect())
+        Ok(PermissionsList::new(unique_permissions))
     }
     /// ## Get a sorted list of namespace ids from a list of parsed query parameters
     ///
@@ -428,7 +426,7 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
         let mut nids = vec![];
 
         for p in self.iter() {
-            if p.field == "namespace" {
+            if p.field == "namespaces" {
                 nids.extend(p.value.as_integer()?);
             }
         }

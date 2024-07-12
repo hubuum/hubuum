@@ -269,7 +269,8 @@ pub async fn assert_response_status(
     assert_eq!(
         resp.status(),
         expected_status,
-        "Unexpected response status: {:?}",
+        "Unexpected response status: {:?} ({:?})",
+        resp.request().uri().clone(),
         test::read_body(resp).await
     );
     resp

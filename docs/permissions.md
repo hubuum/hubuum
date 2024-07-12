@@ -28,6 +28,7 @@ The following permissions are available for collections:
 | `create_collection`   | Allows creating collections within the collection. |
 | `create_class`        | Allows creating classes within the collection. |
 | `create_object`       | Allows creating objects within the collection. |
+| `create_relationship` | Allows creating relationships of classes within the collection. |
 
 The permission to grant groups (or users) access to the collection itself is done by the parent collection. Every collection has a parent collection and the root collection is created when the Hubuum instance is created.
 
@@ -51,6 +52,17 @@ The following permissions are available for objects:
 | `read_object`     | Allows reading the object. |
 | `update_object`   | Allows updating the object. |
 | `delete_object`   | Allows deleting the object. |
+
+### Permissions for class relationships
+
+The following permissions are available for relationships between classes:
+
+| Permission | Description |
+| ---------- | ----------- |
+| `read_class_relationship`     | Allows reading the relationship. |
+| `update_class_relationship`   | Allows updating the relationship. |
+| `delete_class_relationship`   | Allows deleting the relationship. |
+| `create_object_relationship`   | Allows creating relationships between objects adhering of the class relationship. |
 
 ## Example
 

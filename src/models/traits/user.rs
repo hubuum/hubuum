@@ -1,11 +1,13 @@
 use diesel::sql_types::Integer;
 use diesel::{pg::Pg, ExpressionMethods, JoinOnDsl, QueryDsl, RunQueryDsl, Table};
 
+use std::iter::IntoIterator;
+
 use crate::api::v1::handlers::namespaces;
 use crate::models::search::SearchOperator;
 use crate::models::{
-    class, permissions, Group, HubuumClass, HubuumObject, Namespace, Permission, Permissions, User,
-    UserID,
+    class, permissions, Group, HubuumClass, HubuumClassRelation, HubuumObject,
+    HubuumObjectRelation, Namespace, Permission, Permissions, User, UserID,
 };
 
 use crate::schema::{hubuumclass, hubuumobject};
@@ -42,11 +44,13 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         );
 
         let mut conn = pool.get()?;
-        let group_id_subquery = self.group_ids_subquery();
+
+        let mut permissions_list = query_params.permissions()?;
+        permissions_list.ensure_contains(&[Permissions::ReadClass, Permissions::ReadCollection]);
 
         // Get all namespace IDs that the user has read permissions on, and if we have a list of selected namespaces, filter on those.
         let namespace_ids: Vec<i32> = self
-            .namespaces_read(pool)
+            .namespaces(pool, &permissions_list)
             .await?
             .into_iter()
             .map(|n| n.id)
@@ -59,17 +63,9 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             namespace_ids = ?namespace_ids
         );
 
-        let mut base_query = permissions
-            .into_boxed()
-            .filter(group_id.eq_any(group_id_subquery));
-
-        // Handle permissions
-        for perm in query_params.permissions()? {
-            base_query = perm.create_boxed_filter(base_query, true);
-        }
-
-        let mut base_query =
-            base_query.inner_join(hubuumclass.on(hubuum_classes_nid.eq_any(namespace_ids)));
+        let mut base_query = hubuumclass
+            .filter(hubuum_classes_nid.eq_any(namespace_ids))
+            .into_boxed();
 
         let json_schema_queries = query_params.json_schemas()?;
         if !json_schema_queries.is_empty() {
@@ -192,11 +188,13 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         );
 
         let mut conn = pool.get()?;
-        let group_id_subquery = self.group_ids_subquery();
+
+        let mut permission_list = query_params.permissions()?;
+        permission_list.ensure_contains(&[Permissions::ReadObject, Permissions::ReadCollection]);
 
         // Get all namespace IDs that the user has read permissions on, and if we have a list of selected namespaces, filter on those.
         let namespace_ids: Vec<i32> = self
-            .namespaces_read(pool)
+            .namespaces(pool, &permission_list)
             .await?
             .into_iter()
             .map(|n| n.id)
@@ -209,17 +207,9 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             namespace_ids = ?namespace_ids
         );
 
-        let mut base_query = permissions
-            .into_boxed()
-            .filter(group_id.eq_any(group_id_subquery));
-
-        // Handle permissions
-        for perm in query_params.permissions()? {
-            base_query = perm.create_boxed_filter(base_query, true);
-        }
-
-        let mut base_query =
-            base_query.inner_join(hubuumobject.on(hubuum_object_nid.eq_any(namespace_ids)));
+        let mut base_query = hubuumobject
+            .filter(hubuum_object_nid.eq_any(namespace_ids))
+            .into_boxed();
 
         let json_data_queries = query_params.json_datas()?;
         if !json_data_queries.is_empty() {
@@ -318,6 +308,136 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             .select(hubuumobject::all_columns())
             .distinct() // TODO: Is it the joins that makes this required?
             .load::<HubuumObject>(&mut conn)?;
+
+        Ok(result)
+    }
+
+    async fn search_class_relations(
+        &self,
+        pool: &DbPool,
+        query_params: Vec<ParsedQueryParam>,
+    ) -> Result<Vec<HubuumClassRelation>, ApiError> {
+        // Valid search fields:
+        // From hubuumclass_relation:
+        // - id (int)
+        // - from_class_id (int)
+        // - to_class_id (int)
+        // - created_at (date)
+        // - updated_at (date)
+        // From permissions:
+        // - A permission field for both from and to class IDs
+
+        // Flow:
+        // 1. Get all namespace IDs that the user has ReadClassRelations and any other required permissions on
+        // 2. Filter the hubuumclass_relation table on the namespace IDs
+
+        use crate::models::PermissionFilter;
+        use crate::schema::hubuumclass;
+        use crate::schema::hubuumclass_relation::dsl::{
+            from_hubuum_class_id, hubuumclass_relation, id as hubuum_class_relation_id,
+            to_hubuum_class_id,
+        };
+        use crate::schema::permissions::dsl::*;
+        use diesel::alias;
+        use std::collections::HashSet;
+
+        debug!(
+            message = "Searching class relations",
+            stage = "Starting",
+            user_id = self.id(),
+            query_params = ?query_params
+        );
+
+        let mut conn = pool.get()?;
+
+        // Permissions vector must contain ReadClassRelation
+        let mut permissions_list = query_params.permissions()?;
+        permissions_list.ensure_contains(&[Permissions::ReadClassRelation]);
+
+        // Get all namespace IDs that the user has ReadClassRelations and other requested permissions on.
+        let namespace_ids: Vec<i32> = self
+            .namespaces(pool, &permissions_list)
+            .await?
+            .into_iter()
+            .map(|n| n.id)
+            .collect();
+
+        debug!(
+            message = "Searching class relations",
+            stage = "Namespace IDs",
+            user_id = self.id(),
+            namespace_ids = ?namespace_ids
+        );
+
+        let mut base_query = hubuumclass_relation.into_boxed();
+
+        base_query = base_query
+            .filter(
+                from_hubuum_class_id.eq_any(
+                    crate::schema::hubuumclass::dsl::hubuumclass
+                        .select(crate::schema::hubuumclass::id)
+                        .filter(crate::schema::hubuumclass::namespace_id.eq_any(&namespace_ids)),
+                ),
+            )
+            .filter(
+                to_hubuum_class_id.eq_any(
+                    crate::schema::hubuumclass::dsl::hubuumclass
+                        .select(crate::schema::hubuumclass::id)
+                        .filter(crate::schema::hubuumclass::namespace_id.eq_any(&namespace_ids)),
+                ),
+            );
+
+        for param in query_params {
+            use crate::models::search::{DataType, SearchOperator};
+            use crate::{boolean_search, date_search, numeric_search, string_search};
+            let field = param.field.as_str();
+            let operator = param.operator.clone();
+            match field {
+                "id" => numeric_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumclass_relation::dsl::id
+                ),
+                "from_class_id" => numeric_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumclass_relation::dsl::from_hubuum_class_id
+                ),
+                "to_class_id" => numeric_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumclass_relation::dsl::to_hubuum_class_id
+                ),
+                "created_at" => date_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumclass_relation::dsl::created_at
+                ),
+                "updated_at" => date_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumclass_relation::dsl::updated_at
+                ),
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for class relations",
+                        field
+                    )))
+                }
+            }
+        }
+
+        trace_query!(base_query, "Searching class relations");
+
+        let result = base_query
+            .select(hubuumclass_relation::all_columns())
+            .distinct() // TODO: Is it the joins that makes this required?
+            .load::<HubuumClassRelation>(&mut conn)?;
 
         Ok(result)
     }
@@ -499,21 +619,22 @@ pub trait GroupAccessors: SelfAccessors<User> {
 pub trait UserNamespaceAccessors: SelfAccessors<User> + GroupAccessors {
     /// Return all namespaces that the user has NamespacePermissions::ReadCollection on.
     async fn namespaces_read(&self, pool: &DbPool) -> Result<Vec<Namespace>, ApiError> {
-        self.namespaces(pool, vec![Permissions::ReadCollection])
-            .await
+        self.namespaces(pool, &[Permissions::ReadCollection]).await
     }
 
-    async fn namespaces(
+    async fn namespaces<'a, I>(
         &self,
         pool: &DbPool,
-        permissions_list: Vec<Permissions>,
-    ) -> Result<Vec<Namespace>, ApiError> {
+        permissions_list: &'a I,
+    ) -> Result<Vec<Namespace>, ApiError>
+    where
+        &'a I: IntoIterator<Item = &'a Permissions>,
+    {
         use crate::models::PermissionFilter;
         use crate::schema::namespaces::dsl::{id as namespaces_table_id, namespaces};
         use crate::schema::permissions::dsl::{group_id, namespace_id, permissions};
 
         let mut conn = pool.get()?;
-
         let groups_id_subquery = self.group_ids_subquery();
 
         let mut base_query = permissions

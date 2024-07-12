@@ -257,6 +257,30 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
                             Permissions::DeleteObject => {
                                 update_perm.has_delete_object = Some(true);
                             }
+                            Permissions::CreateClassRelation => {
+                                update_perm.has_create_class_relation = Some(true);
+                            }
+                            Permissions::ReadClassRelation => {
+                                update_perm.has_read_class_relation = Some(true);
+                            }
+                            Permissions::UpdateClassRelation => {
+                                update_perm.has_update_class_relation = Some(true);
+                            }
+                            Permissions::DeleteClassRelation => {
+                                update_perm.has_delete_class_relation = Some(true);
+                            }
+                            Permissions::CreateObjectRelation => {
+                                update_perm.has_create_object_relation = Some(true);
+                            }
+                            Permissions::ReadObjectRelation => {
+                                update_perm.has_read_object_relation = Some(true);
+                            }
+                            Permissions::UpdateObjectRelation => {
+                                update_perm.has_update_object_relation = Some(true);
+                            }
+                            Permissions::DeleteObjectRelation => {
+                                update_perm.has_delete_object_relation = Some(true);
+                            }
                         }
                     }
 
@@ -285,6 +309,22 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
                         has_read_object: permission_list.contains(&Permissions::ReadObject),
                         has_update_object: permission_list.contains(&Permissions::UpdateObject),
                         has_delete_object: permission_list.contains(&Permissions::DeleteObject),
+                        has_create_class_relation: permission_list
+                            .contains(&Permissions::CreateClassRelation),
+                        has_read_class_relation: permission_list
+                            .contains(&Permissions::ReadClassRelation),
+                        has_update_class_relation: permission_list
+                            .contains(&Permissions::UpdateClassRelation),
+                        has_delete_class_relation: permission_list
+                            .contains(&Permissions::DeleteClassRelation),
+                        has_create_object_relation: permission_list
+                            .contains(&Permissions::CreateObjectRelation),
+                        has_read_object_relation: permission_list
+                            .contains(&Permissions::ReadObjectRelation),
+                        has_update_object_relation: permission_list
+                            .contains(&Permissions::UpdateObjectRelation),
+                        has_delete_object_relation: permission_list
+                            .contains(&Permissions::DeleteObjectRelation),
                     };
                     Ok(diesel::insert_into(permissions)
                         .values(&new_entry)
@@ -369,6 +409,30 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
                     }
                     Permissions::DeleteObject => {
                         update_perm.has_delete_object = Some(false);
+                    }
+                    Permissions::CreateClassRelation => {
+                        update_perm.has_create_class_relation = Some(false);
+                    }
+                    Permissions::ReadClassRelation => {
+                        update_perm.has_read_class_relation = Some(false);
+                    }
+                    Permissions::UpdateClassRelation => {
+                        update_perm.has_update_class_relation = Some(false);
+                    }
+                    Permissions::DeleteClassRelation => {
+                        update_perm.has_delete_class_relation = Some(false);
+                    }
+                    Permissions::CreateObjectRelation => {
+                        update_perm.has_create_object_relation = Some(false);
+                    }
+                    Permissions::ReadObjectRelation => {
+                        update_perm.has_read_object_relation = Some(false);
+                    }
+                    Permissions::UpdateObjectRelation => {
+                        update_perm.has_update_object_relation = Some(false);
+                    }
+                    Permissions::DeleteObjectRelation => {
+                        update_perm.has_delete_object_relation = Some(false);
                     }
                 }
             }
@@ -525,6 +589,22 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
                         has_read_object: permission_list.contains(&Permissions::ReadObject),
                         has_update_object: permission_list.contains(&Permissions::UpdateObject),
                         has_delete_object: permission_list.contains(&Permissions::DeleteObject),
+                        has_create_class_relation: permission_list
+                            .contains(&Permissions::CreateClassRelation),
+                        has_read_class_relation: permission_list
+                            .contains(&Permissions::ReadClassRelation),
+                        has_update_class_relation: permission_list
+                            .contains(&Permissions::UpdateClassRelation),
+                        has_delete_class_relation: permission_list
+                            .contains(&Permissions::DeleteClassRelation),
+                        has_create_object_relation: permission_list
+                            .contains(&Permissions::CreateObjectRelation),
+                        has_read_object_relation: permission_list
+                            .contains(&Permissions::ReadObjectRelation),
+                        has_update_object_relation: permission_list
+                            .contains(&Permissions::UpdateObjectRelation),
+                        has_delete_object_relation: permission_list
+                            .contains(&Permissions::DeleteObjectRelation),
                     };
                     Ok(diesel::insert_into(permissions)
                         .values(&new_entry)
