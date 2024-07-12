@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{errors::ApiError, schema::hubuumclass_relation, schema::hubuumobject_relation};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HubuumClassRelationID(pub i32);
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +27,7 @@ pub struct NewHubuumClassRelation {
     pub to_hubuum_class_id: i32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HubuumObjectRelationID(pub i32);
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy, PartialEq, Eq)]

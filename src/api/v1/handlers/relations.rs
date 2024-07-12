@@ -2,8 +2,10 @@ use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, UserAccess};
 use crate::models::search::{parse_query_parameter, ParsedQueryParam};
+use crate::models::{HubuumClassRelationID, Permissions};
 
-use crate::traits::SelfAccessors;
+use crate::check_permissions;
+use crate::traits::{PermissionController, SelfAccessors};
 
 use crate::utilities::response::json_response;
 use tracing::debug;
@@ -33,4 +35,29 @@ async fn get_class_relations(
     let classes = user.search_class_relations(&pool, params).await?;
 
     Ok(json_response(classes, StatusCode::OK))
+}
+
+#[get("/{relation_id}")]
+async fn get_class_relation(
+    pool: web::Data<DbPool>,
+    requestor: UserAccess,
+    relation_id: web::Path<HubuumClassRelationID>,
+) -> Result<impl Responder, ApiError> {
+    let user = requestor.user;
+    let relation_id = relation_id.into_inner();
+
+    debug!(
+        message = "Getting class relation",
+        user_id = user.id(),
+        relation_id = ?relation_id,
+    );
+
+    let namespaces = relation_id.namespace(&pool).await?;
+    for namespace in [namespaces.0, namespaces.1] {
+        check_permissions!(namespace, pool, user, Permissions::ReadClass);
+    }
+
+    let relation = relation_id.instance(&pool).await?;
+
+    Ok(json_response(relation, StatusCode::OK))
 }
