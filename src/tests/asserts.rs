@@ -121,7 +121,9 @@ macro_rules! assert_contains_all {
         for item in $items {
             if !$vec.iter().any(|v| v == item) {
                 panic!(
-                    "Assertion failed: item not found in vec. Called from: {}:{}",
+                    "Assertion failed: item {:?} not found in vec {:?}. Called from: {}:{}",
+                    item,
+                    $vec,
                     file!(),
                     line!()
                 );
@@ -131,13 +133,13 @@ macro_rules! assert_contains_all {
 }
 /// ## Assert identical IDs in two collections.
 ///
-/// Asserts that two collections of `HubuumClass` instances contain exactly the same unique IDs, or
-/// that a collection of `HubuumClass` instances contains exactly the specified IDs.
+/// Asserts that two collections of instances with an ID field contain exactly the same unique IDs,
+/// or that a collection of instances contains exactly the specified IDs.
 ///
 /// This macro supports two modes of operation based on the input:
 ///
-/// - Comparing the IDs of two collections of `HubuumClass` instances for exact match, regardless of order.
-/// - Comparing the IDs in a single collection of `HubuumClass` instances against a specified set of IDs.
+/// - Comparing the IDs of two collections of instances for exact match, regardless of order.
+/// - Comparing the IDs in a single collection of instances against a specified set of IDs.
 ///
 /// In either case, it checks that all specified IDs are present and that there are no extra or missing IDs.
 /// It is intended for use in tests where ensuring the exact match of IDs is necessary.
@@ -173,15 +175,15 @@ macro_rules! assert_contains_all {
 ///
 /// ### Parameters
 ///
-/// - `$collection1` and `$collection2`: The collections of `HubuumClass` instances to compare. Each argument should be
-/// a vector of `HubuumClass` instances.
+/// - `$collection1` and `$collection2`: The collections of instances to compare. Each argument should be
+/// a vector of instances.
 ///
-/// - Alternatively, `$collection` is a vector of `HubuumClass` instances and `$ids` is a slice of `i32` representing
+/// - Alternatively, `$collection` is a vector of instances and `$ids` is a slice of `i32` representing
 /// the expected unique IDs to be found in `$collection`.
 
 #[macro_export]
 macro_rules! assert_contains_same_ids {
-    // Case where both arguments are references to vectors of HubuumClass
+    // Case where both arguments are references to vectors of instances
     ($collection1:expr, $collection2:expr) => {{
         let ids1: std::collections::HashSet<i32> = $collection1.iter().map(|item| item.id).collect();
         let ids2: std::collections::HashSet<i32> = $collection2.iter().map(|item| item.id).collect();
@@ -191,7 +193,7 @@ macro_rules! assert_contains_same_ids {
             let extra_ids: Vec<_> = ids1.difference(&ids2).collect();
 
             panic!(
-                "Assertion failed: Ids do not match.\n Missing ids: {:?}\nExtra ids in collection: {:?}\nCalled from: {}:{}",
+                "Assertion failed: IDs do not match.\n Missing ids: {:?}\n Extra ids in collection: {:?}\nCalled from: {}:{}",
                 missing_ids,
                 extra_ids,
                 file!(),
@@ -200,7 +202,7 @@ macro_rules! assert_contains_same_ids {
         }
     }};
 
-    // Case where the first argument is a vector of HubuumClass and the second is a slice of i32
+    // Case where the first argument is a vector of instances and the second is a slice of i32
     ($collection:expr, $ids:expr) => {{
         let collected_ids: std::collections::HashSet<i32> = $collection.iter().map(|item| item.id).collect();
         let expected_ids: std::collections::HashSet<i32> = $ids.iter().cloned().collect();
@@ -210,7 +212,7 @@ macro_rules! assert_contains_same_ids {
             let extra_ids: Vec<_> = collected_ids.difference(&expected_ids).collect();
 
             panic!(
-                "Assertion failed: Ids do not match.\n Missing ids: {:?}\nExtra ids in collection: {:?}\nCalled from: {}:{}",
+                "Assertion failed: IDs do not match.\n Missing ids: {:?}\n Extra ids in collection: {:?}\nCalled from: {}:{}",
                 missing_ids,
                 extra_ids,
                 file!(),
@@ -269,9 +271,9 @@ pub async fn assert_response_status(
     assert_eq!(
         resp.status(),
         expected_status,
-        "Unexpected response status: {:?} ({:?})",
+        "Unexpected response status: {:?} ({:?}).",
         resp.request().uri().clone(),
-        test::read_body(resp).await
+        test::read_body(resp).await,
     );
     resp
 }

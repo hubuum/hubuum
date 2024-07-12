@@ -54,7 +54,7 @@ async fn get_class_relation(
 
     let namespaces = relation_id.namespace(&pool).await?;
     for namespace in [namespaces.0, namespaces.1] {
-        check_permissions!(namespace, pool, user, Permissions::ReadClass);
+        check_permissions!(namespace, pool, user, Permissions::ReadClassRelation);
     }
 
     let relation = relation_id.instance(&pool).await?;

@@ -90,6 +90,7 @@ pub async fn create_test_admin(pool: &DbPool) -> User {
     }
 }
 
+/// Create a test group with a random name
 pub async fn create_test_group(pool: &DbPool) -> Group {
     let groupname = "group".to_string() + &generate_random_password(16);
     let result = NewGroup {
