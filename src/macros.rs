@@ -54,7 +54,7 @@ macro_rules! check_permissions {
     // Captures any number of permissions passed after the user argument and converts them into a vector
     ($request_obj:expr, $pool:expr, $user:expr, $($permissions:expr),+ $(,)?) => {{
         use $crate::errors::ApiError;
-        use $crate::traits::NamespaceAccessors;
+        use $crate::traits::{NamespaceAccessors, SelfAccessors, PermissionController};
         use tracing::warn;
 
         let permissions_vec = vec![$($permissions),+];

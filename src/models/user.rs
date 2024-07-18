@@ -28,21 +28,14 @@ impl User {
         let generated_token = crate::utilities::auth::generate_token();
 
         Ok(diesel::insert_into(crate::schema::tokens::table)
-            .values((
-                user_id.eq(self.id),
-                token.eq(&generated_token.get_token()),
-                issued.eq(chrono::Utc::now().naive_utc()),
-            ))
+            .values((user_id.eq(self.id), token.eq(&generated_token.get_token())))
             .execute(&mut pool.get()?)
             .map(|_| generated_token)?)
     }
 
     pub async fn get_tokens(&self, pool: &DbPool) -> Result<Vec<UserToken>, ApiError> {
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
-        crate::models::token::valid_tokens_for_user(&mut conn, self.id).await
+        let mut conn = pool.get()?;
+        crate::db::tokens_valid_for_user(&mut conn, self.id, 24).await
     }
 
     pub async fn token_is_mine(

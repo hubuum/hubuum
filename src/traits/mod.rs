@@ -23,7 +23,6 @@ pub trait CanSave {
 
 pub trait CanUpdate {
     type Output;
-
     async fn update(&self, pool: &DbPool, entry_id: i32) -> Result<Self::Output, ApiError>;
 }
 
@@ -34,21 +33,15 @@ pub trait SelfAccessors<T> {
     async fn instance(&self, pool: &DbPool) -> Result<T, ApiError>;
 }
 
-pub trait NamespaceAccessors {
-    async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError>;
-    async fn namespace_id(&self, pool: &DbPool) -> Result<i32, ApiError>;
+pub trait NamespaceAccessors<N = Namespace, I = i32> {
+    async fn namespace(&self, pool: &DbPool) -> Result<N, ApiError>;
+    async fn namespace_id(&self, pool: &DbPool) -> Result<I, ApiError>;
 }
 
 pub trait ClassAccessors {
     async fn class(&self, pool: &DbPool) -> Result<HubuumClass, ApiError>;
     async fn class_id(&self, pool: &DbPool) -> Result<i32, ApiError>;
 }
-
-pub trait ObjectAccessors {
-    async fn object(&self, pool: &DbPool) -> Result<HubuumObject, ApiError>;
-    async fn object_id(&self, pool: &DbPool) -> Result<i32, ApiError>;
-}
-
 pub trait PermissionController: Serialize + NamespaceAccessors {
     /// Check if the user has the given permission on the object.
     ///

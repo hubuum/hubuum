@@ -13,7 +13,7 @@ use crate::models::{
     HubuumClassID, HubuumObjectID, NamespaceID, NewHubuumClass, NewHubuumObject, Permissions,
     UpdateHubuumClass, UpdateHubuumObject,
 };
-use crate::traits::{CanDelete, CanSave, CanUpdate, PermissionController, Search, SelfAccessors};
+use crate::traits::{CanDelete, CanSave, CanUpdate, Search, SelfAccessors};
 
 use crate::models::search::{parse_query_parameter, ParsedQueryParam};
 

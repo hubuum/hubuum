@@ -13,6 +13,7 @@ pub struct AdminAccess {
     pub user: User,
 }
 
+#[allow(dead_code)]
 pub struct AdminOrSelfAccess {
     pub token: Token,
     pub user: User,

@@ -1,8 +1,13 @@
-use crate::utilities::db::DatabaseUrlComponents;
+mod token;
+
+pub use crate::db::token::{token_is_valid, tokens_valid_for_user};
+
 use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
 use diesel::PgConnection;
 use tracing::debug;
+
+use crate::utilities::db::DatabaseUrlComponents;
 
 pub type DbPool = Pool<ConnectionManager<PgConnection>>;
 

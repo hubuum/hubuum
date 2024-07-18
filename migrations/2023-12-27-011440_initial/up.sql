@@ -25,10 +25,10 @@ CREATE TABLE user_groups (
 );
 
 CREATE TABLE tokens (
-    token VARCHAR NOT NULL,
+    token VARCHAR NOT NULL UNIQUE,
     user_id INT REFERENCES users (id) ON DELETE CASCADE NOT NULL,
-    issued TIMESTAMP NOT NULL,
-    PRIMARY KEY (token, user_id)
+    issued TIMESTAMP NOT NULL DEFAULT now(),
+    PRIMARY KEY (token)
 );
 
 CREATE TABLE namespaces (

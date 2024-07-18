@@ -1,11 +1,26 @@
+use argon2::password_hash::rand_core::le;
 use chrono::NaiveDateTime;
 
-use crate::errors::ApiError;
 use chrono::{Duration, Utc};
 
-use crate::schema::tokens;
 use diesel::prelude::*;
+use diesel::sql_types::{Integer, Text, Timestamp};
+use diesel::QueryableByName;
 use serde::{Deserialize, Serialize};
+
+use crate::errors::ApiError;
+use crate::schema::tokens;
+
+#[derive(Serialize, Deserialize, Queryable, Insertable, Selectable, QueryableByName, Clone)]
+#[diesel(table_name = tokens)]
+pub struct UserToken {
+    #[diesel(sql_type = Text)]
+    pub token: String,
+    #[diesel(sql_type = Integer)]
+    pub user_id: i32,
+    #[diesel(sql_type = Timestamp)]
+    pub issued: NaiveDateTime,
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Token(pub String);
@@ -16,7 +31,7 @@ impl Token {
     }
 
     pub async fn is_valid(&self, conn: &mut PgConnection) -> Result<UserToken, ApiError> {
-        is_valid_token(conn, &self.0).await
+        crate::db::token_is_valid(conn, &self.0, 24).await
     }
     /// Return a string where we only expose the first three and last three characters.
     /// The middle part is replaced with "..."
@@ -37,46 +52,4 @@ impl Token {
         diesel::delete(tokens.filter(token.eq(&self.0))).execute(conn)?;
         Ok(())
     }
-}
-
-#[derive(Serialize, Deserialize, Queryable, Insertable)]
-#[diesel(table_name = tokens)]
-pub struct UserToken {
-    pub token: String,
-    pub user_id: i32,
-    pub issued: NaiveDateTime,
-}
-
-fn timestamp_for_valid_token() -> chrono::NaiveDateTime {
-    Utc::now().naive_utc() - Duration::hours(24)
-}
-
-pub async fn is_valid_token(conn: &mut PgConnection, token: &str) -> Result<UserToken, ApiError> {
-    use crate::schema::tokens::dsl::{issued, token as token_column, tokens};
-
-    let since = timestamp_for_valid_token();
-
-    let token_result = tokens
-        .filter(token_column.eq(token))
-        .filter(issued.gt(since))
-        .first::<UserToken>(conn);
-
-    match token_result {
-        Ok(token) => Ok(token),
-        Err(_) => Err(ApiError::Unauthorized("Invalid token".to_string())),
-    }
-}
-
-pub async fn valid_tokens_for_user(
-    conn: &mut PgConnection,
-    user_id: i32,
-) -> Result<Vec<UserToken>, ApiError> {
-    use crate::schema::tokens::dsl::{issued, tokens, user_id as user_id_column};
-
-    let since = timestamp_for_valid_token();
-    tokens
-        .filter(user_id_column.eq(user_id))
-        .filter(issued.gt(since))
-        .load::<UserToken>(conn)
-        .map_err(|e| ApiError::DatabaseError(e.to_string()))
 }

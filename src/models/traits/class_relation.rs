@@ -9,7 +9,7 @@ use crate::db::DbPool;
 use crate::{errors::ApiError, schema::hubuumclass_relation, schema::hubuumobject_relation};
 
 use crate::models::{
-    HubuumClassRelation, HubuumClassRelationID, Namespace, NewHubuumClassRelation,
+    HubuumClass, HubuumClassRelation, HubuumClassRelationID, Namespace, NewHubuumClassRelation,
 };
 use crate::traits::{CanDelete, CanSave, NamespaceAccessors, SelfAccessors};
 
@@ -72,55 +72,79 @@ impl CanSave for NewHubuumClassRelation {
     }
 }
 
-impl HubuumClassRelation {
-    pub async fn namespace(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
-        use crate::schema::hubuumclass::dsl::{
-            hubuumclass, id as class_id, namespace_id as class_namespace_id,
-        };
-        use crate::schema::hubuumclass_relation::dsl::{from_hubuum_class_id, to_hubuum_class_id};
-        use crate::schema::namespaces::dsl::{id as namespace_id, namespaces};
-
-        trace!("Getting namespaces for class relation");
-
-        let mut conn = pool.get()?;
-        let namespace_list = hubuumclass
-            .filter(class_id.eq_any(&[self.from_hubuum_class_id, self.to_hubuum_class_id]))
-            .inner_join(namespaces.on(namespace_id.eq(class_namespace_id)))
-            .select(namespaces::all_columns())
-            .load::<Namespace>(&mut conn)?;
-
-        if self.from_hubuum_class_id == self.to_hubuum_class_id && namespace_list.len() == 1 {
-            trace!("Found same namespace for class relation, returning same namespace twice");
-            return Ok((namespace_list[0].clone(), namespace_list[0].clone()));
-        } else if namespace_list.len() != 2 {
-            debug!(
-                "Could not find two namespaces for class relation: {} and {}, found {:?}",
-                self.from_hubuum_class_id, self.to_hubuum_class_id, namespace_list
-            );
-            return Err(ApiError::NotFound(
-                format!(
-                    "Could not find namespaces ({} and {}) for class relation",
-                    self.from_hubuum_class_id, self.to_hubuum_class_id,
-                )
-                .to_string(),
-            ));
-        }
-
-        Ok((namespace_list[0].clone(), namespace_list[1].clone()))
-    }
-
-    pub async fn namespace_id(&self, pool: &DbPool) -> Result<(i32, i32), ApiError> {
-        let namespace_tuple = self.namespace(pool).await?;
-        Ok((namespace_tuple.0.id, namespace_tuple.1.id))
+impl CanDelete for HubuumClassRelationID {
+    async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
+        self.instance(pool).await?.delete(pool).await
     }
 }
 
-impl HubuumClassRelationID {
-    pub async fn namespace(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
+impl NamespaceAccessors<(Namespace, Namespace), (i32, i32)> for NewHubuumClassRelation {
+    async fn namespace(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
+        retrieve_namespaces(pool, self.from_hubuum_class_id, self.to_hubuum_class_id).await
+    }
+
+    async fn namespace_id(&self, pool: &DbPool) -> Result<(i32, i32), ApiError> {
+        let (ns1, ns2) = self.namespace(pool).await?;
+        Ok((ns1.id, ns2.id))
+    }
+}
+
+impl NamespaceAccessors<(Namespace, Namespace), (i32, i32)> for HubuumClassRelation {
+    async fn namespace(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
+        retrieve_namespaces(pool, self.from_hubuum_class_id, self.to_hubuum_class_id).await
+    }
+
+    async fn namespace_id(&self, pool: &DbPool) -> Result<(i32, i32), ApiError> {
+        let (ns1, ns2) = self.namespace(pool).await?;
+        Ok((ns1.id, ns2.id))
+    }
+}
+
+impl NamespaceAccessors<(Namespace, Namespace), (i32, i32)> for HubuumClassRelationID {
+    async fn namespace(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
         self.instance(pool).await?.namespace(pool).await
     }
 
-    pub async fn namespace_id(&self, pool: &DbPool) -> Result<(i32, i32), ApiError> {
+    async fn namespace_id(&self, pool: &DbPool) -> Result<(i32, i32), ApiError> {
         self.instance(pool).await?.namespace_id(pool).await
     }
+}
+
+async fn retrieve_namespaces(
+    pool: &DbPool,
+    from_id: i32,
+    to_id: i32,
+) -> Result<(Namespace, Namespace), ApiError> {
+    use crate::schema::hubuumclass::dsl::{
+        hubuumclass, id as class_id, namespace_id as class_namespace_id,
+    };
+    use crate::schema::namespaces::dsl::{id as namespace_id, namespaces};
+
+    trace!("Getting namespaces for class relation");
+
+    let mut conn = pool.get()?;
+    let namespace_list = hubuumclass
+        .filter(class_id.eq_any(&[from_id, to_id]))
+        .inner_join(namespaces.on(namespace_id.eq(class_namespace_id)))
+        .select(namespaces::all_columns())
+        .load::<Namespace>(&mut conn)?;
+
+    if from_id == to_id && namespace_list.len() == 1 {
+        trace!("Found same namespace for class relation, returning same namespace twice");
+        return Ok((namespace_list[0].clone(), namespace_list[0].clone()));
+    } else if namespace_list.len() != 2 {
+        debug!(
+            "Could not find two namespaces for class relation: {} and {}, found {:?}",
+            from_id, to_id, namespace_list
+        );
+        return Err(ApiError::NotFound(
+            format!(
+                "Could not find namespaces ({} and {}) for class relation",
+                from_id, to_id,
+            )
+            .to_string(),
+        ));
+    }
+
+    Ok((namespace_list[0].clone(), namespace_list[1].clone()))
 }

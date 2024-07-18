@@ -98,7 +98,7 @@ diesel::table! {
 }
 
 diesel::table! {
-    tokens (token, user_id) {
+    tokens (token) {
         token -> Varchar,
         user_id -> Int4,
         issued -> Timestamp,

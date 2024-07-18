@@ -7,7 +7,7 @@ mod tests {
     use crate::{assert_contains_all, assert_contains_same_ids};
     use actix_web::{http::StatusCode, test};
 
-    use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
+    use crate::tests::api_operations::get_request;
     use crate::tests::asserts::assert_response_status;
     use crate::tests::{create_test_group, ensure_normal_user, setup_pool_and_tokens};
     // use crate::{assert_contains_all, assert_contains_same_ids};
