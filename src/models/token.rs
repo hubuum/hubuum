@@ -8,6 +8,7 @@ use diesel::sql_types::{Integer, Text, Timestamp};
 use diesel::QueryableByName;
 use serde::{Deserialize, Serialize};
 
+use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::schema::tokens;
 
@@ -43,10 +44,11 @@ impl Token {
         }
     }
 
-    pub async fn delete(&self, conn: &mut PgConnection) -> Result<(), ApiError> {
+    pub async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::tokens::dsl::{token, tokens};
 
-        diesel::delete(tokens.filter(token.eq(&self.0))).execute(conn)?;
+        let mut conn = pool.get()?;
+        diesel::delete(tokens.filter(token.eq(&self.0))).execute(&mut conn)?;
         Ok(())
     }
 }

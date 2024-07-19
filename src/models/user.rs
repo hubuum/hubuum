@@ -246,9 +246,7 @@ impl LoginUser {
     pub async fn login(self, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::*;
 
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
+        let mut conn = pool.get()?;
 
         // We could do .first::<User>(&mut conn)? here, due to the way errors.rs uses "From"
         // to map diesel errors. But, we specifically map Diesel's NotFound to our own NotFound

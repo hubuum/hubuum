@@ -1,10 +1,12 @@
 mod active_tokens;
+mod class;
 mod is_active;
-
-use diesel::PgConnection;
+mod namespace;
 
 use crate::errors::ApiError;
-use crate::models::token::UserToken;
+use crate::models::{HubuumClass, Namespace, UserToken};
+
+use super::DbPool;
 
 /// Trait for checking if a structure is valid/active/etc in the database.
 ///
@@ -15,7 +17,7 @@ pub trait Status<T> {
     ///
     /// Validity implies that the structure exists in the database and that it is not expired, disabled,
     /// or otherwise inactive.
-    async fn is_valid(&self, conn: &mut PgConnection) -> Result<T, ApiError>;
+    async fn is_valid(&self, pool: &DbPool) -> Result<T, ApiError>;
 }
 
 /// Trait for getting all active tokens for a given structure.
@@ -24,5 +26,23 @@ pub trait Status<T> {
 /// active tokens, and this trait would allow us to get all of them.
 pub trait ActiveTokens {
     /// Get all active tokens for a given structure.
-    async fn tokens(&self, conn: &mut PgConnection) -> Result<Vec<UserToken>, ApiError>;
+    async fn tokens(&self, pool: &DbPool) -> Result<Vec<UserToken>, ApiError>;
+}
+
+/// Trait for getting the namespace(s) of a structure from the backend database.
+///
+/// By default, this returns the singular namespace of the structure in question.
+/// For relations, where we have two namespaces (one for each class or object),
+/// the trait is implemented to return a tuple of the two namespaces.
+pub trait GetNamespace<T = Namespace> {
+    async fn namespace_from_backend(&self, pool: &DbPool) -> Result<T, ApiError>;
+}
+
+/// Trait for getting the classes(s) of a structure from the backend database.
+///
+/// By default, this returns the singular class of the structure in question.
+/// For relations, where we have two classes (one for each structure), the
+/// trait is implemented to return a tuple of the two namespaces.
+pub trait GetClass<T = HubuumClass> {
+    async fn class_from_backend(&self, pool: &DbPool) -> Result<T, ApiError>;
 }

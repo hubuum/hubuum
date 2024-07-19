@@ -218,8 +218,7 @@ mod tests {
         )
         .await;
 
-        let mut conn = pool.get().expect("Failed to get db connection");
-        let user_tokens = new_user.tokens(&mut conn).await.unwrap();
+        let user_tokens = new_user.tokens(&pool).await.unwrap();
         assert_eq!(user_tokens.len(), 1, "Token count mismatch");
 
         let resp_without_token = test::TestRequest::get()
@@ -261,8 +260,7 @@ mod tests {
         );
 
         // Verify token is gone from database
-        let mut conn = pool.get().expect("Failed to get db connection");
-        let user_tokens = new_user.tokens(&mut conn).await.unwrap();
+        let user_tokens = new_user.tokens(&pool).await.unwrap();
         assert_eq!(user_tokens.len(), 0, "User still has tokens");
     }
 
@@ -286,8 +284,7 @@ mod tests {
         }
 
         // Verify that we have three tokens for the user
-        let mut conn = pool.get().expect("Failed to get db connection");
-        let user_tokens = new_user.tokens(&mut conn).await.unwrap();
+        let user_tokens = new_user.tokens(&pool).await.unwrap();
         assert_eq!(user_tokens.len(), 3, "User has wrong number of tokens");
 
         let app = test::init_service(
@@ -308,7 +305,7 @@ mod tests {
             "{:?}",
             test::read_body(resp_without_token).await
         );
-        let user_tokens = new_user.tokens(&mut conn).await.unwrap();
+        let user_tokens = new_user.tokens(&pool).await.unwrap();
         assert_eq!(user_tokens.len(), 3, "User has wrong number of tokens");
 
         // Try removing tokens with broken authorization
@@ -324,7 +321,7 @@ mod tests {
             "{:?}",
             test::read_body(resp_with_broken_token).await
         );
-        let user_tokens = new_user.tokens(&mut conn).await.unwrap();
+        let user_tokens = new_user.tokens(&pool).await.unwrap();
         assert_eq!(user_tokens.len(), 3, "User has wrong number of tokens");
 
         // Remove tokens with valid authorization
@@ -341,7 +338,7 @@ mod tests {
             test::read_body(resp).await
         );
 
-        let user_tokens = new_user.tokens(&mut conn).await.unwrap();
+        let user_tokens = new_user.tokens(&pool).await.unwrap();
         assert_eq!(user_tokens.len(), 0, "User still has tokens");
         new_user.delete(&pool).await.unwrap();
         admin_user.delete(&pool).await.unwrap();
@@ -367,8 +364,7 @@ mod tests {
         }
 
         // Verify that we have three tokens for the user
-        let mut conn = pool.get().expect("Failed to get db connection");
-        let user_tokens = new_user.tokens(&mut conn).await.unwrap();
+        let user_tokens = new_user.tokens(&pool).await.unwrap();
         let token = user_tokens[0].token.clone();
         assert_eq!(user_tokens.len(), 3, "User has wrong number of tokens");
 
@@ -412,7 +408,7 @@ mod tests {
             test::read_body(resp).await
         );
 
-        let user_tokens = new_user.tokens(&mut conn).await.unwrap();
+        let user_tokens = new_user.tokens(&pool).await.unwrap();
         assert_eq!(user_tokens.len(), 2, "User has wrong number of tokens");
         let user_token_strings: Vec<String> = user_tokens.iter().map(|t| t.token.clone()).collect();
         assert_not_contains!(&user_token_strings, &token);

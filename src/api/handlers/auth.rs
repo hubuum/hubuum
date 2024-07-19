@@ -17,7 +17,6 @@ pub async fn login(
     req_input: web::Json<LoginUser>,
 ) -> Result<impl Responder, ApiError> {
     debug!(message = "Login started", user = req_input.username);
-
     let user = req_input.into_inner().login(&pool).await?;
 
     let token_generation_result = user.create_token(&pool).await;
@@ -58,8 +57,7 @@ pub async fn logout(
 
     debug!(message = "Logging out token.", token = token.obfuscate());
 
-    let mut conn = pool.get()?;
-    let result = token.delete(&mut conn).await;
+    let result = token.delete(&pool).await;
 
     match result {
         Ok(_) => Ok(json_response(
@@ -118,8 +116,7 @@ pub async fn logout_token(
 ) -> Result<impl Responder, ApiError> {
     debug!(message = "Logging out token {}.", token = token.obfuscate());
 
-    let mut conn = pool.get()?;
-    let result = token.delete(&mut conn).await;
+    let result = token.delete(&pool).await;
 
     match result {
         Ok(_) => Ok(json_response(

@@ -63,8 +63,7 @@ pub async fn get_user_tokens(
         requestor = requestor.user.id
     );
 
-    let mut conn = pool.get()?;
-    let valid_tokens = user.tokens(&mut conn).await?;
+    let valid_tokens = user.tokens(&pool).await?;
     Ok(json_response(valid_tokens, StatusCode::OK))
 }
 

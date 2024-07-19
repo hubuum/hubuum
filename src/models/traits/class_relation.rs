@@ -5,13 +5,14 @@ use tracing::{debug, trace};
 
 use serde::{Deserialize, Serialize};
 
+use crate::db::traits::GetNamespace;
 use crate::db::DbPool;
 use crate::{errors::ApiError, schema::hubuumclass_relation, schema::hubuumobject_relation};
 
 use crate::models::{
     HubuumClass, HubuumClassRelation, HubuumClassRelationID, Namespace, NewHubuumClassRelation,
 };
-use crate::traits::{CanDelete, CanSave, NamespaceAccessors, SelfAccessors};
+use crate::traits::{CanDelete, CanSave, ClassAccessors, NamespaceAccessors, SelfAccessors};
 
 impl SelfAccessors<HubuumClassRelation> for HubuumClassRelationID {
     fn id(&self) -> i32 {
@@ -80,7 +81,8 @@ impl CanDelete for HubuumClassRelationID {
 
 impl NamespaceAccessors<(Namespace, Namespace), (i32, i32)> for NewHubuumClassRelation {
     async fn namespace(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
-        retrieve_namespaces(pool, self.from_hubuum_class_id, self.to_hubuum_class_id).await
+        use crate::db::traits::GetNamespace;
+        self.namespace_from_backend(&pool).await
     }
 
     async fn namespace_id(&self, pool: &DbPool) -> Result<(i32, i32), ApiError> {
@@ -91,12 +93,24 @@ impl NamespaceAccessors<(Namespace, Namespace), (i32, i32)> for NewHubuumClassRe
 
 impl NamespaceAccessors<(Namespace, Namespace), (i32, i32)> for HubuumClassRelation {
     async fn namespace(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
-        retrieve_namespaces(pool, self.from_hubuum_class_id, self.to_hubuum_class_id).await
+        use crate::db::traits::GetNamespace;
+        self.namespace_from_backend(&pool).await
     }
 
     async fn namespace_id(&self, pool: &DbPool) -> Result<(i32, i32), ApiError> {
         let (ns1, ns2) = self.namespace(pool).await?;
         Ok((ns1.id, ns2.id))
+    }
+}
+
+impl ClassAccessors<(HubuumClass, HubuumClass), (i32, i32)> for HubuumClassRelation {
+    async fn class(&self, pool: &DbPool) -> Result<(HubuumClass, HubuumClass), ApiError> {
+        use crate::db::traits::GetClass;
+        Ok(self.class_from_backend(&pool).await?)
+    }
+
+    async fn class_id(&self, _pool: &DbPool) -> Result<(i32, i32), ApiError> {
+        Ok((self.from_hubuum_class_id, self.to_hubuum_class_id))
     }
 }
 
@@ -110,41 +124,24 @@ impl NamespaceAccessors<(Namespace, Namespace), (i32, i32)> for HubuumClassRelat
     }
 }
 
-async fn retrieve_namespaces(
-    pool: &DbPool,
-    from_id: i32,
-    to_id: i32,
-) -> Result<(Namespace, Namespace), ApiError> {
-    use crate::schema::hubuumclass::dsl::{
-        hubuumclass, id as class_id, namespace_id as class_namespace_id,
-    };
-    use crate::schema::namespaces::dsl::{id as namespace_id, namespaces};
-
-    trace!("Getting namespaces for class relation");
-
-    let mut conn = pool.get()?;
-    let namespace_list = hubuumclass
-        .filter(class_id.eq_any(&[from_id, to_id]))
-        .inner_join(namespaces.on(namespace_id.eq(class_namespace_id)))
-        .select(namespaces::all_columns())
-        .load::<Namespace>(&mut conn)?;
-
-    if from_id == to_id && namespace_list.len() == 1 {
-        trace!("Found same namespace for class relation, returning same namespace twice");
-        return Ok((namespace_list[0].clone(), namespace_list[0].clone()));
-    } else if namespace_list.len() != 2 {
-        debug!(
-            "Could not find two namespaces for class relation: {} and {}, found {:?}",
-            from_id, to_id, namespace_list
-        );
-        return Err(ApiError::NotFound(
-            format!(
-                "Could not find namespaces ({} and {}) for class relation",
-                from_id, to_id,
-            )
-            .to_string(),
-        ));
+impl ClassAccessors<(HubuumClass, HubuumClass), (i32, i32)> for HubuumClassRelationID {
+    async fn class(&self, pool: &DbPool) -> Result<(HubuumClass, HubuumClass), ApiError> {
+        use crate::db::traits::GetClass;
+        Ok(self.class_from_backend(pool).await?)
     }
 
-    Ok((namespace_list[0].clone(), namespace_list[1].clone()))
+    async fn class_id(&self, pool: &DbPool) -> Result<(i32, i32), ApiError> {
+        self.instance(pool).await?.class_id(pool).await
+    }
+}
+
+impl ClassAccessors<(HubuumClass, HubuumClass), (i32, i32)> for NewHubuumClassRelation {
+    async fn class(&self, pool: &DbPool) -> Result<(HubuumClass, HubuumClass), ApiError> {
+        use crate::db::traits::GetClass;
+        Ok(self.class_from_backend(&pool).await?)
+    }
+
+    async fn class_id(&self, _pool: &DbPool) -> Result<(i32, i32), ApiError> {
+        Ok((self.from_hubuum_class_id, self.to_hubuum_class_id))
+    }
 }
