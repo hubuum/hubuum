@@ -33,7 +33,7 @@ impl SelfAccessors<HubuumObjectRelation> for HubuumObjectRelation {
     }
 
     async fn instance(&self, _pool: &DbPool) -> Result<HubuumObjectRelation, ApiError> {
-        Ok(self.clone())
+        Ok(*self)
     }
 }
 
@@ -61,7 +61,7 @@ impl CanSave for NewHubuumObjectRelation {
         }
 
         let class_rel = match HubuumClassRelationID(self.class_relation)
-            .instance(&pool)
+            .instance(pool)
             .await
         {
             Ok(class_rel) => class_rel,
@@ -71,7 +71,7 @@ impl CanSave for NewHubuumObjectRelation {
         };
 
         let obj1 = match HubuumObjectID(self.from_hubuum_object_id)
-            .instance(&pool)
+            .instance(pool)
             .await
         {
             Ok(obj1) => obj1,
@@ -83,7 +83,7 @@ impl CanSave for NewHubuumObjectRelation {
         };
 
         let obj2 = match HubuumObjectID(self.to_hubuum_object_id)
-            .instance(&pool)
+            .instance(pool)
             .await
         {
             Ok(obj2) => obj2,

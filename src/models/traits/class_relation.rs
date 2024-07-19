@@ -36,7 +36,7 @@ impl SelfAccessors<HubuumClassRelation> for HubuumClassRelation {
     }
 
     async fn instance(&self, _pool: &DbPool) -> Result<HubuumClassRelation, ApiError> {
-        Ok(self.clone())
+        Ok(*self)
     }
 }
 

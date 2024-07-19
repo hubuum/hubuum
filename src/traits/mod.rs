@@ -5,7 +5,7 @@ use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::traits::GroupAccessors;
 use crate::models::{
-    HubuumClass, HubuumObject, Namespace, NewPermission, Permission, PermissionFilter, Permissions,
+    HubuumClass, Namespace, NewPermission, Permission, PermissionFilter, Permissions,
     PermissionsList, UpdatePermission, User,
 };
 

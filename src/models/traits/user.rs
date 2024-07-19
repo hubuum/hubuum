@@ -3,6 +3,9 @@ use diesel::{pg::Pg, ExpressionMethods, JoinOnDsl, QueryDsl, RunQueryDsl, Table}
 
 use std::iter::IntoIterator;
 
+use futures::future::try_join_all;
+use tracing::debug;
+
 use crate::api::v1::handlers::namespaces;
 use crate::models::search::SearchOperator;
 use crate::models::{
@@ -16,9 +19,6 @@ use crate::traits::{ClassAccessors, NamespaceAccessors, SelfAccessors};
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::utilities::extensions::CustomStringExtensions;
-
-use futures::future::try_join_all;
-use tracing::debug;
 
 use crate::models::search::{ParsedQueryParam, QueryParamsExt};
 
