@@ -9,8 +9,8 @@ use crate::errors::ApiError;
 
 pub fn get_user_by_id(pool: &DbPool, user_id: i32) -> Result<User, ApiError> {
     with_connection(pool, |conn| {
-        Ok(users
+        users
             .filter(crate::schema::users::dsl::id.eq(user_id))
-            .first::<User>(conn)?)
+            .first::<User>(conn)
     })
 }

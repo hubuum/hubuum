@@ -1,12 +1,10 @@
 use diesel::prelude::*;
-use diesel::PgConnection;
 use tracing::{debug, trace};
 
 use crate::db::traits::GetNamespace;
 use crate::db::{with_connection, DbPool};
 use crate::errors::ApiError;
 use crate::models::HubuumClassRelation;
-use crate::models::HubuumClassRelationID;
 use crate::models::Namespace;
 use crate::models::NewHubuumClassRelation;
 use crate::traits::ClassAccessors;
@@ -22,14 +20,14 @@ impl GetNamespace<(Namespace, Namespace)> for HubuumClassRelation {
         };
         use crate::schema::namespaces::dsl::{id as namespace_id, namespaces};
 
-        let (from_id, to_id) = self.class_id(&pool).await?;
+        let (from_id, to_id) = self.class_id(pool).await?;
 
         let namespace_list = with_connection(pool, |conn| {
-            Ok(hubuumclass
+            hubuumclass
                 .filter(class_id.eq_any(&[from_id, to_id]))
                 .inner_join(namespaces.on(namespace_id.eq(class_namespace_id)))
                 .select(namespaces::all_columns())
-                .load::<Namespace>(conn)?)
+                .load::<Namespace>(conn)
         })?;
 
         if from_id == to_id && namespace_list.len() == 1 {
@@ -62,14 +60,14 @@ impl GetNamespace<(Namespace, Namespace)> for NewHubuumClassRelation {
         };
         use crate::schema::namespaces::dsl::{id as namespace_id, namespaces};
 
-        let (from_id, to_id) = self.class_id(&pool).await?;
+        let (from_id, to_id) = self.class_id(pool).await?;
 
         let namespace_list = with_connection(pool, |conn| {
-            Ok(hubuumclass
+            hubuumclass
                 .filter(class_id.eq_any(&[from_id, to_id]))
                 .inner_join(namespaces.on(namespace_id.eq(class_namespace_id)))
                 .select(namespaces::all_columns())
-                .load::<Namespace>(conn)?)
+                .load::<Namespace>(conn)
         })?;
 
         if from_id == to_id && namespace_list.len() == 1 {
@@ -100,9 +98,9 @@ where
         use crate::schema::namespaces::dsl::{id, namespaces};
 
         let namespace = with_connection(pool, |conn| {
-            Ok(namespaces
+            namespaces
                 .filter(id.eq(self.id()))
-                .first::<Namespace>(conn)?)
+                .first::<Namespace>(conn)
         })?;
 
         Ok(namespace)
