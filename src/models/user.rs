@@ -33,11 +33,6 @@ impl User {
             .map(|_| generated_token)?)
     }
 
-    pub async fn get_tokens(&self, pool: &DbPool) -> Result<Vec<UserToken>, ApiError> {
-        let mut conn = pool.get()?;
-        crate::db::tokens_valid_for_user(&mut conn, self.id, 24).await
-    }
-
     pub async fn token_is_mine(
         &self,
         token_param: Token,

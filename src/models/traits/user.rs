@@ -618,6 +618,7 @@ pub trait GroupAccessors: SelfAccessors<User> {
 
 pub trait UserNamespaceAccessors: SelfAccessors<User> + GroupAccessors {
     /// Return all namespaces that the user has NamespacePermissions::ReadCollection on.
+    #[allow(dead_code)] // Lazy-used in tests.
     async fn namespaces_read(&self, pool: &DbPool) -> Result<Vec<Namespace>, ApiError> {
         self.namespaces(pool, &[Permissions::ReadCollection]).await
     }

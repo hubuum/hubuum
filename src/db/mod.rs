@@ -1,6 +1,4 @@
-mod token;
-
-pub use crate::db::token::{token_is_valid, tokens_valid_for_user};
+pub mod traits;
 
 use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;

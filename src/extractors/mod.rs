@@ -42,6 +42,7 @@ fn extract_token(req: &HttpRequest) -> Result<Token, ApiError> {
 }
 
 async fn extract_user_from_token(pool: &DbPool, token: &Token) -> Result<User, ApiError> {
+    use crate::db::traits::Status;
     let mut conn = pool.get()?;
     let user_token = token.is_valid(&mut conn).await?;
 

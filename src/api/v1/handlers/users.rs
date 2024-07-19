@@ -55,6 +55,7 @@ pub async fn get_user_tokens(
     user_id: web::Path<UserID>,
     requestor: AdminOrSelfAccess,
 ) -> Result<impl Responder, ApiError> {
+    use crate::db::traits::ActiveTokens;
     let user = user_id.into_inner().user(&pool).await?;
     debug!(
         message = "User tokens requested",
@@ -62,7 +63,8 @@ pub async fn get_user_tokens(
         requestor = requestor.user.id
     );
 
-    let valid_tokens = user.get_tokens(&pool).await?;
+    let mut conn = pool.get()?;
+    let valid_tokens = user.tokens(&mut conn).await?;
     Ok(json_response(valid_tokens, StatusCode::OK))
 }
 

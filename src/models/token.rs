@@ -30,9 +30,6 @@ impl Token {
         self.0.clone()
     }
 
-    pub async fn is_valid(&self, conn: &mut PgConnection) -> Result<UserToken, ApiError> {
-        crate::db::token_is_valid(conn, &self.0, 24).await
-    }
     /// Return a string where we only expose the first three and last three characters.
     /// The middle part is replaced with "..."
     pub fn obfuscate(&self) -> String {
