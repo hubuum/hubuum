@@ -24,6 +24,15 @@ diesel::table! {
 }
 
 diesel::table! {
+    hubuumclass_closure (ancestor_class_id, descendant_class_id, path) {
+        ancestor_class_id -> Int4,
+        descendant_class_id -> Int4,
+        depth -> Int4,
+        path -> Array<Nullable<Int4>>,
+    }
+}
+
+diesel::table! {
     hubuumclass_relation (id) {
         id -> Int4,
         from_hubuum_class_id -> Int4,
@@ -49,7 +58,6 @@ diesel::table! {
 diesel::table! {
     hubuumobject_relation (id) {
         id -> Int4,
-        class_relation -> Int4,
         from_hubuum_object_id -> Int4,
         to_hubuum_object_id -> Int4,
         created_at -> Timestamp,
@@ -128,7 +136,6 @@ diesel::table! {
 diesel::joinable!(hubuumclass -> namespaces (namespace_id));
 diesel::joinable!(hubuumobject -> hubuumclass (hubuum_class_id));
 diesel::joinable!(hubuumobject -> namespaces (namespace_id));
-diesel::joinable!(hubuumobject_relation -> hubuumclass_relation (class_relation));
 diesel::joinable!(permissions -> groups (group_id));
 diesel::joinable!(permissions -> namespaces (namespace_id));
 diesel::joinable!(tokens -> users (user_id));
@@ -138,6 +145,7 @@ diesel::joinable!(user_groups -> users (user_id));
 diesel::allow_tables_to_appear_in_same_query!(
     groups,
     hubuumclass,
+    hubuumclass_closure,
     hubuumclass_relation,
     hubuumobject,
     hubuumobject_relation,

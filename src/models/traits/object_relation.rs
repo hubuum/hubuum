@@ -60,16 +60,6 @@ impl CanSave for NewHubuumObjectRelation {
             ));
         }
 
-        let class_rel = match HubuumClassRelationID(self.class_relation)
-            .instance(pool)
-            .await
-        {
-            Ok(class_rel) => class_rel,
-            Err(_) => {
-                return Err(ApiError::NotFound("class_relation not found".to_string()));
-            }
-        };
-
         let obj1 = match HubuumObjectID(self.from_hubuum_object_id)
             .instance(pool)
             .await
@@ -97,20 +87,6 @@ impl CanSave for NewHubuumObjectRelation {
         if obj1.hubuum_class_id == obj2.hubuum_class_id {
             return Err(ApiError::BadRequest(
                 "from_hubuum_object_id and to_hubuum_object_id must not have the same class"
-                    .to_string(),
-            ));
-        }
-
-        if obj1.hubuum_class_id != class_rel.from_hubuum_class_id {
-            return Err(ApiError::BadRequest(
-                "The class of from_hubuum_object_id must match the from_hubuum_class_id of class_relation"
-                    .to_string(),
-            ));
-        }
-
-        if obj2.hubuum_class_id != class_rel.to_hubuum_class_id {
-            return Err(ApiError::BadRequest(
-                "The class of to_hubuum_object_id must match the to_hubuum_class_id of class_relation"
                     .to_string(),
             ));
         }

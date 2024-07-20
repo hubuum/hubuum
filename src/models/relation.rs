@@ -1,11 +1,16 @@
 use diesel::prelude::*;
+use diesel::sql_types::{Array, BigInt, Integer, Jsonb, Nullable, Text, Timestamp};
+
 use std::{fmt, fmt::Display, slice};
 
 use crate::db::DbPool;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{errors::ApiError, schema::hubuumclass_relation, schema::hubuumobject_relation};
+use crate::{
+    errors::ApiError, schema::hubuumclass_closure, schema::hubuumclass_relation,
+    schema::hubuumobject_relation,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HubuumClassRelationID(pub i32);
@@ -34,7 +39,6 @@ pub struct HubuumObjectRelationID(pub i32);
 #[diesel(table_name = hubuumobject_relation)]
 pub struct HubuumObjectRelation {
     pub id: i32,
-    pub class_relation: i32,
     pub from_hubuum_object_id: i32,
     pub to_hubuum_object_id: i32,
     pub created_at: chrono::NaiveDateTime,
@@ -44,14 +48,29 @@ pub struct HubuumObjectRelation {
 #[derive(Debug, Serialize, Deserialize, Insertable)]
 #[diesel(table_name = hubuumobject_relation)]
 pub struct NewHubuumObjectRelation {
-    pub class_relation: i32,
     pub from_hubuum_object_id: i32,
     pub to_hubuum_object_id: i32,
+}
+
+#[derive(
+    Debug, Serialize, Deserialize, Queryable, QueryableByName, Selectable, Clone, PartialEq, Eq,
+)]
+#[diesel(table_name = hubuumclass_closure)]
+pub struct HubuumClassClosure {
+    #[diesel(sql_type = Integer)]
+    pub ancestor_class_id: i32,
+    #[diesel(sql_type = Integer)]
+    pub descendant_class_id: i32,
+    #[diesel(sql_type = Integer)]
+    pub depth: i32,
+    #[diesel(sql_type = Array<Nullable<Integer>>)]
+    pub path: Vec<Option<i32>>,
 }
 
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::db::traits::ClassRelation;
     use crate::models::class::tests::create_class;
     use crate::models::object::tests::create_object;
     use crate::models::traits::class_relation;
@@ -137,12 +156,10 @@ pub mod tests {
 
     pub async fn create_object_relation(
         pool: &DbPool,
-        relation: &HubuumClassRelation,
         object1: &HubuumObject,
         object2: &HubuumObject,
     ) -> HubuumObjectRelation {
         let object_rel = NewHubuumObjectRelation {
-            class_relation: relation.id,
             from_hubuum_object_id: object1.id,
             to_hubuum_object_id: object2.id,
         };
@@ -235,10 +252,15 @@ pub mod tests {
             .await
             .unwrap();
 
-        let class_rel = create_class_relation(&pool, &class1, &class2).await;
-        let object_rel = create_object_relation(&pool, &class_rel, &object1, &object2).await;
+        let _class_rel = create_class_relation(&pool, &class1, &class2).await;
 
-        assert_eq!(object_rel.class_relation, class_rel.id);
+        let class_relations: Vec<HubuumClassClosure> =
+            class1.relations_to(&pool, &class2).await.unwrap();
+
+        assert_eq!(class_relations.len(), 1);
+
+        let object_rel = create_object_relation(&pool, &object1, &object2).await;
+
         assert_eq!(object_rel.from_hubuum_object_id, object1.id);
         assert_eq!(object_rel.to_hubuum_object_id, object2.id);
 
@@ -253,12 +275,11 @@ pub mod tests {
 
     #[actix_rt::test]
     async fn test_creating_object_relation_failure_class_mismatch() {
+        use crate::db::traits::{ClassRelation, Relations};
         let (pool, _) = get_pool_and_config().await;
 
         let (namespace, class1, class2) =
             create_namespace_and_classes("create_object_class_mismatch").await;
-
-        let class3 = create_class(&pool, &namespace, "create_object_class_mismatch3").await;
 
         let nid = namespace.id;
         let json = serde_json::json!({"test": "data"});
@@ -269,11 +290,24 @@ pub mod tests {
             .await
             .unwrap();
 
-        // Creating a relation between class1 and class3, the objects are in class1 and class2
-        let class_rel = create_class_relation(&pool, &class1, &class3).await;
+        let class_relations: Vec<HubuumClassClosure> =
+            HubuumClassClosure::relations(&pool, &class1, &class2)
+                .await
+                .unwrap();
+
+        assert_eq!(
+            class_relations.len(),
+            0,
+            "There should be no class relations between the two objects"
+        );
+
+        let class1_to_class2_relations = class1.relations_to(&pool, &class2).await.unwrap();
+        let class2_to_class1_relations = class2.relations_to(&pool, &class1).await.unwrap();
+
+        assert_eq!(class1_to_class2_relations.len(), 0);
+        assert_eq!(class2_to_class1_relations.len(), 0);
 
         let object_rel = NewHubuumObjectRelation {
-            class_relation: class_rel.id,
             from_hubuum_object_id: object1.id,
             to_hubuum_object_id: object2.id,
         };
@@ -285,7 +319,6 @@ pub mod tests {
         }
 
         let object_rel = NewHubuumObjectRelation {
-            class_relation: class_rel.id,
             from_hubuum_object_id: object2.id,
             to_hubuum_object_id: object1.id,
         };
@@ -293,17 +326,16 @@ pub mod tests {
         match object_rel.save(&pool).await {
             Err(ApiError::BadRequest(_)) => {}
             Err(e) => panic!("Unexpected error: {:?}", e),
-            Ok(_) => panic!("Creating a relation should fail when the classes of objects do not match the relation classes"),
+            Ok(_) => panic!("Creating a relation should fail also when the order is flipped"),
         }
 
         let object_rel = NewHubuumObjectRelation {
-            class_relation: 99999999,
             from_hubuum_object_id: object1.id,
             to_hubuum_object_id: object2.id,
         };
 
         match object_rel.save(&pool).await {
-            Err(ApiError::NotFound(_)) => {}
+            Err(ApiError::BadRequest(_)) => {}
             Err(e) => panic!("Unexpected error: {:?}", e),
             Ok(_) => panic!(
                 "Should not be able to create object relations when class relation does not exist"
@@ -328,8 +360,9 @@ pub mod tests {
             .await
             .unwrap();
 
-        let class_rel = create_class_relation(&pool, &class1, &class2).await;
-        let object_rel = create_object_relation(&pool, &class_rel, &object1, &object2).await;
+        // Create a class relation so that we can create an object relation
+        let _class_rel = create_class_relation(&pool, &class1, &class2).await;
+        let object_rel = create_object_relation(&pool, &object1, &object2).await;
 
         object_rel.delete(&pool).await.unwrap();
         verify_no_such_object_relation(&pool, object_rel.id).await;

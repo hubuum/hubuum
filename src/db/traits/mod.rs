@@ -2,11 +2,13 @@ mod active_tokens;
 mod class;
 mod is_active;
 mod namespace;
+mod relations;
 
 use crate::errors::ApiError;
-use crate::models::{HubuumClass, Namespace, UserToken};
+use crate::models::{HubuumClass, HubuumClassClosure, Namespace, UserToken};
+use crate::traits::SelfAccessors;
 
-use super::DbPool;
+use super::{with_connection, DbPool};
 
 /// Trait for checking if a structure is valid/active/etc in the database.
 ///
@@ -45,4 +47,38 @@ pub trait GetNamespace<T = Namespace> {
 /// trait is implemented to return a tuple of the two namespaces.
 pub trait GetClass<T = HubuumClass> {
     async fn class_from_backend(&self, pool: &DbPool) -> Result<T, ApiError>;
+}
+
+/// Trait for checking if a relation exists between two classes.
+pub trait Relations<C1, C2>
+where
+    C1: SelfAccessors<HubuumClass> + Clone + Send + Sync,
+    C2: SelfAccessors<HubuumClass> + Clone + Send + Sync,
+{
+    /// Check if a relation exists between two classes.
+    async fn relations(
+        pool: &DbPool,
+        from: &C1,
+        to: &C2,
+    ) -> Result<Vec<HubuumClassClosure>, ApiError>;
+}
+
+/// Traits for checking relations between classes
+pub trait ClassRelation<C1, C2>
+where
+    C1: SelfAccessors<HubuumClass> + Relations<C1, C2> + Clone + Send + Sync,
+    C2: SelfAccessors<HubuumClass> + Clone + Send + Sync,
+{
+    /// Check if a relation exists between self and another class
+    async fn relations_to(
+        &self,
+        pool: &DbPool,
+        other: &C2,
+    ) -> Result<Vec<HubuumClassClosure>, ApiError>;
+
+    /// Check if a relation exists between self and another class, boolean
+    async fn has_relation_to(&self, pool: &DbPool, other: &C2) -> Result<bool, ApiError> {
+        let relations = self.relations_to(pool, other).await?;
+        Ok(!relations.is_empty())
+    }
 }

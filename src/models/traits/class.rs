@@ -80,6 +80,16 @@ impl SelfAccessors<HubuumClass> for HubuumClass {
     }
 }
 
+impl SelfAccessors<HubuumClass> for &HubuumClass {
+    fn id(&self) -> i32 {
+        (*self).id
+    }
+
+    async fn instance(&self, _pool: &DbPool) -> Result<HubuumClass, ApiError> {
+        Ok((**self).clone())
+    }
+}
+
 impl ClassAccessors for HubuumClass {
     async fn class_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
         Ok(self.id)
@@ -108,6 +118,16 @@ impl NamespaceAccessors for HubuumClass {
 }
 
 impl SelfAccessors<HubuumClass> for HubuumClassID {
+    fn id(&self) -> i32 {
+        self.0
+    }
+
+    async fn instance(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
+        self.class(pool).await
+    }
+}
+
+impl SelfAccessors<HubuumClass> for &HubuumClassID {
     fn id(&self) -> i32 {
         self.0
     }
