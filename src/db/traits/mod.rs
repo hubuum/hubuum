@@ -5,7 +5,9 @@ mod namespace;
 mod relations;
 
 use crate::errors::ApiError;
-use crate::models::{HubuumClass, HubuumClassClosure, Namespace, UserToken};
+use crate::models::{
+    HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, Namespace, UserToken,
+};
 use crate::traits::SelfAccessors;
 
 use super::{with_connection, DbPool};
@@ -56,11 +58,11 @@ where
     C2: SelfAccessors<HubuumClass> + Clone + Send + Sync,
 {
     /// Check if a relation exists between two classes.
-    async fn relations(
+    async fn relations_between(
         pool: &DbPool,
         from: &C1,
         to: &C2,
-    ) -> Result<Vec<HubuumClassClosure>, ApiError>;
+    ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError>;
 }
 
 /// Traits for checking relations between classes
@@ -68,17 +70,51 @@ pub trait ClassRelation<C1, C2>
 where
     C1: SelfAccessors<HubuumClass> + Relations<C1, C2> + Clone + Send + Sync,
     C2: SelfAccessors<HubuumClass> + Clone + Send + Sync,
+    Self: SelfAccessors<HubuumClass>,
 {
     /// Check if a relation exists between self and another class
     async fn relations_to(
         &self,
         pool: &DbPool,
         other: &C2,
-    ) -> Result<Vec<HubuumClassClosure>, ApiError>;
+    ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError>;
 
     /// Check if a relation exists between self and another class, boolean
     async fn has_relation_to(&self, pool: &DbPool, other: &C2) -> Result<bool, ApiError> {
         let relations = self.relations_to(pool, other).await?;
         Ok(!relations.is_empty())
+    }
+}
+
+pub trait SelfRelations<C1>
+where
+    C1: SelfAccessors<HubuumClass> + Clone + Send + Sync,
+    Self: SelfAccessors<HubuumClass>,
+{
+    async fn transitive_relations(
+        &self,
+        pool: &DbPool,
+    ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError> {
+        use crate::schema::hubuumclass_closure::dsl::*;
+        use diesel::prelude::*;
+
+        with_connection(pool, |conn| {
+            Ok(hubuumclass_closure
+                .or_filter(ancestor_class_id.eq(self.id()))
+                .or_filter(descendant_class_id.eq(self.id()))
+                .load::<HubuumClassRelationTransitive>(conn)?)
+        })
+    }
+
+    async fn relations(&self, pool: &DbPool) -> Result<Vec<HubuumClassRelation>, ApiError> {
+        use crate::schema::hubuumclass_relation::dsl::*;
+        use diesel::prelude::*;
+
+        with_connection(pool, |conn| {
+            Ok(hubuumclass_relation
+                .or_filter(from_hubuum_class_id.eq(self.id()))
+                .or_filter(to_hubuum_class_id.eq(self.id()))
+                .load::<HubuumClassRelation>(conn)?)
+        })
     }
 }

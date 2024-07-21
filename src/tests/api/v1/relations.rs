@@ -1,7 +1,8 @@
 #[cfg(test)]
 mod tests {
     use crate::models::{
-        HubuumClass, HubuumClassRelation, NamespaceID, NewHubuumClassRelation, Permissions,
+        HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, NamespaceID,
+        NewHubuumClassRelation, Permissions,
     };
     use crate::traits::{CanSave, PermissionController, SelfAccessors};
     use crate::{assert_contains_all, assert_contains_same_ids};
@@ -73,6 +74,52 @@ mod tests {
 
         assert_contains_same_ids!(&relations, &relations_in_namespace);
         assert_contains_all!(&relations, &relations_in_namespace);
+
+        cleanup(&classes).await;
+    }
+
+    #[actix_web::test]
+    async fn test_get_class_relation_list_via_class() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let (classes, _) =
+            create_classes_and_relations(&pool, "get_class_relation_list_via_class").await;
+
+        let class = &classes[0];
+
+        // Check direct relations.
+        let endpoint = format!("/api/v1/classes/{}/relations/", class.id);
+        let resp = get_request(&pool, &admin_token, &endpoint).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let relations_fetched: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
+
+        assert_eq!(relations_fetched.len(), 1);
+        assert_eq!(relations_fetched[0].from_hubuum_class_id, class.id);
+        assert_eq!(relations_fetched[0].to_hubuum_class_id, classes[1].id);
+
+        // Check transitive results.
+        // We should have links from 1->2, 2->3, 3->4, 4->5, 5->6.
+        // So for the first class, we should have 5 relations.
+        let endpoint = format!("/api/v1/classes/{}/relations/transitive/", class.id);
+
+        let resp = get_request(&pool, &admin_token, &endpoint).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let relations_fetched: Vec<HubuumClassRelationTransitive> =
+            test::read_body_json(resp).await;
+
+        assert_eq!(relations_fetched.len(), 5);
+        for (i, relation) in relations_fetched.iter().enumerate() {
+            assert_eq!(relation.ancestor_class_id, classes[0].id);
+            assert_eq!(relation.descendant_class_id, classes[i + 1].id);
+            assert_eq!(relation.depth, i as i32 + 1);
+            assert_eq!(relation.path.len(), i as usize + 2);
+            // The path should contain the ancestor and descendant classes, so all the classes up to
+            // the current one.
+            let expected_path = classes.iter().take(i + 2).map(|c| c.id).collect::<Vec<_>>();
+            assert_eq!(relation.path.len(), expected_path.len());
+            for i in 0..expected_path.len() {
+                assert_eq!(relation.path[i], Some(expected_path[i]));
+            }
+        }
 
         cleanup(&classes).await;
     }

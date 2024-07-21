@@ -172,6 +172,48 @@ async fn get_class_permissions(
     Ok(json_response(permissions, StatusCode::OK))
 }
 
+#[get("/{class_id}/relations/")]
+async fn get_class_relations(
+    pool: web::Data<DbPool>,
+    requestor: UserAccess,
+    class_id: web::Path<HubuumClassID>,
+) -> Result<impl Responder, ApiError> {
+    use crate::db::traits::SelfRelations;
+
+    let user = requestor.user;
+    let class_id = class_id.into_inner();
+
+    debug!(
+        message = "Getting class relations",
+        user_id = user.id(),
+        class_id = class_id.id()
+    );
+
+    let relations = class_id.relations(&pool).await?;
+    Ok(json_response(relations, StatusCode::OK))
+}
+
+#[get("/{class_id}/relations/transitive/")]
+async fn get_class_relations_transitive(
+    pool: web::Data<DbPool>,
+    requestor: UserAccess,
+    class_id: web::Path<HubuumClassID>,
+) -> Result<impl Responder, ApiError> {
+    use crate::db::traits::SelfRelations;
+
+    let user = requestor.user;
+    let class_id = class_id.into_inner();
+
+    debug!(
+        message = "Getting class relations",
+        user_id = user.id(),
+        class_id = class_id.id()
+    );
+
+    let relations = class_id.transitive_relations(&pool).await?;
+    Ok(json_response(relations, StatusCode::OK))
+}
+
 //
 // Object API
 //

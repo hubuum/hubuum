@@ -56,7 +56,7 @@ pub struct NewHubuumObjectRelation {
     Debug, Serialize, Deserialize, Queryable, QueryableByName, Selectable, Clone, PartialEq, Eq,
 )]
 #[diesel(table_name = hubuumclass_closure)]
-pub struct HubuumClassClosure {
+pub struct HubuumClassRelationTransitive {
     #[diesel(sql_type = Integer)]
     pub ancestor_class_id: i32,
     #[diesel(sql_type = Integer)]
@@ -254,7 +254,7 @@ pub mod tests {
 
         let _class_rel = create_class_relation(&pool, &class1, &class2).await;
 
-        let class_relations: Vec<HubuumClassClosure> =
+        let class_relations: Vec<HubuumClassRelationTransitive> =
             class1.relations_to(&pool, &class2).await.unwrap();
 
         assert_eq!(class_relations.len(), 1);
@@ -290,8 +290,8 @@ pub mod tests {
             .await
             .unwrap();
 
-        let class_relations: Vec<HubuumClassClosure> =
-            HubuumClassClosure::relations(&pool, &class1, &class2)
+        let class_relations: Vec<HubuumClassRelationTransitive> =
+            HubuumClassRelationTransitive::relations_between(&pool, &class1, &class2)
                 .await
                 .unwrap();
 

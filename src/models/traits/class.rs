@@ -100,6 +100,16 @@ impl ClassAccessors for HubuumClass {
     }
 }
 
+impl ClassAccessors for &HubuumClass {
+    async fn class(&self, _pool: &DbPool) -> Result<HubuumClass, ApiError> {
+        Ok((**self).clone())
+    }
+
+    async fn class_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
+        Ok((**self).id)
+    }
+}
+
 impl NamespaceAccessors for HubuumClass {
     async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
         use crate::schema::namespaces::dsl::{id, namespaces};
@@ -152,6 +162,16 @@ impl ClassAccessors for HubuumClassID {
             .first::<HubuumClass>(&mut conn)?;
 
         Ok(class)
+    }
+}
+
+impl ClassAccessors for &HubuumClassID {
+    async fn class(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
+        (*self).class(pool).await
+    }
+
+    async fn class_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
+        Ok(self.0)
     }
 }
 
