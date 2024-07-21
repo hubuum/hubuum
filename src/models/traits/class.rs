@@ -82,7 +82,7 @@ impl SelfAccessors<HubuumClass> for HubuumClass {
 
 impl SelfAccessors<HubuumClass> for &HubuumClass {
     fn id(&self) -> i32 {
-        (*self).id
+        self.id
     }
 
     async fn instance(&self, _pool: &DbPool) -> Result<HubuumClass, ApiError> {
@@ -106,7 +106,7 @@ impl ClassAccessors for &HubuumClass {
     }
 
     async fn class_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
-        Ok((**self).id)
+        Ok(self.id)
     }
 }
 

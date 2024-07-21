@@ -99,10 +99,10 @@ where
         use diesel::prelude::*;
 
         with_connection(pool, |conn| {
-            Ok(hubuumclass_closure
+            hubuumclass_closure
                 .or_filter(ancestor_class_id.eq(self.id()))
                 .or_filter(descendant_class_id.eq(self.id()))
-                .load::<HubuumClassRelationTransitive>(conn)?)
+                .load::<HubuumClassRelationTransitive>(conn)
         })
     }
 
@@ -111,10 +111,10 @@ where
         use diesel::prelude::*;
 
         with_connection(pool, |conn| {
-            Ok(hubuumclass_relation
+            hubuumclass_relation
                 .or_filter(from_hubuum_class_id.eq(self.id()))
                 .or_filter(to_hubuum_class_id.eq(self.id()))
-                .load::<HubuumClassRelation>(conn)?)
+                .load::<HubuumClassRelation>(conn)
         })
     }
 }

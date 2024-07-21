@@ -73,9 +73,9 @@ where
     let (from, to) = if from > to { (to, from) } else { (from, to) };
 
     with_connection(pool, |conn| {
-        Ok(hubuumclass_closure
+        hubuumclass_closure
             .filter(ancestor_class_id.eq(from))
             .filter(descendant_class_id.eq(to))
-            .load::<HubuumClassRelationTransitive>(conn)?)
+            .load::<HubuumClassRelationTransitive>(conn)
     })
 }
