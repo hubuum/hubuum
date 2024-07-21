@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  hubuum:
+    build: .
+    ports:
+      - "9999:8080"
+    environment:
+      - HUBUUM_BIND_IP=0.0.0.0
+      - HUBUUM_DATABASE_URL=postgres://hubuum:hubuum_password@db/hubuum
+      - HUBUUM_LOG_LEVEL=debug
+      - DATABASE_URL=postgres://hubuum:hubuum_password@db/hubuum
+    depends_on:
+      - db
+
+  db:
+    image: postgres:15
+    ports:
+      - "9998:5432"
+    environment:
+      - POSTGRES_USER=hubuum
+      - POSTGRES_PASSWORD=hubuum_password
+      - POSTGRES_DB=hubuum
+      - PGUSER=hubuum
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U hubuum" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
