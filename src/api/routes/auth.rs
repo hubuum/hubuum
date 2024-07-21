@@ -6,5 +6,6 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(auth_handlers::logout)
         .service(auth_handlers::logout_all)
         .service(auth_handlers::logout_other)
-        .service(auth_handlers::logout_token);
+        .service(auth_handlers::logout_token)
+        .service(auth_handlers::validate_token);
 }

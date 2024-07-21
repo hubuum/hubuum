@@ -176,3 +176,17 @@ pub async fn logout_other(
         }
     }
 }
+
+#[get("/validate")]
+pub async fn validate_token(user_access: UserAccess) -> Result<impl Responder, ApiError> {
+    debug!(
+        message = "Token validation successful",
+        user_id = user_access.user.id,
+        token = user_access.token.obfuscate()
+    );
+
+    Ok(json_response(
+        json!({ "message": "Token is valid."}),
+        StatusCode::OK,
+    ))
+}

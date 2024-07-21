@@ -15,6 +15,7 @@ mod tests {
     const LOGOUT_ALL_ENDPOINT: &str = "/api/v0/auth/logout_all";
     const LOGOUT_ALL_FOR_OTHER_USER_ENDPOINT: &str = "/api/v0/auth/logout/uid/";
     const LOGOUT_SPECIFIC_TOKEN: &str = "/api/v0/auth/logout/token/";
+    const VALIDATE_TOKEN_ENDPOINT: &str = "/api/v0/auth/validate";
 
     #[actix_web::test]
     async fn test_valid_login() {
@@ -108,6 +109,20 @@ mod tests {
             .is_ok();
 
         assert!(token_exists, "Token not found in database");
+
+        // Validate token via endpoint.
+        let resp = test::TestRequest::get()
+            .insert_header((header::AUTHORIZATION, format!("Bearer {}", token_value)))
+            .uri(VALIDATE_TOKEN_ENDPOINT)
+            .send_request(&app)
+            .await;
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "{:?}",
+            test::read_body(resp).await
+        );
     }
 
     #[actix_web::test]
