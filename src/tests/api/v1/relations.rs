@@ -2,13 +2,13 @@
 mod tests {
     use crate::models::{
         HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, NamespaceID,
-        NewHubuumClassRelation, Permissions,
+        NewHubuumClassRelation, NewHubuumClassRelationFromClass, Permissions,
     };
     use crate::traits::{CanSave, PermissionController, SelfAccessors};
     use crate::{assert_contains_all, assert_contains_same_ids};
     use actix_web::{http::StatusCode, test};
 
-    use crate::tests::api_operations::get_request;
+    use crate::tests::api_operations::{delete_request, get_request, post_request};
     use crate::tests::asserts::assert_response_status;
     use crate::tests::{create_test_group, ensure_normal_user, setup_pool_and_tokens};
     // use crate::{assert_contains_all, assert_contains_same_ids};
@@ -135,6 +135,92 @@ mod tests {
 
         let relation_response: HubuumClassRelation = test::read_body_json(resp).await;
         assert_eq!(relation_response.id, relation.id);
+
+        cleanup(&classes).await;
+    }
+
+    #[actix_web::test]
+    async fn test_deleting_class_relation_from_global() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let (classes, relations) =
+            create_classes_and_relations(&pool, "deleting_class_relation_from_global").await;
+        let relation = &relations[0];
+
+        let resp = delete_request(&pool, &admin_token, &relation_endpoint(relation.id)).await;
+        let _ = assert_response_status(resp, StatusCode::NO_CONTENT).await;
+
+        let resp = get_request(&pool, &admin_token, &relation_endpoint(relation.id)).await;
+        let _ = assert_response_status(resp, StatusCode::NOT_FOUND).await;
+
+        cleanup(&classes).await;
+    }
+
+    #[actix_web::test]
+    async fn test_deleting_class_relation_from_class() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let (classes, relations) =
+            create_classes_and_relations(&pool, "deleting_class_relation_from_class").await;
+        let relation = &relations[0];
+
+        let endpoint = format!(
+            "/api/v1/classes/{}/relations/{}",
+            classes[0].id, relation.id
+        );
+        let resp = delete_request(&pool, &admin_token, &endpoint).await;
+        let _ = assert_response_status(resp, StatusCode::NO_CONTENT).await;
+
+        let resp = get_request(&pool, &admin_token, &relation_endpoint(relation.id)).await;
+        let _ = assert_response_status(resp, StatusCode::NOT_FOUND).await;
+
+        cleanup(&classes).await;
+    }
+
+    #[actix_web::test]
+    async fn test_deleting_class_relation_from_class_with_wrong_relation() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let (classes, relations) = create_classes_and_relations(
+            &pool,
+            "deleting_class_relation_from_class_with_wrong_relation",
+        )
+        .await;
+        let relation = &relations[1];
+
+        let endpoint = format!(
+            "/api/v1/classes/{}/relations/{}",
+            classes[0].id, relation.id
+        );
+        let resp = delete_request(&pool, &admin_token, &endpoint).await;
+        let _ = assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+
+        cleanup(&classes).await;
+    }
+
+    #[actix_web::test]
+    async fn test_creating_class_relation_from_class() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let classes = create_test_classes("creating_class_relation_from_class").await;
+
+        let content = NewHubuumClassRelationFromClass {
+            to_hubuum_class_id: classes[1].id,
+        };
+
+        let endpoint = format!("/api/v1/classes/{}/relations/", classes[0].id);
+        let resp = post_request(&pool, &admin_token, &endpoint, &content).await;
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let relation_response: HubuumClassRelation = test::read_body_json(resp).await;
+
+        assert_eq!(relation_response.from_hubuum_class_id, classes[0].id);
+        assert_eq!(relation_response.to_hubuum_class_id, classes[1].id);
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &relation_endpoint(relation_response.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let relation_response_from_global: HubuumClassRelation = test::read_body_json(resp).await;
+        assert_eq!(relation_response, relation_response_from_global);
 
         cleanup(&classes).await;
     }

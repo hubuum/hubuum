@@ -32,6 +32,13 @@ pub struct NewHubuumClassRelation {
     pub to_hubuum_class_id: i32,
 }
 
+/// To create new relations between classes from within a class
+/// we only need the id of the class we want to relate to.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NewHubuumClassRelationFromClass {
+    pub to_hubuum_class_id: i32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HubuumObjectRelationID(pub i32);
 

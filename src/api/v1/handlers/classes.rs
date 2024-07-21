@@ -1,7 +1,7 @@
 use actix_web::{delete, HttpRequest};
 use actix_web::{get, http::StatusCode, patch, post, routes, web, Responder};
 
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::check_permissions;
 use crate::db::DbPool;
@@ -10,8 +10,9 @@ use crate::extractors::UserAccess;
 use crate::utilities::response::{json_response, json_response_created};
 
 use crate::models::{
-    HubuumClassID, HubuumObjectID, NamespaceID, NewHubuumClass, NewHubuumObject, Permissions,
-    UpdateHubuumClass, UpdateHubuumObject,
+    HubuumClassID, HubuumClassRelationID, HubuumObjectID, NamespaceID, NewHubuumClass,
+    NewHubuumClassRelationFromClass, NewHubuumObject, Permissions, UpdateHubuumClass,
+    UpdateHubuumObject,
 };
 use crate::traits::{CanDelete, CanSave, CanUpdate, Search, SelfAccessors};
 
@@ -191,6 +192,87 @@ async fn get_class_relations(
 
     let relations = class_id.relations(&pool).await?;
     Ok(json_response(relations, StatusCode::OK))
+}
+
+#[post("/{class_id}/relations/")]
+async fn create_class_relation(
+    pool: web::Data<DbPool>,
+    requestor: UserAccess,
+    class_id: web::Path<HubuumClassID>,
+    relation_data: web::Json<NewHubuumClassRelationFromClass>,
+) -> Result<impl Responder, ApiError> {
+    use crate::models::NewHubuumClassRelation;
+    use crate::traits::NamespaceAccessors;
+
+    let user = requestor.user;
+    let class_id = class_id.into_inner();
+    let partial_relation = relation_data.into_inner();
+
+    debug!(
+        message = "Creating class relation",
+        user_id = user.id(),
+        from_class = class_id.id(),
+        to_class = partial_relation.to_hubuum_class_id,
+    );
+
+    let relation = NewHubuumClassRelation {
+        from_hubuum_class_id: class_id.id(),
+        to_hubuum_class_id: partial_relation.to_hubuum_class_id,
+    };
+
+    let namespaces = relation.namespace(&pool).await?;
+    for namespace in [namespaces.0, namespaces.1] {
+        check_permissions!(namespace, pool, user, Permissions::CreateClassRelation);
+    }
+
+    let relation = relation.save(&pool).await?;
+
+    Ok(json_response(relation, StatusCode::CREATED))
+}
+
+#[delete("/{class_id}/relations/{relation_id}")]
+async fn delete_class_relation(
+    pool: web::Data<DbPool>,
+    requestor: UserAccess,
+    paths: web::Path<(HubuumClassID, HubuumClassRelationID)>,
+) -> Result<impl Responder, ApiError> {
+    use crate::traits::NamespaceAccessors;
+
+    let user = requestor.user;
+    let (class_id, relation_id) = paths.into_inner();
+
+    debug!(
+        message = "Deleting class relation",
+        user_id = user.id(),
+        class_id = class_id.id(),
+        relation_id = relation_id.id()
+    );
+
+    let relation = relation_id.instance(&pool).await?;
+
+    let namespaces = relation_id.namespace(&pool).await?;
+    for namespace in [namespaces.0, namespaces.1] {
+        check_permissions!(namespace, pool, user, Permissions::DeleteClassRelation);
+    }
+
+    if relation.from_hubuum_class_id == class_id.id() {
+        relation.delete(&pool).await?;
+        Ok(json_response((), StatusCode::NO_CONTENT))
+    } else {
+        info!(
+            message = "Relation ownership mismatch when deleting relation: from class does not match class",
+            user_id = user.id(),
+            class_id = class_id.id(),
+            relation_id = relation_id.id(),
+            relation_from_class = relation.from_hubuum_class_id,
+            relation_to_class = relation.to_hubuum_class_id
+        );
+        Err(ApiError::BadRequest(format!(
+            "Class {} is not the from-class of relation {}.",
+            class_id.id(),
+            relation.id,
+        )))
+    }
 }
 
 #[get("/{class_id}/relations/transitive/")]
