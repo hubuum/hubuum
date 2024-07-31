@@ -60,6 +60,7 @@ diesel::table! {
         id -> Int4,
         from_hubuum_object_id -> Int4,
         to_hubuum_object_id -> Int4,
+        class_relation_id -> Int4,
         created_at -> Timestamp,
         updated_at -> Timestamp,
     }
@@ -136,6 +137,7 @@ diesel::table! {
 diesel::joinable!(hubuumclass -> namespaces (namespace_id));
 diesel::joinable!(hubuumobject -> hubuumclass (hubuum_class_id));
 diesel::joinable!(hubuumobject -> namespaces (namespace_id));
+diesel::joinable!(hubuumobject_relation -> hubuumclass_relation (class_relation_id));
 diesel::joinable!(permissions -> groups (group_id));
 diesel::joinable!(permissions -> namespaces (namespace_id));
 diesel::joinable!(tokens -> users (user_id));

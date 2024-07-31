@@ -2,9 +2,12 @@ use crate::db::traits::ClassRelation;
 
 use crate::db::{with_connection, DbPool};
 use crate::errors::ApiError;
-use crate::models::{HubuumClass, HubuumClassRelationTransitive};
+use crate::models::{
+    user_can_on_any, HubuumClass, HubuumClassRelationTransitive, HubuumObject,
+    HubuumObjectTransitiveLink, User,
+};
 
-use crate::traits::SelfAccessors;
+use crate::traits::{GroupAccessors, SelfAccessors};
 
 use super::{Relations, SelfRelations};
 
@@ -78,4 +81,34 @@ where
             .filter(descendant_class_id.eq(to))
             .load::<HubuumClassRelationTransitive>(conn)
     })
+}
+
+impl User {
+    pub async fn get_related_objects<O, C>(
+        &self,
+        pool: &DbPool,
+        source_object: &O,
+        target_class: &C,
+    ) -> Result<Vec<HubuumObjectTransitiveLink>, ApiError>
+    where
+        Self: SelfAccessors<User> + GroupAccessors,
+        O: SelfAccessors<HubuumObject> + Clone + Send + Sync,
+        C: SelfAccessors<HubuumClass> + Clone + Send + Sync,
+    {
+        use crate::models::Permissions;
+        use diesel::sql_query;
+        use diesel::sql_types::{Array, Integer};
+        use diesel::RunQueryDsl;
+        let namespaces = user_can_on_any(pool, self.clone(), Permissions::ReadObject).await?;
+
+        with_connection(pool, |conn| {
+            sql_query("SELECT * FROM get_transitively_linked_objects($1, $2, $3)")
+                .bind::<Integer, _>(source_object.id())
+                .bind::<Integer, _>(target_class.id())
+                .bind::<Array<Integer>, _>(
+                    namespaces.into_iter().map(|n| n.id()).collect::<Vec<_>>(),
+                )
+                .load::<HubuumObjectTransitiveLink>(conn)
+        })
+    }
 }

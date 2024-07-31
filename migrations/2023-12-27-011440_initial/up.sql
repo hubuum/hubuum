@@ -116,6 +116,7 @@
         id SERIAL PRIMARY KEY,
         from_hubuum_object_id INT REFERENCES hubuumobject (id) ON DELETE CASCADE NOT NULL,
         to_hubuum_object_id INT REFERENCES hubuumobject (id) ON DELETE CASCADE NOT NULL,    
+        class_relation_id INT REFERENCES hubuumclass_relation (id) ON DELETE CASCADE NOT NULL,
         created_at TIMESTAMP NOT NULL DEFAULT now(),
         updated_at TIMESTAMP NOT NULL DEFAULT now(),
         UNIQUE (from_hubuum_object_id, to_hubuum_object_id)
@@ -161,6 +162,7 @@
     ---- Relations
     CREATE INDEX idx_hubuumclass_relation_on_from_to ON hubuumclass_relation (from_hubuum_class_id, to_hubuum_class_id);
     CREATE INDEX idx_hubuumobject_relation_on_from_to ON hubuumobject_relation (from_hubuum_object_id, to_hubuum_object_id);
+    CREATE INDEX idx_hubuumobject_relation_class_relation_id ON hubuumobject_relation (class_relation_id);
 
     ---- Closure table
     CREATE INDEX idx_hubuumclass_closure_ancestor ON hubuumclass_closure(ancestor_class_id);
@@ -282,39 +284,42 @@
     CREATE OR REPLACE FUNCTION validate_object_relation()
     RETURNS TRIGGER AS $$
     DECLARE
-        class1_id INT;
-        class2_id INT;
-        class1_name VARCHAR;
-        class2_name VARCHAR;
+        from_class_id INT;
+        to_class_id INT;
+        relation_from_class_id INT;
+        relation_to_class_id INT;
     BEGIN
-        -- Get class IDs
-        SELECT hubuum_class_id INTO class1_id FROM hubuumobject WHERE id = NEW.from_hubuum_object_id;
-        SELECT hubuum_class_id INTO class2_id FROM hubuumobject WHERE id = NEW.to_hubuum_object_id;
+        -- Get class IDs for the objects
+        IF NEW.from_hubuum_object_id = NEW.to_hubuum_object_id THEN
+            RAISE EXCEPTION 'Invalid object relation: objects cannot be related to themselves';
+        END IF;
 
-        -- Get class names
-        SELECT name INTO class1_name FROM hubuumclass WHERE id = class1_id;
-        SELECT name INTO class2_name FROM hubuumclass WHERE id = class2_id;
+        SELECT hubuum_class_id INTO from_class_id FROM hubuumobject WHERE id = NEW.from_hubuum_object_id;
+        SELECT hubuum_class_id INTO to_class_id FROM hubuumobject WHERE id = NEW.to_hubuum_object_id;
 
-        -- Check if the classes are related
-        IF NOT are_classes_related(class1_id, class2_id) THEN
-            RAISE EXCEPTION 'Invalid object relation: classes % (ID: %) and % (ID: %) are not related',
-                class1_name, class1_id, class2_name, class2_id;
+        IF from_class_id = to_class_id THEN
+            RAISE EXCEPTION 'Invalid object relation: objects cannot be related to the same classes';
+        END IF;
+
+        -- Get class IDs for the relation
+        SELECT from_hubuum_class_id, to_hubuum_class_id 
+        INTO relation_from_class_id, relation_to_class_id 
+        FROM hubuumclass_relation 
+        WHERE id = NEW.class_relation_id;
+
+        -- Check if the objects match the class relation
+        IF (from_class_id != relation_from_class_id OR to_class_id != relation_to_class_id) AND
+        (from_class_id != relation_to_class_id OR to_class_id != relation_from_class_id) THEN
+            RAISE EXCEPTION 'Invalid object relation: objects do not match the specified class relation';
         END IF;
 
         RETURN NEW;
     END;
     $$ LANGUAGE plpgsql;
 
-    CREATE OR REPLACE FUNCTION get_class_relation_paths(class1_id INT, class2_id INT)
-    RETURNS TABLE(paths INT[]) AS $$
-    BEGIN
-        RETURN QUERY
-        SELECT path
-        FROM hubuumclass_closure
-        WHERE ancestor_class_id = LEAST(class1_id, class2_id)
-        AND descendant_class_id = GREATEST(class1_id, class2_id);
-    END;
-    $$ LANGUAGE plpgsql;
+CREATE TRIGGER check_object_relation
+BEFORE INSERT OR UPDATE ON hubuumobject_relation
+FOR EACH ROW EXECUTE FUNCTION validate_object_relation();
 
     -- Function to get objects that use a class relation. 
     CREATE OR REPLACE FUNCTION get_affected_objects(class1_id INT, class2_id INT)
@@ -345,6 +350,56 @@
             AND cc.descendant_class_id = GREATEST(o1.hubuum_class_id, o2.hubuum_class_id)
         );
         RETURN NULL;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    CREATE OR REPLACE FUNCTION get_transitively_linked_objects(
+        start_object_id INT, 
+        target_class_id INT,
+        valid_namespace_ids INT[]
+    )
+    RETURNS TABLE (
+        target_object_id INT,
+        path INT[]
+    ) AS $$
+    DECLARE
+        start_class_id INT;
+    BEGIN
+        -- Get the class ID of the start object
+        SELECT hubuum_class_id INTO start_class_id 
+        FROM hubuumobject 
+        WHERE id = start_object_id;
+
+        RETURN QUERY
+        WITH RECURSIVE transitive_relations AS (
+            -- Base case: direct relations
+            SELECT 
+                or1.to_hubuum_object_id as object_id,
+                ARRAY[start_object_id, or1.to_hubuum_object_id] as path
+            FROM hubuumobject_relation or1
+            JOIN hubuumobject o ON o.id = or1.to_hubuum_object_id
+            WHERE or1.from_hubuum_object_id = start_object_id
+            AND o.namespace_id = ANY(valid_namespace_ids)
+
+            UNION ALL
+
+            -- Recursive case
+            SELECT 
+                or2.to_hubuum_object_id,
+                tr.path || or2.to_hubuum_object_id
+            FROM transitive_relations tr
+            JOIN hubuumobject_relation or2 ON tr.object_id = or2.from_hubuum_object_id
+            JOIN hubuumobject o ON o.id = or2.to_hubuum_object_id
+            WHERE o.namespace_id = ANY(valid_namespace_ids)
+        )
+        SELECT DISTINCT ON (tr.object_id)
+            tr.object_id as target_object_id,
+            tr.path
+        FROM transitive_relations tr
+        JOIN hubuumobject o ON o.id = tr.object_id
+        JOIN hubuumclass_closure cc ON cc.ancestor_class_id = start_class_id 
+                                    AND cc.descendant_class_id = target_class_id
+        WHERE o.hubuum_class_id = target_class_id;
     END;
     $$ LANGUAGE plpgsql;
 

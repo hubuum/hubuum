@@ -3,14 +3,15 @@ use serde::Serialize;
 
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::models::traits::GroupAccessors;
 use crate::models::{
     HubuumClass, Namespace, NewPermission, Permission, PermissionFilter, Permissions,
     PermissionsList, UpdatePermission, User,
 };
 
 #[allow(unused_imports)]
-pub use crate::models::traits::user::{Search, UserClassAccessors, UserNamespaceAccessors};
+pub use crate::models::traits::user::{
+    GroupAccessors, Search, UserClassAccessors, UserNamespaceAccessors,
+};
 
 pub trait CanDelete {
     async fn delete(&self, pool: &DbPool) -> Result<(), ApiError>;
@@ -28,6 +29,7 @@ pub trait CanUpdate {
 
 // This trait is used to provide a uniform interface for both EntityID
 // and Entity types, ie User and UserID.
+#[allow(async_fn_in_trait)]
 pub trait SelfAccessors<T> {
     fn id(&self) -> i32;
     async fn instance(&self, pool: &DbPool) -> Result<T, ApiError>;

@@ -445,6 +445,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
 
 pub trait GroupAccessors: SelfAccessors<User> {
     /// Return all groups that the user is a member of.
+    #[allow(async_fn_in_trait)]
     async fn groups(&self, pool: &DbPool) -> Result<Vec<Group>, ApiError> {
         use crate::schema::groups::dsl::*;
         use crate::schema::user_groups::dsl::{group_id, user_groups, user_id};

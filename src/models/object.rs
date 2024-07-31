@@ -57,7 +57,7 @@ pub struct ObjectIDResult {
     pub id: i32,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct HubuumObjectID(pub i32);
 
 // For objects per class.

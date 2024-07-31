@@ -85,7 +85,7 @@ macro_rules! numeric_search {
     ($base_query:expr, $parsed_query_param:expr, $operator:expr, $diesel_field:expr) => {{
         use diesel::dsl::not;
         use $crate::errors::ApiError;
-        use $crate::models::search::{DataType, Operator, SearchOperator};
+        use $crate::models::search::{DataType, Operator};
         let values = $parsed_query_param.value_as_integer()?;
 
         if !$operator.is_applicable_to(DataType::NumericOrDate) {
@@ -178,7 +178,7 @@ macro_rules! date_search {
         use diesel::dsl::not;
         use diesel::prelude::*;
         use $crate::errors::ApiError;
-        use $crate::models::search::{DataType, Operator, SearchOperator};
+        use $crate::models::search::{DataType, Operator};
 
         let values = $parsed_query_param.value_as_date()?;
 
@@ -259,7 +259,7 @@ macro_rules! string_search {
         use diesel::dsl::not;
         use diesel::prelude::*;
         use $crate::errors::ApiError;
-        use $crate::models::search::{DataType, Operator, SearchOperator};
+        use $crate::models::search::{DataType, Operator};
 
         let value = $param.value.clone();
 
@@ -325,7 +325,7 @@ macro_rules! boolean_search {
     ($base_query:expr, $param:expr, $operator:expr, $diesel_field:expr) => {{
         use diesel::dsl::not;
         use $crate::errors::ApiError;
-        use $crate::models::search::{DataType, Operator, SearchOperator};
+        use $crate::models::search::{DataType, Operator};
 
         let value = $param.value_as_boolean()?;
 
