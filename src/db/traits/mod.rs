@@ -3,6 +3,7 @@ mod class;
 mod is_active;
 mod namespace;
 mod relations;
+mod user;
 
 use crate::errors::ApiError;
 use crate::models::{
