@@ -807,6 +807,9 @@ impl UserClassAccessors for UserID {}
 impl GroupAccessors for User {}
 impl GroupAccessors for UserID {}
 
+impl GroupAccessors for &User {}
+impl GroupAccessors for &UserID {}
+
 impl Search for User {}
 impl Search for UserID {}
 
@@ -830,6 +833,24 @@ impl SelfAccessors<User> for UserID {
         Ok(users
             .filter(id.eq(self.0))
             .first::<User>(&mut pool.get()?)?)
+    }
+}
+
+impl<'a> SelfAccessors<User> for &'a User {
+    fn id(&self) -> i32 {
+        (*self).id()
+    }
+    async fn instance(&self, pool: &DbPool) -> Result<User, ApiError> {
+        (*self).instance(pool).await
+    }
+}
+
+impl<'a> SelfAccessors<User> for &'a UserID {
+    fn id(&self) -> i32 {
+        (*self).id()
+    }
+    async fn instance(&self, pool: &DbPool) -> Result<User, ApiError> {
+        (*self).instance(pool).await
     }
 }
 

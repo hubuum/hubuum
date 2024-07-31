@@ -9,7 +9,7 @@ use crate::models::{
 
 use crate::traits::{GroupAccessors, SelfAccessors};
 
-use super::{Relations, SelfRelations};
+use super::{ObjectRelationsFromUser, Relations, SelfRelations};
 
 impl<C1> SelfRelations<HubuumClass> for C1 where C1: SelfAccessors<HubuumClass> + Clone + Send + Sync
 {}
@@ -83,15 +83,18 @@ where
     })
 }
 
-impl User {
-    pub async fn get_related_objects<O, C>(
+impl<U> ObjectRelationsFromUser for U
+where
+    U: SelfAccessors<User> + GroupAccessors,
+    for<'a> &'a U: GroupAccessors,
+{
+    async fn get_related_objects<O, C>(
         &self,
         pool: &DbPool,
         source_object: &O,
         target_class: &C,
     ) -> Result<Vec<HubuumObjectTransitiveLink>, ApiError>
     where
-        Self: SelfAccessors<User> + GroupAccessors,
         O: SelfAccessors<HubuumObject> + Clone + Send + Sync,
         C: SelfAccessors<HubuumClass> + Clone + Send + Sync,
     {
@@ -99,8 +102,8 @@ impl User {
         use diesel::sql_query;
         use diesel::sql_types::{Array, Integer};
         use diesel::RunQueryDsl;
-        let namespaces = user_can_on_any(pool, self.clone(), Permissions::ReadObject).await?;
 
+        let namespaces = user_can_on_any(pool, self.clone(), Permissions::ReadObject).await?;
         with_connection(pool, |conn| {
             sql_query("SELECT * FROM get_transitively_linked_objects($1, $2, $3)")
                 .bind::<Integer, _>(source_object.id())

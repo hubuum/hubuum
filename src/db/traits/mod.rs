@@ -7,9 +7,10 @@ mod user;
 
 use crate::errors::ApiError;
 use crate::models::{
-    HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, Namespace, UserToken,
+    HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, HubuumObject,
+    HubuumObjectTransitiveLink, Namespace, User, UserToken,
 };
-use crate::traits::SelfAccessors;
+use crate::traits::{GroupAccessors, SelfAccessors};
 
 use super::{with_connection, DbPool};
 
@@ -118,4 +119,19 @@ where
                 .load::<HubuumClassRelation>(conn)
         })
     }
+}
+
+pub trait ObjectRelationsFromUser: SelfAccessors<User> + GroupAccessors
+where
+    for<'a> &'a Self: GroupAccessors,
+{
+    async fn get_related_objects<O, C>(
+        &self,
+        pool: &DbPool,
+        source_object: &O,
+        target_class: &C,
+    ) -> Result<Vec<HubuumObjectTransitiveLink>, ApiError>
+    where
+        O: SelfAccessors<HubuumObject> + Clone + Send + Sync,
+        C: SelfAccessors<HubuumClass> + Clone + Send + Sync;
 }

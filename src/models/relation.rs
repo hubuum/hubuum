@@ -415,6 +415,7 @@ pub mod tests {
 
     #[actix_rt::test]
     async fn test_finding_object_relations() {
+        use crate::db::traits::ObjectRelationsFromUser;
         use crate::tests::ensure_admin_user;
         let (pool, _) = get_pool_and_config().await;
 
