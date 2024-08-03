@@ -91,7 +91,8 @@ macro_rules! numeric_search {
         if !$operator.is_applicable_to(DataType::NumericOrDate) {
             return Err(ApiError::OperatorMismatch(format!(
                 "Operator '{:?}' is not applicable to field '{}'",
-                $operator, $parsed_query_param.field
+                $operator,
+                $parsed_query_param.field.query_field()
             )));
         }
 
@@ -99,7 +100,7 @@ macro_rules! numeric_search {
         if values.is_empty() {
             return Err(ApiError::BadRequest(format!(
                 "Searching on field '{}' requires a value",
-                $parsed_query_param.field,
+                $parsed_query_param.field.query_field(),
             )));
         }
 
@@ -164,7 +165,8 @@ macro_rules! numeric_search {
             _ => {
                 return Err(ApiError::OperatorMismatch(format!(
                     "Operator '{:?}' not implemented for field '{}' (type: numeric)",
-                    $operator, $parsed_query_param.field
+                    $operator,
+                    $parsed_query_param.field.query_field()
                 )))
             }
         };
@@ -185,7 +187,8 @@ macro_rules! date_search {
         if !$operator.is_applicable_to(DataType::NumericOrDate) {
             return Err(ApiError::OperatorMismatch(format!(
                 "Operator '{:?}' is not applicable to field '{}'",
-                $operator, $parsed_query_param.field
+                $operator,
+                $parsed_query_param.field.query_field()
             )));
         }
 
@@ -193,7 +196,7 @@ macro_rules! date_search {
         if values.is_empty() {
             return Err(ApiError::BadRequest(format!(
                 "Searching on field '{}' requires a value",
-                $parsed_query_param.field
+                $parsed_query_param.field.query_field()
             )));
         }
 
@@ -205,7 +208,7 @@ macro_rules! date_search {
         if op == Operator::Between && values.len() != 2 {
             return Err(ApiError::OperatorMismatch(format!(
                 "Operator 'between' requires 2 values (min,max) for field '{}'",
-                $parsed_query_param.field
+                $parsed_query_param.field.query_field()
             )));
         }
 
@@ -245,7 +248,8 @@ macro_rules! date_search {
             _ => {
                 return Err(ApiError::OperatorMismatch(format!(
                     "Operator '{:?}' not implemented for field '{}' (type: date)",
-                    $operator, $parsed_query_param.field
+                    $operator,
+                    $parsed_query_param.field.query_field()
                 )))
             }
         };
@@ -266,7 +270,8 @@ macro_rules! string_search {
         if !$operator.is_applicable_to(DataType::String) {
             return Err(ApiError::OperatorMismatch(format!(
                 "Operator '{:?}' is not applicable to field '{}'",
-                $operator, $param.field
+                $operator,
+                $param.field.query_field()
             )));
         }
 
@@ -274,7 +279,7 @@ macro_rules! string_search {
         if value.is_empty() {
             return Err(ApiError::BadRequest(format!(
                 "Searching on field '{}' requires a value",
-                $param.field
+                $param.field.query_field()
             )));
         }
 
@@ -312,7 +317,8 @@ macro_rules! string_search {
             _ => {
                 return Err(ApiError::OperatorMismatch(format!(
                     "Operator '{:?}' not implemented for field '{}' (type: string)",
-                    $operator, $param.field
+                    $operator,
+                    $param.field.query_field()
                 )))
             }
         }
@@ -332,7 +338,8 @@ macro_rules! boolean_search {
         if !$operator.is_applicable_to(DataType::Boolean) {
             return Err(ApiError::OperatorMismatch(format!(
                 "Operator '{:?}' is not applicable to field '{}'",
-                $operator, $param.field
+                $operator,
+                $param.field.query_field()
             )));
         }
 
@@ -346,7 +353,8 @@ macro_rules! boolean_search {
             _ => {
                 return Err(ApiError::OperatorMismatch(format!(
                     "Operator '{:?}' not implemented for field '{}' (type: boolean)",
-                    $operator, $param.field
+                    $operator,
+                    $param.field.query_field()
                 )))
             }
         }

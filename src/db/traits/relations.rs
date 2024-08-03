@@ -3,7 +3,7 @@ use crate::db::traits::ClassRelation;
 use crate::db::{with_connection, DbPool};
 use crate::errors::ApiError;
 use crate::models::{
-    user_can_on_any, HubuumClass, HubuumClassRelationTransitive, HubuumObject,
+    user_can_on_any, HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, HubuumObject,
     HubuumObjectTransitiveLink, User,
 };
 
@@ -40,6 +40,17 @@ where
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError> {
         <C1 as Relations<C1, C2>>::relations_between(pool, self, other).await
     }
+
+    async fn direct_relation_to(
+        &self,
+        pool: &DbPool,
+        other: &C2,
+    ) -> Result<Option<HubuumClassRelation>, ApiError> {
+        fetch_relations_direct(pool, self, other)
+            .await
+            .map(Some)
+            .or(Ok(None))
+    }
 }
 
 impl<C1, C2> Relations<C1, C2> for HubuumClassRelationTransitive
@@ -54,6 +65,29 @@ where
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError> {
         fetch_relations(pool, from, to).await
     }
+}
+
+async fn fetch_relations_direct<C1, C2>(
+    pool: &DbPool,
+    from: &C1,
+    to: &C2,
+) -> Result<HubuumClassRelation, ApiError>
+where
+    C1: SelfAccessors<HubuumClass> + Clone + Send + Sync,
+    C2: SelfAccessors<HubuumClass> + Clone + Send + Sync,
+{
+    use crate::schema::hubuumclass_relation::dsl::*;
+    use diesel::prelude::*;
+
+    let (from, to) = (from.id(), to.id());
+    let (from, to) = if from > to { (to, from) } else { (from, to) };
+
+    with_connection(pool, |conn| {
+        hubuumclass_relation
+            .filter(from_hubuum_class_id.eq(from))
+            .filter(to_hubuum_class_id.eq(to))
+            .first::<HubuumClassRelation>(conn)
+    })
 }
 
 async fn fetch_relations<C1, C2>(
@@ -103,7 +137,7 @@ where
         use diesel::sql_types::{Array, Integer};
         use diesel::RunQueryDsl;
 
-        let namespaces = user_can_on_any(pool, self.clone(), Permissions::ReadObject).await?;
+        let namespaces = user_can_on_any(pool, self, Permissions::ReadObject).await?;
         with_connection(pool, |conn| {
             sql_query("SELECT * FROM get_transitively_linked_objects($1, $2, $3)")
                 .bind::<Integer, _>(source_object.id())

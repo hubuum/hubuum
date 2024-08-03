@@ -61,6 +61,15 @@ pub struct NewHubuumObjectRelation {
     pub class_relation_id: i32,
 }
 
+/// To create new relations between objects from within a
+/// path where we already provide the class and object IDs
+/// we only need the destination object ID.
+#[derive(Debug, Serialize, Deserialize, Insertable, Clone)]
+#[diesel(table_name = hubuumobject_relation)]
+pub struct NewHubuumObjectRelationFromClassAndObject {
+    pub to_hubuum_object_id: i32,
+}
+
 #[derive(
     Debug, Serialize, Deserialize, Queryable, QueryableByName, Selectable, Clone, PartialEq, Eq,
 )]

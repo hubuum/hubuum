@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 use actix_web::web::Json;
+use diesel::dsl::Filter;
 use diesel::sql_types::Bool;
+use std::str::FromStr;
 use std::{collections::HashSet, f32::consts::E};
 use tracing::debug;
 
@@ -56,7 +58,7 @@ pub fn parse_query_parameter(query_string: &str) -> Result<Vec<ParsedQueryParam>
         };
 
         let parsed_query_param = ParsedQueryParam {
-            field,
+            field: FilterField::from_str(&field)?,
             operator,
             value,
         };
@@ -81,7 +83,7 @@ pub fn parse_query_parameter(query_string: &str) -> Result<Vec<ParsedQueryParam>
 /// parsing the value into an integer, a date, or a permission.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedQueryParam {
-    pub field: String,
+    pub field: FilterField,
     pub operator: SearchOperator,
     pub value: String,
 }
@@ -131,30 +133,34 @@ impl ParsedQueryParam {
     /// ### Returns
     ///
     /// * A new ParsedQueryParam instance
-    pub fn new(field: &str, operator: Option<SearchOperator>, value: &str) -> Self {
+    pub fn new(
+        field: &str,
+        operator: Option<SearchOperator>,
+        value: &str,
+    ) -> Result<Self, ApiError> {
         let operator = operator.unwrap_or(SearchOperator::Equals { is_negated: false });
 
-        ParsedQueryParam {
-            field: field.to_string(),
+        Ok(ParsedQueryParam {
+            field: FilterField::from_str(field)?,
             operator,
             value: value.to_string(),
-        }
+        })
     }
 
     pub fn is_permission(&self) -> bool {
-        self.field == "permission"
+        self.field == FilterField::Permissions
     }
 
     pub fn is_namespace(&self) -> bool {
-        self.field == "namespace"
+        self.field == FilterField::Namespaces
     }
 
     pub fn is_json_schema(&self) -> bool {
-        self.field == "json_schema"
+        self.field == FilterField::JsonSchema
     }
 
     pub fn is_json_data(&self) -> bool {
-        self.field == "json_data"
+        self.field == FilterField::JsonData
     }
 
     pub fn is_json(&self) -> bool {
@@ -234,7 +240,7 @@ impl ParsedQueryParam {
         if !self.is_json() {
             return Err(ApiError::InternalServerError(format!(
                 "Attempt to filter '{}' as JSON!",
-                self.field
+                self.field.query_field()
             )));
         }
 
@@ -322,22 +328,46 @@ impl ParsedQueryParam {
             }
             Some(SQLMappedType::String) | Some(SQLMappedType::None) => {
                 bind_variables.push(SQLValue::String(value));
-                format!("{}{} #>> {} {} ?", neg_str, field, key, sql_op)
+                format!(
+                    "{}{} #>> {} {} ?",
+                    neg_str,
+                    field.table_field(),
+                    key,
+                    sql_op
+                )
             }
             Some(SQLMappedType::Numeric) => {
                 let ints = value.as_integer()?;
                 bind_variables.push(SQLValue::Integer(ints[0]));
-                format!("{}({} #>> {})::numeric {} ?", neg_str, field, key, sql_op)
+                format!(
+                    "{}({} #>> {})::numeric {} ?",
+                    neg_str,
+                    field.table_field(),
+                    key,
+                    sql_op
+                )
             }
             Some(SQLMappedType::Date) => {
                 let dates = value.as_date()?;
                 bind_variables.push(SQLValue::Date(dates[0]));
-                format!("{}({} #>> {})::date {} ?", neg_str, field, key, sql_op)
+                format!(
+                    "{}({} #>> {})::date {} ?",
+                    neg_str,
+                    field.table_field(),
+                    key,
+                    sql_op
+                )
             }
             Some(SQLMappedType::Boolean) => {
                 let boolean = value.as_boolean()?;
                 bind_variables.push(SQLValue::Boolean(boolean));
-                format!("{}({} #>> {})::boolean {} ?", neg_str, field, key, sql_op)
+                format!(
+                    "{}({} #>> {})::boolean {} ?",
+                    neg_str,
+                    field.table_field(),
+                    key,
+                    sql_op
+                )
             }
         };
 
@@ -354,7 +384,7 @@ pub trait QueryParamsExt {
     /// ## Get a list of permissions from a list of parsed query parameters
     ///
     /// Iterate over the parsed query parameters and filter out the ones that are permissions,
-    /// defined as having the `field` set as "permission". For each value of each parsed query
+    /// defined as having the `field` set as "permissions". For each value of each parsed query
     /// parameter, attempt to parse it into a Permissions enum. If the value is not a valid
     /// permission, return an ApiError::BadRequest.
     ///
@@ -366,7 +396,7 @@ pub trait QueryParamsExt {
     /// ## Get a sorted list of namespace ids from a list of parsed query parameters
     ///
     /// Iterate over the parsed query parameters and filter out the ones that are namespaces,
-    /// defined as having the `field` set as "namespace". For each value of each parsed query
+    /// defined as having the `field` set as "namespaces". For each value of each parsed query
     /// parameter, attempt to parse it into a list integers via [`parse_integer_list`].
     ///
     /// If the value is not a valid list of integers, return an ApiError::BadRequest.
@@ -397,7 +427,7 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
     /// ## Get a list of all Permissions in a list of parsed query parameters
     ///
     /// Iterate over the parsed query parameters and filter out the ones that are permissions,
-    /// defined as having the `field` set as "permission". For each value of a matching parsed query
+    /// defined as having the `field` set as "permissions". For each value of a matching parsed query
     /// parameter, attempt to parse it into a Permissions enum.
     ///
     /// Note that the list is not sorted and duplicates are removed.
@@ -418,7 +448,7 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
     /// ## Get a sorted list of namespace ids from a list of parsed query parameters
     ///
     /// Iterate over the parsed query parameters and filter out the ones that are namespaces,
-    /// defined as having the `field` set as "namespace". For each value of a matching parsed query
+    /// defined as having the `field` set as "namespaces". For each value of a matching parsed query
     /// parameter, attempt to parse it into a list of integers via [`parse_integer_list`].
     ///
     /// If any value is not a valid list of integers, return an ApiError::BadRequest.
@@ -426,7 +456,7 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
         let mut nids = vec![];
 
         for p in self.iter() {
-            if p.field == "namespaces" {
+            if p.field == FilterField::Namespaces {
                 nids.extend(p.value.as_integer()?);
             }
         }
@@ -863,6 +893,105 @@ fn get_sql_mapped_type_from_value(
     None
 }
 
+/// An enum to ensure that we only allow valid fields for relation
+#[derive(Debug, PartialEq, Clone)]
+pub enum FilterField {
+    Id,
+    Namespaces,
+    Name,
+    Description,
+    Username,
+    Email,
+    ValidateSchema,
+    JsonSchema,
+    JsonData,
+    Permissions,
+    Classes,
+    ClassId,
+    ClassTo,
+    ClassFrom,
+    CreatedAt,
+    UpdatedAt,
+}
+
+impl FromStr for FilterField {
+    type Err = ApiError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "id" => Ok(FilterField::Id),
+            "name" => Ok(FilterField::Name),
+            "description" => Ok(FilterField::Description),
+
+            "username" => Ok(FilterField::Username),
+            "email" => Ok(FilterField::Email),
+
+            "validate_schema" => Ok(FilterField::ValidateSchema),
+            "json_schema" => Ok(FilterField::JsonSchema),
+            "json_data" => Ok(FilterField::JsonData),
+
+            "permissions" => Ok(FilterField::Permissions),
+            "namespaces" => Ok(FilterField::Namespaces),
+
+            "classes" => Ok(FilterField::Classes),
+            "class" => Ok(FilterField::ClassId),
+            "to_class" => Ok(FilterField::ClassTo),
+            "from_class" => Ok(FilterField::ClassFrom),
+
+            "created_at" => Ok(FilterField::CreatedAt),
+            "updated_at" => Ok(FilterField::UpdatedAt),
+            _ => Err(ApiError::BadRequest(format!(
+                "Invalid search field: '{}'",
+                s
+            ))),
+        }
+    }
+}
+
+impl FilterField {
+    pub fn table_field(&self) -> &'static str {
+        match self {
+            FilterField::Id => "id",
+            FilterField::Name => "name",
+            FilterField::Username => "username",
+            FilterField::Email => "email",
+            FilterField::Description => "description",
+            FilterField::ValidateSchema => "validate_schema",
+            FilterField::JsonSchema => "json_schema",
+            FilterField::JsonData => "json_data",
+            FilterField::ClassTo => "to_hubuum_class_id",
+            FilterField::ClassFrom => "from_hubuum_class_id",
+            FilterField::CreatedAt => "created_at",
+            FilterField::UpdatedAt => "updated_at",
+            FilterField::ClassId => panic!("{:?} should not be used as a table field", self),
+            FilterField::Classes => panic!("{:?} should not be used as a table field", self),
+            FilterField::Namespaces => panic!("{:?} should not be used as a table field", self),
+            FilterField::Permissions => panic!("{:?} should not be used as a table field", self),
+        }
+    }
+    pub fn query_field(&self) -> &'static str {
+        match self {
+            FilterField::Id => "id",
+            FilterField::Namespaces => "namespaces",
+            FilterField::Name => "name",
+            FilterField::Description => "description",
+            FilterField::Username => "username",
+            FilterField::Email => "email",
+            FilterField::ValidateSchema => "validate_schema",
+            FilterField::JsonSchema => "json_schema",
+            FilterField::JsonData => "json_data",
+            FilterField::Permissions => "permissions",
+            FilterField::ClassTo => "to_class",
+            FilterField::ClassFrom => "from_class",
+            FilterField::CreatedAt => "created_at",
+            FilterField::UpdatedAt => "updated_at",
+            FilterField::Classes => "classes",
+            FilterField::ClassId => "class",
+        }
+    }
+}
+
+// TODO: Rewrite to use yare::parametrized...
 #[cfg(test)]
 mod test {
     use std::vec;
@@ -876,7 +1005,7 @@ mod test {
 
     fn pq(field: &str, operator: SearchOperator, value: &str) -> ParsedQueryParam {
         ParsedQueryParam {
-            field: field.to_string(),
+            field: FilterField::from_str(field).unwrap(),
             operator,
             value: value.to_string(),
         }
@@ -982,7 +1111,7 @@ mod test {
         let test_case_errors = vec![
             "Invalid query parameter: 'invalid'",
             "Invalid query parameter: 'invalid=', no value",
-            "Invalid search operator: 'invalid'",
+            "Invalid search field: 'invalid'",
         ];
 
         let mut i = 0;
@@ -1027,11 +1156,11 @@ mod test {
                 ],
             },
             TestCase {
-                query_string: "name__not_icontains=foo&description=bar&permission=CanRead&validate_schema=true",
+                query_string: "name__not_icontains=foo&description=bar&permissions=CanRead&validate_schema=true",
                 expected: vec![
                     pq("name", SearchOperator::IContains{ is_negated: true}, "foo"),
                     pq("description", SearchOperator::Equals{ is_negated: false}, "bar"),
-                    pq("permission", SearchOperator::Equals{ is_negated: false}, "CanRead"),
+                    pq("permissions", SearchOperator::Equals{ is_negated: false}, "CanRead"),
                     pq("validate_schema", SearchOperator::Equals{ is_negated: false}, "true"),
                 ],
             },

@@ -16,5 +16,10 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(classes::get_class_relations)
         .service(classes::get_class_relations_transitive)
         .service(classes::delete_class_relation)
-        .service(classes::create_class_relation);
+        .service(classes::create_class_relation)
+        .service(classes::get_object_relations)
+        .service(classes::get_class_relation_from_classes_and_object)
+        .service(classes::get_object_relation_from_class_and_objects)
+        .service(classes::delete_object_relation)
+        .service(classes::create_object_relation);
 }

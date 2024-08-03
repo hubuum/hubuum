@@ -317,10 +317,6 @@
     END;
     $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER check_object_relation
-BEFORE INSERT OR UPDATE ON hubuumobject_relation
-FOR EACH ROW EXECUTE FUNCTION validate_object_relation();
-
     -- Function to get objects that use a class relation. 
     CREATE OR REPLACE FUNCTION get_affected_objects(class1_id INT, class2_id INT)
     RETURNS TABLE (from_object_id INT, to_object_id INT) AS $$

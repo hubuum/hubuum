@@ -108,7 +108,8 @@ mod test {
                     "id",
                     Some(SearchOperator::Equals { is_negated: false }),
                     &classes[0].id.to_string(),
-                )],
+                )
+                .unwrap()],
                 expected: 1,
             },
             TestCase {
@@ -116,7 +117,8 @@ mod test {
                     "name",
                     Some(SearchOperator::Equals { is_negated: false }),
                     &classes[0].name,
-                )],
+                )
+                .unwrap()],
                 expected: 1,
             },
             TestCase {
@@ -124,7 +126,8 @@ mod test {
                     "namespaces",
                     Some(SearchOperator::Equals { is_negated: false }),
                     &namespaces[2].id.to_string(),
-                )],
+                )
+                .unwrap()],
                 expected: 1,
             },
             TestCase {
@@ -132,7 +135,8 @@ mod test {
                     "validate_schema",
                     Some(SearchOperator::Equals { is_negated: false }),
                     "true",
-                )],
+                )
+                .unwrap()],
                 expected: 0,
             },
             TestCase {
@@ -141,12 +145,14 @@ mod test {
                         "validate_schema",
                         Some(SearchOperator::Equals { is_negated: true }), // so true becomes false
                         "true",
-                    ),
+                    )
+                    .unwrap(),
                     ParsedQueryParam::new(
                         "namespaces",
                         Some(SearchOperator::Equals { is_negated: false }),
                         &namespaces[2].id.to_string(),
-                    ),
+                    )
+                    .unwrap(),
                 ],
                 expected: 1,
             },
@@ -168,7 +174,8 @@ mod test {
                 .map(|ns| ns.id.to_string())
                 .collect::<Vec<String>>()
                 .join(","),
-        );
+        )
+        .unwrap();
 
         let testcases = vec![
             TestCase {
@@ -177,7 +184,8 @@ mod test {
                         "id",
                         Some(SearchOperator::Equals { is_negated: false }),
                         &classes[0].id.to_string(),
-                    ),
+                    )
+                    .unwrap(),
                     nspqp.clone(),
                 ],
                 expected: 1,
@@ -188,7 +196,8 @@ mod test {
                         "namespaces",
                         Some(SearchOperator::Equals { is_negated: false }),
                         &namespaces[2].id.to_string(),
-                    ),
+                    )
+                    .unwrap(),
                     nspqp.clone(),
                 ],
                 expected: 1,
@@ -199,12 +208,14 @@ mod test {
                         "id",
                         Some(SearchOperator::Gt { is_negated: false }),
                         &classes[1].id.to_string(),
-                    ),
+                    )
+                    .unwrap(),
                     ParsedQueryParam::new(
                         "id",
                         Some(SearchOperator::Lt { is_negated: false }),
                         &classes[3].id.to_string(),
-                    ),
+                    )
+                    .unwrap(),
                     nspqp.clone(),
                 ],
                 expected: 1,
@@ -215,7 +226,8 @@ mod test {
                         "name",
                         Some(SearchOperator::Contains { is_negated: false }),
                         "class_search",
-                    ),
+                    )
+                    .unwrap(),
                     nspqp.clone(),
                 ],
                 expected: 10,
@@ -226,12 +238,14 @@ mod test {
                         "name",
                         Some(SearchOperator::IContains { is_negated: false }),
                         "CLASS_search",
-                    ),
+                    )
+                    .unwrap(),
                     ParsedQueryParam::new(
                         "namespaces",
                         Some(SearchOperator::Equals { is_negated: false }),
                         &namespaces[1].id.to_string(),
-                    ),
+                    )
+                    .unwrap(),
                     nspqp.clone(),
                 ],
                 expected: 3,
@@ -242,12 +256,14 @@ mod test {
                         "description",
                         Some(SearchOperator::Contains { is_negated: false }),
                         "class search",
-                    ),
+                    )
+                    .unwrap(),
                     ParsedQueryParam::new(
                         "validate_schema",
                         Some(SearchOperator::Equals { is_negated: false }),
                         "true",
-                    ),
+                    )
+                    .unwrap(),
                     nspqp.clone(),
                 ],
                 expected: 0,
@@ -269,12 +285,14 @@ mod test {
                         "namespaces",
                         Some(SearchOperator::Equals { is_negated: false }),
                         format!("{}-{}", namespaces[1].id, namespaces[2].id).as_str(),
-                    ),
+                    )
+                    .unwrap(),
                     ParsedQueryParam::new(
                         "name",
                         Some(SearchOperator::Contains { is_negated: false }),
                         "test_user_class_int_ranges",
-                    ),
+                    )
+                    .unwrap(),
                 ],
                 expected: 4,
             },
@@ -284,12 +302,14 @@ mod test {
                         "namespaces",
                         Some(SearchOperator::Equals { is_negated: false }),
                         format!("{},{}", namespaces[0].id, namespaces[2].id).as_str(),
-                    ),
+                    )
+                    .unwrap(),
                     ParsedQueryParam::new(
                         "name",
                         Some(SearchOperator::Contains { is_negated: false }),
                         "test_user_class_int_ranges",
-                    ),
+                    )
+                    .unwrap(),
                 ],
                 expected: 7,
             },
@@ -303,12 +323,14 @@ mod test {
                             namespaces[0].id, namespaces[1].id, namespaces[2].id
                         )
                         .as_str(),
-                    ),
+                    )
+                    .unwrap(),
                     ParsedQueryParam::new(
                         "name",
                         Some(SearchOperator::Contains { is_negated: false }),
                         "test_user_class_int_ranges",
-                    ),
+                    )
+                    .unwrap(),
                 ],
                 expected: 10,
             },
@@ -318,12 +340,14 @@ mod test {
                         "namespaces",
                         Some(SearchOperator::Equals { is_negated: false }),
                         format!("{}-{}", namespaces[0].id, namespaces[2].id).as_str(),
-                    ),
+                    )
+                    .unwrap(),
                     ParsedQueryParam::new(
                         "name",
                         Some(SearchOperator::Contains { is_negated: false }),
                         "test_user_class_int_ranges",
-                    ),
+                    )
+                    .unwrap(),
                 ],
                 expected: 10,
             },
@@ -337,12 +361,14 @@ mod test {
                             namespaces[0].id, namespaces[1].id, namespaces[2].id
                         )
                         .as_str(),
-                    ),
+                    )
+                    .unwrap(),
                     ParsedQueryParam::new(
                         "name",
                         Some(SearchOperator::Contains { is_negated: false }),
                         "test_user_class_int_ranges",
-                    ),
+                    )
+                    .unwrap(),
                 ],
                 expected: 10,
             },
@@ -369,11 +395,12 @@ mod test {
                 .map(|ns| ns.id.to_string())
                 .collect::<Vec<String>>()
                 .join(","),
-        );
+        )
+        .unwrap();
 
         TestCase {
             query: vec![
-                ParsedQueryParam::new("json_schema", Some(operator), value),
+                ParsedQueryParam::new("json_schema", Some(operator), value).unwrap(),
                 binding_pgp_to_our_namespace.clone(),
             ],
             expected: expected_hits,

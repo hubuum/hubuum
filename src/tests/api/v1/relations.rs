@@ -1,12 +1,14 @@
 #[cfg(test)]
 mod tests {
     use crate::models::{
-        HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, NamespaceID,
-        NewHubuumClassRelation, NewHubuumClassRelationFromClass, Permissions,
+        HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, HubuumObject,
+        HubuumObjectRelation, NamespaceID, NewHubuumClassRelation, NewHubuumClassRelationFromClass,
+        NewHubuumObject, NewHubuumObjectRelation, Permissions,
     };
     use crate::traits::{CanSave, PermissionController, SelfAccessors};
     use crate::{assert_contains_all, assert_contains_same_ids};
     use actix_web::{http::StatusCode, test};
+    use yare::parameterized;
 
     use crate::tests::api_operations::{delete_request, get_request, post_request};
     use crate::tests::asserts::assert_response_status;
@@ -34,6 +36,21 @@ mod tests {
         relation.save(pool).await.unwrap()
     }
 
+    async fn create_object_relation(
+        pool: &crate::db::DbPool,
+        from_object: &HubuumObject,
+        to_object: &HubuumObject,
+        relation: &HubuumClassRelation,
+    ) -> HubuumObjectRelation {
+        let relation = NewHubuumObjectRelation {
+            from_hubuum_object_id: from_object.id,
+            to_hubuum_object_id: to_object.id,
+            class_relation_id: relation.id,
+        };
+
+        relation.save(pool).await.unwrap()
+    }
+
     async fn create_classes_and_relations(
         pool: &crate::db::DbPool,
         prefix: &str,
@@ -49,6 +66,26 @@ mod tests {
         ];
 
         (classes, relations)
+    }
+
+    async fn create_objects_in_classes(
+        pool: &crate::db::DbPool,
+        classes: &[HubuumClass],
+    ) -> Vec<crate::models::HubuumObject> {
+        let mut objects = Vec::new();
+        for class in classes {
+            let object = NewHubuumObject {
+                hubuum_class_id: class.id,
+                namespace_id: class.namespace_id,
+                name: format!("object_in_{}", class.name),
+                description: format!("Object in class {}", class.description),
+                data: serde_json::json!({}),
+            };
+
+            objects.push(object.save(pool).await.unwrap());
+        }
+
+        objects
     }
 
     #[actix_web::test]
@@ -86,7 +123,7 @@ mod tests {
 
         let class = &classes[0];
 
-        // Check direct relations.
+        // Check direct relations. The first class has relations to the second and the fifth.
         let endpoint = format!("/api/v1/classes/{}/relations/", class.id);
         let resp = get_request(&pool, &admin_token, &endpoint).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
@@ -97,8 +134,8 @@ mod tests {
         assert_eq!(relations_fetched[0].to_hubuum_class_id, classes[1].id);
 
         // Check transitive results.
-        // We should have links from 1->2, 2->3, 3->4, 4->5, 5->6.
-        // So for the first class, we should have 5 relations.
+        // We should have links from 1->2, 2->3, 3->4, 4->5, 5->6
+        // So for the first class, we relations[0] relations..id
         let endpoint = format!("/api/v1/classes/{}/relations/transitive/", class.id);
 
         let resp = get_request(&pool, &admin_token, &endpoint).await;
@@ -272,6 +309,85 @@ mod tests {
 
         let relation_response: HubuumClassRelation = test::read_body_json(resp).await;
         assert_eq!(relation_response.id, relation.id);
+
+        cleanup(&classes).await;
+    }
+
+
+    // classidx of obj1, obj1_idx, obj2_idx, relation_idx, exists
+    #[parameterized(
+        relation_12_rel_true = { 0, 0, 1, 0, true },        
+        relation_12_rel_false_c1 = { 1, 0, 1, 0, false }, // Gets the wrong class
+        relation_21_rel_true = { 1, 1, 0, 0, true }, // This is the same as relation_12_true, relations are bidirectional
+        relation_32_true = { 2, 2, 1, 1, true },
+        relation_15_true = { 0, 0, 4, 2, true },
+        relation_34_false = { 2, 2, 3, 0, false },
+        relation_45_false_r0 = { 3, 3, 4, 0, false },
+        relation_45_false_r1 = { 3, 3, 4, 1, false },
+        relation_45_false_r2 = { 3, 3, 4, 2, false },
+
+    )]
+    #[test_macro(actix_web::test)]
+    async fn test_get_object_relation_param(
+        class_index: usize,
+        from_index: usize,
+        to_index: usize,
+        relation_index: usize,
+        exists: bool,
+    ) {
+        let unique = format!(
+            "get_object_relation_param_{}_{}_{}_{}",
+            from_index, to_index, relation_index, exists
+        );
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let (classes, relations) = create_classes_and_relations(&pool, &unique).await;
+        let objects = create_objects_in_classes(&pool, &classes).await;
+
+        // Create relations as in the original test
+        let relation_12 =
+            create_object_relation(&pool, &objects[0], &objects[1], &relations[0]).await;
+        let relation_23 =
+            create_object_relation(&pool, &objects[1], &objects[2], &relations[1]).await;
+        let class_relation_15 = create_relation(&pool, &classes[0], &classes[4]).await;
+        let relation_15 =
+            create_object_relation(&pool, &objects[0], &objects[4], &class_relation_15).await;
+
+        let relations = vec![relation_12, relation_23, relation_15];
+
+        let endpoint = format!(
+            "/api/v1/classes/{}/{}/relations/object/{}",
+            classes[class_index].id, objects[from_index].id, objects[to_index].id
+        );
+
+        let resp = get_request(&pool, &admin_token, &endpoint).await;
+
+        if exists {
+            let resp = assert_response_status(resp, StatusCode::OK).await;
+            let relation_response: HubuumObjectRelation = test::read_body_json(resp).await;
+
+            assert_eq!(relation_response.id, relations[relation_index].id, "{}: Relation index: {} ({:?} in {:?})", endpoint, relation_index, relation_response, relations);
+            if from_index > to_index {
+                assert_eq!(
+                    relation_response.from_hubuum_object_id,
+                    objects[to_index].id
+                );
+                assert_eq!(
+                    relation_response.to_hubuum_object_id,
+                    objects[from_index].id
+                );
+            } else {
+                assert_eq!(
+                    relation_response.from_hubuum_object_id,
+                    objects[from_index].id
+                );
+                assert_eq!(relation_response.to_hubuum_object_id, objects[to_index].id);
+            }
+        } else {
+            if !(resp.status() == StatusCode::NOT_FOUND || resp.status() == StatusCode::BAD_REQUEST) {
+                panic!("Expected NOT_FOUND/BAD_REQUEST from {}, got {:?} ({:?})", endpoint, resp.status(), test::read_body(resp).await);  
+            }
+
+        }
 
         cleanup(&classes).await;
     }

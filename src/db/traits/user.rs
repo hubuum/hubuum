@@ -9,7 +9,7 @@ use crate::traits::SelfAccessors;
 use crate::db::DbPool;
 use crate::errors::ApiError;
 
-use crate::models::search::ParsedQueryParam;
+use crate::models::search::{FilterField, ParsedQueryParam};
 
 use crate::{date_search, numeric_search, string_search, trace_query};
 
@@ -33,18 +33,17 @@ impl User {
         let mut base_query = users.into_boxed();
 
         for param in query_params {
-            let field = param.field.as_str();
             let operator = param.operator.clone();
-            match field {
-                "id" => numeric_search!(base_query, param, operator, id),
-                "username" => string_search!(base_query, param, operator, username),
-                "email" => string_search!(base_query, param, operator, email),
-                "created_at" => date_search!(base_query, param, operator, created_at),
-                "updated_at" => date_search!(base_query, param, operator, updated_at),
+            match param.field {
+                FilterField::Id => numeric_search!(base_query, param, operator, id),
+                FilterField::Username => string_search!(base_query, param, operator, username),
+                FilterField::Email => string_search!(base_query, param, operator, email),
+                FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
+                FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for users",
-                        field
+                        param.field.query_field()
                     )))
                 }
             }

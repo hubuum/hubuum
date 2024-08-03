@@ -44,6 +44,8 @@ pub trait ClassAccessors<C = HubuumClass, I = i32> {
     async fn class(&self, pool: &DbPool) -> Result<C, ApiError>;
     async fn class_id(&self, pool: &DbPool) -> Result<I, ApiError>;
 }
+
+#[allow(dead_code)]
 pub trait PermissionController: Serialize + NamespaceAccessors {
     /// Check if the user has the given permission on the object.
     ///

@@ -7,7 +7,7 @@ use futures::future::try_join_all;
 use tracing::debug;
 
 use crate::api::v1::handlers::namespaces;
-use crate::models::search::SearchOperator;
+use crate::models::search::{FilterField, SearchOperator};
 use crate::models::{
     class, permissions, Group, HubuumClass, HubuumClassRelation, HubuumObject,
     HubuumObjectRelation, Namespace, Permission, Permissions, User, UserID,
@@ -102,57 +102,56 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         for param in query_params {
             use crate::models::search::{DataType, SearchOperator};
             use crate::{boolean_search, date_search, numeric_search, string_search};
-            let field = param.field.as_str();
             let operator = param.operator.clone();
-            match field {
-                "id" => numeric_search!(
+            match param.field {
+                FilterField::Id => numeric_search!(
                     base_query,
                     param,
                     operator,
                     crate::schema::hubuumclass::dsl::id
                 ),
-                "namespaces" => numeric_search!(
+                FilterField::Namespaces => numeric_search!(
                     base_query,
                     param,
                     operator,
                     crate::schema::hubuumclass::dsl::namespace_id
                 ),
-                "created_at" => date_search!(
+                FilterField::CreatedAt => date_search!(
                     base_query,
                     param,
                     operator,
                     crate::schema::hubuumclass::dsl::created_at
                 ),
-                "updated_at" => date_search!(
+                FilterField::UpdatedAt => date_search!(
                     base_query,
                     param,
                     operator,
                     crate::schema::hubuumclass::dsl::updated_at
                 ),
-                "name" => string_search!(
+                FilterField::Name => string_search!(
                     base_query,
                     param,
                     operator,
                     crate::schema::hubuumclass::dsl::name
                 ),
-                "description" => string_search!(
+                FilterField::Description => string_search!(
                     base_query,
                     param,
                     operator,
                     crate::schema::hubuumclass::dsl::description
                 ),
-                "validate_schema" => boolean_search!(
+                FilterField::ValidateSchema => boolean_search!(
                     base_query,
                     param,
                     operator,
                     crate::schema::hubuumclass::dsl::validate_schema
                 ),
-                "json_schema" => {} // Handled above
-                "permission" => {}  // Handled above
+                FilterField::JsonSchema => {}  // Handled above
+                FilterField::Permissions => {} // Handled above
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for classes",
-                        field
+                        param.field.query_field()
                     )))
                 }
             }
@@ -246,57 +245,56 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         for param in query_params {
             use crate::models::search::{DataType, SearchOperator};
             use crate::{boolean_search, date_search, numeric_search, string_search};
-            let field = param.field.as_str();
             let operator = param.operator.clone();
-            match field {
-                "id" => numeric_search!(
+            match param.field {
+                FilterField::Id => numeric_search!(
                     base_query,
                     param,
                     operator,
                     crate::schema::hubuumobject::dsl::id
                 ),
-                "namespaces" => numeric_search!(
+                FilterField::Namespaces => numeric_search!(
                     base_query,
                     param,
                     operator,
                     crate::schema::hubuumobject::dsl::namespace_id
                 ),
-                "created_at" => date_search!(
+                FilterField::CreatedAt => date_search!(
                     base_query,
                     param,
                     operator,
                     crate::schema::hubuumobject::dsl::created_at
                 ),
-                "updated_at" => date_search!(
+                FilterField::UpdatedAt => date_search!(
                     base_query,
                     param,
                     operator,
                     crate::schema::hubuumobject::dsl::updated_at
                 ),
-                "name" => string_search!(
+                FilterField::Name => string_search!(
                     base_query,
                     param,
                     operator,
                     crate::schema::hubuumobject::dsl::name
                 ),
-                "description" => string_search!(
+                FilterField::Description => string_search!(
                     base_query,
                     param,
                     operator,
                     crate::schema::hubuumobject::dsl::description
                 ),
-                "classes" => numeric_search!(
+                FilterField::Classes => numeric_search!(
                     base_query,
                     param,
                     operator,
                     crate::schema::hubuumobject::dsl::hubuum_class_id
                 ),
-                "json_data" => {}  // Handled above
-                "permission" => {} // Handled above
+                FilterField::JsonData => {}    // Handled above
+                FilterField::Permissions => {} // Handled above
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for classes",
-                        field
+                        param.field.query_field()
                     )))
                 }
             }
@@ -390,34 +388,33 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         for param in query_params {
             use crate::models::search::{DataType, SearchOperator};
             use crate::{boolean_search, date_search, numeric_search, string_search};
-            let field = param.field.as_str();
             let operator = param.operator.clone();
-            match field {
-                "id" => numeric_search!(
+            match param.field {
+                FilterField::Id => numeric_search!(
                     base_query,
                     param,
                     operator,
                     crate::schema::hubuumclass_relation::dsl::id
                 ),
-                "from_class_id" => numeric_search!(
+                FilterField::ClassFrom => numeric_search!(
                     base_query,
                     param,
                     operator,
                     crate::schema::hubuumclass_relation::dsl::from_hubuum_class_id
                 ),
-                "to_class_id" => numeric_search!(
+                FilterField::ClassTo => numeric_search!(
                     base_query,
                     param,
                     operator,
                     crate::schema::hubuumclass_relation::dsl::to_hubuum_class_id
                 ),
-                "created_at" => date_search!(
+                FilterField::CreatedAt => date_search!(
                     base_query,
                     param,
                     operator,
                     crate::schema::hubuumclass_relation::dsl::created_at
                 ),
-                "updated_at" => date_search!(
+                FilterField::UpdatedAt => date_search!(
                     base_query,
                     param,
                     operator,
@@ -426,7 +423,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for class relations",
-                        field
+                        param.field.query_field()
                     )))
                 }
             }
@@ -660,7 +657,11 @@ pub trait UserClassAccessors: Search {
     async fn classes_read(&self, pool: &DbPool) -> Result<Vec<HubuumClass>, ApiError> {
         self.search_classes(
             pool,
-            vec![ParsedQueryParam::new("permission", None, "ReadClass")],
+            vec![ParsedQueryParam::new(
+                FilterField::Permissions.query_field(),
+                None,
+                "ReadClass",
+            )?],
         )
         .await
     }
@@ -679,9 +680,17 @@ pub trait UserClassAccessors: Search {
             .collect();
         let namespace_ids: Vec<i32> = try_join_all(futures).await?;
 
-        let mut queries = vec![ParsedQueryParam::new("permission", None, "ReadClass")];
+        let mut queries = vec![ParsedQueryParam::new(
+            FilterField::Permissions.query_field(),
+            None,
+            "ReadClass",
+        )?];
         for nid in namespace_ids {
-            queries.push(ParsedQueryParam::new("namespace", None, &nid.to_string()));
+            queries.push(ParsedQueryParam::new(
+                FilterField::Namespaces.query_field(),
+                None,
+                &nid.to_string(),
+            )?);
         }
 
         self.search_classes(pool, queries).await
@@ -704,11 +713,19 @@ pub trait UserClassAccessors: Search {
 
         let mut queries = vec![];
         for nid in namespace_ids {
-            queries.push(ParsedQueryParam::new("namespace", None, &nid.to_string()));
+            queries.push(ParsedQueryParam::new(
+                FilterField::Namespaces.query_field(),
+                None,
+                &nid.to_string(),
+            )?);
         }
 
         for perm in permissions_list {
-            queries.push(ParsedQueryParam::new("permission", None, &perm.to_string()));
+            queries.push(ParsedQueryParam::new(
+                FilterField::Namespaces.query_field(),
+                None,
+                &perm.to_string(),
+            )?);
         }
 
         self.search_classes(pool, queries).await
@@ -722,7 +739,11 @@ pub trait UserClassAccessors: Search {
         let mut queries = vec![];
 
         for perm in permissions_list {
-            queries.push(ParsedQueryParam::new("permission", None, &perm.to_string()));
+            queries.push(ParsedQueryParam::new(
+                FilterField::Namespaces.query_field(),
+                None,
+                &perm.to_string(),
+            )?);
         }
 
         self.search_classes(pool, queries).await
