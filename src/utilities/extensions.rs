@@ -13,21 +13,6 @@ pub trait CustomStringExtensions {
     /// * A boolean
     fn is_valid_jsonb_search_key(&self) -> bool;
 
-    /// ## Check if the value is a valid json value for searching in jsonb fields.
-    ///
-    /// It seems that the diesel ORM does not allow a run-time defined number of bind
-    /// variables of unknown (at compile time) types, so it seems we can't use
-    /// parameterized queries for jsonb fields.
-    ///
-    /// This leaves is with the issue of generating these queries manually, which apart
-    /// from a performance hit, also opens the door to SQL injection attacks. This function
-    /// is a first line of defense against such attacks.
-    ///
-    /// ### Returns
-    ///
-    /// * A boolean
-    fn is_valid_jsonb_search_value(&self) -> bool;
-
     /// ## Coerce the value into a boolean
     ///
     /// Accepted values are "true" and "false" (case insensitive)
@@ -93,26 +78,6 @@ impl<T: AsRef<str>> CustomStringExtensions for T {
         self.as_ref()
             .chars()
             .all(|c| c.is_alphanumeric() || c == '_' || c == ',' || c == '$')
-    }
-
-    fn is_valid_jsonb_search_value(&self) -> bool {
-        self.as_ref().chars().all(|c| {
-            c.is_alphanumeric()
-                || c.is_whitespace()
-                || c == '_'
-                || c == '-'
-                || c == ','
-                || c == '.'
-                || c == ':'
-                || c == '/'
-                || c == '\\'
-                || c == '['
-                || c == ']'
-                || c == '{'
-                || c == '}'
-                || c == '*'
-                || c == '@'
-        })
     }
 
     fn as_integer(&self) -> Result<Vec<i32>, ApiError> {
