@@ -151,7 +151,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for classes",
-                        param.field.query_field()
+                        param.field
                     )))
                 }
             }
@@ -294,7 +294,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for classes",
-                        param.field.query_field()
+                        param.field
                     )))
                 }
             }
@@ -423,7 +423,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for class relations",
-                        param.field.query_field()
+                        param.field
                     )))
                 }
             }
@@ -658,7 +658,7 @@ pub trait UserClassAccessors: Search {
         self.search_classes(
             pool,
             vec![ParsedQueryParam::new(
-                FilterField::Permissions.query_field(),
+                &FilterField::Permissions.to_string(),
                 None,
                 "ReadClass",
             )?],
@@ -681,13 +681,13 @@ pub trait UserClassAccessors: Search {
         let namespace_ids: Vec<i32> = try_join_all(futures).await?;
 
         let mut queries = vec![ParsedQueryParam::new(
-            FilterField::Permissions.query_field(),
+            &FilterField::Permissions.to_string(),
             None,
             "ReadClass",
         )?];
         for nid in namespace_ids {
             queries.push(ParsedQueryParam::new(
-                FilterField::Namespaces.query_field(),
+                &FilterField::Namespaces.to_string(),
                 None,
                 &nid.to_string(),
             )?);
@@ -714,7 +714,7 @@ pub trait UserClassAccessors: Search {
         let mut queries = vec![];
         for nid in namespace_ids {
             queries.push(ParsedQueryParam::new(
-                FilterField::Namespaces.query_field(),
+                &FilterField::Namespaces.to_string(),
                 None,
                 &nid.to_string(),
             )?);
@@ -722,7 +722,7 @@ pub trait UserClassAccessors: Search {
 
         for perm in permissions_list {
             queries.push(ParsedQueryParam::new(
-                FilterField::Namespaces.query_field(),
+                &FilterField::Namespaces.to_string(),
                 None,
                 &perm.to_string(),
             )?);
@@ -740,7 +740,7 @@ pub trait UserClassAccessors: Search {
 
         for perm in permissions_list {
             queries.push(ParsedQueryParam::new(
-                FilterField::Namespaces.query_field(),
+                &FilterField::Namespaces.to_string(),
                 None,
                 &perm.to_string(),
             )?);

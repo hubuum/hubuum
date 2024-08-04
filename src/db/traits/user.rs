@@ -43,7 +43,7 @@ impl User {
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for users",
-                        param.field.query_field()
+                        param.field
                     )))
                 }
             }

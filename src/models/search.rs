@@ -240,7 +240,7 @@ impl ParsedQueryParam {
         if !self.is_json() {
             return Err(ApiError::InternalServerError(format!(
                 "Attempt to filter '{}' as JSON!",
-                self.field.query_field()
+                self.field
             )));
         }
 
@@ -893,103 +893,80 @@ fn get_sql_mapped_type_from_value(
     None
 }
 
-/// An enum to ensure that we only allow valid fields for relation
-#[derive(Debug, PartialEq, Clone)]
-pub enum FilterField {
-    Id,
-    Namespaces,
-    Name,
-    Description,
-    Username,
-    Email,
-    ValidateSchema,
-    JsonSchema,
-    JsonData,
-    Permissions,
-    Classes,
-    ClassId,
-    ClassTo,
-    ClassFrom,
-    CreatedAt,
-    UpdatedAt,
-}
+// Generate the FilterField enum and its associated functions. We use a macro
+// to generate the enum and its functions to ensure that the FromStr and query_string
+// functions are always in sync.
+macro_rules! filter_fields {
+    ($(($variant:ident, $str_rep:expr)),* $(,)?) => {
+        /// Valid search fields in URLS.
+        ///
+        /// Each enum variant corresponds to a field that can be searched on. As a general rule, fields that may
+        /// be issued repeatedly in the query string are puralized while fields that are unique are singular.
+        ///
+        /// JSON fields (JsonSchema and JsonData) also have a table field, which is used for JSON SQL query generation
+        /// to map into the correct JSON field in the database as these fields do not use the macro–defined searches
+        /// and interpolate the field directly.
+        #[derive(Debug, PartialEq, Clone)]
+        pub enum FilterField {
+            $($variant),*
+        }
 
-impl FromStr for FilterField {
-    type Err = ApiError;
+        impl std::str::FromStr for FilterField {
+            type Err = ApiError;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "id" => Ok(FilterField::Id),
-            "name" => Ok(FilterField::Name),
-            "description" => Ok(FilterField::Description),
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                match s {
+                    $(
+                        $str_rep => Ok(FilterField::$variant),
+                    )*
+                    _ => Err(ApiError::BadRequest(format!(
+                        "Invalid search field: '{}'",
+                        s
+                    ))),
+                }
+            }
+        }
 
-            "username" => Ok(FilterField::Username),
-            "email" => Ok(FilterField::Email),
+        impl std::fmt::Display for FilterField {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match self {
+                    $(
+                        FilterField::$variant => write!(f, "{}", $str_rep),
+                    )*
+                }
+            }
+        }
 
-            "validate_schema" => Ok(FilterField::ValidateSchema),
-            "json_schema" => Ok(FilterField::JsonSchema),
-            "json_data" => Ok(FilterField::JsonData),
-
-            "permissions" => Ok(FilterField::Permissions),
-            "namespaces" => Ok(FilterField::Namespaces),
-
-            "classes" => Ok(FilterField::Classes),
-            "class" => Ok(FilterField::ClassId),
-            "to_class" => Ok(FilterField::ClassTo),
-            "from_class" => Ok(FilterField::ClassFrom),
-
-            "created_at" => Ok(FilterField::CreatedAt),
-            "updated_at" => Ok(FilterField::UpdatedAt),
-            _ => Err(ApiError::BadRequest(format!(
-                "Invalid search field: '{}'",
-                s
-            ))),
+        impl FilterField {
+            pub fn table_field(&self) -> &'static str {
+                match self {
+                    FilterField::JsonSchema => "json_schema",
+                    FilterField::JsonData => "json_data",
+                    _ => panic!("{:?} should not be used as a table field", self),
+                }
+            }
         }
     }
 }
 
-impl FilterField {
-    pub fn table_field(&self) -> &'static str {
-        match self {
-            FilterField::Id => "id",
-            FilterField::Name => "name",
-            FilterField::Username => "username",
-            FilterField::Email => "email",
-            FilterField::Description => "description",
-            FilterField::ValidateSchema => "validate_schema",
-            FilterField::JsonSchema => "json_schema",
-            FilterField::JsonData => "json_data",
-            FilterField::ClassTo => "to_hubuum_class_id",
-            FilterField::ClassFrom => "from_hubuum_class_id",
-            FilterField::CreatedAt => "created_at",
-            FilterField::UpdatedAt => "updated_at",
-            FilterField::ClassId => panic!("{:?} should not be used as a table field", self),
-            FilterField::Classes => panic!("{:?} should not be used as a table field", self),
-            FilterField::Namespaces => panic!("{:?} should not be used as a table field", self),
-            FilterField::Permissions => panic!("{:?} should not be used as a table field", self),
-        }
-    }
-    pub fn query_field(&self) -> &'static str {
-        match self {
-            FilterField::Id => "id",
-            FilterField::Namespaces => "namespaces",
-            FilterField::Name => "name",
-            FilterField::Description => "description",
-            FilterField::Username => "username",
-            FilterField::Email => "email",
-            FilterField::ValidateSchema => "validate_schema",
-            FilterField::JsonSchema => "json_schema",
-            FilterField::JsonData => "json_data",
-            FilterField::Permissions => "permissions",
-            FilterField::ClassTo => "to_class",
-            FilterField::ClassFrom => "from_class",
-            FilterField::CreatedAt => "created_at",
-            FilterField::UpdatedAt => "updated_at",
-            FilterField::Classes => "classes",
-            FilterField::ClassId => "class",
-        }
-    }
-}
+filter_fields!(
+    (Id, "id"),
+    (Namespaces, "namespaces"),
+    (Name, "name"),
+    (Description, "description"),
+    (Username, "username"),
+    (Email, "email"),
+    (ValidateSchema, "validate_schema"),
+    (JsonSchema, "json_schema"),
+    (JsonData, "json_data"),
+    (Permissions, "permissions"),
+    (Classes, "classes"),
+    (ClassId, "class"),
+    (ClassTo, "to_class"),
+    (ClassFrom, "from_class"),
+    (CreatedAt, "created_at"),
+    (UpdatedAt, "updated_at"),
+);
 
 // TODO: Rewrite to use yare::parametrized...
 #[cfg(test)]

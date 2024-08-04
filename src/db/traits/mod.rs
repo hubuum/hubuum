@@ -159,7 +159,7 @@ where
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for class relations",
-                        param.field.query_field()
+                        param.field
                     )))
                 }
             }
