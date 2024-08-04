@@ -20,10 +20,9 @@ Note that the class_id defines the class of the first object. The class of the s
 
 | Operation | Method | Path | Description |
 |-----------|--------|------|-------------|
-| Create    | POST   | /classes/{class_id}/{object_id}/relations/{to_object_id} | Create a relation between two objects |
-| Delete    | DELETE | /classes/{class_id}/{object_id}/relations/object/{to_object_id} | Delete a relation between two objects |
-| List      | GET    | /classes/{class_id}/{object_id}/relations/object/ | List all objects an object is related to. Should support filtering on class and object IDs. |
-| List      | GET    | /classes/{class_id}/{object_id}/relations/classes/{to_class_id} | List all objects an object is related to of a specific class |
+| Create    | POST   | /classes/{class_id}/{object_id}/relations/{to_class_id}/{to_object_id} | Create a relation between two objects |
+| Delete    | DELETE | /classes/{class_id}/{object_id}/relations/{to_class}/{to_object_id} | Delete a relation between two objects |
+| List      | GET    | /classes/{class_id}/{object_id}/relations/ | List all objects an object is related to. Should support filtering on class and object IDs. |
 
 ## Context free operations
 

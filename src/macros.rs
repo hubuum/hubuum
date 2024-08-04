@@ -29,6 +29,45 @@ macro_rules! debug_query {
 }
 
 #[macro_export]
+/// ## Check if a user has a set of permissions in a set of namespaces.
+///
+/// This is a thin wrapper over the [`UserPermissions::can`] method, but with a more
+/// convenient syntax for the caller as the objects we test against may be of different types
+/// but all implement the [`NamespaceAccessors`] trait.
+///
+/// ### Arguments
+///
+/// * `pool` - A database connection pool.
+/// * `user` - The user (impl [`UserPermissions`]) to check permissions for.
+/// * `[permissions]` - An iterable of [`Permissions`] to check for.
+///   All permissions must be present in all namespaces.
+/// * `objects+`- Objects to check permissions on (impl [`NamespaceAccessors`]).
+///
+/// ### Returns
+///
+/// * Nothing if the user has the required permissions, or an [`ApiError::Forbidden`] if they do not.
+///
+/// [`UserPermissions::can`]: crate::db::traits::UserPermissions::can
+/// [`UserPermissions`]: crate::db::traits::UserPermissions
+/// [`NamespaceAccessors`]: crate::traits::NamespaceAccessors
+/// [`Permissions`]: crate::models::Permissions
+/// [`ApiError::Forbidden`]: crate::errors::ApiError::Forbidden
+macro_rules! can {
+    ($pool:expr, $user:expr, [$($perm:expr),+], $($namespace:expr),+) => {{
+        $user.can(
+            $pool,
+            vec![$($perm),+],
+            vec![
+                // This should be fairly cheap. We're just getting the namespace ID for each object.
+                // which is a field lookup and convertinng it to NamespaceID directly. There is no
+                // database interaction here but the trait definition requires the pool to be passed.
+                $(NamespaceID($namespace.namespace_id($pool).await?)),+
+            ]
+        ).await?
+    }};
+}
+
+#[macro_export]
 /// Check permissions for a user on a namespace, class, or object.
 ///
 /// ## Arguments

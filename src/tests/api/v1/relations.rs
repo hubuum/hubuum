@@ -355,8 +355,8 @@ mod tests {
         let relations = vec![relation_12, relation_23, relation_15];
 
         let endpoint = format!(
-            "/api/v1/classes/{}/{}/relations/object/{}",
-            classes[class_index].id, objects[from_index].id, objects[to_index].id
+            "/api/v1/classes/{}/{}/relations/{}/{}",
+            classes[class_index].id, objects[from_index].id, objects[to_index].hubuum_class_id, objects[to_index].id
         );
 
         let resp = get_request(&pool, &admin_token, &endpoint).await;

@@ -176,6 +176,16 @@ impl NamespaceAccessors for Namespace {
     }
 }
 
+impl NamespaceAccessors for &Namespace {
+    async fn namespace(&self, _pool: &DbPool) -> Result<Namespace, ApiError> {
+        Ok((**self).clone())
+    }
+
+    async fn namespace_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
+        Ok(self.id)
+    }
+}
+
 impl SelfAccessors<Namespace> for NamespaceID {
     fn id(&self) -> i32 {
         self.0
@@ -200,6 +210,16 @@ impl NamespaceAccessors for NamespaceID {
             .first::<Namespace>(&mut conn)?;
 
         Ok(namespace)
+    }
+}
+
+impl NamespaceAccessors for &NamespaceID {
+    async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
+        self.instance(pool).await
+    }
+
+    async fn namespace_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
+        Ok(self.0)
     }
 }
 

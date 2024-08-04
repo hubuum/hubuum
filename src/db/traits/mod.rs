@@ -5,6 +5,9 @@ mod namespace;
 mod relations;
 mod user;
 
+#[allow(unused_imports)]
+pub use user::UserPermissions;
+
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, ParsedQueryParam};
 use crate::models::{

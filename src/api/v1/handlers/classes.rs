@@ -3,8 +3,8 @@ use actix_web::{get, http::StatusCode, patch, post, routes, web, Responder};
 
 use tracing::{debug, info};
 
-use crate::check_permissions;
-use crate::db::traits::{ClassRelation, ObjectRelationMemberships};
+use crate::can;
+use crate::db::traits::{ClassRelation, ObjectRelationMemberships, UserPermissions};
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
@@ -19,6 +19,7 @@ use crate::traits::{
     CanDelete, CanSave, CanUpdate, ClassAccessors, NamespaceAccessors, Search, SelfAccessors,
 };
 
+use super::check_if_object_in_class;
 use crate::models::search::{parse_query_parameter, FilterField, ParsedQueryParam};
 
 // GET /api/v1/classes, list all classes the user may see.
@@ -62,8 +63,9 @@ async fn create_class(
         class_name = class_data.name
     );
 
-    let namespace = NamespaceID(class_data.namespace_id).instance(&pool).await?;
-    check_permissions!(namespace, pool, user, Permissions::CreateClass);
+    let namespace = NamespaceID(class_data.namespace_id);
+    can!(&pool, user, [Permissions::CreateClass], namespace);
+
     let class = class_data.save(&pool).await?;
 
     Ok(json_response_created(
@@ -88,7 +90,7 @@ async fn get_class(
     );
 
     let class = class.instance(&pool).await?;
-    check_permissions!(class, pool, user, Permissions::ReadClass);
+    can!(&pool, user, [Permissions::ReadClass], class);
 
     Ok(json_response(class, StatusCode::OK))
 }
@@ -111,7 +113,7 @@ async fn update_class(
     );
 
     let class = class_id.instance(&pool).await?;
-    check_permissions!(class, pool, user, Permissions::UpdateClass);
+    can!(&pool, user, [Permissions::UpdateClass], class);
 
     let class = class_data.update(&pool, class.id).await?;
     Ok(json_response(class, StatusCode::OK))
@@ -133,7 +135,7 @@ async fn delete_class(
     );
 
     let class = class_id.instance(&pool).await?;
-    check_permissions!(class, pool, user, Permissions::DeleteClass);
+    can!(&pool, user, [Permissions::DeleteClass], class);
 
     class.delete(&pool).await?;
     Ok(json_response((), StatusCode::NO_CONTENT))
@@ -158,7 +160,7 @@ async fn get_class_permissions(
     );
 
     let class = class_id.instance(&pool).await?;
-    check_permissions!(class, pool, user, Permissions::ReadClass);
+    can!(&pool, user, [Permissions::ReadClass], class);
 
     let nid = class.namespace_id(&pool).await?;
     let permissions = groups_on(
@@ -246,10 +248,17 @@ async fn create_class_relation(
         to_hubuum_class_id: partial_relation.to_hubuum_class_id,
     };
 
-    let namespaces = relation.namespace(&pool).await?;
-    for namespace in [namespaces.0, namespaces.1] {
-        check_permissions!(namespace, pool, user, Permissions::CreateClassRelation);
-    }
+    let ids = relation
+        .namespace_id(&pool)
+        .await
+        .map(|(id0, id1)| (NamespaceID(id0), NamespaceID(id1)))?;
+    can!(
+        &pool,
+        user,
+        [Permissions::CreateClassRelation],
+        ids.0,
+        ids.1
+    );
 
     let relation = relation.save(&pool).await?;
 
@@ -284,10 +293,18 @@ async fn delete_class_relation(
 
     let relation = relation_id.instance(&pool).await?;
 
-    let namespaces = relation_id.namespace(&pool).await?;
-    for namespace in [namespaces.0, namespaces.1] {
-        check_permissions!(namespace, pool, user, Permissions::DeleteClassRelation);
-    }
+    let ids = relation_id
+        .namespace_id(&pool)
+        .await
+        .map(|(id0, id1)| (NamespaceID(id0), NamespaceID(id1)))?;
+
+    can!(
+        &pool,
+        user,
+        [Permissions::DeleteClassRelation],
+        ids.0,
+        ids.1
+    );
 
     if relation.from_hubuum_class_id == class_id.id() {
         relation.delete(&pool).await?;
@@ -389,12 +406,8 @@ async fn create_object_in_class(
         object_data = object_data.name,
     );
 
-    check_permissions!(
-        class_id.instance(&pool).await?,
-        pool,
-        user,
-        Permissions::CreateClass
-    );
+    can!(&pool, user, [Permissions::CreateObject], class_id);
+
     let object = object_data.save(&pool).await?;
 
     Ok(json_response_created(
@@ -423,7 +436,7 @@ async fn get_object_in_class(
     // check_permissions!(class.namespace_id, pool, user, Permissions::ReadClass);
 
     let object = object_id.instance(&pool).await?;
-    check_permissions!(object, pool, user, Permissions::ReadObject);
+    can!(&pool, user, [Permissions::ReadObject], object);
 
     Ok(json_response(object, StatusCode::OK))
 }
@@ -447,7 +460,7 @@ async fn patch_object_in_class(
     );
 
     let object = object_id.instance(&pool).await?;
-    check_permissions!(object, pool, user, Permissions::UpdateObject);
+    can!(&pool, user, [Permissions::UpdateObject], object);
 
     let object = object_data.update(&pool, object.id).await?;
     Ok(json_response(object, StatusCode::OK))
@@ -470,7 +483,7 @@ async fn delete_object_in_class(
     );
 
     let object = object_id.instance(&pool).await?;
-    check_permissions!(object, pool, user, Permissions::DeleteObject);
+    can!(&pool, user, [Permissions::DeleteObject], object);
 
     object.delete(&pool).await?;
     Ok(json_response((), StatusCode::NO_CONTENT))
@@ -519,13 +532,14 @@ async fn get_class_relation_from_classes_and_object(
     let requested_class = requested_class.instance(&pool).await?;
     let from_object = from_object.instance(&pool).await?;
 
-    for namespace in [
-        from_class.namespace(&pool).await?,
-        from_object.namespace(&pool).await?,
-        requested_class.namespace(&pool).await?,
-    ] {
-        check_permissions!(namespace, pool, user, Permissions::ReadObjectRelation);
-    }
+    can!(
+        &pool,
+        user,
+        [Permissions::ReadObjectRelation],
+        from_class,
+        from_object,
+        requested_class
+    );
 
     if from_object.hubuum_class_id != from_class.id() {
         debug!(
@@ -570,14 +584,14 @@ async fn get_class_relation_from_classes_and_object(
     Ok(json_response(class_relation, StatusCode::OK))
 }
 
-#[get("/{class_id}/{from_object_id}/relations/object/{to_object_id}")]
+#[get("/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}")]
 async fn get_object_relation_from_class_and_objects(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
-    paths: web::Path<(HubuumClassID, HubuumObjectID, HubuumObjectID)>,
+    paths: web::Path<(HubuumClassID, HubuumObjectID, HubuumClassID, HubuumObjectID)>,
 ) -> Result<impl Responder, ApiError> {
     let user = requestor.user;
-    let (from_class, from_object, to_object) = paths.into_inner();
+    let (from_class, from_object, to_class, to_object) = paths.into_inner();
 
     debug!(
         message = "Getting object relation from class and objects",
@@ -587,31 +601,18 @@ async fn get_object_relation_from_class_and_objects(
         to_object_id = to_object.id()
     );
 
-    let to_object = to_object.instance(&pool).await?;
-    let from_object = from_object.instance(&pool).await?;
+    can!(
+        &pool,
+        user,
+        [Permissions::ReadObjectRelation],
+        from_class,
+        from_object,
+        to_class,
+        to_object
+    );
 
-    for namespace in [
-        from_class.namespace(&pool).await?,
-        from_object.namespace(&pool).await?,
-        to_object.namespace(&pool).await?,
-    ] {
-        check_permissions!(namespace, pool, user, Permissions::ReadObjectRelation);
-    }
-
-    if from_object.hubuum_class_id != from_class.id() {
-        debug!(
-            message = "Object class mismatch",
-            user_id = user.id(),
-            class_id = from_class.id(),
-            object_id = from_object.id(),
-            object_class = from_object.hubuum_class_id
-        );
-        return Err(ApiError::BadRequest(format!(
-            "Object {} is not of class {}",
-            from_object.id(),
-            from_class.id()
-        )));
-    }
+    check_if_object_in_class(&pool, &from_class, &from_object).await?;
+    check_if_object_in_class(&pool, &to_class, &to_object).await?;
 
     match from_object
         .object_relation(&pool, &from_class, &to_object)
@@ -627,7 +628,7 @@ async fn get_object_relation_from_class_and_objects(
     }
 }
 
-#[delete("/{class_id}/{object_id}/relations/{relation_id}")]
+#[delete("/{class_id}/{object_id}/relations/{to_class_id}/{to_object_id}")]
 async fn delete_object_relation(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
@@ -644,12 +645,13 @@ async fn delete_object_relation(
         relation_id = requested_relation.id()
     );
 
-    for namespace in [
-        from_class.namespace(&pool).await?,
-        from_object.namespace(&pool).await?,
-    ] {
-        check_permissions!(namespace, pool, user, Permissions::DeleteObjectRelation);
-    }
+    can!(
+        &pool,
+        user,
+        [Permissions::DeleteObjectRelation],
+        from_class,
+        from_object
+    );
 
     let to_class = from_object.class(&pool).await?;
     let relation = from_class.direct_relation_to(&pool, &to_class).await?;
@@ -713,12 +715,13 @@ async fn create_object_relation(
         to_object = to_object.id()
     );
 
-    for namespace in [
-        to_class.namespace(&pool).await?,
-        from_class.namespace(&pool).await?,
-    ] {
-        check_permissions!(namespace, pool, user, Permissions::CreateObjectRelation);
-    }
+    can!(
+        &pool,
+        user,
+        [Permissions::CreateObjectRelation],
+        from_class,
+        to_class
+    );
 
     let is_related = from_class.direct_relation_to(&pool, &to_class).await?;
 

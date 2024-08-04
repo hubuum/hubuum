@@ -35,6 +35,7 @@ pub trait SelfAccessors<T> {
     async fn instance(&self, pool: &DbPool) -> Result<T, ApiError>;
 }
 
+#[allow(async_fn_in_trait)]
 pub trait NamespaceAccessors<N = Namespace, I = i32> {
     async fn namespace(&self, pool: &DbPool) -> Result<N, ApiError>;
     async fn namespace_id(&self, pool: &DbPool) -> Result<I, ApiError>;
