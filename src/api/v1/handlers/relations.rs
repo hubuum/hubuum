@@ -2,9 +2,10 @@ use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::parse_query_parameter;
-use crate::models::{HubuumClassRelationID, Permissions};
+use crate::models::{HubuumClassRelationID, NamespaceID, Permissions};
 
-use crate::check_permissions;
+use crate::can;
+use crate::db::traits::UserPermissions;
 use crate::traits::{CanDelete, CanSave, NamespaceAccessors, SelfAccessors};
 
 use crate::utilities::response::json_response;
@@ -54,9 +55,13 @@ async fn get_class_relation(
     );
 
     let namespaces = relation_id.namespace(&pool).await?;
-    for namespace in [namespaces.0, namespaces.1] {
-        check_permissions!(namespace, pool, user, Permissions::ReadClassRelation);
-    }
+    can!(
+        &pool,
+        user,
+        [Permissions::ReadClassRelation],
+        namespaces.0,
+        namespaces.1
+    );
 
     let relation = relation_id.instance(&pool).await?;
 
@@ -82,9 +87,13 @@ async fn create_class_relation(
     );
 
     let namespaces = relation.namespace(&pool).await?;
-    for namespace in [namespaces.0, namespaces.1] {
-        check_permissions!(namespace, pool, user, Permissions::CreateClassRelation);
-    }
+    can!(
+        &pool,
+        user,
+        [Permissions::CreateClassRelation],
+        namespaces.0,
+        namespaces.1
+    );
 
     let relation = relation.save(&pool).await?;
 
@@ -107,9 +116,13 @@ async fn delete_class_relation(
     );
 
     let namespaces = relation_id.namespace(&pool).await?;
-    for namespace in [namespaces.0, namespaces.1] {
-        check_permissions!(namespace, pool, user, Permissions::DeleteClassRelation);
-    }
+    can!(
+        &pool,
+        user,
+        [Permissions::DeleteClassRelation],
+        namespaces.0,
+        namespaces.1
+    );
 
     relation_id.delete(&pool).await?;
 

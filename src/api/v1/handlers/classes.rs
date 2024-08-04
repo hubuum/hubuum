@@ -432,6 +432,7 @@ async fn get_object_in_class(
         object_id = object_id.id()
     );
 
+    // Can you read objects in a class you can't read? Hm.
     // let class = class_id.instance(&pool).await?;
     // check_permissions!(class.namespace_id, pool, user, Permissions::ReadClass);
 

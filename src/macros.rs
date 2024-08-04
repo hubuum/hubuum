@@ -47,6 +47,13 @@ macro_rules! debug_query {
 ///
 /// * Nothing if the user has the required permissions, or an [`ApiError::Forbidden`] if they do not.
 ///
+/// ### Example
+///
+/// ```
+/// can!(pool, user, [Permissions::ReadCollection], namespace, class, object);
+/// can!(pool, user, [Permissions::ReadCollection, Permissions::UpdateCollection], namespace, class1, class2);
+/// ```
+///
 /// [`UserPermissions::can`]: crate::db::traits::UserPermissions::can
 /// [`UserPermissions`]: crate::db::traits::UserPermissions
 /// [`NamespaceAccessors`]: crate::traits::NamespaceAccessors
