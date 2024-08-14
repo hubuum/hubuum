@@ -23,11 +23,11 @@ use actix_web::{http, test};
 /// ### Parameters
 ///
 /// - `$vec`: The vector to search within. This argument should be
-/// a `Vec<T>` where `T` is any type that implements `PartialEq`.
+///   a `Vec<T>` where `T` is any type that implements `PartialEq`.
 ///
 /// - `$item`: The item to search for within the vector. This
-/// argument should have the same type as the elements of the
-/// vector (`T`).
+///   argument should have the same type as the elements of the
+///   vector (`T`).
 #[macro_export]
 macro_rules! assert_contains {
     ($vec:expr, $item:expr) => {
@@ -64,11 +64,11 @@ macro_rules! assert_contains {
 /// ### Parameters
 ///
 /// - `$vec`: The vector to search within. This argument should be
-/// a `Vec<T>` where `T` is any type that implements `PartialEq`.
+///   a `Vec<T>` where `T` is any type that implements `PartialEq`.
 ///
 /// - `$item`: The item to ensure is not within the vector. This
-/// argument should have the same type as the elements of the
-/// vector (`T`).
+///   argument should have the same type as the elements of the
+///   vector (`T`).
 #[macro_export]
 macro_rules! assert_not_contains {
     ($vec:expr, $item:expr) => {
@@ -110,11 +110,11 @@ macro_rules! assert_not_contains {
 /// ### Parameters
 ///
 /// - `$vec`: The vector to search within. This argument should be
-/// a `Vec<T>` where `T` is any type that implements `PartialEq`.
+///   a `Vec<T>` where `T` is any type that implements `PartialEq`.
 ///
 /// - `$items`: The collection of items to search for within the vector.
-/// This argument should be an array or a slice containing elements of the
-/// same type as the elements of the vector (`T`).
+///   This argument should be an array or a slice containing elements of the
+///   same type as the elements of the vector (`T`).
 #[macro_export]
 macro_rules! assert_contains_all {
     ($vec:expr, $items:expr) => {
@@ -176,10 +176,10 @@ macro_rules! assert_contains_all {
 /// ### Parameters
 ///
 /// - `$collection1` and `$collection2`: The collections of instances to compare. Each argument should be
-/// a vector of instances.
+///   a vector of instances.
 ///
 /// - Alternatively, `$collection` is a vector of instances and `$ids` is a slice of `i32` representing
-/// the expected unique IDs to be found in `$collection`.
+///   the expected unique IDs to be found in `$collection`.
 
 #[macro_export]
 macro_rules! assert_contains_same_ids {
@@ -251,7 +251,7 @@ macro_rules! assert_contains_same_ids {
 /// ### Parameters
 ///
 /// - `resp`: The response to check. This is an instance of `actix_web::dev::ServiceResponse`
-/// that you want to verify the HTTP status code of.
+///   that you want to verify the HTTP status code of.
 ///
 /// - `expected_status`: The expected HTTP status code (`http::StatusCode`) for the response.
 ///

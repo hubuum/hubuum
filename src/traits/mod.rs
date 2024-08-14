@@ -84,7 +84,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// * `Ok(true)` if the user has the given permission on this class.
     /// * `Ok(false)` if the user does not have the given permission on this class.
     /// * `Err(_)` if the user does not have the given permission on this class, or if the
-    ///  permission is invalid.
+    ///   permission is invalid.
     ///
     /// ## Example
     ///
@@ -139,7 +139,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// * `Ok(true)` if the user has the given permission on this class.
     /// * `Ok(false)` if the user does not have the given permission on this class.
     /// * `Err(_)` if the user does not have the given permission on this class, or if the
-    ///  permission is invalid.
+    ///   permission is invalid.
     ///
     /// ## Example
     ///
@@ -179,10 +179,10 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// Grant a set of permissions to a group.
     ///
     /// - If the group previously had any permissions, the requested
-    /// permissions are added to the existing permission object for
-    /// the group.
+    ///   permissions are added to the existing permission object for
+    ///   the group.
     /// - If the group did not have any permissions, a new permission
-    /// object is created for the group, with the requested permissions.
+    ///   object is created for the group, with the requested permissions.
     /// - No permissions are removed from the group.
     ///
     /// ## Arguments
@@ -335,11 +335,11 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// Revoke a set of permissions from a group.
     ///
     /// - If the group previously had any permissions, the requested
-    /// permissions are removed from the existing permission object for
-    /// the group.
+    ///   permissions are removed from the existing permission object for
+    ///   the group.
     ///
     /// - If the group did not have any permissions, no permissions are modified
-    /// and an ApiError::NotFound is returned.
+    ///   and an ApiError::NotFound is returned.
     ///
     /// ## Arguments
     ///
@@ -445,11 +445,11 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// Grant a specific permission to a group.
     ///
     /// - If the group previously had the permission, the requested
-    /// permission is added to the existing permission object for
-    /// the group.
+    ///   permission is added to the existing permission object for
+    ///   the group.
     ///
     /// - If the group did not have the permission, a new permission
-    /// object is created for the group, with the requested permission.
+    ///   object is created for the group, with the requested permission.
     ///
     /// - No permissions are removed from the group.
     ///
@@ -479,11 +479,11 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// Revoke a specific permission from a group.
     ///
     /// - If the group previously had the permission, the requested
-    /// permission is removed from the existing permission object for
-    /// the group.
+    ///   permission is removed from the existing permission object for
+    ///   the group.
     ///
     /// - If the group did not have the permission, no permissions are modified
-    /// and an ApiError::NotFound is returned.
+    ///   and an ApiError::NotFound is returned.
     ///
     /// ## Arguments
     ///
@@ -512,11 +512,11 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// Set the permissions for a group.
     ///
     /// - If the group previously had any permissions, the requested
-    /// permissions *replace* the existing permission object for
-    /// the group.
+    ///   permissions *replace* the existing permission object for
+    ///   the group.
     ///
     /// - If the group did not have any permissions, a new permission
-    /// object is created for the group, with the requested permissions.
+    ///   object is created for the group, with the requested permissions.
     ///
     /// ## Arguments
     ///
