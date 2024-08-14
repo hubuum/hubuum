@@ -126,6 +126,27 @@ macro_rules! check_permissions {
 }
 
 #[macro_export]
+/// A JSON field search macro
+macro_rules! json_search {
+    ($query:expr, $param:expr, $filter_field:expr, $dbfield:expr, $me:expr, $pool:expr) => {{
+        // First get the correct JSON queries from the filter field. For object relations we have
+        // both to and from JSON data fields, so we need to check which one to apply for this filter.
+        let json_data_queries = $param.json_datas($filter_field)?;
+
+        // If there are no queries, we can skip this filter.
+        if !json_data_queries.is_empty() {
+            // Get the object IDs that match the JSON data queries. This is a complexly built
+            // query that is executed and we fish out the IDs from the result.
+            let json_data_integers = $me.json_data_subquery($pool, json_data_queries)?;
+            if !json_data_integers.is_empty() {
+                // If we get any object IDs, filter the database field we requested on these values.
+                $query = $query.filter($dbfield.eq_any(json_data_integers))
+            }
+        }
+    }};
+}
+
+#[macro_export]
 /// A numeric search macro
 macro_rules! numeric_search {
     ($base_query:expr, $parsed_query_param:expr, $operator:expr, $diesel_field:expr) => {{
@@ -299,6 +320,55 @@ macro_rules! date_search {
 }
 
 #[macro_export]
+/// A macro to search on a field with a list of values
+macro_rules! array_search {
+    ($base_query:expr, $param:expr, $operator:expr, $diesel_field:expr) => {{
+        use diesel::dsl::not;
+        use diesel::prelude::*;
+        use $crate::errors::ApiError;
+        use $crate::models::search::{DataType, Operator};
+
+        let values = $param.value_as_integer()?;
+
+        if !$operator.is_applicable_to(DataType::Array) {
+            return Err(ApiError::OperatorMismatch(format!(
+                "Operator '{:?}' is not applicable to field '{}'",
+                $operator, $param.field
+            )));
+        }
+
+        // The values shouldn't be empty at this point, but we can make sure.
+        if values.is_empty() {
+            return Err(ApiError::BadRequest(format!(
+                "Searching on field '{}' requires a value",
+                $param.field
+            )));
+        }
+
+        let (op, negated) = $operator.op_and_neg();
+
+        match (op, negated) {
+            (Operator::Contains, false) => {
+                $base_query = $base_query.filter($diesel_field.contains(values))
+            }
+            (Operator::Contains, true) => {
+                $base_query = $base_query.filter(not($diesel_field.contains(values)))
+            }
+            (Operator::Equals, false) => $base_query = $base_query.filter($diesel_field.eq(values)),
+            (Operator::Equals, true) => {
+                $base_query = $base_query.filter(not($diesel_field.eq(values)))
+            }
+            _ => {
+                return Err(ApiError::OperatorMismatch(format!(
+                    "Operator '{:?}' not implemented for field '{}' (type: array)",
+                    $operator, $param.field
+                )))
+            }
+        }
+    }};
+}
+
+#[macro_export]
 /// A string search macro
 macro_rules! string_search {
     ($base_query:expr, $param:expr, $operator:expr, $diesel_field:expr) => {{
@@ -344,10 +414,10 @@ macro_rules! string_search {
                 $base_query = $base_query.filter(not($diesel_field.like(format!("{}%", value))))
             }
             (Operator::EndsWith, false) => {
-                $base_query = $base_query.filter($diesel_field.like(format!("{}%", value)))
+                $base_query = $base_query.filter($diesel_field.like(format!("%{}", value)))
             }
             (Operator::EndsWith, true) => {
-                $base_query = $base_query.filter(not($diesel_field.like(format!("{}%", value))))
+                $base_query = $base_query.filter(not($diesel_field.like(format!("%{}", value))))
             }
             (Operator::IContains, false) => {
                 $base_query = $base_query.filter($diesel_field.ilike(format!("%{}%", value)))

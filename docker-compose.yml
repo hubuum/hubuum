@@ -4,7 +4,7 @@ services:
   hubuum:
     build: .
     ports:
-      - "9999:8080"
+      - "127.0.0.1:9999:8080"
     environment:
       - HUBUUM_BIND_IP=0.0.0.0
       - HUBUUM_DATABASE_URL=postgres://hubuum:hubuum_password@db/hubuum

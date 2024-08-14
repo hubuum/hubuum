@@ -45,7 +45,7 @@ export HUBUUM_DATABASE_URL="postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$
 
 
 # Run migrations
-diesel migration run --migration-dir $MIGRATIONS_DIR --database-url $HUBUUM_DATABASE_URL 
+diesel migration run --migration-dir $MIGRATIONS_DIR --database-url $HUBUUM_DATABASE_URL --locked-schema
 
 # Run the tests
 cargo test $@

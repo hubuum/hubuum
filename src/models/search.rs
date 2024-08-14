@@ -161,6 +161,8 @@ impl ParsedQueryParam {
 
     pub fn is_json_data(&self) -> bool {
         self.field == FilterField::JsonData
+            || self.field == FilterField::JsonDataFrom
+            || self.field == FilterField::JsonDataTo
     }
 
     pub fn is_json(&self) -> bool {
@@ -420,7 +422,7 @@ pub trait QueryParamsExt {
     /// Iterate over the parsed query parameters and filter out the ones that are JSON Data,
     /// defined as having the `field` set as "json_data". Also validates both keys and values
     /// and their matching to the operator.
-    fn json_datas(&self) -> Result<Vec<&ParsedQueryParam>, ApiError>;
+    fn json_datas(&self, filter: FilterField) -> Result<Vec<&ParsedQueryParam>, ApiError>;
 }
 
 impl QueryParamsExt for Vec<ParsedQueryParam> {
@@ -481,9 +483,11 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
     ///
     /// Iterate over the parsed query parameters and filter out the ones that are JSON Schemas,
     /// defined as having the `field` set as "json_data".
-    fn json_datas(&self) -> Result<Vec<&ParsedQueryParam>, ApiError> {
-        let json_schema: Vec<&ParsedQueryParam> =
-            self.iter().filter(|p| p.is_json_data()).collect();
+    fn json_datas(&self, field: FilterField) -> Result<Vec<&ParsedQueryParam>, ApiError> {
+        let json_schema: Vec<&ParsedQueryParam> = self
+            .iter()
+            .filter(|p| p.is_json_data() && p.field == field)
+            .collect();
 
         Ok(json_schema)
     }
@@ -538,6 +542,7 @@ pub enum DataType {
     String,
     NumericOrDate,
     Boolean,
+    Array,
 }
 
 impl SearchOperator {
@@ -551,6 +556,9 @@ impl SearchOperator {
             | SO::Lt { .. }
             | SO::Lte { .. }
             | SO::Between { .. } => matches!(data_type, DataType::NumericOrDate),
+            SO::Contains { .. } => {
+                matches!(data_type, DataType::String) || matches!(data_type, DataType::Array)
+            }
             _ => {
                 matches!(data_type, DataType::String)
             }
@@ -962,10 +970,26 @@ filter_fields!(
     (Permissions, "permissions"),
     (Classes, "classes"),
     (ClassId, "class"),
-    (ClassTo, "to_class"),
-    (ClassFrom, "from_class"),
     (CreatedAt, "created_at"),
     (UpdatedAt, "updated_at"),
+    (NameFrom, "from_name"),
+    (NameTo, "to_name"),
+    (DescriptionFrom, "from_description"),
+    (DescriptionTo, "to_description"),
+    (ObjectFrom, "from_objects"),
+    (ObjectTo, "to_objects"),
+    (ClassTo, "to_classes"),
+    (ClassFrom, "from_classes"),
+    (NamespacesFrom, "from_namespaces"),
+    (NamespacesTo, "to_namespaces"),
+    (JsonDataFrom, "from_json_data"),
+    (JsonDataTo, "to_json_data"),
+    (CreatedAtFrom, "from_created_at"),
+    (CreatedAtTo, "to_created_at"),
+    (UpdatedAtFrom, "from_updated_at"),
+    (UpdatedAtTo, "to_updated_at"),
+    (Depth, "depth"),
+    (Path, "path"),
 );
 
 // TODO: Rewrite to use yare::parametrized...

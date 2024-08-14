@@ -27,11 +27,22 @@ For numeric and date fields:
 - `lte`: The field is less than or equal to the value.
 - `between`: The field is between the two values.
 
-Boolean fields can be filtered using the `equals` operator.
+For array fields:
+
+- `contains`: The array contains the value, eg `array_field__contains=1`.
+- `equals`: The array is equal to the value, expressed as a comma-separated list, eg `array_field=1,2,3` (identical to `array_field__equals=1,2,3`).
+
+For boolean fields:
+
+- `equals`: The field is equal to the value, eg `boolean_field__equals=true`.
 
 ## Negation
 
 You can negate a filter by prefixing the operator with `not_`. For example, to find all employees that are not named "John", you can use the filter `username__not_equals=John`.
+
+## Combining filters
+
+You can combine filters by separating them with `&`. For example, to find all employees named "John" that are in the "Engineering" department, you can use the filter `username__equals=John&department__equals=Engineering`. All filters are combined with an AND operation.
 
 ## Examples
 
@@ -39,6 +50,7 @@ Employees with the the exact username "John": `api/v1/iam/users/?username__equal
 Employees with the username "John" or "john": `api/v1/iam/users/?username__iequals=john`.
 Employees with the username containing "John": `api/v1/iam/users/?username__contains=John`.
 Employees not named "John" or "john": `api/v1/iam/users/?username__not_icontains=John`.
+Employees with the username starting with "John" and ending with "Smith": `api/v1/iam/users/?username__startswith=John&username__endswith=Smith`.
 
 ## JSON filtering
 

@@ -8,16 +8,15 @@ use crate::db::traits::{ClassRelation, ObjectRelationMemberships, UserPermission
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
+use crate::models::traits::ToHubuumObjects;
 use crate::utilities::response::{json_response, json_response_created};
 
 use crate::models::{
-    HubuumClassID, HubuumClassRelationID, HubuumObjectID, HubuumObjectRelationID, NamespaceID,
-    NewHubuumClass, NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation,
-    NewHubuumObjectRelationFromClassAndObject, Permissions, UpdateHubuumClass, UpdateHubuumObject,
+    HubuumClassID, HubuumClassRelationID, HubuumObjectID, NamespaceID, NewHubuumClass,
+    NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation, Permissions,
+    UpdateHubuumClass, UpdateHubuumObject,
 };
-use crate::traits::{
-    CanDelete, CanSave, CanUpdate, ClassAccessors, NamespaceAccessors, Search, SelfAccessors,
-};
+use crate::traits::{CanDelete, CanSave, CanUpdate, NamespaceAccessors, Search, SelfAccessors};
 
 use super::check_if_object_in_class;
 use crate::models::search::{parse_query_parameter, FilterField, ParsedQueryParam};
@@ -490,7 +489,7 @@ async fn delete_object_in_class(
     Ok(json_response((), StatusCode::NO_CONTENT))
 }
 
-#[get("/{class_id}/{object_id}/relations/")]
+#[get("/{class_id}/{object_id}/relations_by_path/")]
 async fn get_object_relations(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
@@ -513,76 +512,38 @@ async fn get_object_relations(
     Ok(json_response(relations, StatusCode::OK))
 }
 
-#[get("/{class_id}/{from_object_id}/relations/class/{target_class}")]
-async fn get_class_relation_from_classes_and_object(
+#[get("/{class_id}/{from_object_id}/relations/")]
+async fn list_related_objects(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
-    paths: web::Path<(HubuumClassID, HubuumObjectID, HubuumClassID)>,
+    paths: web::Path<(HubuumClassID, HubuumObjectID)>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = requestor.user;
-    let (from_class, from_object, requested_class) = paths.into_inner();
+    let (from_class, from_object) = paths.into_inner();
+    let query_string = req.query_string();
+
+    let params = match parse_query_parameter(query_string) {
+        Ok(params) => params,
+        Err(e) => return Err(e),
+    };
+
+    check_if_object_in_class(&pool, &from_class, &from_object).await?;
 
     debug!(
-        message = "Getting class relation from classes and object",
+        message = "Getting objects related from class and object",
         user_id = user.id(),
         class_id = from_class.id(),
         object_id = from_object.id(),
-        requested_class = requested_class.id()
+        query = query_string,
     );
 
-    let requested_class = requested_class.instance(&pool).await?;
-    let from_object = from_object.instance(&pool).await?;
-
-    can!(
-        &pool,
-        user,
-        [Permissions::ReadObjectRelation],
-        from_class,
-        from_object,
-        requested_class
-    );
-
-    if from_object.hubuum_class_id != from_class.id() {
-        debug!(
-            message = "Object class mismatch",
-            user_id = user.id(),
-            class_id = from_class.id(),
-            object_id = from_object.id(),
-            object_class = from_object.hubuum_class_id
-        );
-        return Err(ApiError::BadRequest(format!(
-            "Object {} is not of class {}",
-            from_object.id(),
-            from_class.id()
-        )));
-    }
-
-    let class_relation = match from_class
-        .direct_relation_to(&pool, &requested_class)
+    let hits = user
+        .search_objects_related_to(&pool, from_object, params)
         .await?
-    {
-        Some(relation) => relation,
-        None => {
-            return Err(ApiError::NotFound(format!(
-                "Class {} is not related to class {}",
-                from_class.id(),
-                requested_class.id()
-            )))
-        }
-    };
+        .to_descendant_objects_with_path();
 
-    if !from_object
-        .is_member_of_class_relation(&pool, &class_relation)
-        .await?
-    {
-        return Err(ApiError::NotFound(format!(
-            "Object {} is not a member of class relation {}",
-            from_object.id(),
-            class_relation.id()
-        )));
-    }
-
-    Ok(json_response(class_relation, StatusCode::OK))
+    Ok(json_response(hits, StatusCode::OK))
 }
 
 #[get("/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}")]
@@ -633,17 +594,21 @@ async fn get_object_relation_from_class_and_objects(
 async fn delete_object_relation(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
-    paths: web::Path<(HubuumClassID, HubuumObjectID, HubuumObjectRelationID)>,
+    paths: web::Path<(HubuumClassID, HubuumObjectID, HubuumClassID, HubuumObjectID)>,
 ) -> Result<impl Responder, ApiError> {
     let user = requestor.user;
-    let (from_class, from_object, requested_relation) = paths.into_inner();
+    let (from_class, from_object, to_class, to_object) = paths.into_inner();
+
+    check_if_object_in_class(&pool, &from_class, &from_object).await?;
+    check_if_object_in_class(&pool, &to_class, &to_object).await?;
 
     debug!(
         message = "Deleting object relation",
         user_id = user.id(),
-        class_id = from_class.id(),
-        object_id = from_object.id(),
-        relation_id = requested_relation.id()
+        from_class_id = from_class.id(),
+        from_object_id = from_object.id(),
+        to_class_id = to_class.id(),
+        to_object_id = to_object.id()
     );
 
     can!(
@@ -651,18 +616,21 @@ async fn delete_object_relation(
         user,
         [Permissions::DeleteObjectRelation],
         from_class,
-        from_object
+        from_object,
+        to_class,
+        to_object
     );
 
-    let to_class = from_object.class(&pool).await?;
     let relation = from_class.direct_relation_to(&pool, &to_class).await?;
 
     if relation.is_none() {
         debug!(
             message = "Relation does not exist",
             user_id = user.id(),
-            class_id = from_class.id(),
-            object_id = from_object.id()
+            from_class_id = from_class.id(),
+            from_object_id = from_object.id(),
+            to_class_id = to_class.id(),
+            to_object_id = to_object.id()
         );
         return Err(ApiError::NotFound(format!(
             "Class {} is not related to class {}",
@@ -671,41 +639,29 @@ async fn delete_object_relation(
         )));
     }
 
-    // Verifying that the relation fetched by looking up the relation of the class
-    // and the target object class is the same as the relation requested to be deleted.
     let relation = relation.unwrap();
-    if relation.from_hubuum_class_id != from_class.id() {
-        debug!(
-            message = "Relation ID mismatch",
-            user_id = user.id(),
-            class_id = from_class.id(),
-            object_id = from_object.id(),
-            relation_id = requested_relation.id(),
-            relation_id_actual = relation.id()
-        );
-        return Err(ApiError::BadRequest(format!(
-            "Relation ID {} does not match actual relation ID {}",
-            requested_relation.id(),
-            relation.id()
-        )));
-    }
+
+    debug!(
+        message = "Relation ID found",
+        user_id = user.id(),
+        class_id = from_class.id(),
+        object_id = from_object.id(),
+        relation_id = relation.id(),
+        relation_id_actual = relation.id()
+    );
 
     relation.delete(&pool).await?;
     Ok(json_response((), StatusCode::NO_CONTENT))
 }
 
-#[post("/{class_id}/{object_id}/relations/")]
+#[post("/{class_id}/{object_id}/relations/{to_class_id}/{to_object_id}")]
 async fn create_object_relation(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
-    paths: web::Path<(HubuumClassID, HubuumObjectID)>,
-    relation_data: web::Json<NewHubuumObjectRelationFromClassAndObject>,
+    paths: web::Path<(HubuumClassID, HubuumObjectID, HubuumClassID, HubuumObjectID)>,
 ) -> Result<impl Responder, ApiError> {
     let user = requestor.user;
-    let (from_class, from_object) = paths.into_inner();
-    let partial_relation = relation_data.into_inner();
-    let to_object = HubuumObjectID(partial_relation.to_hubuum_object_id);
-    let to_class = to_object.class(&pool).await?;
+    let (from_class, from_object, to_class, to_object) = paths.into_inner();
 
     debug!(
         message = "Creating object relation",
@@ -753,10 +709,11 @@ async fn create_object_relation(
     Ok(json_response_created(
         relation,
         format!(
-            "/api/v1/classes/{}/{}/relations/{}",
+            "/api/v1/classes/{}/{}/relations/{}/{}",
             from_class.id(),
             from_object.id(),
-            relation.id()
+            to_class.id(),
+            to_object.id()
         )
         .as_str(),
     ))

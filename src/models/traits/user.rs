@@ -1,3 +1,5 @@
+use diesel::dsl::Filter;
+use diesel::query_builder;
 use diesel::sql_types::Integer;
 use diesel::{pg::Pg, ExpressionMethods, JoinOnDsl, QueryDsl, RunQueryDsl, Table};
 
@@ -7,20 +9,20 @@ use futures::future::try_join_all;
 use tracing::debug;
 
 use crate::api::v1::handlers::namespaces;
-use crate::models::search::{FilterField, SearchOperator};
+use crate::models::search::{FilterField, ParsedQueryParam, QueryParamsExt, SearchOperator};
 use crate::models::{
-    class, permissions, Group, HubuumClass, HubuumClassRelation, HubuumObject,
-    HubuumObjectRelation, Namespace, Permission, Permissions, User, UserID,
+    class, group, permissions, ClassClosureView, Group, HubuumClass, HubuumClassRelation,
+    HubuumObject, HubuumObjectRelation, Namespace, ObjectClosureView, Permission, Permissions,
+    User, UserID,
 };
 
+use crate::schema::hubuumclass::namespace_id;
 use crate::schema::{hubuumclass, hubuumobject};
 use crate::traits::{ClassAccessors, NamespaceAccessors, SelfAccessors};
 
-use crate::db::DbPool;
+use crate::db::{with_connection, DbPool};
 use crate::errors::ApiError;
 use crate::utilities::extensions::CustomStringExtensions;
-
-use crate::models::search::{ParsedQueryParam, QueryParamsExt};
 
 use crate::trace_query;
 
@@ -210,10 +212,10 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             .filter(hubuum_object_nid.eq_any(namespace_ids))
             .into_boxed();
 
-        let json_data_queries = query_params.json_datas()?;
+        let json_data_queries = query_params.json_datas(FilterField::JsonData)?;
         if !json_data_queries.is_empty() {
             debug!(
-                message = "Searching classes",
+                message = "Searching objects",
                 stage = "JSON Data",
                 user_id = self.id(),
                 query_params = ?json_data_queries
@@ -239,7 +241,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                 class_ids = ?json_data_integers
             );
 
-            base_query = base_query.filter(hubuum_class_id.eq_any(json_data_integers));
+            base_query = base_query.filter(hubuum_object_id.eq_any(json_data_integers));
         }
 
         for param in query_params {
@@ -293,7 +295,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                 FilterField::Permissions => {} // Handled above
                 _ => {
                     return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't searchable (or does not exist) for classes",
+                        "Field '{}' isn't searchable (or does not exist) for objects",
                         param.field
                     )))
                 }
@@ -438,6 +440,158 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
 
         Ok(result)
     }
+
+    async fn search_objects_related_to<O>(
+        &self,
+        pool: &DbPool,
+        object: O,
+        query_params: Vec<ParsedQueryParam>,
+    ) -> Result<Vec<ObjectClosureView>, ApiError>
+    where
+        O: SelfAccessors<HubuumObject> + ClassAccessors,
+    {
+        use crate::schema::object_closure_view::dsl as obj;
+        use diesel::prelude::*;
+
+        debug!(
+            message = "Searching object relations",
+            stage = "Starting",
+            user_id = self.id(),
+            query_params = ?query_params
+        );
+
+        // Permissions vector must contain ReadClassRelation
+        let mut permissions_list = query_params.permissions()?;
+        permissions_list.ensure_contains(&[Permissions::ReadObject]);
+
+        // Get all namespace IDs that the user has ReadClassRelations and other requested permissions on.
+        let namespace_ids: Vec<i32> = self
+            .namespaces(pool, &permissions_list)
+            .await?
+            .into_iter()
+            .map(|n| n.id)
+            .collect();
+
+        // If the namespace_ids is empty, we can return early.
+        if namespace_ids.is_empty() {
+            debug!(
+                message = "Searching object relations",
+                stage = "Namespace IDs",
+                user_id = self.id(),
+                result = "No namespace IDs found, returning empty result"
+            );
+            return Ok(vec![]);
+        } else {
+            debug!(
+                message = "Searching object relations",
+                stage = "Namespace IDs",
+                user_id = self.id(),
+                result = "Found namespace IDs",
+                namespace_ids = ?namespace_ids
+            );
+        }
+
+        // First we need to ensure we have the correct permissions on both of the objects in question.
+        let mut base_query = obj::object_closure_view.into_boxed();
+        base_query = base_query
+            .filter(obj::ancestor_object_id.eq(object.id()))
+            .filter(obj::ancestor_namespace_id.eq_any(&namespace_ids))
+            .filter(obj::descendant_namespace_id.eq_any(&namespace_ids));
+
+        for param in &query_params {
+            use crate::models::search::{DataType, SearchOperator};
+            use crate::{
+                array_search, boolean_search, date_search, json_search, numeric_search,
+                string_search,
+            };
+            let operator = param.operator.clone();
+            match &param.field {
+                FilterField::ObjectFrom => {
+                    numeric_search!(base_query, param, operator, obj::ancestor_object_id)
+                }
+                FilterField::ObjectTo => {
+                    numeric_search!(base_query, param, operator, obj::descendant_object_id)
+                }
+                FilterField::ClassFrom => {
+                    numeric_search!(base_query, param, operator, obj::ancestor_class_id)
+                }
+                FilterField::ClassTo => {
+                    numeric_search!(base_query, param, operator, obj::descendant_class_id)
+                }
+                FilterField::NamespacesFrom => {
+                    numeric_search!(base_query, param, operator, obj::ancestor_namespace_id)
+                }
+                FilterField::NamespacesTo => {
+                    numeric_search!(base_query, param, operator, obj::descendant_namespace_id)
+                }
+                FilterField::NameFrom => {
+                    string_search!(base_query, param, operator, obj::ancestor_name)
+                }
+                FilterField::NameTo => {
+                    string_search!(base_query, param, operator, obj::descendant_name)
+                }
+                FilterField::DescriptionFrom => {
+                    string_search!(base_query, param, operator, obj::ancestor_description)
+                }
+                FilterField::DescriptionTo => {
+                    string_search!(base_query, param, operator, obj::descendant_description)
+                }
+                FilterField::CreatedAtFrom => {
+                    date_search!(base_query, param, operator, obj::ancestor_created_at)
+                }
+                FilterField::CreatedAtTo => {
+                    date_search!(base_query, param, operator, obj::descendant_created_at)
+                }
+                FilterField::UpdatedAtFrom => {
+                    date_search!(base_query, param, operator, obj::ancestor_updated_at)
+                }
+                FilterField::UpdatedAtTo => {
+                    date_search!(base_query, param, operator, obj::descendant_updated_at)
+                }
+                FilterField::JsonDataFrom => {
+                    json_search!(
+                        base_query,
+                        query_params,
+                        FilterField::JsonDataFrom,
+                        obj::ancestor_object_id,
+                        self,
+                        pool
+                    )
+                }
+                FilterField::JsonDataTo => {
+                    json_search!(
+                        base_query,
+                        query_params,
+                        FilterField::JsonDataTo,
+                        obj::descendant_object_id,
+                        self,
+                        pool
+                    )
+                }
+                FilterField::Depth => {
+                    numeric_search!(base_query, param, operator, obj::depth)
+                }
+                FilterField::Path => {
+                    array_search!(base_query, param, operator, obj::path)
+                }
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for object relations",
+                        param.field
+                    )))
+                }
+            }
+        }
+
+        trace_query!(base_query, "Searching object relations");
+
+        let result = base_query
+            .select(obj::object_closure_view::all_columns())
+            .distinct() // TODO: Is it the joins that makes this required?
+            .load::<ObjectClosureView>(&mut pool.get()?)?;
+
+        Ok(result)
+    }
 }
 
 pub trait GroupAccessors: SelfAccessors<User> {
@@ -558,6 +712,7 @@ pub trait GroupAccessors: SelfAccessors<User> {
         Ok(ids)
     }
 
+    // Umm, async? Also, the name implies we return a subquery, but we return the Vec<i32> of the executed query.
     fn json_data_subquery(
         &self,
         pool: &DbPool,
@@ -621,6 +776,7 @@ pub trait UserNamespaceAccessors: SelfAccessors<User> + GroupAccessors {
         self.namespaces(pool, &[Permissions::ReadCollection]).await
     }
 
+    /// Return all namespaces that the user has the given permissions on.
     async fn namespaces<'a, I>(
         &self,
         pool: &DbPool,

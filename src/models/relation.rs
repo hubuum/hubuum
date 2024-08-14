@@ -8,8 +8,8 @@ use crate::db::DbPool;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    errors::ApiError, schema::hubuumclass_closure, schema::hubuumclass_relation,
-    schema::hubuumobject_relation,
+    errors::ApiError, schema::class_closure_view, schema::hubuumclass_closure,
+    schema::hubuumclass_relation, schema::hubuumobject_relation, schema::object_closure_view,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +91,42 @@ pub struct HubuumObjectTransitiveLink {
     target_object_id: i32,
     #[diesel(sql_type = Array<Integer>)]
     path: Vec<i32>,
+}
+
+#[derive(Debug, Queryable, Selectable, Serialize, Deserialize)]
+#[diesel(table_name = class_closure_view)]
+pub struct ClassClosureView {
+    pub ancestor_class_id: i32,
+    pub descendant_class_id: i32,
+    pub depth: i32,
+    pub path: Vec<i32>,
+    pub ancestor_name: String,
+    pub descendant_name: String,
+    pub ancestor_namespace_id: i32,
+    pub descendant_namespace_id: i32,
+}
+
+#[derive(Debug, Queryable, Selectable, Serialize, Deserialize)]
+#[diesel(table_name = object_closure_view)]
+pub struct ObjectClosureView {
+    pub ancestor_object_id: i32,
+    pub descendant_object_id: i32,
+    pub depth: i32,
+    pub path: Vec<i32>,
+    pub ancestor_name: String,
+    pub descendant_name: String,
+    pub ancestor_namespace_id: i32,
+    pub descendant_namespace_id: i32,
+    pub ancestor_class_id: i32,
+    pub descendant_class_id: i32,
+    pub ancestor_description: String,
+    pub descendant_description: String,
+    pub ancestor_data: serde_json::Value,
+    pub descendant_data: serde_json::Value,
+    pub ancestor_created_at: chrono::NaiveDateTime,
+    pub descendant_created_at: chrono::NaiveDateTime,
+    pub ancestor_updated_at: chrono::NaiveDateTime,
+    pub descendant_updated_at: chrono::NaiveDateTime,
 }
 
 #[cfg(test)]

@@ -1,14 +1,13 @@
 #[cfg(test)]
 mod tests {
-    use crate::models::{
-        HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, HubuumObject,
-        HubuumObjectRelation, NamespaceID, NewHubuumClassRelation, NewHubuumClassRelationFromClass,
-        NewHubuumObject, NewHubuumObjectRelation, Permissions,
+    use actix_web::{http::StatusCode, test};
+    use yare::parameterized;
+
+    use crate::models::{        
+        HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, HubuumObject, HubuumObjectRelation, HubuumObjectWithPath, NamespaceID, NewHubuumClassRelation, NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation, Permissions
     };
     use crate::traits::{CanSave, PermissionController, SelfAccessors};
     use crate::{assert_contains_all, assert_contains_same_ids};
-    use actix_web::{http::StatusCode, test};
-    use yare::parameterized;
 
     use crate::tests::api_operations::{delete_request, get_request, post_request};
     use crate::tests::asserts::assert_response_status;
@@ -313,7 +312,6 @@ mod tests {
         cleanup(&classes).await;
     }
 
-
     // classidx of obj1, obj1_idx, obj2_idx, relation_idx, exists
     #[parameterized(
         relation_12_rel_true = { 0, 0, 1, 0, true },        
@@ -390,5 +388,67 @@ mod tests {
         }
 
         cleanup(&classes).await;
+    }
+
+    // class_idx object_idx, filter, expected_code, expected_object_ids
+    // TODO: Add tests against _classes / _namespaces / _object
+    // Note that <int> in the filter will be replaced with the object id with that index.
+    #[parameterized(
+        id_0_0_empty = { 0, 0, StatusCode::OK, "", vec![1,2,4] },
+        id_0_0_from_name = { 0, 0, StatusCode::OK, "?from_name__contains=0", vec![1,2,4] },
+        id_0_0_to_name = { 0, 0, StatusCode::OK, "?to_name__endswith=api_class_2", vec![1] },
+        id_0_0_to_desc = { 0, 0, StatusCode::OK, "?to_description__endswith=api_description_2", vec![1] },
+        id_0_0_depth_eq = { 0, 0, StatusCode::OK, "?depth=1", vec![1,2] },
+        id_0_0_depth_gt = { 0, 0, StatusCode::OK, "?depth__gt=1", vec![4] },
+        id_0_0_depth_lt = { 0, 0, StatusCode::OK, "?depth__lt=1", vec![] },
+        id_0_0_path_equals_0_1 = { 0, 0, StatusCode::OK, "?path=<0>,<1>", vec![1] },
+        id_0_0_path_equals_0_2 = { 0, 0, StatusCode::OK, "?path=<0>,<1>,<2>", vec![2] }, 
+        id_0_0_path_contains = { 0, 0, StatusCode::OK, "?path__contains=<1>", vec![1,2] },
+        id_1_2_empty = { 1, 1, StatusCode::OK, "", vec![2] },
+        id_0_0_invalid_key = { 0, 0, StatusCode::BAD_REQUEST, "?nosuchkey=foo", vec![] },
+        id_0_0_invalid_op = { 0, 0, StatusCode::BAD_REQUEST, "?from_name__foo=bar", vec![] },         
+        id_0_1_wrong_class = { 0, 1, StatusCode::BAD_REQUEST, "", vec![] },
+    )]
+    #[test_macro(actix_web::test)]
+    async fn test_filter_related_objects(class_index: usize, object_index: usize, status: StatusCode, filter: &str, expected_object_ids: Vec<usize>) {
+        use regex::Regex;
+
+        let unique = format!("filter_related_objects_{}_{}_{}_{}", class_index, object_index, status, filter).replace(&['=', '&', '?', ' ', '<', '>', ][..], "_");
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let (classes, relations) = create_classes_and_relations(&pool, &unique).await;
+        let objects = create_objects_in_classes(&pool, &classes).await;
+
+        let _ = create_object_relation(&pool, &objects[0], &objects[1], &relations[0]).await;
+        let _ = create_object_relation(&pool, &objects[1], &objects[2], &relations[1]).await;
+        let class_relation_15 = create_relation(&pool, &classes[0], &classes[4]).await;
+        let _ = create_object_relation(&pool, &objects[0], &objects[4], &class_relation_15).await;
+
+        // replace <int> in the filter with the object id with that index.
+        let re = Regex::new(r"<(\d+)>").unwrap();
+        let filter = re.replace_all(&filter, |caps: &regex::Captures| {
+            let index = caps[1].parse::<usize>().unwrap();
+            objects[index].id.to_string()
+        });
+
+        let endpoint = format!(
+            "/api/v1/classes/{}/{}/relations/{}",
+            classes[class_index].id, objects[object_index].id, filter
+        );
+
+        let resp = get_request(&pool, &admin_token, &endpoint).await;
+        let resp = assert_response_status(resp, status).await;        
+
+        if status == StatusCode::OK {
+            let objects_fetched: Vec<HubuumObjectWithPath> = test::read_body_json(resp).await;  
+            assert_eq!(objects_fetched.len(), expected_object_ids.len(), "{} -> Expected: {:?}, got: {:?}\nAll objects: {:?}",
+                endpoint,
+                expected_object_ids.iter().map(|i| objects[i.clone()].id).collect::<Vec<_>>(),
+                objects_fetched.iter().map(|o| o.id).collect::<Vec<_>>(),
+                objects
+            );
+        }
+
+        cleanup(&classes).await;
+        
     }
 }

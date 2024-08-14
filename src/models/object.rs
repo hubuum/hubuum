@@ -69,6 +69,19 @@ pub struct ObjectsByClass {
     pub count: i64,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HubuumObjectWithPath {
+    pub id: i32,
+    pub name: String,
+    pub namespace_id: i32,
+    pub hubuum_class_id: i32,
+    pub data: serde_json::Value,
+    pub description: String,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+    pub path: Vec<i32>,
+}
+
 pub async fn total_object_count(pool: &DbPool) -> Result<i64, ApiError> {
     use crate::schema::hubuumobject::dsl::*;
 

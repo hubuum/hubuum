@@ -13,16 +13,28 @@
 
 ### Object relations
 
-// We must validate that there is a direct relation between class_id and the class of to_object_id, and use that relation
-// as the class_relation_id for the object relation.
-
-Note that the class_id defines the class of the first object. The class of the second object in inferred from the object.
+Note that if the objects are not of the class ID preceeding the object ID, the operation will return the status code 400.
 
 | Operation | Method | Path | Description |
 |-----------|--------|------|-------------|
 | Create    | POST   | /classes/{class_id}/{object_id}/relations/{to_class_id}/{to_object_id} | Create a relation between two objects |
 | Delete    | DELETE | /classes/{class_id}/{object_id}/relations/{to_class}/{to_object_id} | Delete a relation between two objects |
-| List      | GET    | /classes/{class_id}/{object_id}/relations/ | List all objects an object is related to. Should support filtering on class and object IDs. |
+| List      | GET    | /classes/{class_id}/{object_id}/relations/ | List all objects an object is related to. |
+
+#### Filter support for list operations
+
+- `to_objects` - INT - Destination objects IDs
+- `to_classes` - INT - Destination classes IDs
+- `to_name` - STRING - Destination object names
+- `to_description` - STRING - Destination object descriptions
+- `to_json_data` - JSON - Destination object JSON data
+- `to_namespaces` - STRING - Destination object namespaces
+- `to_created_at` - DATETIME - Destination object creation date
+- `to_updated_at` - DATETIME - Destination object update date
+- `depth` - INT - Depth of the relation
+- `path` - ARRAY - Path of the relation
+
+See [querying.md](querying.md) for more information on filtering and the available operators for each field type.
 
 ## Context free operations
 

@@ -15,7 +15,7 @@ use crate::models::{
     HubuumObjectRelation, HubuumObjectTransitiveLink, Namespace, User, UserToken,
 };
 use crate::traits::{GroupAccessors, SelfAccessors};
-use crate::{date_search, numeric_search, trace_query};
+use crate::{date_search, numeric_search, string_search, trace_query};
 
 use super::{with_connection, DbPool};
 
@@ -255,6 +255,74 @@ where
                 )
                 .select(obj_rel::hubuumobject_relation::all_columns())
                 .first::<HubuumObjectRelation>(conn)
+        })
+    }
+
+    async fn related_objects<C>(
+        &self,
+        pool: &DbPool,
+        class: &C,
+        query_params: &Vec<ParsedQueryParam>,
+    ) -> Result<Vec<HubuumObject>, ApiError>
+    where
+        Self: SelfAccessors<HubuumObject> + Clone + Send + Sync,
+        C: SelfAccessors<HubuumClass> + Clone + Send + Sync,
+    {
+        use crate::schema::hubuumclass_relation::dsl as class_rel;
+        use crate::schema::hubuumobject::dsl as obj;
+        use crate::schema::hubuumobject_relation::dsl as obj_rel;
+        use diesel::prelude::*;
+
+        let mut base_query = obj::hubuumobject.into_boxed();
+        for param in query_params {
+            let operator = param.operator.clone();
+            match param.field {
+                FilterField::CreatedAt => {
+                    date_search!(base_query, param, operator, obj::created_at)
+                }
+                FilterField::UpdatedAt => {
+                    date_search!(base_query, param, operator, obj::updated_at)
+                }
+                FilterField::Namespaces => {
+                    numeric_search!(base_query, param, operator, obj::namespace_id)
+                }
+                FilterField::Description => {
+                    string_search!(base_query, param, operator, obj::description)
+                }
+                FilterField::Name => {
+                    string_search!(base_query, param, operator, obj::name)
+                }
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for objects",
+                        param.field
+                    )))
+                }
+            }
+        }
+
+        with_connection(pool, |conn| {
+            base_query
+                .inner_join(
+                    obj_rel::hubuumobject_relation.on(obj::id.eq(obj_rel::from_hubuum_object_id)),
+                )
+                .inner_join(
+                    class_rel::hubuumclass_relation
+                        .on(obj_rel::class_relation_id.eq(class_rel::id)),
+                )
+                .filter(
+                    obj_rel::from_hubuum_object_id
+                        .eq(self.id())
+                        .or(obj_rel::to_hubuum_object_id.eq(self.id())),
+                )
+                .filter(
+                    class_rel::from_hubuum_class_id
+                        .eq(class.id())
+                        .or(class_rel::to_hubuum_class_id.eq(class.id())),
+                )
+                .select(obj::hubuumobject::all_columns())
+                .distinct()
+                .load::<HubuumObject>(conn)
         })
     }
 }
