@@ -216,6 +216,7 @@ async fn get_class_relations(
     let mut params = parse_query_parameter(query_string)?;
     ensure_class_filter(&mut params, FilterField::ClassFrom, &class_id);
 
+    // TODO: Migrate to user search for permissions.
     let relations = class_id.search_relations(&pool, &params).await?;
     Ok(json_response(relations, StatusCode::OK))
 }
@@ -489,29 +490,6 @@ async fn delete_object_in_class(
     Ok(json_response((), StatusCode::NO_CONTENT))
 }
 
-#[get("/{class_id}/{object_id}/relations_by_path/")]
-async fn get_object_relations(
-    pool: web::Data<DbPool>,
-    requestor: UserAccess,
-    paths: web::Path<(HubuumClassID, HubuumObjectID)>,
-) -> Result<impl Responder, ApiError> {
-    use crate::db::traits::ObjectRelationsFromUser;
-    let user = requestor.user;
-    let (class_id, object_id) = paths.into_inner();
-
-    debug!(
-        message = "Getting object relations",
-        user_id = user.id(),
-        class_id = class_id.id(),
-        object_id = object_id.id()
-    );
-
-    let relations = user
-        .get_related_objects(&pool, &object_id, &class_id)
-        .await?;
-    Ok(json_response(relations, StatusCode::OK))
-}
-
 #[get("/{class_id}/{from_object_id}/relations/")]
 async fn list_related_objects(
     pool: web::Data<DbPool>,
@@ -538,6 +516,7 @@ async fn list_related_objects(
         query = query_string,
     );
 
+    // We could map this directly from the database? Meh.
     let hits = user
         .search_objects_related_to(&pool, from_object, params)
         .await?
