@@ -104,6 +104,16 @@ pub struct ClassClosureView {
     pub descendant_name: String,
     pub ancestor_namespace_id: i32,
     pub descendant_namespace_id: i32,
+    pub ancestor_json_schema: serde_json::Value,
+    pub descendant_json_schema: serde_json::Value,
+    pub ancestor_validate_schema: bool,
+    pub descendant_validate_schema: bool,
+    pub ancestor_description: String,
+    pub descendant_description: String,
+    pub ancestor_created_at: chrono::NaiveDateTime,
+    pub descendant_created_at: chrono::NaiveDateTime,
+    pub ancestor_updated_at: chrono::NaiveDateTime,
+    pub descendant_updated_at: chrono::NaiveDateTime,
 }
 
 #[derive(Debug, Queryable, Selectable, Serialize, Deserialize)]

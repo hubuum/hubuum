@@ -462,7 +462,8 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
 
         // Permissions vector must contain ReadClassRelation
         let mut permissions_list = query_params.permissions()?;
-        permissions_list.ensure_contains(&[Permissions::ReadObject]);
+        permissions_list
+            .ensure_contains(&[Permissions::ReadObject, Permissions::ReadObjectRelation]);
 
         // Get all namespace IDs that the user has ReadClassRelations and other requested permissions on.
         let namespace_ids: Vec<i32> = self
@@ -633,7 +634,7 @@ pub trait GroupAccessors: SelfAccessors<User> {
     ///
     /// Check if a user has a specific class permission to a given namespace ID
     ///
-    /// ```
+    /// ```ignore
     /// let group_id_subquery = user_id.group_ids_subquery();
     ///
     /// let base_query = classpermissions

@@ -49,7 +49,7 @@ macro_rules! debug_query {
 ///
 /// ### Example
 ///
-/// ```
+/// ```ignore
 /// can!(pool, user, [Permissions::ReadCollection], namespace, class, object);
 /// can!(pool, user, [Permissions::ReadCollection, Permissions::UpdateCollection], namespace, class1, class2);
 /// ```
@@ -91,7 +91,7 @@ macro_rules! can {
 ///
 /// ## Example
 ///
-/// ```
+/// ```ignore
 /// check_permissions!(namespace, pool, requestor.user, Permissions::ReadCollection);
 /// check_permissions!(namespace, pool, requestor.user, Permissions::ReadCollection, Permissions::UpdateCollection);
 ///

@@ -6,10 +6,11 @@
 
 | Operation | Method | Path | Description |
 |-----------|--------|------|-------------|
+| Get       | GET    | /classes/{from_class_id}/relations/{to_class_id} | Get a specific class relation |
 | Create    | POST   | /classes/{class_id}/relations/{to_class_id} | Create a relation between two classes |
 | Delete    | DELETE | /classes/{from_class_id}/relations/{to_class_id} | Delete a relation between two classes |
-| List      | GET    | /classes/{class_id}/relations/ | List all class relations of a class. Should support filtering. |
-| Get       | GET    | /classes/{from_class_id}/relations/{to_class_id} | Get a specific class relation |
+| List      | GET    | /classes/{class_id}/relations/ | List all relations of a class |
+| List      | GET    | /classes/{class_id}/related_classes/ | List all classes a class is related to |
 
 ### Object relations
 
@@ -17,9 +18,11 @@ Note that if the objects are not of the class ID preceeding the object ID, the o
 
 | Operation | Method | Path | Description |
 |-----------|--------|------|-------------|
+| Get       | GET    | /classes/{class_id}/{object_id}/relations/{to_class_id}/{to_object_id} | Get a specific relation between two objects |
 | Create    | POST   | /classes/{class_id}/{object_id}/relations/{to_class_id}/{to_object_id} | Create a relation between two objects |
 | Delete    | DELETE | /classes/{class_id}/{object_id}/relations/{to_class}/{to_object_id} | Delete a relation between two objects |
-| List      | GET    | /classes/{class_id}/{object_id}/relations/ | List all objects an object is related to. |
+| List      | GET    | /classes/{class_id}/{object_id}/relations/ | List all relations of an object |
+| List      | GET    | /classes/{class_id}/{object_id}/related_objects/ | List all objects an object is related to |
 
 #### Filter support for list operations
 

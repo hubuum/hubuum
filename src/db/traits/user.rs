@@ -4,7 +4,7 @@ use std::iter::IntoIterator;
 use tracing::debug;
 
 use crate::models::{Permissions, User, UserID};
-
+use crate::utilities::auth::hash_password;
 use crate::traits::{GroupAccessors, NamespaceAccessors, SelfAccessors};
 
 use crate::db::{with_connection, DbPool};
@@ -13,6 +13,42 @@ use crate::errors::ApiError;
 use crate::models::search::{FilterField, ParsedQueryParam};
 
 use crate::{date_search, numeric_search, string_search, trace_query};
+
+impl User {
+    pub async fn get_by_username(pool: &DbPool, username_arg: &str) -> Result<User, ApiError> {
+        use crate::schema::users::dsl::*;
+
+        with_connection(pool, |conn| {
+            users
+                .filter(username.eq(username_arg))
+                .first::<User>(conn)
+        })
+    }
+
+    /// Set a new password for a user
+    /// 
+    /// The password will be hashed before storing it in the database, so the input should be the
+    /// desired plaintext password.
+    pub async fn set_password(&self, pool: &DbPool, new_password: &str) -> Result<(), ApiError> {        
+        use crate::schema::users::dsl::*;
+        debug!(
+            message = "Setting new password",
+            id = self.id(),
+            username = self.username,
+        );
+        let new_password = hash_password(new_password).map_err(|e| {
+            ApiError::HashError(format!("Failed to hash password: {}", e))
+        })?;
+
+        with_connection(pool, |conn| {
+            diesel::update(users.filter(id.eq(self.id)))
+                .set(password.eq(new_password))
+                .execute(conn)
+        })?;
+
+        Ok(())
+    }
+}
 
 pub trait UserPermissions: SelfAccessors<User> + GroupAccessors {
     /// ## Check if a user has a set of permissions in a set of namespaces

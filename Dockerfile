@@ -1,4 +1,4 @@
-FROM rust:bookworm as builder
+FROM rust:bookworm AS builder
 
 WORKDIR /usr/src/hubuum
 
@@ -15,7 +15,8 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y libpq5 && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /usr/src/hubuum/target/release/hubuum /usr/local/bin/hubuum
+COPY --from=builder /usr/src/hubuum/target/release/hubuum-server /usr/local/bin/hubuum-server
+COPY --from=builder /usr/src/hubuum/target/release/hubuum-admin /usr/local/bin/hubuum-admin
 COPY --from=builder /usr/local/cargo/bin/diesel /usr/local/bin/diesel
 COPY --from=builder /usr/src/hubuum/migrations /migrations
 

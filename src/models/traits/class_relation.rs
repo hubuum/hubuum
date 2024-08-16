@@ -10,7 +10,8 @@ use crate::db::DbPool;
 use crate::{errors::ApiError, schema::hubuumclass_relation, schema::hubuumobject_relation};
 
 use crate::models::{
-    HubuumClass, HubuumClassRelation, HubuumClassRelationID, Namespace, NewHubuumClassRelation,
+    ClassClosureView, HubuumClass, HubuumClassRelation, HubuumClassRelationID, HubuumClassWithPath,
+    Namespace, NewHubuumClassRelation,
 };
 use crate::traits::{CanDelete, CanSave, ClassAccessors, NamespaceAccessors, SelfAccessors};
 
@@ -143,5 +144,74 @@ impl ClassAccessors<(HubuumClass, HubuumClass), (i32, i32)> for NewHubuumClassRe
 
     async fn class_id(&self, _pool: &DbPool) -> Result<(i32, i32), ApiError> {
         Ok((self.from_hubuum_class_id, self.to_hubuum_class_id))
+    }
+}
+
+impl ClassClosureView {
+    pub fn to_ascendant_class(&self) -> HubuumClass {
+        HubuumClass {
+            id: self.ancestor_class_id,
+            name: self.ancestor_name.clone(),
+            namespace_id: self.ancestor_namespace_id,
+            description: self.ancestor_description.clone(),
+            json_schema: self.ancestor_json_schema.clone(),
+            validate_schema: self.ancestor_validate_schema,
+            created_at: self.ancestor_created_at,
+            updated_at: self.ancestor_updated_at,
+        }
+    }
+
+    pub fn to_descendant_class(&self) -> HubuumClass {
+        HubuumClass {
+            id: self.descendant_class_id,
+            name: self.descendant_name.clone(),
+            namespace_id: self.descendant_namespace_id,
+            description: self.descendant_description.clone(),
+            json_schema: self.descendant_json_schema.clone(),
+            validate_schema: self.descendant_validate_schema,
+            created_at: self.descendant_created_at,
+            updated_at: self.descendant_updated_at,
+        }
+    }
+
+    pub fn to_descendant_class_with_path(&self) -> HubuumClassWithPath {
+        HubuumClassWithPath {
+            id: self.descendant_class_id,
+            name: self.descendant_name.clone(),
+            namespace_id: self.descendant_namespace_id,
+            description: self.descendant_description.clone(),
+            json_schema: self.descendant_json_schema.clone(),
+            validate_schema: self.descendant_validate_schema,
+            created_at: self.descendant_created_at,
+            updated_at: self.descendant_updated_at,
+            path: self.path.clone(),
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub trait ToHubuumClasses {
+    fn to_descendant_classes(self) -> Vec<HubuumClass>;
+    fn to_descendant_classes_with_path(self) -> Vec<HubuumClassWithPath>;
+    fn to_ascendant_classes(self) -> Vec<HubuumClass>;
+}
+
+impl ToHubuumClasses for Vec<ClassClosureView> {
+    fn to_descendant_classes(self) -> Vec<HubuumClass> {
+        self.into_iter()
+            .map(|ocv| ocv.to_descendant_class())
+            .collect()
+    }
+
+    fn to_descendant_classes_with_path(self) -> Vec<HubuumClassWithPath> {
+        self.into_iter()
+            .map(|ocv| ocv.to_descendant_class_with_path())
+            .collect()
+    }
+
+    fn to_ascendant_classes(self) -> Vec<HubuumClass> {
+        self.into_iter()
+            .map(|ocv| ocv.to_ascendant_class())
+            .collect()
     }
 }

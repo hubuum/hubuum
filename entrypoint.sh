@@ -20,4 +20,4 @@ diesel migration run --migration-dir /migrations --database-url $HUBUUM_DATABASE
 
 # Start the application
 echo "Starting the application..."
-exec hubuum "$@"
+exec hubuum-server "$@"

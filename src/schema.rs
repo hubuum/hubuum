@@ -153,6 +153,16 @@ diesel::table! {
         descendant_name -> Text,
         ancestor_namespace_id -> Int4,
         descendant_namespace_id -> Int4,
+        ancestor_json_schema -> Jsonb,
+        descendant_json_schema -> Jsonb,
+        ancestor_validate_schema -> Bool,
+        descendant_validate_schema -> Bool,
+        ancestor_description -> Text,
+        descendant_description -> Text,
+        ancestor_created_at -> Timestamp,
+        descendant_created_at -> Timestamp,
+        ancestor_updated_at -> Timestamp,
+        descendant_updated_at -> Timestamp,
     }
 }
 

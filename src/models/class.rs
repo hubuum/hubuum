@@ -48,6 +48,19 @@ pub struct UpdateHubuumClass {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct HubuumClassWithPath {
+    pub id: i32,
+    pub name: String,
+    pub namespace_id: i32,
+    pub json_schema: serde_json::Value,
+    pub validate_schema: bool,
+    pub description: String,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+    pub path: Vec<i32>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct HubuumClassID(pub i32);
 
 pub async fn total_class_count(pool: &DbPool) -> Result<i64, ApiError> {

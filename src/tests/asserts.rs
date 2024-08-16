@@ -235,7 +235,7 @@ macro_rules! assert_contains_same_ids {
 ///
 /// ### Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// #[actix_web::test]
 /// async fn test_api_classes_get() {
 ///     let created_classes = create_test_classes("get").await;

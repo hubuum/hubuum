@@ -155,11 +155,21 @@
         cc.ancestor_class_id,
         cc.descendant_class_id,
         cc.depth,
-        cc.path,
+        cc.path,        
         ac.name AS ancestor_name,
         dc.name AS descendant_name,
         ac.namespace_id AS ancestor_namespace_id,
-        dc.namespace_id AS descendant_namespace_id
+        dc.namespace_id AS descendant_namespace_id,
+        ac.json_schema AS ancestor_json_schema,
+        dc.json_schema AS descendant_json_schema,
+        ac.validate_schema AS ancestor_validate_schema,
+        dc.validate_schema AS descendant_validate_schema,
+        ac.description AS ancestor_description,
+        dc.description AS descendant_description,
+        ac.created_at AS ancestor_created_at,
+        dc.created_at AS descendant_created_at,
+        ac.updated_at AS ancestor_updated_at,
+        dc.updated_at AS descendant_updated_at
     FROM 
         hubuumclass_closure cc
     JOIN 

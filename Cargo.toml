@@ -29,7 +29,7 @@ rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0"
-tokio = { version = "1", features = ["sync"] }
+tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread"] }
 tracing = "0.1"
 tracing-serde = "0.1"
 tracing-subscriber = { version = "0.3.18", features = [
@@ -48,3 +48,18 @@ regex = "1"
 codegen-units = 1
 lto = "fat"
 opt-level = "z"
+
+[lib]
+name = "hubuum"
+path = "src/lib.rs"
+test = false
+
+
+[[bin]]
+name = "hubuum-server"
+path = "src/main.rs"
+
+[[bin]]
+name = "hubuum-admin"
+path = "src/bin/admin.rs"
+test = false

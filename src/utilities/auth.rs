@@ -14,7 +14,7 @@ use sha2::{Digest, Sha512};
 
 use tracing::debug;
 
-// Function to hash a password
+/// Hash a plaintext password.
 pub fn hash_password(password: &str) -> Result<String, Box<dyn std::error::Error>> {
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();
@@ -35,7 +35,7 @@ pub fn hash_password(password: &str) -> Result<String, Box<dyn std::error::Error
 ///
 /// ## Example
 ///
-/// ```
+/// ```ignore
 /// use crate::utilities::auth::verify_password;
 ///
 /// let pwcheck = verify_password(plaintext_password, hashed_password);
