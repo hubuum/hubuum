@@ -44,8 +44,8 @@ pub mod tests {
                 name: format!("{}_api_class_{}", prefix, i),
                 description: format!("{}_api_description_{}", prefix, i),
                 namespace_id: ns.id,
-                json_schema: schema,
-                validate_schema: false,
+                json_schema: Some(schema),
+                validate_schema: Some(false),
             };
 
             created_classes.push(class.save(&pool).await.unwrap());
@@ -246,8 +246,8 @@ pub mod tests {
             name: "api_create_test_classes".to_string(),
             description: "api_create_test_classes".to_string(),
             namespace_id: ns.id,
-            json_schema: get_schema(SchemaType::Blog).clone(),
-            validate_schema: false,
+            json_schema: Some(get_schema(SchemaType::Blog).clone()),
+            validate_schema: Some(false),
         };
 
         let resp = post_request(
@@ -291,8 +291,8 @@ pub mod tests {
             name: "api_patch_test_classes".to_string(),
             description: "api_patch_test_classes_desc".to_string(),
             namespace_id: ns.id,
-            json_schema: get_schema(SchemaType::Blog).clone(),
-            validate_schema: false,
+            json_schema: Some(get_schema(SchemaType::Blog).clone()),
+            validate_schema: None,
         };
         let created_class = new_class.save(&pool).await.unwrap();
 

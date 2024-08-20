@@ -20,7 +20,7 @@ impl CanSave for HubuumClass {
         let update = UpdateHubuumClass {
             name: Some(self.name.clone()),
             namespace_id: Some(self.namespace_id),
-            json_schema: Some(self.json_schema.clone()),
+            json_schema: self.json_schema.clone(),
             validate_schema: Some(self.validate_schema),
             description: Some(self.description.clone()),
         };

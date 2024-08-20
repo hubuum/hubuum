@@ -59,8 +59,8 @@ mod test {
                 NewHubuumClass {
                     name: format!("{}_class_{}", prefix, padded_i),
                     description: format!("{} class {}", pretty_prefix, padded_i),
-                    json_schema: schema,
-                    validate_schema: false,
+                    json_schema: Some(schema),
+                    validate_schema: Some(false),
                     namespace_id: nid,
                 }
                 .save(&pool)

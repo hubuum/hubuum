@@ -79,8 +79,8 @@
         id SERIAL PRIMARY KEY,
         name VARCHAR NOT NULL UNIQUE,
         namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
-        json_schema JSONB DEFAULT '{}'::jsonb NOT NULL,
-        validate_schema BOOLEAN NOT NULL,
+        json_schema JSONB DEFAULT NULL,
+        validate_schema BOOLEAN DEFAULT false NOT NULL,
         description VARCHAR NOT NULL,
         created_at TIMESTAMP NOT NULL DEFAULT now(),
         updated_at TIMESTAMP NOT NULL DEFAULT now()

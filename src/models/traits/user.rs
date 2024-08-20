@@ -1069,8 +1069,8 @@ mod test {
         let class = NewHubuumClass {
             name: "test_user_namespace_listing".to_string(),
             description: "Test class".to_string(),
-            json_schema: serde_json::json!({}),
-            validate_schema: false,
+            json_schema: None,
+            validate_schema: None,
             namespace_id: ns.id,
         }
         .save(&pool)
