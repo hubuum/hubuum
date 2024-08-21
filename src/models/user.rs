@@ -167,10 +167,14 @@ pub struct NewUser {
 
 impl NewUser {
     pub async fn new(username: &str, password: &str, email: Option<&str>) -> Self {
+        let email = match email {
+            Some(e) => Some(e.to_string()),
+            None => None,
+        };
         NewUser {
             username: username.to_string(),
             password: password.to_string(),
-            email: email.map(|s| s.to_string()),
+            email,
         }
     }
 
