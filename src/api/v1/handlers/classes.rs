@@ -1,5 +1,4 @@
-use actix_web::{delete, HttpRequest};
-use actix_web::{get, http::StatusCode, patch, post, routes, web, Responder};
+use actix_web::{delete, get, http::StatusCode, patch, post, routes, web, HttpRequest, Responder};
 
 use tracing::{debug, info};
 
@@ -8,7 +7,7 @@ use crate::db::traits::{ClassRelation, ObjectRelationMemberships, UserPermission
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
-use crate::models::traits::ToHubuumObjects;
+use crate::models::traits::{ExpandNamespace, ToHubuumObjects};
 use crate::utilities::response::{json_response, json_response_created};
 
 use crate::models::{
@@ -65,11 +64,15 @@ async fn create_class(
     let namespace = NamespaceID(class_data.namespace_id);
     can!(&pool, user, [Permissions::CreateClass], namespace);
 
-    let class = class_data.save(&pool).await?;
+    let class = class_data
+        .save(&pool)
+        .await?
+        .expand_namespace(&pool)
+        .await?;
 
     Ok(json_response_created(
         &class,
-        format!("/api/v1/classes/{}", class.id()).as_str(),
+        format!("/api/v1/classes/{}", class.id).as_str(),
     ))
 }
 
@@ -90,6 +93,7 @@ async fn get_class(
 
     let class = class.instance(&pool).await?;
     can!(&pool, user, [Permissions::ReadClass], class);
+    let class = class.expand_namespace(&pool).await?;
 
     Ok(json_response(class, StatusCode::OK))
 }
@@ -114,7 +118,11 @@ async fn update_class(
     let class = class_id.instance(&pool).await?;
     can!(&pool, user, [Permissions::UpdateClass], class);
 
-    let class = class_data.update(&pool, class.id).await?;
+    let class = class_data
+        .update(&pool, class.id)
+        .await?
+        .expand_namespace(&pool)
+        .await?;
     Ok(json_response(class, StatusCode::OK))
 }
 
@@ -344,6 +352,26 @@ async fn get_class_relations_transitive(
     );
 
     let relations = class_id.transitive_relations(&pool).await?;
+    Ok(json_response(relations, StatusCode::OK))
+}
+
+#[get("/{class_id}/relations/transitive/class/{class_id_to}")]
+async fn get_class_relations_transitive_to_class(
+    pool: web::Data<DbPool>,
+    requestor: UserAccess,
+    class_ids: web::Path<(HubuumClassID, HubuumClassID)>,
+) -> Result<impl Responder, ApiError> {
+    let user = requestor.user;
+    let (class_id, class_id_to) = class_ids.into_inner();
+
+    debug!(
+        message = "Getting class relations to class",
+        user_id = user.id(),
+        class_id_from = class_id.id(),
+        class_id_to = class_id_to.id()
+    );
+
+    let relations = class_id.relations_to(&pool, &class_id_to).await?;
     Ok(json_response(relations, StatusCode::OK))
 }
 

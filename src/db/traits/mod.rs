@@ -86,12 +86,6 @@ where
         other: &C2,
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError>;
 
-    /// Check if a relation exists between self and another class, boolean
-    async fn has_relation_to(&self, pool: &DbPool, other: &C2) -> Result<bool, ApiError> {
-        let relations = self.relations_to(pool, other).await?;
-        Ok(!relations.is_empty())
-    }
-
     /// Check if a direct relation exists between self and another class
     async fn direct_relation_to(
         &self,
@@ -120,6 +114,8 @@ where
         })
     }
 
+    // We typically end up searching, so this interface is rarely used.
+    #[allow(dead_code)]
     async fn relations(&self, pool: &DbPool) -> Result<Vec<HubuumClassRelation>, ApiError> {
         use crate::schema::hubuumclass_relation::dsl::*;
         use diesel::prelude::*;

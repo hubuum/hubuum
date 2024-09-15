@@ -1,6 +1,6 @@
 #[cfg(test)]
 pub mod tests {
-    use crate::models::{HubuumClass, NamespaceID, NewHubuumClass};
+    use crate::models::{HubuumClass, HubuumClassExpanded, NamespaceID, NewHubuumClass};
     use crate::traits::{CanDelete, CanSave};
     use actix_web::{http::StatusCode, test};
 
@@ -65,7 +65,7 @@ pub mod tests {
         }
     }
 
-    async fn api_get_classes_with_query_string(query_string: &str) -> Vec<HubuumClass> {
+    async fn api_get_classes_with_query_string(query_string: &str) -> Vec<HubuumClassExpanded> {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
         let resp = get_request(
             &pool,
@@ -75,7 +75,7 @@ pub mod tests {
         .await;
 
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let classes: Vec<HubuumClass> = test::read_body_json(resp).await;
+        let classes: Vec<HubuumClassExpanded> = test::read_body_json(resp).await;
         classes
     }
 
@@ -87,7 +87,7 @@ pub mod tests {
 
         let resp = get_request(&pool, &admin_token, CLASSES_ENDPOINT).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let classes: Vec<HubuumClass> = test::read_body_json(resp).await;
+        let classes: Vec<HubuumClassExpanded> = test::read_body_json(resp).await;
 
         // We can't do
         // assert_eq!(classes.len(), created_classes.len());
@@ -98,7 +98,7 @@ pub mod tests {
         // Check that we can do api/v1/classes/ as well as api/v1/classes
         let resp = get_request(&pool, &admin_token, &format!("{}/", CLASSES_ENDPOINT)).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let classes: Vec<HubuumClass> = test::read_body_json(resp).await;
+        let classes: Vec<HubuumClassExpanded> = test::read_body_json(resp).await;
         assert_contains_all!(&classes, &created_classes);
         cleanup(&created_classes).await;
     }
@@ -216,7 +216,7 @@ pub mod tests {
             )
             .await;
             let resp = assert_response_status(resp, StatusCode::OK).await;
-            let returned_class: HubuumClass = test::read_body_json(resp).await;
+            let returned_class: HubuumClassExpanded = test::read_body_json(resp).await;
             assert_eq!(class, &returned_class);
         }
         cleanup(&created_classes).await;
@@ -260,12 +260,12 @@ pub mod tests {
 
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
         let headers = resp.headers().clone();
-        let created_class_from_create: HubuumClass = test::read_body_json(resp).await;
+        let created_class_from_create: HubuumClassExpanded = test::read_body_json(resp).await;
         let created_class_url = headers.get("Location").unwrap().to_str().unwrap();
 
         let resp = get_request(&pool, &admin_token, created_class_url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let created_class: HubuumClass = test::read_body_json(resp).await;
+        let created_class: HubuumClassExpanded = test::read_body_json(resp).await;
 
         // Validate that the location is what we expect
         assert_eq!(
@@ -313,7 +313,7 @@ pub mod tests {
         .await;
 
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let updated_class_from_patch: HubuumClass = test::read_body_json(resp).await;
+        let updated_class_from_patch: HubuumClassExpanded = test::read_body_json(resp).await;
         let resp = get_request(
             &pool,
             &admin_token,
@@ -321,7 +321,7 @@ pub mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let updated_class_from_get: HubuumClass = test::read_body_json(resp).await;
+        let updated_class_from_get: HubuumClassExpanded = test::read_body_json(resp).await;
 
         assert_eq!(updated_class_from_patch, updated_class_from_get);
         assert_ne!(created_class, updated_class_from_patch);
@@ -332,7 +332,7 @@ pub mod tests {
             created_class.description
         );
         assert_eq!(
-            updated_class_from_patch.namespace_id,
+            updated_class_from_patch.namespace.id,
             created_class.namespace_id
         );
         assert_eq!(

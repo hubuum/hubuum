@@ -2,12 +2,14 @@ use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, UserAccess};
 use crate::models::{
-    user_can_on_any, GroupID, NamespaceID, NewNamespaceWithAssignee, Permissions, PermissionsList,
-    UpdateNamespace, UserID,
+    GroupID, NamespaceID, NewNamespaceWithAssignee, Permissions, PermissionsList, UpdateNamespace,
+    UserID,
 };
 
+use crate::models::search::parse_query_parameter;
+
 use crate::utilities::response::{json_response, json_response_created};
-use actix_web::{delete, get, http::StatusCode, patch, post, routes, web, Responder};
+use actix_web::{delete, get, http::StatusCode, patch, post, routes, web, HttpRequest, Responder};
 use serde_json::json;
 use tracing::{debug, info};
 
@@ -15,7 +17,7 @@ use crate::can;
 
 use crate::db::traits::UserPermissions;
 use crate::traits::{
-    CanDelete, CanSave, CanUpdate, NamespaceAccessors, PermissionController, SelfAccessors,
+    CanDelete, CanSave, CanUpdate, NamespaceAccessors, PermissionController, Search, SelfAccessors,
 };
 
 #[routes]
@@ -24,13 +26,22 @@ use crate::traits::{
 pub async fn get_namespaces(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
+    let user = requestor.user;
     debug!(
         message = "Namespace list requested",
-        requestor = requestor.user.username
+        requestor = user.username
     );
 
-    let result = user_can_on_any(&pool, requestor.user, Permissions::ReadCollection).await?;
+    let query_string = req.query_string();
+
+    let params = match parse_query_parameter(query_string) {
+        Ok(params) => params,
+        Err(e) => return Err(e),
+    };
+
+    let result = user.search_namespaces(&pool, params).await?;
     Ok(json_response(result, StatusCode::OK))
 }
 

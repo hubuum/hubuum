@@ -39,6 +39,7 @@ tracing-subscriber = { version = "0.3.18", features = [
 ] }
 urlparse = "0.7"
 uuid = { version = "1.6", features = ["v4"] }
+percent-encoding = "2"
 
 [dev-dependencies]
 yare = "3"

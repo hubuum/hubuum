@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use actix_web::web::Json;
+use chrono::{format, DateTime, NaiveDateTime, Utc};
 use diesel::dsl::Filter;
 use diesel::sql_types::Bool;
 use std::str::FromStr;
@@ -9,7 +10,6 @@ use tracing::debug;
 use crate::models::permissions::{Permissions, PermissionsList};
 use crate::utilities::extensions::CustomStringExtensions;
 use crate::{errors::ApiError, schema::hubuumobject::data};
-use chrono::{format, DateTime, NaiveDateTime, Utc};
 
 use super::Permission;
 
@@ -42,6 +42,17 @@ pub fn parse_query_parameter(query_string: &str) -> Result<Vec<ParsedQueryParam>
 
         let field_and_op: Vec<&str> = query_param_parts[0].splitn(2, "__").collect();
         let value = query_param_parts[1].to_string();
+
+        let value = match percent_encoding::percent_decode(value.as_bytes()).decode_utf8() {
+            Ok(value) => value.to_string(),
+            Err(e) => {
+                return Err(ApiError::BadRequest(format!(
+                    "Invalid query parameter: '{}', invalid value: {}",
+                    query_param, e
+                )));
+            }
+        };
+
         let field = field_and_op[0].to_string();
 
         if value.is_empty() {

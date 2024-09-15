@@ -1,3 +1,4 @@
+use argon2::password_hash::rand_core::le;
 use diesel::dsl::Filter;
 use diesel::query_builder;
 use diesel::sql_types::Integer;
@@ -10,10 +11,11 @@ use tracing::debug;
 
 use crate::api::v1::handlers::namespaces;
 use crate::models::search::{FilterField, ParsedQueryParam, QueryParamsExt, SearchOperator};
+use crate::models::traits::ExpandNamespaceFromMap;
 use crate::models::{
-    class, group, permissions, ClassClosureView, Group, HubuumClass, HubuumClassRelation,
-    HubuumObject, HubuumObjectRelation, Namespace, ObjectClosureView, Permission, Permissions,
-    User, UserID,
+    class, group, permissions, ClassClosureView, Group, HubuumClass, HubuumClassExpanded,
+    HubuumClassRelation, HubuumObject, HubuumObjectRelation, Namespace, ObjectClosureView,
+    Permission, Permissions, User, UserID,
 };
 
 use crate::schema::hubuumclass::namespace_id;
@@ -27,11 +29,98 @@ use crate::utilities::extensions::CustomStringExtensions;
 use crate::trace_query;
 
 pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors {
+    async fn search_namespaces(
+        &self,
+        pool: &DbPool,
+        query_params: Vec<ParsedQueryParam>,
+    ) -> Result<Vec<Namespace>, ApiError> {
+        use crate::models::PermissionFilter;
+        use crate::schema::namespaces::dsl::{id as namespace_id, namespaces};
+        use crate::schema::permissions::dsl::{
+            group_id, namespace_id as permissions_nid, permissions,
+        };
+
+        debug!(
+            message = "Searching namespaces",
+            stage = "Starting",
+            user_id = self.id(),
+            query_params = ?query_params
+        );
+
+        let mut permissions_list = query_params.permissions()?;
+        permissions_list.ensure_contains(&[Permissions::ReadCollection]);
+
+        let group_id_subquery = self.group_ids_subquery();
+
+        let mut base_query = namespaces
+            .filter(
+                namespace_id.eq_any(
+                    permissions
+                        .filter(group_id.eq_any(group_id_subquery))
+                        .select(permissions_nid),
+                ),
+            )
+            .into_boxed();
+
+        for param in query_params {
+            use crate::models::search::{DataType, SearchOperator};
+            use crate::{boolean_search, date_search, numeric_search, string_search};
+            let operator = param.operator.clone();
+            match param.field {
+                FilterField::Id => numeric_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::namespaces::dsl::id
+                ),
+                FilterField::CreatedAt => date_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::namespaces::dsl::created_at
+                ),
+                FilterField::UpdatedAt => date_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::namespaces::dsl::updated_at
+                ),
+                FilterField::Name => string_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::namespaces::dsl::name
+                ),
+                FilterField::Description => string_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::namespaces::dsl::description
+                ),
+                FilterField::Permissions => {} // Handled above
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for namespaces",
+                        param.field
+                    )))
+                }
+            }
+        }
+
+        let result = with_connection(pool, |conn| {
+            base_query
+                .select(namespaces::all_columns())
+                .load::<Namespace>(conn)
+        })?;
+
+        Ok(result)
+    }
+
     async fn search_classes(
         &self,
         pool: &DbPool,
         query_params: Vec<ParsedQueryParam>,
-    ) -> Result<Vec<HubuumClass>, ApiError> {
+    ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         use crate::models::PermissionFilter;
         use crate::schema::hubuumclass::dsl::{
             hubuumclass, id as hubuum_class_id, namespace_id as hubuum_classes_nid,
@@ -45,18 +134,12 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             query_params = ?query_params
         );
 
-        let mut conn = pool.get()?;
-
         let mut permissions_list = query_params.permissions()?;
         permissions_list.ensure_contains(&[Permissions::ReadClass, Permissions::ReadCollection]);
 
         // Get all namespace IDs that the user has read permissions on, and if we have a list of selected namespaces, filter on those.
-        let namespace_ids: Vec<i32> = self
-            .namespaces(pool, &permissions_list)
-            .await?
-            .into_iter()
-            .map(|n| n.id)
-            .collect();
+        let namespaces = self.namespaces(pool, &permissions_list).await?;
+        let namespace_ids: Vec<i32> = namespaces.iter().map(|n| n.id).collect();
 
         debug!(
             message = "Searching classes",
@@ -161,12 +244,21 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
 
         trace_query!(base_query, "Searching classes");
 
-        let result = base_query
-            .select(hubuumclass::all_columns())
-            .distinct() // TODO: Is it the joins that makes this required?
-            .load::<HubuumClass>(&mut conn)?;
+        let result = with_connection(pool, |conn| {
+            base_query
+                .select(hubuumclass::all_columns())
+                .distinct() // TODO: Is it the joins that makes this required?
+                .load::<HubuumClass>(conn)
+        })?;
 
-        Ok(result)
+        // Map namespace IDs to namespaces for easy lookup
+        let namespace_map: std::collections::HashMap<i32, Namespace> =
+            namespaces.into_iter().map(|n| (n.id, n)).collect();
+
+        let expanded_result: Vec<HubuumClassExpanded> =
+            result.expand_namespace_from_map(&namespace_map);
+
+        Ok(expanded_result)
     }
 
     async fn search_objects(
@@ -187,8 +279,6 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             user_id = self.id(),
             query_params = ?query_params
         );
-
-        let mut conn = pool.get()?;
 
         let mut permission_list = query_params.permissions()?;
         permission_list.ensure_contains(&[Permissions::ReadObject, Permissions::ReadCollection]);
@@ -304,10 +394,12 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
 
         trace_query!(base_query, "Searching objects");
 
-        let result = base_query
-            .select(hubuumobject::all_columns())
-            .distinct() // TODO: Is it the joins that makes this required?
-            .load::<HubuumObject>(&mut conn)?;
+        let result = with_connection(pool, |conn| {
+            base_query
+                .select(hubuumobject::all_columns())
+                .distinct() // TODO: Is it the joins that makes this required?
+                .load::<HubuumObject>(conn)
+        })?;
 
         Ok(result)
     }
@@ -347,8 +439,6 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             user_id = self.id(),
             query_params = ?query_params
         );
-
-        let mut conn = pool.get()?;
 
         // Permissions vector must contain ReadClassRelation
         let mut permissions_list = query_params.permissions()?;
@@ -433,10 +523,12 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
 
         trace_query!(base_query, "Searching class relations");
 
-        let result = base_query
-            .select(hubuumclass_relation::all_columns())
-            .distinct() // TODO: Is it the joins that makes this required?
-            .load::<HubuumClassRelation>(&mut conn)?;
+        let result = with_connection(pool, |conn| {
+            base_query
+                .select(hubuumclass_relation::all_columns())
+                .distinct() // TODO: Is it the joins that makes this required?
+                .load::<HubuumClassRelation>(conn)
+        })?;
 
         Ok(result)
     }
@@ -586,10 +678,12 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
 
         trace_query!(base_query, "Searching object relations");
 
-        let result = base_query
-            .select(obj::object_closure_view::all_columns())
-            .distinct() // TODO: Is it the joins that makes this required?
-            .load::<ObjectClosureView>(&mut pool.get()?)?;
+        let result = with_connection(pool, |conn| {
+            base_query
+                .select(obj::object_closure_view::all_columns())
+                .distinct() // TODO: Is it the joins that makes this required?
+                .load::<ObjectClosureView>(conn)
+        })?;
 
         Ok(result)
     }
@@ -602,12 +696,13 @@ pub trait GroupAccessors: SelfAccessors<User> {
         use crate::schema::groups::dsl::*;
         use crate::schema::user_groups::dsl::{group_id, user_groups, user_id};
 
-        let mut conn = pool.get()?;
-        let group_list = user_groups
-            .inner_join(groups.on(id.eq(group_id)))
-            .filter(user_id.eq(self.id()))
-            .select(groups::all_columns())
-            .load::<Group>(&mut conn)?;
+        let group_list = with_connection(pool, |conn| {
+            user_groups
+                .inner_join(groups.on(id.eq(group_id)))
+                .filter(user_id.eq(self.id()))
+                .select(groups::all_columns())
+                .load::<Group>(conn)
+        })?;
 
         Ok(group_list)
     }
@@ -688,8 +783,6 @@ pub trait GroupAccessors: SelfAccessors<User> {
 
         debug!(message = "JSON Schema subquery", stage = "Complete", raw_sql = ?raw_sql, bind_variables = ?bind_varaibles);
 
-        let mut connection = pool.get()?;
-
         let mut query = diesel::sql_query(raw_sql).into_boxed();
 
         for bind_var in bind_varaibles {
@@ -704,7 +797,7 @@ pub trait GroupAccessors: SelfAccessors<User> {
 
         trace_query!(query, "JSONB Schema subquery");
 
-        let result_ids = query.get_results::<ClassIdResult>(&mut connection)?;
+        let result_ids = with_connection(pool, |conn| query.get_results::<ClassIdResult>(conn))?;
         let ids: Vec<i32> = result_ids
             .into_iter()
             .map(|r: ClassIdResult| r.id)
@@ -744,8 +837,6 @@ pub trait GroupAccessors: SelfAccessors<User> {
 
         debug!(message = "JSON Data subquery", stage = "Complete", raw_sql = ?raw_sql, bind_variables = ?bind_varaibles);
 
-        let mut connection = pool.get()?;
-
         let mut query = diesel::sql_query(raw_sql).into_boxed();
 
         for bind_var in bind_varaibles {
@@ -760,7 +851,7 @@ pub trait GroupAccessors: SelfAccessors<User> {
 
         trace_query!(query, "JSONB Data subquery");
 
-        let result_ids = query.get_results::<ObjectIDResult>(&mut connection)?;
+        let result_ids = with_connection(pool, |conn| query.get_results::<ObjectIDResult>(conn))?;
         let ids: Vec<i32> = result_ids
             .into_iter()
             .map(|r: ObjectIDResult| r.id)
@@ -790,7 +881,6 @@ pub trait UserNamespaceAccessors: SelfAccessors<User> + GroupAccessors {
         use crate::schema::namespaces::dsl::{id as namespaces_table_id, namespaces};
         use crate::schema::permissions::dsl::{group_id, namespace_id, permissions};
 
-        let mut conn = pool.get()?;
         let groups_id_subquery = self.group_ids_subquery();
 
         let mut base_query = permissions
@@ -801,17 +891,19 @@ pub trait UserNamespaceAccessors: SelfAccessors<User> + GroupAccessors {
             base_query = perm.create_boxed_filter(base_query, true);
         }
 
-        let result = base_query
-            .inner_join(namespaces.on(namespace_id.eq(namespaces_table_id)))
-            .select(namespaces::all_columns())
-            .load::<Namespace>(&mut conn)?;
+        let result = with_connection(pool, |conn| {
+            base_query
+                .inner_join(namespaces.on(namespace_id.eq(namespaces_table_id)))
+                .select(namespaces::all_columns())
+                .load::<Namespace>(conn)
+        })?;
 
         Ok(result)
     }
 }
 
 pub trait UserClassAccessors: Search {
-    async fn classes_read(&self, pool: &DbPool) -> Result<Vec<HubuumClass>, ApiError> {
+    async fn classes_read(&self, pool: &DbPool) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         self.search_classes(
             pool,
             vec![ParsedQueryParam::new(
@@ -827,7 +919,7 @@ pub trait UserClassAccessors: Search {
         &self,
         pool: &DbPool,
         namespaces: Vec<N>,
-    ) -> Result<Vec<HubuumClass>, ApiError> {
+    ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         let futures: Vec<_> = namespaces
             .into_iter()
             .map(|n| {
@@ -858,7 +950,7 @@ pub trait UserClassAccessors: Search {
         pool: &DbPool,
         namespaces: Vec<N>,
         permissions_list: Vec<Permissions>,
-    ) -> Result<Vec<HubuumClass>, ApiError> {
+    ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         let futures: Vec<_> = namespaces
             .into_iter()
             .map(|n| {
@@ -892,7 +984,7 @@ pub trait UserClassAccessors: Search {
         &self,
         pool: &DbPool,
         permissions_list: Vec<Permissions>,
-    ) -> Result<Vec<HubuumClass>, ApiError> {
+    ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         let mut queries = vec![];
 
         for perm in permissions_list {
@@ -906,7 +998,7 @@ pub trait UserClassAccessors: Search {
         self.search_classes(pool, queries).await
     }
 
-    async fn classes(&self, pool: &DbPool) -> Result<Vec<HubuumClass>, ApiError> {
+    async fn classes(&self, pool: &DbPool) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         self.search_classes(pool, vec![]).await
     }
 }
@@ -941,7 +1033,6 @@ pub trait ObjectAccessors: UserClassAccessors + UserNamespaceAccessors {
         };
         use crate::schema::permissions::dsl::*;
 
-        let mut conn = pool.get()?;
         let group_id_subquery = self.group_ids_subquery();
 
         let namespace_ids: Vec<i32> = self
@@ -968,9 +1059,11 @@ pub trait ObjectAccessors: UserClassAccessors + UserNamespaceAccessors {
             joined_query = joined_query.filter(hubuum_class_id.eq_any(valid_class_ids));
         }
 
-        let result = joined_query
-            .select(hubuumobject::all_columns())
-            .load::<HubuumObject>(&mut conn)?;
+        let result = with_connection(pool, |conn| {
+            joined_query
+                .select(hubuumobject::all_columns())
+                .load::<HubuumObject>(conn)
+        })?;
 
         Ok(result)
     }
@@ -1008,9 +1101,9 @@ impl SelfAccessors<User> for UserID {
 
     async fn instance(&self, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::*;
-        Ok(users
-            .filter(id.eq(self.0))
-            .first::<User>(&mut pool.get()?)?)
+        Ok(with_connection(pool, |conn| {
+            users.filter(id.eq(self.0)).first::<User>(conn)
+        })?)
     }
 }
 
