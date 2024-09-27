@@ -143,7 +143,7 @@ jobs:
           echo "Creating database"
           PGPASSWORD=postgres createdb -U postgres -h localhost -p 5432 hubuum_rust_test
           echo "Running database setup and migrations"
-          diesel migration run --database-url ${{ env.DATABASE_URL }}
+          diesel migration run --database-url ${{ env.DATABASE_URL }} --locked-schema
           echo "Checking database setup"
           PGPASSWORD=postgres psql -U postgres -h localhost -p 5432 -d hubuum_rust_test -c "select * from users;"
       - name: Configure Git
