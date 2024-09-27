@@ -980,7 +980,7 @@ filter_fields!(
     (JsonData, "json_data"),
     (Permissions, "permissions"),
     (Classes, "classes"),
-    (ClassId, "class"),
+    (ClassId, "class_id"),
     (CreatedAt, "created_at"),
     (UpdatedAt, "updated_at"),
     (NameFrom, "from_name"),

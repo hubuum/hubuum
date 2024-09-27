@@ -70,7 +70,7 @@ impl GetNamespace<(Namespace, Namespace)> for NewHubuumClassRelation {
                 .load::<Namespace>(conn)
         })?;
 
-        if from_id == to_id && namespace_list.len() == 1 {
+        if namespace_list.len() == 1 {
             trace!("Found same namespace for class relation, returning same namespace twice");
             return Ok((namespace_list[0].clone(), namespace_list[0].clone()));
         } else if namespace_list.len() != 2 {
@@ -98,9 +98,7 @@ where
         use crate::schema::namespaces::dsl::{id, namespaces};
 
         let namespace = with_connection(pool, |conn| {
-            namespaces
-                .filter(id.eq(self.id()))
-                .first::<Namespace>(conn)
+            namespaces.filter(id.eq(self.id())).first::<Namespace>(conn)
         })?;
 
         Ok(namespace)

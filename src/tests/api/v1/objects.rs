@@ -17,14 +17,18 @@ mod tests {
         format!("{}/{}/{}", OBJECT_ENDPOINT, class_id, object_id)
     }
 
+    fn objects_in_class_endpoint(class_id: i32) -> String {
+        format!("{}/{}/", OBJECT_ENDPOINT, class_id)
+    }
+
     #[actix_rt::test]
     async fn get_patch_and_delete_objects_in_class() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
 
-        let namespace = create_namespace(&pool, "get_objects_in_class")
+        let namespace = create_namespace(&pool, "get_patch_and_delete_objects_in_class")
             .await
             .unwrap();
-        let classes = create_test_classes("get_objects_in_class").await;
+        let classes = create_test_classes("get_patch_and_delete_objects_in_class").await;
 
         let class = &classes[0];
 
@@ -143,5 +147,36 @@ mod tests {
 
         let created_object_url = headers.get("Location").unwrap().to_str().unwrap();
         assert_eq!(created_object_url, object_url);
+    }
+
+    #[actix_rt::test]
+    async fn get_objects_in_class() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+
+        let namespace = create_namespace(&pool, "get_objects_in_class")
+            .await
+            .unwrap();
+        let classes = create_test_classes("get_objects_in_class").await;
+
+        let class = &classes[0];
+
+        let mut objects = vec![];
+
+        for i in 0..5 {
+            let object = NewHubuumObject {
+                namespace_id: namespace.id,
+                hubuum_class_id: classes[0].id,
+                data: serde_json::json!({"test": format!("data_{}", i)}),
+                name: format!("test get objects {}", i),
+                description: format!("test object description {}", i),
+            };
+            objects.push(object.save(&pool).await.unwrap());
+        }
+
+        let resp = get_request(&pool, &admin_token, &objects_in_class_endpoint(class.id)).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let objects_from_api: Vec<HubuumObject> = test::read_body_json(resp).await;
+
+        assert_eq!(objects_from_api.len(), objects.len());
     }
 }

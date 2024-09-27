@@ -381,6 +381,12 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                     operator,
                     crate::schema::hubuumobject::dsl::hubuum_class_id
                 ),
+                FilterField::ClassId => numeric_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumobject::dsl::hubuum_class_id
+                ),
                 FilterField::JsonData => {}    // Handled above
                 FilterField::Permissions => {} // Handled above
                 _ => {

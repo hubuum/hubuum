@@ -1,4 +1,5 @@
 #![allow(unused_imports)]
+#![allow(ambiguous_glob_reexports)] // We have several test modules, should be fine
 pub mod class;
 pub mod group;
 pub mod namespace;
