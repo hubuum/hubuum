@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{errors::ApiError, schema::permissions};
 
+use super::search::ParsedQueryParam;
+
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
 pub enum Permissions {
     ReadCollection,
@@ -19,6 +21,14 @@ pub enum Permissions {
     ReadObject,
     UpdateObject,
     DeleteObject,
+    CreateClassRelation,
+    ReadClassRelation,
+    UpdateClassRelation,
+    DeleteClassRelation,
+    CreateObjectRelation,
+    ReadObjectRelation,
+    UpdateObjectRelation,
+    DeleteObjectRelation,
 }
 
 impl Permissions {
@@ -45,6 +55,14 @@ impl Permissions {
             "ReadObject" => Ok(Permissions::ReadObject),
             "UpdateObject" => Ok(Permissions::UpdateObject),
             "DeleteObject" => Ok(Permissions::DeleteObject),
+            "CreateClassRelation" => Ok(Permissions::CreateClassRelation),
+            "ReadClassRelation" => Ok(Permissions::ReadClassRelation),
+            "UpdateClassRelation" => Ok(Permissions::UpdateClassRelation),
+            "DeleteClassRelation" => Ok(Permissions::DeleteClassRelation),
+            "CreateObjectRelation" => Ok(Permissions::CreateObjectRelation),
+            "ReadObjectRelation" => Ok(Permissions::ReadObjectRelation),
+            "UpdateObjectRelation" => Ok(Permissions::UpdateObjectRelation),
+            "DeleteObjectRelation" => Ok(Permissions::DeleteObjectRelation),
             _ => Err(ApiError::BadRequest(format!("Invalid permission: '{}'", s))),
         }
     }
@@ -67,32 +85,54 @@ impl Display for Permissions {
                 Permissions::ReadObject => "ReadObject",
                 Permissions::UpdateObject => "UpdateObject",
                 Permissions::DeleteObject => "DeleteObject",
+                Permissions::CreateClassRelation => "CreateClassRelation",
+                Permissions::ReadClassRelation => "ReadClassRelation",
+                Permissions::UpdateClassRelation => "UpdateClassRelation",
+                Permissions::DeleteClassRelation => "DeleteClassRelation",
+                Permissions::CreateObjectRelation => "CreateObjectRelation",
+                Permissions::ReadObjectRelation => "ReadObjectRelation",
+                Permissions::UpdateObjectRelation => "UpdateObjectRelation",
+                Permissions::DeleteObjectRelation => "DeleteObjectRelation",
             }
         )
     }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct PermissionsList<T: Serialize + PartialEq>(Vec<T>);
+pub struct PermissionsList<T: Serialize + PartialEq + Clone>(Vec<T>);
 
-impl<T: Serialize + PartialEq> PermissionsList<T> {
+impl<T: Serialize + PartialEq + Clone> PermissionsList<T> {
     // Constructor that accepts a generic IntoIterator so we can create a PermissionsList from any
     // collection of items that can be converted into an iterator.
     pub fn new<I: IntoIterator<Item = T>>(items: I) -> Self {
         PermissionsList(items.into_iter().collect())
     }
 
+    pub fn from_query_params(
+        query_params: Vec<ParsedQueryParam>,
+    ) -> Result<PermissionsList<Permissions>, ApiError> {
+        use crate::models::search::QueryParamsExt;
+        query_params.permissions()
+    }
+
     pub fn contains(&self, item: &T) -> bool {
         self.0.contains(item)
     }
 
+    pub fn ensure_contains(&mut self, items: &[T]) {
+        for item in items {
+            if !self.contains(item) {
+                self.0.push(item.clone());
+            }
+        }
+    }
     // Method to get an iterator over references to the items in the Vec<T>
     pub fn iter(&self) -> slice::Iter<'_, T> {
         self.0.iter()
     }
 }
 
-impl<T: Serialize + PartialEq + Display> Display for PermissionsList<T> {
+impl<T: Serialize + PartialEq + Clone + Display> Display for PermissionsList<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let formatted = self
             .0
@@ -104,7 +144,7 @@ impl<T: Serialize + PartialEq + Display> Display for PermissionsList<T> {
     }
 }
 
-impl<'a, T: Serialize + PartialEq> IntoIterator for &'a PermissionsList<T> {
+impl<'a, T: Serialize + PartialEq + Clone> IntoIterator for &'a PermissionsList<T> {
     type Item = &'a T;
     type IntoIter = slice::Iter<'a, T>;
 
@@ -127,7 +167,8 @@ pub trait PermissionFilter<'a, Q> {
     ///
     /// ## Example
     ///
-    /// ```
+    /// ```ignore
+    /// use crate::models::Permissions;
     /// use crate::models::PermissionFilter;
     /// use crate::schema::permissions::dsl::{permissions, group_id, namespace_id};
     ///
@@ -171,6 +212,30 @@ impl<'a> PermissionFilter<'a, permissions::BoxedQuery<'a, diesel::pg::Pg>> for P
             Permissions::ReadObject => query.filter(permissions::has_read_object.eq(target)),
             Permissions::UpdateObject => query.filter(permissions::has_update_object.eq(target)),
             Permissions::DeleteObject => query.filter(permissions::has_delete_object.eq(target)),
+            Permissions::CreateClassRelation => {
+                query.filter(permissions::has_create_class_relation.eq(target))
+            }
+            Permissions::ReadClassRelation => {
+                query.filter(permissions::has_read_class_relation.eq(target))
+            }
+            Permissions::UpdateClassRelation => {
+                query.filter(permissions::has_update_class_relation.eq(target))
+            }
+            Permissions::DeleteClassRelation => {
+                query.filter(permissions::has_delete_class_relation.eq(target))
+            }
+            Permissions::CreateObjectRelation => {
+                query.filter(permissions::has_create_object_relation.eq(target))
+            }
+            Permissions::ReadObjectRelation => {
+                query.filter(permissions::has_read_object_relation.eq(target))
+            }
+            Permissions::UpdateObjectRelation => {
+                query.filter(permissions::has_update_object_relation.eq(target))
+            }
+            Permissions::DeleteObjectRelation => {
+                query.filter(permissions::has_delete_object_relation.eq(target))
+            }
         }
     }
 }
@@ -193,6 +258,14 @@ pub struct Permission {
     pub has_read_object: bool,
     pub has_update_object: bool,
     pub has_delete_object: bool,
+    pub has_create_class_relation: bool,
+    pub has_read_class_relation: bool,
+    pub has_update_class_relation: bool,
+    pub has_delete_class_relation: bool,
+    pub has_create_object_relation: bool,
+    pub has_read_object_relation: bool,
+    pub has_update_object_relation: bool,
+    pub has_delete_object_relation: bool,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
 }
@@ -215,6 +288,14 @@ pub struct NewPermission {
     pub has_read_object: bool,
     pub has_update_object: bool,
     pub has_delete_object: bool,
+    pub has_create_class_relation: bool,
+    pub has_read_class_relation: bool,
+    pub has_update_class_relation: bool,
+    pub has_delete_class_relation: bool,
+    pub has_create_object_relation: bool,
+    pub has_read_object_relation: bool,
+    pub has_update_object_relation: bool,
+    pub has_delete_object_relation: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, AsChangeset, Default)]
@@ -232,4 +313,12 @@ pub struct UpdatePermission {
     pub has_read_object: Option<bool>,
     pub has_update_object: Option<bool>,
     pub has_delete_object: Option<bool>,
+    pub has_create_class_relation: Option<bool>,
+    pub has_read_class_relation: Option<bool>,
+    pub has_update_class_relation: Option<bool>,
+    pub has_delete_class_relation: Option<bool>,
+    pub has_create_object_relation: Option<bool>,
+    pub has_read_object_relation: Option<bool>,
+    pub has_update_object_relation: Option<bool>,
+    pub has_delete_object_relation: Option<bool>,
 }

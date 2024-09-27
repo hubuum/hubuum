@@ -1,10 +1,12 @@
 #![allow(unused_imports)]
+#![allow(ambiguous_glob_reexports)] // We have several test modules, should be fine
 pub mod class;
 pub mod group;
 pub mod namespace;
 pub mod object;
 pub mod output;
 pub mod permissions;
+pub mod relation;
 pub mod search;
 pub mod token;
 pub mod user;
@@ -18,6 +20,7 @@ pub use crate::models::namespace::*;
 pub use crate::models::object::*;
 pub use crate::models::output::*;
 pub use crate::models::permissions::*;
+pub use crate::models::relation::*;
 pub use crate::models::token::*;
 pub use crate::models::user::*;
 pub use crate::models::user_group::*;

@@ -1,4 +1,8 @@
 use diesel::prelude::*;
+
+use diesel::pg::Pg;
+use diesel::sql_types::{Integer, Text, Timestamp};
+
 use serde::{Deserialize, Serialize};
 
 use crate::models::group::Group;
@@ -20,7 +24,7 @@ use tracing::info;
 
 use super::PermissionsList;
 
-#[derive(Serialize, Deserialize, Queryable, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, Queryable, PartialEq, Debug, Clone, Selectable)]
 #[diesel(table_name = namespaces)]
 pub struct Namespace {
     pub id: i32,

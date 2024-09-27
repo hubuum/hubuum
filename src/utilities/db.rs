@@ -1,6 +1,7 @@
 use urlparse::urlparse;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct DatabaseUrlComponents {
     pub vendor: String,
     pub username: String,

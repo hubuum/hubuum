@@ -29,6 +29,52 @@ macro_rules! debug_query {
 }
 
 #[macro_export]
+/// ## Check if a user has a set of permissions in a set of namespaces.
+///
+/// This is a thin wrapper over the [`UserPermissions::can`] method, but with a more
+/// convenient syntax for the caller as the objects we test against may be of different types
+/// but all implement the [`NamespaceAccessors`] trait.
+///
+/// ### Arguments
+///
+/// * `pool` - A database connection pool.
+/// * `user` - The user (impl [`UserPermissions`]) to check permissions for.
+/// * `[permissions]` - An iterable of [`Permissions`] to check for.
+///   All permissions must be present in all namespaces.
+/// * `objects+`- Objects to check permissions on (impl [`NamespaceAccessors`]).
+///
+/// ### Returns
+///
+/// * Nothing if the user has the required permissions, or an [`ApiError::Forbidden`] if they do not.
+///
+/// ### Example
+///
+/// ```ignore
+/// can!(pool, user, [Permissions::ReadCollection], namespace, class, object);
+/// can!(pool, user, [Permissions::ReadCollection, Permissions::UpdateCollection], namespace, class1, class2);
+/// ```
+///
+/// [`UserPermissions::can`]: crate::db::traits::UserPermissions::can
+/// [`UserPermissions`]: crate::db::traits::UserPermissions
+/// [`NamespaceAccessors`]: crate::traits::NamespaceAccessors
+/// [`Permissions`]: crate::models::Permissions
+/// [`ApiError::Forbidden`]: crate::errors::ApiError::Forbidden
+macro_rules! can {
+    ($pool:expr, $user:expr, [$($perm:expr),+], $($namespace:expr),+) => {{
+        $user.can(
+            $pool,
+            vec![$($perm),+],
+            vec![
+                // This should be fairly cheap. We're just getting the namespace ID for each object.
+                // which is a field lookup and convertinng it to NamespaceID directly. There is no
+                // database interaction here but the trait definition requires the pool to be passed.
+                $(NamespaceID($namespace.namespace_id($pool).await?)),+
+            ]
+        ).await?
+    }};
+}
+
+#[macro_export]
 /// Check permissions for a user on a namespace, class, or object.
 ///
 /// ## Arguments
@@ -45,7 +91,7 @@ macro_rules! debug_query {
 ///
 /// ## Example
 ///
-/// ```
+/// ```ignore
 /// check_permissions!(namespace, pool, requestor.user, Permissions::ReadCollection);
 /// check_permissions!(namespace, pool, requestor.user, Permissions::ReadCollection, Permissions::UpdateCollection);
 ///
@@ -54,7 +100,7 @@ macro_rules! check_permissions {
     // Captures any number of permissions passed after the user argument and converts them into a vector
     ($request_obj:expr, $pool:expr, $user:expr, $($permissions:expr),+ $(,)?) => {{
         use $crate::errors::ApiError;
-        use $crate::traits::NamespaceAccessors;
+        use $crate::traits::{NamespaceAccessors, SelfAccessors, PermissionController};
         use tracing::warn;
 
         let permissions_vec = vec![$($permissions),+];
@@ -80,12 +126,33 @@ macro_rules! check_permissions {
 }
 
 #[macro_export]
+/// A JSON field search macro
+macro_rules! json_search {
+    ($query:expr, $param:expr, $filter_field:expr, $dbfield:expr, $me:expr, $pool:expr) => {{
+        // First get the correct JSON queries from the filter field. For object relations we have
+        // both to and from JSON data fields, so we need to check which one to apply for this filter.
+        let json_data_queries = $param.json_datas($filter_field)?;
+
+        // If there are no queries, we can skip this filter.
+        if !json_data_queries.is_empty() {
+            // Get the object IDs that match the JSON data queries. This is a complexly built
+            // query that is executed and we fish out the IDs from the result.
+            let json_data_integers = $me.json_data_subquery($pool, json_data_queries)?;
+            if !json_data_integers.is_empty() {
+                // If we get any object IDs, filter the database field we requested on these values.
+                $query = $query.filter($dbfield.eq_any(json_data_integers))
+            }
+        }
+    }};
+}
+
+#[macro_export]
 /// A numeric search macro
 macro_rules! numeric_search {
     ($base_query:expr, $parsed_query_param:expr, $operator:expr, $diesel_field:expr) => {{
         use diesel::dsl::not;
         use $crate::errors::ApiError;
-        use $crate::models::search::{DataType, Operator, SearchOperator};
+        use $crate::models::search::{DataType, Operator};
         let values = $parsed_query_param.value_as_integer()?;
 
         if !$operator.is_applicable_to(DataType::NumericOrDate) {
@@ -99,7 +166,7 @@ macro_rules! numeric_search {
         if values.is_empty() {
             return Err(ApiError::BadRequest(format!(
                 "Searching on field '{}' requires a value",
-                $parsed_query_param.field,
+                $parsed_query_param.field
             )));
         }
 
@@ -178,7 +245,7 @@ macro_rules! date_search {
         use diesel::dsl::not;
         use diesel::prelude::*;
         use $crate::errors::ApiError;
-        use $crate::models::search::{DataType, Operator, SearchOperator};
+        use $crate::models::search::{DataType, Operator};
 
         let values = $parsed_query_param.value_as_date()?;
 
@@ -253,13 +320,62 @@ macro_rules! date_search {
 }
 
 #[macro_export]
+/// A macro to search on a field with a list of values
+macro_rules! array_search {
+    ($base_query:expr, $param:expr, $operator:expr, $diesel_field:expr) => {{
+        use diesel::dsl::not;
+        use diesel::prelude::*;
+        use $crate::errors::ApiError;
+        use $crate::models::search::{DataType, Operator};
+
+        let values = $param.value_as_integer()?;
+
+        if !$operator.is_applicable_to(DataType::Array) {
+            return Err(ApiError::OperatorMismatch(format!(
+                "Operator '{:?}' is not applicable to field '{}'",
+                $operator, $param.field
+            )));
+        }
+
+        // The values shouldn't be empty at this point, but we can make sure.
+        if values.is_empty() {
+            return Err(ApiError::BadRequest(format!(
+                "Searching on field '{}' requires a value",
+                $param.field
+            )));
+        }
+
+        let (op, negated) = $operator.op_and_neg();
+
+        match (op, negated) {
+            (Operator::Contains, false) => {
+                $base_query = $base_query.filter($diesel_field.contains(values))
+            }
+            (Operator::Contains, true) => {
+                $base_query = $base_query.filter(not($diesel_field.contains(values)))
+            }
+            (Operator::Equals, false) => $base_query = $base_query.filter($diesel_field.eq(values)),
+            (Operator::Equals, true) => {
+                $base_query = $base_query.filter(not($diesel_field.eq(values)))
+            }
+            _ => {
+                return Err(ApiError::OperatorMismatch(format!(
+                    "Operator '{:?}' not implemented for field '{}' (type: array)",
+                    $operator, $param.field
+                )))
+            }
+        }
+    }};
+}
+
+#[macro_export]
 /// A string search macro
 macro_rules! string_search {
     ($base_query:expr, $param:expr, $operator:expr, $diesel_field:expr) => {{
         use diesel::dsl::not;
         use diesel::prelude::*;
         use $crate::errors::ApiError;
-        use $crate::models::search::{DataType, Operator, SearchOperator};
+        use $crate::models::search::{DataType, Operator};
 
         let value = $param.value.clone();
 
@@ -298,10 +414,10 @@ macro_rules! string_search {
                 $base_query = $base_query.filter(not($diesel_field.like(format!("{}%", value))))
             }
             (Operator::EndsWith, false) => {
-                $base_query = $base_query.filter($diesel_field.like(format!("{}%", value)))
+                $base_query = $base_query.filter($diesel_field.like(format!("%{}", value)))
             }
             (Operator::EndsWith, true) => {
-                $base_query = $base_query.filter(not($diesel_field.like(format!("{}%", value))))
+                $base_query = $base_query.filter(not($diesel_field.like(format!("%{}", value))))
             }
             (Operator::IContains, false) => {
                 $base_query = $base_query.filter($diesel_field.ilike(format!("%{}%", value)))
@@ -325,7 +441,7 @@ macro_rules! boolean_search {
     ($base_query:expr, $param:expr, $operator:expr, $diesel_field:expr) => {{
         use diesel::dsl::not;
         use $crate::errors::ApiError;
-        use $crate::models::search::{DataType, Operator, SearchOperator};
+        use $crate::models::search::{DataType, Operator};
 
         let value = $param.value_as_boolean()?;
 

@@ -3,14 +3,15 @@ use serde::Serialize;
 
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::models::traits::GroupAccessors;
 use crate::models::{
-    HubuumClass, HubuumObject, Namespace, NewPermission, Permission, PermissionFilter, Permissions,
+    HubuumClass, Namespace, NewPermission, Permission, PermissionFilter, Permissions,
     PermissionsList, UpdatePermission, User,
 };
 
 #[allow(unused_imports)]
-pub use crate::models::traits::user::{Search, UserClassAccessors, UserNamespaceAccessors};
+pub use crate::models::traits::user::{
+    GroupAccessors, Search, UserClassAccessors, UserNamespaceAccessors,
+};
 
 pub trait CanDelete {
     async fn delete(&self, pool: &DbPool) -> Result<(), ApiError>;
@@ -23,32 +24,29 @@ pub trait CanSave {
 
 pub trait CanUpdate {
     type Output;
-
     async fn update(&self, pool: &DbPool, entry_id: i32) -> Result<Self::Output, ApiError>;
 }
 
 // This trait is used to provide a uniform interface for both EntityID
 // and Entity types, ie User and UserID.
+#[allow(async_fn_in_trait)]
 pub trait SelfAccessors<T> {
     fn id(&self) -> i32;
     async fn instance(&self, pool: &DbPool) -> Result<T, ApiError>;
 }
 
-pub trait NamespaceAccessors {
-    async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError>;
-    async fn namespace_id(&self, pool: &DbPool) -> Result<i32, ApiError>;
+#[allow(async_fn_in_trait)]
+pub trait NamespaceAccessors<N = Namespace, I = i32> {
+    async fn namespace(&self, pool: &DbPool) -> Result<N, ApiError>;
+    async fn namespace_id(&self, pool: &DbPool) -> Result<I, ApiError>;
 }
 
-pub trait ClassAccessors {
-    async fn class(&self, pool: &DbPool) -> Result<HubuumClass, ApiError>;
-    async fn class_id(&self, pool: &DbPool) -> Result<i32, ApiError>;
+pub trait ClassAccessors<C = HubuumClass, I = i32> {
+    async fn class(&self, pool: &DbPool) -> Result<C, ApiError>;
+    async fn class_id(&self, pool: &DbPool) -> Result<I, ApiError>;
 }
 
-pub trait ObjectAccessors {
-    async fn object(&self, pool: &DbPool) -> Result<HubuumObject, ApiError>;
-    async fn object_id(&self, pool: &DbPool) -> Result<i32, ApiError>;
-}
-
+#[allow(dead_code)]
 pub trait PermissionController: Serialize + NamespaceAccessors {
     /// Check if the user has the given permission on the object.
     ///
@@ -62,14 +60,14 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// If this is called on a *ID, a full class is created to extract
     /// the namespace_id. To avoid creating the class multiple times during use
     /// do this:
-    /// ```
+    /// ```ignore
     /// class = class_id.class(pool).await?;
     /// if (class.user_can(pool, userid, Permissions::ReadClass).await?) {
     ///     return Ok(class);
     /// }
     /// ```
     /// And not this:
-    /// ```
+    /// ```ignore
     /// if (class_id.user_can(pool, userid, Permissions::ReadClass).await?) {
     ///    return Ok(class_id.class(pool).await?);
     /// }
@@ -86,11 +84,11 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// * `Ok(true)` if the user has the given permission on this class.
     /// * `Ok(false)` if the user does not have the given permission on this class.
     /// * `Err(_)` if the user does not have the given permission on this class, or if the
-    ///  permission is invalid.
+    ///   permission is invalid.
     ///
     /// ## Example
     ///
-    /// ```
+    /// ```ignore
     /// if (hubuum_class_or_classid.user_can(pool, userid, ClassPermissions::ReadClass).await?) {
     ///     // Do something
     /// }
@@ -115,7 +113,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// If this is called on a *ID, a full class is created to extract
     /// the namespace_id. To avoid creating the class multiple times during use
     /// do this:
-    /// ```
+    /// ```ignore
     /// permissions = vec![Permissions::ReadClass, Permissions::UpdateClass];
     /// class = class_id.class(pool).await?;
     /// if (class.user_can(pool, userid, permissions).await?) {
@@ -123,7 +121,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// }
     /// ```
     /// And not this:
-    /// ```
+    /// ```ignore
     /// permissions = vec![Permissions::ReadClass, Permissions::UpdateClass];
     /// if (class_id.user_can(pool, userid, permissions).await?) {
     ///    return Ok(class_id.class(pool).await?);
@@ -141,11 +139,11 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// * `Ok(true)` if the user has the given permission on this class.
     /// * `Ok(false)` if the user does not have the given permission on this class.
     /// * `Err(_)` if the user does not have the given permission on this class, or if the
-    ///  permission is invalid.
+    ///   permission is invalid.
     ///
     /// ## Example
     ///
-    /// ```
+    /// ```ignore
     /// if (hubuum_class_or_classid.user_can(pool, userid, ClassPermissions::ReadClass).await?) {
     ///     // Do something
     /// }
@@ -181,10 +179,10 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// Grant a set of permissions to a group.
     ///
     /// - If the group previously had any permissions, the requested
-    /// permissions are added to the existing permission object for
-    /// the group.
+    ///   permissions are added to the existing permission object for
+    ///   the group.
     /// - If the group did not have any permissions, a new permission
-    /// object is created for the group, with the requested permissions.
+    ///   object is created for the group, with the requested permissions.
     /// - No permissions are removed from the group.
     ///
     /// ## Arguments
@@ -257,6 +255,30 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
                             Permissions::DeleteObject => {
                                 update_perm.has_delete_object = Some(true);
                             }
+                            Permissions::CreateClassRelation => {
+                                update_perm.has_create_class_relation = Some(true);
+                            }
+                            Permissions::ReadClassRelation => {
+                                update_perm.has_read_class_relation = Some(true);
+                            }
+                            Permissions::UpdateClassRelation => {
+                                update_perm.has_update_class_relation = Some(true);
+                            }
+                            Permissions::DeleteClassRelation => {
+                                update_perm.has_delete_class_relation = Some(true);
+                            }
+                            Permissions::CreateObjectRelation => {
+                                update_perm.has_create_object_relation = Some(true);
+                            }
+                            Permissions::ReadObjectRelation => {
+                                update_perm.has_read_object_relation = Some(true);
+                            }
+                            Permissions::UpdateObjectRelation => {
+                                update_perm.has_update_object_relation = Some(true);
+                            }
+                            Permissions::DeleteObjectRelation => {
+                                update_perm.has_delete_object_relation = Some(true);
+                            }
                         }
                     }
 
@@ -285,6 +307,22 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
                         has_read_object: permission_list.contains(&Permissions::ReadObject),
                         has_update_object: permission_list.contains(&Permissions::UpdateObject),
                         has_delete_object: permission_list.contains(&Permissions::DeleteObject),
+                        has_create_class_relation: permission_list
+                            .contains(&Permissions::CreateClassRelation),
+                        has_read_class_relation: permission_list
+                            .contains(&Permissions::ReadClassRelation),
+                        has_update_class_relation: permission_list
+                            .contains(&Permissions::UpdateClassRelation),
+                        has_delete_class_relation: permission_list
+                            .contains(&Permissions::DeleteClassRelation),
+                        has_create_object_relation: permission_list
+                            .contains(&Permissions::CreateObjectRelation),
+                        has_read_object_relation: permission_list
+                            .contains(&Permissions::ReadObjectRelation),
+                        has_update_object_relation: permission_list
+                            .contains(&Permissions::UpdateObjectRelation),
+                        has_delete_object_relation: permission_list
+                            .contains(&Permissions::DeleteObjectRelation),
                     };
                     Ok(diesel::insert_into(permissions)
                         .values(&new_entry)
@@ -297,11 +335,11 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// Revoke a set of permissions from a group.
     ///
     /// - If the group previously had any permissions, the requested
-    /// permissions are removed from the existing permission object for
-    /// the group.
+    ///   permissions are removed from the existing permission object for
+    ///   the group.
     ///
     /// - If the group did not have any permissions, no permissions are modified
-    /// and an ApiError::NotFound is returned.
+    ///   and an ApiError::NotFound is returned.
     ///
     /// ## Arguments
     ///
@@ -370,6 +408,30 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
                     Permissions::DeleteObject => {
                         update_perm.has_delete_object = Some(false);
                     }
+                    Permissions::CreateClassRelation => {
+                        update_perm.has_create_class_relation = Some(false);
+                    }
+                    Permissions::ReadClassRelation => {
+                        update_perm.has_read_class_relation = Some(false);
+                    }
+                    Permissions::UpdateClassRelation => {
+                        update_perm.has_update_class_relation = Some(false);
+                    }
+                    Permissions::DeleteClassRelation => {
+                        update_perm.has_delete_class_relation = Some(false);
+                    }
+                    Permissions::CreateObjectRelation => {
+                        update_perm.has_create_object_relation = Some(false);
+                    }
+                    Permissions::ReadObjectRelation => {
+                        update_perm.has_read_object_relation = Some(false);
+                    }
+                    Permissions::UpdateObjectRelation => {
+                        update_perm.has_update_object_relation = Some(false);
+                    }
+                    Permissions::DeleteObjectRelation => {
+                        update_perm.has_delete_object_relation = Some(false);
+                    }
                 }
             }
             Ok(diesel::update(permissions)
@@ -383,11 +445,11 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// Grant a specific permission to a group.
     ///
     /// - If the group previously had the permission, the requested
-    /// permission is added to the existing permission object for
-    /// the group.
+    ///   permission is added to the existing permission object for
+    ///   the group.
     ///
     /// - If the group did not have the permission, a new permission
-    /// object is created for the group, with the requested permission.
+    ///   object is created for the group, with the requested permission.
     ///
     /// - No permissions are removed from the group.
     ///
@@ -417,11 +479,11 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// Revoke a specific permission from a group.
     ///
     /// - If the group previously had the permission, the requested
-    /// permission is removed from the existing permission object for
-    /// the group.
+    ///   permission is removed from the existing permission object for
+    ///   the group.
     ///
     /// - If the group did not have the permission, no permissions are modified
-    /// and an ApiError::NotFound is returned.
+    ///   and an ApiError::NotFound is returned.
     ///
     /// ## Arguments
     ///
@@ -450,11 +512,11 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// Set the permissions for a group.
     ///
     /// - If the group previously had any permissions, the requested
-    /// permissions *replace* the existing permission object for
-    /// the group.
+    ///   permissions *replace* the existing permission object for
+    ///   the group.
     ///
     /// - If the group did not have any permissions, a new permission
-    /// object is created for the group, with the requested permissions.
+    ///   object is created for the group, with the requested permissions.
     ///
     /// ## Arguments
     ///
@@ -525,6 +587,22 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
                         has_read_object: permission_list.contains(&Permissions::ReadObject),
                         has_update_object: permission_list.contains(&Permissions::UpdateObject),
                         has_delete_object: permission_list.contains(&Permissions::DeleteObject),
+                        has_create_class_relation: permission_list
+                            .contains(&Permissions::CreateClassRelation),
+                        has_read_class_relation: permission_list
+                            .contains(&Permissions::ReadClassRelation),
+                        has_update_class_relation: permission_list
+                            .contains(&Permissions::UpdateClassRelation),
+                        has_delete_class_relation: permission_list
+                            .contains(&Permissions::DeleteClassRelation),
+                        has_create_object_relation: permission_list
+                            .contains(&Permissions::CreateObjectRelation),
+                        has_read_object_relation: permission_list
+                            .contains(&Permissions::ReadObjectRelation),
+                        has_update_object_relation: permission_list
+                            .contains(&Permissions::UpdateObjectRelation),
+                        has_delete_object_relation: permission_list
+                            .contains(&Permissions::DeleteObjectRelation),
                     };
                     Ok(diesel::insert_into(permissions)
                         .values(&new_entry)

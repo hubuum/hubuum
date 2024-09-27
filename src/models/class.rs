@@ -11,7 +11,7 @@ pub struct HubuumClass {
     pub id: i32,
     pub name: String,
     pub namespace_id: i32,
-    pub json_schema: serde_json::Value,
+    pub json_schema: Option<serde_json::Value>,
     pub validate_schema: bool,
     pub description: String,
     pub created_at: chrono::NaiveDateTime,
@@ -32,8 +32,8 @@ pub struct ClassIdResult {
 pub struct NewHubuumClass {
     pub name: String,
     pub namespace_id: i32,
-    pub json_schema: serde_json::Value,
-    pub validate_schema: bool,
+    pub json_schema: Option<serde_json::Value>,
+    pub validate_schema: Option<bool>,
     pub description: String,
 }
 
@@ -45,6 +45,19 @@ pub struct UpdateHubuumClass {
     pub json_schema: Option<serde_json::Value>,
     pub validate_schema: Option<bool>,
     pub description: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct HubuumClassWithPath {
+    pub id: i32,
+    pub name: String,
+    pub namespace_id: i32,
+    pub json_schema: Option<serde_json::Value>,
+    pub validate_schema: bool,
+    pub description: String,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+    pub path: Vec<i32>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -89,8 +102,8 @@ pub mod tests {
         let class = NewHubuumClass {
             name: class_name.to_string(),
             namespace_id: namespace.id,
-            json_schema: serde_json::Value::Null,
-            validate_schema: false,
+            json_schema: None,
+            validate_schema: None,
             description: "test".to_string(),
         };
 
@@ -110,7 +123,7 @@ pub mod tests {
         assert_eq!(class.namespace_id(&pool).await.unwrap(), namespace.id);
         assert_eq!(class.name, class_name);
         assert_eq!(class.description, "test");
-        assert_eq!(class.json_schema, serde_json::Value::Null);
+        assert_eq!(class.json_schema, None);
 
         let fetched_class = get_class(class.id, &pool).await;
 

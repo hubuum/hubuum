@@ -1,6 +1,6 @@
 #[cfg(test)]
 pub mod tests {
-    use crate::models::{HubuumClass, NamespaceID, NewHubuumClass};
+    use crate::models::{HubuumClass, HubuumClassExpanded, NamespaceID, NewHubuumClass};
     use crate::traits::{CanDelete, CanSave};
     use actix_web::{http::StatusCode, test};
 
@@ -12,6 +12,16 @@ pub mod tests {
 
     const CLASSES_ENDPOINT: &str = "/api/v1/classes";
 
+    /// Create a set of 6 classes for testing
+    ///
+    /// The classes are created in a namespace with the name `prefix`_api_create_test_classes.
+    /// Their names are: `prefix`_api_class_1, `prefix`_api_class_2, etc.
+    /// Their descriptions are: `prefix`_api_description_1, `prefix`_api_description_2, etc.
+    ///
+    /// The classes use the following schemas:
+    /// 1-3: Blog
+    /// 4-5: Address
+    /// 6: Geo
     pub async fn create_test_classes(prefix: &str) -> Vec<crate::models::class::HubuumClass> {
         let (pool, _, _) = setup_pool_and_tokens().await;
 
@@ -34,8 +44,8 @@ pub mod tests {
                 name: format!("{}_api_class_{}", prefix, i),
                 description: format!("{}_api_description_{}", prefix, i),
                 namespace_id: ns.id,
-                json_schema: schema,
-                validate_schema: false,
+                json_schema: Some(schema),
+                validate_schema: Some(false),
             };
 
             created_classes.push(class.save(&pool).await.unwrap());
@@ -55,7 +65,7 @@ pub mod tests {
         }
     }
 
-    async fn api_get_classes_with_query_string(query_string: &str) -> Vec<HubuumClass> {
+    async fn api_get_classes_with_query_string(query_string: &str) -> Vec<HubuumClassExpanded> {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
         let resp = get_request(
             &pool,
@@ -65,7 +75,7 @@ pub mod tests {
         .await;
 
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let classes: Vec<HubuumClass> = test::read_body_json(resp).await;
+        let classes: Vec<HubuumClassExpanded> = test::read_body_json(resp).await;
         classes
     }
 
@@ -77,7 +87,7 @@ pub mod tests {
 
         let resp = get_request(&pool, &admin_token, CLASSES_ENDPOINT).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let classes: Vec<HubuumClass> = test::read_body_json(resp).await;
+        let classes: Vec<HubuumClassExpanded> = test::read_body_json(resp).await;
 
         // We can't do
         // assert_eq!(classes.len(), created_classes.len());
@@ -88,7 +98,7 @@ pub mod tests {
         // Check that we can do api/v1/classes/ as well as api/v1/classes
         let resp = get_request(&pool, &admin_token, &format!("{}/", CLASSES_ENDPOINT)).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let classes: Vec<HubuumClass> = test::read_body_json(resp).await;
+        let classes: Vec<HubuumClassExpanded> = test::read_body_json(resp).await;
         assert_contains_all!(&classes, &created_classes);
         cleanup(&created_classes).await;
     }
@@ -206,7 +216,7 @@ pub mod tests {
             )
             .await;
             let resp = assert_response_status(resp, StatusCode::OK).await;
-            let returned_class: HubuumClass = test::read_body_json(resp).await;
+            let returned_class: HubuumClassExpanded = test::read_body_json(resp).await;
             assert_eq!(class, &returned_class);
         }
         cleanup(&created_classes).await;
@@ -236,8 +246,8 @@ pub mod tests {
             name: "api_create_test_classes".to_string(),
             description: "api_create_test_classes".to_string(),
             namespace_id: ns.id,
-            json_schema: get_schema(SchemaType::Blog).clone(),
-            validate_schema: false,
+            json_schema: Some(get_schema(SchemaType::Blog).clone()),
+            validate_schema: Some(false),
         };
 
         let resp = post_request(
@@ -250,12 +260,12 @@ pub mod tests {
 
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
         let headers = resp.headers().clone();
-        let created_class_from_create: HubuumClass = test::read_body_json(resp).await;
+        let created_class_from_create: HubuumClassExpanded = test::read_body_json(resp).await;
         let created_class_url = headers.get("Location").unwrap().to_str().unwrap();
 
         let resp = get_request(&pool, &admin_token, created_class_url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let created_class: HubuumClass = test::read_body_json(resp).await;
+        let created_class: HubuumClassExpanded = test::read_body_json(resp).await;
 
         // Validate that the location is what we expect
         assert_eq!(
@@ -281,8 +291,8 @@ pub mod tests {
             name: "api_patch_test_classes".to_string(),
             description: "api_patch_test_classes_desc".to_string(),
             namespace_id: ns.id,
-            json_schema: get_schema(SchemaType::Blog).clone(),
-            validate_schema: false,
+            json_schema: Some(get_schema(SchemaType::Blog).clone()),
+            validate_schema: None,
         };
         let created_class = new_class.save(&pool).await.unwrap();
 
@@ -303,7 +313,7 @@ pub mod tests {
         .await;
 
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let updated_class_from_patch: HubuumClass = test::read_body_json(resp).await;
+        let updated_class_from_patch: HubuumClassExpanded = test::read_body_json(resp).await;
         let resp = get_request(
             &pool,
             &admin_token,
@@ -311,7 +321,7 @@ pub mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let updated_class_from_get: HubuumClass = test::read_body_json(resp).await;
+        let updated_class_from_get: HubuumClassExpanded = test::read_body_json(resp).await;
 
         assert_eq!(updated_class_from_patch, updated_class_from_get);
         assert_ne!(created_class, updated_class_from_patch);
@@ -322,7 +332,7 @@ pub mod tests {
             created_class.description
         );
         assert_eq!(
-            updated_class_from_patch.namespace_id,
+            updated_class_from_patch.namespace.id,
             created_class.namespace_id
         );
         assert_eq!(

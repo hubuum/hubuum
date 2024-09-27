@@ -28,21 +28,9 @@ impl User {
         let generated_token = crate::utilities::auth::generate_token();
 
         Ok(diesel::insert_into(crate::schema::tokens::table)
-            .values((
-                user_id.eq(self.id),
-                token.eq(&generated_token.get_token()),
-                issued.eq(chrono::Utc::now().naive_utc()),
-            ))
+            .values((user_id.eq(self.id), token.eq(&generated_token.get_token())))
             .execute(&mut pool.get()?)
             .map(|_| generated_token)?)
-    }
-
-    pub async fn get_tokens(&self, pool: &DbPool) -> Result<Vec<UserToken>, ApiError> {
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
-
-        crate::models::token::valid_tokens_for_user(&mut conn, self.id).await
     }
 
     pub async fn token_is_mine(
@@ -179,10 +167,14 @@ pub struct NewUser {
 
 impl NewUser {
     pub async fn new(username: &str, password: &str, email: Option<&str>) -> Self {
+        let email = match email {
+            Some(e) => Some(e.to_string()),
+            None => None,
+        };
         NewUser {
             username: username.to_string(),
             password: password.to_string(),
-            email: email.map(|s| s.to_string()),
+            email,
         }
     }
 
@@ -258,9 +250,7 @@ impl LoginUser {
     pub async fn login(self, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::*;
 
-        let mut conn = pool
-            .get()
-            .map_err(|e| ApiError::DbConnectionError(e.to_string()))?;
+        let mut conn = pool.get()?;
 
         // We could do .first::<User>(&mut conn)? here, due to the way errors.rs uses "From"
         // to map diesel errors. But, we specifically map Diesel's NotFound to our own NotFound

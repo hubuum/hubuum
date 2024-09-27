@@ -13,6 +13,7 @@ pub struct AdminAccess {
     pub user: User,
 }
 
+#[allow(dead_code)]
 pub struct AdminOrSelfAccess {
     pub token: Token,
     pub user: User,
@@ -41,10 +42,10 @@ fn extract_token(req: &HttpRequest) -> Result<Token, ApiError> {
 }
 
 async fn extract_user_from_token(pool: &DbPool, token: &Token) -> Result<User, ApiError> {
-    let mut conn = pool.get()?;
-    let user_token = token.is_valid(&mut conn).await?;
+    use crate::db::traits::Status;
+    let user_token = token.is_valid(pool).await?;
 
-    get_user_by_id(&mut conn, user_token.user_id)
+    get_user_by_id(pool, user_token.user_id)
         .map_err(|_| ApiError::Unauthorized("Invalid token".to_string()))
 }
 
@@ -63,8 +64,7 @@ async fn get_user_and_path(
 
     let path = path.as_str().to_string();
 
-    let mut conn = pool.get()?;
-    let user = get_user_by_id(&mut conn, user_id)?;
+    let user = get_user_by_id(pool, user_id)?;
 
     Ok((user, path))
 }

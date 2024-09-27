@@ -149,6 +149,15 @@ impl From<DieselError> for ApiError {
                 debug!(message = message, error = ?e);
                 ApiError::BadRequest(message)
             }
+            DieselError::DatabaseError(DatabaseErrorKind::Unknown, ref info) => {
+                let message = info.message();
+                if message.starts_with("Invalid object relation:") {
+                    debug!(message = message, error = ?e);
+                    return ApiError::BadRequest(message.to_string());
+                }
+                error!(message = "Database error", error = ?e);
+                ApiError::DatabaseError(e.to_string())
+            }
             _ => {
                 error!(message = "Database error", error = ?e);
                 ApiError::DatabaseError(e.to_string())

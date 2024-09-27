@@ -1,13 +1,17 @@
 #![allow(dead_code)]
 use actix_web::web::Json;
+use chrono::{format, DateTime, NaiveDateTime, Utc};
+use diesel::dsl::Filter;
 use diesel::sql_types::Bool;
+use std::str::FromStr;
 use std::{collections::HashSet, f32::consts::E};
 use tracing::debug;
 
-use crate::models::permissions::Permissions;
+use crate::models::permissions::{Permissions, PermissionsList};
 use crate::utilities::extensions::CustomStringExtensions;
 use crate::{errors::ApiError, schema::hubuumobject::data};
-use chrono::{format, DateTime, NaiveDateTime, Utc};
+
+use super::Permission;
 
 /// ## Parse a query string into search parameters
 ///
@@ -38,6 +42,17 @@ pub fn parse_query_parameter(query_string: &str) -> Result<Vec<ParsedQueryParam>
 
         let field_and_op: Vec<&str> = query_param_parts[0].splitn(2, "__").collect();
         let value = query_param_parts[1].to_string();
+
+        let value = match percent_encoding::percent_decode(value.as_bytes()).decode_utf8() {
+            Ok(value) => value.to_string(),
+            Err(e) => {
+                return Err(ApiError::BadRequest(format!(
+                    "Invalid query parameter: '{}', invalid value: {}",
+                    query_param, e
+                )));
+            }
+        };
+
         let field = field_and_op[0].to_string();
 
         if value.is_empty() {
@@ -54,7 +69,7 @@ pub fn parse_query_parameter(query_string: &str) -> Result<Vec<ParsedQueryParam>
         };
 
         let parsed_query_param = ParsedQueryParam {
-            field,
+            field: FilterField::from_str(&field)?,
             operator,
             value,
         };
@@ -79,7 +94,7 @@ pub fn parse_query_parameter(query_string: &str) -> Result<Vec<ParsedQueryParam>
 /// parsing the value into an integer, a date, or a permission.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedQueryParam {
-    pub field: String,
+    pub field: FilterField,
     pub operator: SearchOperator,
     pub value: String,
 }
@@ -129,30 +144,36 @@ impl ParsedQueryParam {
     /// ### Returns
     ///
     /// * A new ParsedQueryParam instance
-    pub fn new(field: &str, operator: Option<SearchOperator>, value: &str) -> Self {
+    pub fn new(
+        field: &str,
+        operator: Option<SearchOperator>,
+        value: &str,
+    ) -> Result<Self, ApiError> {
         let operator = operator.unwrap_or(SearchOperator::Equals { is_negated: false });
 
-        ParsedQueryParam {
-            field: field.to_string(),
+        Ok(ParsedQueryParam {
+            field: FilterField::from_str(field)?,
             operator,
             value: value.to_string(),
-        }
+        })
     }
 
     pub fn is_permission(&self) -> bool {
-        self.field == "permission"
+        self.field == FilterField::Permissions
     }
 
     pub fn is_namespace(&self) -> bool {
-        self.field == "namespace"
+        self.field == FilterField::Namespaces
     }
 
     pub fn is_json_schema(&self) -> bool {
-        self.field == "json_schema"
+        self.field == FilterField::JsonSchema
     }
 
     pub fn is_json_data(&self) -> bool {
-        self.field == "json_data"
+        self.field == FilterField::JsonData
+            || self.field == FilterField::JsonDataFrom
+            || self.field == FilterField::JsonDataTo
     }
 
     pub fn is_json(&self) -> bool {
@@ -320,22 +341,46 @@ impl ParsedQueryParam {
             }
             Some(SQLMappedType::String) | Some(SQLMappedType::None) => {
                 bind_variables.push(SQLValue::String(value));
-                format!("{}{} #>> {} {} ?", neg_str, field, key, sql_op)
+                format!(
+                    "{}{} #>> {} {} ?",
+                    neg_str,
+                    field.table_field(),
+                    key,
+                    sql_op
+                )
             }
             Some(SQLMappedType::Numeric) => {
                 let ints = value.as_integer()?;
                 bind_variables.push(SQLValue::Integer(ints[0]));
-                format!("{}({} #>> {})::numeric {} ?", neg_str, field, key, sql_op)
+                format!(
+                    "{}({} #>> {})::numeric {} ?",
+                    neg_str,
+                    field.table_field(),
+                    key,
+                    sql_op
+                )
             }
             Some(SQLMappedType::Date) => {
                 let dates = value.as_date()?;
                 bind_variables.push(SQLValue::Date(dates[0]));
-                format!("{}({} #>> {})::date {} ?", neg_str, field, key, sql_op)
+                format!(
+                    "{}({} #>> {})::date {} ?",
+                    neg_str,
+                    field.table_field(),
+                    key,
+                    sql_op
+                )
             }
             Some(SQLMappedType::Boolean) => {
                 let boolean = value.as_boolean()?;
                 bind_variables.push(SQLValue::Boolean(boolean));
-                format!("{}({} #>> {})::boolean {} ?", neg_str, field, key, sql_op)
+                format!(
+                    "{}({} #>> {})::boolean {} ?",
+                    neg_str,
+                    field.table_field(),
+                    key,
+                    sql_op
+                )
             }
         };
 
@@ -352,21 +397,19 @@ pub trait QueryParamsExt {
     /// ## Get a list of permissions from a list of parsed query parameters
     ///
     /// Iterate over the parsed query parameters and filter out the ones that are permissions,
-    /// defined as having the `field` set as "permission". For each value of each parsed query
+    /// defined as having the `field` set as "permissions". For each value of each parsed query
     /// parameter, attempt to parse it into a Permissions enum. If the value is not a valid
     /// permission, return an ApiError::BadRequest.
     ///
-    /// Note that duplicates may occur, it is up to the caller to handle this if necessary.
-    ///
     /// ### Returns    
     ///
-    /// * A vector of Permissions or ApiError::BadRequest if the permissions are invalid
-    fn permissions(&self) -> Result<Vec<Permissions>, ApiError>;
+    /// * A PermissionsList of Permissions or ApiError::BadRequest if the permissions are invalid
+    fn permissions(&self) -> Result<PermissionsList<Permissions>, ApiError>;
 
     /// ## Get a sorted list of namespace ids from a list of parsed query parameters
     ///
     /// Iterate over the parsed query parameters and filter out the ones that are namespaces,
-    /// defined as having the `field` set as "namespace". For each value of each parsed query
+    /// defined as having the `field` set as "namespaces". For each value of each parsed query
     /// parameter, attempt to parse it into a list integers via [`parse_integer_list`].
     ///
     /// If the value is not a valid list of integers, return an ApiError::BadRequest.
@@ -390,22 +433,21 @@ pub trait QueryParamsExt {
     /// Iterate over the parsed query parameters and filter out the ones that are JSON Data,
     /// defined as having the `field` set as "json_data". Also validates both keys and values
     /// and their matching to the operator.
-    fn json_datas(&self) -> Result<Vec<&ParsedQueryParam>, ApiError>;
+    fn json_datas(&self, filter: FilterField) -> Result<Vec<&ParsedQueryParam>, ApiError>;
 }
 
 impl QueryParamsExt for Vec<ParsedQueryParam> {
     /// ## Get a list of all Permissions in a list of parsed query parameters
     ///
     /// Iterate over the parsed query parameters and filter out the ones that are permissions,
-    /// defined as having the `field` set as "permission". For each value of a matching parsed query
+    /// defined as having the `field` set as "permissions". For each value of a matching parsed query
     /// parameter, attempt to parse it into a Permissions enum.
     ///
     /// Note that the list is not sorted and duplicates are removed.
     ///
     /// If any value is not a valid permission, return an ApiError::BadRequest.
-    fn permissions(&self) -> Result<Vec<Permissions>, ApiError> {
+    fn permissions(&self) -> Result<PermissionsList<Permissions>, ApiError> {
         let mut unique_permissions = HashSet::new();
-
         for param in self.iter().filter(|p| p.is_permission()) {
             match param.value_as_permission() {
                 Ok(permission) => {
@@ -414,13 +456,12 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
                 Err(e) => return Err(e),
             }
         }
-
-        Ok(unique_permissions.into_iter().collect())
+        Ok(PermissionsList::new(unique_permissions))
     }
     /// ## Get a sorted list of namespace ids from a list of parsed query parameters
     ///
     /// Iterate over the parsed query parameters and filter out the ones that are namespaces,
-    /// defined as having the `field` set as "namespace". For each value of a matching parsed query
+    /// defined as having the `field` set as "namespaces". For each value of a matching parsed query
     /// parameter, attempt to parse it into a list of integers via [`parse_integer_list`].
     ///
     /// If any value is not a valid list of integers, return an ApiError::BadRequest.
@@ -428,7 +469,7 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
         let mut nids = vec![];
 
         for p in self.iter() {
-            if p.field == "namespace" {
+            if p.field == FilterField::Namespaces {
                 nids.extend(p.value.as_integer()?);
             }
         }
@@ -453,9 +494,11 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
     ///
     /// Iterate over the parsed query parameters and filter out the ones that are JSON Schemas,
     /// defined as having the `field` set as "json_data".
-    fn json_datas(&self) -> Result<Vec<&ParsedQueryParam>, ApiError> {
-        let json_schema: Vec<&ParsedQueryParam> =
-            self.iter().filter(|p| p.is_json_data()).collect();
+    fn json_datas(&self, field: FilterField) -> Result<Vec<&ParsedQueryParam>, ApiError> {
+        let json_schema: Vec<&ParsedQueryParam> = self
+            .iter()
+            .filter(|p| p.is_json_data() && p.field == field)
+            .collect();
 
         Ok(json_schema)
     }
@@ -510,6 +553,7 @@ pub enum DataType {
     String,
     NumericOrDate,
     Boolean,
+    Array,
 }
 
 impl SearchOperator {
@@ -523,6 +567,9 @@ impl SearchOperator {
             | SO::Lt { .. }
             | SO::Lte { .. }
             | SO::Between { .. } => matches!(data_type, DataType::NumericOrDate),
+            SO::Contains { .. } => {
+                matches!(data_type, DataType::String) || matches!(data_type, DataType::Array)
+            }
             _ => {
                 matches!(data_type, DataType::String)
             }
@@ -865,6 +912,98 @@ fn get_sql_mapped_type_from_value(
     None
 }
 
+// Generate the FilterField enum and its associated functions. We use a macro
+// to generate the enum and its functions to ensure that the FromStr and query_string
+// functions are always in sync.
+macro_rules! filter_fields {
+    ($(($variant:ident, $str_rep:expr)),* $(,)?) => {
+        /// Valid search fields in URLS.
+        ///
+        /// Each enum variant corresponds to a field that can be searched on. As a general rule, fields that may
+        /// be issued repeatedly in the query string are puralized while fields that are unique are singular.
+        ///
+        /// JSON fields (JsonSchema and JsonData) also have a table field, which is used for JSON SQL query generation
+        /// to map into the correct JSON field in the database as these fields do not use the macro–defined searches
+        /// and interpolate the field directly.
+        #[derive(Debug, PartialEq, Clone)]
+        pub enum FilterField {
+            $($variant),*
+        }
+
+        impl std::str::FromStr for FilterField {
+            type Err = ApiError;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                match s {
+                    $(
+                        $str_rep => Ok(FilterField::$variant),
+                    )*
+                    _ => Err(ApiError::BadRequest(format!(
+                        "Invalid search field: '{}'",
+                        s
+                    ))),
+                }
+            }
+        }
+
+        impl std::fmt::Display for FilterField {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match self {
+                    $(
+                        FilterField::$variant => write!(f, "{}", $str_rep),
+                    )*
+                }
+            }
+        }
+
+        impl FilterField {
+            pub fn table_field(&self) -> &'static str {
+                match self {
+                    FilterField::JsonSchema => "json_schema",
+                    FilterField::JsonData => "json_data",
+                    _ => panic!("{:?} should not be used as a table field", self),
+                }
+            }
+        }
+    }
+}
+
+filter_fields!(
+    (Id, "id"),
+    (Namespaces, "namespaces"),
+    (Name, "name"),
+    (Description, "description"),
+    (Username, "username"),
+    (Email, "email"),
+    (ValidateSchema, "validate_schema"),
+    (JsonSchema, "json_schema"),
+    (JsonData, "json_data"),
+    (Permissions, "permissions"),
+    (Classes, "classes"),
+    (ClassId, "class_id"),
+    (CreatedAt, "created_at"),
+    (UpdatedAt, "updated_at"),
+    (NameFrom, "from_name"),
+    (NameTo, "to_name"),
+    (DescriptionFrom, "from_description"),
+    (DescriptionTo, "to_description"),
+    (ObjectFrom, "from_objects"),
+    (ObjectTo, "to_objects"),
+    (ClassTo, "to_classes"),
+    (ClassFrom, "from_classes"),
+    (NamespacesFrom, "from_namespaces"),
+    (NamespacesTo, "to_namespaces"),
+    (JsonDataFrom, "from_json_data"),
+    (JsonDataTo, "to_json_data"),
+    (CreatedAtFrom, "from_created_at"),
+    (CreatedAtTo, "to_created_at"),
+    (UpdatedAtFrom, "from_updated_at"),
+    (UpdatedAtTo, "to_updated_at"),
+    (Depth, "depth"),
+    (Path, "path"),
+);
+
+// TODO: Rewrite to use yare::parametrized...
 #[cfg(test)]
 mod test {
     use std::vec;
@@ -878,7 +1017,7 @@ mod test {
 
     fn pq(field: &str, operator: SearchOperator, value: &str) -> ParsedQueryParam {
         ParsedQueryParam {
-            field: field.to_string(),
+            field: FilterField::from_str(field).unwrap(),
             operator,
             value: value.to_string(),
         }
@@ -984,7 +1123,7 @@ mod test {
         let test_case_errors = vec![
             "Invalid query parameter: 'invalid'",
             "Invalid query parameter: 'invalid=', no value",
-            "Invalid search operator: 'invalid'",
+            "Invalid search field: 'invalid'",
         ];
 
         let mut i = 0;
@@ -1029,11 +1168,11 @@ mod test {
                 ],
             },
             TestCase {
-                query_string: "name__not_icontains=foo&description=bar&permission=CanRead&validate_schema=true",
+                query_string: "name__not_icontains=foo&description=bar&permissions=CanRead&validate_schema=true",
                 expected: vec![
                     pq("name", SearchOperator::IContains{ is_negated: true}, "foo"),
                     pq("description", SearchOperator::Equals{ is_negated: false}, "bar"),
-                    pq("permission", SearchOperator::Equals{ is_negated: false}, "CanRead"),
+                    pq("permissions", SearchOperator::Equals{ is_negated: false}, "CanRead"),
                     pq("validate_schema", SearchOperator::Equals{ is_negated: false}, "true"),
                 ],
             },

@@ -1,9 +1,10 @@
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, AdminOrSelfAccess, UserAccess};
-use crate::models::user::{NewUser, UpdateUser, User, UserID};
+use crate::models::search::parse_query_parameter;
+use crate::models::user::{NewUser, UpdateUser, UserID};
 use crate::utilities::response::{json_response, json_response_created};
-use actix_web::{delete, get, http::StatusCode, patch, routes, web, Responder};
+use actix_web::{delete, get, http::StatusCode, patch, routes, web, HttpRequest, Responder};
 use serde_json::json;
 use tracing::debug;
 
@@ -13,17 +14,20 @@ use tracing::debug;
 pub async fn get_users(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    use crate::schema::users::dsl::users;
-    use diesel::RunQueryDsl;
-    let mut conn = pool.get()?;
+    let user = requestor.user;
+    let query_string = req.query_string();
 
-    debug!(
-        message = "User list requested",
-        requestor = requestor.user.username
-    );
+    let params = match parse_query_parameter(query_string) {
+        Ok(params) => params,
+        Err(e) => return Err(e),
+    };
 
-    let result = users.load::<User>(&mut conn)?;
+    debug!(message = "User list requested", requestor = user.username);
+
+    let result = user.search_users(&pool, params).await?;
+
     Ok(json_response(result, StatusCode::OK))
 }
 
@@ -55,6 +59,7 @@ pub async fn get_user_tokens(
     user_id: web::Path<UserID>,
     requestor: AdminOrSelfAccess,
 ) -> Result<impl Responder, ApiError> {
+    use crate::db::traits::ActiveTokens;
     let user = user_id.into_inner().user(&pool).await?;
     debug!(
         message = "User tokens requested",
@@ -62,7 +67,7 @@ pub async fn get_user_tokens(
         requestor = requestor.user.id
     );
 
-    let valid_tokens = user.get_tokens(&pool).await?;
+    let valid_tokens = user.tokens(&pool).await?;
     Ok(json_response(valid_tokens, StatusCode::OK))
 }
 

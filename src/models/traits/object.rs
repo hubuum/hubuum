@@ -8,8 +8,8 @@ use crate::models::object::{HubuumObject, HubuumObjectID, NewHubuumObject, Updat
 use crate::models::permissions::{NewPermission, Permission, Permissions, PermissionsList};
 use crate::models::user::User;
 use crate::traits::{
-    CanDelete, CanSave, CanUpdate, ClassAccessors, NamespaceAccessors, ObjectAccessors,
-    PermissionController, SelfAccessors,
+    CanDelete, CanSave, CanUpdate, ClassAccessors, NamespaceAccessors, PermissionController,
+    SelfAccessors,
 };
 use diesel::prelude::*;
 
@@ -120,16 +120,6 @@ impl ClassAccessors for HubuumObject {
     }
 }
 
-impl ObjectAccessors for HubuumObject {
-    async fn object(&self, _pool: &DbPool) -> Result<HubuumObject, ApiError> {
-        Ok(self.clone())
-    }
-
-    async fn object_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.id)
-    }
-}
-
 impl SelfAccessors<HubuumObject> for HubuumObjectID {
     fn id(&self) -> i32 {
         self.0
@@ -179,16 +169,6 @@ impl ClassAccessors for HubuumObjectID {
 
     async fn class_id(&self, pool: &DbPool) -> Result<i32, ApiError> {
         Ok(self.class(pool).await?.id)
-    }
-}
-
-impl ObjectAccessors for HubuumObjectID {
-    async fn object(&self, pool: &DbPool) -> Result<HubuumObject, ApiError> {
-        self.instance(pool).await
-    }
-
-    async fn object_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.0)
     }
 }
 

@@ -137,6 +137,14 @@ impl CanSave for NewNamespaceWithAssignee {
                 has_read_object: true,
                 has_update_object: true,
                 has_delete_object: true,
+                has_create_class_relation: true,
+                has_read_class_relation: true,
+                has_update_class_relation: true,
+                has_delete_class_relation: true,
+                has_create_object_relation: true,
+                has_read_object_relation: true,
+                has_update_object_relation: true,
+                has_delete_object_relation: true,
             };
 
             diesel::insert_into(crate::schema::permissions::table)
@@ -161,6 +169,16 @@ impl SelfAccessors<Namespace> for Namespace {
 impl NamespaceAccessors for Namespace {
     async fn namespace(&self, _pool: &DbPool) -> Result<Namespace, ApiError> {
         Ok(self.clone())
+    }
+
+    async fn namespace_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
+        Ok(self.id)
+    }
+}
+
+impl NamespaceAccessors for &Namespace {
+    async fn namespace(&self, _pool: &DbPool) -> Result<Namespace, ApiError> {
+        Ok((**self).clone())
     }
 
     async fn namespace_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
@@ -195,6 +213,16 @@ impl NamespaceAccessors for NamespaceID {
     }
 }
 
+impl NamespaceAccessors for &NamespaceID {
+    async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
+        self.instance(pool).await
+    }
+
+    async fn namespace_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
+        Ok(self.0)
+    }
+}
+
 impl NewNamespace {
     pub async fn save_and_grant_all_to(
         self,
@@ -225,6 +253,14 @@ impl NewNamespace {
                 has_read_object: true,
                 has_update_object: true,
                 has_delete_object: true,
+                has_create_class_relation: true,
+                has_read_class_relation: true,
+                has_update_class_relation: true,
+                has_delete_class_relation: true,
+                has_create_object_relation: true,
+                has_read_object_relation: true,
+                has_update_object_relation: true,
+                has_delete_object_relation: true,
             };
 
             diesel::insert_into(permissions)
@@ -264,6 +300,14 @@ impl NewNamespace {
                 has_read_object: true,
                 has_update_object: true,
                 has_delete_object: true,
+                has_create_class_relation: true,
+                has_read_class_relation: true,
+                has_update_class_relation: true,
+                has_delete_class_relation: true,
+                has_create_object_relation: true,
+                has_read_object_relation: true,
+                has_update_object_relation: true,
+                has_delete_object_relation: true,
             };
 
             diesel::insert_into(permissions)

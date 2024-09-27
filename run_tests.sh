@@ -44,8 +44,9 @@ echo "Created test database: $TEST_DB_NAME"
 export HUBUUM_DATABASE_URL="postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$TEST_DB_NAME$SSL_MODE"
 
 
-# Run migrations
-diesel migration run --migration-dir $MIGRATIONS_DIR --database-url $HUBUUM_DATABASE_URL 
+# Run migrations, lock the schema as we define views in the sql and those go bye-bye with print-schema.
+# See https://github.com/diesel-rs/diesel/issues/1482.
+diesel migration run --migration-dir $MIGRATIONS_DIR --database-url $HUBUUM_DATABASE_URL --locked-schema
 
 # Run the tests
 cargo test $@

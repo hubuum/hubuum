@@ -20,7 +20,7 @@ impl CanSave for HubuumClass {
         let update = UpdateHubuumClass {
             name: Some(self.name.clone()),
             namespace_id: Some(self.namespace_id),
-            json_schema: Some(self.json_schema.clone()),
+            json_schema: self.json_schema.clone(),
             validate_schema: Some(self.validate_schema),
             description: Some(self.description.clone()),
         };
@@ -80,6 +80,16 @@ impl SelfAccessors<HubuumClass> for HubuumClass {
     }
 }
 
+impl SelfAccessors<HubuumClass> for &HubuumClass {
+    fn id(&self) -> i32 {
+        self.id
+    }
+
+    async fn instance(&self, _pool: &DbPool) -> Result<HubuumClass, ApiError> {
+        Ok((**self).clone())
+    }
+}
+
 impl ClassAccessors for HubuumClass {
     async fn class_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
         Ok(self.id)
@@ -87,6 +97,16 @@ impl ClassAccessors for HubuumClass {
 
     async fn class(&self, _pool: &DbPool) -> Result<HubuumClass, ApiError> {
         Ok(self.clone())
+    }
+}
+
+impl ClassAccessors for &HubuumClass {
+    async fn class(&self, _pool: &DbPool) -> Result<HubuumClass, ApiError> {
+        Ok((**self).clone())
+    }
+
+    async fn class_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
+        Ok(self.id)
     }
 }
 
@@ -117,6 +137,16 @@ impl SelfAccessors<HubuumClass> for HubuumClassID {
     }
 }
 
+impl SelfAccessors<HubuumClass> for &HubuumClassID {
+    fn id(&self) -> i32 {
+        self.0
+    }
+
+    async fn instance(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
+        self.class(pool).await
+    }
+}
+
 impl ClassAccessors for HubuumClassID {
     async fn class_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
         Ok(self.0)
@@ -132,6 +162,16 @@ impl ClassAccessors for HubuumClassID {
             .first::<HubuumClass>(&mut conn)?;
 
         Ok(class)
+    }
+}
+
+impl ClassAccessors for &HubuumClassID {
+    async fn class(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
+        (*self).class(pool).await
+    }
+
+    async fn class_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
+        Ok(self.0)
     }
 }
 
