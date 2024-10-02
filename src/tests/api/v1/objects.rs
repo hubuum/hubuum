@@ -1,7 +1,9 @@
 #[cfg(test)]
 mod tests {
+    use yare::parameterized;
+
     use crate::models::{HubuumObject, NewHubuumObject, UpdateHubuumObject};
-    use crate::traits::CanSave;
+    use crate::traits::{CanDelete, CanSave};
     use actix_web::{http::StatusCode, test};
 
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
@@ -105,48 +107,71 @@ mod tests {
         cleanup(&classes).await;
     }
 
-    #[actix_rt::test]
-    async fn create_object_in_class() {
+    // This will create objects with the same name but potentially in differnet classes.
+    // This is to test that the name is unique within the class.
+    // [class_idx1, class_idx2] [expected_status1, expected_status2]
+    #[parameterized(
+        class_0_0_conflict = {[0, 0], [StatusCode::CREATED, StatusCode::CONFLICT]},
+        class_0_1_ok = {[0, 1], [StatusCode::CREATED, StatusCode::CREATED]},
+        class_0_2_ok = {[0, 2], [StatusCode::CREATED, StatusCode::CREATED]},
+        class_1_1_conflict = {[1, 1], [StatusCode::CREATED, StatusCode::CONFLICT]},
+        class_2_2_conflict = {[2, 2], [StatusCode::CREATED, StatusCode::CONFLICT]},
+
+    )]
+    #[test_macro(actix_web::test)]
+    async fn create_object_in_class(class_ids: [i32; 2], expected_statuses: [StatusCode; 2]) {
+        let literal = format!(
+            "create_object_in_class_{}",
+            class_ids
+                .iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<String>>()
+                .join("_")
+        );
+
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
 
-        let namespace = create_namespace(&pool, "create_object_in_class")
-            .await
-            .unwrap();
-        let classes = create_test_classes("create_object_in_class").await;
+        let namespace = create_namespace(&pool, &literal).await.unwrap();
+        let classes = create_test_classes(&literal).await;
 
-        let class = &classes[0];
+        for (class_id, expected_status) in class_ids.iter().zip(expected_statuses.iter()) {
+            let class = &classes[*class_id as usize];
 
-        let object = NewHubuumObject {
-            namespace_id: namespace.id,
-            hubuum_class_id: classes[0].id,
-            data: serde_json::json!({"test": "data"}),
-            name: "test create object".to_string(),
-            description: "test create object description".to_string(),
-        };
+            let object = NewHubuumObject {
+                namespace_id: namespace.id,
+                hubuum_class_id: class.id,
+                data: serde_json::json!({"test": "data"}),
+                name: "test create object".to_string(),
+                description: "test create object description".to_string(),
+            };
 
-        let resp = post_request(
-            &pool,
-            &admin_token,
-            &format!("{}/{}/", OBJECT_ENDPOINT, class.id),
-            &object,
-        )
-        .await;
+            let resp = post_request(
+                &pool,
+                &admin_token,
+                &format!("{}/{}/", OBJECT_ENDPOINT, class.id),
+                &object,
+            )
+            .await;
 
-        let resp = assert_response_status(resp, StatusCode::CREATED).await;
-        let headers = resp.headers().clone();
+            let resp = assert_response_status(resp, expected_status.clone()).await;
 
-        let object_from_api: HubuumObject = test::read_body_json(resp).await;
+            if expected_status == &StatusCode::CREATED {
+                let headers = resp.headers().clone();
 
-        assert_eq!(object_from_api.name, object.name);
-        assert_eq!(object_from_api.description, object.description);
-        assert_eq!(object_from_api.data, object.data);
-        assert_eq!(object_from_api.namespace_id, object.namespace_id);
-        assert_eq!(object_from_api.hubuum_class_id, object.hubuum_class_id);
+                let object_from_api: HubuumObject = test::read_body_json(resp).await;
+                assert_eq!(object_from_api.name, object.name);
+                assert_eq!(object_from_api.description, object.description);
+                assert_eq!(object_from_api.data, object.data);
+                assert_eq!(object_from_api.namespace_id, object.namespace_id);
+                assert_eq!(object_from_api.hubuum_class_id, object.hubuum_class_id);
 
-        let object_url = format!("{}/{}/{}", OBJECT_ENDPOINT, class.id, object_from_api.id);
+                let object_url = format!("{}/{}/{}", OBJECT_ENDPOINT, class.id, object_from_api.id);
 
-        let created_object_url = headers.get("Location").unwrap().to_str().unwrap();
-        assert_eq!(created_object_url, object_url);
+                let created_object_url = headers.get("Location").unwrap().to_str().unwrap();
+                assert_eq!(created_object_url, object_url);
+            }
+        }
+        namespace.delete(&pool).await.unwrap();
     }
 
     #[actix_rt::test]

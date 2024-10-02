@@ -96,7 +96,7 @@
         description VARCHAR NOT NULL,
         created_at TIMESTAMP NOT NULL DEFAULT now(),
         updated_at TIMESTAMP NOT NULL DEFAULT now(),
-        UNIQUE (name, namespace_id)
+        UNIQUE (name, hubuum_class_id)
     );
 
     -- A bidirectional relation between classes
