@@ -53,7 +53,7 @@ pub mod tests {
         created_classes
     }
 
-    pub async fn cleanup(classes: &Vec<HubuumClass>) {
+    pub async fn cleanup(classes: &[HubuumClass]) {
         let (pool, _, _) = setup_pool_and_tokens().await;
         let namespaces = classes
             .iter()
@@ -250,13 +250,7 @@ pub mod tests {
             validate_schema: Some(false),
         };
 
-        let resp = post_request(
-            &pool,
-            &admin_token,
-            &CLASSES_ENDPOINT.to_string(),
-            &new_class,
-        )
-        .await;
+        let resp = post_request(&pool, &admin_token, CLASSES_ENDPOINT, &new_class).await;
 
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
         let headers = resp.headers().clone();

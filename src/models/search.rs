@@ -1120,12 +1120,13 @@ mod test {
             "name__icontains=foo&description=bar&invalid=foo&name__invalid=bar",
         ];
 
-        let test_case_errors = ["Invalid query parameter: 'invalid'",
+        let test_case_errors = [
+            "Invalid query parameter: 'invalid'",
             "Invalid query parameter: 'invalid=', no value",
-            "Invalid search field: 'invalid'"];
+            "Invalid search field: 'invalid'",
+        ];
 
-        let mut i = 0;
-        for case in test_cases {
+        for (i, case) in test_cases.into_iter().enumerate() {
             let result = parse_query_parameter(case);
             assert!(
                 result.is_err(),
@@ -1142,7 +1143,6 @@ mod test {
                 result_err,
                 test_case_errors[i]
             );
-            i += 1;
         }
     }
 

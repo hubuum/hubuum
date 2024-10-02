@@ -152,8 +152,8 @@ mod tests {
             // the current one.
             let expected_path = classes.iter().take(i + 2).map(|c| c.id).collect::<Vec<_>>();
             assert_eq!(relation.path.len(), expected_path.len());
-            for i in 0..expected_path.len() {
-                assert_eq!(relation.path[i], Some(expected_path[i]));
+            for (i, ep) in expected_path.into_iter().enumerate() {
+                assert_eq!(relation.path[i], Some(ep));
             }
         }
 
@@ -439,7 +439,7 @@ mod tests {
             let objects_fetched: Vec<HubuumObjectWithPath> = test::read_body_json(resp).await;  
             assert_eq!(objects_fetched.len(), expected_object_ids.len(), "{} -> Expected: {:?}, got: {:?}\nAll objects: {:?}",
                 endpoint,
-                expected_object_ids.iter().map(|i| objects[(*i)].id).collect::<Vec<_>>(),
+                expected_object_ids.iter().map(|i| objects[*i].id).collect::<Vec<_>>(),
                 objects_fetched.iter().map(|o| o.id).collect::<Vec<_>>(),
                 objects
             );
