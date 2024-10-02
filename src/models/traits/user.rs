@@ -937,9 +937,9 @@ impl SelfAccessors<User> for UserID {
 
     async fn instance(&self, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::*;
-        Ok(with_connection(pool, |conn| {
+        with_connection(pool, |conn| {
             users.filter(id.eq(self.0)).first::<User>(conn)
-        })?)
+        })
     }
 }
 

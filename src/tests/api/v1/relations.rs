@@ -147,7 +147,7 @@ mod tests {
             assert_eq!(relation.ancestor_class_id, classes[0].id);
             assert_eq!(relation.descendant_class_id, classes[i + 1].id);
             assert_eq!(relation.depth, i as i32 + 1);
-            assert_eq!(relation.path.len(), i as usize + 2);
+            assert_eq!(relation.path.len(), i + 2);
             // The path should contain the ancestor and descendant classes, so all the classes up to
             // the current one.
             let expected_path = classes.iter().take(i + 2).map(|c| c.id).collect::<Vec<_>>();
@@ -380,11 +380,8 @@ mod tests {
                 );
                 assert_eq!(relation_response.to_hubuum_object_id, objects[to_index].id);
             }
-        } else {
-            if !(resp.status() == StatusCode::NOT_FOUND || resp.status() == StatusCode::BAD_REQUEST) {
-                panic!("Expected NOT_FOUND/BAD_REQUEST from {}, got {:?} ({:?})", endpoint, resp.status(), test::read_body(resp).await);  
-            }
-
+        } else if !(resp.status() == StatusCode::NOT_FOUND || resp.status() == StatusCode::BAD_REQUEST) {
+            panic!("Expected NOT_FOUND/BAD_REQUEST from {}, got {:?} ({:?})", endpoint, resp.status(), test::read_body(resp).await);  
         }
 
         cleanup(&classes).await;
@@ -425,7 +422,7 @@ mod tests {
 
         // replace <int> in the filter with the object id with that index.
         let re = Regex::new(r"<(\d+)>").unwrap();
-        let filter = re.replace_all(&filter, |caps: &regex::Captures| {
+        let filter = re.replace_all(filter, |caps: &regex::Captures| {
             let index = caps[1].parse::<usize>().unwrap();
             objects[index].id.to_string()
         });
@@ -442,7 +439,7 @@ mod tests {
             let objects_fetched: Vec<HubuumObjectWithPath> = test::read_body_json(resp).await;  
             assert_eq!(objects_fetched.len(), expected_object_ids.len(), "{} -> Expected: {:?}, got: {:?}\nAll objects: {:?}",
                 endpoint,
-                expected_object_ids.iter().map(|i| objects[i.clone()].id).collect::<Vec<_>>(),
+                expected_object_ids.iter().map(|i| objects[(*i)].id).collect::<Vec<_>>(),
                 objects_fetched.iter().map(|o| o.id).collect::<Vec<_>>(),
                 objects
             );

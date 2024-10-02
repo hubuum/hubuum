@@ -195,7 +195,7 @@ pub mod tests {
             to_hubuum_class_id: class2.id,
         };
 
-        let relation = relation.save(&pool).await.unwrap();
+        let relation = relation.save(pool).await.unwrap();
 
         assert!(relation.from_hubuum_class_id < relation.to_hubuum_class_id);
 
@@ -212,7 +212,7 @@ pub mod tests {
         };
 
         let fetched_relation = HubuumClassRelationID(relation.id)
-            .instance(&pool)
+            .instance(pool)
             .await
             .unwrap();
 
@@ -240,7 +240,7 @@ pub mod tests {
             class_relation_id: class1.id,
         };
 
-        object_rel.save(&pool).await.unwrap()
+        object_rel.save(pool).await.unwrap()
     }
 
     #[actix_rt::test]

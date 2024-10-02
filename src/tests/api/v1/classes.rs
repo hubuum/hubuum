@@ -117,7 +117,7 @@ pub mod tests {
     async fn test_api_classes_get_filtered_name_contains() {
         let created_classes = create_test_classes("get_filtered_name_contains").await;
         let query_string = "name__contains=get_filtered_name_contains";
-        let classes = api_get_classes_with_query_string(&query_string).await;
+        let classes = api_get_classes_with_query_string(query_string).await;
         assert_contains_same_ids!(&classes, &created_classes);
         cleanup(&created_classes).await;
     }
@@ -126,7 +126,7 @@ pub mod tests {
     async fn test_api_classes_get_filtered_description_contains() {
         let created_classes = create_test_classes("get_filtered_description_contains").await;
         let query_string = "description__contains=get_filtered_description_contains";
-        let classes = api_get_classes_with_query_string(&query_string).await;
+        let classes = api_get_classes_with_query_string(query_string).await;
         assert_contains_same_ids!(&classes, &created_classes);
         cleanup(&created_classes).await;
     }
@@ -137,7 +137,7 @@ pub mod tests {
             create_test_classes("get_filtered_description_and_not_name_contains").await;
         let query_string =
             "description__contains=get_filtered_description_and_not_name_contains&name__not_contains=1";
-        let classes = api_get_classes_with_query_string(&query_string).await;
+        let classes = api_get_classes_with_query_string(query_string).await;
         assert_eq!(classes.len(), 5);
         cleanup(&created_classes).await;
     }
@@ -253,7 +253,7 @@ pub mod tests {
         let resp = post_request(
             &pool,
             &admin_token,
-            &format!("{}", CLASSES_ENDPOINT),
+            &CLASSES_ENDPOINT.to_string(),
             &new_class,
         )
         .await;
@@ -339,7 +339,7 @@ pub mod tests {
             updated_class_from_patch.json_schema,
             created_class.json_schema
         );
-        assert_eq!(updated_class_from_patch.validate_schema, false);
+        assert!(!updated_class_from_patch.validate_schema);
     }
 
     #[actix_web::test]

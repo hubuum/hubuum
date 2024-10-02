@@ -221,7 +221,7 @@ mod tests {
 
         let new_user = create_test_user(&pool).await;
 
-        let token_string = match { new_user.create_token(&pool).await } {
+        let token_string = match new_user.create_token(&pool).await {
             Ok(ret_token) => ret_token.get_token(),
             Err(e) => panic!("Failed to add token to user: {:?}", e),
         };
@@ -286,13 +286,13 @@ mod tests {
 
         let new_user = create_test_user(&pool).await;
         let admin_user = create_test_admin(&pool).await;
-        let admin_token = match { admin_user.create_token(&pool).await } {
+        let admin_token = match admin_user.create_token(&pool).await {
             Ok(ret_token) => ret_token.get_token(),
             Err(e) => panic!("Failed to add token to admin: {:?}", e),
         };
 
         for _ in 0..3 {
-            let _ = match { new_user.create_token(&pool).await } {
+            let _ = match new_user.create_token(&pool).await {
                 Ok(ret_token) => ret_token.get_token(),
                 Err(e) => panic!("Failed to add token to user: {:?}", e),
             };
@@ -366,13 +366,13 @@ mod tests {
 
         let new_user = create_test_user(&pool).await;
         let admin_user = create_test_admin(&pool).await;
-        let admin_token = match { admin_user.create_token(&pool).await } {
+        let admin_token = match admin_user.create_token(&pool).await {
             Ok(ret_token) => ret_token.get_token(),
             Err(e) => panic!("Failed to add token to admin: {:?}", e),
         };
 
         for _ in 0..3 {
-            let _ = match { new_user.create_token(&pool).await } {
+            let _ = match new_user.create_token(&pool).await {
                 Ok(ret_token) => ret_token.get_token(),
                 Err(e) => panic!("Failed to add token to user: {:?}", e),
             };

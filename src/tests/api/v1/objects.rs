@@ -153,7 +153,7 @@ mod tests {
             )
             .await;
 
-            let resp = assert_response_status(resp, expected_status.clone()).await;
+            let resp = assert_response_status(resp, *expected_status).await;
 
             if expected_status == &StatusCode::CREATED {
                 let headers = resp.headers().clone();

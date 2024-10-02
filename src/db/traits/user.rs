@@ -228,18 +228,14 @@ mod tests {
             expected
         );
 
-        let namespaces = vec![
-            create_namespace(&pool, &format!("test_user_can_ns1_{}", suffix))
+        let namespaces = [create_namespace(&pool, &format!("test_user_can_ns1_{}", suffix))
                 .await
                 .unwrap(),
             create_namespace(&pool, &format!("test_user_can_ns2_{}", suffix))
                 .await
-                .unwrap(),
-        ];
-        let groups = vec![
-            create_test_group(&pool).await,
-            create_test_group(&pool).await,
-        ];
+                .unwrap()];
+        let groups = [create_test_group(&pool).await,
+            create_test_group(&pool).await];
         let users = vec![
             create_user_with_params(&pool, &format!("test_user_can_u1_{}", suffix), "foo").await,
             create_user_with_params(&pool, &format!("test_user_can_u2_{}", suffix), "foo").await,

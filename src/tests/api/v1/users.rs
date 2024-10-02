@@ -86,10 +86,10 @@ mod tests {
         );
 
         // And only admins can delete users...
-        let resp = delete_request(&pool, &normal_token, &created_user_url).await;
+        let resp = delete_request(&pool, &normal_token, created_user_url).await;
         let _ = assert_response_status(resp, StatusCode::FORBIDDEN).await;
 
-        let resp = delete_request(&pool, &admin_token, &created_user_url).await;
+        let resp = delete_request(&pool, &admin_token, created_user_url).await;
         let _ = assert_response_status(resp, StatusCode::NO_CONTENT).await;
 
         let resp = get_request(&pool, &admin_token, created_user_url).await;

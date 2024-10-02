@@ -323,7 +323,7 @@ mod tests {
             // Validate that the permissions were granted
             for permission in permissions.iter() {
                 assert!(
-                    group_can_on(pool, group.id, namespace.clone(), permission.clone())
+                    group_can_on(pool, group.id, namespace.clone(), *permission)
                         .await
                         .unwrap(),
                     "Group {} does not have permission {:?} on namespace {}",
@@ -367,7 +367,7 @@ mod tests {
         let (pool, _) = crate::tests::get_pool_and_config().await;
 
         let mut groups = Vec::new();
-        for group_number in vec![1, 2, 3, 4, 5] {
+        for group_number in [1, 2, 3, 4, 5] {
             let group_name = format!("test_list_group_{}", group_number);
             groups.push(
                 NewGroup {
@@ -478,7 +478,7 @@ mod tests {
             // Test that only the granted permissions are set
             for permission in permissions.iter() {
                 let expected = subset.contains(permission);
-                let actual = group_can_on(&pool, group_id, namespace.clone(), permission.clone())
+                let actual = group_can_on(&pool, group_id, namespace.clone(), *permission)
                     .await
                     .unwrap();
                 assert_eq!(expected, actual, "Mismatch for permission {:?}", permission);
@@ -547,7 +547,7 @@ mod tests {
             // Test that only the revoked permissions are set
             for permission in permissions.iter() {
                 let expected = !subset.contains(permission);
-                let actual = group_can_on(&pool, group_id, namespace.clone(), permission.clone())
+                let actual = group_can_on(&pool, group_id, namespace.clone(), *permission)
                     .await
                     .unwrap();
                 assert_eq!(expected, actual, "Mismatch for permission {:?}", permission);
@@ -593,15 +593,13 @@ mod tests {
             NP::ReadCollection
         );
 
-        for permission in vec![
-            NP::UpdateCollection,
+        for permission in [NP::UpdateCollection,
             NP::DeleteCollection,
             NP::DelegateCollection,
             NP::CreateClass,
-            NP::CreateObject,
-        ] {
+            NP::CreateObject] {
             assert!(
-                !group_can_on(&pool, group_id, namespace.clone(), permission.clone())
+                !group_can_on(&pool, group_id, namespace.clone(), permission)
                     .await
                     .unwrap(),
                 "Permission {:?} should not be set",
@@ -614,9 +612,9 @@ mod tests {
             .await
             .unwrap();
 
-        for permission in vec![NP::ReadCollection, NP::UpdateCollection] {
+        for permission in [NP::ReadCollection, NP::UpdateCollection] {
             assert!(
-                group_can_on(&pool, group_id, namespace.clone(), permission.clone())
+                group_can_on(&pool, group_id, namespace.clone(), permission)
                     .await
                     .unwrap(),
                 "Permission {:?} should be set",
@@ -624,14 +622,12 @@ mod tests {
             );
         }
 
-        for permission in vec![
-            NP::DeleteCollection,
+        for permission in [NP::DeleteCollection,
             NP::DelegateCollection,
             NP::CreateClass,
-            NP::CreateObject,
-        ] {
+            NP::CreateObject] {
             assert!(
-                !group_can_on(&pool, group_id, namespace.clone(), permission.clone())
+                !group_can_on(&pool, group_id, namespace.clone(), permission)
                     .await
                     .unwrap(),
                 "Permission {:?} should not be set",
@@ -652,15 +648,13 @@ mod tests {
             NP::ReadCollection
         );
 
-        for permission in vec![
-            NP::UpdateCollection,
+        for permission in [NP::UpdateCollection,
             NP::DeleteCollection,
             NP::DelegateCollection,
             NP::CreateClass,
-            NP::CreateObject,
-        ] {
+            NP::CreateObject] {
             assert!(
-                !group_can_on(&pool, group_id, namespace.clone(), permission.clone())
+                !group_can_on(&pool, group_id, namespace.clone(), permission)
                     .await
                     .unwrap(),
                 "Permission {:?} should not be set",

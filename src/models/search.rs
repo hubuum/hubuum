@@ -1120,11 +1120,9 @@ mod test {
             "name__icontains=foo&description=bar&invalid=foo&name__invalid=bar",
         ];
 
-        let test_case_errors = vec![
-            "Invalid query parameter: 'invalid'",
+        let test_case_errors = ["Invalid query parameter: 'invalid'",
             "Invalid query parameter: 'invalid=', no value",
-            "Invalid search field: 'invalid'",
-        ];
+            "Invalid search field: 'invalid'"];
 
         let mut i = 0;
         for case in test_cases {

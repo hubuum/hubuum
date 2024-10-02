@@ -180,8 +180,8 @@ pub mod tests {
 
     pub async fn get_object(pool: &DbPool, object_id: i32) -> HubuumObject {
         let object = HubuumObjectID(object_id);
-        let object = object.instance(pool).await.unwrap();
-        object
+        
+        object.instance(pool).await.unwrap()
     }
 
     #[actix_rt::test]

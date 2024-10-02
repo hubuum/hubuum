@@ -54,7 +54,7 @@ impl ExpandNamespaceFromMap<Vec<HubuumClassExpanded>> for Vec<HubuumClass> {
         namespace_map: &HashMap<i32, Namespace>,
     ) -> Vec<HubuumClassExpanded> {
         self.iter()
-            .map(|class| class.expand_namespace_from_map(&namespace_map))
+            .map(|class| class.expand_namespace_from_map(namespace_map))
             .collect()
     }
 }
