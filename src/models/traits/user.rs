@@ -908,178 +908,8 @@ pub trait UserNamespaceAccessors: SelfAccessors<User> + GroupAccessors {
     }
 }
 
-pub trait UserClassAccessors: Search {
-    async fn classes_read(&self, pool: &DbPool) -> Result<Vec<HubuumClassExpanded>, ApiError> {
-        self.search_classes(
-            pool,
-            vec![ParsedQueryParam::new(
-                &FilterField::Permissions.to_string(),
-                None,
-                "ReadClass",
-            )?],
-        )
-        .await
-    }
-
-    async fn classes_read_within_namespaces<N: NamespaceAccessors>(
-        &self,
-        pool: &DbPool,
-        namespaces: Vec<N>,
-    ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
-        let futures: Vec<_> = namespaces
-            .into_iter()
-            .map(|n| {
-                let pool_ref = &pool;
-                async move { n.namespace_id(pool_ref).await }
-            })
-            .collect();
-        let namespace_ids: Vec<i32> = try_join_all(futures).await?;
-
-        let mut queries = vec![ParsedQueryParam::new(
-            &FilterField::Permissions.to_string(),
-            None,
-            "ReadClass",
-        )?];
-        for nid in namespace_ids {
-            queries.push(ParsedQueryParam::new(
-                &FilterField::Namespaces.to_string(),
-                None,
-                &nid.to_string(),
-            )?);
-        }
-
-        self.search_classes(pool, queries).await
-    }
-
-    async fn classes_within_namespaces_with_permissions<N: NamespaceAccessors>(
-        &self,
-        pool: &DbPool,
-        namespaces: Vec<N>,
-        permissions_list: Vec<Permissions>,
-    ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
-        let futures: Vec<_> = namespaces
-            .into_iter()
-            .map(|n| {
-                let pool_ref = &pool;
-                async move { n.namespace_id(pool_ref).await }
-            })
-            .collect();
-        let namespace_ids: Vec<i32> = try_join_all(futures).await?;
-
-        let mut queries = vec![];
-        for nid in namespace_ids {
-            queries.push(ParsedQueryParam::new(
-                &FilterField::Namespaces.to_string(),
-                None,
-                &nid.to_string(),
-            )?);
-        }
-
-        for perm in permissions_list {
-            queries.push(ParsedQueryParam::new(
-                &FilterField::Namespaces.to_string(),
-                None,
-                &perm.to_string(),
-            )?);
-        }
-
-        self.search_classes(pool, queries).await
-    }
-
-    async fn classes_with_permissions(
-        &self,
-        pool: &DbPool,
-        permissions_list: Vec<Permissions>,
-    ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
-        let mut queries = vec![];
-
-        for perm in permissions_list {
-            queries.push(ParsedQueryParam::new(
-                &FilterField::Namespaces.to_string(),
-                None,
-                &perm.to_string(),
-            )?);
-        }
-
-        self.search_classes(pool, queries).await
-    }
-
-    async fn classes(&self, pool: &DbPool) -> Result<Vec<HubuumClassExpanded>, ApiError> {
-        self.search_classes(pool, vec![]).await
-    }
-}
-
-pub trait ObjectAccessors: UserClassAccessors + UserNamespaceAccessors {
-    async fn objects_in_class_read<C: UserClassAccessors>(
-        &self,
-        pool: &DbPool,
-        class_id: C,
-    ) -> Result<Vec<HubuumObject>, ApiError> {
-        self.objects_in_classes_read(pool, vec![class_id]).await
-    }
-
-    async fn objects_in_classes_read<C: UserClassAccessors>(
-        &self,
-        pool: &DbPool,
-        class_ids: Vec<C>,
-    ) -> Result<Vec<HubuumObject>, ApiError> {
-        self.objects(pool, class_ids, vec![Permissions::ReadClass])
-            .await
-    }
-
-    async fn objects<C: UserClassAccessors>(
-        &self,
-        pool: &DbPool,
-        class_ids: Vec<C>,
-        permissions_list: Vec<Permissions>,
-    ) -> Result<Vec<HubuumObject>, ApiError> {
-        use crate::models::PermissionFilter;
-        use crate::schema::hubuumobject::dsl::{
-            hubuum_class_id, hubuumobject, namespace_id as hubuumobject_nid,
-        };
-        use crate::schema::permissions::dsl::*;
-
-        let group_id_subquery = self.group_ids_subquery();
-
-        let namespace_ids: Vec<i32> = self
-            .namespaces_read(pool)
-            .await?
-            .iter()
-            .map(|n| n.id)
-            .collect();
-
-        let mut base_query = permissions
-            .into_boxed()
-            .filter(namespace_id.eq_any(namespace_ids.clone()))
-            .filter(group_id.eq_any(group_id_subquery));
-
-        for perm in permissions_list {
-            base_query = perm.create_boxed_filter(base_query, true);
-        }
-
-        let mut joined_query =
-            base_query.inner_join(hubuumobject.on(hubuumobject_nid.eq_any(namespace_ids)));
-
-        if !class_ids.is_empty() {
-            let valid_class_ids = class_ids.iter().map(|c| c.id()).collect::<Vec<i32>>();
-            joined_query = joined_query.filter(hubuum_class_id.eq_any(valid_class_ids));
-        }
-
-        let result = with_connection(pool, |conn| {
-            joined_query
-                .select(hubuumobject::all_columns())
-                .load::<HubuumObject>(conn)
-        })?;
-
-        Ok(result)
-    }
-}
-
 impl UserNamespaceAccessors for User {}
 impl UserNamespaceAccessors for UserID {}
-
-impl UserClassAccessors for User {}
-impl UserClassAccessors for UserID {}
 
 impl GroupAccessors for User {}
 impl GroupAccessors for UserID {}
@@ -1134,6 +964,8 @@ impl<'a> SelfAccessors<User> for &'a UserID {
 #[cfg(test)]
 mod test {
 
+    use std::vec;
+
     use super::*;
     use crate::models::{GroupID, NewHubuumClass, Permissions, PermissionsList};
     use crate::tests::{
@@ -1147,6 +979,7 @@ mod test {
     #[actix_rt::test]
     async fn test_user_permissions_namespace_and_class_listing() {
         use crate::models::namespace::NewNamespace;
+        use crate::models::search::{FilterField, ParsedQueryParam, SearchOperator};
 
         let (pool, _, _) = setup_pool_and_tokens().await;
         let test_user_1 = create_test_user(&pool).await;
@@ -1190,26 +1023,53 @@ mod test {
             .await
             .unwrap();
 
-        let nslist = test_user_1.namespaces_read(&pool).await.unwrap();
+        let read_class_param = ParsedQueryParam {
+            field: FilterField::Permissions,
+            operator: SearchOperator::Equals { is_negated: false },
+            value: "ReadClass".to_string(),
+        };
+
+        let read_namespace_param = ParsedQueryParam {
+            field: FilterField::Permissions,
+            operator: SearchOperator::Equals { is_negated: false },
+            value: "ReadCollection".to_string(),
+        };
+
+        let nslist = test_user_1
+            .search_namespaces(&pool, vec![read_namespace_param.clone()])
+            .await
+            .unwrap();
         assert_contains!(&nslist, &ns);
 
-        let nslist = test_user_2.namespaces_read(&pool).await.unwrap();
+        let nslist = test_user_2
+            .search_namespaces(&pool, vec![read_namespace_param.clone()])
+            .await
+            .unwrap();
         assert_not_contains!(&nslist, &ns);
 
-        let classlist = test_user_1.classes_read(&pool).await.unwrap();
+        let classlist = test_user_1
+            .search_classes(&pool, vec![read_class_param.clone()])
+            .await
+            .unwrap();
         assert_contains!(&classlist, &class);
 
-        let classlist = test_user_2.classes_read(&pool).await.unwrap();
+        let classlist = test_user_2
+            .search_classes(&pool, vec![read_class_param.clone()])
+            .await
+            .unwrap();
         assert_not_contains!(&classlist, &class);
 
         ns.grant_one(&pool, test_group_2.id, Permissions::ReadCollection)
             .await
             .unwrap();
 
-        let nslist = test_user_2.namespaces_read(&pool).await.unwrap();
+        let nslist = test_user_2
+            .search_namespaces(&pool, vec![read_namespace_param.clone()])
+            .await
+            .unwrap();
         assert_contains!(&nslist, &ns);
 
-        let classlist = test_user_1.classes_read(&pool).await.unwrap();
+        let classlist = test_user_1.search_classes(&pool, vec![]).await.unwrap();
         assert_contains!(&classlist, &class);
 
         class
@@ -1217,7 +1077,10 @@ mod test {
             .await
             .unwrap();
 
-        let classlist = test_user_2.classes_read(&pool).await.unwrap();
+        let classlist = test_user_2
+            .search_classes(&pool, vec![read_class_param.clone()])
+            .await
+            .unwrap();
         assert_contains!(&classlist, &class);
 
         class
@@ -1225,15 +1088,24 @@ mod test {
             .await
             .unwrap();
 
-        let classlist = test_user_2.classes_read(&pool).await.unwrap();
+        let classlist = test_user_2
+            .search_classes(&pool, vec![read_class_param.clone()])
+            .await
+            .unwrap();
         assert_not_contains!(&classlist, &class);
 
-        let nslist = test_user_2.namespaces_read(&pool).await.unwrap();
+        let nslist = test_user_2
+            .search_namespaces(&pool, vec![read_namespace_param.clone()])
+            .await
+            .unwrap();
         assert_contains!(&nslist, &ns);
 
         ns.revoke_all(&pool, test_group_2.id).await.unwrap();
 
-        let nslist = test_user_2.namespaces_read(&pool).await.unwrap();
+        let nslist = test_user_2
+            .search_namespaces(&pool, vec![read_namespace_param.clone()])
+            .await
+            .unwrap();
         assert_not_contains!(&nslist, &ns);
 
         test_user_1.delete(&pool).await.unwrap();
