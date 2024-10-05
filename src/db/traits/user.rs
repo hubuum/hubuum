@@ -135,8 +135,6 @@ impl User {
             query_params = ?query_params
         );
 
-        let mut conn = pool.get()?;
-
         let mut base_query = users.into_boxed();
 
         for param in query_params {
@@ -158,10 +156,10 @@ impl User {
 
         trace_query!(base_query, "Searching users");
 
-        let result = base_query
+        let result = with_connection(pool, |conn| base_query
             .select(users::all_columns())
             .distinct() // TODO: Is it the joins that makes this required?
-            .load::<User>(&mut conn)?;
+            .load::<User>(conn))?;
 
         Ok(result)
     }

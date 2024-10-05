@@ -1,4 +1,4 @@
-use crate::db::DbPool;
+use crate::db::{with_connection, DbPool};
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, UserAccess};
 use crate::models::group::{Group, GroupID, NewGroup, UpdateGroup};
@@ -17,14 +17,13 @@ pub async fn get_groups(
 ) -> Result<impl Responder, ApiError> {
     use crate::schema::groups::dsl::*;
     use diesel::RunQueryDsl;
-    let mut conn = pool.get()?;
 
     debug!(
         message = "Group list requested",
         requestor = requestor.user.id
     );
 
-    let result = groups.load::<Group>(&mut conn)?;
+    let result = with_connection(&pool, |conn| groups.load::<Group>(conn))?;
 
     Ok(json_response(result, StatusCode::OK))
 }

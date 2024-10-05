@@ -1,4 +1,4 @@
-use crate::db::DbPool;
+use crate::db::{with_connection, DbPool};
 use crate::errors::ApiError;
 use crate::extractors::AdminAccess;
 use crate::models::class::total_class_count;
@@ -46,8 +46,16 @@ pub async fn get_db_state(pool: web::Data<DbPool>, requestor: AdminAccess) -> im
           pg_stat_user_tables;
     "#;
 
-    let mut conn = pool.get().unwrap();
-    let results = sql_query(query).load::<DbState>(&mut conn).unwrap();
+    let results = match with_connection(&pool, |conn| sql_query(query).load::<DbState>(conn)) {
+        Ok(results) => results,
+        Err(e) => {
+            return ApiError::InternalServerError(format!(
+                "Error getting state for the database: {}",
+                e
+            ))
+            .error_response()
+        }
+    };
 
     if let Some(row) = results.first() {
         debug!(
