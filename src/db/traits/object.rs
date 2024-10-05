@@ -30,7 +30,7 @@ impl GetObject<(HubuumObject, HubuumObject)> for HubuumObjectRelationID {
 
         if objects.len() != 2 {
             return Err(ApiError::NotFound(
-                format!("Could not find two objects for object relation").to_string(),
+                "Could not find two objects for object relation".to_string(),
             ));
         }
 
@@ -86,7 +86,7 @@ impl GetObject<(HubuumObject, HubuumObject)> for HubuumObjectRelation {
 
         if objects.len() != 2 {
             return Err(ApiError::NotFound(
-                format!("Could not find two objects for object relation").to_string(),
+                "Could not find two objects for object relation".to_string(),
             ));
         }
 
