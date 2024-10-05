@@ -29,7 +29,7 @@ where
             object_id = object.id(),
             object_class = object_class_id
         );
-        return Err(ApiError::BadRequest(format!(
+        return Err(ApiError::NotFound(format!(
             "Object {} is not of class {}",
             object.id(),
             class.id()

@@ -16,10 +16,11 @@ mod tests {
 
     use crate::tests::api::v1::classes::tests::{cleanup, create_test_classes};
 
-    const RELATIONS_ENDPOINT: &str = "/api/v1/relations";
+    const CLASS_RELATIONS_ENDPOINT: &str = "/api/v1/relations/classes";
+    const OBJECT_RELATIONS_ENDPOINT: &str = "/api/v1/relations/objects";
 
     fn relation_endpoint(relation_id: i32) -> String {
-        format!("{}/{}", RELATIONS_ENDPOINT, relation_id)
+        format!("{}/{}", CLASS_RELATIONS_ENDPOINT, relation_id)
     }
 
     async fn create_relation(
@@ -93,7 +94,7 @@ mod tests {
         let (classes, relations) =
             create_classes_and_relations(&pool, "get_class_relations_list").await;
 
-        let resp = get_request(&pool, &admin_token, RELATIONS_ENDPOINT).await;
+        let resp = get_request(&pool, &admin_token, CLASS_RELATIONS_ENDPOINT).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let relations_fetched_all: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
 
@@ -280,7 +281,7 @@ mod tests {
         let relation = &relations[0];
 
         // No permissions so far.
-        let resp = get_request(&pool, &token, RELATIONS_ENDPOINT).await;
+        let resp = get_request(&pool, &token, CLASS_RELATIONS_ENDPOINT).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
 
         let relations_fetched_all: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
@@ -295,7 +296,7 @@ mod tests {
             .await
             .unwrap();
 
-        let resp = get_request(&pool, &token, RELATIONS_ENDPOINT).await;
+        let resp = get_request(&pool, &token, CLASS_RELATIONS_ENDPOINT).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
 
         let relations_fetched_all: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
@@ -387,30 +388,46 @@ mod tests {
         cleanup(&classes).await;
     }
 
-    // class_idx object_idx, filter, expected_code, expected_object_ids
+    // class_idx object_idx, expected_code, filter, expected_object_ids, absolute_endpoint
     // TODO: Add tests against _classes / _namespaces / _object
     // Note that <int> in the filter will be replaced with the object id with that index.
     #[parameterized(
-        id_0_0_empty = { 0, 0, StatusCode::OK, "", vec![1,2,4] },
-        id_0_0_from_name = { 0, 0, StatusCode::OK, "?from_name__contains=0", vec![1,2,4] },
-        id_0_0_to_name = { 0, 0, StatusCode::OK, "?to_name__endswith=api_class_2", vec![1] },
-        id_0_0_to_desc = { 0, 0, StatusCode::OK, "?to_description__endswith=api_description_2", vec![1] },
-        id_0_0_depth_eq = { 0, 0, StatusCode::OK, "?depth=1", vec![1,2] },
-        id_0_0_depth_gt = { 0, 0, StatusCode::OK, "?depth__gt=1", vec![4] },
-        id_0_0_depth_lt = { 0, 0, StatusCode::OK, "?depth__lt=1", vec![] },
-        id_0_0_path_equals_0_1 = { 0, 0, StatusCode::OK, "?path=<0>,<1>", vec![1] },
-        id_0_0_path_equals_0_2 = { 0, 0, StatusCode::OK, "?path=<0>,<1>,<2>", vec![2] }, 
-        id_0_0_path_contains = { 0, 0, StatusCode::OK, "?path__contains=<1>", vec![1,2] },
-        id_1_2_empty = { 1, 1, StatusCode::OK, "", vec![2] },
-        id_0_0_invalid_key = { 0, 0, StatusCode::BAD_REQUEST, "?nosuchkey=foo", vec![] },
-        id_0_0_invalid_op = { 0, 0, StatusCode::BAD_REQUEST, "?from_name__foo=bar", vec![] },         
-        id_0_1_wrong_class = { 0, 1, StatusCode::BAD_REQUEST, "", vec![] },
+        rel_0_0_empty = { 0, 0, StatusCode::OK, "", vec![1,2,4], false },
+        abs_0_0_empty = { 0, 0, StatusCode::OK, "", vec![1,2,4], true },
+        rel_0_0_from_name = { 0, 0, StatusCode::OK, "?from_name__contains=0", vec![1,2,4], false },
+        abs_0_0_from_name = { 0, 0, StatusCode::OK, "?from_name__contains=0", vec![1,2,4], true },
+        rel_0_0_to_name = { 0, 0, StatusCode::OK, "?to_name__endswith=api_class_2", vec![1], false },
+        abs_0_0_to_name = { 0, 0, StatusCode::OK, "?to_name__endswith=api_class_2", vec![1], true },
+        rel_0_0_to_desc = { 0, 0, StatusCode::OK, "?to_description__endswith=api_description_2", vec![1], false },
+        abs_0_0_to_desc = { 0, 0, StatusCode::OK, "?to_description__endswith=api_description_2", vec![1], true },
+        rel_0_0_depth_eq = { 0, 0, StatusCode::OK, "?depth=1", vec![1,2], false },
+        abs_0_0_depth_eq = { 0, 0, StatusCode::OK, "?depth=1", vec![1,2], true },
+        rel_0_0_depth_gt = { 0, 0, StatusCode::OK, "?depth__gt=1", vec![4], false },
+        abs_0_0_depth_gt = { 0, 0, StatusCode::OK, "?depth__gt=1", vec![4], true },
+        rel_0_0_depth_lt = { 0, 0, StatusCode::OK, "?depth__lt=1", vec![], false },
+        abs_0_0_depth_lt = { 0, 0, StatusCode::OK, "?depth__lt=1", vec![], true },
+        rel_0_0_path_equals_0_1 = { 0, 0, StatusCode::OK, "?path=<0>,<1>", vec![1], false },
+        abs_0_0_path_equals_0_1 = { 0, 0, StatusCode::OK, "?path=<0>,<1>", vec![1], true },
+        rel_0_0_path_equals_0_2 = { 0, 0, StatusCode::OK, "?path=<0>,<1>,<2>", vec![2], false }, 
+        abs_0_0_path_equals_0_2 = { 0, 0, StatusCode::OK, "?path=<0>,<1>,<2>", vec![2], true },
+        rel_0_0_path_contains = { 0, 0, StatusCode::OK, "?path__contains=<1>", vec![1,2], false },
+        abs_0_0_path_contains = { 0, 0, StatusCode::OK, "?path__contains=<1>", vec![1,2], true },
+        rel_1_2_empty = { 1, 1, StatusCode::OK, "", vec![2], false },
+        abs_1_2_empty = { 1, 1, StatusCode::OK, "", vec![2], true },
+        rel_0_0_invalid_key = { 0, 0, StatusCode::BAD_REQUEST, "?nosuchkey=foo", vec![], false },
+        abs_0_0_invalid_key = { 0, 0, StatusCode::BAD_REQUEST, "?nosuchkey=foo", vec![], true },
+        
+        rel_0_0_invalid_op = { 0, 0, StatusCode::BAD_REQUEST, "?from_name__foo=bar", vec![], false },         
+        abs_0_0_invalid_op = { 0, 0, StatusCode::BAD_REQUEST, "?from_name__foo=bar", vec![], true },
+        rel_0_1_wrong_class = { 0, 1, StatusCode::NOT_FOUND, "", vec![], false },
+        abs_0_1_wrong_class = { 0, 1, StatusCode::NOT_FOUND, "", vec![], true },
     )]
     #[test_macro(actix_web::test)]
-    async fn test_filter_related_objects(class_index: usize, object_index: usize, status: StatusCode, filter: &str, expected_object_ids: Vec<usize>) {
+    async fn test_filter_related_objects(class_index: usize, object_index: usize, status: StatusCode, filter: &str, expected_object_ids: Vec<usize>, abs_endpoint: bool) {
         use regex::Regex;
+        use crate::models::search::FilterField;
 
-        let unique = format!("filter_related_objects_{}_{}_{}_{}", class_index, object_index, status, filter).replace(&['=', '&', '?', ' ', '<', '>', ][..], "_");
+        let unique = format!("filter_related_objects_{}_{}_{}_{}_{}", class_index, object_index, status, filter, abs_endpoint).replace(&['=', '&', '?', ' ', '<', '>', ][..], "_");
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
         let (classes, relations) = create_classes_and_relations(&pool, &unique).await;
         let objects = create_objects_in_classes(&pool, &classes).await;
@@ -427,16 +444,27 @@ mod tests {
             objects[index].id.to_string()
         });
 
-        let endpoint = format!(
-            "/api/v1/classes/{}/{}/relations/{}",
-            classes[class_index].id, objects[object_index].id, filter
-        );
+        let mut status = status;
+
+        let endpoint = if abs_endpoint {
+            let (from_class_field, from_object_field) = (FilterField::ClassFrom.to_string(), FilterField::ObjectFrom.to_string());
+            let filter = if filter.is_empty() { "?".to_string() } else { format!("{}&", filter) };
+            if status == StatusCode::NOT_FOUND {
+                status = StatusCode::OK;
+            }
+            format!("{}/{}{}={}&{}={}", OBJECT_RELATIONS_ENDPOINT, filter, from_class_field, classes[class_index].id, from_object_field, objects[object_index].id)
+        } else {
+            format!( "/api/v1/classes/{}/{}/relations/{}", classes[class_index].id, objects[object_index].id, filter)
+        };
 
         let resp = get_request(&pool, &admin_token, &endpoint).await;
         let resp = assert_response_status(resp, status).await;        
 
         if status == StatusCode::OK {
-            let objects_fetched: Vec<HubuumObjectWithPath> = test::read_body_json(resp).await;  
+            let body = test::read_body(resp).await;
+            let objects_fetched: Vec<HubuumObjectWithPath> = serde_json::from_slice(&body).unwrap();
+
+//            let objects_fetched: Vec<HubuumObjectWithPath> = test::read_body_json(resp).await;  
             assert_eq!(objects_fetched.len(), expected_object_ids.len(), "{} -> Expected: {:?}, got: {:?}\nAll objects: {:?}",
                 endpoint,
                 expected_object_ids.iter().map(|i| objects[*i].id).collect::<Vec<_>>(),

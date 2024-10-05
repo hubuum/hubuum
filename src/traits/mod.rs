@@ -4,7 +4,7 @@ use serde::Serialize;
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::{
-    HubuumClass, Namespace, NewPermission, Permission, PermissionFilter, Permissions,
+    HubuumClass, HubuumObject, Namespace, NewPermission, Permission, PermissionFilter, Permissions,
     PermissionsList, UpdatePermission, User,
 };
 
@@ -42,6 +42,12 @@ pub trait NamespaceAccessors<N = Namespace, I = i32> {
 pub trait ClassAccessors<C = HubuumClass, I = i32> {
     async fn class(&self, pool: &DbPool) -> Result<C, ApiError>;
     async fn class_id(&self, pool: &DbPool) -> Result<I, ApiError>;
+}
+
+pub trait ObjectAccessors<O = HubuumObject, I = i32> {
+    #[allow(dead_code)]
+    async fn object(&self, pool: &DbPool) -> Result<O, ApiError>;
+    async fn object_id(&self, pool: &DbPool) -> Result<I, ApiError>;
 }
 
 #[allow(dead_code)]

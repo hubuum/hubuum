@@ -2,6 +2,7 @@ mod active_tokens;
 mod class;
 mod is_active;
 mod namespace;
+mod object;
 mod relations;
 mod user;
 
@@ -56,6 +57,15 @@ pub trait GetNamespace<T = Namespace> {
 /// trait is implemented to return a tuple of the two namespaces.
 pub trait GetClass<T = HubuumClass> {
     async fn class_from_backend(&self, pool: &DbPool) -> Result<T, ApiError>;
+}
+
+/// Trait for getting the object(s) of a structure from the backend database.
+///
+/// By default, this returns the singular object of the structure in question.
+/// For relations, where we have two objects (one for each structure), the
+/// trait is implemented to return a tuple of the two objects.
+pub trait GetObject<T = HubuumObject> {
+    async fn object_from_backend(&self, pool: &DbPool) -> Result<T, ApiError>;
 }
 
 /// Trait for checking if a relation exists between two classes.

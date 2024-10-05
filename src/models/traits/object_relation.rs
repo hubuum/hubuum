@@ -48,6 +48,17 @@ impl CanDelete for HubuumObjectRelation {
     }
 }
 
+impl CanDelete for HubuumObjectRelationID {
+    async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
+        use crate::schema::hubuumobject_relation::dsl::*;
+
+        let mut conn = pool.get()?;
+        diesel::delete(hubuumobject_relation.filter(id.eq(self.0))).execute(&mut conn)?;
+
+        Ok(())
+    }
+}
+
 impl CanSave for NewHubuumObjectRelation {
     type Output = HubuumObjectRelation;
 

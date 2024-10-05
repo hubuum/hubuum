@@ -539,20 +539,16 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         Ok(result)
     }
 
-    async fn search_objects_related_to<O>(
+    async fn search_object_relations(
         &self,
         pool: &DbPool,
-        object: O,
         query_params: Vec<ParsedQueryParam>,
-    ) -> Result<Vec<ObjectClosureView>, ApiError>
-    where
-        O: SelfAccessors<HubuumObject> + ClassAccessors,
-    {
+    ) -> Result<Vec<ObjectClosureView>, ApiError> {
         use crate::schema::object_closure_view::dsl as obj;
         use diesel::prelude::*;
 
         debug!(
-            message = "Searching object relations",
+            message = "Searching object relations related to object",
             stage = "Starting",
             user_id = self.id(),
             query_params = ?query_params
@@ -574,7 +570,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         // If the namespace_ids is empty, we can return early.
         if namespace_ids.is_empty() {
             debug!(
-                message = "Searching object relations",
+                message = "Searching object relations related to object",
                 stage = "Namespace IDs",
                 user_id = self.id(),
                 result = "No namespace IDs found, returning empty result"
@@ -582,7 +578,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             return Ok(vec![]);
         } else {
             debug!(
-                message = "Searching object relations",
+                message = "Searching object relations related to object",
                 stage = "Namespace IDs",
                 user_id = self.id(),
                 result = "Found namespace IDs",
@@ -593,7 +589,6 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         // First we need to ensure we have the correct permissions on both of the objects in question.
         let mut base_query = obj::object_closure_view.into_boxed();
         base_query = base_query
-            .filter(obj::ancestor_object_id.eq(object.id()))
             .filter(obj::ancestor_namespace_id.eq_any(&namespace_ids))
             .filter(obj::descendant_namespace_id.eq_any(&namespace_ids));
 
@@ -692,6 +687,36 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         })?;
 
         Ok(result)
+    }
+
+    async fn search_objects_related_to<O>(
+        &self,
+        pool: &DbPool,
+        object: O,
+        query_params: Vec<ParsedQueryParam>,
+    ) -> Result<Vec<ObjectClosureView>, ApiError>
+    where
+        O: SelfAccessors<HubuumObject> + ClassAccessors,
+    {
+        debug!(
+            message = "Searching objects related to object",
+            stage = "Starting",
+            user_id = self.id(),
+            object_id = object.id(),
+            query_params = ?query_params
+        );
+
+        // Convert the object to a parameter for the search
+        let object_param = ParsedQueryParam::new(
+            &FilterField::ObjectFrom.to_string(),
+            Some(SearchOperator::Equals { is_negated: false }),
+            &object.id().to_string(),
+        )?;
+
+        let mut query_params = query_params;
+        query_params.push(object_param);
+
+        self.search_object_relations(pool, query_params).await
     }
 }
 
@@ -937,9 +962,7 @@ impl SelfAccessors<User> for UserID {
 
     async fn instance(&self, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::*;
-        with_connection(pool, |conn| {
-            users.filter(id.eq(self.0)).first::<User>(conn)
-        })
+        with_connection(pool, |conn| users.filter(id.eq(self.0)).first::<User>(conn))
     }
 }
 

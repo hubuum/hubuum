@@ -4,11 +4,10 @@ use tracing::{debug, trace};
 use crate::db::traits::GetNamespace;
 use crate::db::{with_connection, DbPool};
 use crate::errors::ApiError;
-use crate::models::HubuumClassRelation;
-use crate::models::Namespace;
-use crate::models::NewHubuumClassRelation;
-use crate::traits::ClassAccessors;
-use crate::traits::SelfAccessors;
+use crate::models::{HubuumClassRelation, NewHubuumObjectRelation};
+use crate::models::{HubuumObjectRelation, NewHubuumClassRelation};
+use crate::models::{HubuumObjectRelationID, Namespace};
+use crate::traits::{ClassAccessors, ObjectAccessors, SelfAccessors};
 
 impl GetNamespace<(Namespace, Namespace)> for HubuumClassRelation {
     async fn namespace_from_backend(
@@ -81,6 +80,126 @@ impl GetNamespace<(Namespace, Namespace)> for NewHubuumClassRelation {
             return Err(ApiError::NotFound(
                 format!(
                     "Could not find namespaces ({} and {}) for class relation",
+                    from_id, to_id,
+                )
+                .to_string(),
+            ));
+        }
+        Ok((namespace_list[0].clone(), namespace_list[1].clone()))
+    }
+}
+
+impl GetNamespace<(Namespace, Namespace)> for HubuumObjectRelation {
+    async fn namespace_from_backend(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(Namespace, Namespace), ApiError> {
+        use crate::schema::hubuumobject::dsl::{
+            hubuumobject, id as object_id, namespace_id as object_namespace_id,
+        };
+        use crate::schema::namespaces::dsl::{id as namespace_id, namespaces};
+
+        let (from_id, to_id) = self.object_id(pool).await?;
+
+        let namespace_list = with_connection(pool, |conn| {
+            hubuumobject
+                .filter(object_id.eq_any(&[from_id, to_id]))
+                .inner_join(namespaces.on(namespace_id.eq(object_namespace_id)))
+                .select(namespaces::all_columns())
+                .load::<Namespace>(conn)
+        })?;
+
+        if namespace_list.len() == 1 {
+            trace!("Found same namespace for object relation, returning same namespace twice");
+            return Ok((namespace_list[0].clone(), namespace_list[0].clone()));
+        } else if namespace_list.len() != 2 {
+            debug!(
+                "Could not find two namespaces for object relation: {} and {}, found {:?}",
+                from_id, to_id, namespace_list
+            );
+            return Err(ApiError::NotFound(
+                format!(
+                    "Could not find namespaces ({} and {}) for object relation",
+                    from_id, to_id,
+                )
+                .to_string(),
+            ));
+        }
+        Ok((namespace_list[0].clone(), namespace_list[1].clone()))
+    }
+}
+
+impl GetNamespace<(Namespace, Namespace)> for NewHubuumObjectRelation {
+    async fn namespace_from_backend(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(Namespace, Namespace), ApiError> {
+        use crate::schema::hubuumobject::dsl::{
+            hubuumobject, id as object_id, namespace_id as object_namespace_id,
+        };
+        use crate::schema::namespaces::dsl::{id as namespace_id, namespaces};
+
+        let (from_id, to_id) = self.object_id(pool).await?;
+
+        let namespace_list = with_connection(pool, |conn| {
+            hubuumobject
+                .filter(object_id.eq_any(&[from_id, to_id]))
+                .inner_join(namespaces.on(namespace_id.eq(object_namespace_id)))
+                .select(namespaces::all_columns())
+                .load::<Namespace>(conn)
+        })?;
+
+        if namespace_list.len() == 1 {
+            trace!("Found same namespace for object relation, returning same namespace twice");
+            return Ok((namespace_list[0].clone(), namespace_list[0].clone()));
+        } else if namespace_list.len() != 2 {
+            debug!(
+                "Could not find two namespaces for object relation: {} and {}, found {:?}",
+                from_id, to_id, namespace_list
+            );
+            return Err(ApiError::NotFound(
+                format!(
+                    "Could not find namespaces ({} and {}) for object relation",
+                    from_id, to_id,
+                )
+                .to_string(),
+            ));
+        }
+        Ok((namespace_list[0].clone(), namespace_list[1].clone()))
+    }
+}
+
+impl GetNamespace<(Namespace, Namespace)> for HubuumObjectRelationID {
+    async fn namespace_from_backend(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(Namespace, Namespace), ApiError> {
+        use crate::schema::hubuumobject::dsl::{
+            hubuumobject, id as object_id, namespace_id as object_namespace_id,
+        };
+        use crate::schema::namespaces::dsl::{id as namespace_id, namespaces};
+
+        let (from_id, to_id) = self.object_id(pool).await?;
+
+        let namespace_list = with_connection(pool, |conn| {
+            hubuumobject
+                .filter(object_id.eq_any(&[from_id, to_id]))
+                .inner_join(namespaces.on(namespace_id.eq(object_namespace_id)))
+                .select(namespaces::all_columns())
+                .load::<Namespace>(conn)
+        })?;
+
+        if namespace_list.len() == 1 {
+            trace!("Found same namespace for object relation, returning same namespace twice");
+            return Ok((namespace_list[0].clone(), namespace_list[0].clone()));
+        } else if namespace_list.len() != 2 {
+            debug!(
+                "Could not find two namespaces for object relation: {} and {}, found {:?}",
+                from_id, to_id, namespace_list
+            );
+            return Err(ApiError::NotFound(
+                format!(
+                    "Could not find namespaces ({} and {}) for object relation",
                     from_id, to_id,
                 )
                 .to_string(),
