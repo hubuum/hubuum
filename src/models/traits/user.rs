@@ -543,9 +543,165 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         &self,
         pool: &DbPool,
         query_params: Vec<ParsedQueryParam>,
-    ) -> Result<Vec<ObjectClosureView>, ApiError> {
+    ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
+        // Valid search fields:
+        // From hubuumobject_relation:
+        // - id (int)
+        // - from_object_id (int)
+        // - to_object_id (int)
+        // - created_at (date)
+        // - updated_at (date)
+        // From permissions:
+        // - A permission field for both from and to object IDs
+
+        // Flow:
+        // 1. Get all namespace IDs that the user has ReadObjectRelations and any other required permissions on
+        // 2. Filter the hubuumobject_relation table on the namespace IDs
+
+        use crate::models::PermissionFilter;
+        use crate::schema::hubuumobject_relation::dsl::{
+            class_relation_id, from_hubuum_object_id, hubuumobject_relation,
+            id as hubuum_object_relation_id, to_hubuum_object_id,
+        };
+        use crate::schema::permissions::dsl::*;
+        use diesel::alias;
+        use std::collections::HashSet;
+
+        debug!(
+            message = "Searching object relations",
+            stage = "Starting",
+            user_id = self.id(),
+            query_params = ?query_params
+        );
+
+        // Permissions vector must contain ReadObjectRelation
+        let mut permissions_list = query_params.permissions()?;
+        permissions_list.ensure_contains(&[Permissions::ReadObjectRelation]);
+
+        // Get all namespace IDs that the user has ReadObjectRelations and other requested permissions on.
+        let namespace_ids: Vec<i32> = self
+            .namespaces(pool, &permissions_list)
+            .await?
+            .into_iter()
+            .map(|n| n.id)
+            .collect();
+
+        debug!(
+            message = "Searching object relations",
+            stage = "Namespace IDs",
+            user_id = self.id(),
+            namespace_ids = ?namespace_ids
+        );
+
+        let mut base_query = hubuumobject_relation.into_boxed();
+
+        base_query = base_query
+            .filter(
+                from_hubuum_object_id.eq_any(
+                    crate::schema::hubuumobject::dsl::hubuumobject
+                        .select(crate::schema::hubuumobject::id)
+                        .filter(crate::schema::hubuumobject::namespace_id.eq_any(&namespace_ids)),
+                ),
+            )
+            .filter(
+                to_hubuum_object_id.eq_any(
+                    crate::schema::hubuumobject::dsl::hubuumobject
+                        .select(crate::schema::hubuumobject::id)
+                        .filter(crate::schema::hubuumobject::namespace_id.eq_any(&namespace_ids)),
+                ),
+            );
+
+        for param in query_params {
+            use crate::models::search::{DataType, SearchOperator};
+            use crate::{boolean_search, date_search, numeric_search, string_search};
+            let operator = param.operator.clone();
+            match param.field {
+                FilterField::Id => numeric_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumobject_relation::dsl::id
+                ),
+                FilterField::ClassRelation => numeric_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumobject_relation::dsl::class_relation_id
+                ),
+                FilterField::ObjectFrom => numeric_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumobject_relation::dsl::from_hubuum_object_id
+                ),
+                FilterField::ObjectTo => numeric_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumobject_relation::dsl::to_hubuum_object_id
+                ),
+                FilterField::CreatedAt => date_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumobject_relation::dsl::created_at
+                ),
+                FilterField::UpdatedAt => date_search!(
+                    base_query,
+                    param,
+                    operator,
+                    crate::schema::hubuumobject_relation::dsl::updated_at
+                ),
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for object relations",
+                        param.field
+                    )))
+                }
+            }
+        }
+
+        trace_query!(base_query, "Searching object relations");
+
+        let result = with_connection(pool, |conn| {
+            base_query
+                .select(hubuumobject_relation::all_columns())
+                .distinct() // TODO: Is it the joins that makes this required?
+                .load::<HubuumObjectRelation>(conn)
+        })?;
+
+        Ok(result)
+    }
+
+    async fn search_objects_related_to<O>(
+        &self,
+        pool: &DbPool,
+        object: O,
+        query_params: Vec<ParsedQueryParam>,
+    ) -> Result<Vec<ObjectClosureView>, ApiError>
+    where
+        O: SelfAccessors<HubuumObject> + ClassAccessors,
+    {
         use crate::schema::object_closure_view::dsl as obj;
         use diesel::prelude::*;
+
+        debug!(
+            message = "Searching objects related to object",
+            stage = "Starting",
+            user_id = self.id(),
+            object_id = object.id(),
+            query_params = ?query_params
+        );
+
+        // Convert the object to a parameter for the search
+        let object_param = ParsedQueryParam::new(
+            &FilterField::ObjectFrom.to_string(),
+            Some(SearchOperator::Equals { is_negated: false }),
+            &object.id().to_string(),
+        )?;
+
+        let mut query_params = query_params;
+        query_params.push(object_param);
 
         debug!(
             message = "Searching object relations related to object",
@@ -687,36 +843,6 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         })?;
 
         Ok(result)
-    }
-
-    async fn search_objects_related_to<O>(
-        &self,
-        pool: &DbPool,
-        object: O,
-        query_params: Vec<ParsedQueryParam>,
-    ) -> Result<Vec<ObjectClosureView>, ApiError>
-    where
-        O: SelfAccessors<HubuumObject> + ClassAccessors,
-    {
-        debug!(
-            message = "Searching objects related to object",
-            stage = "Starting",
-            user_id = self.id(),
-            object_id = object.id(),
-            query_params = ?query_params
-        );
-
-        // Convert the object to a parameter for the search
-        let object_param = ParsedQueryParam::new(
-            &FilterField::ObjectFrom.to_string(),
-            Some(SearchOperator::Equals { is_negated: false }),
-            &object.id().to_string(),
-        )?;
-
-        let mut query_params = query_params;
-        query_params.push(object_param);
-
-        self.search_object_relations(pool, query_params).await
     }
 }
 

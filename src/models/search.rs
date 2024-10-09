@@ -999,6 +999,7 @@ filter_fields!(
     (CreatedAtTo, "to_created_at"),
     (UpdatedAtFrom, "from_updated_at"),
     (UpdatedAtTo, "to_updated_at"),
+    (ClassRelation, "class_relation"),
     (Depth, "depth"),
     (Path, "path"),
 );

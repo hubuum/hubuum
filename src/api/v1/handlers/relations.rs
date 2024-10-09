@@ -2,7 +2,6 @@ use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::parse_query_parameter;
-use crate::models::traits::ToHubuumObjects;
 use crate::models::{HubuumClassRelationID, HubuumObjectRelationID, NamespaceID, Permissions};
 
 use crate::can;
@@ -148,12 +147,9 @@ async fn get_object_relations(
 
     debug!(message = "Listing object relations", user_id = user.id());
 
-    let objects = user
-        .search_object_relations(&pool, params)
-        .await?
-        .to_descendant_objects_with_path();
+    let object_relations = user.search_object_relations(&pool, params).await?;
 
-    Ok(json_response(objects, StatusCode::OK))
+    Ok(json_response(object_relations, StatusCode::OK))
 }
 
 #[get("objects/{relation_id}")]

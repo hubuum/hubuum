@@ -185,6 +185,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 pub trait ObjectRelationsFromUser: SelfAccessors<User> + GroupAccessors
 where
     for<'a> &'a Self: GroupAccessors,
@@ -200,6 +201,7 @@ where
         C: SelfAccessors<HubuumClass> + Clone + Send + Sync;
 }
 
+#[allow(dead_code)]
 pub trait ObjectRelationMemberships
 where
     Self: SelfAccessors<HubuumObject> + Clone + Send + Sync,
