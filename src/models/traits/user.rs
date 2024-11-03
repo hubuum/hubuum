@@ -446,6 +446,8 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             query_params = ?query_params
         );
 
+        let mut query_params = query_params;
+
         // Permissions vector must contain ReadClassRelation
         let mut permissions_list = query_params.permissions()?;
         permissions_list.ensure_contains(&[Permissions::ReadClassRelation]);
@@ -466,6 +468,53 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         );
 
         let mut base_query = hubuumclass_relation.into_boxed();
+
+        // This needs to be a dynamic join...
+        for param in &[FilterField::ClassFromName, FilterField::ClassToName] {
+            if let Some(class_param) = query_params.iter().find(|p| &p.field == param) {
+                let qparam = ParsedQueryParam {
+                    field: FilterField::Name,
+                    operator: class_param.operator.clone(),
+                    value: class_param.value.clone(),
+                };
+                let classes = self.search_classes(pool, vec![qparam]).await?;
+                let class_ids: Vec<i32> = classes.iter().map(|c| c.id).collect();
+
+                if class_ids.is_empty() {
+                    debug!(
+                        message = "Searching class relations with class names",
+                        stage = "Class IDs",
+                        user_id = self.id(),
+                        result = "No class IDs found, returning empty result"
+                    );
+                    return Ok(vec![]);
+                } else {
+                    debug!(
+                        message = "Searching class relations with class names",
+                        stage = "Class IDs",
+                        user_id = self.id(),
+                        result = "Found class IDs",
+                        class_ids = ?class_ids
+                    );
+                }
+
+                let field = match param {
+                    FilterField::ClassFromName => FilterField::ClassFrom,
+                    FilterField::ClassToName => FilterField::ClassTo,
+                    _ => unreachable!(),
+                };
+
+                query_params.push(ParsedQueryParam {
+                    field,
+                    operator: SearchOperator::Equals { is_negated: false },
+                    value: class_ids
+                        .iter()
+                        .map(|item| item.to_string())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                });
+            }
+        }
 
         base_query = base_query
             .filter(
@@ -518,6 +567,8 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                     operator,
                     crate::schema::hubuumclass_relation::dsl::updated_at
                 ),
+                FilterField::ClassFromName => {} // Handled above
+                FilterField::ClassToName => {}   // Handled above
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for class relations",

@@ -526,6 +526,29 @@ pub enum Operator {
     Between,
 }
 
+impl std::fmt::Display for Operator {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let op = match self {
+            Operator::Equals => "equals",
+            Operator::IEquals => "iequals",
+            Operator::Contains => "contains",
+            Operator::IContains => "icontains",
+            Operator::StartsWith => "startswith",
+            Operator::IStartsWith => "istartswith",
+            Operator::EndsWith => "endswith",
+            Operator::IEndsWith => "iendswith",
+            Operator::Like => "like",
+            Operator::Regex => "regex",
+            Operator::Gt => "gt",
+            Operator::Gte => "gte",
+            Operator::Lt => "lt",
+            Operator::Lte => "lte",
+            Operator::Between => "between",
+        };
+        write!(f, "{}", op)
+    }
+}
+
 /// ## An enum that represents a search operator
 ///
 /// This enum represents the different types of search operators that can be used in a search query,
@@ -554,6 +577,14 @@ pub enum DataType {
     NumericOrDate,
     Boolean,
     Array,
+}
+
+impl std::fmt::Display for SearchOperator {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let (op, neg) = self.op_and_neg();
+        let neg_str = if neg { "not_" } else { "" };
+        write!(f, "{}{}", neg_str, op)
+    }
 }
 
 impl SearchOperator {
@@ -991,6 +1022,8 @@ filter_fields!(
     (ObjectTo, "to_objects"),
     (ClassTo, "to_classes"),
     (ClassFrom, "from_classes"),
+    (ClassToName, "to_class_name"),
+    (ClassFromName, "from_class_name"),
     (NamespacesFrom, "from_namespaces"),
     (NamespacesTo, "to_namespaces"),
     (JsonDataFrom, "from_json_data"),

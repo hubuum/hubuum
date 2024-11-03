@@ -92,21 +92,37 @@ pub async fn create_test_admin(pool: &DbPool) -> User {
 
 /// Create a test group with a random name
 pub async fn create_test_group(pool: &DbPool) -> Group {
-    let groupname = "group".to_string() + &generate_random_password(16);
-    let result = NewGroup {
-        groupname: groupname.to_string(),
-        description: Some("Test group".to_string()),
+    create_groups_with_prefix(pool, &generate_random_password(16), 1)
+        .await
+        .remove(0)
+}
+
+pub async fn create_groups_with_prefix(
+    pool: &DbPool,
+    prefix: &str,
+    num_groups: usize,
+) -> Vec<Group> {
+    let mut groups = Vec::new();
+
+    for i in 0..num_groups {
+        let groupname = format!("{}-group-{}", prefix, i);
+        let result = NewGroup {
+            groupname: groupname.to_string(),
+            description: Some(groupname.clone()),
+        }
+        .save(pool)
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "Failed to create group: {:?}",
+            result.err().unwrap()
+        );
+
+        groups.push(result.unwrap());
     }
-    .save(pool)
-    .await;
 
-    assert!(
-        result.is_ok(),
-        "Failed to create group: {:?}",
-        result.err().unwrap()
-    );
-
-    result.unwrap()
+    groups
 }
 
 pub async fn ensure_user(pool: &DbPool, uname: &str) -> User {
