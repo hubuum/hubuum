@@ -103,7 +103,7 @@ mod test {
         let (namespace, _classes, relations) = create_data(&pool, &prefix).await;
 
         let re = Regex::new(r"<(\d+)>").unwrap();
-        let value = re.replace_all(&value, |caps: &regex::Captures| {
+        let value = re.replace_all(value, |caps: &regex::Captures| {
             let index = caps[1].parse::<usize>().unwrap();
 
             match field {
