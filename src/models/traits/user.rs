@@ -1143,7 +1143,7 @@ impl SelfAccessors<User> for UserID {
     }
 }
 
-impl<'a> SelfAccessors<User> for &'a User {
+impl SelfAccessors<User> for &User {
     fn id(&self) -> i32 {
         (*self).id()
     }
@@ -1152,7 +1152,7 @@ impl<'a> SelfAccessors<User> for &'a User {
     }
 }
 
-impl<'a> SelfAccessors<User> for &'a UserID {
+impl SelfAccessors<User> for &UserID {
     fn id(&self) -> i32 {
         (*self).id()
     }

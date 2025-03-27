@@ -1,5 +1,4 @@
 #[cfg(test)]
-
 mod test {
     use regex::Regex;
     use yare::parameterized;

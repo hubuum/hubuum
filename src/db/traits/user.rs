@@ -63,8 +63,7 @@ pub trait UserPermissions: SelfAccessors<User> + GroupAccessors {
     ///
     /// ### Returns
     ///
-    /// * Nothing if the user has the required permissions, or an ApiError::Forbidden if they do not.
-    
+    /// * Nothing if the user has the required permissions, or an ApiError::Forbidden if they do not.    
     async fn can<P, N, I>(
         &self,
         pool: &DbPool,

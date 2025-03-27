@@ -282,7 +282,6 @@ pub fn generate_all_subsets<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
 }
 
 #[cfg(test)]
-
 mod test {
 
     use super::*;

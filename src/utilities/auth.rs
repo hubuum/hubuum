@@ -57,9 +57,9 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool, argon2::Error
         }
     };
 
-    return Ok(Argon2::default()
+    Ok(Argon2::default()
         .verify_password(password.as_bytes(), &parsed_hash)
-        .is_ok());
+        .is_ok())
 }
 
 pub fn generate_random_password(length: usize) -> String {

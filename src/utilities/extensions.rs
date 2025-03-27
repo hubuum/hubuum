@@ -121,7 +121,6 @@ impl<T: AsRef<str>> CustomStringExtensions for T {
                             .map(|date| date.and_hms_opt(0, 0, 0).unwrap())
                             .map_err(Into::<ApiError>::into)
                     })
-                    .map_err(Into::<ApiError>::into)
             })
             .collect()
     }

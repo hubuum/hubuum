@@ -180,7 +180,6 @@ macro_rules! assert_contains_all {
 ///
 /// - Alternatively, `$collection` is a vector of instances and `$ids` is a slice of `i32` representing
 ///   the expected unique IDs to be found in `$collection`.
-
 #[macro_export]
 macro_rules! assert_contains_same_ids {
     // Case where both arguments are references to vectors of instances
