@@ -7,9 +7,7 @@ use argon2::{
     Argon2,
 };
 
-use rand::distributions::Alphanumeric;
-use rand::{thread_rng, Rng};
-
+use rand::{distr::Alphanumeric, rng, Rng};
 use sha2::{Digest, Sha512};
 
 use tracing::debug;
@@ -63,7 +61,7 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool, argon2::Error
 }
 
 pub fn generate_random_password(length: usize) -> String {
-    let mut rng = thread_rng();
+    let mut rng = rng();
     std::iter::repeat(())
         .map(|()| rng.sample(Alphanumeric))
         .map(char::from)

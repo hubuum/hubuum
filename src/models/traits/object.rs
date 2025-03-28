@@ -1,4 +1,7 @@
-use crate::db::DbPool;
+use diesel::prelude::*;
+use jsonschema;
+
+use crate::db::{with_connection, DbPool};
 use crate::errors::ApiError;
 use crate::models::traits::GroupAccessors;
 
@@ -11,7 +14,6 @@ use crate::traits::{
     CanDelete, CanSave, CanUpdate, ClassAccessors, NamespaceAccessors, PermissionController,
     SelfAccessors,
 };
-use diesel::prelude::*;
 
 //
 // Save/Update/Delete
