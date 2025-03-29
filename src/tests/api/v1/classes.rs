@@ -22,7 +22,7 @@ pub mod tests {
     /// 1-3: Blog
     /// 4-5: Address
     /// 6: Geo
-    pub async fn create_test_classes(prefix: &str) -> Vec<crate::models::class::HubuumClass> {
+    pub async fn create_test_classes(prefix: &str) -> Vec<HubuumClass> {
         let (pool, _, _) = setup_pool_and_tokens().await;
 
         let ns = create_namespace(&pool, &format!("{}_{}", prefix, "api_create_test_classes"))

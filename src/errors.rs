@@ -73,7 +73,7 @@ impl ResponseError for ApiError {
                 .json(json!({ "error": "Operator Mismatch", "message": message })),
             ApiError::InvalidIntegerRange(ref message) => HttpResponse::BadRequest()
                 .json(json!({ "error": "Invalid Integer Range", "message": message })),
-            ApiError::ValidationError(ref message) => HttpResponse::BadRequest()
+            ApiError::ValidationError(ref message) => HttpResponse::NotAcceptable()
                 .json(json!({ "error": "Validation Error", "message": message })),
         }
     }
@@ -91,7 +91,7 @@ impl ResponseError for ApiError {
             ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
             ApiError::OperatorMismatch(_) => StatusCode::BAD_REQUEST,
             ApiError::InvalidIntegerRange(_) => StatusCode::BAD_REQUEST,
-            ApiError::ValidationError(_) => StatusCode::BAD_REQUEST,
+            ApiError::ValidationError(_) => StatusCode::NOT_ACCEPTABLE,
         }
     }
 }

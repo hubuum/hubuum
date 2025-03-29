@@ -8,6 +8,7 @@ pub mod api_operations;
 pub mod asserts;
 pub mod constants;
 pub mod search;
+pub mod validation;
 
 use actix_web::web;
 use diesel::prelude::*;

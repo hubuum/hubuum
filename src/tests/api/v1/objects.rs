@@ -2,12 +2,13 @@
 mod tests {
     use yare::parameterized;
 
-    use crate::models::{HubuumObject, NewHubuumObject, UpdateHubuumObject};
+    use crate::models::{HubuumObject, NewHubuumClass, NewHubuumObject, UpdateHubuumObject};
     use crate::traits::{CanDelete, CanSave};
     use actix_web::{http::StatusCode, test};
 
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::assert_response_status;
+    use crate::tests::constants::{get_schema, SchemaType};
     use crate::tests::{create_namespace, setup_pool_and_tokens};
     // use crate::{assert_contains_all, assert_contains_same_ids};
 
@@ -203,5 +204,81 @@ mod tests {
         let objects_from_api: Vec<HubuumObject> = test::read_body_json(resp).await;
 
         assert_eq!(objects_from_api.len(), objects.len());
+    }
+
+    #[parameterized(
+        ok_40_74 = { r#"{"latitude": 40.7128, "longitude": -74.0060}"#, true },
+        failed_91_74 = { r#"{"latitude": 91, "longitude": 200}"#, false },
+        failed_neg91_74 = { r#"{"latitude": -91, "longitude": 200}"#, false },
+        failed_40_181 = { r#"{"latitude": 40.7128, "longitude": 181}"#, false },
+        failed_40_neg181 = { r#"{"latitude": 40.7128, "longitude": -181}"#, false },
+        failed_100_200 = { r#"{"latitude": 100, "longitude": 200}"#, false },
+        failed_lat_missing = { r#"{"longitude": 0}"#, false },
+        failed_long_missing = { r#"{"latitude": 0}"#, false },
+        ok_extra_fields = { r#"{"latitude": 40.7128, "longitude": -74.0060, "extra_field": "value"}"#, true },
+    )]
+    #[test_macro(actix_web::test)]
+    async fn create_objects_in_class_failing_validation(json_data: &str, expected: bool) {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+
+        let unique_name = format!("{}_create_objects_in_class_failing_validation", json_data);
+
+        let namespace = create_namespace(&pool, &unique_name).await.unwrap();
+
+        let schema = get_schema(SchemaType::Geo);
+        let class = NewHubuumClass {
+            name: unique_name.clone(),
+            namespace_id: namespace.id,
+            description: "Test class".to_string(),
+            json_schema: Some(schema.clone()),
+            validate_schema: Some(true),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        let object = NewHubuumObject {
+            name: unique_name.clone(),
+            namespace_id: namespace.id,
+            hubuum_class_id: class.id,
+            data: serde_json::from_str(json_data).unwrap(),
+            description: "Test object".to_string(),
+        };
+
+        let resp = post_request(
+            &pool,
+            &admin_token,
+            &format!("{}/{}/", OBJECT_ENDPOINT, class.id),
+            &object,
+        )
+        .await;
+
+        let resp = assert_response_status(
+            resp,
+            if expected {
+                StatusCode::CREATED
+            } else {
+                StatusCode::NOT_ACCEPTABLE
+            },
+        )
+        .await;
+
+        if expected {
+            let object_from_api: HubuumObject = test::read_body_json(resp).await;
+            assert_eq!(object_from_api.name, object.name);
+            assert_eq!(object_from_api.description, object.description);
+            assert_eq!(object_from_api.data, object.data);
+            assert_eq!(object_from_api.namespace_id, object.namespace_id);
+            assert_eq!(object_from_api.hubuum_class_id, object.hubuum_class_id);
+            object_from_api.delete(&pool).await.unwrap();
+        } else {
+            let error_message: serde_json::Value = test::read_body_json(resp).await;
+            let error_text = error_message["error"].as_str().unwrap().to_lowercase();
+            assert!(
+                error_text.contains("validation error"),
+                "Expected 'validation error', got: {}",
+                error_text
+            );
+        }
     }
 }

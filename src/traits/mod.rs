@@ -25,6 +25,27 @@ pub trait CanUpdate {
     async fn update(&self, pool: &DbPool, entry_id: i32) -> Result<Self::Output, ApiError>;
 }
 
+pub trait Validate {
+    /// Complete validation of the object.
+    ///
+    /// This returns errors if:
+    /// - If the object's class requires validation (validate_schema), and the object's data
+    ///   fails validation against the class's JSON schema (json_schema).
+    async fn validate(&self, pool: &DbPool) -> Result<(), ApiError>;
+}
+
+pub trait ValidateAgainstSchema {
+    /// Validate the object's data against the class's JSON schema.
+    ///
+    /// This does not check if the class requires validation (validate_schema), it
+    /// only checks if the data is valid against the schema.
+    ///
+    /// Returns OK() if any of the following are true:
+    /// - The class does not have a schema (json_schema).
+    /// - The object data is valid against the schema.
+    async fn validate_against_schema(&self, schema: &serde_json::Value) -> Result<(), ApiError>;
+}
+
 // This trait is used to provide a uniform interface for both EntityID
 // and Entity types, ie User and UserID.
 #[allow(async_fn_in_trait)]

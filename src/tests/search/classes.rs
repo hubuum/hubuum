@@ -103,41 +103,67 @@ mod test {
     async fn test_equals() {
         let (namespaces, classes) = setup_test_structure("test_user_class_equals").await;
 
+        // Set which namespaces we want to search in
+        let comma_separated_namespaces = namespaces
+            .iter()
+            .map(|ns| ns.id.to_string())
+            .collect::<Vec<String>>()
+            .join(",");
+
+        let namespace_pgp = ParsedQueryParam::new(
+            "namespaces",
+            Some(SearchOperator::Equals { is_negated: false }),
+            &comma_separated_namespaces,
+        )
+        .unwrap();
+
         let testcases = vec![
             TestCase {
-                query: vec![ParsedQueryParam::new(
-                    "id",
-                    Some(SearchOperator::Equals { is_negated: false }),
-                    &classes[0].id.to_string(),
-                )
-                .unwrap()],
+                query: vec![
+                    ParsedQueryParam::new(
+                        "id",
+                        Some(SearchOperator::Equals { is_negated: false }),
+                        &classes[0].id.to_string(),
+                    )
+                    .unwrap(),
+                    namespace_pgp.clone(),
+                ],
                 expected: 1,
             },
             TestCase {
-                query: vec![ParsedQueryParam::new(
-                    "name",
-                    Some(SearchOperator::Equals { is_negated: false }),
-                    &classes[0].name,
-                )
-                .unwrap()],
+                query: vec![
+                    ParsedQueryParam::new(
+                        "name",
+                        Some(SearchOperator::Equals { is_negated: false }),
+                        &classes[0].name,
+                    )
+                    .unwrap(),
+                    namespace_pgp.clone(),
+                ],
                 expected: 1,
             },
             TestCase {
-                query: vec![ParsedQueryParam::new(
-                    "namespaces",
-                    Some(SearchOperator::Equals { is_negated: false }),
-                    &namespaces[2].id.to_string(),
-                )
-                .unwrap()],
+                query: vec![
+                    ParsedQueryParam::new(
+                        "namespaces",
+                        Some(SearchOperator::Equals { is_negated: false }),
+                        &namespaces[2].id.to_string(),
+                    )
+                    .unwrap(),
+                    namespace_pgp.clone(),
+                ],
                 expected: 1,
             },
             TestCase {
-                query: vec![ParsedQueryParam::new(
-                    "validate_schema",
-                    Some(SearchOperator::Equals { is_negated: false }),
-                    "true",
-                )
-                .unwrap()],
+                query: vec![
+                    ParsedQueryParam::new(
+                        "validate_schema",
+                        Some(SearchOperator::Equals { is_negated: false }),
+                        "true",
+                    )
+                    .unwrap(),
+                    namespace_pgp.clone(),
+                ],
                 expected: 0,
             },
             TestCase {
