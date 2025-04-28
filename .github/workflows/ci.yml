@@ -60,7 +60,7 @@ jobs:
             name: hubuum-Linux-arm-gnu.tar.gz
             skip_tests: true
           - os_name: Linux-i686
-            os: ubuntu-20.04
+            os: ubuntu-latest
             target: i686-unknown-linux-gnu
             bin: hubuum
             name: hubuum-Linux-i686-gnu.tar.gz
@@ -78,7 +78,7 @@ jobs:
 #            name: hubuum-Linux-powerpc64-gnu.tar.gz
 #            skip_tests: true
           - os_name: Linux-powerpc64le
-            os: ubuntu-20.04
+            os: ubuntu-latest
             target: powerpc64le-unknown-linux-gnu
             bin: hubuum
             name: hubuum-Linux-powerpc64le.tar.gz
@@ -89,7 +89,7 @@ jobs:
 #            bin: hubuum
 #            name: hubuum-Linux-riscv64gc-gnu.tar.gz
           - os_name: Linux-s390x
-            os: ubuntu-20.04
+            os: ubuntu-latest
             target: s390x-unknown-linux-gnu
             bin: hubuum
             name: hubuum-Linux-s390x-gnu.tar.gz
