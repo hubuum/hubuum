@@ -114,7 +114,7 @@ pub async fn user_on<T: NamespaceAccessors>(
 ///
 /// ## Returns
 /// * Ok(Vec<Namespace>) - List of namespaces the user has the requested permission for.
-///                        If no matching namespaces are found, an empty list is returned
+///   If no matching namespaces are found, an empty list is returned
 /// * Err(ApiError) - On query errors only.
 pub async fn user_can_on_any<U: SelfAccessors<User> + GroupAccessors>(
     pool: &DbPool,
@@ -593,11 +593,13 @@ mod tests {
             NP::ReadCollection
         );
 
-        for permission in [NP::UpdateCollection,
+        for permission in [
+            NP::UpdateCollection,
             NP::DeleteCollection,
             NP::DelegateCollection,
             NP::CreateClass,
-            NP::CreateObject] {
+            NP::CreateObject,
+        ] {
             assert!(
                 !group_can_on(&pool, group_id, namespace.clone(), permission)
                     .await
@@ -622,10 +624,12 @@ mod tests {
             );
         }
 
-        for permission in [NP::DeleteCollection,
+        for permission in [
+            NP::DeleteCollection,
             NP::DelegateCollection,
             NP::CreateClass,
-            NP::CreateObject] {
+            NP::CreateObject,
+        ] {
             assert!(
                 !group_can_on(&pool, group_id, namespace.clone(), permission)
                     .await
@@ -648,11 +652,13 @@ mod tests {
             NP::ReadCollection
         );
 
-        for permission in [NP::UpdateCollection,
+        for permission in [
+            NP::UpdateCollection,
             NP::DeleteCollection,
             NP::DelegateCollection,
             NP::CreateClass,
-            NP::CreateObject] {
+            NP::CreateObject,
+        ] {
             assert!(
                 !group_can_on(&pool, group_id, namespace.clone(), permission)
                     .await
