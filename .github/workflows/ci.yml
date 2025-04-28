@@ -21,7 +21,7 @@ env:
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
         uses: actions/checkout@v3
@@ -43,24 +43,24 @@ jobs:
       matrix:
         platform:
           - os_name: Linux-x86_64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             bin: hubuum
             name: hubuum-Linux-x86_64-gnu.tar.gz
           - os_name: Linux-aarch64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             target: aarch64-unknown-linux-gnu
             bin: hubuum
             name: hubuum-Linux-aarch64-gnu.tar.gz
             skip_tests: true
           - os_name: Linux-arm
-            os: ubuntu-latest
+            os: ubuntu-24.04
             target: arm-unknown-linux-gnueabi
             bin: hubuum
             name: hubuum-Linux-arm-gnu.tar.gz
             skip_tests: true
           - os_name: Linux-i686
-            os: ubuntu-latest
+            os: ubuntu-24.04
             target: i686-unknown-linux-gnu
             bin: hubuum
             name: hubuum-Linux-i686-gnu.tar.gz
@@ -78,7 +78,7 @@ jobs:
 #            name: hubuum-Linux-powerpc64-gnu.tar.gz
 #            skip_tests: true
           - os_name: Linux-powerpc64le
-            os: ubuntu-latest
+            os: ubuntu-24.04
             target: powerpc64le-unknown-linux-gnu
             bin: hubuum
             name: hubuum-Linux-powerpc64le.tar.gz
@@ -89,7 +89,7 @@ jobs:
 #            bin: hubuum
 #            name: hubuum-Linux-riscv64gc-gnu.tar.gz
           - os_name: Linux-s390x
-            os: ubuntu-latest
+            os: ubuntu-24.04
             target: s390x-unknown-linux-gnu
             bin: hubuum
             name: hubuum-Linux-s390x-gnu.tar.gz
