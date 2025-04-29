@@ -53,12 +53,12 @@ jobs:
             bin: hubuum
             name: hubuum-Linux-aarch64-gnu.tar.gz
             skip_tests: true
-          - os_name: Linux-arm
-            os: ubuntu-22.04
-            target: arm-unknown-linux-gnueabi
-            bin: hubuum
-            name: hubuum-Linux-arm-gnu.tar.gz
-            skip_tests: true
+          #- os_name: Linux-arm
+          #  os: ubuntu-22.04
+          #  target: arm-unknown-linux-gnueabi
+          #  bin: hubuum
+          #  name: hubuum-Linux-arm-gnu.tar.gz
+          #  skip_tests: true
           - os_name: Linux-i686
             os: ubuntu-24.04
             target: i686-unknown-linux-gnu
