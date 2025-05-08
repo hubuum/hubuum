@@ -4,7 +4,7 @@ mod test {
 
     use crate::models::class::NewHubuumClass;
     use crate::models::group::GroupID;
-    use crate::models::search::{ParsedQueryParam, SearchOperator};
+    use crate::models::search::{ParsedQueryParam, QueryOptions, SearchOperator};
     use crate::models::{HubuumClass, Namespace, NewNamespace};
     use crate::tests::constants::{get_schema, SchemaType};
     use crate::tests::{ensure_admin_group, ensure_admin_user, setup_pool_and_tokens};
@@ -78,8 +78,14 @@ mod test {
         let admin_user = ensure_admin_user(&pool).await;
 
         for tc in testcases {
+            let query_options = QueryOptions {
+                filters: tc.query.clone(),
+                sort: vec![],
+                limit: None,
+            };
+
             let hits = admin_user
-                .search_classes(&pool, tc.query.clone())
+                .search_classes(&pool, query_options.clone())
                 .await
                 .unwrap();
             assert_eq!(

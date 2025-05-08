@@ -18,7 +18,7 @@ use crate::models::{
 use crate::traits::{CanDelete, CanSave, CanUpdate, NamespaceAccessors, Search, SelfAccessors};
 
 use super::check_if_object_in_class;
-use crate::models::search::{parse_query_parameter, FilterField, ParsedQueryParam};
+use crate::models::search::{parse_query_parameter, FilterField};
 
 // GET /api/v1/classes, list all classes the user may see.
 #[routes]
@@ -185,21 +185,6 @@ async fn get_class_permissions(
     Ok(json_response(permissions, StatusCode::OK))
 }
 
-fn ensure_class_filter(
-    params: &mut Vec<ParsedQueryParam>,
-    field: FilterField,
-    class_id: &HubuumClassID,
-) {
-    use crate::models::search::SearchOperator;
-    if !params.iter().any(|p| p.field == field) {
-        params.push(ParsedQueryParam {
-            field,
-            operator: SearchOperator::Equals { is_negated: false },
-            value: class_id.id().to_string(),
-        });
-    }
-}
-
 // Contextual get for class relations
 #[get("/{class_id}/relations/")]
 async fn get_class_relations(
@@ -222,7 +207,7 @@ async fn get_class_relations(
     );
 
     let mut params = parse_query_parameter(query_string)?;
-    ensure_class_filter(&mut params, FilterField::ClassFrom, &class_id);
+    params.ensure_filter_exact(FilterField::ClassFrom, &class_id);
 
     // TODO: Migrate to user search for permissions.
     let relations = class_id.search_relations(&pool, &params).await?;
@@ -397,12 +382,7 @@ async fn get_objects_in_class(
 
     // Manually add a filter for the class itself to restrict the search
     // in order to restrict the search to the class.
-    let class_filter = ParsedQueryParam {
-        field: FilterField::ClassId,
-        operator: crate::models::search::SearchOperator::Equals { is_negated: false },
-        value: class.id().to_string(),
-    };
-    params.push(class_filter);
+    params.ensure_filter_exact(FilterField::ClassId, &class);
 
     debug!(
         message = "Getting objects in class",
