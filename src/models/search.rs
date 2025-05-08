@@ -3,15 +3,16 @@ use actix_web::web::Json;
 use chrono::{format, DateTime, NaiveDateTime, Utc};
 use diesel::dsl::Filter;
 use diesel::sql_types::Bool;
+use std::collections::HashSet;
 use std::str::FromStr;
-use std::{collections::HashSet, f32::consts::E};
 use tracing::debug;
 
 use crate::models::permissions::{Permissions, PermissionsList};
+use crate::traits::SelfAccessors;
 use crate::utilities::extensions::CustomStringExtensions;
 use crate::{errors::ApiError, schema::hubuumobject::data};
 
-use super::Permission;
+use super::{HubuumClassID, Permission};
 
 /// ## Parse a query string into search parameters
 ///
@@ -21,60 +22,119 @@ use super::Permission;
 ///
 /// ## Returns
 ///
-/// * A vector of parsed query parameters or ApiError::BadRequest if the query string is invalid
-pub fn parse_query_parameter(query_string: &str) -> Result<Vec<ParsedQueryParam>, ApiError> {
-    let mut parsed_query_params = Vec::new();
+pub fn parse_query_parameter(qs: &str) -> Result<QueryOptions, ApiError> {
+    let mut filters = Vec::new();
+    let mut sort = Vec::new();
+    let mut limit = None;
 
-    // Return empty if the query string is empty
-    if query_string.is_empty() {
-        return Ok(parsed_query_params);
+    if qs.is_empty() {
+        return Ok(QueryOptions {
+            filters,
+            sort,
+            limit,
+        });
     }
 
-    for query_param in query_string.split('&') {
-        let query_param_parts: Vec<&str> = query_param.splitn(2, '=').collect();
-
-        if query_param_parts.len() != 2 {
+    for chunk in qs.split('&') {
+        let parts: Vec<_> = chunk.splitn(2, '=').collect();
+        if parts.len() != 2 {
             return Err(ApiError::BadRequest(format!(
-                "Invalid query parameter: '{query_param}'"
+                "Invalid query parameter: '{chunk}'"
             )));
         }
 
-        let field_and_op: Vec<&str> = query_param_parts[0].splitn(2, "__").collect();
-        let value = query_param_parts[1].to_string();
-
-        let value = match percent_encoding::percent_decode(value.as_bytes()).decode_utf8() {
+        let key = parts[0];
+        let value = match percent_encoding::percent_decode(parts[1].as_bytes()).decode_utf8() {
             Ok(value) => value.to_string(),
             Err(e) => {
                 return Err(ApiError::BadRequest(format!(
-                    "Invalid query parameter: '{query_param}', invalid value: {e}"
+                    "Invalid query parameter: '{chunk}', invalid value: {e}",
                 )));
             }
         };
 
-        let field = field_and_op[0].to_string();
+        match key {
+            // LIMIT: e.g. limit=10, for limiting the number of results
+            "limit" => {
+                if limit.is_some() {
+                    return Err(ApiError::BadRequest("duplicate limit".into()));
+                }
+                limit = Some(
+                    value
+                        .parse::<usize>()
+                        .map_err(|e| ApiError::BadRequest(format!("bad limit: {}", e)))?,
+                );
+            }
 
-        if value.is_empty() {
-            return Err(ApiError::BadRequest(format!(
-                "Invalid query parameter: '{query_param}', no value"
-            )));
+            // SORT / ORDER BY: e.g. sort=created_at,-name,email.desc
+            "sort" | "order_by" => {
+                for piece in value.split(',') {
+                    let descending = piece.starts_with('-') || piece.ends_with(".desc");
+                    let field_name = piece
+                        .trim_start_matches('-')
+                        .trim_end_matches(".asc")
+                        .trim_end_matches(".desc");
+                    let field = FilterField::from_str(field_name)?;
+                    sort.push(SortParam { field, descending });
+                }
+            }
+
+            // FILTER: e.g. field__op=value
+            _ => {
+                let param = parse_single_filter(key, &value)?;
+                filters.push(param);
+            }
         }
-
-        let operator = if field_and_op.len() == 1 {
-            SearchOperator::new_from_string("equals")?
-        } else {
-            SearchOperator::new_from_string(field_and_op[1])?
-        };
-
-        let parsed_query_param = ParsedQueryParam {
-            field: FilterField::from_str(&field)?,
-            operator,
-            value,
-        };
-
-        parsed_query_params.push(parsed_query_param);
     }
 
-    Ok(parsed_query_params)
+    Ok(QueryOptions {
+        filters,
+        sort,
+        limit,
+    })
+}
+
+fn parse_single_filter(key: &str, value: &str) -> Result<ParsedQueryParam, ApiError> {
+    let field_and_op: Vec<&str> = key.splitn(2, "__").collect();
+    let value = value.to_string();
+    let field = field_and_op[0].to_string();
+
+    if value.is_empty() {
+        return Err(ApiError::BadRequest(format!(
+            "Invalid query parameter: '{key}', no value",
+        )));
+    }
+
+    let operator = if field_and_op.len() == 1 {
+        SearchOperator::new_from_string("equals")?
+    } else {
+        SearchOperator::new_from_string(field_and_op[1])?
+    };
+
+    let parsed_query_param = ParsedQueryParam {
+        field: FilterField::from_str(&field)?,
+        operator,
+        value,
+    };
+
+    Ok(parsed_query_param)
+}
+
+/// ## A struct that represents a set of query options
+///
+/// This struct holds a list of filters, a list of sort parameters, and a limit on the number of results.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QueryOptions {
+    pub filters: Vec<ParsedQueryParam>,
+    pub sort: Vec<SortParam>,
+    pub limit: Option<usize>,
+}
+
+/// ## A struct that represents a filter field
+#[derive(Debug, Clone, PartialEq)]
+pub struct SortParam {
+    pub field: FilterField,
+    pub descending: bool,
 }
 
 /// ## A struct that represents a parsed query parameter
@@ -123,6 +183,57 @@ pub enum SQLValue {
     Integer(i32),
     Date(NaiveDateTime),
     Boolean(bool),
+}
+
+impl QueryOptions {
+    /// ## Ensure that a filter is present in the query options
+    ///
+    /// This function checks if a filter with the given field and identifier is
+    /// already present in the filters list. If not, it adds a new filter with
+    /// the given field and identifier.
+    ///
+    /// ### Arguments
+    ///
+    /// * `field` - The field to check for
+    /// * `operator` - The operator to check for
+    /// * `identifier` - The identifier to add if the filter is not present
+    ///
+    /// ### Returns
+    ///
+    /// * None
+    pub fn ensure_filter<I, T>(
+        &mut self,
+        field: FilterField,
+        operator: SearchOperator,
+        identifier: &I,
+    ) -> bool
+    where
+        I: SelfAccessors<T>,
+    {
+        let id_string = identifier.id().to_string();
+        self.filters.ensure_filter(field, operator, &id_string)
+    }
+
+    /// ## Ensure that an equality filter is present in the query options
+    ///
+    /// This function checks if an equality filter with the given field and identifier is already
+    /// present in the filters list. If not, it adds a new equality filter with the given field and identifier.
+    ///
+    /// ### Arguments
+    ///
+    /// * `field` - The field to check for
+    /// * `identifier` - The identifier to add if the filter is not present
+    ///
+    /// ### Returns
+    ///
+    /// * bool - true if the filter was added, false if it already existed
+    pub fn ensure_filter_exact(&mut self, field: FilterField, identifier: &HubuumClassID) -> bool {
+        self.filters.ensure_filter(
+            field,
+            SearchOperator::Equals { is_negated: false },
+            &identifier.id().to_string(),
+        )
+    }
 }
 
 impl ParsedQueryParam {
@@ -429,6 +540,51 @@ pub trait QueryParamsExt {
     /// defined as having the `field` set as "json_data". Also validates both keys and values
     /// and their matching to the operator.
     fn json_datas(&self, filter: FilterField) -> Result<Vec<&ParsedQueryParam>, ApiError>;
+
+    /// ## Add a filter to the query options
+    ///
+    /// Blindly add a filter to the query params. This may lead to duplicate filters.
+    ///
+    /// ### Arguments
+    ///
+    /// * `field` - The field to add
+    /// * `operator` - The operator to add
+    ///
+    /// ### Returns
+    ///
+    /// * None
+    fn add_filter(&mut self, field: FilterField, operator: SearchOperator, value: &str);
+
+    /// ## Ensure a filter is present in the query options
+    ///
+    /// This function checks if a filter with the given field and operator exists in the list of
+    /// parsed query parameters. If not, it adds a new filter with the given field and operator.
+    ///
+    /// ### Arguments
+    ///
+    /// * `field` - The field to check for
+    /// * `operator` - The operator to check for
+    /// * `value` - The value to check for
+    ///
+    /// ### Returns
+    ///
+    /// * true if the filter was added, false if it already exists
+    fn ensure_filter(&mut self, field: FilterField, operator: SearchOperator, value: &str) -> bool;
+
+    /// ## Check if a filter exists
+    ///
+    /// This function checks if a filter with the given field and operator exists in the list of
+    /// parsed query parameters.
+    ///
+    /// ### Arguments
+    ///
+    /// * `field` - The field to check for
+    /// * `operator` - The operator to check for
+    ///
+    /// ### Returns
+    ///
+    /// * true if the filter exists, false if it does not
+    fn filter_exists(&self, field: FilterField, operator: SearchOperator) -> bool;
 }
 
 impl QueryParamsExt for Vec<ParsedQueryParam> {
@@ -496,6 +652,28 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
             .collect();
 
         Ok(json_schema)
+    }
+
+    fn add_filter(&mut self, field: FilterField, operator: SearchOperator, value: &str) {
+        self.push(ParsedQueryParam {
+            field,
+            operator,
+            value: value.to_string(),
+        });
+    }
+
+    fn filter_exists(&self, field: FilterField, operator: SearchOperator) -> bool {
+        self.iter()
+            .any(|p| p.field == field && p.operator == operator)
+    }
+
+    fn ensure_filter(&mut self, field: FilterField, operator: SearchOperator, value: &str) -> bool {
+        if !self.filter_exists(field.clone(), operator.clone()) {
+            self.add_filter(field, operator, value);
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -1053,8 +1231,8 @@ mod test {
 
     #[test]
     fn test_empty_query_string_returns_empty_vec() {
-        let result = parse_query_parameter("");
-        assert_eq!(result, Ok(vec![]));
+        let result = parse_query_parameter("").unwrap();
+        assert_eq!(result.filters, vec![]);
     }
 
     #[test]
@@ -1133,7 +1311,7 @@ mod test {
 
         let test_case_errors = [
             "Invalid query parameter: 'invalid'",
-            "Invalid query parameter: 'invalid=', no value",
+            "Invalid query parameter: 'invalid', no value",
             "Invalid search field: 'invalid'",
         ];
 
@@ -1187,7 +1365,7 @@ mod test {
         for case in test_cases {
             let parsed_query_params = parse_query_parameter(case.query_string).unwrap();
             assert_eq!(
-                parsed_query_params, case.expected,
+                parsed_query_params.filters, case.expected,
                 "Failed test case for query: {}",
                 case.query_string
             );
