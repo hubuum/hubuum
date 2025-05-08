@@ -60,7 +60,7 @@ async fn main() -> std::io::Result<()> {
         db_pool_size = config.db_pool_size,
     );
 
-    let pool = init_pool(&config.database_url.clone(), config.db_pool_size);
+    let pool = init_pool(&config.database_url, config.db_pool_size);
 
     utilities::init::init(pool.clone()).await;
 

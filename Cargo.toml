@@ -8,11 +8,11 @@ edition = "2021"
 [dependencies]
 actix-rt = "2"
 actix-service = "2"
-actix-web = { version = "4.4", features = ["actix-tls"] }
+actix-web = { version = "4", features = ["actix-tls"] }
 argon2 = { version = "0.5", features = ["std"] }
-bytes = "1.5"
+bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
-clap = { version = "4.4", features = ["env", "derive"] }
+clap = { version = "4.5", features = ["env", "derive"] }
 diesel = { version = "2", features = [
     "postgres",
     "serde_json",
@@ -38,7 +38,7 @@ tracing-subscriber = { version = "0.3.18", features = [
     "json",
 ] }
 urlparse = "0.7"
-uuid = { version = "1.6", features = ["v4"] }
+uuid = { version = "1", features = ["v4"] }
 percent-encoding = "2"
 
 [dev-dependencies]
