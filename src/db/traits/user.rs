@@ -10,7 +10,7 @@ use crate::traits::{GroupAccessors, NamespaceAccessors, SelfAccessors};
 use crate::db::{with_connection, DbPool};
 use crate::errors::ApiError;
 
-use crate::models::search::{FilterField, ParsedQueryParam};
+use crate::models::search::{FilterField, QueryOptions};
 
 use crate::{date_search, numeric_search, string_search, trace_query};
 
@@ -123,9 +123,11 @@ impl User {
     pub async fn search_users(
         &self,
         pool: &DbPool,
-        query_params: Vec<ParsedQueryParam>,
+        query_options: QueryOptions
     ) -> Result<Vec<User>, ApiError> {
         use crate::schema::users::dsl::*;
+
+        let query_params = query_options.filters;
 
         debug!(
             message = "Searching users",
