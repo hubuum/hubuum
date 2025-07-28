@@ -390,7 +390,7 @@ mod tests {
         )
         .await;
 
-        let uri = &format!("{}{}", LOGOUT_SPECIFIC_TOKEN, token);
+        let uri = &format!("{LOGOUT_SPECIFIC_TOKEN}{token}");
 
         // Try to remove the token as a user
         let resp = test::TestRequest::get()

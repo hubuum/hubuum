@@ -152,7 +152,7 @@ pub mod tests {
     }
 
     fn combine_query_string(prefix: &String, query_string: &str) -> String {
-        format!("{}&{}", prefix, query_string)
+        format!("{prefix}&{query_string}")
     }
 
     #[actix_web::test]

@@ -1074,12 +1074,7 @@ mod test {
 
         for (input, expected) in test_cases {
             let result = input.as_integer();
-            assert_eq!(
-                result,
-                Ok(expected),
-                "Failed test case for input: {}",
-                input
-            );
+            assert_eq!(result, Ok(expected), "Failed test case for input: {input}");
         }
     }
 

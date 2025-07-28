@@ -45,7 +45,7 @@ mod test {
         let geo_schema = get_schema(SchemaType::Geo);
 
         for i in 0..10 {
-            let padded_i = format!("{:02}", i);
+            let padded_i = format!("{i:02}");
             let mut nid = namespaces[0].id;
             let mut schema = blog_schema.clone();
             if i > 8 {

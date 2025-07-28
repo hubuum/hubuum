@@ -221,7 +221,7 @@ mod tests {
     async fn create_objects_in_class_failing_validation(json_data: &str, expected: bool) {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
 
-        let unique_name = format!("{}_create_objects_in_class_failing_validation", json_data);
+        let unique_name = format!("{json_data}_create_objects_in_class_failing_validation");
 
         let namespace = create_namespace(&pool, &unique_name).await.unwrap();
 
