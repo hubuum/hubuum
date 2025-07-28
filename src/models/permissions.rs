@@ -63,7 +63,7 @@ impl Permissions {
             "ReadObjectRelation" => Ok(Permissions::ReadObjectRelation),
             "UpdateObjectRelation" => Ok(Permissions::UpdateObjectRelation),
             "DeleteObjectRelation" => Ok(Permissions::DeleteObjectRelation),
-            _ => Err(ApiError::BadRequest(format!("Invalid permission: '{}'", s))),
+            _ => Err(ApiError::BadRequest(format!("Invalid permission: '{s}'"))),
         }
     }
 }
@@ -140,7 +140,7 @@ impl<T: Serialize + PartialEq + Clone + Display> Display for PermissionsList<T> 
             .map(|item| item.to_string())
             .collect::<Vec<_>>()
             .join(", ");
-        write!(f, "{}", formatted)
+        write!(f, "{formatted}")
     }
 }
 

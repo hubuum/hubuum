@@ -112,6 +112,7 @@ impl CanSave for NewHubuumObjectRelation {
 }
 
 impl ObjectClosureView {
+    #[allow(dead_code)]
     pub fn to_descendant_object(&self) -> HubuumObject {
         HubuumObject {
             id: self.descendant_object_id,
@@ -139,6 +140,7 @@ impl ObjectClosureView {
         }
     }
 
+    #[allow(dead_code)]
     pub fn to_ascendant_object(&self) -> HubuumObject {
         HubuumObject {
             id: self.ancestor_object_id,

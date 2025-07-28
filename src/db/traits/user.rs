@@ -37,7 +37,7 @@ impl User {
             username = self.username,
         );
         let new_password = hash_password(new_password).map_err(|e| {
-            ApiError::HashError(format!("Failed to hash password: {}", e))
+            ApiError::HashError(format!("Failed to hash password: {e}"))
         })?;
 
         with_connection(pool, |conn| {
@@ -225,17 +225,17 @@ mod tests {
             expected
         );
 
-        let namespaces = [create_namespace(&pool, &format!("test_user_can_ns1_{}", suffix))
+        let namespaces = [create_namespace(&pool, &format!("test_user_can_ns1_{suffix}"))
                 .await
                 .unwrap(),
-            create_namespace(&pool, &format!("test_user_can_ns2_{}", suffix))
+            create_namespace(&pool, &format!("test_user_can_ns2_{suffix}"))
                 .await
                 .unwrap()];
         let groups = [create_test_group(&pool).await,
             create_test_group(&pool).await];
         let users = vec![
-            create_user_with_params(&pool, &format!("test_user_can_u1_{}", suffix), "foo").await,
-            create_user_with_params(&pool, &format!("test_user_can_u2_{}", suffix), "foo").await,
+            create_user_with_params(&pool, &format!("test_user_can_u1_{suffix}"), "foo").await,
+            create_user_with_params(&pool, &format!("test_user_can_u2_{suffix}"), "foo").await,
         ];
 
         groups[0].add_member(&pool, &users[0]).await.unwrap();
@@ -294,10 +294,10 @@ mod tests {
                 panic!("Expected permission check to fail, but it succeeded");
             },
             (Err(ApiError::Forbidden(msg)), true) => {
-                panic!("Expected permission check to succeed, but got Forbidden error: {}", msg);
+                panic!("Expected permission check to succeed, but got Forbidden error: {msg}");
             },
             (Err(e), _) => {
-                panic!("Unexpected error occurred: {:?}", e);
+                panic!("Unexpected error occurred: {e:?}");
             },
         }
     }

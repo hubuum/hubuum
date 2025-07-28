@@ -64,6 +64,7 @@ pub trait GetClass<T = HubuumClass> {
 /// By default, this returns the singular object of the structure in question.
 /// For relations, where we have two objects (one for each structure), the
 /// trait is implemented to return a tuple of the two objects.
+#[allow(dead_code)]
 pub trait GetObject<T = HubuumObject> {
     async fn object_from_backend(&self, pool: &DbPool) -> Result<T, ApiError>;
 }
@@ -75,6 +76,7 @@ where
     C2: SelfAccessors<HubuumClass> + Clone + Send + Sync,
 {
     /// Check if a relation exists between two classes.
+    #[allow(dead_code)]
     async fn relations_between(
         pool: &DbPool,
         from: &C1,
@@ -90,6 +92,7 @@ where
     Self: SelfAccessors<HubuumClass>,
 {
     /// Check if a relation exists between self and another class
+    #[allow(dead_code)]
     async fn relations_to(
         &self,
         pool: &DbPool,

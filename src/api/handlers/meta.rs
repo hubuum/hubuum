@@ -50,8 +50,7 @@ pub async fn get_db_state(pool: web::Data<DbPool>, requestor: AdminAccess) -> im
         Ok(results) => results,
         Err(e) => {
             return ApiError::InternalServerError(format!(
-                "Error getting state for the database: {}",
-                e
+                "Error getting state for the database: {e}"
             ))
             .error_response()
         }

@@ -35,8 +35,7 @@ pub fn parse_query_parameter(query_string: &str) -> Result<Vec<ParsedQueryParam>
 
         if query_param_parts.len() != 2 {
             return Err(ApiError::BadRequest(format!(
-                "Invalid query parameter: '{}'",
-                query_param
+                "Invalid query parameter: '{query_param}'"
             )));
         }
 
@@ -47,8 +46,7 @@ pub fn parse_query_parameter(query_string: &str) -> Result<Vec<ParsedQueryParam>
             Ok(value) => value.to_string(),
             Err(e) => {
                 return Err(ApiError::BadRequest(format!(
-                    "Invalid query parameter: '{}', invalid value: {}",
-                    query_param, e
+                    "Invalid query parameter: '{query_param}', invalid value: {e}"
                 )));
             }
         };
@@ -57,8 +55,7 @@ pub fn parse_query_parameter(query_string: &str) -> Result<Vec<ParsedQueryParam>
 
         if value.is_empty() {
             return Err(ApiError::BadRequest(format!(
-                "Invalid query parameter: '{}', no value",
-                query_param
+                "Invalid query parameter: '{query_param}', no value"
             )));
         }
 
@@ -277,8 +274,7 @@ impl ParsedQueryParam {
         // Validate the key
         if !key.is_valid_jsonb_search_key() {
             return Err(ApiError::BadRequest(format!(
-                "Invalid JSON search key: '{}'",
-                key
+                "Invalid JSON search key: '{key}'"
             )));
         }
 
@@ -292,7 +288,7 @@ impl ParsedQueryParam {
         }
         */
 
-        let key = format!("'{{{}}}'", key);
+        let key = format!("'{{{key}}}'");
 
         // The bind variables for the SQL query. We can't bind the key as using
         // bind variables for the key itself is not supported in Postgres.
@@ -312,12 +308,12 @@ impl ParsedQueryParam {
         let (sql_op, value) = match op {
             Operator::Equals => ("=", (*value).to_string()),
             Operator::IEquals => ("ILIKE", (*value).to_string()),
-            Operator::Contains | Operator::Like => ("LIKE", format!("%{}%", value)),
-            Operator::IContains => ("ILIKE", format!("%{}%", value)),
-            Operator::StartsWith => ("LIKE", format!("{}%", value)),
-            Operator::IStartsWith => ("ILIKE", format!("{}%", value)),
-            Operator::EndsWith => ("LIKE", format!("%{}", value)),
-            Operator::IEndsWith => ("ILIKE", format!("%{}", value)),
+            Operator::Contains | Operator::Like => ("LIKE", format!("%{value}%")),
+            Operator::IContains => ("ILIKE", format!("%{value}%")),
+            Operator::StartsWith => ("LIKE", format!("{value}%")),
+            Operator::IStartsWith => ("ILIKE", format!("{value}%")),
+            Operator::EndsWith => ("LIKE", format!("%{value}")),
+            Operator::IEndsWith => ("ILIKE", format!("%{value}")),
             Operator::Regex => ("~", (*value).to_string()),
             Operator::Gt => (">", (*value).to_string()),
             Operator::Gte => (">=", (*value).to_string()),
@@ -326,8 +322,7 @@ impl ParsedQueryParam {
 
             _ => {
                 return Err(ApiError::BadRequest(format!(
-                    "Invalid operator for JSON: '{:?}'",
-                    op
+                    "Invalid operator for JSON: '{op:?}'"
                 )))
             }
         };
@@ -545,7 +540,7 @@ impl std::fmt::Display for Operator {
             Operator::Lte => "lte",
             Operator::Between => "between",
         };
-        write!(f, "{}", op)
+        write!(f, "{op}")
     }
 }
 
@@ -583,7 +578,7 @@ impl std::fmt::Display for SearchOperator {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let (op, neg) = self.op_and_neg();
         let neg_str = if neg { "not_" } else { "" };
-        write!(f, "{}{}", neg_str, op)
+        write!(f, "{neg_str}{op}")
     }
 }
 
@@ -688,8 +683,7 @@ impl SearchOperator {
             }),
 
             _ => Err(ApiError::BadRequest(format!(
-                "Invalid search operator: '{}'",
-                operator
+                "Invalid search operator: '{operator}'"
             ))),
         }
     }
@@ -1080,12 +1074,7 @@ mod test {
 
         for (input, expected) in test_cases {
             let result = input.as_integer();
-            assert_eq!(
-                result,
-                Ok(expected),
-                "Failed test case for input: {}",
-                input
-            );
+            assert_eq!(result, Ok(expected), "Failed test case for input: {input}");
         }
     }
 
@@ -1100,12 +1089,7 @@ mod test {
 
         for (input, expected) in test_cases {
             let result = input.as_integer();
-            assert_eq!(
-                result,
-                Ok(expected),
-                "Failed test case for input: {}",
-                input
-            );
+            assert_eq!(result, Ok(expected), "Failed test case for input: {input}");
         }
     }
 
@@ -1122,12 +1106,7 @@ mod test {
 
         for (input, expected) in test_cases {
             let result = input.as_integer();
-            assert_eq!(
-                result,
-                Ok(expected),
-                "Failed test case for input: {}",
-                input
-            );
+            assert_eq!(result, Ok(expected), "Failed test case for input: {input}",);
         }
     }
 
@@ -1139,9 +1118,7 @@ mod test {
             let result = input.as_integer();
             assert!(
                 result.is_err(),
-                "Failed test case for input: {} (no error) {:?}",
-                input,
-                result
+                "Failed test case for input: {input} (no error) {result:?}",
             );
         }
     }
@@ -1164,16 +1141,13 @@ mod test {
             let result = parse_query_parameter(case);
             assert!(
                 result.is_err(),
-                "Failed test case for query: {} (no error) {:?}",
-                case,
-                result
+                "Failed test case for query: {case} (no error) {result:?}",
             );
             let result_err = result.unwrap_err();
             assert_eq!(
                 result_err,
                 ApiError::BadRequest(test_case_errors[i].to_string()),
-                "Failed test case for query: {} ({} vs {})",
-                case,
+                "Failed test case for query: {case} ({} vs {})",
                 result_err,
                 test_case_errors[i]
             );
@@ -1230,7 +1204,7 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key=foo",
                 ),
-                format!("{} #>> '{{key}}' = ?", field),
+                format!("{field} #>> '{{key}}' = ?"),
                 SQLValue::String("foo".to_string()),
             ),
             (
@@ -1239,7 +1213,7 @@ mod test {
                     SearchOperator::IEquals { is_negated: true },
                     "key=foo",
                 ),
-                format!("NOT {} #>> '{{key}}' ILIKE ?", field),
+                format!("NOT {field} #>> '{{key}}' ILIKE ?"),
                 SQLValue::String("foo".to_string()),
             ),
             (
@@ -1248,7 +1222,7 @@ mod test {
                     SearchOperator::Gt { is_negated: false },
                     "key,subkey=3",
                 ),
-                format!("({} #>> '{{key,subkey}}')::numeric > ?", field),
+                format!("({field} #>> '{{key,subkey}}')::numeric > ?"),
                 SQLValue::Integer(3),
             ),
         ];
@@ -1261,8 +1235,7 @@ mod test {
                     sql: expected.to_string(),
                     bind_variables: vec![sqlvalue]
                 },
-                "Failed test case for param: {:?}",
-                param,
+                "Failed test case for param: {param:?}",
             );
         }
     }
@@ -1277,7 +1250,7 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key=2021-01-01",
                 ),
-                format!("({} #>> '{{key}}')::date = ?", field),
+                format!("({field} #>> '{{key}}')::date = ?"),
                 SQLValue::Date("2021-01-01".as_date().unwrap()[0]),
             ),
             (
@@ -1286,7 +1259,7 @@ mod test {
                     SearchOperator::Gt { is_negated: false },
                     "key,subkey=2021-01-01",
                 ),
-                format!("({} #>> '{{key,subkey}}')::date > ?", field),
+                format!("({field} #>> '{{key,subkey}}')::date > ?"),
                 SQLValue::Date("2021-01-01".as_date().unwrap()[0]),
             ),
             (
@@ -1295,7 +1268,7 @@ mod test {
                     SearchOperator::Gt { is_negated: true },
                     "key,subkey=2021-01-01",
                 ),
-                format!("NOT ({} #>> '{{key,subkey}}')::date > ?", field),
+                format!("NOT ({field} #>> '{{key,subkey}}')::date > ?"),
                 SQLValue::Date("2021-01-01".as_date().unwrap()[0]),
             ),
         ];
@@ -1308,8 +1281,7 @@ mod test {
                     sql: expected.to_string(),
                     bind_variables: vec![sqlvalue]
                 },
-                "Failed test case for param: {:?}",
-                param,
+                "Failed test case for param: {param:?}",
             );
         }
     }
@@ -1324,7 +1296,7 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key=3",
                 ),
-                format!("({} #>> '{{key}}')::numeric = ?", field),
+                format!("({field} #>> '{{key}}')::numeric = ?"),
                 SQLValue::Integer(3),
             ),
             (
@@ -1333,7 +1305,7 @@ mod test {
                     SearchOperator::Gt { is_negated: false },
                     "key,subkey=3",
                 ),
-                format!("({} #>> '{{key,subkey}}')::numeric > ?", field),
+                format!("({field} #>> '{{key,subkey}}')::numeric > ?"),
                 SQLValue::Integer(3),
             ),
             (
@@ -1342,7 +1314,7 @@ mod test {
                     SearchOperator::Gt { is_negated: true },
                     "key,subkey=3",
                 ),
-                format!("NOT ({} #>> '{{key,subkey}}')::numeric > ?", field),
+                format!("NOT ({field} #>> '{{key,subkey}}')::numeric > ?"),
                 SQLValue::Integer(3),
             ),
         ];
@@ -1355,8 +1327,7 @@ mod test {
                     sql: expected.to_string(),
                     bind_variables: vec![sqlvalue]
                 },
-                "Failed test case for param: {:?}",
-                param,
+                "Failed test case for param: {param:?}",
             );
         }
     }
@@ -1371,7 +1342,7 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key,subkey=3",
                 ),
-                format!("({} #>> '{{key,subkey}}')::numeric = ?", field),
+                format!("({field} #>> '{{key,subkey}}')::numeric = ?"),
             ),
             (
                 pq(
@@ -1379,7 +1350,7 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key,subkey,subsubkey=3",
                 ),
-                format!("({} #>> '{{key,subkey,subsubkey}}')::numeric = ?", field),
+                format!("({field} #>> '{{key,subkey,subsubkey}}')::numeric = ?"),
             ),
             (
                 pq(
@@ -1387,10 +1358,7 @@ mod test {
                     SearchOperator::Equals { is_negated: true },
                     "key,subkey,subsubkey,subsubsubkey=3",
                 ),
-                format!(
-                    "NOT ({} #>> '{{key,subkey,subsubkey,subsubsubkey}}')::numeric = ?",
-                    field
-                ),
+                format!("NOT ({field} #>> '{{key,subkey,subsubkey,subsubsubkey}}')::numeric = ?",),
             ),
         ];
 
@@ -1399,8 +1367,7 @@ mod test {
             assert_eq!(
                 result.unwrap().sql,
                 expected.to_string(),
-                "Failed test case for param: {:?}",
-                param,
+                "Failed test case for param: {param:?}",
             );
         }
     }
@@ -1457,7 +1424,7 @@ mod test {
 
         for (key, expected) in test_cases {
             let result = get_jsonb_field_type_from_json_schema(&schema, key);
-            assert_eq!(result, Some(expected), "Failed test case for key: {}", key);
+            assert_eq!(result, Some(expected), "Failed test case for key: {key}");
         }
     }
 
@@ -1496,7 +1463,7 @@ mod test {
 
         for key in test_cases {
             let result = get_jsonb_field_type_from_json_schema(&schema, key);
-            assert_eq!(result, None, "Failed test case for key: {}", key);
+            assert_eq!(result, None, "Failed test case for key: {key}");
         }
     }
 
@@ -1527,8 +1494,7 @@ mod test {
             assert_eq!(
                 result,
                 Some(expected),
-                "Failed test case for value: '{}'",
-                value
+                "Failed test case for value: '{value}'"
             );
         }
     }
@@ -1553,8 +1519,7 @@ mod test {
             let result = get_jsonb_field_type_from_value_and_operator(value, operator.clone());
             assert_eq!(
                 result, expected,
-                "Failed test case for value: '{}', operator: '{:?}'",
-                value, operator
+                "Failed test case for value: '{value}', operator: '{operator:?}'"
             );
         }
     }
@@ -1600,8 +1565,7 @@ mod test {
             assert_eq!(
                 result,
                 Ok(expected),
-                "Failed test case for input: '{}'",
-                input
+                "Failed test case for input: '{input}'",
             );
         }
     }
@@ -1679,8 +1643,7 @@ mod test {
             let result = operator.is_applicable_to(data_type);
             assert_eq!(
                 result, expected,
-                "Failed test case for operator: '{:?}', data_type: '{:?}'",
-                operator, data_type
+                "Failed test case for operator: '{operator:?}', data_type: '{data_type:?}'",
             );
         }
     }

@@ -25,7 +25,7 @@ pub mod tests {
     pub async fn create_test_classes(prefix: &str) -> Vec<HubuumClass> {
         let (pool, _, _) = setup_pool_and_tokens().await;
 
-        let ns = create_namespace(&pool, &format!("{}_{}", prefix, "api_create_test_classes"))
+        let ns = create_namespace(&pool, &format!("{prefix}_api_create_test_classes"))
             .await
             .unwrap();
 
@@ -41,8 +41,8 @@ pub mod tests {
             };
 
             let class = NewHubuumClass {
-                name: format!("{}_api_class_{}", prefix, i),
-                description: format!("{}_api_description_{}", prefix, i),
+                name: format!("{prefix}_api_class_{i}"),
+                description: format!("{prefix}_api_description_{i}"),
                 namespace_id: ns.id,
                 json_schema: Some(schema),
                 validate_schema: Some(false),
@@ -70,7 +70,7 @@ pub mod tests {
         let resp = get_request(
             &pool,
             &admin_token,
-            &format!("{}?{}", CLASSES_ENDPOINT, query_string),
+            &format!("{CLASSES_ENDPOINT}?{query_string}"),
         )
         .await;
 
@@ -96,7 +96,7 @@ pub mod tests {
         assert_contains_all!(&classes, &created_classes);
 
         // Check that we can do api/v1/classes/ as well as api/v1/classes
-        let resp = get_request(&pool, &admin_token, &format!("{}/", CLASSES_ENDPOINT)).await;
+        let resp = get_request(&pool, &admin_token, &format!("{CLASSES_ENDPOINT}/")).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let classes: Vec<HubuumClassExpanded> = test::read_body_json(resp).await;
         assert_contains_all!(&classes, &created_classes);
@@ -152,13 +152,13 @@ pub mod tests {
     }
 
     fn combine_query_string(prefix: &String, query_string: &str) -> String {
-        format!("{}&{}", prefix, query_string)
+        format!("{prefix}&{query_string}")
     }
 
     #[actix_web::test]
     async fn test_api_classes_get_filtered_json_schema() {
         let prefix = "get_filtered_classes_json_schema";
-        let base_filter = format!("name__contains={}", prefix);
+        let base_filter = format!("name__contains={prefix}");
 
         // We have 6 classes, 3 with blog (0,1,2), 2 with address (3,4) and 1 with geo (5)
         let created_classes = create_test_classes("get_filtered_classes_json_schema").await;
@@ -228,8 +228,7 @@ pub mod tests {
 
         // It'd be really nice if we could garantee that this id doesn't exist...
         for id in 999990..1000000 {
-            let resp =
-                get_request(&pool, &admin_token, &format!("{}/{}", CLASSES_ENDPOINT, id)).await;
+            let resp = get_request(&pool, &admin_token, &format!("{CLASSES_ENDPOINT}/{id}")).await;
             assert_response_status(resp, StatusCode::NOT_FOUND).await;
         }
     }

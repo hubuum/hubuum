@@ -136,8 +136,7 @@ impl UpdateUser {
                 }
                 Err(e) => {
                     return Err(ApiError::HashError(format!(
-                        "Failed to hash password: {}",
-                        e
+                        "Failed to hash password: {e}"
                     )))
                 }
             }
@@ -190,8 +189,7 @@ impl NewUser {
                 }
                 Err(e) => {
                     return Err(ApiError::HashError(format!(
-                        "Failed to hash password: {}",
-                        e
+                        "Failed to hash password: {e}"
                     )))
                 }
             }

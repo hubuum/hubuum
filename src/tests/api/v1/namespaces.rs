@@ -35,7 +35,7 @@ mod tests {
         let created_namespace2 = create_namespace(&pool, "test_namespace_lookup2")
             .await
             .unwrap();
-        let resp = get_request(&pool, &admin_token, &format!("{}/", NAMESPACE_ENDPOINT)).await;
+        let resp = get_request(&pool, &admin_token, &format!("{NAMESPACE_ENDPOINT}/")).await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
         let updated_namespaces: Vec<crate::models::namespace::Namespace> =
             test::read_body_json(resp).await;
@@ -133,7 +133,7 @@ mod tests {
         let resp = get_request(
             &pool,
             &admin_token,
-            &format!("{}/permissions", created_ns_url),
+            &format!("{created_ns_url}/permissions"),
         )
         .await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
@@ -167,7 +167,7 @@ mod tests {
         let resp = get_request(
             &pool,
             &admin_token,
-            &format!("{}/permissions", created_ns_url),
+            &format!("{created_ns_url}/permissions"),
         )
         .await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
@@ -296,15 +296,15 @@ mod tests {
         test_group.add_member(&pool, &test_user).await.unwrap();
         let token = test_user.create_token(&pool).await.unwrap().get_token();
 
-        let ns_endpoint = &format!("{}/{}", NAMESPACE_ENDPOINT, ns.id);
+        let ns_endpoint = &format!("{NAMESPACE_ENDPOINT}/{}", ns.id);
         // First, let us verify that test_user can't read the namespace.
         let resp = get_request(&pool, &token, ns_endpoint).await;
         let _ = assert_response_status(resp, http::StatusCode::FORBIDDEN).await;
 
         // We can verify this by checking the permissions for the user
         let user_perm_endpoint = &format!(
-            "{}/{}/permissions/user/{}",
-            NAMESPACE_ENDPOINT, ns.id, test_user.id
+            "{NAMESPACE_ENDPOINT}/{}/permissions/user/{}",
+            ns.id, test_user.id
         );
         let resp = get_request(&pool, &admin_token, user_perm_endpoint).await;
         let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;

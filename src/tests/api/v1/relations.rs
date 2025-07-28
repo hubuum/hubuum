@@ -20,7 +20,7 @@ mod tests {
     const OBJECT_RELATIONS_ENDPOINT: &str = "/api/v1/relations/objects";
 
     fn relation_endpoint(relation_id: i32) -> String {
-        format!("{}/{}", CLASS_RELATIONS_ENDPOINT, relation_id)
+        format!("{CLASS_RELATIONS_ENDPOINT}/{relation_id}")
     }
 
     async fn create_relation(
@@ -335,8 +335,7 @@ mod tests {
         exists: bool,
     ) {
         let unique = format!(
-            "get_object_relation_param_{}_{}_{}_{}",
-            from_index, to_index, relation_index, exists
+            "get_object_relation_param_{from_index}_{to_index}_{relation_index}_{exists}"
         );
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
         let (classes, relations) = create_classes_and_relations(&pool, &unique).await;
@@ -364,7 +363,7 @@ mod tests {
             let resp = assert_response_status(resp, StatusCode::OK).await;
             let relation_response: HubuumObjectRelation = test::read_body_json(resp).await;
 
-            assert_eq!(relation_response.id, relations[relation_index].id, "{}: Relation index: {} ({:?} in {:?})", endpoint, relation_index, relation_response, relations);
+            assert_eq!(relation_response.id, relations[relation_index].id, "{endpoint}: Relation index: {relation_index} ({relation_response:?} in {relations:?})");
             if from_index > to_index {
                 assert_eq!(
                     relation_response.from_hubuum_object_id,
@@ -412,7 +411,7 @@ mod tests {
     async fn test_filter_related_objects(class_index: usize, object_index: usize, status: StatusCode, filter: &str, expected_object_ids: Vec<usize>) {
         use regex::Regex;
 
-        let unique = format!("filter_related_objects_{}_{}_{}_{}", class_index, object_index, status, filter).replace(&['=', '&', '?', ' ', '<', '>', ][..], "_");
+        let unique = format!("filter_related_objects_{class_index}_{object_index}_{status}_{filter}").replace(&['=', '&', '?', ' ', '<', '>', ][..], "_");
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
         let (classes, relations) = create_classes_and_relations(&pool, &unique).await;
         let objects = create_objects_in_classes(&pool, &classes).await;

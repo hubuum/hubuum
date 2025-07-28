@@ -54,7 +54,7 @@ async fn reset_password(pool: DbPool, username: &str) -> Result<(), ApiError> {
     let user = User::get_by_username(&pool, username).await?;
     let new_password = generate_random_password(32);
     user.set_password(&pool, &new_password).await?;
-    println!("Password for user {} reset to: {}", username, new_password);
+    println!("Password for user {username} reset to: {new_password}");
     Ok(())
 }
 

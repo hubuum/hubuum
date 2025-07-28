@@ -84,7 +84,7 @@ pub mod tests {
             Ok(_) => panic!("Class should not exist"),
             Err(e) => match e {
                 ApiError::NotFound(_) => {}
-                _ => panic!("Unexpected error: {:?}", e),
+                _ => panic!("Unexpected error: {e:?}"),
             },
         }
     }

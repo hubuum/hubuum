@@ -29,18 +29,18 @@ pub enum ApiError {
 impl fmt::Display for ApiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ApiError::HashError(ref message) => write!(f, "{}", message),
-            ApiError::NotFound(ref message) => write!(f, "{}", message),
-            ApiError::Conflict(ref message) => write!(f, "{}", message),
-            ApiError::Forbidden(ref message) => write!(f, "{}", message),
-            ApiError::InternalServerError(ref message) => write!(f, "{}", message),
-            ApiError::Unauthorized(ref message) => write!(f, "{}", message),
-            ApiError::DatabaseError(ref message) => write!(f, "{}", message),
-            ApiError::DbConnectionError(ref message) => write!(f, "{}", message),
-            ApiError::BadRequest(ref message) => write!(f, "{}", message),
-            ApiError::OperatorMismatch(ref message) => write!(f, "{}", message),
-            ApiError::InvalidIntegerRange(ref message) => write!(f, "{}", message),
-            ApiError::ValidationError(ref message) => write!(f, "{}", message),
+            ApiError::HashError(ref message) => write!(f, "{message}"),
+            ApiError::NotFound(ref message) => write!(f, "{message}"),
+            ApiError::Conflict(ref message) => write!(f, "{message}"),
+            ApiError::Forbidden(ref message) => write!(f, "{message}"),
+            ApiError::InternalServerError(ref message) => write!(f, "{message}"),
+            ApiError::Unauthorized(ref message) => write!(f, "{message}"),
+            ApiError::DatabaseError(ref message) => write!(f, "{message}"),
+            ApiError::DbConnectionError(ref message) => write!(f, "{message}"),
+            ApiError::BadRequest(ref message) => write!(f, "{message}"),
+            ApiError::OperatorMismatch(ref message) => write!(f, "{message}"),
+            ApiError::InvalidIntegerRange(ref message) => write!(f, "{message}"),
+            ApiError::ValidationError(ref message) => write!(f, "{message}"),
         }
     }
 }
@@ -174,6 +174,6 @@ impl From<DieselError> for ApiError {
 /// Ensure that json deserialization errors are reported as a bad request and
 /// that the error itself is returned as json.
 pub fn json_error_handler(err: JsonPayloadError, _: &HttpRequest) -> actix_web::Error {
-    let error_message = format!("Json deserialize error: {}", err);
+    let error_message = format!("Json deserialize error: {err}");
     ApiError::BadRequest(error_message).into()
 }

@@ -78,10 +78,10 @@ async fn test_endpoint_access() {
             // Adding auth token based on access level
             match access_level {
                 AccessLevel::User => {
-                    req = req.insert_header(("Authorization", format!("Bearer {}", normal_token)))
+                    req = req.insert_header(("Authorization", format!("Bearer {normal_token}")))
                 }
                 AccessLevel::Admin => {
-                    req = req.insert_header(("Authorization", format!("Bearer {}", admin_token)))
+                    req = req.insert_header(("Authorization", format!("Bearer {admin_token}")))
                 }
                 _ => {}
             }
@@ -92,24 +92,21 @@ async fn test_endpoint_access() {
             match required_access {
                 AccessLevel::Open => assert!(
                     !resp.status().is_client_error(),
-                    "Expected {} open, returned {} ({:?})",
-                    endpoint,
+                    "Expected {endpoint} open, returned {} ({:?})",
                     resp.status(),
                     test::read_body(resp).await
                 ),
                 AccessLevel::User => assert_eq!(
                     resp.status().is_client_error(),
                     *access_level == AccessLevel::Open,
-                    "Expected {} open to users, returned {} ({:?})",
-                    endpoint,
+                    "Expected {endpoint} open to users, returned {} ({:?})",
                     resp.status(),
                     test::read_body(resp).await
                 ),
                 AccessLevel::Admin => assert_eq!(
                     resp.status().is_client_error(),
                     *access_level != AccessLevel::Admin,
-                    "Expected {} admin endpoint, returned {} ({:?})",
-                    endpoint,
+                    "Expected {endpoint} admin endpoint, returned {} ({:?})",
                     resp.status(),
                     test::read_body(resp).await
                 ),

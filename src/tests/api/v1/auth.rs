@@ -112,7 +112,7 @@ mod tests {
 
         // Validate token via endpoint.
         let resp = test::TestRequest::get()
-            .insert_header((header::AUTHORIZATION, format!("Bearer {}", token_value)))
+            .insert_header((header::AUTHORIZATION, format!("Bearer {token_value}")))
             .uri(VALIDATE_TOKEN_ENDPOINT)
             .send_request(&app)
             .await;
@@ -223,7 +223,7 @@ mod tests {
 
         let token_string = match new_user.create_token(&pool).await {
             Ok(ret_token) => ret_token.get_token(),
-            Err(e) => panic!("Failed to add token to user: {:?}", e),
+            Err(e) => panic!("Failed to add token to user: {e:?}"),
         };
 
         let app = test::init_service(
@@ -262,7 +262,7 @@ mod tests {
         );
 
         let resp = test::TestRequest::get()
-            .insert_header((header::AUTHORIZATION, format!("Bearer {}", token_string)))
+            .insert_header((header::AUTHORIZATION, format!("Bearer {token_string}")))
             .uri(LOGOUT_ENDPOINT)
             .send_request(&app)
             .await;
@@ -288,13 +288,13 @@ mod tests {
         let admin_user = create_test_admin(&pool).await;
         let admin_token = match admin_user.create_token(&pool).await {
             Ok(ret_token) => ret_token.get_token(),
-            Err(e) => panic!("Failed to add token to admin: {:?}", e),
+            Err(e) => panic!("Failed to add token to admin: {e:?}"),
         };
 
         for _ in 0..3 {
             let _ = match new_user.create_token(&pool).await {
                 Ok(ret_token) => ret_token.get_token(),
-                Err(e) => panic!("Failed to add token to user: {:?}", e),
+                Err(e) => panic!("Failed to add token to user: {e:?}"),
             };
         }
 
@@ -341,7 +341,7 @@ mod tests {
 
         // Remove tokens with valid authorization
         let resp = test::TestRequest::get()
-            .insert_header((header::AUTHORIZATION, format!("Bearer {}", admin_token)))
+            .insert_header((header::AUTHORIZATION, format!("Bearer {admin_token}")))
             .uri(uri)
             .send_request(&app)
             .await;
@@ -368,13 +368,13 @@ mod tests {
         let admin_user = create_test_admin(&pool).await;
         let admin_token = match admin_user.create_token(&pool).await {
             Ok(ret_token) => ret_token.get_token(),
-            Err(e) => panic!("Failed to add token to admin: {:?}", e),
+            Err(e) => panic!("Failed to add token to admin: {e:?}"),
         };
 
         for _ in 0..3 {
             let _ = match new_user.create_token(&pool).await {
                 Ok(ret_token) => ret_token.get_token(),
-                Err(e) => panic!("Failed to add token to user: {:?}", e),
+                Err(e) => panic!("Failed to add token to user: {e:?}"),
             };
         }
 
@@ -390,11 +390,11 @@ mod tests {
         )
         .await;
 
-        let uri = &format!("{}{}", LOGOUT_SPECIFIC_TOKEN, token);
+        let uri = &format!("{LOGOUT_SPECIFIC_TOKEN}{token}");
 
         // Try to remove the token as a user
         let resp = test::TestRequest::get()
-            .insert_header((header::AUTHORIZATION, format!("Bearer {}", token.clone())))
+            .insert_header((header::AUTHORIZATION, format!("Bearer {token}")))
             .uri(uri)
             .send_request(&app)
             .await;
