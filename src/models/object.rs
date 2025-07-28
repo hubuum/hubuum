@@ -155,9 +155,9 @@ pub mod tests {
             .first::<HubuumObject>(&mut conn);
 
         match result {
-            Ok(_) => panic!("Object {} should not exist", object_id),
+            Ok(_) => panic!("Object {object_id} should not exist"),
             Err(diesel::result::Error::NotFound) => (),
-            Err(e) => panic!("Error: {}", e),
+            Err(e) => panic!("Error: {e}"),
         }
     }
 
@@ -180,7 +180,6 @@ pub mod tests {
 
     pub async fn get_object(pool: &DbPool, object_id: i32) -> HubuumObject {
         let object = HubuumObjectID(object_id);
-        
         object.instance(pool).await.unwrap()
     }
 

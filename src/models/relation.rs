@@ -159,12 +159,12 @@ pub mod tests {
     ) -> (Namespace, HubuumClass, HubuumClass) {
         let (pool, _) = get_pool_and_config().await;
 
-        let namespace = create_namespace(&pool, &format!("rel_test_{}", suffix))
+        let namespace = create_namespace(&pool, &format!("rel_test_{suffix}"))
             .await
             .unwrap();
 
-        let class1 = create_class(&pool, &namespace, &format!("rel_class1_{}", suffix)).await;
-        let class2 = create_class(&pool, &namespace, &format!("rel_class2_{}", suffix)).await;
+        let class1 = create_class(&pool, &namespace, &format!("rel_class1_{suffix}")).await;
+        let class2 = create_class(&pool, &namespace, &format!("rel_class2_{suffix}")).await;
 
         (namespace, class1, class2)
     }
@@ -173,7 +173,7 @@ pub mod tests {
         match HubuumClassRelationID(id).instance(pool).await {
             Ok(_) => panic!("Found a class relation that should not exist"),
             Err(ApiError::NotFound(_)) => {}
-            Err(e) => panic!("Unexpected error: {:?}", e),
+            Err(e) => panic!("Unexpected error: {e:?}"),
         }
     }
 
@@ -181,7 +181,7 @@ pub mod tests {
         match HubuumObjectRelationID(id).instance(pool).await {
             Ok(_) => panic!("Found an object relation that should not exist"),
             Err(ApiError::NotFound(_)) => {}
-            Err(e) => panic!("Unexpected error: {:?}", e),
+            Err(e) => panic!("Unexpected error: {e:?}"),
         }
     }
 
@@ -265,7 +265,7 @@ pub mod tests {
 
         match relation.save(&pool).await {
             Err(ApiError::BadRequest(_)) => {}
-            Err(e) => panic!("Unexpected error: {:?}", e),
+            Err(e) => panic!("Unexpected error: {e:?}"),
             Ok(_) => panic!("Should not be able to create a relation with the same classes"),
         }
 
@@ -290,7 +290,7 @@ pub mod tests {
         };
         match old_relation.save(&pool).await {
             Err(ApiError::Conflict(_)) => {}
-            Err(e) => panic!("Unexpected error: {:?}", e),
+            Err(e) => panic!("Unexpected error: {e:?}"),
             Ok(_) => panic!("Should not be able to create a relation with the same classes"),
         }
 
@@ -384,7 +384,7 @@ pub mod tests {
 
         match object_rel.save(&pool).await {
             Err(ApiError::BadRequest(_)) => {}
-            Err(e) => panic!("Unexpected error: {:?}", e),
+            Err(e) => panic!("Unexpected error: {e:?}"),
             Ok(_) => panic!("Creating a relation should fail when the classes of objects do not match the relation classes"),
         }
 
@@ -396,7 +396,7 @@ pub mod tests {
 
         match object_rel.save(&pool).await {
             Err(ApiError::BadRequest(_)) => {}
-            Err(e) => panic!("Unexpected error: {:?}", e),
+            Err(e) => panic!("Unexpected error: {e:?}"),
             Ok(_) => panic!("Creating a relation should fail also when the order is flipped"),
         }
 
@@ -408,7 +408,7 @@ pub mod tests {
 
         match object_rel.save(&pool).await {
             Err(ApiError::NotFound(_)) => {}
-            Err(e) => panic!("Unexpected error: {:?}", e),
+            Err(e) => panic!("Unexpected error: {e:?}"),
             Ok(_) => panic!(
                 "Should not be able to create object relations when class relation does not exist"
             ),

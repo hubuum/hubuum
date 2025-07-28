@@ -25,9 +25,9 @@ mod test {
         let mut classes = vec![];
 
         for i in 0..3 {
-            let padded_i = format!("{:02}", i);
-            let namespace_name = format!("{}_namespace_{}", prefix, padded_i);
-            let namespace_description = format!("{} namespace {}", pretty_prefix, padded_i);
+            let padded_i = format!("{i:02}");
+            let namespace_name = format!("{prefix}_namespace_{padded_i}");
+            let namespace_description = format!("{pretty_prefix} namespace {padded_i}");
 
             namespaces.push(
                 NewNamespace {
@@ -58,8 +58,8 @@ mod test {
 
             classes.push(
                 NewHubuumClass {
-                    name: format!("{}_class_{}", prefix, padded_i),
-                    description: format!("{} class {}", pretty_prefix, padded_i),
+                    name: format!("{prefix}_class_{padded_i}"),
+                    description: format!("{pretty_prefix} class {padded_i}"),
                     json_schema: Some(schema),
                     validate_schema: Some(false),
                     namespace_id: nid,
@@ -445,7 +445,7 @@ mod test {
     )]
     #[test_macro(actix_rt::test)]
     async fn test_class_search_json_schema(op: SearchOperator, value: &str, hits: usize) {
-        let prefix = format!("class_json_schema_{}_{}_{}", op, value, hits);
+        let prefix = format!("class_json_schema_{op}_{value}_{hits}");
         let (namespaces, _) = setup_test_structure(&prefix).await;
 
         let testcases = vec![generate_test_case_for_json_schema(

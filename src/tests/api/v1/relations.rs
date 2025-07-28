@@ -20,7 +20,7 @@ mod tests {
     const OBJECT_RELATIONS_ENDPOINT: &str = "/api/v1/relations/objects";
 
     fn relation_endpoint(relation_id: i32) -> String {
-        format!("{}/{}", CLASS_RELATIONS_ENDPOINT, relation_id)
+        format!("{CLASS_RELATIONS_ENDPOINT}/{relation_id}")
     }
 
     async fn create_relation(

@@ -369,7 +369,7 @@ mod tests {
 
         let mut groups = Vec::new();
         for group_number in [1, 2, 3, 4, 5] {
-            let group_name = format!("test_list_group_{}", group_number);
+            let group_name = format!("test_list_group_{group_number}");
             groups.push(
                 NewGroup {
                     groupname: group_name.to_string(),
@@ -482,7 +482,7 @@ mod tests {
                 let actual = group_can_on(&pool, group_id, namespace.clone(), *permission)
                     .await
                     .unwrap();
-                assert_eq!(expected, actual, "Mismatch for permission {:?}", permission);
+                assert_eq!(expected, actual, "Mismatch for permission {permission:?}");
             }
 
             namespace.delete(&pool).await.unwrap();
@@ -551,7 +551,7 @@ mod tests {
                 let actual = group_can_on(&pool, group_id, namespace.clone(), *permission)
                     .await
                     .unwrap();
-                assert_eq!(expected, actual, "Mismatch for permission {:?}", permission);
+                assert_eq!(expected, actual, "Mismatch for permission {permission:?}");
             }
 
             namespace.delete(&pool).await.unwrap();
@@ -605,8 +605,7 @@ mod tests {
                 !group_can_on(&pool, group_id, namespace.clone(), permission)
                     .await
                     .unwrap(),
-                "Permission {:?} should not be set",
-                permission
+                "Permission {permission:?} should not be set",
             );
         }
 
@@ -620,8 +619,7 @@ mod tests {
                 group_can_on(&pool, group_id, namespace.clone(), permission)
                     .await
                     .unwrap(),
-                "Permission {:?} should be set",
-                permission
+                "Permission {permission:?} should be set",
             );
         }
 
@@ -635,8 +633,7 @@ mod tests {
                 !group_can_on(&pool, group_id, namespace.clone(), permission)
                     .await
                     .unwrap(),
-                "Permission {:?} should not be set",
-                permission
+                "Permission {permission:?} should not be set",
             );
         }
 
@@ -664,8 +661,7 @@ mod tests {
                 !group_can_on(&pool, group_id, namespace.clone(), permission)
                     .await
                     .unwrap(),
-                "Permission {:?} should not be set",
-                permission
+                "Permission {permission:?} should not be set",
             );
         }
         namespace.delete(&pool).await.unwrap();

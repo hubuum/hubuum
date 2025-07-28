@@ -13,13 +13,13 @@ use crate::errors::ApiError;
 /// The identifier string is used to create unique names.
 async fn setup_geo_class(identifier: &str) -> (Namespace, NewHubuumClass, Value) {
     let (pool, _) = get_pool_and_config().await;
-    let ns = create_namespace(&pool, &format!("Validation_test_{}", identifier))
+    let ns = create_namespace(&pool, &format!("Validation_test_{identifier}"))
         .await
         .expect("Failed to create namespace");
     // Get the Geo schema.
     let schema = get_schema(SchemaType::Geo);
     let new_class = NewHubuumClass {
-        name: format!("{}_class", identifier),
+        name: format!("{identifier}_class"),
         validate_schema: Some(true),
         json_schema: Some(schema.clone()),
         namespace_id: ns.id,
@@ -41,9 +41,7 @@ fn assert_validation_result(result: Result<(), ApiError>, expected: bool, contex
     } else {
         assert!(
             result.is_err(),
-            "{} passed, but it was expected to fail: {:?}",
-            context,
-            result
+            "{context} passed, but it was expected to fail: {result:?}",
         );
     }
 }
@@ -62,10 +60,10 @@ fn assert_validation_result(result: Result<(), ApiError>, expected: bool, contex
 #[test_macro(actix_web::test)]
 async fn test_validate_object(json_data: &str, expected: bool) {
     let data = serde_json::from_str::<Value>(json_data).unwrap();
-    let obj_name = format!("{}_test_validate_object", json_data);
+    let obj_name = format!("{json_data}_test_validate_object");
 
     let (pool, _) = get_pool_and_config().await;
-    let (ns, new_class, _schema) = setup_geo_class(&format!("new_{}", json_data)).await;
+    let (ns, new_class, _schema) = setup_geo_class(&format!("new_{json_data}")).await;
 
     // Save the class and build the new object.
     let class = new_class.save(&pool).await.expect("Failed to create class");
@@ -101,13 +99,13 @@ async fn test_validate_object(json_data: &str, expected: bool) {
 async fn test_validate_update_object(json_data: &str, expected: bool) {
     // The base data for the original object.
     let base_data = r#"{"latitude": 40.7128, "longitude": -74.0060}"#;
-    let obj_name = format!("{}_test_validate_update_object", json_data);
+    let obj_name = format!("{json_data}_test_validate_update_object");
     
     let base_data = serde_json::from_str::<Value>(base_data).unwrap();
     let updated_data = serde_json::from_str::<Value>(json_data).unwrap();
 
     let (pool, _) = get_pool_and_config().await;
-    let (ns, new_class, _schema) = setup_geo_class(&format!("update_{}", json_data)).await;
+    let (ns, new_class, _schema) = setup_geo_class(&format!("update_{json_data}")).await;
 
     // Save the class and then create an object with the base data.
     let class = new_class.save(&pool).await.expect("Failed to create class");

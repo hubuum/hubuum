@@ -17,11 +17,11 @@ mod tests {
     const OBJECT_ENDPOINT: &str = "/api/v1/classes";
 
     fn object_in_class_endpoint(class_id: i32, object_id: i32) -> String {
-        format!("{}/{}/{}", OBJECT_ENDPOINT, class_id, object_id)
+        format!("{OBJECT_ENDPOINT}/{class_id}/{object_id}")
     }
 
     fn objects_in_class_endpoint(class_id: i32) -> String {
-        format!("{}/{}/", OBJECT_ENDPOINT, class_id)
+        format!("{OBJECT_ENDPOINT}/{class_id}/")
     }
 
     #[actix_rt::test]
@@ -192,9 +192,9 @@ mod tests {
             let object = NewHubuumObject {
                 namespace_id: namespace.id,
                 hubuum_class_id: classes[0].id,
-                data: serde_json::json!({"test": format!("data_{}", i)}),
-                name: format!("test get objects {}", i),
-                description: format!("test object description {}", i),
+                data: serde_json::json!({"test": format!("data_{i}")}),
+                name: format!("test get objects {i}"),
+                description: format!("test object description {i}"),
             };
             objects.push(object.save(&pool).await.unwrap());
         }
@@ -276,8 +276,7 @@ mod tests {
             let error_text = error_message["error"].as_str().unwrap().to_lowercase();
             assert!(
                 error_text.contains("validation error"),
-                "Expected 'validation error', got: {}",
-                error_text
+                "Expected 'validation error', got: {error_text}"
             );
         }
     }

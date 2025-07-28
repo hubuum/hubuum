@@ -1094,12 +1094,7 @@ mod test {
 
         for (input, expected) in test_cases {
             let result = input.as_integer();
-            assert_eq!(
-                result,
-                Ok(expected),
-                "Failed test case for input: {}",
-                input
-            );
+            assert_eq!(result, Ok(expected), "Failed test case for input: {input}");
         }
     }
 
@@ -1116,12 +1111,7 @@ mod test {
 
         for (input, expected) in test_cases {
             let result = input.as_integer();
-            assert_eq!(
-                result,
-                Ok(expected),
-                "Failed test case for input: {}",
-                input
-            );
+            assert_eq!(result, Ok(expected), "Failed test case for input: {input}",);
         }
     }
 
@@ -1133,9 +1123,7 @@ mod test {
             let result = input.as_integer();
             assert!(
                 result.is_err(),
-                "Failed test case for input: {} (no error) {:?}",
-                input,
-                result
+                "Failed test case for input: {input} (no error) {result:?}",
             );
         }
     }
@@ -1158,16 +1146,13 @@ mod test {
             let result = parse_query_parameter(case);
             assert!(
                 result.is_err(),
-                "Failed test case for query: {} (no error) {:?}",
-                case,
-                result
+                "Failed test case for query: {case} (no error) {result:?}",
             );
             let result_err = result.unwrap_err();
             assert_eq!(
                 result_err,
                 ApiError::BadRequest(test_case_errors[i].to_string()),
-                "Failed test case for query: {} ({} vs {})",
-                case,
+                "Failed test case for query: {case} ({} vs {})",
                 result_err,
                 test_case_errors[i]
             );
@@ -1224,7 +1209,7 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key=foo",
                 ),
-                format!("{} #>> '{{key}}' = ?", field),
+                format!("{field} #>> '{{key}}' = ?"),
                 SQLValue::String("foo".to_string()),
             ),
             (
@@ -1233,7 +1218,7 @@ mod test {
                     SearchOperator::IEquals { is_negated: true },
                     "key=foo",
                 ),
-                format!("NOT {} #>> '{{key}}' ILIKE ?", field),
+                format!("NOT {field} #>> '{{key}}' ILIKE ?"),
                 SQLValue::String("foo".to_string()),
             ),
             (
@@ -1242,7 +1227,7 @@ mod test {
                     SearchOperator::Gt { is_negated: false },
                     "key,subkey=3",
                 ),
-                format!("({} #>> '{{key,subkey}}')::numeric > ?", field),
+                format!("({field} #>> '{{key,subkey}}')::numeric > ?"),
                 SQLValue::Integer(3),
             ),
         ];
@@ -1255,8 +1240,7 @@ mod test {
                     sql: expected.to_string(),
                     bind_variables: vec![sqlvalue]
                 },
-                "Failed test case for param: {:?}",
-                param,
+                "Failed test case for param: {param:?}",
             );
         }
     }
@@ -1271,7 +1255,7 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key=2021-01-01",
                 ),
-                format!("({} #>> '{{key}}')::date = ?", field),
+                format!("({field} #>> '{{key}}')::date = ?"),
                 SQLValue::Date("2021-01-01".as_date().unwrap()[0]),
             ),
             (
@@ -1280,7 +1264,7 @@ mod test {
                     SearchOperator::Gt { is_negated: false },
                     "key,subkey=2021-01-01",
                 ),
-                format!("({} #>> '{{key,subkey}}')::date > ?", field),
+                format!("({field} #>> '{{key,subkey}}')::date > ?"),
                 SQLValue::Date("2021-01-01".as_date().unwrap()[0]),
             ),
             (
@@ -1289,7 +1273,7 @@ mod test {
                     SearchOperator::Gt { is_negated: true },
                     "key,subkey=2021-01-01",
                 ),
-                format!("NOT ({} #>> '{{key,subkey}}')::date > ?", field),
+                format!("NOT ({field} #>> '{{key,subkey}}')::date > ?"),
                 SQLValue::Date("2021-01-01".as_date().unwrap()[0]),
             ),
         ];
@@ -1302,8 +1286,7 @@ mod test {
                     sql: expected.to_string(),
                     bind_variables: vec![sqlvalue]
                 },
-                "Failed test case for param: {:?}",
-                param,
+                "Failed test case for param: {param:?}",
             );
         }
     }
@@ -1318,7 +1301,7 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key=3",
                 ),
-                format!("({} #>> '{{key}}')::numeric = ?", field),
+                format!("({field} #>> '{{key}}')::numeric = ?"),
                 SQLValue::Integer(3),
             ),
             (
@@ -1327,7 +1310,7 @@ mod test {
                     SearchOperator::Gt { is_negated: false },
                     "key,subkey=3",
                 ),
-                format!("({} #>> '{{key,subkey}}')::numeric > ?", field),
+                format!("({field} #>> '{{key,subkey}}')::numeric > ?"),
                 SQLValue::Integer(3),
             ),
             (
@@ -1336,7 +1319,7 @@ mod test {
                     SearchOperator::Gt { is_negated: true },
                     "key,subkey=3",
                 ),
-                format!("NOT ({} #>> '{{key,subkey}}')::numeric > ?", field),
+                format!("NOT ({field} #>> '{{key,subkey}}')::numeric > ?"),
                 SQLValue::Integer(3),
             ),
         ];
@@ -1349,8 +1332,7 @@ mod test {
                     sql: expected.to_string(),
                     bind_variables: vec![sqlvalue]
                 },
-                "Failed test case for param: {:?}",
-                param,
+                "Failed test case for param: {param:?}",
             );
         }
     }
@@ -1365,7 +1347,7 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key,subkey=3",
                 ),
-                format!("({} #>> '{{key,subkey}}')::numeric = ?", field),
+                format!("({field} #>> '{{key,subkey}}')::numeric = ?"),
             ),
             (
                 pq(
@@ -1373,7 +1355,7 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key,subkey,subsubkey=3",
                 ),
-                format!("({} #>> '{{key,subkey,subsubkey}}')::numeric = ?", field),
+                format!("({field} #>> '{{key,subkey,subsubkey}}')::numeric = ?"),
             ),
             (
                 pq(
@@ -1381,10 +1363,7 @@ mod test {
                     SearchOperator::Equals { is_negated: true },
                     "key,subkey,subsubkey,subsubsubkey=3",
                 ),
-                format!(
-                    "NOT ({} #>> '{{key,subkey,subsubkey,subsubsubkey}}')::numeric = ?",
-                    field
-                ),
+                format!("NOT ({field} #>> '{{key,subkey,subsubkey,subsubsubkey}}')::numeric = ?",),
             ),
         ];
 
@@ -1393,8 +1372,7 @@ mod test {
             assert_eq!(
                 result.unwrap().sql,
                 expected.to_string(),
-                "Failed test case for param: {:?}",
-                param,
+                "Failed test case for param: {param:?}",
             );
         }
     }
@@ -1451,7 +1429,7 @@ mod test {
 
         for (key, expected) in test_cases {
             let result = get_jsonb_field_type_from_json_schema(&schema, key);
-            assert_eq!(result, Some(expected), "Failed test case for key: {}", key);
+            assert_eq!(result, Some(expected), "Failed test case for key: {key}");
         }
     }
 
@@ -1490,7 +1468,7 @@ mod test {
 
         for key in test_cases {
             let result = get_jsonb_field_type_from_json_schema(&schema, key);
-            assert_eq!(result, None, "Failed test case for key: {}", key);
+            assert_eq!(result, None, "Failed test case for key: {key}");
         }
     }
 
@@ -1521,8 +1499,7 @@ mod test {
             assert_eq!(
                 result,
                 Some(expected),
-                "Failed test case for value: '{}'",
-                value
+                "Failed test case for value: '{value}'"
             );
         }
     }
@@ -1547,8 +1524,7 @@ mod test {
             let result = get_jsonb_field_type_from_value_and_operator(value, operator.clone());
             assert_eq!(
                 result, expected,
-                "Failed test case for value: '{}', operator: '{:?}'",
-                value, operator
+                "Failed test case for value: '{value}', operator: '{operator:?}'"
             );
         }
     }
@@ -1594,8 +1570,7 @@ mod test {
             assert_eq!(
                 result,
                 Ok(expected),
-                "Failed test case for input: '{}'",
-                input
+                "Failed test case for input: '{input}'",
             );
         }
     }
@@ -1673,8 +1648,7 @@ mod test {
             let result = operator.is_applicable_to(data_type);
             assert_eq!(
                 result, expected,
-                "Failed test case for operator: '{:?}', data_type: '{:?}'",
-                operator, data_type
+                "Failed test case for operator: '{operator:?}', data_type: '{data_type:?}'",
             );
         }
     }

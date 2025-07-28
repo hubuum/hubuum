@@ -18,7 +18,7 @@ mod test {
         prefix: &str,
     ) -> (Namespace, Vec<HubuumClass>, Vec<HubuumClassRelation>) {
         let admin_group = ensure_admin_group(pool).await;
-        let crname = format!("{}-classrelation", prefix);
+        let crname = format!("{prefix}-classrelation");
         let namespace = NewNamespace {
             name: crname.clone(),
             description: crname.clone(),
@@ -30,7 +30,7 @@ mod test {
 
         let mut classes = Vec::new();
         for i in 0..4 {
-            let label = format!("{}-class-{}", prefix, i);
+            let label = format!("{prefix}-class-{i}");
             let class = NewHubuumClass {
                 name: label.clone(),
                 description: label,
@@ -94,10 +94,7 @@ mod test {
         value: &str,
         list_of_expected_ids: Vec<usize>,
     ) {
-        let prefix = format!(
-            "test_filter_by_class_field_{}_{}_{}",
-            field, operator, value
-        );
+        let prefix = format!("test_filter_by_class_field_{field}_{operator}_{value}");
         let (pool, _, _) = setup_pool_and_tokens().await;
         let (namespace, _classes, relations) = create_data(&pool, &prefix).await;
 
@@ -110,7 +107,7 @@ mod test {
                 FilterField::ClassTo => relations[index].to_hubuum_class_id.to_string(),
                 FilterField::ClassFromName => value.to_string(),
                 FilterField::ClassToName => value.to_string(),
-                _ => panic!("unexpected field: {:?}", field),
+                _ => panic!("unexpected field: {field:?}"),
             }
         });
 
