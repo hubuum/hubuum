@@ -5,7 +5,7 @@ use actix_web::{http, test, web::Data, App};
 use serde::Serialize;
 
 fn create_token_header(token: &str) -> (http::header::HeaderName, String) {
-    (http::header::AUTHORIZATION, format!("Bearer {}", token))
+    (http::header::AUTHORIZATION, format!("Bearer {token}"))
 }
 
 pub async fn get_request_with_correlation(

@@ -68,7 +68,7 @@ impl<T: AsRef<str>> CustomStringExtensions for T {
         let mut result = self.as_ref().to_string();
         while let Some(pos) = result.find('?') {
             // Replace '?' with '$n'
-            result.replace_range(pos..pos + 1, &format!("${}", n));
+            result.replace_range(pos..pos + 1, &format!("${n}"));
             n += 1;
         }
         result
@@ -152,8 +152,7 @@ pub fn parse_integer_list(input: &str) -> Result<Vec<i32>, ApiError> {
             let parts: Vec<&str> = segment.split("--").collect();
             if parts.len() != 2 {
                 return Err(ApiError::InvalidIntegerRange(format!(
-                    "Invalid format: '{}'",
-                    segment
+                    "Invalid format: '{segment}'"
                 )));
             }
             let start = parts[0].parse::<i32>().map_err(|_| {
@@ -164,8 +163,7 @@ pub fn parse_integer_list(input: &str) -> Result<Vec<i32>, ApiError> {
             })?;
             if start > end {
                 return Err(ApiError::InvalidIntegerRange(format!(
-                    "Range start is greater than end: '{}'",
-                    segment
+                    "Range start is greater than end: '{segment}'"
                 )));
             }
             numbers.extend(start..=end);
@@ -173,22 +171,21 @@ pub fn parse_integer_list(input: &str) -> Result<Vec<i32>, ApiError> {
             if idx == 0 {
                 // It's a negative number, not a range.
                 numbers.push(segment.parse::<i32>().map_err(|_| {
-                    ApiError::InvalidIntegerRange(format!("Invalid number: '{}'", segment))
+                    ApiError::InvalidIntegerRange(format!("Invalid number: '{segment}'"))
                 })?);
             } else {
                 // It's a positive range.
                 let (start, end) = segment.split_at(idx);
                 let end = &end[1..]; // Skip the hyphen
                 let start = start.parse::<i32>().map_err(|_| {
-                    ApiError::InvalidIntegerRange(format!("Invalid start of range: '{}'", start))
+                    ApiError::InvalidIntegerRange(format!("Invalid start of range: '{start}'"))
                 })?;
                 let end = end.parse::<i32>().map_err(|_| {
-                    ApiError::InvalidIntegerRange(format!("Invalid end of range: '{}'", end))
+                    ApiError::InvalidIntegerRange(format!("Invalid end of range: '{end}'"))
                 })?;
                 if start > end {
                     return Err(ApiError::InvalidIntegerRange(format!(
-                        "Range start is greater than end: '{}'",
-                        segment
+                        "Range start is greater than end: '{segment}'"
                     )));
                 }
                 numbers.extend(start..=end);
@@ -196,7 +193,7 @@ pub fn parse_integer_list(input: &str) -> Result<Vec<i32>, ApiError> {
         } else {
             // Handle a single number.
             numbers.push(segment.parse::<i32>().map_err(|_| {
-                ApiError::InvalidIntegerRange(format!("Invalid number: '{}'", segment))
+                ApiError::InvalidIntegerRange(format!("Invalid number: '{segment}'"))
             })?);
         }
     }

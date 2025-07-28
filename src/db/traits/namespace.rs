@@ -39,8 +39,7 @@ impl GetNamespace<(Namespace, Namespace)> for HubuumClassRelation {
             );
             return Err(ApiError::NotFound(
                 format!(
-                    "Could not find namespaces ({} and {}) for class relation",
-                    from_id, to_id,
+                    "Could not find namespaces ({from_id} and {to_id}) for class relation",
                 )
                 .to_string(),
             ));
@@ -79,8 +78,7 @@ impl GetNamespace<(Namespace, Namespace)> for NewHubuumClassRelation {
             );
             return Err(ApiError::NotFound(
                 format!(
-                    "Could not find namespaces ({} and {}) for class relation",
-                    from_id, to_id,
+                    "Could not find namespaces ({from_id} and {to_id}) for class relation",
                 )
                 .to_string(),
             ));
@@ -119,8 +117,7 @@ impl GetNamespace<(Namespace, Namespace)> for HubuumObjectRelation {
             );
             return Err(ApiError::NotFound(
                 format!(
-                    "Could not find namespaces ({} and {}) for object relation",
-                    from_id, to_id,
+                    "Could not find namespaces ({from_id} and {to_id}) for object relation",
                 )
                 .to_string(),
             ));
@@ -159,8 +156,7 @@ impl GetNamespace<(Namespace, Namespace)> for NewHubuumObjectRelation {
             );
             return Err(ApiError::NotFound(
                 format!(
-                    "Could not find namespaces ({} and {}) for object relation",
-                    from_id, to_id,
+                    "Could not find namespaces ({from_id} and {to_id}) for object relation",
                 )
                 .to_string(),
             ));
@@ -199,8 +195,7 @@ impl GetNamespace<(Namespace, Namespace)> for HubuumObjectRelationID {
             );
             return Err(ApiError::NotFound(
                 format!(
-                    "Could not find namespaces ({} and {}) for object relation",
-                    from_id, to_id,
+                    "Could not find namespaces ({from_id} and {to_id}) for object relation",
                 )
                 .to_string(),
             ));

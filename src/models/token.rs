@@ -38,7 +38,7 @@ impl Token {
         if len > 6 {
             let start = &self.0[..3];
             let end = &self.0[len - 3..];
-            format!("{}...{}", start, end)
+            format!("{start}...{end}")
         } else {
             "...".to_string()
         }

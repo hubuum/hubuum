@@ -37,7 +37,7 @@ impl User {
             username = self.username,
         );
         let new_password = hash_password(new_password).map_err(|e| {
-            ApiError::HashError(format!("Failed to hash password: {}", e))
+            ApiError::HashError(format!("Failed to hash password: {e}"))
         })?;
 
         with_connection(pool, |conn| {

@@ -35,8 +35,7 @@ pub fn parse_query_parameter(query_string: &str) -> Result<Vec<ParsedQueryParam>
 
         if query_param_parts.len() != 2 {
             return Err(ApiError::BadRequest(format!(
-                "Invalid query parameter: '{}'",
-                query_param
+                "Invalid query parameter: '{query_param}'"
             )));
         }
 
@@ -47,8 +46,7 @@ pub fn parse_query_parameter(query_string: &str) -> Result<Vec<ParsedQueryParam>
             Ok(value) => value.to_string(),
             Err(e) => {
                 return Err(ApiError::BadRequest(format!(
-                    "Invalid query parameter: '{}', invalid value: {}",
-                    query_param, e
+                    "Invalid query parameter: '{query_param}', invalid value: {e}"
                 )));
             }
         };
@@ -57,8 +55,7 @@ pub fn parse_query_parameter(query_string: &str) -> Result<Vec<ParsedQueryParam>
 
         if value.is_empty() {
             return Err(ApiError::BadRequest(format!(
-                "Invalid query parameter: '{}', no value",
-                query_param
+                "Invalid query parameter: '{query_param}', no value"
             )));
         }
 
@@ -277,8 +274,7 @@ impl ParsedQueryParam {
         // Validate the key
         if !key.is_valid_jsonb_search_key() {
             return Err(ApiError::BadRequest(format!(
-                "Invalid JSON search key: '{}'",
-                key
+                "Invalid JSON search key: '{key}'"
             )));
         }
 
@@ -292,7 +288,7 @@ impl ParsedQueryParam {
         }
         */
 
-        let key = format!("'{{{}}}'", key);
+        let key = format!("'{{{key}}}'");
 
         // The bind variables for the SQL query. We can't bind the key as using
         // bind variables for the key itself is not supported in Postgres.
@@ -312,12 +308,12 @@ impl ParsedQueryParam {
         let (sql_op, value) = match op {
             Operator::Equals => ("=", (*value).to_string()),
             Operator::IEquals => ("ILIKE", (*value).to_string()),
-            Operator::Contains | Operator::Like => ("LIKE", format!("%{}%", value)),
-            Operator::IContains => ("ILIKE", format!("%{}%", value)),
-            Operator::StartsWith => ("LIKE", format!("{}%", value)),
-            Operator::IStartsWith => ("ILIKE", format!("{}%", value)),
-            Operator::EndsWith => ("LIKE", format!("%{}", value)),
-            Operator::IEndsWith => ("ILIKE", format!("%{}", value)),
+            Operator::Contains | Operator::Like => ("LIKE", format!("%{value}%")),
+            Operator::IContains => ("ILIKE", format!("%{value}%")),
+            Operator::StartsWith => ("LIKE", format!("{value}%")),
+            Operator::IStartsWith => ("ILIKE", format!("{value}%")),
+            Operator::EndsWith => ("LIKE", format!("%{value}")),
+            Operator::IEndsWith => ("ILIKE", format!("%{value}")),
             Operator::Regex => ("~", (*value).to_string()),
             Operator::Gt => (">", (*value).to_string()),
             Operator::Gte => (">=", (*value).to_string()),
@@ -326,8 +322,7 @@ impl ParsedQueryParam {
 
             _ => {
                 return Err(ApiError::BadRequest(format!(
-                    "Invalid operator for JSON: '{:?}'",
-                    op
+                    "Invalid operator for JSON: '{op:?}'"
                 )))
             }
         };
@@ -545,7 +540,7 @@ impl std::fmt::Display for Operator {
             Operator::Lte => "lte",
             Operator::Between => "between",
         };
-        write!(f, "{}", op)
+        write!(f, "{op}")
     }
 }
 
@@ -583,7 +578,7 @@ impl std::fmt::Display for SearchOperator {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let (op, neg) = self.op_and_neg();
         let neg_str = if neg { "not_" } else { "" };
-        write!(f, "{}{}", neg_str, op)
+        write!(f, "{neg_str}{op}")
     }
 }
 
@@ -688,8 +683,7 @@ impl SearchOperator {
             }),
 
             _ => Err(ApiError::BadRequest(format!(
-                "Invalid search operator: '{}'",
-                operator
+                "Invalid search operator: '{operator}'"
             ))),
         }
     }

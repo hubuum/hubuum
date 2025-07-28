@@ -106,7 +106,7 @@ pub async fn create_groups_with_prefix(
     let mut groups = Vec::new();
 
     for i in 0..num_groups {
-        let groupname = format!("{}-group-{}", prefix, i);
+        let groupname = format!("{prefix}-group-{i}");
         let result = NewGroup {
             groupname: groupname.to_string(),
             description: Some(groupname.clone()),
@@ -153,7 +153,7 @@ pub async fn ensure_user(pool: &DbPool, uname: &str) -> User {
                     .first::<User>(&mut conn)
                     .expect("Failed to fetch user after conflict");
             }
-            _ => panic!("Failed to create user '{}': {:?}", uname, e),
+            _ => panic!("Failed to create user '{uname}': {e:?}"),
         }
     }
 
@@ -202,7 +202,7 @@ pub async fn ensure_admin_group(pool: &DbPool) -> Group {
                     .first::<Group>(&mut conn)
                     .expect("Failed to fetch user after conflict");
             }
-            _ => panic!("Failed to create admin group: {:?}", e),
+            _ => panic!("Failed to create admin group: {e:?}"),
         }
     }
 
