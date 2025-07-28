@@ -62,7 +62,7 @@ pub fn parse_query_parameter(qs: &str) -> Result<QueryOptions, ApiError> {
                 limit = Some(
                     value
                         .parse::<usize>()
-                        .map_err(|e| ApiError::BadRequest(format!("bad limit: {}", e)))?,
+                        .map_err(|e| ApiError::BadRequest(format!("bad limit: {e}")))?,
                 );
             }
 
