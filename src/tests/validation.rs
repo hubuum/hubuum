@@ -13,7 +13,6 @@ use crate::errors::ApiError;
 /// The identifier string is used to create unique names.
 async fn setup_geo_class(identifier: &str) -> (Namespace, NewHubuumClass, Value) {
     let (pool, _) = get_pool_and_config().await;
-    println!("Creating namespace for test: {}", identifier);
     let ns = create_namespace(&pool, &format!("Validation_test_{}", identifier))
         .await
         .expect("Failed to create namespace");
