@@ -90,6 +90,7 @@ where
     })
 }
 
+#[allow(dead_code)]
 async fn fetch_relations<C1, C2>(
     pool: &DbPool,
     from: &C1,

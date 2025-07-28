@@ -218,6 +218,7 @@ impl ObjectAccessors<(HubuumObject, HubuumObject), (i32, i32)> for HubuumObjectR
 }
 
 impl ClassClosureView {
+    #[allow(dead_code)]
     pub fn to_ascendant_class(&self) -> HubuumClass {
         HubuumClass {
             id: self.ancestor_class_id,
@@ -231,6 +232,7 @@ impl ClassClosureView {
         }
     }
 
+    #[allow(dead_code)]
     pub fn to_descendant_class(&self) -> HubuumClass {
         HubuumClass {
             id: self.descendant_class_id,
@@ -244,6 +246,7 @@ impl ClassClosureView {
         }
     }
 
+    #[allow(dead_code)]
     pub fn to_descendant_class_with_path(&self) -> HubuumClassWithPath {
         HubuumClassWithPath {
             id: self.descendant_class_id,

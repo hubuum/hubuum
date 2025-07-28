@@ -116,6 +116,7 @@ pub async fn user_on<T: NamespaceAccessors>(
 /// * Ok(Vec<Namespace>) - List of namespaces the user has the requested permission for.
 ///   If no matching namespaces are found, an empty list is returned
 /// * Err(ApiError) - On query errors only.
+#[allow(dead_code)]
 pub async fn user_can_on_any<U: SelfAccessors<User> + GroupAccessors>(
     pool: &DbPool,
     user_id: U,
