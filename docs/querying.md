@@ -89,9 +89,9 @@ You can sort the results of a query by adding a `sort` query parameter. The valu
 
 The fields you may sort on depends on the resource being queried. Currently supported resources and fields are:
 
-- Namespaces: `id`, `name`, `created_at`, `updated_at`
-- Classes: `id`, `name`, `namespaces`, `created_at`, `updated_at`
-- Objects: `id`, `name`, `namespaces`, `classid`, `created_at`, `updated_at`
+- Namespaces (`/api/v1/namespaces/`): `id`, `name`, `created_at`, `updated_at`
+- Classes (`/api/v1/classes/`): `id`, `name`, `namespaces`, `created_at`, `updated_at`
+- Objects (`/api/v1/classes/{class_id}/`): `id`, `name`, `namespaces`, `classid`, `created_at`, `updated_at` (the `classid` sort option exists for possible future endpoints)
 
 ### Examples
 
