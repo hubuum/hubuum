@@ -6,7 +6,7 @@ mod test {
     use crate::db::DbPool;
     use crate::models::class::NewHubuumClass;
     use crate::models::group::GroupID;
-    use crate::models::search::{FilterField, ParsedQueryParam, SearchOperator};
+    use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, SearchOperator};
     use crate::models::{
         HubuumClass, HubuumClassRelation, Namespace, NewHubuumClassRelation, NewNamespace,
     };
@@ -119,6 +119,12 @@ mod test {
             },
             relations_constraint_query(&relations),
         ];
+
+        let query = QueryOptions {
+            filters: query,
+            sort: vec![],
+            limit: None,
+        };
 
         let admin_user = ensure_admin_user(&pool).await;
         let result = admin_user

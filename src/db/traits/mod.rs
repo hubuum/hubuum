@@ -10,7 +10,7 @@ mod user;
 pub use user::UserPermissions;
 
 use crate::errors::ApiError;
-use crate::models::search::{FilterField, ParsedQueryParam};
+use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions};
 use crate::models::{
     HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, HubuumObject, HubuumObjectID,
     HubuumObjectRelation, HubuumObjectTransitiveLink, Namespace, User, UserToken,
@@ -144,11 +144,12 @@ where
     async fn search_relations(
         &self,
         pool: &DbPool,
-        query_params: &Vec<ParsedQueryParam>,
+        query_options: &QueryOptions,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
         use crate::schema::hubuumclass_relation::dsl::*;
         use diesel::prelude::*;
 
+        let query_params = query_options.filters.clone();
         let mut base_query = hubuumclass_relation.into_boxed();
         for param in query_params {
             let operator = param.operator.clone();

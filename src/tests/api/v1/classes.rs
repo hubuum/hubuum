@@ -4,6 +4,8 @@ pub mod tests {
     use crate::traits::{CanDelete, CanSave};
     use actix_web::{http::StatusCode, test};
 
+    use yare::parameterized;
+
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::assert_response_status;
     use crate::tests::constants::{get_schema, SchemaType};
@@ -357,5 +359,70 @@ pub mod tests {
             .await;
             assert_response_status(resp, StatusCode::NOT_FOUND).await;
         }
+    }
+
+    #[parameterized(
+        unsorted = { "", &[0, 1, 2] },
+        sorted_id_default = { "id", &[0, 1, 2] },
+        sorted_id_explicit_asc = { "id.asc", &[0, 1, 2] },
+        sorted_id_descending = { "id.desc", &[5, 4, 3] }
+
+    )]
+    #[test_macro(actix_web::test)]
+    async fn test_api_classes_sorted(sort_order: &str, expected_id_order: &[usize]) {
+        let created_classes = create_test_classes(&format!(
+            "api_classes_sorted_{sort_order}_{expected_id_order:?}"
+        ))
+        .await;
+
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let namespace_id = created_classes[0].namespace_id;
+
+        let sort_order = if sort_order.is_empty() {
+            ""
+        } else {
+            &format!("&sort={sort_order}")
+        };
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{CLASSES_ENDPOINT}?namespaces={namespace_id}{sort_order}"),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let classes: Vec<HubuumClassExpanded> = test::read_body_json(resp).await;
+        assert_eq!(classes.len(), created_classes.len());
+        assert_eq!(classes[0].id, created_classes[expected_id_order[0]].id);
+        assert_eq!(classes[1].id, created_classes[expected_id_order[1]].id);
+        assert_eq!(classes[2].id, created_classes[expected_id_order[2]].id);
+
+        cleanup(&created_classes).await;
+    }
+
+    #[parameterized(
+        limit_2 = { 2 },
+        limit_5 = { 5 },
+        limit_7 = { 6 } // Max possible hits
+    )]
+    #[test_macro(actix_web::test)]
+    async fn test_api_classes_limit(limit: usize) {
+        let created_classes = create_test_classes(&format!("api_classes_limit_{limit}")).await;
+
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let namespace_id = created_classes[0].namespace_id;
+
+        // Limit to 2 results
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{CLASSES_ENDPOINT}?namespaces={namespace_id}&limit={limit}&sort=id"),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let classes: Vec<HubuumClassExpanded> = test::read_body_json(resp).await;
+        assert_eq!(classes.len(), limit);
+
+        cleanup(&created_classes).await;
     }
 }

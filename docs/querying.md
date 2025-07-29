@@ -82,3 +82,29 @@ These filters can also be applied to nested JSON fields. If you have a JSON sche
 
 You can find all entries use this schema and that are south of the equator (ie, whos latitude is negative) by searching for
 `json_schema__lt=properties,latitude,minimum=0`. If the path does not exist, the filter will NOT match but it will not fail.
+
+## Sorting
+
+You can sort the results of a query by adding a `sort` query parameter. The value of the `sort` parameter is a comma-separated list of fields to sort by. Each field can be followed by `.asc` or `.desc` to specify the sort direction. You may currently only sort by top-level fields.
+
+The fields you may sort on depends on the resource being queried. Currently supported resources and fields are:
+
+- Namespaces (`/api/v1/namespaces/`): `id`, `name`, `created_at`, `updated_at`
+- Classes (`/api/v1/classes/`): `id`, `name`, `namespaces`, `created_at`, `updated_at`
+- Objects (`/api/v1/classes/{class_id}/`): `id`, `name`, `namespaces`, `classid`, `created_at`, `updated_at` (the `classid` sort option exists for possible future endpoints)
+
+### Examples
+
+- Sorting by name in ascending order: `?sort=name.asc`
+- Sorting by name in descending order: `?sort=name.desc`
+- Sorting by created_at in ascending order: `?sort=created_at.asc`
+- Sorting an object search by namespaces descending, then class_id ascending, then object_id in descending order: `/api/v1/classes/4/?sort=namespaces.desc,class_id.asc,object_id.desc`
+
+### Notes
+
+- The parameter `order_by` is an alias for `sort` and can be used interchangeably.
+- The sort order is adhered to, so if you specify multiple fields to sort by, the results will be sorted by the first field, then the second field, and so on.
+
+## Limit
+
+You can limit the number of results returned by a query by adding a `limit` query parameter. The value of the `limit` parameter is the maximum number of results to return. For example, to return only 10 results, you can add the following query: `?limit=10`.

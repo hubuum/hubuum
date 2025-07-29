@@ -24,6 +24,36 @@ mod tests {
         format!("{OBJECT_ENDPOINT}/{class_id}/")
     }
 
+    async fn create_test_objects(prefix: &str, count: usize) -> Vec<HubuumObject> {
+        let (pool, _, _) = setup_pool_and_tokens().await;
+
+        let namespace = create_namespace(&pool, prefix).await.unwrap();
+        let class = NewHubuumClass {
+            namespace_id: namespace.id,
+            name: format!("test class {prefix}"),
+            description: "Test class description".to_string(),
+            json_schema: None,
+            validate_schema: None,
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        let mut objects = Vec::new();
+
+        for i in 0..count {
+            let object = NewHubuumObject {
+                namespace_id: namespace.id,
+                hubuum_class_id: class.id,
+                data: serde_json::json!({"test": format!("data_{i}")}),
+                name: format!("{prefix} test object {i}"),
+                description: format!("{prefix} test object description {i}"),
+            };
+            objects.push(object.save(&pool).await.unwrap());
+        }
+        objects
+    }
+
     #[actix_rt::test]
     async fn get_patch_and_delete_objects_in_class() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
@@ -279,5 +309,76 @@ mod tests {
                 "Expected 'validation error', got: {error_text}"
             );
         }
+    }
+
+    #[parameterized(
+        unsorted = { "", &[0, 1, 2] },
+        sorted_id_default = { "id", &[0, 1, 2] },
+        sorted_id_explicit_asc = { "id.asc", &[0, 1, 2] },
+        sorted_id_descending = { "id.desc", &[3, 2, 1] },
+        sorted_name_asc = { "name.asc", &[0, 1, 2] },
+        sorted_name_desc = { "name.desc", &[3, 2, 1] },
+        sorted_created_at_asc = { "created_at.asc", &[0, 1, 2] },
+        sorted_created_at_desc = { "created_at.desc", &[3, 2, 1] },
+        sorted_namespace_and_id_asc = { "namespace_id.asc,id.asc", &[0, 1, 2] },
+
+    )]
+    #[test_macro(actix_web::test)]
+    async fn test_api_objects_sorted(sort_order: &str, expected_id_order: &[usize]) {
+        let created_objects = create_test_objects(
+            &format!("api_objects_sorted_{sort_order}_{expected_id_order:?}"),
+            4,
+        )
+        .await;
+
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let namespace_id = created_objects[0].namespace_id;
+
+        let sort_order = if sort_order.is_empty() {
+            ""
+        } else {
+            &format!("&sort={sort_order}")
+        };
+
+        let class_id = created_objects[0].hubuum_class_id;
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{OBJECT_ENDPOINT}/{class_id}/?namespaces={namespace_id}{sort_order}"),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let objects: Vec<HubuumObject> = test::read_body_json(resp).await;
+        assert_eq!(objects.len(), created_objects.len());
+        assert_eq!(objects[0].id, created_objects[expected_id_order[0]].id);
+        assert_eq!(objects[1].id, created_objects[expected_id_order[1]].id);
+        assert_eq!(objects[2].id, created_objects[expected_id_order[2]].id);
+    }
+
+    #[parameterized(
+        limit_2 = { 2 },
+        limit_5 = { 5 },
+        limit_7 = { 6 } // Max possible hits
+    )]
+    #[test_macro(actix_web::test)]
+    async fn test_api_objects_limit(limit: usize) {
+        let created_objects = create_test_objects(&format!("api_objects_limit_{limit}"), 6).await;
+
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let namespace_id = created_objects[0].namespace_id;
+        let class_id = created_objects[0].hubuum_class_id;
+
+        // Limit to 2 results
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!(
+                "{OBJECT_ENDPOINT}/{class_id}/?namespaces={namespace_id}&limit={limit}&sort=id"
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let objects: Vec<HubuumObject> = test::read_body_json(resp).await;
+        assert_eq!(objects.len(), limit);
     }
 }

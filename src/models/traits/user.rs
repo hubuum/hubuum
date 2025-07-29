@@ -10,7 +10,9 @@ use futures::future::try_join_all;
 use tracing::debug;
 
 use crate::api::v1::handlers::namespaces;
-use crate::models::search::{FilterField, ParsedQueryParam, QueryParamsExt, SearchOperator};
+use crate::models::search::{
+    FilterField, ParsedQueryParam, QueryOptions, QueryParamsExt, SearchOperator,
+};
 use crate::models::traits::ExpandNamespaceFromMap;
 use crate::models::{
     class, group, permissions, ClassClosureView, Group, HubuumClass, HubuumClassExpanded,
@@ -32,13 +34,15 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
     async fn search_namespaces(
         &self,
         pool: &DbPool,
-        query_params: Vec<ParsedQueryParam>,
+        query_options: QueryOptions,
     ) -> Result<Vec<Namespace>, ApiError> {
         use crate::models::PermissionFilter;
         use crate::schema::namespaces::dsl::{id as namespace_id, namespaces};
         use crate::schema::permissions::dsl::{
             group_id, namespace_id as permissions_nid, permissions,
         };
+
+        let query_params = query_options.filters;
 
         debug!(
             message = "Searching namespaces",
@@ -107,6 +111,40 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             }
         }
 
+        for order in query_options.sort.iter() {
+            use crate::schema::namespaces::dsl::{
+                created_at, id as namespace_id, name, updated_at,
+            };
+            match (&order.field, &order.descending) {
+                (FilterField::Id, false) => base_query = base_query.order_by(namespace_id.asc()),
+                (FilterField::Id, true) => base_query = base_query.order_by(namespace_id.desc()),
+                (FilterField::CreatedAt, false) => {
+                    base_query = base_query.order_by(created_at.asc())
+                }
+                (FilterField::CreatedAt, true) => {
+                    base_query = base_query.order_by(created_at.desc())
+                }
+                (FilterField::UpdatedAt, false) => {
+                    base_query = base_query.order_by(updated_at.asc())
+                }
+                (FilterField::UpdatedAt, true) => {
+                    base_query = base_query.order_by(updated_at.desc())
+                }
+                (FilterField::Name, false) => base_query = base_query.order_by(name.asc()),
+                (FilterField::Name, true) => base_query = base_query.order_by(name.desc()),
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't orderable (or does not exist) for namespaces",
+                        order.field
+                    )))
+                }
+            }
+        }
+
+        if let Some(limit) = query_options.limit {
+            base_query = base_query.limit(limit as i64);
+        }
+
         let result = with_connection(pool, |conn| {
             base_query
                 .select(namespaces::all_columns())
@@ -119,13 +157,15 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
     async fn search_classes(
         &self,
         pool: &DbPool,
-        query_params: Vec<ParsedQueryParam>,
+        query_options: QueryOptions,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         use crate::models::PermissionFilter;
         use crate::schema::hubuumclass::dsl::{
             hubuumclass, id as hubuum_class_id, namespace_id as hubuum_classes_nid,
         };
         use crate::schema::permissions::dsl::*;
+
+        let query_params = query_options.filters;
 
         debug!(
             message = "Searching classes",
@@ -242,6 +282,47 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             }
         }
 
+        for order in query_options.sort.iter() {
+            use crate::schema::hubuumclass::dsl::{
+                created_at, id as hubuum_class_id, name, namespace_id as hubuum_classes_nid,
+                updated_at,
+            };
+            match (&order.field, &order.descending) {
+                (FilterField::Id, false) => base_query = base_query.order_by(hubuum_class_id.asc()),
+                (FilterField::Id, true) => base_query = base_query.order_by(hubuum_class_id.desc()),
+                (FilterField::CreatedAt, false) => {
+                    base_query = base_query.order_by(created_at.asc())
+                }
+                (FilterField::CreatedAt, true) => {
+                    base_query = base_query.order_by(created_at.desc())
+                }
+                (FilterField::UpdatedAt, false) => {
+                    base_query = base_query.order_by(updated_at.asc())
+                }
+                (FilterField::UpdatedAt, true) => {
+                    base_query = base_query.order_by(updated_at.desc())
+                }
+                (FilterField::Name, false) => base_query = base_query.order_by(name.asc()),
+                (FilterField::Name, true) => base_query = base_query.order_by(name.desc()),
+                (FilterField::NamespaceId, false) => {
+                    base_query = base_query.order_by(hubuum_classes_nid.asc())
+                }
+                (FilterField::NamespaceId, true) => {
+                    base_query = base_query.order_by(hubuum_classes_nid.desc())
+                }
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't orderable (or does not exist) for classes",
+                        order.field
+                    )))
+                }
+            }
+        }
+
+        if let Some(limit) = query_options.limit {
+            base_query = base_query.limit(limit as i64);
+        }
+
         trace_query!(base_query, "Searching classes");
 
         let result = with_connection(pool, |conn| {
@@ -264,7 +345,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
     async fn search_objects(
         &self,
         pool: &DbPool,
-        query_params: Vec<ParsedQueryParam>,
+        query_options: QueryOptions,
     ) -> Result<Vec<HubuumObject>, ApiError> {
         use crate::models::PermissionFilter;
         use crate::schema::hubuumobject::dsl::{
@@ -272,6 +353,8 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             namespace_id as hubuum_object_nid,
         };
         use crate::schema::permissions::dsl::*;
+
+        let query_params = query_options.filters;
 
         debug!(
             message = "Searching objects",
@@ -398,6 +481,57 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             }
         }
 
+        for order in query_options.sort.iter() {
+            use crate::schema::hubuumobject::dsl::{
+                created_at, hubuum_class_id, id as hubuum_object_id, name,
+                namespace_id as hubuum_object_nid, updated_at,
+            };
+            match (&order.field, &order.descending) {
+                (FilterField::Id, false) => {
+                    base_query = base_query.order_by(hubuum_object_id.asc())
+                }
+                (FilterField::Id, true) => {
+                    base_query = base_query.order_by(hubuum_object_id.desc())
+                }
+                (FilterField::ClassId, false) => {
+                    base_query = base_query.order_by(hubuum_class_id.asc())
+                }
+                (FilterField::ClassId, true) => {
+                    base_query = base_query.order_by(hubuum_class_id.desc())
+                }
+                (FilterField::NamespaceId, false) => {
+                    base_query = base_query.order_by(hubuum_object_nid.asc())
+                }
+                (FilterField::NamespaceId, true) => {
+                    base_query = base_query.order_by(hubuum_object_nid.desc())
+                }
+                (FilterField::CreatedAt, false) => {
+                    base_query = base_query.order_by(created_at.asc())
+                }
+                (FilterField::CreatedAt, true) => {
+                    base_query = base_query.order_by(created_at.desc())
+                }
+                (FilterField::UpdatedAt, false) => {
+                    base_query = base_query.order_by(updated_at.asc())
+                }
+                (FilterField::UpdatedAt, true) => {
+                    base_query = base_query.order_by(updated_at.desc())
+                }
+                (FilterField::Name, false) => base_query = base_query.order_by(name.asc()),
+                (FilterField::Name, true) => base_query = base_query.order_by(name.desc()),
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't orderable (or does not exist) for classes",
+                        order.field
+                    )))
+                }
+            }
+        }
+
+        if let Some(limit) = query_options.limit {
+            base_query = base_query.limit(limit as i64);
+        }
+
         trace_query!(base_query, "Searching objects");
 
         let result = with_connection(pool, |conn| {
@@ -413,7 +547,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
     async fn search_class_relations(
         &self,
         pool: &DbPool,
-        query_params: Vec<ParsedQueryParam>,
+        query_options: QueryOptions,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
         // Valid search fields:
         // From hubuumclass_relation:
@@ -438,6 +572,8 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         use crate::schema::permissions::dsl::*;
         use diesel::alias;
         use std::collections::HashSet;
+
+        let query_params = query_options.filters;
 
         debug!(
             message = "Searching class relations",
@@ -477,7 +613,12 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                     operator: class_param.operator.clone(),
                     value: class_param.value.clone(),
                 };
-                let classes = self.search_classes(pool, vec![qparam]).await?;
+                let query_options = QueryOptions {
+                    filters: vec![qparam],
+                    sort: vec![],
+                    limit: None,
+                };
+                let classes = self.search_classes(pool, query_options).await?;
                 let class_ids: Vec<i32> = classes.iter().map(|c| c.id).collect();
 
                 if class_ids.is_empty() {
@@ -593,7 +734,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
     async fn search_object_relations(
         &self,
         pool: &DbPool,
-        query_params: Vec<ParsedQueryParam>,
+        query_options: QueryOptions,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
         // Valid search fields:
         // From hubuumobject_relation:
@@ -617,6 +758,8 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         use crate::schema::permissions::dsl::*;
         use diesel::alias;
         use std::collections::HashSet;
+
+        let query_params = query_options.filters;
 
         debug!(
             message = "Searching object relations",
@@ -728,13 +871,15 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         &self,
         pool: &DbPool,
         object: O,
-        query_params: Vec<ParsedQueryParam>,
+        query_options: QueryOptions,
     ) -> Result<Vec<ObjectClosureView>, ApiError>
     where
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
         use crate::schema::object_closure_view::dsl as obj;
         use diesel::prelude::*;
+
+        let query_params = query_options.filters;
 
         debug!(
             message = "Searching objects related to object",
@@ -1176,6 +1321,14 @@ mod test {
     use crate::traits::{CanDelete, CanSave};
     use crate::{assert_contains, assert_not_contains};
 
+    fn make_query_options_from_query_param(filter: &ParsedQueryParam) -> QueryOptions {
+        QueryOptions {
+            filters: vec![filter.clone()],
+            sort: vec![],
+            limit: None,
+        }
+    }
+
     #[actix_rt::test]
     async fn test_user_permissions_namespace_and_class_listing() {
         use crate::models::namespace::NewNamespace;
@@ -1236,25 +1389,37 @@ mod test {
         };
 
         let nslist = test_user_1
-            .search_namespaces(&pool, vec![read_namespace_param.clone()])
+            .search_namespaces(
+                &pool,
+                make_query_options_from_query_param(&read_namespace_param),
+            )
             .await
             .unwrap();
         assert_contains!(&nslist, &ns);
 
         let nslist = test_user_2
-            .search_namespaces(&pool, vec![read_namespace_param.clone()])
+            .search_namespaces(
+                &pool,
+                make_query_options_from_query_param(&read_namespace_param),
+            )
             .await
             .unwrap();
         assert_not_contains!(&nslist, &ns);
 
         let classlist = test_user_1
-            .search_classes(&pool, vec![read_class_param.clone()])
+            .search_classes(
+                &pool,
+                make_query_options_from_query_param(&read_class_param),
+            )
             .await
             .unwrap();
         assert_contains!(&classlist, &class);
 
         let classlist = test_user_2
-            .search_classes(&pool, vec![read_class_param.clone()])
+            .search_classes(
+                &pool,
+                make_query_options_from_query_param(&read_class_param),
+            )
             .await
             .unwrap();
         assert_not_contains!(&classlist, &class);
@@ -1264,12 +1429,25 @@ mod test {
             .unwrap();
 
         let nslist = test_user_2
-            .search_namespaces(&pool, vec![read_namespace_param.clone()])
+            .search_namespaces(
+                &pool,
+                make_query_options_from_query_param(&read_namespace_param),
+            )
             .await
             .unwrap();
         assert_contains!(&nslist, &ns);
 
-        let classlist = test_user_1.search_classes(&pool, vec![]).await.unwrap();
+        let classlist = test_user_1
+            .search_classes(
+                &pool,
+                QueryOptions {
+                    filters: vec![],
+                    sort: vec![],
+                    limit: None,
+                },
+            )
+            .await
+            .unwrap();
         assert_contains!(&classlist, &class);
 
         class
@@ -1278,7 +1456,10 @@ mod test {
             .unwrap();
 
         let classlist = test_user_2
-            .search_classes(&pool, vec![read_class_param.clone()])
+            .search_classes(
+                &pool,
+                make_query_options_from_query_param(&read_class_param),
+            )
             .await
             .unwrap();
         assert_contains!(&classlist, &class);
@@ -1289,13 +1470,19 @@ mod test {
             .unwrap();
 
         let classlist = test_user_2
-            .search_classes(&pool, vec![read_class_param.clone()])
+            .search_classes(
+                &pool,
+                make_query_options_from_query_param(&read_class_param),
+            )
             .await
             .unwrap();
         assert_not_contains!(&classlist, &class);
 
         let nslist = test_user_2
-            .search_namespaces(&pool, vec![read_namespace_param.clone()])
+            .search_namespaces(
+                &pool,
+                make_query_options_from_query_param(&read_class_param),
+            )
             .await
             .unwrap();
         assert_contains!(&nslist, &ns);
@@ -1303,7 +1490,10 @@ mod test {
         ns.revoke_all(&pool, test_group_2.id).await.unwrap();
 
         let nslist = test_user_2
-            .search_namespaces(&pool, vec![read_namespace_param.clone()])
+            .search_namespaces(
+                &pool,
+                make_query_options_from_query_param(&read_namespace_param),
+            )
             .await
             .unwrap();
         assert_not_contains!(&nslist, &ns);

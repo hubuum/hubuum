@@ -14,8 +14,21 @@ mod tests {
     use crate::traits::{CanDelete, PermissionController};
     use crate::{assert_contains, assert_contains_all};
     use actix_web::{http, test};
+    use yare::parameterized;
 
     const NAMESPACE_ENDPOINT: &str = "/api/v1/namespaces";
+
+    async fn create_namespaces(prefix: &str, count: usize) -> Vec<Namespace> {
+        let (pool, _, _) = setup_pool_and_tokens().await;
+        let mut namespaces = Vec::new();
+        for i in 0..count {
+            let namespace = create_namespace(&pool, &format!("{prefix}_{i}"))
+                .await
+                .unwrap();
+            namespaces.push(namespace);
+        }
+        namespaces
+    }
 
     #[actix_web::test]
     async fn test_looking_up_namespaces() {
@@ -371,5 +384,89 @@ mod tests {
 
         test_group.delete(&pool).await.unwrap();
         test_user.delete(&pool).await.unwrap();
+    }
+
+    #[parameterized(
+        unsorted = { "", &[0, 1, 2] },
+        sorted_id_default = { "id", &[0, 1, 2] },
+        sorted_id_explicit_asc = { "id.asc", &[0, 1, 2] },
+        sorted_id_descending = { "id.desc", &[3, 2, 1] },
+        sorted_name_asc = { "name.asc", &[0, 1, 2] },
+        sorted_name_desc = { "name.desc", &[3, 2, 1] },
+        sorted_created_at_asc = { "created_at.asc", &[0, 1, 2] },
+        sorted_created_at_desc = { "created_at.desc", &[3, 2, 1] },
+
+    )]
+    #[test_macro(actix_web::test)]
+    async fn test_api_namespaces_sorted(sort_order: &str, expected_id_order: &[usize]) {
+        let created_namespaces = create_namespaces(
+            &format!("api_namespaces_sorted_{sort_order}_{expected_id_order:?}"),
+            4,
+        )
+        .await;
+
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+
+        let sort_order = if sort_order.is_empty() {
+            ""
+        } else {
+            &format!("&sort={sort_order}")
+        };
+
+        let comma_separated_ids = created_namespaces
+            .iter()
+            .map(|ns| ns.id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{NAMESPACE_ENDPOINT}/?id={comma_separated_ids}{sort_order}"),
+        )
+        .await;
+        let resp = assert_response_status(resp, http::StatusCode::OK).await;
+        let objects: Vec<Namespace> = test::read_body_json(resp).await;
+        assert_eq!(objects.len(), created_namespaces.len());
+        assert_eq!(objects[0].id, created_namespaces[expected_id_order[0]].id);
+        assert_eq!(objects[1].id, created_namespaces[expected_id_order[1]].id);
+        assert_eq!(objects[2].id, created_namespaces[expected_id_order[2]].id);
+
+        for i in created_namespaces {
+            i.delete(&pool).await.unwrap();
+        }
+    }
+
+    #[parameterized(
+        limit_2 = { 2 },
+        limit_5 = { 5 },
+        limit_7 = { 6 } // Max possible hits
+    )]
+    #[test_macro(actix_web::test)]
+    async fn test_api_namespaces_limit(limit: usize) {
+        let created_namespaces =
+            create_namespaces(&format!("api_namespaces_limit_{limit}"), 6).await;
+
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let comma_separated_ids = created_namespaces
+            .iter()
+            .map(|ns| ns.id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        // Limit to 2 results
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{NAMESPACE_ENDPOINT}/?id={comma_separated_ids}&limit={limit}&sort=id"),
+        )
+        .await;
+        let resp = assert_response_status(resp, http::StatusCode::OK).await;
+        let objects: Vec<Namespace> = test::read_body_json(resp).await;
+        assert_eq!(objects.len(), limit);
+
+        for i in created_namespaces {
+            i.delete(&pool).await.unwrap();
+        }
     }
 }
