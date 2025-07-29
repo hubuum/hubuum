@@ -248,6 +248,42 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             }
         }
 
+        // Add ordering and limits
+        for order in query_options.sort.iter() {
+            use crate::schema::hubuumclass::dsl::{
+                created_at, id as hubuum_class_id, name, updated_at,
+            };
+            match (&order.field, &order.descending) {
+                (FilterField::Id, false) => base_query = base_query.order_by(hubuum_class_id.asc()),
+                (FilterField::Id, true) => base_query = base_query.order_by(hubuum_class_id.desc()),
+                (FilterField::CreatedAt, false) => {
+                    base_query = base_query.order_by(created_at.asc())
+                }
+                (FilterField::CreatedAt, true) => {
+                    base_query = base_query.order_by(created_at.desc())
+                }
+                (FilterField::UpdatedAt, false) => {
+                    base_query = base_query.order_by(updated_at.asc())
+                }
+                (FilterField::UpdatedAt, true) => {
+                    base_query = base_query.order_by(updated_at.desc())
+                }
+                (FilterField::Name, false) => base_query = base_query.order_by(name.asc()),
+                (FilterField::Name, true) => base_query = base_query.order_by(name.desc()),
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't orderable (or does not exist) for classes",
+                        order.field
+                    )))
+                }
+            }
+        }
+
+        // Add limit
+        if let Some(limit) = query_options.limit {
+            base_query = base_query.limit(limit as i64);
+        }
+
         trace_query!(base_query, "Searching classes");
 
         let result = with_connection(pool, |conn| {
