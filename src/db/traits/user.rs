@@ -3,7 +3,7 @@ use std::iter::IntoIterator;
 
 use tracing::debug;
 
-use crate::models::{Permissions, User, UserID};
+use crate::models::{Group, Permissions, User, UserID};
 use crate::utilities::auth::hash_password;
 use crate::traits::{GroupAccessors, NamespaceAccessors, SelfAccessors};
 
@@ -165,6 +165,50 @@ impl User {
         Ok(result)
     }
 
+    pub async fn search_groups(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions
+    ) -> Result<Vec<Group>, ApiError> {
+        use crate::schema::groups::dsl::{id, created_at, updated_at, groupname, description, groups};
+
+        let query_params = query_options.filters;
+
+        debug!(
+            message = "Searching groups",
+            stage = "Starting",
+            user_id = self.id(),
+            query_params = ?query_params
+        );
+
+        let mut base_query = groups.into_boxed();
+
+        for param in query_params {
+            let operator = param.operator.clone();
+            match param.field {
+                FilterField::Id => numeric_search!(base_query, param, operator, id),
+                FilterField::Name => string_search!(base_query, param, operator, groupname),
+                FilterField::Description => string_search!(base_query, param, operator, description),
+                FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
+                FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for groups",
+                        param.field
+                    )))
+                }
+            }
+        }
+
+        trace_query!(base_query, "Searching groups");
+
+        let result = with_connection(pool, |conn| base_query
+            .select(groups::all_columns())
+            .distinct() 
+            .load::<Group>(conn))?;
+
+        Ok(result)
+    }
 
 }
 

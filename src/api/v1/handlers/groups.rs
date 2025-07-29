@@ -1,10 +1,11 @@
-use crate::db::{with_connection, DbPool};
+use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, UserAccess};
-use crate::models::group::{Group, GroupID, NewGroup, UpdateGroup};
+use crate::models::group::{GroupID, NewGroup, UpdateGroup};
+use crate::models::search::parse_query_parameter;
 use crate::models::user_group::UserGroup;
 use crate::utilities::response::{json_response, json_response_created};
-use actix_web::{delete, get, http::StatusCode, patch, post, routes, web, Responder};
+use actix_web::{delete, get, http::StatusCode, patch, post, routes, web, HttpRequest, Responder};
 use serde_json::json;
 use tracing::debug;
 
@@ -14,16 +15,23 @@ use tracing::debug;
 pub async fn get_groups(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    use crate::schema::groups::dsl::*;
-    use diesel::RunQueryDsl;
+    let user = requestor.user.clone();
+    let query_string = req.query_string();
+
+    let params = match parse_query_parameter(query_string) {
+        Ok(params) => params,
+        Err(e) => return Err(e),
+    };
 
     debug!(
         message = "Group list requested",
-        requestor = requestor.user.id
+        requestor = requestor.user.id,
+        params = ?params
     );
 
-    let result = with_connection(&pool, |conn| groups.load::<Group>(conn))?;
+    let result = user.search_groups(&pool, params).await?;
 
     Ok(json_response(result, StatusCode::OK))
 }

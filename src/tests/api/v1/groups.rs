@@ -1,9 +1,10 @@
 #[cfg(test)]
 mod tests {
+    use actix_web::{http::StatusCode, test};
+    use yare::parameterized;
+
     use crate::models::group::{Group, NewGroup, UpdateGroup};
     use crate::models::user::User;
-    use actix_web::{http::StatusCode, test};
-
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::assert_response_status;
     use crate::tests::{
@@ -119,5 +120,37 @@ mod tests {
 
         assert_eq!(patched_group.groupname, updated_group.groupname.unwrap());
         assert_eq!(patched_group, refetched_group);
+    }
+
+    #[parameterized(
+        filter_by_name = { "name", |g: &Group| g.groupname.clone() },
+        filter_by_id   = { "id", |g: &Group| g.id.to_string() },
+        filter_by_desc = { "description", |g: &Group| g.description.clone() }
+    )]
+    #[test_macro(actix_web::test)]
+    async fn test_list_groups_filtered(filter_tpl: &str, filter_arg_fn: fn(&Group) -> String) {
+        // shared setup
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let groupname = format!("test_list_groups_filtered_{}", filter_tpl);
+        let mygroup = NewGroup {
+            groupname: groupname.clone(),
+            description: Some(groupname.clone()),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        // build URL from the injected template & closure
+        let arg = filter_arg_fn(&mygroup);
+        let url = format!("{}?{}={}", GROUPS_ENDPOINT, filter_tpl, arg);
+
+        let resp = get_request(&pool, &admin_token, &url).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let groups: Vec<Group> = test::read_body_json(resp).await;
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].groupname, mygroup.groupname);
+
+        mygroup.delete(&pool).await.unwrap();
     }
 }
