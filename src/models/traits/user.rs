@@ -111,6 +111,40 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             }
         }
 
+        for order in query_options.sort.iter() {
+            use crate::schema::namespaces::dsl::{
+                created_at, id as namespace_id, name, updated_at,
+            };
+            match (&order.field, &order.descending) {
+                (FilterField::Id, false) => base_query = base_query.order_by(namespace_id.asc()),
+                (FilterField::Id, true) => base_query = base_query.order_by(namespace_id.desc()),
+                (FilterField::CreatedAt, false) => {
+                    base_query = base_query.order_by(created_at.asc())
+                }
+                (FilterField::CreatedAt, true) => {
+                    base_query = base_query.order_by(created_at.desc())
+                }
+                (FilterField::UpdatedAt, false) => {
+                    base_query = base_query.order_by(updated_at.asc())
+                }
+                (FilterField::UpdatedAt, true) => {
+                    base_query = base_query.order_by(updated_at.desc())
+                }
+                (FilterField::Name, false) => base_query = base_query.order_by(name.asc()),
+                (FilterField::Name, true) => base_query = base_query.order_by(name.desc()),
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't orderable (or does not exist) for namespaces",
+                        order.field
+                    )))
+                }
+            }
+        }
+
+        if let Some(limit) = query_options.limit {
+            base_query = base_query.limit(limit as i64);
+        }
+
         let result = with_connection(pool, |conn| {
             base_query
                 .select(namespaces::all_columns())
@@ -248,10 +282,10 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             }
         }
 
-        // Add ordering and limits
         for order in query_options.sort.iter() {
             use crate::schema::hubuumclass::dsl::{
-                created_at, id as hubuum_class_id, name, updated_at,
+                created_at, id as hubuum_class_id, name, namespace_id as hubuum_classes_nid,
+                updated_at,
             };
             match (&order.field, &order.descending) {
                 (FilterField::Id, false) => base_query = base_query.order_by(hubuum_class_id.asc()),
@@ -270,6 +304,12 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                 }
                 (FilterField::Name, false) => base_query = base_query.order_by(name.asc()),
                 (FilterField::Name, true) => base_query = base_query.order_by(name.desc()),
+                (FilterField::NamespaceId, false) => {
+                    base_query = base_query.order_by(hubuum_classes_nid.asc())
+                }
+                (FilterField::NamespaceId, true) => {
+                    base_query = base_query.order_by(hubuum_classes_nid.desc())
+                }
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't orderable (or does not exist) for classes",
@@ -279,7 +319,6 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             }
         }
 
-        // Add limit
         if let Some(limit) = query_options.limit {
             base_query = base_query.limit(limit as i64);
         }
@@ -440,6 +479,57 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                     )))
                 }
             }
+        }
+
+        for order in query_options.sort.iter() {
+            use crate::schema::hubuumobject::dsl::{
+                created_at, hubuum_class_id, id as hubuum_object_id, name,
+                namespace_id as hubuum_object_nid, updated_at,
+            };
+            match (&order.field, &order.descending) {
+                (FilterField::Id, false) => {
+                    base_query = base_query.order_by(hubuum_object_id.asc())
+                }
+                (FilterField::Id, true) => {
+                    base_query = base_query.order_by(hubuum_object_id.desc())
+                }
+                (FilterField::ClassId, false) => {
+                    base_query = base_query.order_by(hubuum_class_id.asc())
+                }
+                (FilterField::ClassId, true) => {
+                    base_query = base_query.order_by(hubuum_class_id.desc())
+                }
+                (FilterField::NamespaceId, false) => {
+                    base_query = base_query.order_by(hubuum_object_nid.asc())
+                }
+                (FilterField::NamespaceId, true) => {
+                    base_query = base_query.order_by(hubuum_object_nid.desc())
+                }
+                (FilterField::CreatedAt, false) => {
+                    base_query = base_query.order_by(created_at.asc())
+                }
+                (FilterField::CreatedAt, true) => {
+                    base_query = base_query.order_by(created_at.desc())
+                }
+                (FilterField::UpdatedAt, false) => {
+                    base_query = base_query.order_by(updated_at.asc())
+                }
+                (FilterField::UpdatedAt, true) => {
+                    base_query = base_query.order_by(updated_at.desc())
+                }
+                (FilterField::Name, false) => base_query = base_query.order_by(name.asc()),
+                (FilterField::Name, true) => base_query = base_query.order_by(name.desc()),
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't orderable (or does not exist) for classes",
+                        order.field
+                    )))
+                }
+            }
+        }
+
+        if let Some(limit) = query_options.limit {
+            base_query = base_query.limit(limit as i64);
         }
 
         trace_query!(base_query, "Searching objects");

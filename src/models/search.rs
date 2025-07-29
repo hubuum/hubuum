@@ -1174,6 +1174,7 @@ macro_rules! filter_fields {
 filter_fields!(
     (Id, "id"),
     (Namespaces, "namespaces"),
+    (NamespaceId, "namespace_id"),
     (Name, "name"),
     (Description, "description"),
     (Username, "username"),

@@ -396,6 +396,8 @@ pub mod tests {
         assert_eq!(classes[0].id, created_classes[expected_id_order[0]].id);
         assert_eq!(classes[1].id, created_classes[expected_id_order[1]].id);
         assert_eq!(classes[2].id, created_classes[expected_id_order[2]].id);
+
+        cleanup(&created_classes).await;
     }
 
     #[parameterized(
