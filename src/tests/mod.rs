@@ -27,27 +27,12 @@ use crate::utilities::auth::generate_random_password;
 use crate::traits::CanSave;
 
 use lazy_static::lazy_static;
-use once_cell::sync::Lazy;
-use std::sync::Arc;
-use tokio::runtime::Builder;
 
 lazy_static! {
     static ref POOL: DbPool = {
-        let config = get_config_sync();
+        let config = get_config().unwrap();
         init_pool(&config.database_url, 20)
     };
-}
-
-static CONFIG: Lazy<Arc<AppConfig>> = Lazy::new(|| {
-    let rt = Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("Failed to create Tokio runtime");
-    Arc::new(rt.block_on(async { get_config().await.clone() }))
-});
-
-pub fn get_config_sync() -> Arc<AppConfig> {
-    CONFIG.clone()
 }
 
 pub async fn create_user_with_params(pool: &DbPool, username: &str, password: &str) -> User {
@@ -210,10 +195,10 @@ pub async fn ensure_admin_group(pool: &DbPool) -> Group {
 }
 
 pub async fn get_pool_and_config() -> (DbPool, AppConfig) {
-    let config = get_config().await.clone();
+    let config = get_config().unwrap();
     let pool = POOL.clone();
 
-    (pool, config)
+    (pool, config.clone())
 }
 
 pub async fn create_namespace(pool: &DbPool, ns_name: &str) -> Result<Namespace, ApiError> {

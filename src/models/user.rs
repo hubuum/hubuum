@@ -66,50 +66,6 @@ impl User {
         use crate::schema::users::dsl::*;
         Ok(diesel::delete(users.filter(id.eq(self.id))).execute(&mut pool.get()?)?)
     }
-
-    pub async fn is_in_group_by_name(&self, groupname_queried: &str, pool: &DbPool) -> bool {
-        use crate::schema::groups::dsl::*;
-        use crate::schema::user_groups::dsl::*;
-
-        match pool.get() {
-            Ok(mut conn) => user_groups
-                .filter(user_id.eq(self.id))
-                .inner_join(groups.on(id.eq(group_id)))
-                .filter(groupname.eq(groupname_queried)) // Clarify the field and variable
-                .first::<(UserGroup, Group)>(&mut conn) // Change the expected type
-                .is_ok(),
-            Err(e) => {
-                error!(
-                    message = "Failed to get db connection from pool",
-                    error = e.to_string()
-                );
-                false
-            }
-        }
-    }
-
-    pub async fn is_in_group(&self, group_id_queried: i32, pool: &DbPool) -> bool {
-        use crate::schema::user_groups::dsl::*;
-
-        match pool.get() {
-            Ok(mut conn) => user_groups
-                .filter(user_id.eq(self.id))
-                .filter(group_id.eq(group_id_queried))
-                .first::<crate::models::user_group::UserGroup>(&mut conn)
-                .is_ok(),
-            Err(e) => {
-                error!(
-                    message = "Failed to get db connection from pool",
-                    error = e.to_string()
-                );
-                false
-            }
-        }
-    }
-
-    pub async fn is_admin(&self, pool: &DbPool) -> bool {
-        self.is_in_group_by_name("admin", pool).await
-    }
 }
 
 /// Struct to update a user.
@@ -134,11 +90,7 @@ impl UpdateUser {
                         ..self
                     });
                 }
-                Err(e) => {
-                    return Err(ApiError::HashError(format!(
-                        "Failed to hash password: {e}"
-                    )))
-                }
+                Err(e) => return Err(ApiError::HashError(format!("Failed to hash password: {e}"))),
             }
         }
         Ok(self)
@@ -187,11 +139,7 @@ impl NewUser {
                 Ok(hashed_password) => {
                     self.password = hashed_password;
                 }
-                Err(e) => {
-                    return Err(ApiError::HashError(format!(
-                        "Failed to hash password: {e}"
-                    )))
-                }
+                Err(e) => return Err(ApiError::HashError(format!("Failed to hash password: {e}"))),
             }
         }
         Ok(self)

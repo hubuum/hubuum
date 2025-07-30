@@ -1,7 +1,7 @@
 use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl, Table};
 use std::iter::IntoIterator;
 
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::models::{Group, Permissions, User, UserID};
 use crate::utilities::auth::hash_password;
@@ -50,7 +50,7 @@ impl User {
     }
 }
 
-pub trait UserPermissions: SelfAccessors<User> + GroupAccessors {
+pub trait UserPermissions: SelfAccessors<User> + GroupAccessors + GroupMemberships {
     /// ## Check if a user has a set of permissions in a set of namespaces
     /// 
     /// All permissions must be present in all namespaces for the function to return true.
@@ -79,7 +79,11 @@ pub trait UserPermissions: SelfAccessors<User> + GroupAccessors {
         use diesel::{dsl::sql, sql_types::BigInt};
         use std::collections::HashSet;
         use crate::models::PermissionFilter;
-    
+
+        if self.is_admin(pool).await? {
+            return Ok(());
+        }
+
         let lookup_table = crate::schema::permissions::dsl::permissions;
         let group_id_field = crate::schema::permissions::dsl::group_id;
         let namespace_id_field = crate::schema::permissions::dsl::namespace_id;
@@ -114,10 +118,76 @@ pub trait UserPermissions: SelfAccessors<User> + GroupAccessors {
         } else {
             Err(ApiError::Forbidden("User does not have the required permissions".to_string()))
         }
-    }}
+    }
+}
 
 impl UserPermissions for User {}
 impl UserPermissions for UserID {}
+
+pub trait GroupMemberships: SelfAccessors<User> {
+    /// At some point, we need to get the name of the admin group. Right now it's hard coded.
+    async fn admin_groupname(&self) -> Result<String, ApiError> {
+        Ok(crate::config::get_config()?.admin_groupname.clone())
+    }
+
+    /// Check if the user is in a group by name
+    /// 
+    /// This function checks if the user is a member of a group with the specified name.
+    /// 
+    /// ## Parameters
+    ///
+    /// * `groupname_queried` - The name of the group to check for membership.
+    /// * `pool` - The database connection pool.
+    ///
+    /// ## Returns
+    ///
+    /// * Ok(true) if the user is in the group
+    /// * Ok(false) if the user is not in the group
+    /// * Err(ApiError) if something failed.
+    async fn is_in_group_by_name(&self, groupname_queried: &str, pool: &DbPool) -> Result<bool, ApiError> {
+        use diesel::dsl::{exists, select};
+        use crate::schema::groups::dsl::{groupname, groups};
+        use crate::schema::user_groups::dsl::{user_id as ug_user_id,user_groups};
+
+        let is_in_group = with_connection(pool, |conn| {
+            select(exists(
+                user_groups
+                    .inner_join(groups)
+                    .filter(ug_user_id.eq(self.id()))
+                    .filter(groupname.eq(groupname_queried))
+            ))
+            .get_result(conn)
+        })?;
+
+        trace!(
+            message = "Group by name check result",
+            user_id = self.id(),
+            groupname = groupname_queried,
+            is_in_group = is_in_group,
+        );
+
+        Ok(is_in_group)
+    }
+
+    /// Check if the user is an admin
+    /// 
+    /// This function checks the user's admin status in the database, but checking if they are
+    /// a member of the group with the name "admin".
+    async fn is_admin(&self, pool: &DbPool) -> Result<bool, ApiError> {
+        let is_admin = self.is_in_group_by_name(&self.admin_groupname().await?, pool).await?;
+
+        trace!(
+            message = "Admin check result",
+            user_id = self.id(),
+            is_admin = is_admin,
+        );
+
+        Ok(is_admin)
+    }
+}
+
+impl GroupMemberships for User {}
+impl GroupMemberships for UserID {}
 
 impl User {
     pub async fn search_users(
@@ -337,7 +407,11 @@ mod tests {
                 // Expected failure case: We expected no permission and got Forbidden error
             },
             (Ok(()), false) => {
-                panic!("Expected permission check to fail, but it succeeded");
+                if user.is_admin(&pool).await.unwrap() {
+                    panic!("Expected permission check to fail, but it succeeded (user is admin)");
+                } else {
+                    panic!("Expected permission check to fail, but it succeeded");
+                }
             },
             (Err(ApiError::Forbidden(msg)), true) => {
                 panic!("Expected permission check to succeed, but got Forbidden error: {msg}");

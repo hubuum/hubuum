@@ -19,7 +19,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_valid_login() {
-        let config = get_config().await;
+        let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let mut conn = pool.get().expect("Failed to get db connection");
 
@@ -127,7 +127,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_invalid_login_credentials() {
-        let config = get_config().await;
+        let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
             App::new()
@@ -158,7 +158,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_invalid_login_parameters() {
-        let config = get_config().await;
+        let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
         let app = test::init_service(
@@ -216,7 +216,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_logout_single_token() {
-        let config = get_config().await;
+        let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
         let new_user = create_test_user(&pool).await;
@@ -281,7 +281,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_logout_all_tokens_from_user() {
-        let config = get_config().await;
+        let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
         let new_user = create_test_user(&pool).await;
@@ -361,7 +361,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_logout_specific_token() {
-        let config = get_config().await;
+        let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
         let new_user = create_test_user(&pool).await;

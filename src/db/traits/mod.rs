@@ -1,10 +1,10 @@
-mod active_tokens;
-mod class;
-mod is_active;
-mod namespace;
-mod object;
-mod relations;
-mod user;
+pub mod active_tokens;
+pub mod class;
+pub mod is_active;
+pub mod namespace;
+pub mod object;
+pub mod relations;
+pub mod user;
 
 #[allow(unused_imports)]
 pub use user::UserPermissions;

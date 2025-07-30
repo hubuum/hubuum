@@ -17,6 +17,7 @@ use crate::errors::ApiError;
 use crate::models::output::GroupPermission;
 use crate::models::{Permission, Permissions};
 
+use crate::db::traits::user::GroupMemberships;
 use crate::models::traits::GroupAccessors;
 use crate::traits::{NamespaceAccessors, SelfAccessors};
 
@@ -129,7 +130,7 @@ pub async fn user_can_on_any<U: SelfAccessors<User> + GroupAccessors>(
 
     let mut conn = pool.get()?;
 
-    let base_query = if user_id.instance(pool).await?.is_admin(pool).await {
+    let base_query = if user_id.instance(pool).await?.is_admin(pool).await? {
         permissions.into_boxed()
     } else {
         let group_ids_subquery = user_id.group_ids_subquery();

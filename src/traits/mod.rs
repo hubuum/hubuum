@@ -8,8 +8,8 @@ use crate::models::{
     PermissionsList, UpdatePermission, User,
 };
 
-#[allow(unused_imports)]
-pub use crate::models::traits::user::{GroupAccessors, Search, UserNamespaceAccessors};
+pub use crate::db::traits::user::GroupMemberships;
+pub use crate::models::traits::{GroupAccessors, Search};
 
 pub trait CanDelete {
     async fn delete(&self, pool: &DbPool) -> Result<(), ApiError>;
@@ -117,7 +117,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// if (hubuum_class_or_classid.user_can(pool, userid, ClassPermissions::ReadClass).await?) {
     ///     // Do something
     /// }
-    async fn user_can<U: SelfAccessors<User> + GroupAccessors>(
+    async fn user_can<U: SelfAccessors<User> + GroupAccessors + GroupMemberships>(
         &self,
         pool: &DbPool,
         user: U,
@@ -172,7 +172,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// if (hubuum_class_or_classid.user_can(pool, userid, ClassPermissions::ReadClass).await?) {
     ///     // Do something
     /// }
-    async fn user_can_all<U: SelfAccessors<User> + GroupAccessors>(
+    async fn user_can_all<U: SelfAccessors<User> + GroupAccessors + GroupMemberships>(
         &self,
         pool: &DbPool,
         user: U,
@@ -181,6 +181,10 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
         let lookup_table = crate::schema::permissions::dsl::permissions;
         let group_id_field = crate::schema::permissions::dsl::group_id;
         let namespace_id_field = crate::schema::permissions::dsl::namespace_id;
+
+        if user.is_admin(pool).await? {
+            return Ok(true);
+        }
 
         let mut conn = pool.get()?;
         let group_id_subquery = user.group_ids_subquery();

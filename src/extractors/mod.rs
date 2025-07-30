@@ -1,8 +1,10 @@
+use crate::db::traits::user::GroupMemberships;
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::token::Token;
 use crate::models::user::User;
 use crate::utilities::iam::get_user_by_id;
+
 use actix_web::{dev::Payload, web::Data, FromRequest, HttpRequest};
 use futures_util::future::{self, FutureExt};
 use std::pin::Pin;
@@ -117,7 +119,7 @@ impl FromRequest for AdminAccess {
             let token = token_result?;
             let user = extract_user_from_token(&pool, &token).await?;
 
-            if user.is_admin(&pool).await {
+            if user.is_admin(&pool).await? {
                 Ok(AdminAccess { token, user })
             } else {
                 Err(ApiError::Forbidden("Permission denied".to_string()))
@@ -154,7 +156,7 @@ impl FromRequest for AdminOrSelfAccess {
             // Use the extracted information instead of `req`
             let (user_from_path, path) = get_user_and_path(&path_info, &pool).await?;
 
-            if user.is_admin(&pool).await || user.id == user_from_path.id {
+            if user.is_admin(&pool).await? || user.id == user_from_path.id {
                 Ok(AdminOrSelfAccess { token, user })
             } else {
                 debug! {
