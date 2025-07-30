@@ -131,7 +131,7 @@ mod tests {
     async fn test_list_groups_filtered(filter_tpl: &str, filter_arg_fn: fn(&Group) -> String) {
         // shared setup
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let groupname = format!("test_list_groups_filtered_{}", filter_tpl);
+        let groupname = format!("test_list_groups_filtered_{filter_tpl}");
         let mygroup = NewGroup {
             groupname: groupname.clone(),
             description: Some(groupname.clone()),
@@ -142,7 +142,7 @@ mod tests {
 
         // build URL from the injected template & closure
         let arg = filter_arg_fn(&mygroup);
-        let url = format!("{}?{}={}", GROUPS_ENDPOINT, filter_tpl, arg);
+        let url = format!("{GROUPS_ENDPOINT}?{filter_tpl}={arg}");
 
         let resp = get_request(&pool, &admin_token, &url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;

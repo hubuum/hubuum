@@ -50,7 +50,7 @@ pub static CONFIG: Lazy<RwLock<AppConfig>> = Lazy::new(|| RwLock::new(AppConfig:
 pub fn get_config() -> Result<RwLockReadGuard<'static, AppConfig>, ApiError> {
     CONFIG
         .read()
-        .map_err(|e| ApiError::InternalServerError(format!("Failed to read config: {}", e)))
+        .map_err(|e| ApiError::InternalServerError(format!("Failed to read config: {e}")))
 }
 
 #[cfg(test)]
