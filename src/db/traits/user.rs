@@ -91,7 +91,9 @@ pub trait UserPermissions: SelfAccessors<User> + GroupAccessors + GroupMembershi
         let group_id_subquery = self.group_ids_subquery();
 
         let namespace_ids: HashSet<i32> = stream::iter(namespaces)
-            .then(|n| async move { n.namespace_id(pool).await })
+            .map(|ns| async move { ns.namespace_id(&pool).await })
+            // Batch the futures into groups of 5, to avoid overwhelming the database
+            .buffered(5)
             .try_collect()
             .await?;
 
