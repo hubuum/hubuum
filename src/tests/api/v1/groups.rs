@@ -153,4 +153,54 @@ mod tests {
 
         mygroup.delete(&pool).await.unwrap();
     }
+
+    #[actix_web::test]
+    async fn test_group_add_and_delete_member() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let group = create_test_group(&pool).await;
+        let user = create_test_user(&pool).await;
+
+        let resp = post_request(
+            &pool,
+            &admin_token,
+            &format!("{}/{}/members/{}", GROUPS_ENDPOINT, group.id, user.id),
+            &(),
+        )
+        .await;
+        let _ = assert_response_status(resp, StatusCode::NO_CONTENT).await;
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{}/{}/members", GROUPS_ENDPOINT, group.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+
+        let members: Vec<User> = test::read_body_json(resp).await;
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].id, user.id);
+
+        let resp = delete_request(
+            &pool,
+            &admin_token,
+            &format!("{}/{}/members/{}", GROUPS_ENDPOINT, group.id, user.id),
+        )
+        .await;
+        let _ = assert_response_status(resp, StatusCode::NO_CONTENT).await;
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{}/{}/members", GROUPS_ENDPOINT, group.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+
+        let members: Vec<User> = test::read_body_json(resp).await;
+        assert_eq!(members.len(), 0);
+
+        user.delete(&pool).await.unwrap();
+        group.delete(&pool).await.unwrap();
+    }
 }

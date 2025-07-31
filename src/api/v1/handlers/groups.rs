@@ -3,11 +3,18 @@ use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, UserAccess};
 use crate::models::group::{GroupID, NewGroup, UpdateGroup};
 use crate::models::search::parse_query_parameter;
-use crate::models::user_group::UserGroup;
+use crate::models::UserID;
 use crate::utilities::response::{json_response, json_response_created};
 use actix_web::{delete, get, http::StatusCode, patch, post, routes, web, HttpRequest, Responder};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::debug;
+
+#[derive(Serialize, Deserialize)]
+struct GroupMember {
+    pub user_id: UserID,
+    pub group_id: GroupID,
+}
 
 #[routes]
 #[get("")]
@@ -132,11 +139,11 @@ pub async fn get_group_members(
 #[post("/{group_id}/members/{user_id}")]
 pub async fn add_group_member(
     pool: web::Data<DbPool>,
-    user_group_ids: web::Path<UserGroup>,
+    user_group_ids: web::Path<GroupMember>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    let group = user_group_ids.group(&pool).await?;
-    let user = user_group_ids.user(&pool).await?;
+    let group = user_group_ids.group_id.group(&pool).await?;
+    let user = user_group_ids.user_id.user(&pool).await?;
 
     debug!(
         message = "Adding user to group",
@@ -153,11 +160,11 @@ pub async fn add_group_member(
 #[delete("/{group_id}/members/{user_id}")]
 pub async fn delete_group_member(
     pool: web::Data<DbPool>,
-    user_group_ids: web::Path<UserGroup>,
+    user_group_ids: web::Path<GroupMember>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    let group = user_group_ids.group(&pool).await?;
-    let user = user_group_ids.user(&pool).await?;
+    let group = user_group_ids.group_id.group(&pool).await?;
+    let user = user_group_ids.user_id.user(&pool).await?;
 
     debug!(
         message = "Deleting user from group",
@@ -166,6 +173,6 @@ pub async fn delete_group_member(
         requestor = requestor.user.id
     );
 
-    user_group_ids.delete(&pool).await?;
+    group.remove_member(&user, &pool).await?;
     Ok(json_response(json!({}), StatusCode::NO_CONTENT))
 }
