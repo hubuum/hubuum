@@ -259,7 +259,7 @@ impl User {
             let operator = param.operator.clone();
             match param.field {
                 FilterField::Id => numeric_search!(base_query, param, operator, id),
-                FilterField::Name => string_search!(base_query, param, operator, groupname),
+                FilterField::Groupname => string_search!(base_query, param, operator, groupname),
                 FilterField::Description => string_search!(base_query, param, operator, description),
                 FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
                 FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),

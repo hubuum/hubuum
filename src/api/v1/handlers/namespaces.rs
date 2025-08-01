@@ -220,6 +220,7 @@ pub async fn get_namespace_group_permissions(
 ///   "CreateObject",
 ///   "ReadCollection"
 /// ]
+/// ```
 #[post("/{namespace_id}/permissions/group/{group_id}")]
 pub async fn grant_namespace_group_permissions(
     pool: web::Data<DbPool>,
