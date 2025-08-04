@@ -17,11 +17,10 @@ mod utilities;
 
 use actix_web::{middleware::Logger, web::Data, web::JsonConfig, App, HttpServer};
 use db::init_pool;
-use openssl::{
-    pkey::PKey,
-    ssl::{SslAcceptor, SslFiletype, SslMethod},
+use rustls::{
+    pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer},
+    ServerConfig,
 };
-use std::{fs::File, io::Read};
 use tracing::{debug, info, warn};
 use tracing_subscriber::{
     filter::EnvFilter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
@@ -60,6 +59,7 @@ async fn main() -> std::io::Result<()> {
         message = "Starting server",
         bind_ip = %config.bind_ip,
         port = config.port,
+        ssl = config.tls_cert_path.is_some() && config.tls_key_path.is_some(),
         log_level = %config.log_level,
         actix_workers = config.actix_workers,
         db_pool_size = config.db_pool_size,
@@ -82,39 +82,36 @@ async fn main() -> std::io::Result<()> {
 
     let server = match (&config.tls_cert_path, &config.tls_key_path) {
         (Some(cert), Some(key)) => {
-            let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls())
-                .expect("unable to create SSL acceptor");
-
-            if let Some(pass) = &config.tls_key_passphrase {
-                let mut buf = Vec::new();
-                File::open(key)?.read_to_end(&mut buf)?;
-                let pkey = PKey::private_key_from_pem_passphrase(&buf, pass.as_bytes())
-                    .expect("unable to decrypt private key");
-                builder.set_private_key(&pkey).unwrap();
-            } else {
-                builder
-                    .set_private_key_file(key, SslFiletype::PEM)
-                    .expect("unable to load private key file");
-            }
-
-            builder
-                .set_certificate_chain_file(cert)
-                .expect("unable to load certificate chain");
-
-            info!("Starting HTTPS server at https://{}", bind_address);
-            server.bind_openssl(bind_address, builder)?
+            // Build a rustls ServerConfig, passing along the optional passphrase
+            let rustls_cfg = load_rustls_config(cert, key, config.tls_key_passphrase.as_deref());
+            info!("Binding HTTPS server at https://{}", bind_address);
+            server.bind_rustls_0_23(bind_address, rustls_cfg)?
         }
-        (Some(_), None) => {
-            panic!("Certificate offered but TLS key is missing, aborting startup.");
-        }
-        (None, Some(_)) => {
-            panic!("TLS certificate is missing, aborting startup.");
-        }
+        (Some(_), None) => panic!("Certificate specified but key missing"),
+        (None, Some(_)) => panic!("Key specified but certificate missing"),
         _ => {
-            info!("Starting HTTP server at http://{}", bind_address);
+            info!("Binding HTTP server at http://{}", bind_address);
             server.bind(bind_address)?
         }
     };
 
     server.workers(config.actix_workers).run().await
+}
+
+fn load_rustls_config(cert: &str, key: &str, _: Option<&str>) -> ServerConfig {
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .unwrap();
+
+    let cert_chain = CertificateDer::pem_file_iter(cert)
+        .unwrap()
+        .flatten()
+        .collect();
+
+    let key_der = PrivateKeyDer::from_pem_file(key).unwrap();
+
+    ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(cert_chain, key_der)
+        .unwrap()
 }
