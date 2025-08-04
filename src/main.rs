@@ -17,7 +17,12 @@ mod utilities;
 
 use actix_web::{middleware::Logger, web::Data, web::JsonConfig, App, HttpServer};
 use db::init_pool;
-use tracing::{debug, warn};
+use openssl::{
+    pkey::PKey,
+    ssl::{SslAcceptor, SslFiletype, SslMethod},
+};
+use std::{fs::File, io::Read};
+use tracing::{debug, info, warn};
 use tracing_subscriber::{
     filter::EnvFilter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
 };
@@ -64,16 +69,52 @@ async fn main() -> std::io::Result<()> {
 
     utilities::init::init(pool.clone()).await;
 
-    HttpServer::new(move || {
+    let server = HttpServer::new(move || {
         App::new()
             .wrap(middlewares::tracing::TracingMiddleware)
             .wrap(Logger::default())
             .app_data(Data::new(pool.clone()))
             .app_data(JsonConfig::default().error_handler(json_error_handler))
             .configure(api::config)
-    })
-    .bind(format!("{}:{}", config.bind_ip, config.port))?
-    .workers(config.actix_workers)
-    .run()
-    .await
+    });
+
+    let bind_address = format!("{}:{}", config.bind_ip, config.port);
+
+    let server = match (&config.tls_cert_path, &config.tls_key_path) {
+        (Some(cert), Some(key)) => {
+            let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls())
+                .expect("unable to create SSL acceptor");
+
+            if let Some(pass) = &config.tls_key_passphrase {
+                let mut buf = Vec::new();
+                File::open(key)?.read_to_end(&mut buf)?;
+                let pkey = PKey::private_key_from_pem_passphrase(&buf, pass.as_bytes())
+                    .expect("unable to decrypt private key");
+                builder.set_private_key(&pkey).unwrap();
+            } else {
+                builder
+                    .set_private_key_file(key, SslFiletype::PEM)
+                    .expect("unable to load private key file");
+            }
+
+            builder
+                .set_certificate_chain_file(cert)
+                .expect("unable to load certificate chain");
+
+            info!("Starting HTTPS server at https://{}", bind_address);
+            server.bind_openssl(bind_address, builder)?
+        }
+        (Some(_), None) => {
+            panic!("Certificate offered but TLS key is missing, aborting startup.");
+        }
+        (None, Some(_)) => {
+            panic!("TLS certificate is missing, aborting startup.");
+        }
+        _ => {
+            info!("Starting HTTP server at http://{}", bind_address);
+            server.bind(bind_address)?
+        }
+    };
+
+    server.workers(config.actix_workers).run().await
 }

@@ -41,6 +41,18 @@ pub struct AppConfig {
     /// The name of the admin group
     #[clap(long, env = "HUBUUM_ADMIN_GROUPNAME", default_value = "admin")]
     pub admin_groupname: String,
+
+    /// Path to the TLS certificate chain file
+    #[clap(long, env = "HUBUUM_TLS_CERT_PATH", default_value = None)]
+    pub tls_cert_path: Option<String>,
+
+    /// Path to the TLS private key file
+    #[clap(long, env = "HUBUUM_TLS_KEY_PATH", default_value = None)]
+    pub tls_key_path: Option<String>,
+
+    /// Optional passphrase to decrypt an encrypted PEM key
+    #[clap(long, env = "HUBUUM_TLS_KEY_PASSPHRASE", default_value = None)]
+    pub tls_key_passphrase: Option<String>,
 }
 
 #[cfg(not(test))]
@@ -62,6 +74,10 @@ pub fn get_config() -> Result<AppConfig, ApiError> {
         env::var(key).unwrap_or_else(|_| default.to_string())
     }
 
+    fn env_or_default_opt(key: &str, default: Option<&str>) -> Option<String> {
+        env::var(key).ok().or(default.map(String::from))
+    }
+
     Ok(AppConfig {
         bind_ip: env_or_default("HUBUUM_BIND_IP", "127.0.0.1"),
         port: env_or_default("HUBUUM_BIND_PORT", "8080")
@@ -76,5 +92,8 @@ pub fn get_config() -> Result<AppConfig, ApiError> {
             .parse()
             .unwrap_or(5),
         admin_groupname: env_or_default("HUBUUM_ADMIN_GROUPNAME", "admin"),
+        tls_cert_path: env_or_default_opt("HUBUUM_TLS_CERT_PATH", None),
+        tls_key_path: env_or_default_opt("HUBUUM_TLS_KEY_PATH", None),
+        tls_key_passphrase: env_or_default_opt("HUBUUM_TLS_KEY_PASSPHRASE", None),
     })
 }
