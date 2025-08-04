@@ -84,13 +84,13 @@ async fn main() -> std::io::Result<()> {
         (Some(cert), Some(key)) => {
             // Build a rustls ServerConfig, passing along the optional passphrase
             let rustls_cfg = load_rustls_config(cert, key, config.tls_key_passphrase.as_deref());
-            info!("Binding HTTPS server at https://{}", bind_address);
+            info!("Server binding to https://{}", bind_address);
             server.bind_rustls_0_23(bind_address, rustls_cfg)?
         }
         (Some(_), None) => panic!("Certificate specified but key missing"),
         (None, Some(_)) => panic!("Key specified but certificate missing"),
         _ => {
-            info!("Binding HTTP server at http://{}", bind_address);
+            info!("Server binding to http://{}", bind_address);
             server.bind(bind_address)?
         }
     };
