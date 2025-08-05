@@ -283,6 +283,17 @@ jobs:
 
           FILENAME=hubuum-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}-main.tar.gz
           tar czvf artifacts/$FILENAME -C target/${{ matrix.platform.target }}/release/ hubuum-server hubuum-admin
+
+      - name: Create or update “main” release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: main
+          name: Main build
+          body: Automatically published build for `main` branch
+          draft: false
+          prerelease: false
+          files: artifacts/*.tar.gz
  
       - name: Upload “main” artifact
         uses: actions/upload-artifact@v4
