@@ -42,6 +42,8 @@ urlparse = "0.7"
 uuid = { version = "1", features = ["v4"] }
 percent-encoding = "2"
 rustls = { version = "0.23", features = ["aws-lc-rs", "ring"], optional = true }
+# required for some platforms: https://aws.github.io/aws-lc-rs/platform_support.html
+aws-lc-rs = { version = "1", features = ["bindgen"], optional = true }
 openssl = { version = "0", optional = true }
 
 [dev-dependencies]
@@ -49,7 +51,7 @@ yare = "3"
 regex = "1"
 
 [features]
-tls-rustls = ["dep:rustls", "actix-web/rustls-0_23"]
+tls-rustls = ["dep:rustls", "actix-web/rustls-0_23", "aws-lc-rs"]
 tls-openssl = ["dep:openssl", "actix-web/openssl"]
 
 [profile.release]
