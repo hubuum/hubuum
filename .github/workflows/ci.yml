@@ -215,7 +215,6 @@ jobs:
         run: shasum -a 256 ${{ matrix.platform.name }}
         if: |
           matrix.toolchain == 'stable' &&
-          matrix.platform.os == 'macOS-latest' &&
           ( startsWith( github.ref, 'refs/tags/v' ) ||
             github.ref == 'refs/tags/test-release' )
       - name: Publish GitHub release
@@ -225,3 +224,65 @@ jobs:
           files: "hubuum-*"
           body_path: Changes.md
         if: matrix.toolchain == 'stable' && startsWith( github.ref, 'refs/tags/v' )
+
+  release-main:
+    name: Publish “main” binaries
+    if: github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-24.04
+
+    strategy:
+      matrix:
+        platform:
+          - name: Linux-x86_64
+            target: x86_64-unknown-linux-gnu
+            os_name: linux-x86_64
+            bin: hubuum
+          - name: Linux-aarch64
+            target: aarch64-unknown-linux-gnu
+            os_name: linux-aarch64
+            bin: hubuum
+        feature:
+          - name: no-tls
+            extra_args: "--no-default-features"
+            ext: no-tls
+          - name: openssl
+            extra_args: "-F tls-openssl"
+            ext: tls-openssl
+          - name: rustls
+            extra_args: "-F tls-rustls"
+            ext: tls-rustls
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update --yes
+          sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev musl-tools
+
+      - name: Build ${{ matrix.platform.name }} [$${{ matrix.feature.name }}]
+        uses: houseabsolute/actions-rust-cross@v0
+        with:
+          command: build
+          target: ${{ matrix.platform.target }}
+          toolchain: stable
+          args: "${{ matrix.feature.extra_args }} --locked --release"
+          strip: true
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          PLAT_DIR=target/${{ matrix.platform.target }}/release
+          mkdir -p artifacts
+          cd $PLAT_DIR
+          FILENAME=hubuum-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}-main.tar.gz
+          tar czvf ../../../../artifacts/$FILENAME ${{ matrix.platform.bin }}
+          cd -
+
+      - name: Upload “main” artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}-main
+          path: artifacts/*.tar.gz
