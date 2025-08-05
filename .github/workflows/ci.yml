@@ -181,7 +181,7 @@ jobs:
           command: "build"
           target: ${{ matrix.platform.target }}
           toolchain: ${{ matrix.toolchain }}
-          args: "-F rustls --locked --release"
+          args: "-F tls-rustls --locked --release"
           strip: true
       - name: Run tests      
         uses: houseabsolute/actions-rust-cross@v0
