@@ -28,7 +28,7 @@ jobs:
       - name: Install clippy
         run: rustup component add clippy
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
       - name: Markdown lint
         uses: DavidAnson/markdownlint-cli2-action@v18
         with:
@@ -175,13 +175,13 @@ jobs:
           sudo apt-get update --yes
           sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev
         if: contains(matrix.platform.os, 'ubuntu')
-      - name: Build binary
+      - name: Build binary with rustls feature enabled
         uses: houseabsolute/actions-rust-cross@v0
         with:
           command: "build"
           target: ${{ matrix.platform.target }}
           toolchain: ${{ matrix.toolchain }}
-          args: "--locked --release"
+          args: "-F rustls --locked --release"
           strip: true
       - name: Run tests      
         uses: houseabsolute/actions-rust-cross@v0
