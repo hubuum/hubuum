@@ -276,13 +276,15 @@ jobs:
       - name: Package artifact
         shell: bash
         run: |
-          PLAT_DIR=target/${{ matrix.platform.target }}/release
           mkdir -p artifacts
-          cd $PLAT_DIR
-          FILENAME=hubuum-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}-main.tar.gz
-          tar czvf ../../../../artifacts/$FILENAME ${{ matrix.platform.bin }} ${{ matrix.platform.admin }}
-          cd -
 
+          # verify that the binary really is there
+          ls -l target/${{ matrix.platform.target }}/release/
+
+          FILENAME=hubuum-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}-main.tar.gz
+          tar czvf artifacts/$FILENAME \
+            -C target/${{ matrix.platform.target }}/release/*
+ 
       - name: Upload “main” artifact
         uses: actions/upload-artifact@v4
         with:
