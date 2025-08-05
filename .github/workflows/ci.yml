@@ -230,7 +230,10 @@ jobs:
     if: github.ref == 'refs/heads/main'
     needs: test
     runs-on: ubuntu-24.04
-
+    permissions:
+      contents: write
+      packages: write
+      
     strategy:
       matrix:
         platform:
