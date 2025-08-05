@@ -283,7 +283,7 @@ jobs:
 
           FILENAME=hubuum-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}-main.tar.gz
           tar czvf artifacts/$FILENAME \
-            -C target/${{ matrix.platform.target }}/release/*
+            -C target/${{ matrix.platform.target }}/release/ hubuum-server hubuum-admin
  
       - name: Upload “main” artifact
         uses: actions/upload-artifact@v4
