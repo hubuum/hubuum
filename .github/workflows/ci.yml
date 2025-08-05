@@ -237,11 +237,13 @@ jobs:
           - name: Linux-x86_64
             target: x86_64-unknown-linux-gnu
             os_name: linux-x86_64
-            bin: hubuum
+            bin: hubuum-server
+            admin: hubuum-admin
           - name: Linux-aarch64
             target: aarch64-unknown-linux-gnu
             os_name: linux-aarch64
-            bin: hubuum
+            bin: hubuum-server
+            admin: hubuum-admin
         feature:
           - name: no-tls
             extra_args: "--no-default-features"
@@ -278,7 +280,7 @@ jobs:
           mkdir -p artifacts
           cd $PLAT_DIR
           FILENAME=hubuum-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}-main.tar.gz
-          tar czvf ../../../../artifacts/$FILENAME ${{ matrix.platform.bin }}
+          tar czvf ../../../../artifacts/$FILENAME ${{ matrix.platform.bin }} ${{ matrix.platform.admin }}
           cd -
 
       - name: Upload “main” artifact
