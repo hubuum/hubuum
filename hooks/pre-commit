@@ -1,0 +1,17 @@
+#!/bin/bash
+# Pre-commit hook to enforce clippy checks
+# This prevents commits if clippy finds any warnings
+
+set -e
+
+echo "Running clippy checks before commit..."
+
+if ! cargo clippy --all-targets -- -D warnings; then
+    echo ""
+    echo "❌ Clippy found warnings or errors. Please fix them before committing."
+    echo "You can run 'cargo clippy --all-targets -- -D warnings' to see all issues."
+    exit 1
+fi
+
+echo "✅ Clippy checks passed!"
+exit 0

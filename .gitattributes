@@ -1,0 +1,3 @@
+# Ensure hook scripts keep LF line endings (avoid CRLF breaking bash/sh)
+hooks/*.sh eol=lf diff=sh
+hooks/pre-commit eol=lf diff=sh
