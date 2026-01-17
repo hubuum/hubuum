@@ -1,8 +1,5 @@
 #![allow(async_fn_in_trait)]
 
-#[macro_use]
-extern crate lazy_static;
-
 pub mod api;
 pub mod config;
 pub mod db;

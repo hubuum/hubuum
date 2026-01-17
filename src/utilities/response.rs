@@ -3,20 +3,16 @@ use serde::Serialize;
 
 use std::collections::HashMap;
 use tracing::debug;
-
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use std::collections::HashSet;
 
-lazy_static! {
-    /// A set of status codes that should not have a body
-    static ref NO_CONTENT_STATUS_CODES: HashSet<StatusCode> = {
-        let mut m = HashSet::new();
-        m.insert(StatusCode::NO_CONTENT);
-        m.insert(StatusCode::RESET_CONTENT);
-        m.insert(StatusCode::NOT_MODIFIED);
-        m
-    };
-}
+static NO_CONTENT_STATUS_CODES: Lazy<HashSet<StatusCode>> = Lazy::new(|| {
+    let mut m = HashSet::new();
+    m.insert(StatusCode::NO_CONTENT);
+    m.insert(StatusCode::RESET_CONTENT);
+    m.insert(StatusCode::NOT_MODIFIED);
+    m
+});
 
 /// Create a JSON response with the given data and status code
 ///

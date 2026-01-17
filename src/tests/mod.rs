@@ -25,15 +25,12 @@ use crate::models::user::{NewUser, User};
 use crate::utilities::auth::generate_random_password;
 
 use crate::traits::CanSave;
+use once_cell::sync::Lazy;
 
-use lazy_static::lazy_static;
-
-lazy_static! {
-    static ref POOL: DbPool = {
-        let config = get_config().unwrap();
-        init_pool(&config.database_url, 20)
-    };
-}
+static POOL: Lazy<DbPool> = Lazy::new(|| {
+    let config = get_config().unwrap();
+    init_pool(&config.database_url, 20)
+});
 
 pub async fn create_user_with_params(pool: &DbPool, username: &str, password: &str) -> User {
     let result = NewUser {
