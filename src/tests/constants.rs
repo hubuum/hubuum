@@ -2,6 +2,7 @@ use serde_json;
 
 use serde_json::Value;
 use std::collections::HashMap;
+use once_cell::sync::Lazy;
 
 // Define an enum with variants for each schema
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -11,25 +12,23 @@ pub enum SchemaType {
     Address,
 }
 
-// Use lazy_static to hold your parsed schemas
-lazy_static! {
-    static ref SCHEMAS: HashMap<SchemaType, Value> = {
-        let mut m = HashMap::new();
-        m.insert(
-            SchemaType::Geo,
-            serde_json::from_str(GEO_SCHEMA_STR).expect("Failed to parse GEO_SCHEMA"),
-        );
-        m.insert(
-            SchemaType::Blog,
-            serde_json::from_str(BLOG_SCHEMA_STR).expect("Failed to parse OTHER_SCHEMA1"),
-        );
-        m.insert(
-            SchemaType::Address,
-            serde_json::from_str(ADDRESS_SCHEMA_STR).expect("Failed to parse OTHER_SCHEMA2"),
-        );
-        m
-    };
-}
+// Use once_cell to hold your parsed schemas
+static SCHEMAS: Lazy<HashMap<SchemaType, Value>> = Lazy::new(|| {
+    let mut m = HashMap::new();
+    m.insert(
+        SchemaType::Geo,
+        serde_json::from_str(GEO_SCHEMA_STR).expect("Failed to parse GEO_SCHEMA"),
+    );
+    m.insert(
+        SchemaType::Blog,
+        serde_json::from_str(BLOG_SCHEMA_STR).expect("Failed to parse OTHER_SCHEMA1"),
+    );
+    m.insert(
+        SchemaType::Address,
+        serde_json::from_str(ADDRESS_SCHEMA_STR).expect("Failed to parse OTHER_SCHEMA2"),
+    );
+    m
+});
 
 // Function to get a schema by type
 pub fn get_schema(schema_type: SchemaType) -> &'static Value {
