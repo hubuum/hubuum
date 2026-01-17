@@ -353,7 +353,7 @@ mod tests {
                 .unwrap()];
         let groups = [create_test_group(&pool).await,
             create_test_group(&pool).await];
-        let users = vec![
+        let users = [
             create_user_with_params(&pool, &format!("test_user_can_u1_{suffix}"), "foo").await,
             create_user_with_params(&pool, &format!("test_user_can_u2_{suffix}"), "foo").await,
         ];
