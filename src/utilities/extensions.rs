@@ -1,6 +1,7 @@
 use crate::errors::ApiError;
 use crate::models::permissions::Permissions;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
+use tracing::error;
 
 pub trait CustomStringExtensions {
     /// ## Check if the value is a valid json key for hubuum
@@ -118,8 +119,14 @@ impl<T: AsRef<str>> CustomStringExtensions for T {
                     .map(|dt| dt.with_timezone(&Utc).naive_utc())
                     .or_else(|_| {
                         NaiveDate::parse_from_str(part, "%Y-%m-%d")
-                            .map(|date| date.and_hms_opt(0, 0, 0).unwrap())
-                            .map_err(Into::<ApiError>::into)
+                            .map_err(|e| {
+                                error!("Failed to parse date: {}", e);
+                                ApiError::BadRequest(format!("Invalid date format: {}", part))
+                            })?
+                            .and_hms_opt(0, 0, 0)
+                            .ok_or_else(|| ApiError::BadRequest(
+                                format!("Failed to create time for date: {}", part)
+                            ))
                     })
             })
             .collect()

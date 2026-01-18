@@ -18,7 +18,7 @@ pub fn hash_password(password: &str) -> Result<String, Box<dyn std::error::Error
     let argon2 = Argon2::default();
     let password_hash = argon2
         .hash_password(password.as_bytes(), &salt)
-        .unwrap()
+        .map_err(|e| format!("Failed to hash password: {}", e))?
         .to_string();
 
     Ok(password_hash)

@@ -170,8 +170,18 @@ macro_rules! numeric_search {
             )));
         }
 
-        let max = values.iter().max().unwrap();
-        let min = values.iter().min().unwrap();
+        let max = values.iter().max().ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "Failed to determine max value for field '{}'",
+                $parsed_query_param.field
+            ))
+        })?;
+        let min = values.iter().min().ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "Failed to determine min value for field '{}'",
+                $parsed_query_param.field
+            ))
+        })?;
 
         let (op, negated) = $operator.op_and_neg();
 
@@ -264,8 +274,18 @@ macro_rules! date_search {
             )));
         }
 
-        let max = values.iter().max().unwrap();
-        let min = values.iter().min().unwrap();
+        let max = values.iter().max().ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "Failed to determine max value for field '{}'",
+                $parsed_query_param.field
+            ))
+        })?;
+        let min = values.iter().min().ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "Failed to determine min value for field '{}'",
+                $parsed_query_param.field
+            ))
+        })?;
 
         let (op, negated) = $operator.op_and_neg();
 
