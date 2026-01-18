@@ -193,7 +193,7 @@ mod tls {
             .map_err(|e| {
                 std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    format!("Failed to install crypto provider: {}", e),
+                    format!("Failed to install crypto provider: {:?}", e),
                 )
             })?;
 
