@@ -15,15 +15,43 @@ use crate::utilities::auth::generate_random_password;
 
 use tracing::{debug, error, trace, warn};
 
-pub async fn init(pool: DbPool) {
-    let mut conn = pool.get().expect("couldn't get db connection from pool");
+pub type InitError = String;
+pub type InitResult = Result<(), InitError>;
 
-    let users_count = users.count().get_result::<i64>(&mut conn).unwrap_or(0);
-    let groups_count = groups.count().get_result::<i64>(&mut conn).unwrap_or(0);
+pub async fn init(pool: DbPool) -> InitResult {
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(e) => {
+            let err_msg = format!(
+                "Failed to get database connection during initialization: {}",
+                e
+            );
+            error!(message = &err_msg);
+            return Err(err_msg);
+        }
+    };
+
+    let users_count = match users.count().get_result::<i64>(&mut conn) {
+        Ok(count) => count,
+        Err(e) => {
+            let err_msg = format!("Failed to count users during initialization: {}", e);
+            error!(message = &err_msg);
+            return Err(err_msg);
+        }
+    };
+
+    let groups_count = match groups.count().get_result::<i64>(&mut conn) {
+        Ok(count) => count,
+        Err(e) => {
+            let err_msg = format!("Failed to count groups during initialization: {}", e);
+            error!(message = &err_msg);
+            return Err(err_msg);
+        }
+    };
 
     if users_count != 0 || groups_count != 0 {
         trace!("Users and/or groups found. Skipping default admin user and group creation.");
-        return;
+        return Ok(());
     }
 
     debug!(message = "No users or groups found. Creating default admin user and group.");
@@ -37,11 +65,9 @@ pub async fn init(pool: DbPool) {
     {
         Ok(group) => group,
         Err(e) => {
-            error!(
-                message = "Error creating default admin group",
-                error = e.to_string()
-            );
-            return;
+            let err_msg = format!("Error creating default admin group: {}", e);
+            error!(message = &err_msg);
+            return Err(err_msg);
         }
     };
 
@@ -57,22 +83,21 @@ pub async fn init(pool: DbPool) {
     {
         Ok(user) => user,
         Err(e) => {
-            error!(
-                message = "Error creating default admin user",
-                error = e.to_string()
-            );
-            return;
+            let err_msg = format!("Error creating default admin user: {}", e);
+            error!(message = &err_msg);
+            return Err(err_msg);
         }
     };
 
     match adm_group.add_member(&pool, &adm_user).await {
         Ok(_) => {}
         Err(e) => {
-            error!(
-                message = "Error adding default admin user to default admin group",
-                error = e.to_string()
+            let err_msg = format!(
+                "Error adding default admin user to default admin group: {}",
+                e
             );
-            return;
+            error!(message = &err_msg);
+            return Err(err_msg);
         }
     }
 
@@ -81,4 +106,5 @@ pub async fn init(pool: DbPool) {
         username = adm_user.username,
         password = default_password
     );
+    Ok(())
 }

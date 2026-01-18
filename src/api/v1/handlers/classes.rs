@@ -626,7 +626,7 @@ async fn delete_object_relation(
         )));
     }
 
-    let relation = relation.unwrap();
+    let relation = relation.expect("Relation should exist after is_none check");
 
     debug!(
         message = "Relation ID found",
@@ -683,7 +683,7 @@ async fn create_object_relation(
         )));
     }
 
-    let relation = is_related.unwrap();
+    let relation = is_related.expect("Relation should exist after is_none check");
 
     let relation = NewHubuumObjectRelation {
         class_relation_id: relation.id,

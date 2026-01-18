@@ -1,11 +1,12 @@
 use clap::Parser;
+use std::process::exit;
 use tracing::warn;
 use tracing_subscriber::{
     filter::EnvFilter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
 };
 
 use hubuum::db::{init_pool, DbPool};
-use hubuum::errors::ApiError;
+use hubuum::errors::{fatal_error, ApiError, EXIT_CODE_CONFIG_ERROR};
 use hubuum::logger;
 use hubuum::models::User;
 use hubuum::utilities::auth::generate_random_password;
@@ -34,8 +35,12 @@ async fn main() -> Result<(), ApiError> {
     init_logging(&admin_cli.log_level);
 
     let database_url = admin_cli.database_url.unwrap_or_else(|| {
-        std::env::var("HUBUUM_DATABASE_URL")
-            .expect("HUBUUM_DATABASE_URL must be set if not provided as an argument")
+        std::env::var("HUBUUM_DATABASE_URL").unwrap_or_else(|_| {
+            fatal_error(
+                "HUBUUM_DATABASE_URL must be set if not provided as an argument",
+                EXIT_CODE_CONFIG_ERROR,
+            )
+        })
     });
 
     // Initialize database connection
@@ -62,11 +67,11 @@ fn init_logging(log_level: &str) {
     let filter = if is_valid_log_level(log_level) {
         EnvFilter::try_new(log_level).unwrap_or_else(|_e| {
             warn!("Error parsing log level: {}", log_level);
-            std::process::exit(1);
+            exit(EXIT_CODE_CONFIG_ERROR);
         })
     } else {
         warn!("Invalid log level: {}", log_level);
-        std::process::exit(1);
+        exit(EXIT_CODE_CONFIG_ERROR);
     };
 
     tracing_subscriber::registry()

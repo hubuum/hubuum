@@ -57,10 +57,13 @@ mod tests {
                     assert_eq!(components.port, expected_components.port);
                     assert_eq!(components.database, expected_components.database);
                 }
-                Err(err) => panic!("Unexpected error: {err}"),
+                Err(err) => panic!("Test case expected Ok but got error: {}", err),
             },
             Err(expected_err) => {
-                assert!(result.is_err());
+                assert!(
+                    result.is_err(),
+                    "Test case expected error but got Ok result"
+                );
                 assert_eq!(result.unwrap_err(), expected_err);
             }
         }

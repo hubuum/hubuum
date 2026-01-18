@@ -29,28 +29,31 @@ where
 
         let mut s = Vec::<u8>::new();
         let mut serializer = serde_json::Serializer::new(&mut s);
-        let mut serializer_map = serializer.serialize_map(None).unwrap();
+        let mut serializer_map = serializer
+            .serialize_map(None)
+            .map_err(|_| std::fmt::Error)?;
 
         let timestamp = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        serializer_map.serialize_entry("time", &timestamp).unwrap();
+        serializer_map
+            .serialize_entry("time", &timestamp)
+            .map_err(|_| std::fmt::Error)?;
         serializer_map
             .serialize_entry("severity", &meta.level().as_serde())
-            .unwrap();
+            .map_err(|_| std::fmt::Error)?;
 
         if let Some(leaf_span) = ctx.lookup_current() {
             for span in leaf_span.scope().from_root() {
                 let ext = span.extensions();
-                let data = ext
-                    .get::<FormattedFields<N>>()
-                    .expect("Unable to find FormattedFields in extensions; this is a bug");
-
-                let serde_json::Value::Object(fields) =
-                    serde_json::from_str::<serde_json::Value>(data).unwrap()
-                else {
-                    panic!()
-                };
-                for field in fields {
-                    serializer_map.serialize_entry(&field.0, &field.1).unwrap();
+                if let Some(data) = ext.get::<FormattedFields<N>>() {
+                    if let Ok(serde_json::Value::Object(fields)) =
+                        serde_json::from_str::<serde_json::Value>(data)
+                    {
+                        for field in fields {
+                            serializer_map
+                                .serialize_entry(&field.0, &field.1)
+                                .map_err(|_| std::fmt::Error)?;
+                        }
+                    }
                 }
             }
         }
@@ -58,9 +61,82 @@ where
         let mut visitor = tracing_serde::SerdeMapVisitor::new(serializer_map);
         event.record(&mut visitor);
 
-        visitor.take_serializer().unwrap().end().unwrap();
+        visitor
+            .take_serializer()
+            .map_err(|_| std::fmt::Error)?
+            .end()
+            .map_err(|_| std::fmt::Error)?;
 
-        writer.write_str(std::str::from_utf8(&s).unwrap()).unwrap();
+        let s_str = std::str::from_utf8(&s).map_err(|_| std::fmt::Error)?;
+        writer.write_str(s_str)?;
         writeln!(writer)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tracing::info;
+    use tracing_subscriber::fmt::format::FmtSpan;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    #[test]
+    fn test_logging_format_handles_simple_event() {
+        // Test that basic logging works without panicking
+        // We use a writer that discards output to avoid polluting test output
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_writer(std::io::sink) // Discard output
+                .with_span_events(FmtSpan::CLOSE)
+                .event_format(HubuumLoggingFormat),
+        );
+
+        let _guard = subscriber.set_default();
+
+        // This should not panic
+        info!("Test message");
+    }
+
+    #[test]
+    fn test_logging_format_handles_event_with_fields() {
+        // Test that logging with structured fields works
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_writer(std::io::sink) // Discard output
+                .with_span_events(FmtSpan::CLOSE)
+                .event_format(HubuumLoggingFormat),
+        );
+
+        let _guard = subscriber.set_default();
+
+        // This should not panic even with multiple fields
+        info!(
+            message = "Test with fields",
+            user_id = 123,
+            action = "test_action"
+        );
+    }
+
+    #[test]
+    fn test_logging_format_handles_special_characters() {
+        // Test that special characters don't cause panics
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_writer(std::io::sink) // Discard output
+                .with_span_events(FmtSpan::CLOSE)
+                .event_format(HubuumLoggingFormat),
+        );
+
+        let _guard = subscriber.set_default();
+
+        // This should handle various special characters without panicking
+        info!(
+            message = "Test with \"quotes\" and \n newlines",
+            path = "/some/path/with\\backslashes"
+        );
     }
 }

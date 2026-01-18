@@ -15,13 +15,16 @@ mod utilities;
 use actix_web::{middleware::Logger, web::Data, web::JsonConfig, App, HttpServer};
 use db::init_pool;
 
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use tracing_subscriber::{
     filter::EnvFilter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
 };
 
 use crate::config::get_config;
-use crate::errors::json_error_handler;
+use crate::errors::{
+    fatal_error, json_error_handler, EXIT_CODE_CONFIG_ERROR, EXIT_CODE_INIT_ERROR,
+    EXIT_CODE_TLS_ERROR,
+};
 use crate::utilities::is_valid_log_level;
 
 #[cfg(all(feature = "tls-openssl", feature = "tls-rustls"))]
@@ -31,15 +34,25 @@ compile_error!("Features `tls-openssl` and `tls-rustls` are mutually exclusive")
 async fn main() -> std::io::Result<()> {
     // Clone the config to prevent the mutex from being locked
     // See https://rust-lang.github.io/rust-clippy/master/index.html#await_holding_lock
-    let config = get_config().unwrap().clone();
+    let config = match get_config() {
+        Ok(cfg) => cfg.clone(),
+        Err(e) => fatal_error(
+            &format!("Failed to load configuration: {}", e),
+            EXIT_CODE_CONFIG_ERROR,
+        ),
+    };
     let filter = if is_valid_log_level(&config.log_level) {
         EnvFilter::try_new(&config.log_level).unwrap_or_else(|_e| {
-            warn!("Error parsing log level: {}", &config.log_level);
-            std::process::exit(1);
+            fatal_error(
+                &format!("Error parsing log level: {}", &config.log_level),
+                EXIT_CODE_CONFIG_ERROR,
+            )
         })
     } else {
-        warn!("Invalid log level: {}", config.log_level);
-        std::process::exit(1);
+        fatal_error(
+            &format!("Invalid log level: {}", config.log_level),
+            EXIT_CODE_CONFIG_ERROR,
+        )
     };
 
     tracing_subscriber::registry()
@@ -64,7 +77,12 @@ async fn main() -> std::io::Result<()> {
 
     let pool = init_pool(&config.database_url, config.db_pool_size);
 
-    utilities::init::init(pool.clone()).await;
+    if let Err(e) = utilities::init::init(pool.clone()).await {
+        fatal_error(
+            &format!("Critical database initialization failed: {}", e),
+            EXIT_CODE_INIT_ERROR,
+        );
+    }
 
     let server = HttpServer::new(move || {
         App::new()
@@ -78,16 +96,27 @@ async fn main() -> std::io::Result<()> {
     let bind_address = format!("{}:{}", config.bind_ip, config.port);
 
     let server = match (&config.tls_cert_path, &config.tls_key_path) {
-        (Some(cert), Some(key)) => tls::configure_server(
+        (Some(cert), Some(key)) => match tls::configure_server(
             server,
             &bind_address,
             cert,
             key,
             config.tls_key_passphrase.as_deref(),
-        )
-        .expect("Failed to configure TLS server"),
-        (Some(_), None) => panic!("Certificate specified but key missing"),
-        (None, Some(_)) => panic!("Key specified but certificate missing"),
+        ) {
+            Ok(srv) => srv,
+            Err(e) => fatal_error(
+                &format!("Failed to configure TLS server: {}", e),
+                EXIT_CODE_TLS_ERROR,
+            ),
+        },
+        (Some(_), None) => fatal_error(
+            "TLS certificate specified but key is missing. Please provide both --tls-cert-path and --tls-key-path",
+            EXIT_CODE_TLS_ERROR,
+        ),
+        (None, Some(_)) => fatal_error(
+            "TLS key specified but certificate is missing. Please provide both --tls-cert-path and --tls-key-path",
+            EXIT_CODE_TLS_ERROR,
+        ),
         _ => {
             info!("Server binding to http://{}", bind_address);
             server.bind(bind_address)?
@@ -119,9 +148,9 @@ mod tls {
         S::Response: Into<Response<B>>,
         B: MessageBody + 'static,
     {
-        panic!(
-            "Certificate and key offered, but no TLS feature enabled during build. Please enable either `tls-rustls` or `tls-openssl` during build to use TLS"
-        );
+        Err(std::io::Error::other(
+            "TLS certificate and key offered, but no TLS feature enabled during build. Please enable either `tls-rustls` or `tls-openssl` during build to use TLS"
+        ))
     }
 }
 
@@ -153,29 +182,57 @@ mod tls {
         B: MessageBody + 'static,
     {
         if pass.is_some() {
-            panic!("Using encrypted TLS key with passphrase is not supported with rustls feature");
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Using encrypted TLS key with passphrase is not supported with rustls feature",
+            ));
         }
 
         rustls::crypto::aws_lc_rs::default_provider()
             .install_default()
-            .unwrap();
+            .map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to install crypto provider: {:?}", e),
+                )
+            })?;
 
         let cert_chain = CertificateDer::pem_file_iter(cert)
-            .unwrap()
+            .map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Failed to read certificate file: {}", e),
+                )
+            })?
             .flatten()
             .collect();
 
-        let key_der = PrivateKeyDer::from_pem_file(key).unwrap();
+        let key_der = PrivateKeyDer::from_pem_file(key).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Failed to read key file: {}", e),
+            )
+        })?;
 
         let rustls_config = ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(cert_chain, key_der)
-            .unwrap();
+            .map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Failed to configure TLS: {}", e),
+                )
+            })?;
 
         info!("Server binding with rustls to https://{}", bind_address);
-        Ok(server
+        server
             .bind_rustls_0_23(bind_address, rustls_config)
-            .unwrap())
+            .map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to bind server: {}", e),
+                )
+            })
     }
 }
 
@@ -207,26 +264,53 @@ mod tls {
         S::Response: Into<Response<B>>,
         B: MessageBody + 'static,
     {
-        let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls())
-            .expect("unable to create SSL acceptor");
+        let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("unable to create SSL acceptor: {}", e),
+            )
+        })?;
 
         if let Some(pass) = pass {
             let mut buf = Vec::new();
             File::open(key)?.read_to_end(&mut buf)?;
-            let pkey = PKey::private_key_from_pem_passphrase(&buf, pass.as_bytes())
-                .expect("unable to decrypt private key");
-            builder.set_private_key(&pkey).unwrap();
+            let pkey =
+                PKey::private_key_from_pem_passphrase(&buf, pass.as_bytes()).map_err(|e| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("unable to decrypt private key: {}", e),
+                    )
+                })?;
+            builder.set_private_key(&pkey).map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("unable to set private key: {}", e),
+                )
+            })?;
         } else {
             builder
                 .set_private_key_file(key, SslFiletype::PEM)
-                .expect("unable to load private key file");
+                .map_err(|e| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("unable to load private key file: {}", e),
+                    )
+                })?;
         }
 
-        builder
-            .set_certificate_chain_file(cert)
-            .expect("unable to load certificate chain");
+        builder.set_certificate_chain_file(cert).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("unable to load certificate chain: {}", e),
+            )
+        })?;
 
         info!("Server binding with openssl to https://{}", bind_address);
-        Ok(server.bind_openssl(bind_address, builder).unwrap())
+        server.bind_openssl(bind_address, builder).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to bind server: {}", e),
+            )
+        })
     }
 }
