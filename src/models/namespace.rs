@@ -4,6 +4,7 @@ use diesel::pg::Pg;
 use diesel::sql_types::{Integer, Text, Timestamp};
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::models::group::Group;
 use crate::models::user::{User, UserID};
@@ -25,7 +26,7 @@ use tracing::info;
 
 use super::PermissionsList;
 
-#[derive(Serialize, Deserialize, Queryable, PartialEq, Debug, Clone, Selectable)]
+#[derive(Serialize, Deserialize, Queryable, PartialEq, Debug, Clone, Selectable, ToSchema)]
 #[diesel(table_name = namespaces)]
 pub struct Namespace {
     pub id: i32,
@@ -35,10 +36,10 @@ pub struct Namespace {
     pub updated_at: chrono::NaiveDateTime,
 }
 
-#[derive(Serialize, Debug, Deserialize, Copy, Clone)]
+#[derive(Serialize, Debug, Deserialize, Copy, Clone, ToSchema)]
 pub struct NamespaceID(pub i32);
 
-#[derive(Serialize, Deserialize, Clone, AsChangeset)]
+#[derive(Serialize, Deserialize, Clone, AsChangeset, ToSchema)]
 #[diesel(table_name = namespaces)]
 pub struct UpdateNamespace {
     pub name: Option<String>,
@@ -50,7 +51,7 @@ pub struct UpdateNamespace {
 ///
 /// This wraps the NewNamespace struct and uses the group_id to grant all permissions
 /// to the group in a single transaction.
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, ToSchema)]
 pub struct NewNamespaceWithAssignee {
     pub name: String,
     pub description: String,
@@ -61,7 +62,7 @@ pub struct NewNamespaceWithAssignee {
 /// into the database.
 ///
 /// Odds are pretty good that you want to use NewNamespaceWithAssignee instead.
-#[derive(Serialize, Deserialize, Insertable)]
+#[derive(Serialize, Deserialize, Insertable, ToSchema)]
 #[diesel(table_name = namespaces)]
 pub struct NewNamespace {
     pub name: String,

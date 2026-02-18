@@ -1,11 +1,12 @@
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::db::{with_connection, DbPool};
 use crate::errors::ApiError;
 use crate::schema::hubuumclass;
 
-#[derive(Serialize, Deserialize, Queryable, Clone, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Queryable, Clone, PartialEq, Debug, ToSchema)]
 #[diesel(table_name = hubuumclass )]
 pub struct HubuumClass {
     pub id: i32,
@@ -27,7 +28,7 @@ pub struct ClassIdResult {
     pub id: i32,
 }
 
-#[derive(Serialize, Deserialize, Insertable, Clone, Debug)]
+#[derive(Serialize, Deserialize, Insertable, Clone, Debug, ToSchema)]
 #[diesel(table_name = hubuumclass)]
 pub struct NewHubuumClass {
     pub name: String,
@@ -37,7 +38,7 @@ pub struct NewHubuumClass {
     pub description: String,
 }
 
-#[derive(Serialize, Deserialize, AsChangeset, Clone, Debug)]
+#[derive(Serialize, Deserialize, AsChangeset, Clone, Debug, ToSchema)]
 #[diesel(table_name = hubuumclass)]
 pub struct UpdateHubuumClass {
     pub name: Option<String>,
@@ -47,7 +48,7 @@ pub struct UpdateHubuumClass {
     pub description: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
 pub struct HubuumClassWithPath {
     pub id: i32,
     pub name: String,
@@ -60,7 +61,7 @@ pub struct HubuumClassWithPath {
     pub path: Vec<i32>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
 pub struct HubuumClassID(pub i32);
 
 pub async fn total_class_count(pool: &DbPool) -> Result<i64, ApiError> {

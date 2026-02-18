@@ -14,6 +14,8 @@ mod utilities;
 
 use actix_web::{middleware::Logger, web::Data, web::JsonConfig, App, HttpServer};
 use db::init_pool;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 use tracing::{debug, info};
 use tracing_subscriber::{
@@ -90,6 +92,10 @@ async fn main() -> std::io::Result<()> {
             .wrap(Logger::default())
             .app_data(Data::new(pool.clone()))
             .app_data(JsonConfig::default().error_handler(json_error_handler))
+            .service(
+                SwaggerUi::new("/swagger-ui/{_:.*}")
+                    .url("/api-doc/openapi.json", api::openapi::ApiDoc::openapi()),
+            )
             .configure(api::config)
     });
 

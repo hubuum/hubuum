@@ -37,6 +37,8 @@ tracing-subscriber = { version = "0.3", features = [
     "chrono",
     "json",
 ] }
+utoipa = { version = "5", features = ["actix_extras", "chrono"] }
+utoipa-swagger-ui = { version = "9", features = ["actix-web", "vendored"] }
 urlparse = "0.7"
 uuid = { version = "1", features = ["v4"] }
 percent-encoding = "2"
@@ -69,4 +71,9 @@ path = "src/main.rs"
 [[bin]]
 name = "hubuum-admin"
 path = "src/bin/admin.rs"
+test = false
+
+[[bin]]
+name = "hubuum-openapi"
+path = "src/bin/openapi.rs"
 test = false

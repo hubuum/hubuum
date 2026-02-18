@@ -4,6 +4,7 @@ use crate::models::user_group::UserGroup;
 use crate::schema::users;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::db::DbPool;
 
@@ -11,7 +12,7 @@ use crate::errors::ApiError;
 
 use tracing::{error, warn};
 
-#[derive(Serialize, Deserialize, Queryable, Insertable, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, Queryable, Insertable, PartialEq, Debug, Clone, ToSchema)]
 #[diesel(table_name = users)]
 pub struct User {
     pub id: i32,
@@ -72,7 +73,7 @@ impl User {
 ///
 /// The password, if present, is expected to be hashed
 /// before being passed to the database.
-#[derive(AsChangeset, Deserialize, Serialize, Clone)]
+#[derive(AsChangeset, Deserialize, Serialize, Clone, ToSchema)]
 #[diesel(table_name = users)]
 pub struct UpdateUser {
     pub username: Option<String>,
@@ -108,7 +109,7 @@ impl UpdateUser {
 ///
 /// The password is expected to be hashed
 /// before being passed to the database.
-#[derive(Serialize, Deserialize, Insertable, Debug)]
+#[derive(Serialize, Deserialize, Insertable, Debug, ToSchema)]
 #[diesel(table_name = users)]
 pub struct NewUser {
     pub username: String,
@@ -180,7 +181,7 @@ impl UserID {
 /// Struct to log in a user.
 ///
 /// The password is expected to be plaintext.
-#[derive(AsChangeset, Deserialize, Serialize)]
+#[derive(AsChangeset, Deserialize, Serialize, ToSchema)]
 #[diesel(table_name = users)]
 pub struct LoginUser {
     pub username: String,

@@ -5,14 +5,15 @@
 
 use crate::models::{Group, HubuumClass, Namespace, Permission};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, ToSchema)]
 pub struct GroupPermission {
     pub group: Group,
     pub permission: Permission,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, ToSchema)]
 pub struct HubuumClassExpanded {
     pub id: i32,
     pub name: String,

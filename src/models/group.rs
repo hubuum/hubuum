@@ -7,12 +7,13 @@ use crate::schema::groups;
 use crate::models::user::User;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::traits::{CanSave, SelfAccessors};
 
 use crate::db::DbPool;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct GroupID(pub i32);
 
 impl SelfAccessors<Group> for GroupID {
@@ -39,7 +40,7 @@ impl GroupID {
     }
 }
 
-#[derive(Serialize, Deserialize, Queryable, Insertable, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, Queryable, Insertable, PartialEq, Debug, Clone, ToSchema)]
 #[diesel(table_name = groups)]
 pub struct Group {
     pub id: i32,
@@ -106,7 +107,7 @@ impl Group {
     }
 }
 
-#[derive(Deserialize, Serialize, Insertable, Debug)]
+#[derive(Deserialize, Serialize, Insertable, Debug, ToSchema)]
 #[diesel(table_name = groups)]
 pub struct NewGroup {
     pub groupname: String,
@@ -129,7 +130,7 @@ impl NewGroup {
     }
 }
 
-#[derive(Deserialize, Serialize, AsChangeset)]
+#[derive(Deserialize, Serialize, AsChangeset, ToSchema)]
 #[diesel(table_name = groups)]
 pub struct UpdateGroup {
     pub groupname: Option<String>,

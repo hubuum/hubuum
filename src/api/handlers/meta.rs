@@ -1,3 +1,4 @@
+use crate::api::openapi::{ApiErrorResponse, CountsResponse};
 use crate::db::{with_connection, DbPool};
 use crate::errors::ApiError;
 use crate::extractors::AdminAccess;
@@ -12,9 +13,10 @@ use diesel::RunQueryDsl;
 use serde::Serialize;
 use serde_json::json;
 use tracing::debug;
+use utoipa::ToSchema;
 
-#[derive(Serialize, Debug)]
-struct DbStateResponse {
+#[derive(Serialize, Debug, ToSchema)]
+pub struct DbStateResponse {
     available_connections: u32,
     idle_connections: u32,
     active_connections: i64,
@@ -33,6 +35,17 @@ struct DbState {
     last_vacuum_time: Option<chrono::NaiveDateTime>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v0/meta/db",
+    tag = "meta",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Database state", body = DbStateResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 500, description = "Internal server error", body = ApiErrorResponse)
+    )
+)]
 #[get("db")]
 pub async fn get_db_state(pool: web::Data<DbPool>, requestor: AdminAccess) -> impl Responder {
     let state = pool.state();
@@ -76,6 +89,17 @@ pub async fn get_db_state(pool: web::Data<DbPool>, requestor: AdminAccess) -> im
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v0/meta/counts",
+    tag = "meta",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Object and class counters", body = CountsResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 500, description = "Internal server error", body = ApiErrorResponse)
+    )
+)]
 #[get("counts")]
 pub async fn get_object_and_class_count(
     pool: web::Data<DbPool>,

@@ -1,9 +1,10 @@
+use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, UserAccess};
 use crate::models::group::{GroupID, NewGroup, UpdateGroup};
 use crate::models::search::parse_query_parameter;
-use crate::models::UserID;
+use crate::models::{Group, User, UserID};
 use crate::utilities::response::{json_response, json_response_created};
 use actix_web::{delete, get, http::StatusCode, patch, post, routes, web, HttpRequest, Responder};
 use serde::{Deserialize, Serialize};
@@ -16,6 +17,17 @@ struct GroupMember {
     pub group_id: GroupID,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/iam/groups",
+    tag = "groups",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Groups matching optional query filters", body = [Group]),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse)
+    )
+)]
 #[routes]
 #[get("")]
 #[get("/")]
@@ -43,6 +55,19 @@ pub async fn get_groups(
     Ok(json_response(result, StatusCode::OK))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/iam/groups",
+    tag = "groups",
+    security(("bearer_auth" = [])),
+    request_body = NewGroup,
+    responses(
+        (status = 201, description = "Group created", body = Group),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 409, description = "Conflict", body = ApiErrorResponse)
+    )
+)]
 #[routes]
 #[post("")]
 #[post("/")]
@@ -65,6 +90,20 @@ pub async fn create_group(
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/iam/groups/{group_id}",
+    tag = "groups",
+    security(("bearer_auth" = [])),
+    params(
+        ("group_id" = i32, Path, description = "Group ID")
+    ),
+    responses(
+        (status = 200, description = "Group", body = Group),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Group not found", body = ApiErrorResponse)
+    )
+)]
 #[get("/{group_id}")]
 pub async fn get_group(
     pool: web::Data<DbPool>,
@@ -82,6 +121,22 @@ pub async fn get_group(
     Ok(json_response(group, StatusCode::OK))
 }
 
+#[utoipa::path(
+    patch,
+    path = "/api/v1/iam/groups/{group_id}",
+    tag = "groups",
+    security(("bearer_auth" = [])),
+    params(
+        ("group_id" = i32, Path, description = "Group ID")
+    ),
+    request_body = UpdateGroup,
+    responses(
+        (status = 200, description = "Updated group", body = Group),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Group not found", body = ApiErrorResponse)
+    )
+)]
 #[patch("/{group_id}")]
 pub async fn update_group(
     pool: web::Data<DbPool>,
@@ -101,6 +156,20 @@ pub async fn update_group(
     Ok(json_response(updated, StatusCode::OK))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/iam/groups/{group_id}",
+    tag = "groups",
+    security(("bearer_auth" = [])),
+    params(
+        ("group_id" = i32, Path, description = "Group ID")
+    ),
+    responses(
+        (status = 204, description = "Group deleted"),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Group not found", body = ApiErrorResponse)
+    )
+)]
 #[delete("/{group_id}")]
 pub async fn delete_group(
     pool: web::Data<DbPool>,
@@ -117,6 +186,20 @@ pub async fn delete_group(
     Ok(json_response(json!({}), StatusCode::NO_CONTENT))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/iam/groups/{group_id}/members",
+    tag = "groups",
+    security(("bearer_auth" = [])),
+    params(
+        ("group_id" = i32, Path, description = "Group ID")
+    ),
+    responses(
+        (status = 200, description = "Members of group", body = [User]),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Group not found", body = ApiErrorResponse)
+    )
+)]
 #[get("/{group_id}/members")]
 pub async fn get_group_members(
     pool: web::Data<DbPool>,
@@ -136,6 +219,21 @@ pub async fn get_group_members(
     Ok(json_response(members, StatusCode::OK))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/iam/groups/{group_id}/members/{user_id}",
+    tag = "groups",
+    security(("bearer_auth" = [])),
+    params(
+        ("group_id" = i32, Path, description = "Group ID"),
+        ("user_id" = i32, Path, description = "User ID")
+    ),
+    responses(
+        (status = 204, description = "User added to group"),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "User or group not found", body = ApiErrorResponse)
+    )
+)]
 #[post("/{group_id}/members/{user_id}")]
 pub async fn add_group_member(
     pool: web::Data<DbPool>,
@@ -157,6 +255,21 @@ pub async fn add_group_member(
     Ok(json_response(json!({}), StatusCode::NO_CONTENT))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/iam/groups/{group_id}/members/{user_id}",
+    tag = "groups",
+    security(("bearer_auth" = [])),
+    params(
+        ("group_id" = i32, Path, description = "Group ID"),
+        ("user_id" = i32, Path, description = "User ID")
+    ),
+    responses(
+        (status = 204, description = "User removed from group"),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "User or group not found", body = ApiErrorResponse)
+    )
+)]
 #[delete("/{group_id}/members/{user_id}")]
 pub async fn delete_group_member(
     pool: web::Data<DbPool>,
