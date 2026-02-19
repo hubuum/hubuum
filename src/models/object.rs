@@ -31,6 +31,7 @@ pub struct HubuumObject {
 }
 
 #[derive(Serialize, Deserialize, Clone, Insertable, ToSchema)]
+#[schema(example = new_hubuum_object_example)]
 #[diesel(table_name = hubuumobject)]
 pub struct NewHubuumObject {
     pub name: String,
@@ -40,6 +41,7 @@ pub struct NewHubuumObject {
     pub description: String,
 }
 #[derive(Serialize, Deserialize, Clone, AsChangeset, ToSchema)]
+#[schema(example = update_hubuum_object_example)]
 #[diesel(table_name = hubuumobject)]
 pub struct UpdateHubuumObject {
     pub name: Option<String>,
@@ -100,6 +102,28 @@ pub async fn objects_per_class_count(pool: &DbPool) -> Result<Vec<ObjectsByClass
     let results = sql_query(raw_query).load::<ObjectsByClass>(&mut conn)?;
 
     Ok(results)
+}
+
+#[allow(dead_code)]
+fn new_hubuum_object_example() -> NewHubuumObject {
+    NewHubuumObject {
+        name: "srv-01".to_string(),
+        namespace_id: 1,
+        hubuum_class_id: 2,
+        data: serde_json::json!({"hostname": "srv-01", "ip": "10.0.0.10"}),
+        description: "Primary application server".to_string(),
+    }
+}
+
+#[allow(dead_code)]
+fn update_hubuum_object_example() -> UpdateHubuumObject {
+    UpdateHubuumObject {
+        name: Some("srv-01".to_string()),
+        namespace_id: None,
+        hubuum_class_id: None,
+        data: Some(serde_json::json!({"hostname": "srv-01", "status": "active"})),
+        description: Some("Primary application server (updated)".to_string()),
+    }
 }
 
 #[cfg(test)]

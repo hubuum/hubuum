@@ -29,6 +29,7 @@ pub struct ClassIdResult {
 }
 
 #[derive(Serialize, Deserialize, Insertable, Clone, Debug, ToSchema)]
+#[schema(example = new_hubuum_class_example)]
 #[diesel(table_name = hubuumclass)]
 pub struct NewHubuumClass {
     pub name: String,
@@ -39,6 +40,7 @@ pub struct NewHubuumClass {
 }
 
 #[derive(Serialize, Deserialize, AsChangeset, Clone, Debug, ToSchema)]
+#[schema(example = update_hubuum_class_example)]
 #[diesel(table_name = hubuumclass)]
 pub struct UpdateHubuumClass {
     pub name: Option<String>,
@@ -70,6 +72,28 @@ pub async fn total_class_count(pool: &DbPool) -> Result<i64, ApiError> {
     let count = with_connection(pool, |conn| hubuumclass.count().get_result::<i64>(conn))?;
 
     Ok(count)
+}
+
+#[allow(dead_code)]
+fn new_hubuum_class_example() -> NewHubuumClass {
+    NewHubuumClass {
+        name: "server".to_string(),
+        namespace_id: 1,
+        json_schema: None,
+        validate_schema: Some(false),
+        description: "Server inventory class".to_string(),
+    }
+}
+
+#[allow(dead_code)]
+fn update_hubuum_class_example() -> UpdateHubuumClass {
+    UpdateHubuumClass {
+        name: Some("server".to_string()),
+        namespace_id: Some(1),
+        json_schema: None,
+        validate_schema: Some(true),
+        description: Some("Validated server inventory class".to_string()),
+    }
 }
 
 #[cfg(test)]

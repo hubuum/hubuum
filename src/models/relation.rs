@@ -27,6 +27,7 @@ pub struct HubuumClassRelation {
 }
 
 #[derive(Debug, Serialize, Deserialize, Insertable, ToSchema)]
+#[schema(example = new_hubuum_class_relation_example)]
 #[diesel(table_name = hubuumclass_relation)]
 pub struct NewHubuumClassRelation {
     pub from_hubuum_class_id: i32,
@@ -36,6 +37,7 @@ pub struct NewHubuumClassRelation {
 /// To create new relations between classes from within a class
 /// we only need the id of the class we want to relate to.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[schema(example = new_hubuum_class_relation_from_class_example)]
 pub struct NewHubuumClassRelationFromClass {
     pub to_hubuum_class_id: i32,
 }
@@ -55,6 +57,7 @@ pub struct HubuumObjectRelation {
 }
 
 #[derive(Debug, Serialize, Deserialize, Insertable, ToSchema)]
+#[schema(example = new_hubuum_object_relation_example)]
 #[diesel(table_name = hubuumobject_relation)]
 pub struct NewHubuumObjectRelation {
     pub from_hubuum_object_id: i32,
@@ -147,6 +150,30 @@ pub struct ObjectClosureView {
     pub descendant_created_at: chrono::NaiveDateTime,
     pub ancestor_updated_at: chrono::NaiveDateTime,
     pub descendant_updated_at: chrono::NaiveDateTime,
+}
+
+#[allow(dead_code)]
+fn new_hubuum_class_relation_example() -> NewHubuumClassRelation {
+    NewHubuumClassRelation {
+        from_hubuum_class_id: 1,
+        to_hubuum_class_id: 2,
+    }
+}
+
+#[allow(dead_code)]
+fn new_hubuum_class_relation_from_class_example() -> NewHubuumClassRelationFromClass {
+    NewHubuumClassRelationFromClass {
+        to_hubuum_class_id: 2,
+    }
+}
+
+#[allow(dead_code)]
+fn new_hubuum_object_relation_example() -> NewHubuumObjectRelation {
+    NewHubuumObjectRelation {
+        from_hubuum_object_id: 10,
+        to_hubuum_object_id: 20,
+        class_relation_id: 3,
+    }
 }
 
 #[cfg(test)]

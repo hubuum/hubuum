@@ -851,12 +851,12 @@ async fn get_object_relation_from_class_and_objects(
 
 #[utoipa::path(
     delete,
-    path = "/api/v1/classes/{class_id}/{object_id}/relations/{to_class_id}/{to_object_id}",
+    path = "/api/v1/classes/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}",
     tag = "classes",
     security(("bearer_auth" = [])),
     params(
         ("class_id" = i32, Path, description = "Source class ID"),
-        ("object_id" = i32, Path, description = "Source object ID"),
+        ("from_object_id" = i32, Path, description = "Source object ID"),
         ("to_class_id" = i32, Path, description = "Target class ID"),
         ("to_object_id" = i32, Path, description = "Target object ID")
     ),
@@ -932,12 +932,12 @@ async fn delete_object_relation(
 
 #[utoipa::path(
     post,
-    path = "/api/v1/classes/{class_id}/{object_id}/relations/{to_class_id}/{to_object_id}",
+    path = "/api/v1/classes/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}",
     tag = "classes",
     security(("bearer_auth" = [])),
     params(
         ("class_id" = i32, Path, description = "Source class ID"),
-        ("object_id" = i32, Path, description = "Source object ID"),
+        ("from_object_id" = i32, Path, description = "Source object ID"),
         ("to_class_id" = i32, Path, description = "Target class ID"),
         ("to_object_id" = i32, Path, description = "Target object ID")
     ),

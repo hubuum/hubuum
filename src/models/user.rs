@@ -74,6 +74,7 @@ impl User {
 /// The password, if present, is expected to be hashed
 /// before being passed to the database.
 #[derive(AsChangeset, Deserialize, Serialize, Clone, ToSchema)]
+#[schema(example = update_user_example)]
 #[diesel(table_name = users)]
 pub struct UpdateUser {
     pub username: Option<String>,
@@ -110,6 +111,7 @@ impl UpdateUser {
 /// The password is expected to be hashed
 /// before being passed to the database.
 #[derive(Serialize, Deserialize, Insertable, Debug, ToSchema)]
+#[schema(example = new_user_example)]
 #[diesel(table_name = users)]
 pub struct NewUser {
     pub username: String,
@@ -182,6 +184,7 @@ impl UserID {
 ///
 /// The password is expected to be plaintext.
 #[derive(AsChangeset, Deserialize, Serialize, ToSchema)]
+#[schema(example = login_user_example)]
 #[diesel(table_name = users)]
 pub struct LoginUser {
     pub username: String,
@@ -244,4 +247,30 @@ impl LoginUser {
 
 pub fn auth_failure() -> ApiError {
     ApiError::Unauthorized("Authentication failure".to_string())
+}
+
+#[allow(dead_code)]
+fn update_user_example() -> UpdateUser {
+    UpdateUser {
+        username: Some("alice".to_string()),
+        password: Some("new-password".to_string()),
+        email: Some("alice@example.com".to_string()),
+    }
+}
+
+#[allow(dead_code)]
+fn new_user_example() -> NewUser {
+    NewUser {
+        username: "alice".to_string(),
+        password: "correct-horse-battery-staple".to_string(),
+        email: Some("alice@example.com".to_string()),
+    }
+}
+
+#[allow(dead_code)]
+fn login_user_example() -> LoginUser {
+    LoginUser {
+        username: "alice".to_string(),
+        password: "correct-horse-battery-staple".to_string(),
+    }
 }

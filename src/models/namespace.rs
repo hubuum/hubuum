@@ -40,6 +40,7 @@ pub struct Namespace {
 pub struct NamespaceID(pub i32);
 
 #[derive(Serialize, Deserialize, Clone, AsChangeset, ToSchema)]
+#[schema(example = update_namespace_example)]
 #[diesel(table_name = namespaces)]
 pub struct UpdateNamespace {
     pub name: Option<String>,
@@ -52,6 +53,7 @@ pub struct UpdateNamespace {
 /// This wraps the NewNamespace struct and uses the group_id to grant all permissions
 /// to the group in a single transaction.
 #[derive(Serialize, Deserialize, Clone, ToSchema)]
+#[schema(example = new_namespace_with_assignee_example)]
 pub struct NewNamespaceWithAssignee {
     pub name: String,
     pub description: String,
@@ -67,6 +69,23 @@ pub struct NewNamespaceWithAssignee {
 pub struct NewNamespace {
     pub name: String,
     pub description: String,
+}
+
+#[allow(dead_code)]
+fn update_namespace_example() -> UpdateNamespace {
+    UpdateNamespace {
+        name: Some("global-assets".to_string()),
+        description: Some("Shared assets and metadata".to_string()),
+    }
+}
+
+#[allow(dead_code)]
+fn new_namespace_with_assignee_example() -> NewNamespaceWithAssignee {
+    NewNamespaceWithAssignee {
+        name: "global-assets".to_string(),
+        description: "Shared assets and metadata".to_string(),
+        group_id: 1,
+    }
 }
 
 /// Check what permissions a user has to a given namespace

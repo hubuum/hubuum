@@ -26,5 +26,36 @@ Once upon a time your data was everywhere, each in its own silo. Now you can hav
 
 Hubuum is designed around the idea of classes and objects, where the classes are user-defined and optionally constrained by a JSON schema[^2]. Objects are instances of these classes and these classes only. If the class defines a schema, and the class requires validation against the schema, you are guaranteed that objects within that class conform to said schema.
 
+## API Documentation
+
+- OpenAPI JSON is served at `/api-doc/openapi.json`.
+- Swagger UI is served at `/swagger-ui/` when built with the `swagger-ui` feature.
+
+### Authentication in OpenAPI/Swagger
+
+Most endpoints require bearer authentication.
+
+```http
+Authorization: Bearer <token>
+```
+
+Quick example:
+
+```sh
+curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/iam/users
+```
+
+### OpenAPI Versioning Policy
+
+- The `openapi.info.version` value is tied to `Cargo.toml` package version (`CARGO_PKG_VERSION`).
+- `docs/openapi.json` is the canonical committed spec for the current code.
+- CI generates the spec and fails if it drifts from `docs/openapi.json`.
+
+### Production Behavior
+
+- `swagger-ui` is enabled by default.
+- To disable Swagger UI in production builds, build without default features (or without `swagger-ui`):
+  - `cargo build --no-default-features`
+
 [^1]: Hubuum is probably a loanword from Akkadian.
 [^2]: [JSON schema](https://json-schema.org) is a powerful tool for validating the structure of JSON data. It allows you to define the expected format of your data, including required fields, data types, and constraints on values.

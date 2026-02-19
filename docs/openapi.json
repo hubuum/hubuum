@@ -1,0 +1,5223 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Hubuum REST API",
+    "description": "OpenAPI documentation for the Hubuum REST service.",
+    "license": {
+      "name": ""
+    },
+    "version": "0.1.0"
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Current deployment base URL"
+    }
+  ],
+  "paths": {
+    "/api/v0/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Post Api V0 Auth Login",
+        "description": "Auto-generated documentation for POST /api/v0/auth/login.",
+        "operationId": "postApiV0AuthLogin",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginUser"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Token issued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v0/auth/logout": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Get Api V0 Auth Logout",
+        "description": "Auto-generated documentation for GET /api/v0/auth/logout.",
+        "operationId": "getApiV0AuthLogout",
+        "responses": {
+          "200": {
+            "description": "Token revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v0/auth/logout/token/{token}": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Get Api V0 Auth Logout Token By Token",
+        "description": "Auto-generated documentation for GET /api/v0/auth/logout/token/{token}.",
+        "operationId": "getApiV0AuthLogoutTokenByToken",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "description": "Token string to revoke",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Token revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v0/auth/logout/uid/{user_id}": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Get Api V0 Auth Logout Uid By User Id",
+        "description": "Auto-generated documentation for GET /api/v0/auth/logout/uid/{user_id}.",
+        "operationId": "getApiV0AuthLogoutUidByUserId",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "User ID to revoke all tokens for",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "All tokens revoked for user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v0/auth/logout_all": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Get Api V0 Auth Logout All",
+        "description": "Auto-generated documentation for GET /api/v0/auth/logout_all.",
+        "operationId": "getApiV0AuthLogoutAll",
+        "responses": {
+          "200": {
+            "description": "All tokens revoked for current user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v0/auth/validate": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Get Api V0 Auth Validate",
+        "description": "Auto-generated documentation for GET /api/v0/auth/validate.",
+        "operationId": "getApiV0AuthValidate",
+        "responses": {
+          "200": {
+            "description": "Token is valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v0/meta/counts": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "Get Api V0 Meta Counts",
+        "description": "Auto-generated documentation for GET /api/v0/meta/counts.",
+        "operationId": "getApiV0MetaCounts",
+        "responses": {
+          "200": {
+            "description": "Object and class counters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CountsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v0/meta/db": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "Get Api V0 Meta Db",
+        "description": "Auto-generated documentation for GET /api/v0/meta/db.",
+        "operationId": "getApiV0MetaDb",
+        "responses": {
+          "200": {
+            "description": "Database state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DbStateResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get Api V1 Classes",
+        "description": "Auto-generated documentation for GET /api/v1/classes.",
+        "operationId": "getApiV1Classes",
+        "responses": {
+          "200": {
+            "description": "Classes matching optional query filters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HubuumClassExpanded"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Post Api V1 Classes",
+        "description": "Auto-generated documentation for POST /api/v1/classes.",
+        "operationId": "postApiV1Classes",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewHubuumClass"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Class created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumClassExpanded"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get Api V1 Classes By Class Id",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}.",
+        "operationId": "getApiV1ClassesByClassId",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Class",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumClassExpanded"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Delete Api V1 Classes By Class Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/classes/{class_id}.",
+        "operationId": "deleteApiV1ClassesByClassId",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Class deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Patch Api V1 Classes By Class Id",
+        "description": "Auto-generated documentation for PATCH /api/v1/classes/{class_id}.",
+        "operationId": "patchApiV1ClassesByClassId",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateHubuumClass"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated class",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumClassExpanded"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Trailing",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/.",
+        "operationId": "getApiV1ClassesByClassIdTrailing",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Objects in class",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HubuumObject"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Post Api V1 Classes By Class Id Trailing",
+        "description": "Auto-generated documentation for POST /api/v1/classes/{class_id}/.",
+        "operationId": "postApiV1ClassesByClassIdTrailing",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewHubuumObject"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Object created in class",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/permissions": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Permissions",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/permissions.",
+        "operationId": "getApiV1ClassesByClassIdPermissions",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Namespace-group permission mappings for class namespace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GroupPermission"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/relations": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Relations",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/relations.",
+        "operationId": "getApiV1ClassesByClassIdRelations",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Direct class relations from class",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HubuumClassRelation"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Post Api V1 Classes By Class Id Relations",
+        "description": "Auto-generated documentation for POST /api/v1/classes/{class_id}/relations.",
+        "operationId": "postApiV1ClassesByClassIdRelations",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewHubuumClassRelationFromClass"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Class relation created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumClassRelation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/relations/transitive": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Relations Transitive",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/relations/transitive.",
+        "operationId": "getApiV1ClassesByClassIdRelationsTransitive",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transitive class relations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HubuumClassRelationTransitive"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/relations/transitive/class/{class_id_to}": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Relations Transitive Class By Class Id To",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/relations/transitive/class/{class_id_to}.",
+        "operationId": "getApiV1ClassesByClassIdRelationsTransitiveClassByClassIdTo",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "From class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "class_id_to",
+            "in": "path",
+            "description": "To class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transitive relations between classes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HubuumClassRelationTransitive"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/relations/{relation_id}": {
+      "delete": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Delete Api V1 Classes By Class Id Relations By Relation Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/classes/{class_id}/relations/{relation_id}.",
+        "operationId": "deleteApiV1ClassesByClassIdRelationsByRelationId",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "relation_id",
+            "in": "path",
+            "description": "Class relation ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Class relation deleted"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class or relation not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/{from_object_id}/relations": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get Api V1 Classes By Class Id By From Object Id Relations",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/{from_object_id}/relations.",
+        "operationId": "getApiV1ClassesByClassIdByFromObjectIdRelations",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "from_object_id",
+            "in": "path",
+            "description": "Source object ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Objects related to source object",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HubuumObjectWithPath"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class or object not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get Api V1 Classes By Class Id By From Object Id Relations By To Class Id By To Object Id",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}.",
+        "operationId": "getApiV1ClassesByClassIdByFromObjectIdRelationsByToClassIdByToObjectId",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Source class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "from_object_id",
+            "in": "path",
+            "description": "Source object ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "to_class_id",
+            "in": "path",
+            "description": "Target class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "to_object_id",
+            "in": "path",
+            "description": "Target object ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object relation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumObjectRelation"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Relation not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Post Api V1 Classes By Class Id By From Object Id Relations By To Class Id By To Object Id",
+        "description": "Auto-generated documentation for POST /api/v1/classes/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}.",
+        "operationId": "postApiV1ClassesByClassIdByFromObjectIdRelationsByToClassIdByToObjectId",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Source class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "from_object_id",
+            "in": "path",
+            "description": "Source object ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "to_class_id",
+            "in": "path",
+            "description": "Target class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "to_object_id",
+            "in": "path",
+            "description": "Target object ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "object_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HubuumObjectID"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Object relation created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumObjectRelation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class or object not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Delete Api V1 Classes By Class Id By From Object Id Relations By To Class Id By To Object Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/classes/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}.",
+        "operationId": "deleteApiV1ClassesByClassIdByFromObjectIdRelationsByToClassIdByToObjectId",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Source class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "from_object_id",
+            "in": "path",
+            "description": "Source object ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "to_class_id",
+            "in": "path",
+            "description": "Target class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "to_object_id",
+            "in": "path",
+            "description": "Target object ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "object_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HubuumObjectID"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Object relation deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Relation not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/{object_id}": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get Api V1 Classes By Class Id By Object Id",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/{object_id}.",
+        "operationId": "getApiV1ClassesByClassIdByObjectId",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "object_id",
+            "in": "path",
+            "description": "Object ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object in class",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumObject"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Object not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Delete Api V1 Classes By Class Id By Object Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/classes/{class_id}/{object_id}.",
+        "operationId": "deleteApiV1ClassesByClassIdByObjectId",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "object_id",
+            "in": "path",
+            "description": "Object ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Object deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Object not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Patch Api V1 Classes By Class Id By Object Id",
+        "description": "Auto-generated documentation for PATCH /api/v1/classes/{class_id}/{object_id}.",
+        "operationId": "patchApiV1ClassesByClassIdByObjectId",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "object_id",
+            "in": "path",
+            "description": "Object ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateHubuumObject"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated object",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Object not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/groups": {
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Get Api V1 Iam Groups",
+        "description": "Auto-generated documentation for GET /api/v1/iam/groups.",
+        "operationId": "getApiV1IamGroups",
+        "responses": {
+          "200": {
+            "description": "Groups matching optional query filters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Group"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Post Api V1 Iam Groups",
+        "description": "Auto-generated documentation for POST /api/v1/iam/groups.",
+        "operationId": "postApiV1IamGroups",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewGroup"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Group created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Group"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/groups/{group_id}": {
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Get Api V1 Iam Groups By Group Id",
+        "description": "Auto-generated documentation for GET /api/v1/iam/groups/{group_id}.",
+        "operationId": "getApiV1IamGroupsByGroupId",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Group",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Group"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Delete Api V1 Iam Groups By Group Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/iam/groups/{group_id}.",
+        "operationId": "deleteApiV1IamGroupsByGroupId",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Group deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Patch Api V1 Iam Groups By Group Id",
+        "description": "Auto-generated documentation for PATCH /api/v1/iam/groups/{group_id}.",
+        "operationId": "patchApiV1IamGroupsByGroupId",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateGroup"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated group",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Group"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/groups/{group_id}/members": {
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Get Api V1 Iam Groups By Group Id Members",
+        "description": "Auto-generated documentation for GET /api/v1/iam/groups/{group_id}/members.",
+        "operationId": "getApiV1IamGroupsByGroupIdMembers",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Members of group",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/User"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/groups/{group_id}/members/{user_id}": {
+      "post": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Post Api V1 Iam Groups By Group Id Members By User Id",
+        "description": "Auto-generated documentation for POST /api/v1/iam/groups/{group_id}/members/{user_id}.",
+        "operationId": "postApiV1IamGroupsByGroupIdMembersByUserId",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "User ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "User added to group"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Delete Api V1 Iam Groups By Group Id Members By User Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/iam/groups/{group_id}/members/{user_id}.",
+        "operationId": "deleteApiV1IamGroupsByGroupIdMembersByUserId",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "User ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "User removed from group"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/users": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Get Api V1 Iam Users",
+        "description": "Auto-generated documentation for GET /api/v1/iam/users.",
+        "operationId": "getApiV1IamUsers",
+        "responses": {
+          "200": {
+            "description": "Users matching optional query filters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/User"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Post Api V1 Iam Users",
+        "description": "Auto-generated documentation for POST /api/v1/iam/users.",
+        "operationId": "postApiV1IamUsers",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewUser"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "User created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/users/{user_id}": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Get Api V1 Iam Users By User Id",
+        "description": "Auto-generated documentation for GET /api/v1/iam/users/{user_id}.",
+        "operationId": "getApiV1IamUsersByUserId",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "User ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Delete Api V1 Iam Users By User Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/iam/users/{user_id}.",
+        "operationId": "deleteApiV1IamUsersByUserId",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "User ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "User deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Patch Api V1 Iam Users By User Id",
+        "description": "Auto-generated documentation for PATCH /api/v1/iam/users/{user_id}.",
+        "operationId": "patchApiV1IamUsersByUserId",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "User ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUser"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/users/{user_id}/groups": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Get Api V1 Iam Users By User Id Groups",
+        "description": "Auto-generated documentation for GET /api/v1/iam/users/{user_id}/groups.",
+        "operationId": "getApiV1IamUsersByUserIdGroups",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "User ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Groups of user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Group"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/users/{user_id}/tokens": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Get Api V1 Iam Users By User Id Tokens",
+        "description": "Auto-generated documentation for GET /api/v1/iam/users/{user_id}/tokens.",
+        "operationId": "getApiV1IamUsersByUserIdTokens",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "User ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active tokens for user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/UserToken"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/namespaces": {
+      "get": {
+        "tags": [
+          "namespaces"
+        ],
+        "summary": "Get Api V1 Namespaces",
+        "description": "Auto-generated documentation for GET /api/v1/namespaces.",
+        "operationId": "getApiV1Namespaces",
+        "responses": {
+          "200": {
+            "description": "Namespaces matching optional query filters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Namespace"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "namespaces"
+        ],
+        "summary": "Post Api V1 Namespaces",
+        "description": "Auto-generated documentation for POST /api/v1/namespaces.",
+        "operationId": "postApiV1Namespaces",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewNamespaceWithAssignee"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Namespace created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Namespace"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace_id}": {
+      "get": {
+        "tags": [
+          "namespaces"
+        ],
+        "summary": "Get Api V1 Namespaces By Namespace Id",
+        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}.",
+        "operationId": "getApiV1NamespacesByNamespaceId",
+        "parameters": [
+          {
+            "name": "namespace_id",
+            "in": "path",
+            "description": "Namespace ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Namespace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Namespace"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Namespace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "namespaces"
+        ],
+        "summary": "Delete Api V1 Namespaces By Namespace Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/namespaces/{namespace_id}.",
+        "operationId": "deleteApiV1NamespacesByNamespaceId",
+        "parameters": [
+          {
+            "name": "namespace_id",
+            "in": "path",
+            "description": "Namespace ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Namespace deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Namespace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "namespaces"
+        ],
+        "summary": "Patch Api V1 Namespaces By Namespace Id",
+        "description": "Auto-generated documentation for PATCH /api/v1/namespaces/{namespace_id}.",
+        "operationId": "patchApiV1NamespacesByNamespaceId",
+        "parameters": [
+          {
+            "name": "namespace_id",
+            "in": "path",
+            "description": "Namespace ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateNamespace"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Namespace updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Namespace"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Namespace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace_id}/has_permissions/{permission}": {
+      "get": {
+        "tags": [
+          "namespaces"
+        ],
+        "summary": "List all groups that have any permissions on a namespace",
+        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/has_permissions/{permission}.",
+        "operationId": "getApiV1NamespacesByNamespaceIdHasPermissionsByPermission",
+        "parameters": [
+          {
+            "name": "namespace_id",
+            "in": "path",
+            "description": "Namespace ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "permission",
+            "in": "path",
+            "description": "Permission value",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Permissions"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Groups with permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Group"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Namespace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace_id}/permissions": {
+      "get": {
+        "tags": [
+          "namespaces"
+        ],
+        "summary": "List all groups who have permissions for a namespace",
+        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/permissions.",
+        "operationId": "getApiV1NamespacesByNamespaceIdPermissions",
+        "parameters": [
+          {
+            "name": "namespace_id",
+            "in": "path",
+            "description": "Namespace ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Group permissions on namespace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GroupPermission"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Namespace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}": {
+      "get": {
+        "tags": [
+          "namespaces"
+        ],
+        "summary": "List all permissions for a given group on a namespace",
+        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/permissions/group/{group_id}.",
+        "operationId": "getApiV1NamespacesByNamespaceIdPermissionsGroupByGroupId",
+        "parameters": [
+          {
+            "name": "namespace_id",
+            "in": "path",
+            "description": "Namespace ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Permission record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Permission"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Namespace or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "namespaces"
+        ],
+        "summary": "Post a permission set to a group on a namespace\nThis will create a new entry if the group had no permissions,\nor update the existing entry if it did.\nThe body should be a JSON array of permissions:\n```json\n[\n  \"CreateObject\",\n  \"ReadCollection\"\n]\n```",
+        "description": "Auto-generated documentation for POST /api/v1/namespaces/{namespace_id}/permissions/group/{group_id}.",
+        "operationId": "postApiV1NamespacesByNamespaceIdPermissionsGroupByGroupId",
+        "parameters": [
+          {
+            "name": "namespace_id",
+            "in": "path",
+            "description": "Namespace ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Permissions"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Permissions set"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Namespace or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "namespaces"
+        ],
+        "summary": "Revoke a permission set from a group on a namespace",
+        "description": "Auto-generated documentation for DELETE /api/v1/namespaces/{namespace_id}/permissions/group/{group_id}.",
+        "operationId": "deleteApiV1NamespacesByNamespaceIdPermissionsGroupByGroupId",
+        "parameters": [
+          {
+            "name": "namespace_id",
+            "in": "path",
+            "description": "Namespace ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Permissions revoked"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Namespace or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}/{permission}": {
+      "get": {
+        "tags": [
+          "namespaces"
+        ],
+        "summary": "Check a specific permission for a group on a namespace",
+        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/permissions/group/{group_id}/{permission}.",
+        "operationId": "getApiV1NamespacesByNamespaceIdPermissionsGroupByGroupIdByPermission",
+        "parameters": [
+          {
+            "name": "namespace_id",
+            "in": "path",
+            "description": "Namespace ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "permission",
+            "in": "path",
+            "description": "Permission value",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Permissions"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Group has permission"
+          },
+          "404": {
+            "description": "Group missing permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "namespaces"
+        ],
+        "summary": "Grant a specific permission to a group on a namespace\nIf the group previously had no permissions, a new entry is created",
+        "description": "Auto-generated documentation for POST /api/v1/namespaces/{namespace_id}/permissions/group/{group_id}/{permission}.",
+        "operationId": "postApiV1NamespacesByNamespaceIdPermissionsGroupByGroupIdByPermission",
+        "parameters": [
+          {
+            "name": "namespace_id",
+            "in": "path",
+            "description": "Namespace ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "permission",
+            "in": "path",
+            "description": "Permission value",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Permissions"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Permission granted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Namespace or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "namespaces"
+        ],
+        "summary": "Revoke a specific permission from a group on a namespace",
+        "description": "Auto-generated documentation for DELETE /api/v1/namespaces/{namespace_id}/permissions/group/{group_id}/{permission}.",
+        "operationId": "deleteApiV1NamespacesByNamespaceIdPermissionsGroupByGroupIdByPermission",
+        "parameters": [
+          {
+            "name": "namespace_id",
+            "in": "path",
+            "description": "Namespace ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "permission",
+            "in": "path",
+            "description": "Permission value",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Permissions"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Permission revoked"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Namespace or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace_id}/permissions/user/{user_id}": {
+      "get": {
+        "tags": [
+          "namespaces"
+        ],
+        "summary": "List all permissions for a user on a namespace",
+        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/permissions/user/{user_id}.",
+        "operationId": "getApiV1NamespacesByNamespaceIdPermissionsUserByUserId",
+        "parameters": [
+          {
+            "name": "namespace_id",
+            "in": "path",
+            "description": "Namespace ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "User ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User permissions via group memberships",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GroupPermission"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No permissions found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/relations/classes": {
+      "get": {
+        "tags": [
+          "relations"
+        ],
+        "summary": "Get Api V1 Relations Classes",
+        "description": "Auto-generated documentation for GET /api/v1/relations/classes.",
+        "operationId": "getApiV1RelationsClasses",
+        "responses": {
+          "200": {
+            "description": "Class relations matching optional query filters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HubuumClassRelation"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "relations"
+        ],
+        "summary": "Post Api V1 Relations Classes",
+        "description": "Auto-generated documentation for POST /api/v1/relations/classes.",
+        "operationId": "postApiV1RelationsClasses",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewHubuumClassRelation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Class relation created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumClassRelation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/relations/classes/{relation_id}": {
+      "get": {
+        "tags": [
+          "relations"
+        ],
+        "summary": "Get Api V1 Relations Classes By Relation Id",
+        "description": "Auto-generated documentation for GET /api/v1/relations/classes/{relation_id}.",
+        "operationId": "getApiV1RelationsClassesByRelationId",
+        "parameters": [
+          {
+            "name": "relation_id",
+            "in": "path",
+            "description": "Class relation ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Class relation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumClassRelation"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Relation not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "relations"
+        ],
+        "summary": "Delete Api V1 Relations Classes By Relation Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/relations/classes/{relation_id}.",
+        "operationId": "deleteApiV1RelationsClassesByRelationId",
+        "parameters": [
+          {
+            "name": "relation_id",
+            "in": "path",
+            "description": "Class relation ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Class relation deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Relation not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/relations/objects": {
+      "get": {
+        "tags": [
+          "relations"
+        ],
+        "summary": "Get Api V1 Relations Objects",
+        "description": "Auto-generated documentation for GET /api/v1/relations/objects.",
+        "operationId": "getApiV1RelationsObjects",
+        "responses": {
+          "200": {
+            "description": "Object relations matching optional query filters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HubuumObjectRelation"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "relations"
+        ],
+        "summary": "Post Api V1 Relations Objects",
+        "description": "Auto-generated documentation for POST /api/v1/relations/objects.",
+        "operationId": "postApiV1RelationsObjects",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewHubuumObjectRelation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Object relation created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumObjectRelation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/relations/objects/{relation_id}": {
+      "get": {
+        "tags": [
+          "relations"
+        ],
+        "summary": "Get Api V1 Relations Objects By Relation Id",
+        "description": "Auto-generated documentation for GET /api/v1/relations/objects/{relation_id}.",
+        "operationId": "getApiV1RelationsObjectsByRelationId",
+        "parameters": [
+          {
+            "name": "relation_id",
+            "in": "path",
+            "description": "Object relation ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object relation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumObjectRelation"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Relation not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "relations"
+        ],
+        "summary": "Delete Api V1 Relations Objects By Relation Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/relations/objects/{relation_id}.",
+        "operationId": "deleteApiV1RelationsObjectsByRelationId",
+        "parameters": [
+          {
+            "name": "relation_id",
+            "in": "path",
+            "description": "Object relation ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Object relation deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Relation not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiErrorResponse": {
+        "type": "object",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "example": {
+          "error": "Unauthorized",
+          "message": "Authentication failure"
+        }
+      },
+      "CountsResponse": {
+        "type": "object",
+        "required": [
+          "total_objects",
+          "total_classes",
+          "objects_per_class"
+        ],
+        "properties": {
+          "objects_per_class": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ObjectsByClass"
+            }
+          },
+          "total_classes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total_objects": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "example": {
+          "objects_per_class": [
+            {
+              "count": 6,
+              "hubuum_class_id": 1
+            }
+          ],
+          "total_classes": 7,
+          "total_objects": 42
+        }
+      },
+      "DbStateResponse": {
+        "type": "object",
+        "required": [
+          "available_connections",
+          "idle_connections",
+          "active_connections",
+          "db_size"
+        ],
+        "properties": {
+          "active_connections": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "available_connections": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "db_size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "idle_connections": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "last_vacuum_time": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Group": {
+        "type": "object",
+        "required": [
+          "id",
+          "groupname",
+          "description",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "groupname": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "GroupPermission": {
+        "type": "object",
+        "required": [
+          "group",
+          "permission"
+        ],
+        "properties": {
+          "group": {
+            "$ref": "#/components/schemas/Group"
+          },
+          "permission": {
+            "$ref": "#/components/schemas/Permission"
+          }
+        }
+      },
+      "HubuumClass": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "namespace_id",
+          "validate_schema",
+          "description",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "json_schema": {},
+          "name": {
+            "type": "string"
+          },
+          "namespace_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "validate_schema": {
+            "type": "boolean"
+          }
+        }
+      },
+      "HubuumClassExpanded": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "namespace",
+          "validate_schema",
+          "description",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "json_schema": {},
+          "name": {
+            "type": "string"
+          },
+          "namespace": {
+            "$ref": "#/components/schemas/Namespace"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "validate_schema": {
+            "type": "boolean"
+          }
+        }
+      },
+      "HubuumClassRelation": {
+        "type": "object",
+        "required": [
+          "id",
+          "from_hubuum_class_id",
+          "to_hubuum_class_id",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "from_hubuum_class_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "to_hubuum_class_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "HubuumClassRelationTransitive": {
+        "type": "object",
+        "required": [
+          "ancestor_class_id",
+          "descendant_class_id",
+          "depth",
+          "path"
+        ],
+        "properties": {
+          "ancestor_class_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "depth": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "descendant_class_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "path": {
+            "type": "array",
+            "items": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            }
+          }
+        }
+      },
+      "HubuumObject": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "namespace_id",
+          "hubuum_class_id",
+          "data",
+          "description",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "data": {},
+          "description": {
+            "type": "string"
+          },
+          "hubuum_class_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          },
+          "namespace_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "HubuumObjectRelation": {
+        "type": "object",
+        "required": [
+          "id",
+          "from_hubuum_object_id",
+          "to_hubuum_object_id",
+          "class_relation_id",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "class_relation_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "from_hubuum_object_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "to_hubuum_object_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "HubuumObjectWithPath": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "namespace_id",
+          "hubuum_class_id",
+          "data",
+          "description",
+          "created_at",
+          "updated_at",
+          "path"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "data": {},
+          "description": {
+            "type": "string"
+          },
+          "hubuum_class_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          },
+          "namespace_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "path": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "LoginResponse": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          }
+        },
+        "example": {
+          "token": "eyJhbGciOi...example-token"
+        }
+      },
+      "LoginUser": {
+        "type": "object",
+        "description": "Struct to log in a user.\n\nThe password is expected to be plaintext.",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "example": {
+          "password": "correct-horse-battery-staple",
+          "username": "alice"
+        }
+      },
+      "MessageResponse": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        },
+        "example": {
+          "message": "Token is valid."
+        }
+      },
+      "Namespace": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "NewGroup": {
+        "type": "object",
+        "required": [
+          "groupname"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "groupname": {
+            "type": "string"
+          }
+        },
+        "example": {
+          "description": "Operations team",
+          "groupname": "ops"
+        }
+      },
+      "NewHubuumClass": {
+        "type": "object",
+        "required": [
+          "name",
+          "namespace_id",
+          "description"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "json_schema": {},
+          "name": {
+            "type": "string"
+          },
+          "namespace_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "validate_schema": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "example": {
+          "description": "Server inventory class",
+          "json_schema": null,
+          "name": "server",
+          "namespace_id": 1,
+          "validate_schema": false
+        }
+      },
+      "NewHubuumClassRelation": {
+        "type": "object",
+        "required": [
+          "from_hubuum_class_id",
+          "to_hubuum_class_id"
+        ],
+        "properties": {
+          "from_hubuum_class_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "to_hubuum_class_id": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "example": {
+          "from_hubuum_class_id": 1,
+          "to_hubuum_class_id": 2
+        }
+      },
+      "NewHubuumClassRelationFromClass": {
+        "type": "object",
+        "description": "To create new relations between classes from within a class\nwe only need the id of the class we want to relate to.",
+        "required": [
+          "to_hubuum_class_id"
+        ],
+        "properties": {
+          "to_hubuum_class_id": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "example": {
+          "to_hubuum_class_id": 2
+        }
+      },
+      "NewHubuumObject": {
+        "type": "object",
+        "required": [
+          "name",
+          "namespace_id",
+          "hubuum_class_id",
+          "data",
+          "description"
+        ],
+        "properties": {
+          "data": {},
+          "description": {
+            "type": "string"
+          },
+          "hubuum_class_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          },
+          "namespace_id": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "example": {
+          "data": {
+            "hostname": "srv-01",
+            "ip": "10.0.0.10"
+          },
+          "description": "Primary application server",
+          "hubuum_class_id": 2,
+          "name": "srv-01",
+          "namespace_id": 1
+        }
+      },
+      "NewHubuumObjectRelation": {
+        "type": "object",
+        "required": [
+          "from_hubuum_object_id",
+          "to_hubuum_object_id",
+          "class_relation_id"
+        ],
+        "properties": {
+          "class_relation_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "from_hubuum_object_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "to_hubuum_object_id": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "example": {
+          "class_relation_id": 3,
+          "from_hubuum_object_id": 10,
+          "to_hubuum_object_id": 20
+        }
+      },
+      "NewNamespaceWithAssignee": {
+        "type": "object",
+        "description": "A new namespace, with an assignee. Used for creating new namespace entries\ninto the database and assign all permissions to the group given as group_id.\n\nThis wraps the NewNamespace struct and uses the group_id to grant all permissions\nto the group in a single transaction.",
+        "required": [
+          "name",
+          "description",
+          "group_id"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "group_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "example": {
+          "description": "Shared assets and metadata",
+          "group_id": 1,
+          "name": "global-assets"
+        }
+      },
+      "NewUser": {
+        "type": "object",
+        "description": "Struct to create a new user.\n\nThe password is expected to be hashed\nbefore being passed to the database.",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "password": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "example": {
+          "email": "alice@example.com",
+          "password": "correct-horse-battery-staple",
+          "username": "alice"
+        }
+      },
+      "ObjectsByClass": {
+        "type": "object",
+        "required": [
+          "hubuum_class_id",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "hubuum_class_id": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "Permission": {
+        "type": "object",
+        "required": [
+          "id",
+          "namespace_id",
+          "group_id",
+          "has_read_namespace",
+          "has_update_namespace",
+          "has_delete_namespace",
+          "has_delegate_namespace",
+          "has_create_class",
+          "has_read_class",
+          "has_update_class",
+          "has_delete_class",
+          "has_create_object",
+          "has_read_object",
+          "has_update_object",
+          "has_delete_object",
+          "has_create_class_relation",
+          "has_read_class_relation",
+          "has_update_class_relation",
+          "has_delete_class_relation",
+          "has_create_object_relation",
+          "has_read_object_relation",
+          "has_update_object_relation",
+          "has_delete_object_relation",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "group_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "has_create_class": {
+            "type": "boolean"
+          },
+          "has_create_class_relation": {
+            "type": "boolean"
+          },
+          "has_create_object": {
+            "type": "boolean"
+          },
+          "has_create_object_relation": {
+            "type": "boolean"
+          },
+          "has_delegate_namespace": {
+            "type": "boolean"
+          },
+          "has_delete_class": {
+            "type": "boolean"
+          },
+          "has_delete_class_relation": {
+            "type": "boolean"
+          },
+          "has_delete_namespace": {
+            "type": "boolean"
+          },
+          "has_delete_object": {
+            "type": "boolean"
+          },
+          "has_delete_object_relation": {
+            "type": "boolean"
+          },
+          "has_read_class": {
+            "type": "boolean"
+          },
+          "has_read_class_relation": {
+            "type": "boolean"
+          },
+          "has_read_namespace": {
+            "type": "boolean"
+          },
+          "has_read_object": {
+            "type": "boolean"
+          },
+          "has_read_object_relation": {
+            "type": "boolean"
+          },
+          "has_update_class": {
+            "type": "boolean"
+          },
+          "has_update_class_relation": {
+            "type": "boolean"
+          },
+          "has_update_namespace": {
+            "type": "boolean"
+          },
+          "has_update_object": {
+            "type": "boolean"
+          },
+          "has_update_object_relation": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "namespace_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Permissions": {
+        "type": "string",
+        "enum": [
+          "ReadCollection",
+          "UpdateCollection",
+          "DeleteCollection",
+          "DelegateCollection",
+          "CreateClass",
+          "ReadClass",
+          "UpdateClass",
+          "DeleteClass",
+          "CreateObject",
+          "ReadObject",
+          "UpdateObject",
+          "DeleteObject",
+          "CreateClassRelation",
+          "ReadClassRelation",
+          "UpdateClassRelation",
+          "DeleteClassRelation",
+          "CreateObjectRelation",
+          "ReadObjectRelation",
+          "UpdateObjectRelation",
+          "DeleteObjectRelation"
+        ]
+      },
+      "UpdateGroup": {
+        "type": "object",
+        "properties": {
+          "groupname": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "example": {
+          "groupname": "platform-ops"
+        }
+      },
+      "UpdateHubuumClass": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "json_schema": {},
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "namespace_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "validate_schema": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "example": {
+          "description": "Validated server inventory class",
+          "json_schema": null,
+          "name": "server",
+          "namespace_id": 1,
+          "validate_schema": true
+        }
+      },
+      "UpdateHubuumObject": {
+        "type": "object",
+        "properties": {
+          "data": {},
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "hubuum_class_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "namespace_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        },
+        "example": {
+          "data": {
+            "hostname": "srv-01",
+            "status": "active"
+          },
+          "description": "Primary application server (updated)",
+          "hubuum_class_id": null,
+          "name": "srv-01",
+          "namespace_id": null
+        }
+      },
+      "UpdateNamespace": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "example": {
+          "description": "Shared assets and metadata",
+          "name": "global-assets"
+        }
+      },
+      "UpdateUser": {
+        "type": "object",
+        "description": "Struct to update a user.\n\nThe password, if present, is expected to be hashed\nbefore being passed to the database.",
+        "properties": {
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "example": {
+          "email": "alice@example.com",
+          "password": "new-password",
+          "username": "alice"
+        }
+      },
+      "User": {
+        "type": "object",
+        "required": [
+          "id",
+          "username",
+          "password",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "password": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
+      "UserToken": {
+        "type": "object",
+        "required": [
+          "token",
+          "user_id",
+          "issued"
+        ],
+        "properties": {
+          "issued": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "token": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearer_auth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "meta",
+      "description": "Meta and database state endpoints"
+    },
+    {
+      "name": "auth",
+      "description": "Authentication and token lifecycle"
+    },
+    {
+      "name": "users",
+      "description": "User management endpoints"
+    },
+    {
+      "name": "groups",
+      "description": "Group management endpoints"
+    },
+    {
+      "name": "namespaces",
+      "description": "Namespace and permission endpoints"
+    },
+    {
+      "name": "relations",
+      "description": "Class and object relation endpoints"
+    },
+    {
+      "name": "classes",
+      "description": "Class and object-in-class endpoints"
+    }
+  ]
+}

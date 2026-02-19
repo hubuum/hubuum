@@ -108,6 +108,7 @@ impl Group {
 }
 
 #[derive(Deserialize, Serialize, Insertable, Debug, ToSchema)]
+#[schema(example = new_group_example)]
 #[diesel(table_name = groups)]
 pub struct NewGroup {
     pub groupname: String,
@@ -131,6 +132,7 @@ impl NewGroup {
 }
 
 #[derive(Deserialize, Serialize, AsChangeset, ToSchema)]
+#[schema(example = update_group_example)]
 #[diesel(table_name = groups)]
 pub struct UpdateGroup {
     pub groupname: Option<String>,
@@ -142,5 +144,20 @@ impl UpdateGroup {
         Ok(diesel::update(groups.filter(id.eq(group_id)))
             .set(self)
             .get_result::<Group>(&mut pool.get()?)?)
+    }
+}
+
+#[allow(dead_code)]
+fn new_group_example() -> NewGroup {
+    NewGroup {
+        groupname: "ops".to_string(),
+        description: Some("Operations team".to_string()),
+    }
+}
+
+#[allow(dead_code)]
+fn update_group_example() -> UpdateGroup {
+    UpdateGroup {
+        groupname: Some("platform-ops".to_string()),
     }
 }

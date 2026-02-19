@@ -38,7 +38,7 @@ tracing-subscriber = { version = "0.3", features = [
     "json",
 ] }
 utoipa = { version = "5", features = ["actix_extras", "chrono"] }
-utoipa-swagger-ui = { version = "9", features = ["actix-web", "vendored"] }
+utoipa-swagger-ui = { version = "9", features = ["actix-web", "vendored"], optional = true }
 urlparse = "0.7"
 uuid = { version = "1", features = ["v4"] }
 percent-encoding = "2"
@@ -50,6 +50,8 @@ yare = "3"
 regex = "1"
 
 [features]
+default = ["swagger-ui"]
+swagger-ui = ["dep:utoipa-swagger-ui"]
 tls-rustls = ["dep:rustls", "actix-web/rustls-0_23"]
 tls-openssl = ["dep:openssl", "actix-web/openssl"]
 

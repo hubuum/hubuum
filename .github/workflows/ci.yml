@@ -35,8 +35,157 @@ jobs:
           config: '.markdownlint.json'
           globs: '**/*.md'
 
+  openapi-contract:
+    name: OpenAPI contract
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+      - name: Cache cargo & target directories
+        uses: Swatinem/rust-cache@v2
+      - name: Generate OpenAPI JSON
+        run: cargo run --bin hubuum-openapi --locked > /tmp/openapi.json
+      - name: Validate OpenAPI semantics
+        run: "cargo test --lib 'api::openapi::tests::' --locked"
+      - name: Check OpenAPI drift
+        run: diff -u docs/openapi.json /tmp/openapi.json
+      - name: Prepare OpenAPI artifact
+        run: cp /tmp/openapi.json openapi.json
+      - name: Upload OpenAPI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-json
+          path: openapi.json
+
+  feature-matrix:
+    name: Detect feature permutations
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.detect.outputs.matrix }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+      - name: Cache cargo & target directories
+        uses: Swatinem/rust-cache@v2
+      - name: Install feature build dependencies
+        run: |
+          sudo apt-get update --yes
+          sudo apt-get install --yes libssl-dev
+      - name: Detect valid feature permutations
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -t features < <(
+            cargo metadata --no-deps --format-version 1 \
+              | jq -r '.packages[] | select(.name=="hubuum") | .features | keys[]' \
+              | grep -v '^default$' \
+              | sort
+          )
+
+          combos=("")
+          for feature in "${features[@]}"; do
+            current=("${combos[@]}")
+            for combo in "${current[@]}"; do
+              if [[ -z "$combo" ]]; then
+                combos+=("$feature")
+              else
+                combos+=("$combo,$feature")
+              fi
+            done
+          done
+
+          matrix='[]'
+
+          add_if_valid () {
+            local name="$1"
+            local args="$2"
+            local -a args_arr=()
+            if [[ -n "$args" ]]; then
+              read -r -a args_arr <<<"$args"
+            fi
+
+            if cargo check --quiet --locked "${args_arr[@]}"; then
+              matrix="$(jq --arg name "$name" --arg args "$args" '. + [{name:$name,args:$args}]' <<<"$matrix")"
+            else
+              echo "Skipping invalid feature set: $name"
+            fi
+          }
+
+          add_if_valid "default" ""
+          add_if_valid "no-default-features" "--no-default-features"
+
+          for combo in "${combos[@]}"; do
+            [[ -z "$combo" ]] && continue
+            add_if_valid "$combo" "--no-default-features -F $combo"
+          done
+
+          echo "Detected feature matrix:"
+          echo "$matrix" | jq .
+          {
+            echo "matrix<<EOF"
+            echo "$matrix"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  feature-permutations:
+    name: Feature matrix (${{ matrix.feature.name }})
+    needs: feature-matrix
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        feature: ${{ fromJson(needs.feature-matrix.outputs.matrix) }}
+    services:
+      postgres:
+        image: postgres
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+      - name: Cache cargo & target directories
+        uses: Swatinem/rust-cache@v2
+      - name: Install database libraries on Linux
+        run: |
+          sudo apt-get update --yes
+          sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev libssl-dev
+      - name: Set up database
+        continue-on-error: true # Migrations will fail due to views and a locked schema.
+        run: |
+          cargo install diesel_cli --no-default-features --features postgres --force
+          echo "Creating database"
+          PGPASSWORD=postgres createdb -U postgres -h localhost -p 5432 hubuum_rust_test
+          echo "Running database setup and migrations"
+          diesel migration run --database-url ${{ env.DATABASE_URL }} --locked-schema
+          echo "Checking database setup"
+          PGPASSWORD=postgres psql -U postgres -h localhost -p 5432 -d hubuum_rust_test -c "select * from users;"
+      - name: Build (${{ matrix.feature.name }})
+        uses: houseabsolute/actions-rust-cross@v0
+        with:
+          command: "build"
+          target: x86_64-unknown-linux-gnu
+          toolchain: stable
+          args: "${{ matrix.feature.args }} --locked --release"
+          strip: true
+      - name: Test (${{ matrix.feature.name }})
+        uses: houseabsolute/actions-rust-cross@v0
+        with:
+          command: "test -- --database-url ${{ env.DATABASE_URL }}"
+          target: x86_64-unknown-linux-gnu
+          toolchain: stable
+          args: "${{ matrix.feature.args }} --locked --release"
+
   test:
-    name: ${{ matrix.platform.os_name }} with rust ${{ matrix.toolchain }}
+    name: Cross-platform (${{ matrix.platform.os_name }}, rust ${{ matrix.toolchain }})
     runs-on: ${{ matrix.platform.os }}
     strategy:
       fail-fast: false
@@ -183,15 +332,6 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
           args: "-F tls-rustls --locked --release"
           strip: true
-      - name: Generate OpenAPI JSON
-        run: cargo run --bin hubuum-openapi --locked > openapi.json
-        if: matrix.toolchain == 'stable' && matrix.platform.target == 'x86_64-unknown-linux-gnu'
-      - name: Upload OpenAPI artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: openapi-json
-          path: openapi.json
-        if: matrix.toolchain == 'stable' && matrix.platform.target == 'x86_64-unknown-linux-gnu'
       - name: Run tests      
         uses: houseabsolute/actions-rust-cross@v0
         with:
@@ -237,7 +377,10 @@ jobs:
   release-main:
     name: Publish “main” binaries
     if: github.ref == 'refs/heads/main'
-    needs: test
+    needs:
+      - test
+      - openapi-contract
+      - feature-permutations
     runs-on: ubuntu-24.04
     permissions:
       contents: write
