@@ -118,3 +118,28 @@ where
         .send_request(&app)
         .await
 }
+
+pub async fn put_request<T>(
+    pool: &DbPool,
+    token: &str,
+    endpoint: &str,
+    content: T,
+) -> actix_web::dev::ServiceResponse
+where
+    T: Serialize,
+{
+    let app = test::init_service(
+        App::new()
+            .wrap(TracingMiddleware)
+            .app_data(Data::new(pool.clone()))
+            .configure(prod_api::config),
+    )
+    .await;
+
+    test::TestRequest::put()
+        .insert_header(create_token_header(token))
+        .uri(endpoint)
+        .set_json(&content)
+        .send_request(&app)
+        .await
+}

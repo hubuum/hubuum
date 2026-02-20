@@ -212,7 +212,6 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     ///   the group.
     /// - If the group did not have any permissions, a new permission
     ///   object is created for the group, with the requested permissions.
-    /// - No permissions are removed from the group.
     ///
     /// ## Arguments
     ///
@@ -228,6 +227,21 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
         pool: &DbPool,
         group_id_for_grant: i32,
         permission_list: PermissionsList<Permissions>,
+    ) -> Result<Permission, ApiError> {
+        self.apply_permissions(pool, group_id_for_grant, permission_list, false)
+            .await
+    }
+
+    /// Apply permissions to a group, optionally replacing existing permissions.
+    ///
+    /// - When `replace_existing` is false, no permissions are removed from the group.
+    /// - When `replace_existing` is true, any existing permissions are cleared first.
+    async fn apply_permissions(
+        &self,
+        pool: &DbPool,
+        group_id_for_grant: i32,
+        permission_list: PermissionsList<Permissions>,
+        replace_existing: bool,
     ) -> Result<Permission, ApiError> {
         use crate::schema::permissions::dsl::*;
 
@@ -245,7 +259,32 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
 
             match existing_entry {
                 Some(_) => {
-                    let mut update_perm = UpdatePermission::default();
+                    let mut update_perm = if replace_existing {
+                        UpdatePermission {
+                            has_read_namespace: Some(false),
+                            has_update_namespace: Some(false),
+                            has_delete_namespace: Some(false),
+                            has_delegate_namespace: Some(false),
+                            has_create_class: Some(false),
+                            has_read_class: Some(false),
+                            has_update_class: Some(false),
+                            has_delete_class: Some(false),
+                            has_create_object: Some(false),
+                            has_read_object: Some(false),
+                            has_update_object: Some(false),
+                            has_delete_object: Some(false),
+                            has_create_class_relation: Some(false),
+                            has_read_class_relation: Some(false),
+                            has_update_class_relation: Some(false),
+                            has_delete_class_relation: Some(false),
+                            has_create_object_relation: Some(false),
+                            has_read_object_relation: Some(false),
+                            has_update_object_relation: Some(false),
+                            has_delete_object_relation: Some(false),
+                        }
+                    } else {
+                        UpdatePermission::default()
+                    };
                     for permission in permission_list.into_iter() {
                         match permission {
                             Permissions::ReadCollection => {
@@ -562,83 +601,8 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
         group_identifier: i32,
         permission_list: PermissionsList<Permissions>,
     ) -> Result<Permission, ApiError> {
-        use crate::schema::permissions::dsl::*;
-
-        let mut conn = pool.get()?;
-        let nid = self.namespace_id(pool).await?;
-
-        conn.transaction::<_, ApiError, _>(|conn| {
-            let existing_entry = permissions
-                .filter(namespace_id.eq(nid))
-                .filter(group_id.eq(group_identifier))
-                .first::<Permission>(conn)
-                .optional()?;
-
-            match existing_entry {
-                Some(_) => Ok(diesel::update(permissions)
-                    .filter(namespace_id.eq(nid))
-                    .filter(group_id.eq(group_identifier))
-                    .set((
-                        has_read_namespace
-                            .eq(permission_list.contains(&Permissions::ReadCollection)),
-                        has_update_namespace
-                            .eq(permission_list.contains(&Permissions::UpdateCollection)),
-                        has_delete_namespace
-                            .eq(permission_list.contains(&Permissions::DeleteCollection)),
-                        has_delegate_namespace
-                            .eq(permission_list.contains(&Permissions::DelegateCollection)),
-                        has_create_class.eq(permission_list.contains(&Permissions::CreateClass)),
-                        has_read_class.eq(permission_list.contains(&Permissions::ReadClass)),
-                        has_update_class.eq(permission_list.contains(&Permissions::UpdateClass)),
-                        has_delete_class.eq(permission_list.contains(&Permissions::DeleteClass)),
-                        has_create_object.eq(permission_list.contains(&Permissions::CreateObject)),
-                        has_read_object.eq(permission_list.contains(&Permissions::ReadObject)),
-                        has_update_object.eq(permission_list.contains(&Permissions::UpdateObject)),
-                        has_delete_object.eq(permission_list.contains(&Permissions::DeleteObject)),
-                    ))
-                    .get_result(conn)?),
-                None => {
-                    let new_entry = NewPermission {
-                        namespace_id: nid,
-                        group_id: group_identifier,
-                        has_read_namespace: permission_list.contains(&Permissions::ReadCollection),
-                        has_update_namespace: permission_list
-                            .contains(&Permissions::UpdateCollection),
-                        has_delete_namespace: permission_list
-                            .contains(&Permissions::DeleteCollection),
-                        has_delegate_namespace: permission_list
-                            .contains(&Permissions::DelegateCollection),
-                        has_create_class: permission_list.contains(&Permissions::CreateClass),
-                        has_read_class: permission_list.contains(&Permissions::ReadClass),
-                        has_update_class: permission_list.contains(&Permissions::UpdateClass),
-                        has_delete_class: permission_list.contains(&Permissions::DeleteClass),
-                        has_create_object: permission_list.contains(&Permissions::CreateObject),
-                        has_read_object: permission_list.contains(&Permissions::ReadObject),
-                        has_update_object: permission_list.contains(&Permissions::UpdateObject),
-                        has_delete_object: permission_list.contains(&Permissions::DeleteObject),
-                        has_create_class_relation: permission_list
-                            .contains(&Permissions::CreateClassRelation),
-                        has_read_class_relation: permission_list
-                            .contains(&Permissions::ReadClassRelation),
-                        has_update_class_relation: permission_list
-                            .contains(&Permissions::UpdateClassRelation),
-                        has_delete_class_relation: permission_list
-                            .contains(&Permissions::DeleteClassRelation),
-                        has_create_object_relation: permission_list
-                            .contains(&Permissions::CreateObjectRelation),
-                        has_read_object_relation: permission_list
-                            .contains(&Permissions::ReadObjectRelation),
-                        has_update_object_relation: permission_list
-                            .contains(&Permissions::UpdateObjectRelation),
-                        has_delete_object_relation: permission_list
-                            .contains(&Permissions::DeleteObjectRelation),
-                    };
-                    Ok(diesel::insert_into(permissions)
-                        .values(&new_entry)
-                        .get_result(conn)?)
-                }
-            }
-        })
+        self.apply_permissions(pool, group_identifier, permission_list, true)
+            .await
     }
 
     /// Revoke all permissions from a group.

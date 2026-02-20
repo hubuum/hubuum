@@ -5,7 +5,9 @@ mod tests {
         UpdateNamespace,
     };
 
-    use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
+    use crate::tests::api_operations::{
+        delete_request, get_request, patch_request, post_request, put_request,
+    };
     use crate::tests::asserts::assert_response_status;
     use crate::tests::{
         create_namespace, create_test_group, create_test_user, ensure_admin_group,
@@ -290,6 +292,28 @@ mod tests {
         )
         .await;
         let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;
+
+        ns.delete(&pool).await.unwrap();
+        normal_group.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_api_namespace_permissions_put_empty_is_bad_request() {
+        let (pool, admin_token, _normal_token) = setup_pool_and_tokens().await;
+        let _admin_group = ensure_admin_group(&pool).await;
+
+        let ns = create_namespace(&pool, "test_namespace_permissions_put_empty")
+            .await
+            .unwrap();
+        let normal_group = create_test_group(&pool).await;
+
+        let endpoint = &format!(
+            "{}/{}/permissions/group/{}",
+            NAMESPACE_ENDPOINT, ns.id, normal_group.id
+        );
+
+        let resp = put_request(&pool, &admin_token, endpoint, Vec::<Permissions>::new()).await;
+        let _ = assert_response_status(resp, http::StatusCode::BAD_REQUEST).await;
 
         ns.delete(&pool).await.unwrap();
         normal_group.delete(&pool).await.unwrap();

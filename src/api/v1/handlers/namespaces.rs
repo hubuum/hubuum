@@ -10,7 +10,9 @@ use crate::models::{
 use crate::models::search::parse_query_parameter;
 
 use crate::utilities::response::{json_response, json_response_created};
-use actix_web::{delete, get, http::StatusCode, patch, post, routes, web, HttpRequest, Responder};
+use actix_web::{
+    delete, get, http::StatusCode, patch, post, put, routes, web, HttpRequest, Responder,
+};
 use serde_json::json;
 use tracing::{debug, info};
 
@@ -301,7 +303,7 @@ pub async fn get_namespace_group_permissions(
 
 /// Post a permission set to a group on a namespace
 /// This will create a new entry if the group had no permissions,
-/// or update the existing entry if it did.
+/// or add to the existing entry if it did.
 /// The body should be a JSON array of permissions:
 /// ```json
 /// [
@@ -355,6 +357,65 @@ pub async fn grant_namespace_group_permissions(
     namespace.grant(&pool, group_id.id(), permissions).await?;
 
     Ok(json_response((), StatusCode::CREATED))
+}
+
+/// Replace all permissions for a group on a namespace
+/// This removes any existing permissions and applies the new set.
+#[utoipa::path(
+    put,
+    path = "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}",
+    tag = "namespaces",
+    security(("bearer_auth" = [])),
+    params(
+        ("namespace_id" = i32, Path, description = "Namespace ID"),
+        ("group_id" = i32, Path, description = "Group ID")
+    ),
+    request_body = Vec<Permissions>,
+    responses(
+        (status = 200, description = "Permissions replaced"),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Namespace or group not found", body = ApiErrorResponse)
+    )
+)]
+#[put("/{namespace_id}/permissions/group/{group_id}")]
+pub async fn replace_namespace_group_permissions(
+    pool: web::Data<DbPool>,
+    requestor: UserAccess,
+    params: web::Path<(NamespaceID, GroupID)>,
+    permissions: web::Json<Vec<Permissions>>,
+) -> Result<impl Responder, ApiError> {
+    let (namespace_id, group_id) = params.into_inner();
+    let permissions = PermissionsList::new(permissions.into_inner());
+
+    info!(
+        message = "Namespace group permissions replace requested",
+        requestor = requestor.user.id,
+        namespace_id = namespace_id.id(),
+        group_id = group_id.id(),
+        permissions = ?permissions
+    );
+
+    let namespace = namespace_id.instance(&pool).await?;
+    can!(
+        &pool,
+        requestor.user,
+        [Permissions::DelegateCollection],
+        namespace
+    );
+
+    if !permissions.iter().next().is_some() {
+        return Err(ApiError::BadRequest(
+            "Permissions list cannot be empty for replace operation, use DELETE endpoint instead"
+                .to_string(),
+        ));
+    }
+
+    namespace
+        .set_permissions(&pool, group_id.id(), permissions)
+        .await?;
+
+    Ok(json_response((), StatusCode::OK))
 }
 
 /// Revoke a permission set from a group on a namespace

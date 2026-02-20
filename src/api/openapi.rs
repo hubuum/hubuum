@@ -55,6 +55,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         namespaces::get_namespace_permissions,
         namespaces::get_namespace_group_permissions,
         namespaces::grant_namespace_group_permissions,
+        namespaces::replace_namespace_group_permissions,
         namespaces::revoke_namespace_group_permissions,
         namespaces::get_namespace_group_permission,
         namespaces::grant_namespace_group_permission,
