@@ -45,7 +45,7 @@ impl Permissions {
     pub fn from_string(s: &str) -> Result<Permissions, ApiError> {
         match s {
             "ReadCollection" => Ok(Permissions::ReadCollection),
-            "UpdateColletion" => Ok(Permissions::UpdateCollection),
+            "UpdateCollection" => Ok(Permissions::UpdateCollection),
             "DeleteCollection" => Ok(Permissions::DeleteCollection),
             "DelegateCollection" => Ok(Permissions::DelegateCollection),
             "CreateClass" => Ok(Permissions::CreateClass),

@@ -248,17 +248,7 @@ pub async fn get_namespace_permissions(
         namespace
     );
 
-    let permissions = groups_on(
-        &pool,
-        namespace,
-        vec![
-            Permissions::ReadCollection,
-            Permissions::UpdateCollection,
-            Permissions::DeleteCollection,
-            Permissions::DelegateCollection,
-        ],
-    )
-    .await?;
+    let permissions = groups_on(&pool, namespace, vec![]).await?;
     Ok(json_response(permissions, StatusCode::OK))
 }
 
