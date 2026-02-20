@@ -169,6 +169,7 @@ pub struct LoginResponse {
 pub struct CountsResponse {
     pub total_objects: i64,
     pub total_classes: i64,
+    pub total_namespaces: i64,
     pub objects_per_class: Vec<ObjectsByClass>,
 }
 
@@ -199,6 +200,7 @@ fn counts_response_example() -> CountsResponse {
     CountsResponse {
         total_objects: 42,
         total_classes: 7,
+        total_namespaces: 3,
         objects_per_class: vec![ObjectsByClass {
             hubuum_class_id: 1,
             count: 6,
@@ -470,27 +472,28 @@ mod tests {
             .and_then(Value::as_object)
             .expect("OpenAPI paths must be an object");
 
-        let operation_keys = ["get", "post", "put", "patch", "delete", "options", "head", "trace"];
+        let operation_keys = [
+            "get", "post", "put", "patch", "delete", "options", "head", "trace",
+        ];
         let mut operation_ids = HashSet::new();
 
         for (path, path_item) in paths {
-            let path_item = path_item
-                .as_object()
-                .expect("Path item must be an object");
+            let path_item = path_item.as_object().expect("Path item must be an object");
 
             for method in operation_keys {
                 let Some(operation) = path_item.get(method) else {
                     continue;
                 };
-                let operation = operation
-                    .as_object()
-                    .expect("Operation must be an object");
+                let operation = operation.as_object().expect("Operation must be an object");
 
                 let operation_id = operation
                     .get("operationId")
                     .and_then(Value::as_str)
                     .expect("operationId must be present");
-                assert!(!operation_id.trim().is_empty(), "operationId is empty for {method} {path}");
+                assert!(
+                    !operation_id.trim().is_empty(),
+                    "operationId is empty for {method} {path}"
+                );
                 assert!(
                     operation_ids.insert(operation_id.to_string()),
                     "Duplicate operationId found: {operation_id}"
@@ -500,7 +503,10 @@ mod tests {
                     .get("summary")
                     .and_then(Value::as_str)
                     .expect("summary must be present");
-                assert!(!summary.trim().is_empty(), "summary is empty for {method} {path}");
+                assert!(
+                    !summary.trim().is_empty(),
+                    "summary is empty for {method} {path}"
+                );
 
                 let description = operation
                     .get("description")
@@ -524,7 +530,10 @@ mod tests {
                             .map(|obj| obj.contains_key("bearer_auth"))
                             .unwrap_or(false)
                     });
-                    assert!(has_bearer, "missing bearer_auth security for {method} {path}");
+                    assert!(
+                        has_bearer,
+                        "missing bearer_auth security for {method} {path}"
+                    );
                 }
             }
         }

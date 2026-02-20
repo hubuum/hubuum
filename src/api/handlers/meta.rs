@@ -3,6 +3,7 @@ use crate::db::{with_connection, DbPool};
 use crate::errors::ApiError;
 use crate::extractors::AdminAccess;
 use crate::models::class::total_class_count;
+use crate::models::namespace::total_namespace_count;
 use crate::models::object::{objects_per_class_count, total_object_count};
 use crate::utilities::response::json_response;
 use actix_web::{get, http::StatusCode, web, Responder, ResponseError};
@@ -11,7 +12,6 @@ use diesel::sql_types::{BigInt, Nullable, Timestamp};
 use diesel::QueryableByName;
 use diesel::RunQueryDsl;
 use serde::Serialize;
-use serde_json::json;
 use tracing::debug;
 use utoipa::ToSchema;
 
@@ -104,23 +104,18 @@ pub async fn get_db_state(pool: web::Data<DbPool>, requestor: AdminAccess) -> im
 pub async fn get_object_and_class_count(
     pool: web::Data<DbPool>,
     requestor: AdminAccess,
-) -> impl Responder {
-    let total_objects = total_object_count(&pool).await;
-    let total_classes = total_class_count(&pool).await;
-    let objects_per_class = objects_per_class_count(&pool).await;
-
+) -> Result<impl Responder, ApiError> {
     debug!(
-        message = "DB count requested",
+        message = "Object count requested",
         requestor = requestor.user.id,
     );
 
-    match (total_objects, total_classes, objects_per_class) {
-        (Ok(total_objects), Ok(total_classes), Ok(objects_per_class)) => Ok(json_response(
-            json!({"total_objects": total_objects, "total_classes": total_classes, "objects_per_class": objects_per_class}),
-            StatusCode::OK,
-        )),
-        (Err(e), _, _) => Err(e),
-        (_, Err(e), _) => Err(e),
-        (_, _, Err(e)) => Err(e),
-    }
+    let response = CountsResponse {
+        total_objects: total_object_count(&pool).await?,
+        total_classes: total_class_count(&pool).await?,
+        total_namespaces: total_namespace_count(&pool).await?,
+        objects_per_class: objects_per_class_count(&pool).await?,
+    };
+
+    Ok(json_response(response, StatusCode::OK))
 }

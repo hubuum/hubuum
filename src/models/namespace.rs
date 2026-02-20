@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 use crate::models::group::Group;
 use crate::models::user::{User, UserID};
 
-use crate::db::DbPool;
+use crate::db::{with_connection, DbPool};
 
 use crate::schema::namespaces;
 
@@ -86,6 +86,14 @@ fn new_namespace_with_assignee_example() -> NewNamespaceWithAssignee {
         description: "Shared assets and metadata".to_string(),
         group_id: 1,
     }
+}
+
+pub async fn total_namespace_count(pool: &DbPool) -> Result<i64, ApiError> {
+    use crate::schema::namespaces::dsl::*;
+
+    let count = with_connection(pool, |conn| namespaces.count().get_result::<i64>(conn))?;
+
+    Ok(count)
 }
 
 /// Check what permissions a user has to a given namespace
