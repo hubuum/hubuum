@@ -6,16 +6,17 @@ use std::{fmt, fmt::Display, slice};
 use crate::db::DbPool;
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::{
     errors::ApiError, schema::class_closure_view, schema::hubuumclass_closure,
     schema::hubuumclass_relation, schema::hubuumobject_relation, schema::object_closure_view,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct HubuumClassRelationID(pub i32);
 
-#[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy, PartialEq, Eq, ToSchema)]
 #[diesel(table_name = hubuumclass_relation)]
 pub struct HubuumClassRelation {
     pub id: i32,
@@ -25,7 +26,8 @@ pub struct HubuumClassRelation {
     pub updated_at: chrono::NaiveDateTime,
 }
 
-#[derive(Debug, Serialize, Deserialize, Insertable)]
+#[derive(Debug, Serialize, Deserialize, Insertable, ToSchema)]
+#[schema(example = new_hubuum_class_relation_example)]
 #[diesel(table_name = hubuumclass_relation)]
 pub struct NewHubuumClassRelation {
     pub from_hubuum_class_id: i32,
@@ -34,15 +36,16 @@ pub struct NewHubuumClassRelation {
 
 /// To create new relations between classes from within a class
 /// we only need the id of the class we want to relate to.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[schema(example = new_hubuum_class_relation_from_class_example)]
 pub struct NewHubuumClassRelationFromClass {
     pub to_hubuum_class_id: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct HubuumObjectRelationID(pub i32);
 
-#[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy, PartialEq, Eq, ToSchema)]
 #[diesel(table_name = hubuumobject_relation)]
 pub struct HubuumObjectRelation {
     pub id: i32,
@@ -53,7 +56,8 @@ pub struct HubuumObjectRelation {
     pub updated_at: chrono::NaiveDateTime,
 }
 
-#[derive(Debug, Serialize, Deserialize, Insertable)]
+#[derive(Debug, Serialize, Deserialize, Insertable, ToSchema)]
+#[schema(example = new_hubuum_object_relation_example)]
 #[diesel(table_name = hubuumobject_relation)]
 pub struct NewHubuumObjectRelation {
     pub from_hubuum_object_id: i32,
@@ -64,14 +68,23 @@ pub struct NewHubuumObjectRelation {
 /// To create new relations between objects from within a
 /// path where we already provide the class and object IDs
 /// we only need the destination object ID.
-#[derive(Debug, Serialize, Deserialize, Insertable, Clone)]
+#[derive(Debug, Serialize, Deserialize, Insertable, Clone, ToSchema)]
 #[diesel(table_name = hubuumobject_relation)]
 pub struct NewHubuumObjectRelationFromClassAndObject {
     pub to_hubuum_object_id: i32,
 }
 
 #[derive(
-    Debug, Serialize, Deserialize, Queryable, QueryableByName, Selectable, Clone, PartialEq, Eq,
+    Debug,
+    Serialize,
+    Deserialize,
+    Queryable,
+    QueryableByName,
+    Selectable,
+    Clone,
+    PartialEq,
+    Eq,
+    ToSchema,
 )]
 #[diesel(table_name = hubuumclass_closure)]
 pub struct HubuumClassRelationTransitive {
@@ -137,6 +150,30 @@ pub struct ObjectClosureView {
     pub descendant_created_at: chrono::NaiveDateTime,
     pub ancestor_updated_at: chrono::NaiveDateTime,
     pub descendant_updated_at: chrono::NaiveDateTime,
+}
+
+#[allow(dead_code)]
+fn new_hubuum_class_relation_example() -> NewHubuumClassRelation {
+    NewHubuumClassRelation {
+        from_hubuum_class_id: 1,
+        to_hubuum_class_id: 2,
+    }
+}
+
+#[allow(dead_code)]
+fn new_hubuum_class_relation_from_class_example() -> NewHubuumClassRelationFromClass {
+    NewHubuumClassRelationFromClass {
+        to_hubuum_class_id: 2,
+    }
+}
+
+#[allow(dead_code)]
+fn new_hubuum_object_relation_example() -> NewHubuumObjectRelation {
+    NewHubuumObjectRelation {
+        from_hubuum_object_id: 10,
+        to_hubuum_object_id: 20,
+        class_relation_id: 3,
+    }
 }
 
 #[cfg(test)]

@@ -25,7 +25,7 @@ futures-util = "0.3"
 jsonschema = "0"
 once_cell = "1"
 r2d2 = "0.8"
-rand = "0.9"
+rand = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0"
@@ -37,6 +37,11 @@ tracing-subscriber = { version = "0.3", features = [
     "chrono",
     "json",
 ] }
+utoipa = { version = "5", features = ["actix_extras", "chrono"] }
+utoipa-swagger-ui = { version = "9", features = [
+    "actix-web",
+    "vendored",
+], optional = true }
 urlparse = "0.7"
 uuid = { version = "1", features = ["v4"] }
 percent-encoding = "2"
@@ -48,6 +53,8 @@ yare = "3"
 regex = "1"
 
 [features]
+default = ["swagger-ui"]
+swagger-ui = ["dep:utoipa-swagger-ui"]
 tls-rustls = ["dep:rustls", "actix-web/rustls-0_23"]
 tls-openssl = ["dep:openssl", "actix-web/openssl"]
 
@@ -69,4 +76,9 @@ path = "src/main.rs"
 [[bin]]
 name = "hubuum-admin"
 path = "src/bin/admin.rs"
+test = false
+
+[[bin]]
+name = "hubuum-openapi"
+path = "src/bin/openapi.rs"
 test = false

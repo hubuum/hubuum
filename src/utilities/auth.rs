@@ -7,7 +7,7 @@ use argon2::{
     Argon2,
 };
 
-use rand::{distr::Alphanumeric, rng, Rng};
+use rand::{distr::Alphanumeric, rng, RngExt};
 use sha2::{Digest, Sha512};
 
 use tracing::debug;

@@ -15,6 +15,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(classes::create_object_in_class)
         .service(classes::get_class_relations)
         .service(classes::get_class_relations_transitive)
+        .service(classes::get_class_relations_transitive_to_class)
         .service(classes::delete_class_relation)
         .service(classes::create_class_relation)
         .service(classes::list_related_objects)

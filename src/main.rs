@@ -12,8 +12,12 @@ mod tests;
 mod traits;
 mod utilities;
 
-use actix_web::{middleware::Logger, web::Data, web::JsonConfig, App, HttpServer};
+use actix_web::{middleware::Logger, web, web::Data, web::JsonConfig, App, HttpServer};
 use db::init_pool;
+#[cfg(feature = "swagger-ui")]
+use utoipa::OpenApi;
+#[cfg(feature = "swagger-ui")]
+use utoipa_swagger_ui::SwaggerUi;
 
 use tracing::{debug, info};
 use tracing_subscriber::{
@@ -26,6 +30,7 @@ use crate::errors::{
     EXIT_CODE_TLS_ERROR,
 };
 use crate::utilities::is_valid_log_level;
+use crate::api::openapi::openapi_json as openapi_json_handler;
 
 #[cfg(all(feature = "tls-openssl", feature = "tls-rustls"))]
 compile_error!("Features `tls-openssl` and `tls-rustls` are mutually exclusive");
@@ -85,12 +90,20 @@ async fn main() -> std::io::Result<()> {
     }
 
     let server = HttpServer::new(move || {
-        App::new()
+        let app = App::new()
             .wrap(middlewares::tracing::TracingMiddleware)
             .wrap(Logger::default())
             .app_data(Data::new(pool.clone()))
             .app_data(JsonConfig::default().error_handler(json_error_handler))
-            .configure(api::config)
+            .route("/api-doc/openapi.json", web::get().to(openapi_json_handler));
+
+        #[cfg(feature = "swagger-ui")]
+        let app = app.service(
+            SwaggerUi::new("/swagger-ui/{_:.*}")
+                .url("/api-doc/openapi.json", api::openapi::ApiDoc::openapi()),
+        );
+
+        app.configure(api::config)
     });
 
     let bind_address = format!("{}:{}", config.bind_ip, config.port);

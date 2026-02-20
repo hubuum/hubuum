@@ -2,12 +2,13 @@ use diesel::prelude::*;
 use diesel::sql_query;
 use diesel::sql_types::{BigInt, Integer, Jsonb, Text, Timestamp};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::schema::hubuumobject;
 
-#[derive(Serialize, Deserialize, Queryable, Clone, PartialEq, Debug, QueryableByName)]
+#[derive(Serialize, Deserialize, Queryable, Clone, PartialEq, Debug, QueryableByName, ToSchema)]
 #[diesel(table_name = hubuumobject)]
 pub struct HubuumObject {
     #[diesel(sql_type = Integer)]
@@ -29,7 +30,8 @@ pub struct HubuumObject {
     pub updated_at: chrono::NaiveDateTime,
 }
 
-#[derive(Serialize, Deserialize, Clone, Insertable)]
+#[derive(Serialize, Deserialize, Clone, Insertable, ToSchema)]
+#[schema(example = new_hubuum_object_example)]
 #[diesel(table_name = hubuumobject)]
 pub struct NewHubuumObject {
     pub name: String,
@@ -38,7 +40,8 @@ pub struct NewHubuumObject {
     pub data: serde_json::Value,
     pub description: String,
 }
-#[derive(Serialize, Deserialize, Clone, AsChangeset)]
+#[derive(Serialize, Deserialize, Clone, AsChangeset, ToSchema)]
+#[schema(example = update_hubuum_object_example)]
 #[diesel(table_name = hubuumobject)]
 pub struct UpdateHubuumObject {
     pub name: Option<String>,
@@ -57,11 +60,11 @@ pub struct ObjectIDResult {
     pub id: i32,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, ToSchema)]
 pub struct HubuumObjectID(pub i32);
 
 // For objects per class.
-#[derive(QueryableByName, Debug, Serialize, Deserialize)]
+#[derive(QueryableByName, Debug, Serialize, Deserialize, ToSchema)]
 pub struct ObjectsByClass {
     #[diesel(sql_type = Integer)]
     pub hubuum_class_id: i32,
@@ -69,7 +72,7 @@ pub struct ObjectsByClass {
     pub count: i64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct HubuumObjectWithPath {
     pub id: i32,
     pub name: String,
@@ -99,6 +102,28 @@ pub async fn objects_per_class_count(pool: &DbPool) -> Result<Vec<ObjectsByClass
     let results = sql_query(raw_query).load::<ObjectsByClass>(&mut conn)?;
 
     Ok(results)
+}
+
+#[allow(dead_code)]
+fn new_hubuum_object_example() -> NewHubuumObject {
+    NewHubuumObject {
+        name: "srv-01".to_string(),
+        namespace_id: 1,
+        hubuum_class_id: 2,
+        data: serde_json::json!({"hostname": "srv-01", "ip": "10.0.0.10"}),
+        description: "Primary application server".to_string(),
+    }
+}
+
+#[allow(dead_code)]
+fn update_hubuum_object_example() -> UpdateHubuumObject {
+    UpdateHubuumObject {
+        name: Some("srv-01".to_string()),
+        namespace_id: None,
+        hubuum_class_id: None,
+        data: Some(serde_json::json!({"hostname": "srv-01", "status": "active"})),
+        description: Some("Primary application server (updated)".to_string()),
+    }
 }
 
 #[cfg(test)]

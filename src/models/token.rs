@@ -7,12 +7,15 @@ use diesel::prelude::*;
 use diesel::sql_types::{Integer, Text, Timestamp};
 use diesel::QueryableByName;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::schema::tokens;
 
-#[derive(Serialize, Deserialize, Queryable, Insertable, Selectable, QueryableByName, Clone)]
+#[derive(
+    Serialize, Deserialize, Queryable, Insertable, Selectable, QueryableByName, Clone, ToSchema,
+)]
 #[diesel(table_name = tokens)]
 pub struct UserToken {
     #[diesel(sql_type = Text)]

@@ -2,12 +2,13 @@ use diesel::prelude::*;
 use std::{fmt, fmt::Display, slice};
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::{errors::ApiError, schema::permissions};
 
 use super::search::ParsedQueryParam;
 
-#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy, ToSchema)]
 pub enum Permissions {
     ReadCollection,
     UpdateCollection,
@@ -240,7 +241,7 @@ impl<'a> PermissionFilter<'a, permissions::BoxedQuery<'a, diesel::pg::Pg>> for P
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy, ToSchema)]
 #[diesel(table_name = permissions)]
 pub struct Permission {
     pub id: i32,

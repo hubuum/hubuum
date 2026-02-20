@@ -1,9 +1,10 @@
+use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, UserAccess};
 use crate::models::{
-    GroupID, NamespaceID, NewNamespaceWithAssignee, Permissions, PermissionsList, UpdateNamespace,
-    UserID,
+    Group, GroupID, GroupPermission, Namespace, NamespaceID, NewNamespaceWithAssignee, Permission,
+    Permissions, PermissionsList, UpdateNamespace, UserID,
 };
 
 use crate::models::search::parse_query_parameter;
@@ -20,6 +21,17 @@ use crate::traits::{
     CanDelete, CanSave, CanUpdate, NamespaceAccessors, PermissionController, Search, SelfAccessors,
 };
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/namespaces",
+    tag = "namespaces",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Namespaces matching optional query filters", body = [Namespace]),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse)
+    )
+)]
 #[routes]
 #[get("")]
 #[get("/")]
@@ -45,6 +57,19 @@ pub async fn get_namespaces(
     Ok(json_response(result, StatusCode::OK))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/namespaces",
+    tag = "namespaces",
+    security(("bearer_auth" = [])),
+    request_body = NewNamespaceWithAssignee,
+    responses(
+        (status = 201, description = "Namespace created", body = Namespace),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 409, description = "Conflict", body = ApiErrorResponse)
+    )
+)]
 #[routes]
 #[post("")]
 #[post("/")]
@@ -68,6 +93,20 @@ pub async fn create_namespace(
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/namespaces/{namespace_id}",
+    tag = "namespaces",
+    security(("bearer_auth" = [])),
+    params(
+        ("namespace_id" = i32, Path, description = "Namespace ID")
+    ),
+    responses(
+        (status = 200, description = "Namespace", body = Namespace),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Namespace not found", body = ApiErrorResponse)
+    )
+)]
 #[get("/{namespace_id}")]
 pub async fn get_namespace(
     pool: web::Data<DbPool>,
@@ -92,6 +131,22 @@ pub async fn get_namespace(
     Ok(json_response(namespace, StatusCode::OK))
 }
 
+#[utoipa::path(
+    patch,
+    path = "/api/v1/namespaces/{namespace_id}",
+    tag = "namespaces",
+    security(("bearer_auth" = [])),
+    params(
+        ("namespace_id" = i32, Path, description = "Namespace ID")
+    ),
+    request_body = UpdateNamespace,
+    responses(
+        (status = 202, description = "Namespace updated", body = Namespace),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Namespace not found", body = ApiErrorResponse)
+    )
+)]
 #[patch("/{namespace_id}")]
 pub async fn update_namespace(
     pool: web::Data<DbPool>,
@@ -118,6 +173,20 @@ pub async fn update_namespace(
     Ok(json_response(updated_namespace, StatusCode::ACCEPTED))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/namespaces/{namespace_id}",
+    tag = "namespaces",
+    security(("bearer_auth" = [])),
+    params(
+        ("namespace_id" = i32, Path, description = "Namespace ID")
+    ),
+    responses(
+        (status = 204, description = "Namespace deleted"),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Namespace not found", body = ApiErrorResponse)
+    )
+)]
 #[delete("/{namespace_id}")]
 pub async fn delete_namespace(
     pool: web::Data<DbPool>,
@@ -143,6 +212,20 @@ pub async fn delete_namespace(
 }
 
 /// List all groups who have permissions for a namespace
+#[utoipa::path(
+    get,
+    path = "/api/v1/namespaces/{namespace_id}/permissions",
+    tag = "namespaces",
+    security(("bearer_auth" = [])),
+    params(
+        ("namespace_id" = i32, Path, description = "Namespace ID")
+    ),
+    responses(
+        (status = 200, description = "Group permissions on namespace", body = [GroupPermission]),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Namespace not found", body = ApiErrorResponse)
+    )
+)]
 #[get("/{namespace_id}/permissions")]
 pub async fn get_namespace_permissions(
     pool: web::Data<DbPool>,
@@ -180,6 +263,21 @@ pub async fn get_namespace_permissions(
 }
 
 /// List all permissions for a given group on a namespace
+#[utoipa::path(
+    get,
+    path = "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}",
+    tag = "namespaces",
+    security(("bearer_auth" = [])),
+    params(
+        ("namespace_id" = i32, Path, description = "Namespace ID"),
+        ("group_id" = i32, Path, description = "Group ID")
+    ),
+    responses(
+        (status = 200, description = "Permission record", body = Permission),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Namespace or group not found", body = ApiErrorResponse)
+    )
+)]
 #[get("/{namespace_id}/permissions/group/{group_id}")]
 pub async fn get_namespace_group_permissions(
     pool: web::Data<DbPool>,
@@ -221,6 +319,23 @@ pub async fn get_namespace_group_permissions(
 ///   "ReadCollection"
 /// ]
 /// ```
+#[utoipa::path(
+    post,
+    path = "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}",
+    tag = "namespaces",
+    security(("bearer_auth" = [])),
+    params(
+        ("namespace_id" = i32, Path, description = "Namespace ID"),
+        ("group_id" = i32, Path, description = "Group ID")
+    ),
+    request_body = Vec<Permissions>,
+    responses(
+        (status = 201, description = "Permissions set"),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Namespace or group not found", body = ApiErrorResponse)
+    )
+)]
 #[post("/{namespace_id}/permissions/group/{group_id}")]
 pub async fn grant_namespace_group_permissions(
     pool: web::Data<DbPool>,
@@ -253,6 +368,21 @@ pub async fn grant_namespace_group_permissions(
 }
 
 /// Revoke a permission set from a group on a namespace
+#[utoipa::path(
+    delete,
+    path = "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}",
+    tag = "namespaces",
+    security(("bearer_auth" = [])),
+    params(
+        ("namespace_id" = i32, Path, description = "Namespace ID"),
+        ("group_id" = i32, Path, description = "Group ID")
+    ),
+    responses(
+        (status = 204, description = "Permissions revoked"),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Namespace or group not found", body = ApiErrorResponse)
+    )
+)]
 #[delete("/{namespace_id}/permissions/group/{group_id}")]
 pub async fn revoke_namespace_group_permissions(
     pool: web::Data<DbPool>,
@@ -282,6 +412,21 @@ pub async fn revoke_namespace_group_permissions(
 }
 
 /// Check a specific permission for a group on a namespace
+#[utoipa::path(
+    get,
+    path = "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}/{permission}",
+    tag = "namespaces",
+    security(("bearer_auth" = [])),
+    params(
+        ("namespace_id" = i32, Path, description = "Namespace ID"),
+        ("group_id" = i32, Path, description = "Group ID"),
+        ("permission" = Permissions, Path, description = "Permission value")
+    ),
+    responses(
+        (status = 204, description = "Group has permission"),
+        (status = 404, description = "Group missing permission", body = ApiErrorResponse)
+    )
+)]
 #[get("/{namespace_id}/permissions/group/{group_id}/{permission}")]
 pub async fn get_namespace_group_permission(
     pool: web::Data<DbPool>,
@@ -316,6 +461,22 @@ pub async fn get_namespace_group_permission(
 
 /// Grant a specific permission to a group on a namespace
 /// If the group previously had no permissions, a new entry is created
+#[utoipa::path(
+    post,
+    path = "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}/{permission}",
+    tag = "namespaces",
+    security(("bearer_auth" = [])),
+    params(
+        ("namespace_id" = i32, Path, description = "Namespace ID"),
+        ("group_id" = i32, Path, description = "Group ID"),
+        ("permission" = Permissions, Path, description = "Permission value")
+    ),
+    responses(
+        (status = 201, description = "Permission granted"),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Namespace or group not found", body = ApiErrorResponse)
+    )
+)]
 #[post("/{namespace_id}/permissions/group/{group_id}/{permission}")]
 pub async fn grant_namespace_group_permission(
     pool: web::Data<DbPool>,
@@ -348,6 +509,22 @@ pub async fn grant_namespace_group_permission(
 }
 
 /// Revoke a specific permission from a group on a namespace
+#[utoipa::path(
+    delete,
+    path = "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}/{permission}",
+    tag = "namespaces",
+    security(("bearer_auth" = [])),
+    params(
+        ("namespace_id" = i32, Path, description = "Namespace ID"),
+        ("group_id" = i32, Path, description = "Group ID"),
+        ("permission" = Permissions, Path, description = "Permission value")
+    ),
+    responses(
+        (status = 204, description = "Permission revoked"),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Namespace or group not found", body = ApiErrorResponse)
+    )
+)]
 #[delete("/{namespace_id}/permissions/group/{group_id}/{permission}")]
 pub async fn revoke_namespace_group_permission(
     pool: web::Data<DbPool>,
@@ -380,6 +557,21 @@ pub async fn revoke_namespace_group_permission(
 }
 
 /// List all permissions for a user on a namespace
+#[utoipa::path(
+    get,
+    path = "/api/v1/namespaces/{namespace_id}/permissions/user/{user_id}",
+    tag = "namespaces",
+    security(("bearer_auth" = [])),
+    params(
+        ("namespace_id" = i32, Path, description = "Namespace ID"),
+        ("user_id" = i32, Path, description = "User ID")
+    ),
+    responses(
+        (status = 200, description = "User permissions via group memberships", body = [GroupPermission]),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "No permissions found", body = ApiErrorResponse)
+    )
+)]
 #[get("/{namespace_id}/permissions/user/{user_id}")]
 pub async fn get_namespace_user_permissions(
     pool: web::Data<DbPool>,
@@ -415,6 +607,21 @@ pub async fn get_namespace_user_permissions(
 }
 
 /// List all groups that have any permissions on a namespace
+#[utoipa::path(
+    get,
+    path = "/api/v1/namespaces/{namespace_id}/has_permissions/{permission}",
+    tag = "namespaces",
+    security(("bearer_auth" = [])),
+    params(
+        ("namespace_id" = i32, Path, description = "Namespace ID"),
+        ("permission" = Permissions, Path, description = "Permission value")
+    ),
+    responses(
+        (status = 200, description = "Groups with permission", body = [Group]),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Namespace not found", body = ApiErrorResponse)
+    )
+)]
 #[get("/{namespace_id}/has_permissions/{permission}")]
 pub async fn get_namespace_groups_with_permission(
     pool: web::Data<DbPool>,

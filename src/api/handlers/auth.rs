@@ -1,3 +1,4 @@
+use crate::api::openapi::{ApiErrorResponse, LoginResponse, MessageResponse};
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, UserAccess};
@@ -11,6 +12,17 @@ use tracing::{debug, warn};
 // with a generic message. This is to prevent leaking information about
 // the existence of internal data.
 
+#[utoipa::path(
+    post,
+    path = "/api/v0/auth/login",
+    tag = "auth",
+    request_body = LoginUser,
+    responses(
+        (status = 200, description = "Token issued", body = LoginResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 500, description = "Internal server error", body = ApiErrorResponse)
+    )
+)]
 #[post("/login")]
 pub async fn login(
     pool: web::Data<DbPool>,
@@ -48,6 +60,17 @@ pub async fn login(
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v0/auth/logout",
+    tag = "auth",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Token revoked", body = MessageResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 500, description = "Internal server error", body = ApiErrorResponse)
+    )
+)]
 #[get("/logout")]
 pub async fn logout(
     pool: web::Data<DbPool>,
@@ -77,6 +100,17 @@ pub async fn logout(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v0/auth/logout_all",
+    tag = "auth",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "All tokens revoked for current user", body = MessageResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 500, description = "Internal server error", body = ApiErrorResponse)
+    )
+)]
 #[get("/logout_all")]
 pub async fn logout_all(
     pool: web::Data<DbPool>,
@@ -108,6 +142,20 @@ pub async fn logout_all(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v0/auth/logout/token/{token}",
+    tag = "auth",
+    security(("bearer_auth" = [])),
+    params(
+        ("token" = String, Path, description = "Token string to revoke")
+    ),
+    responses(
+        (status = 200, description = "Token revoked", body = MessageResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 500, description = "Internal server error", body = ApiErrorResponse)
+    )
+)]
 #[get("/logout/token/{token}")]
 pub async fn logout_token(
     pool: web::Data<DbPool>,
@@ -138,6 +186,20 @@ pub async fn logout_token(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v0/auth/logout/uid/{user_id}",
+    tag = "auth",
+    security(("bearer_auth" = [])),
+    params(
+        ("user_id" = i32, Path, description = "User ID to revoke all tokens for")
+    ),
+    responses(
+        (status = 200, description = "All tokens revoked for user", body = MessageResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 500, description = "Internal server error", body = ApiErrorResponse)
+    )
+)]
 #[get("/logout/uid/{user_id}")]
 pub async fn logout_other(
     pool: web::Data<DbPool>,
@@ -177,6 +239,16 @@ pub async fn logout_other(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v0/auth/validate",
+    tag = "auth",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Token is valid", body = MessageResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse)
+    )
+)]
 #[get("/validate")]
 pub async fn validate_token(user_access: UserAccess) -> Result<impl Responder, ApiError> {
     debug!(

@@ -2,6 +2,7 @@ use actix_web::{delete, get, http::StatusCode, patch, post, routes, web, HttpReq
 
 use tracing::{debug, info};
 
+use crate::api::openapi::ApiErrorResponse;
 use crate::can;
 use crate::db::traits::{ClassRelation, ObjectRelationMemberships, UserPermissions};
 use crate::db::DbPool;
@@ -11,7 +12,9 @@ use crate::models::traits::{ExpandNamespace, ToHubuumObjects};
 use crate::utilities::response::{json_response, json_response_created};
 
 use crate::models::{
-    HubuumClassID, HubuumClassRelationID, HubuumObjectID, NamespaceID, NewHubuumClass,
+    GroupPermission, HubuumClassExpanded, HubuumClassID, HubuumClassRelation,
+    HubuumClassRelationID, HubuumClassRelationTransitive, HubuumObject, HubuumObjectID,
+    HubuumObjectRelation, HubuumObjectWithPath, NamespaceID, NewHubuumClass,
     NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation, Permissions,
     UpdateHubuumClass, UpdateHubuumObject,
 };
@@ -21,6 +24,17 @@ use super::check_if_object_in_class;
 use crate::models::search::{parse_query_parameter, FilterField};
 
 // GET /api/v1/classes, list all classes the user may see.
+#[utoipa::path(
+    get,
+    path = "/api/v1/classes",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Classes matching optional query filters", body = [HubuumClassExpanded]),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse)
+    )
+)]
 #[routes]
 #[get("")]
 #[get("/")]
@@ -44,6 +58,19 @@ async fn get_classes(
     Ok(json_response(classes, StatusCode::OK))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/classes",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    request_body = NewHubuumClass,
+    responses(
+        (status = 201, description = "Class created", body = HubuumClassExpanded),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 409, description = "Conflict", body = ApiErrorResponse)
+    )
+)]
 #[routes]
 #[post("")]
 #[post("/")]
@@ -76,6 +103,20 @@ async fn create_class(
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/classes/{class_id}",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Class ID")
+    ),
+    responses(
+        (status = 200, description = "Class", body = HubuumClassExpanded),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Class not found", body = ApiErrorResponse)
+    )
+)]
 #[get("/{class_id}")]
 async fn get_class(
     pool: web::Data<DbPool>,
@@ -98,6 +139,22 @@ async fn get_class(
     Ok(json_response(class, StatusCode::OK))
 }
 
+#[utoipa::path(
+    patch,
+    path = "/api/v1/classes/{class_id}",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Class ID")
+    ),
+    request_body = UpdateHubuumClass,
+    responses(
+        (status = 200, description = "Updated class", body = HubuumClassExpanded),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Class not found", body = ApiErrorResponse)
+    )
+)]
 #[patch("/{class_id}")]
 async fn update_class(
     pool: web::Data<DbPool>,
@@ -126,6 +183,20 @@ async fn update_class(
     Ok(json_response(class, StatusCode::OK))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/classes/{class_id}",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Class ID")
+    ),
+    responses(
+        (status = 204, description = "Class deleted"),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Class not found", body = ApiErrorResponse)
+    )
+)]
 #[delete("/{class_id}")]
 async fn delete_class(
     pool: web::Data<DbPool>,
@@ -148,6 +219,20 @@ async fn delete_class(
     Ok(json_response((), StatusCode::NO_CONTENT))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/classes/{class_id}/permissions",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Class ID")
+    ),
+    responses(
+        (status = 200, description = "Namespace-group permission mappings for class namespace", body = [GroupPermission]),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Class not found", body = ApiErrorResponse)
+    )
+)]
 #[get("/{class_id}/permissions")]
 async fn get_class_permissions(
     pool: web::Data<DbPool>,
@@ -186,6 +271,21 @@ async fn get_class_permissions(
 }
 
 // Contextual get for class relations
+#[utoipa::path(
+    get,
+    path = "/api/v1/classes/{class_id}/relations",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Class ID")
+    ),
+    responses(
+        (status = 200, description = "Direct class relations from class", body = [HubuumClassRelation]),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Class not found", body = ApiErrorResponse)
+    )
+)]
 #[get("/{class_id}/relations/")]
 async fn get_class_relations(
     pool: web::Data<DbPool>,
@@ -215,6 +315,22 @@ async fn get_class_relations(
 }
 
 // Contextual post for class relations
+#[utoipa::path(
+    post,
+    path = "/api/v1/classes/{class_id}/relations",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Class ID")
+    ),
+    request_body = NewHubuumClassRelationFromClass,
+    responses(
+        (status = 201, description = "Class relation created", body = HubuumClassRelation),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 409, description = "Conflict", body = ApiErrorResponse)
+    )
+)]
 #[post("/{class_id}/relations/")]
 async fn create_class_relation(
     pool: web::Data<DbPool>,
@@ -266,6 +382,22 @@ async fn create_class_relation(
     ))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/classes/{class_id}/relations/{relation_id}",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Class ID"),
+        ("relation_id" = i32, Path, description = "Class relation ID")
+    ),
+    responses(
+        (status = 204, description = "Class relation deleted"),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Class or relation not found", body = ApiErrorResponse)
+    )
+)]
 #[delete("/{class_id}/relations/{relation_id}")]
 async fn delete_class_relation(
     pool: web::Data<DbPool>,
@@ -319,6 +451,20 @@ async fn delete_class_relation(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/classes/{class_id}/relations/transitive",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Class ID")
+    ),
+    responses(
+        (status = 200, description = "Transitive class relations", body = [HubuumClassRelationTransitive]),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Class not found", body = ApiErrorResponse)
+    )
+)]
 #[get("/{class_id}/relations/transitive/")]
 async fn get_class_relations_transitive(
     pool: web::Data<DbPool>,
@@ -340,6 +486,21 @@ async fn get_class_relations_transitive(
     Ok(json_response(relations, StatusCode::OK))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/classes/{class_id}/relations/transitive/class/{class_id_to}",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "From class ID"),
+        ("class_id_to" = i32, Path, description = "To class ID")
+    ),
+    responses(
+        (status = 200, description = "Transitive relations between classes", body = [HubuumClassRelationTransitive]),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Class not found", body = ApiErrorResponse)
+    )
+)]
 #[get("/{class_id}/relations/transitive/class/{class_id_to}")]
 async fn get_class_relations_transitive_to_class(
     pool: web::Data<DbPool>,
@@ -364,6 +525,21 @@ async fn get_class_relations_transitive_to_class(
 // Object API
 //
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/classes/{class_id}/",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Class ID")
+    ),
+    responses(
+        (status = 200, description = "Objects in class", body = [HubuumObject]),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Class not found", body = ApiErrorResponse)
+    )
+)]
 #[get("/{class_id}/")]
 async fn get_objects_in_class(
     pool: web::Data<DbPool>,
@@ -396,6 +572,22 @@ async fn get_objects_in_class(
     Ok(json_response(objects, StatusCode::OK))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/classes/{class_id}/",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Class ID")
+    ),
+    request_body = NewHubuumObject,
+    responses(
+        (status = 201, description = "Object created in class", body = HubuumObject),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 409, description = "Conflict", body = ApiErrorResponse)
+    )
+)]
 #[post("/{class_id}/")]
 async fn create_object_in_class(
     pool: web::Data<DbPool>,
@@ -424,6 +616,21 @@ async fn create_object_in_class(
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/classes/{class_id}/{object_id}",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Class ID"),
+        ("object_id" = i32, Path, description = "Object ID")
+    ),
+    responses(
+        (status = 200, description = "Object in class", body = HubuumObject),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Object not found", body = ApiErrorResponse)
+    )
+)]
 #[get("/{class_id}/{object_id}")]
 async fn get_object_in_class(
     pool: web::Data<DbPool>,
@@ -450,6 +657,23 @@ async fn get_object_in_class(
     Ok(json_response(object, StatusCode::OK))
 }
 
+#[utoipa::path(
+    patch,
+    path = "/api/v1/classes/{class_id}/{object_id}",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Class ID"),
+        ("object_id" = i32, Path, description = "Object ID")
+    ),
+    request_body = UpdateHubuumObject,
+    responses(
+        (status = 200, description = "Updated object", body = HubuumObject),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Object not found", body = ApiErrorResponse)
+    )
+)]
 #[patch("/{class_id}/{object_id}")]
 async fn patch_object_in_class(
     pool: web::Data<DbPool>,
@@ -475,6 +699,21 @@ async fn patch_object_in_class(
     Ok(json_response(object, StatusCode::OK))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/classes/{class_id}/{object_id}",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Class ID"),
+        ("object_id" = i32, Path, description = "Object ID")
+    ),
+    responses(
+        (status = 204, description = "Object deleted"),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Object not found", body = ApiErrorResponse)
+    )
+)]
 #[delete("/{class_id}/{object_id}")]
 async fn delete_object_in_class(
     pool: web::Data<DbPool>,
@@ -498,6 +737,22 @@ async fn delete_object_in_class(
     Ok(json_response((), StatusCode::NO_CONTENT))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/classes/{class_id}/{from_object_id}/relations",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Class ID"),
+        ("from_object_id" = i32, Path, description = "Source object ID")
+    ),
+    responses(
+        (status = 200, description = "Objects related to source object", body = [HubuumObjectWithPath]),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Class or object not found", body = ApiErrorResponse)
+    )
+)]
 #[get("/{class_id}/{from_object_id}/relations/")]
 async fn list_related_objects(
     pool: web::Data<DbPool>,
@@ -533,6 +788,23 @@ async fn list_related_objects(
     Ok(json_response(hits, StatusCode::OK))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/classes/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Source class ID"),
+        ("from_object_id" = i32, Path, description = "Source object ID"),
+        ("to_class_id" = i32, Path, description = "Target class ID"),
+        ("to_object_id" = i32, Path, description = "Target object ID")
+    ),
+    responses(
+        (status = 200, description = "Object relation", body = HubuumObjectRelation),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Relation not found", body = ApiErrorResponse)
+    )
+)]
 #[get("/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}")]
 async fn get_object_relation_from_class_and_objects(
     pool: web::Data<DbPool>,
@@ -577,6 +849,23 @@ async fn get_object_relation_from_class_and_objects(
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/classes/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Source class ID"),
+        ("from_object_id" = i32, Path, description = "Source object ID"),
+        ("to_class_id" = i32, Path, description = "Target class ID"),
+        ("to_object_id" = i32, Path, description = "Target object ID")
+    ),
+    responses(
+        (status = 204, description = "Object relation deleted"),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Relation not found", body = ApiErrorResponse)
+    )
+)]
 #[delete("/{class_id}/{object_id}/relations/{to_class_id}/{to_object_id}")]
 async fn delete_object_relation(
     pool: web::Data<DbPool>,
@@ -641,6 +930,24 @@ async fn delete_object_relation(
     Ok(json_response((), StatusCode::NO_CONTENT))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/classes/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Source class ID"),
+        ("from_object_id" = i32, Path, description = "Source object ID"),
+        ("to_class_id" = i32, Path, description = "Target class ID"),
+        ("to_object_id" = i32, Path, description = "Target object ID")
+    ),
+    responses(
+        (status = 201, description = "Object relation created", body = HubuumObjectRelation),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Class or object not found", body = ApiErrorResponse)
+    )
+)]
 #[post("/{class_id}/{object_id}/relations/{to_class_id}/{to_object_id}")]
 async fn create_object_relation(
     pool: web::Data<DbPool>,
