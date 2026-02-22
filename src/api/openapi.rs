@@ -379,11 +379,39 @@ fn capitalize(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use actix_web::{
+        http::{Method, StatusCode},
+        App,
+    };
     use serde_json::Value;
     use std::collections::{BTreeSet, HashSet};
 
     fn openapi_json() -> Value {
         serde_json::to_value(ApiDoc::openapi()).expect("OpenAPI should serialize to JSON")
+    }
+
+    fn path_with_sample_params(path: &str) -> String {
+        let mut out = String::with_capacity(path.len());
+        let mut in_param = false;
+
+        for ch in path.chars() {
+            if ch == '{' {
+                in_param = true;
+                out.push('1');
+                continue;
+            }
+
+            if ch == '}' {
+                in_param = false;
+                continue;
+            }
+
+            if !in_param {
+                out.push(ch);
+            }
+        }
+
+        out
     }
 
     #[test]
@@ -430,7 +458,7 @@ mod tests {
             "/api/v1/classes/{class_id}/permissions",
             "/api/v1/classes/{class_id}/relations",
             "/api/v1/classes/{class_id}/relations/{relation_id}",
-            "/api/v1/classes/{class_id}/relations/transitive",
+            "/api/v1/classes/{class_id}/relations/transitive/",
             "/api/v1/classes/{class_id}/relations/transitive/class/{class_id_to}",
             "/api/v1/classes/{class_id}/",
             "/api/v1/classes/{class_id}/{object_id}",
@@ -536,6 +564,54 @@ mod tests {
                         "missing bearer_auth security for {method} {path}"
                     );
                 }
+            }
+        }
+    }
+
+    #[actix_web::test]
+    async fn openapi_operations_resolve_to_mounted_routes() {
+        let json = openapi_json();
+        let paths = json
+            .get("paths")
+            .and_then(Value::as_object)
+            .expect("OpenAPI paths must be an object");
+        let operation_keys = [
+            "get", "post", "put", "patch", "delete", "options", "head", "trace",
+        ];
+
+        let app = actix_web::test::init_service(App::new().configure(crate::api::config)).await;
+
+        for (path, path_item) in paths {
+            let path_item = path_item.as_object().expect("Path item must be an object");
+            let route_uri = path_with_sample_params(path);
+
+            for method in operation_keys {
+                if path_item.get(method).is_none() {
+                    continue;
+                }
+
+                let http_method = match method {
+                    "get" => Method::GET,
+                    "post" => Method::POST,
+                    "put" => Method::PUT,
+                    "patch" => Method::PATCH,
+                    "delete" => Method::DELETE,
+                    "options" => Method::OPTIONS,
+                    "head" => Method::HEAD,
+                    "trace" => Method::TRACE,
+                    _ => unreachable!("operation key list only contains known HTTP methods"),
+                };
+                let req = actix_web::test::TestRequest::default()
+                    .method(http_method)
+                    .uri(&route_uri)
+                    .to_request();
+                let res = actix_web::test::call_service(&app, req).await;
+
+                assert_ne!(
+                    res.status(),
+                    StatusCode::NOT_FOUND,
+                    "Documented OpenAPI operation is not mounted: {method} {path} (sample: {route_uri})"
+                );
             }
         }
     }

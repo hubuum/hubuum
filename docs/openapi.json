@@ -1070,14 +1070,14 @@
         ]
       }
     },
-    "/api/v1/classes/{class_id}/relations/transitive": {
+    "/api/v1/classes/{class_id}/relations/transitive/": {
       "get": {
         "tags": [
           "classes"
         ],
-        "summary": "Get Api V1 Classes By Class Id Relations Transitive",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/relations/transitive.",
-        "operationId": "getApiV1ClassesByClassIdRelationsTransitive",
+        "summary": "Get Api V1 Classes By Class Id Relations Transitive Trailing",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/relations/transitive/.",
+        "operationId": "getApiV1ClassesByClassIdRelationsTransitiveTrailing",
         "parameters": [
           {
             "name": "class_id",
@@ -1493,14 +1493,6 @@
               "type": "integer",
               "format": "int32"
             }
-          },
-          {
-            "name": "object_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/HubuumObjectID"
-            }
           }
         ],
         "responses": {
@@ -1597,14 +1589,6 @@
             "schema": {
               "type": "integer",
               "format": "int32"
-            }
-          },
-          {
-            "name": "object_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/HubuumObjectID"
             }
           }
         ],
@@ -3268,11 +3252,94 @@
           }
         ]
       },
+      "put": {
+        "tags": [
+          "namespaces"
+        ],
+        "summary": "Replace all permissions for a group on a namespace\nThis removes any existing permissions and applies the new set.",
+        "description": "Auto-generated documentation for PUT /api/v1/namespaces/{namespace_id}/permissions/group/{group_id}.",
+        "operationId": "putApiV1NamespacesByNamespaceIdPermissionsGroupByGroupId",
+        "parameters": [
+          {
+            "name": "namespace_id",
+            "in": "path",
+            "description": "Namespace ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Permissions"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Permissions replaced"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Namespace or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
       "post": {
         "tags": [
           "namespaces"
         ],
-        "summary": "Post a permission set to a group on a namespace\nThis will create a new entry if the group had no permissions,\nor update the existing entry if it did.\nThe body should be a JSON array of permissions:\n```json\n[\n  \"CreateObject\",\n  \"ReadCollection\"\n]\n```",
+        "summary": "Post a permission set to a group on a namespace\nThis will create a new entry if the group had no permissions,\nor add to the existing entry if it did.\nThe body should be a JSON array of permissions:\n```json\n[\n  \"CreateObject\",\n  \"ReadCollection\"\n]\n```",
         "description": "Auto-generated documentation for POST /api/v1/namespaces/{namespace_id}/permissions/group/{group_id}.",
         "operationId": "postApiV1NamespacesByNamespaceIdPermissionsGroupByGroupId",
         "parameters": [
@@ -4158,6 +4225,7 @@
         "required": [
           "total_objects",
           "total_classes",
+          "total_namespaces",
           "objects_per_class"
         ],
         "properties": {
@@ -4168,6 +4236,10 @@
             }
           },
           "total_classes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total_namespaces": {
             "type": "integer",
             "format": "int64"
           },
@@ -4184,6 +4256,7 @@
             }
           ],
           "total_classes": 7,
+          "total_namespaces": 3,
           "total_objects": 42
         }
       },

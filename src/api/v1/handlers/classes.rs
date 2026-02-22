@@ -286,6 +286,8 @@ async fn get_class_permissions(
         (status = 404, description = "Class not found", body = ApiErrorResponse)
     )
 )]
+#[routes]
+#[get("/{class_id}/relations")]
 #[get("/{class_id}/relations/")]
 async fn get_class_relations(
     pool: web::Data<DbPool>,
@@ -331,6 +333,8 @@ async fn get_class_relations(
         (status = 409, description = "Conflict", body = ApiErrorResponse)
     )
 )]
+#[routes]
+#[post("/{class_id}/relations")]
 #[post("/{class_id}/relations/")]
 async fn create_class_relation(
     pool: web::Data<DbPool>,
@@ -453,7 +457,7 @@ async fn delete_class_relation(
 
 #[utoipa::path(
     get,
-    path = "/api/v1/classes/{class_id}/relations/transitive",
+    path = "/api/v1/classes/{class_id}/relations/transitive/",
     tag = "classes",
     security(("bearer_auth" = [])),
     params(
@@ -753,6 +757,8 @@ async fn delete_object_in_class(
         (status = 404, description = "Class or object not found", body = ApiErrorResponse)
     )
 )]
+#[routes]
+#[get("/{class_id}/{from_object_id}/relations")]
 #[get("/{class_id}/{from_object_id}/relations/")]
 async fn list_related_objects(
     pool: web::Data<DbPool>,
@@ -866,7 +872,7 @@ async fn get_object_relation_from_class_and_objects(
         (status = 404, description = "Relation not found", body = ApiErrorResponse)
     )
 )]
-#[delete("/{class_id}/{object_id}/relations/{to_class_id}/{to_object_id}")]
+#[delete("/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}")]
 async fn delete_object_relation(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
@@ -948,7 +954,7 @@ async fn delete_object_relation(
         (status = 404, description = "Class or object not found", body = ApiErrorResponse)
     )
 )]
-#[post("/{class_id}/{object_id}/relations/{to_class_id}/{to_object_id}")]
+#[post("/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}")]
 async fn create_object_relation(
     pool: web::Data<DbPool>,
     requestor: UserAccess,

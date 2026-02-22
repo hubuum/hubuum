@@ -48,7 +48,40 @@ jobs:
       - name: Validate OpenAPI semantics
         run: "cargo test --lib 'api::openapi::tests::' --locked"
       - name: Check OpenAPI drift
-        run: diff -u docs/openapi.json /tmp/openapi.json
+        id: openapi_drift
+        continue-on-error: true
+        shell: bash
+        run: |
+          if diff -u docs/openapi.json /tmp/openapi.json > /tmp/openapi.diff; then
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+      - name: Flag OpenAPI drift
+        if: steps.openapi_drift.outputs.drift == 'true'
+        shell: bash
+        run: |
+          echo "::warning title=OpenAPI drift detected::Generated OpenAPI differs from docs/openapi.json. Build and publish continue, but docs/openapi.json should be updated."
+          {
+            echo "### OpenAPI drift detected"
+            echo ""
+            echo "Generated OpenAPI differs from \`docs/openapi.json\`."
+            echo "Build and publish continue, but the spec file should be refreshed and committed."
+            echo ""
+            echo "<details><summary>Diff (first 200 lines)</summary>"
+            echo ""
+            echo '```diff'
+            sed -n '1,200p' /tmp/openapi.diff
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload OpenAPI drift diff
+        if: steps.openapi_drift.outputs.drift == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-diff
+          path: /tmp/openapi.diff
       - name: Prepare OpenAPI artifact
         run: cp /tmp/openapi.json openapi.json
       - name: Upload OpenAPI artifact

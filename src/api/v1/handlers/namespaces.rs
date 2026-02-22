@@ -404,7 +404,7 @@ pub async fn replace_namespace_group_permissions(
         namespace
     );
 
-    if !permissions.iter().next().is_some() {
+    if permissions.iter().next().is_none() {
         return Err(ApiError::BadRequest(
             "Permissions list cannot be empty for replace operation, use DELETE endpoint instead"
                 .to_string(),
