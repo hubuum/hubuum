@@ -719,6 +719,55 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             }
         }
 
+        for order in query_options.sort.iter() {
+            match (&order.field, &order.descending) {
+                (FilterField::Id, false) => {
+                    base_query = base_query.order_by(hubuum_class_relation_id.asc())
+                }
+                (FilterField::Id, true) => {
+                    base_query = base_query.order_by(hubuum_class_relation_id.desc())
+                }
+                (FilterField::ClassFrom, false) => {
+                    base_query = base_query.order_by(from_hubuum_class_id.asc())
+                }
+                (FilterField::ClassFrom, true) => {
+                    base_query = base_query.order_by(from_hubuum_class_id.desc())
+                }
+                (FilterField::ClassTo, false) => {
+                    base_query = base_query.order_by(to_hubuum_class_id.asc())
+                }
+                (FilterField::ClassTo, true) => {
+                    base_query = base_query.order_by(to_hubuum_class_id.desc())
+                }
+                (FilterField::CreatedAt, false) => {
+                    base_query = base_query
+                        .order_by(crate::schema::hubuumclass_relation::dsl::created_at.asc())
+                }
+                (FilterField::CreatedAt, true) => {
+                    base_query = base_query
+                        .order_by(crate::schema::hubuumclass_relation::dsl::created_at.desc())
+                }
+                (FilterField::UpdatedAt, false) => {
+                    base_query = base_query
+                        .order_by(crate::schema::hubuumclass_relation::dsl::updated_at.asc())
+                }
+                (FilterField::UpdatedAt, true) => {
+                    base_query = base_query
+                        .order_by(crate::schema::hubuumclass_relation::dsl::updated_at.desc())
+                }
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't orderable (or does not exist) for class relations",
+                        order.field
+                    )))
+                }
+            }
+        }
+
+        if let Some(limit) = query_options.limit {
+            base_query = base_query.limit(limit as i64);
+        }
+
         trace_query!(base_query, "Searching class relations");
 
         let result = with_connection(pool, |conn| {
@@ -853,6 +902,61 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                     )))
                 }
             }
+        }
+
+        for order in query_options.sort.iter() {
+            match (&order.field, &order.descending) {
+                (FilterField::Id, false) => {
+                    base_query = base_query.order_by(hubuum_object_relation_id.asc())
+                }
+                (FilterField::Id, true) => {
+                    base_query = base_query.order_by(hubuum_object_relation_id.desc())
+                }
+                (FilterField::ClassRelation, false) => {
+                    base_query = base_query.order_by(class_relation_id.asc())
+                }
+                (FilterField::ClassRelation, true) => {
+                    base_query = base_query.order_by(class_relation_id.desc())
+                }
+                (FilterField::ObjectFrom, false) => {
+                    base_query = base_query.order_by(from_hubuum_object_id.asc())
+                }
+                (FilterField::ObjectFrom, true) => {
+                    base_query = base_query.order_by(from_hubuum_object_id.desc())
+                }
+                (FilterField::ObjectTo, false) => {
+                    base_query = base_query.order_by(to_hubuum_object_id.asc())
+                }
+                (FilterField::ObjectTo, true) => {
+                    base_query = base_query.order_by(to_hubuum_object_id.desc())
+                }
+                (FilterField::CreatedAt, false) => {
+                    base_query = base_query
+                        .order_by(crate::schema::hubuumobject_relation::dsl::created_at.asc())
+                }
+                (FilterField::CreatedAt, true) => {
+                    base_query = base_query
+                        .order_by(crate::schema::hubuumobject_relation::dsl::created_at.desc())
+                }
+                (FilterField::UpdatedAt, false) => {
+                    base_query = base_query
+                        .order_by(crate::schema::hubuumobject_relation::dsl::updated_at.asc())
+                }
+                (FilterField::UpdatedAt, true) => {
+                    base_query = base_query
+                        .order_by(crate::schema::hubuumobject_relation::dsl::updated_at.desc())
+                }
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't orderable (or does not exist) for object relations",
+                        order.field
+                    )))
+                }
+            }
+        }
+
+        if let Some(limit) = query_options.limit {
+            base_query = base_query.limit(limit as i64);
         }
 
         trace_query!(base_query, "Searching object relations");
@@ -1027,6 +1131,107 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                     )))
                 }
             }
+        }
+
+        for order in query_options.sort.iter() {
+            match (&order.field, &order.descending) {
+                (FilterField::ObjectFrom, false) => {
+                    base_query = base_query.order_by(obj::ancestor_object_id.asc())
+                }
+                (FilterField::ObjectFrom, true) => {
+                    base_query = base_query.order_by(obj::ancestor_object_id.desc())
+                }
+                (FilterField::ObjectTo, false) => {
+                    base_query = base_query.order_by(obj::descendant_object_id.asc())
+                }
+                (FilterField::ObjectTo, true) => {
+                    base_query = base_query.order_by(obj::descendant_object_id.desc())
+                }
+                (FilterField::ClassFrom, false) => {
+                    base_query = base_query.order_by(obj::ancestor_class_id.asc())
+                }
+                (FilterField::ClassFrom, true) => {
+                    base_query = base_query.order_by(obj::ancestor_class_id.desc())
+                }
+                (FilterField::ClassTo, false) => {
+                    base_query = base_query.order_by(obj::descendant_class_id.asc())
+                }
+                (FilterField::ClassTo, true) => {
+                    base_query = base_query.order_by(obj::descendant_class_id.desc())
+                }
+                (FilterField::NamespacesFrom, false) => {
+                    base_query = base_query.order_by(obj::ancestor_namespace_id.asc())
+                }
+                (FilterField::NamespacesFrom, true) => {
+                    base_query = base_query.order_by(obj::ancestor_namespace_id.desc())
+                }
+                (FilterField::NamespacesTo, false) => {
+                    base_query = base_query.order_by(obj::descendant_namespace_id.asc())
+                }
+                (FilterField::NamespacesTo, true) => {
+                    base_query = base_query.order_by(obj::descendant_namespace_id.desc())
+                }
+                (FilterField::NameFrom, false) => {
+                    base_query = base_query.order_by(obj::ancestor_name.asc())
+                }
+                (FilterField::NameFrom, true) => {
+                    base_query = base_query.order_by(obj::ancestor_name.desc())
+                }
+                (FilterField::NameTo, false) => {
+                    base_query = base_query.order_by(obj::descendant_name.asc())
+                }
+                (FilterField::NameTo, true) => {
+                    base_query = base_query.order_by(obj::descendant_name.desc())
+                }
+                (FilterField::DescriptionFrom, false) => {
+                    base_query = base_query.order_by(obj::ancestor_description.asc())
+                }
+                (FilterField::DescriptionFrom, true) => {
+                    base_query = base_query.order_by(obj::ancestor_description.desc())
+                }
+                (FilterField::DescriptionTo, false) => {
+                    base_query = base_query.order_by(obj::descendant_description.asc())
+                }
+                (FilterField::DescriptionTo, true) => {
+                    base_query = base_query.order_by(obj::descendant_description.desc())
+                }
+                (FilterField::CreatedAtFrom, false) => {
+                    base_query = base_query.order_by(obj::ancestor_created_at.asc())
+                }
+                (FilterField::CreatedAtFrom, true) => {
+                    base_query = base_query.order_by(obj::ancestor_created_at.desc())
+                }
+                (FilterField::CreatedAtTo, false) => {
+                    base_query = base_query.order_by(obj::descendant_created_at.asc())
+                }
+                (FilterField::CreatedAtTo, true) => {
+                    base_query = base_query.order_by(obj::descendant_created_at.desc())
+                }
+                (FilterField::UpdatedAtFrom, false) => {
+                    base_query = base_query.order_by(obj::ancestor_updated_at.asc())
+                }
+                (FilterField::UpdatedAtFrom, true) => {
+                    base_query = base_query.order_by(obj::ancestor_updated_at.desc())
+                }
+                (FilterField::UpdatedAtTo, false) => {
+                    base_query = base_query.order_by(obj::descendant_updated_at.asc())
+                }
+                (FilterField::UpdatedAtTo, true) => {
+                    base_query = base_query.order_by(obj::descendant_updated_at.desc())
+                }
+                (FilterField::Depth, false) => base_query = base_query.order_by(obj::depth.asc()),
+                (FilterField::Depth, true) => base_query = base_query.order_by(obj::depth.desc()),
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't orderable (or does not exist) for related objects",
+                        order.field
+                    )))
+                }
+            }
+        }
+
+        if let Some(limit) = query_options.limit {
+            base_query = base_query.limit(limit as i64);
         }
 
         trace_query!(base_query, "Searching object relations");

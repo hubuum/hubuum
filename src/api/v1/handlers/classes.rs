@@ -238,12 +238,14 @@ async fn get_class_permissions(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
     class_id: web::Path<HubuumClassID>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::models::groups_on;
     use crate::traits::NamespaceAccessors;
 
     let user = requestor.user;
     let class_id = class_id.into_inner();
+    let query_options = parse_query_parameter(req.query_string())?;
 
     debug!(
         message = "Getting class permissions",
@@ -264,6 +266,7 @@ async fn get_class_permissions(
             Permissions::ReadClass,
             Permissions::DeleteClass,
         ],
+        query_options,
     )
     .await?;
 
