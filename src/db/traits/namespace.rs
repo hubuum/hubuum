@@ -38,10 +38,8 @@ impl GetNamespace<(Namespace, Namespace)> for HubuumClassRelation {
                 from_id, to_id, namespace_list
             );
             return Err(ApiError::NotFound(
-                format!(
-                    "Could not find namespaces ({from_id} and {to_id}) for class relation",
-                )
-                .to_string(),
+                format!("Could not find namespaces ({from_id} and {to_id}) for class relation",)
+                    .to_string(),
             ));
         }
         Ok((namespace_list[0].clone(), namespace_list[1].clone()))
@@ -77,10 +75,8 @@ impl GetNamespace<(Namespace, Namespace)> for NewHubuumClassRelation {
                 from_id, to_id, namespace_list
             );
             return Err(ApiError::NotFound(
-                format!(
-                    "Could not find namespaces ({from_id} and {to_id}) for class relation",
-                )
-                .to_string(),
+                format!("Could not find namespaces ({from_id} and {to_id}) for class relation",)
+                    .to_string(),
             ));
         }
         Ok((namespace_list[0].clone(), namespace_list[1].clone()))
@@ -116,10 +112,8 @@ impl GetNamespace<(Namespace, Namespace)> for HubuumObjectRelation {
                 from_id, to_id, namespace_list
             );
             return Err(ApiError::NotFound(
-                format!(
-                    "Could not find namespaces ({from_id} and {to_id}) for object relation",
-                )
-                .to_string(),
+                format!("Could not find namespaces ({from_id} and {to_id}) for object relation",)
+                    .to_string(),
             ));
         }
         Ok((namespace_list[0].clone(), namespace_list[1].clone()))
@@ -155,10 +149,8 @@ impl GetNamespace<(Namespace, Namespace)> for NewHubuumObjectRelation {
                 from_id, to_id, namespace_list
             );
             return Err(ApiError::NotFound(
-                format!(
-                    "Could not find namespaces ({from_id} and {to_id}) for object relation",
-                )
-                .to_string(),
+                format!("Could not find namespaces ({from_id} and {to_id}) for object relation",)
+                    .to_string(),
             ));
         }
         Ok((namespace_list[0].clone(), namespace_list[1].clone()))
@@ -194,10 +186,8 @@ impl GetNamespace<(Namespace, Namespace)> for HubuumObjectRelationID {
                 from_id, to_id, namespace_list
             );
             return Err(ApiError::NotFound(
-                format!(
-                    "Could not find namespaces ({from_id} and {to_id}) for object relation",
-                )
-                .to_string(),
+                format!("Could not find namespaces ({from_id} and {to_id}) for object relation",)
+                    .to_string(),
             ));
         }
         Ok((namespace_list[0].clone(), namespace_list[1].clone()))

@@ -6,8 +6,9 @@ mod tests {
     use crate::traits::{CanDelete, CanSave};
     use actix_web::{http::StatusCode, test};
 
+    use crate::models::pagination::NEXT_CURSOR_HEADER;
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
-    use crate::tests::asserts::assert_response_status;
+    use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::constants::{get_schema, SchemaType};
     use crate::tests::{create_namespace, setup_pool_and_tokens};
     // use crate::{assert_contains_all, assert_contains_same_ids};
@@ -380,5 +381,45 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let objects: Vec<HubuumObject> = test::read_body_json(resp).await;
         assert_eq!(objects.len(), limit);
+    }
+
+    #[actix_web::test]
+    async fn test_api_objects_cursor_pagination() {
+        let created_objects = create_test_objects("api_objects_cursor", 6).await;
+
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let namespace_id = created_objects[0].namespace_id;
+        let class_id = created_objects[0].hubuum_class_id;
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{OBJECT_ENDPOINT}/{class_id}/?namespaces={namespace_id}&limit=2&sort=id"),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        let objects: Vec<HubuumObject> = test::read_body_json(resp).await;
+
+        assert_eq!(objects.len(), 2);
+        assert_eq!(objects[0].id, created_objects[0].id);
+        assert_eq!(objects[1].id, created_objects[1].id);
+        assert!(next_cursor.is_some());
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!(
+                "{OBJECT_ENDPOINT}/{class_id}/?namespaces={namespace_id}&limit=2&sort=id&cursor={}",
+                next_cursor.unwrap()
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let objects: Vec<HubuumObject> = test::read_body_json(resp).await;
+
+        assert_eq!(objects.len(), 2);
+        assert_eq!(objects[0].id, created_objects[2].id);
+        assert_eq!(objects[1].id, created_objects[3].id);
     }
 }

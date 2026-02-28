@@ -3,6 +3,7 @@ mod tests {
     use actix_web::{http::StatusCode, test};
     use yare::parameterized;
 
+    use crate::models::pagination::NEXT_CURSOR_HEADER;
     use crate::models::{
         HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, HubuumObject,
         HubuumObjectRelation, HubuumObjectWithPath, NamespaceID, NewHubuumClassRelation,
@@ -12,7 +13,7 @@ mod tests {
     use crate::{assert_contains_all, assert_contains_same_ids};
 
     use crate::tests::api_operations::{delete_request, get_request, post_request};
-    use crate::tests::asserts::assert_response_status;
+    use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{create_test_group, ensure_normal_user, setup_pool_and_tokens};
     // use crate::{assert_contains_all, assert_contains_same_ids};
 
@@ -149,6 +150,46 @@ mod tests {
         assert_eq!(limited_relations.len(), 2);
         assert_eq!(limited_relations[0].id, relations[0].id);
         assert_eq!(limited_relations[1].id, relations[1].id);
+
+        cleanup(&classes).await;
+    }
+
+    #[actix_web::test]
+    async fn test_get_class_relations_cursor_pagination() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let (classes, _relations) =
+            create_classes_and_relations(&pool, "get_class_relations_cursor").await;
+        let class_ids = classes
+            .iter()
+            .map(|class| class.id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{CLASS_RELATIONS_ENDPOINT}?from_classes={class_ids}&limit=2&sort=id"),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        let relations: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
+
+        assert_eq!(relations.len(), 2);
+        assert!(next_cursor.is_some());
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!(
+                "{CLASS_RELATIONS_ENDPOINT}?from_classes={class_ids}&limit=2&sort=id&cursor={}",
+                next_cursor.unwrap()
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let relations: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
+        assert!(!relations.is_empty());
 
         cleanup(&classes).await;
     }

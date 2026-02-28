@@ -276,3 +276,10 @@ pub async fn assert_response_status(
     );
     resp
 }
+
+pub fn header_value(resp: &actix_web::dev::ServiceResponse, name: &str) -> Option<String> {
+    resp.headers()
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_string())
+}

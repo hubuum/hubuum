@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::str::FromStr;
 use tracing::debug;
 
+use crate::models::pagination::validate_page_limit;
 use crate::models::permissions::{Permissions, PermissionsList};
 use crate::traits::SelfAccessors;
 use crate::utilities::extensions::CustomStringExtensions;
@@ -26,12 +27,14 @@ pub fn parse_query_parameter(qs: &str) -> Result<QueryOptions, ApiError> {
     let mut filters = Vec::new();
     let mut sort = Vec::new();
     let mut limit = None;
+    let mut cursor = None;
 
     if qs.is_empty() {
         return Ok(QueryOptions {
             filters,
             sort,
             limit,
+            cursor,
         });
     }
 
@@ -59,11 +62,17 @@ pub fn parse_query_parameter(qs: &str) -> Result<QueryOptions, ApiError> {
                 if limit.is_some() {
                     return Err(ApiError::BadRequest("duplicate limit".into()));
                 }
-                limit = Some(
-                    value
-                        .parse::<usize>()
-                        .map_err(|e| ApiError::BadRequest(format!("bad limit: {e}")))?,
-                );
+                let parsed_limit = value
+                    .parse::<usize>()
+                    .map_err(|e| ApiError::BadRequest(format!("bad limit: {e}")))?;
+                limit = Some(validate_page_limit(parsed_limit)?);
+            }
+
+            "cursor" => {
+                if cursor.is_some() {
+                    return Err(ApiError::BadRequest("duplicate cursor".into()));
+                }
+                cursor = Some(value);
             }
 
             // SORT / ORDER BY: e.g. sort=created_at,-name,email.desc
@@ -91,6 +100,7 @@ pub fn parse_query_parameter(qs: &str) -> Result<QueryOptions, ApiError> {
         filters,
         sort,
         limit,
+        cursor,
     })
 }
 
@@ -128,6 +138,7 @@ pub struct QueryOptions {
     pub filters: Vec<ParsedQueryParam>,
     pub sort: Vec<SortParam>,
     pub limit: Option<usize>,
+    pub cursor: Option<String>,
 }
 
 /// ## A struct that represents a filter field
@@ -1188,6 +1199,7 @@ filter_fields!(
     (ClassId, "class_id"),
     (CreatedAt, "created_at"),
     (UpdatedAt, "updated_at"),
+    (IssuedAt, "issued_at"),
     (NameFrom, "from_name"),
     (NameTo, "to_name"),
     (DescriptionFrom, "from_description"),
@@ -1826,5 +1838,31 @@ mod test {
                 "Failed test case for operator: '{operator:?}', data_type: '{data_type:?}'",
             );
         }
+    }
+
+    #[test]
+    fn test_parse_query_parameter_with_cursor() {
+        let query_options =
+            parse_query_parameter("limit=2&sort=id.desc&cursor=test-cursor").unwrap();
+
+        assert_eq!(query_options.limit, Some(2));
+        assert_eq!(query_options.sort.len(), 1);
+        assert_eq!(query_options.sort[0].field, FilterField::Id);
+        assert!(query_options.sort[0].descending);
+        assert_eq!(query_options.cursor, Some("test-cursor".to_string()));
+    }
+
+    #[test]
+    fn test_parse_query_parameter_rejects_duplicate_cursor() {
+        let error = parse_query_parameter("cursor=one&cursor=two").unwrap_err();
+        assert!(matches!(error, ApiError::BadRequest(_)));
+        assert_eq!(error.to_string(), "duplicate cursor");
+    }
+
+    #[test]
+    fn test_parse_query_parameter_rejects_zero_limit() {
+        let error = parse_query_parameter("limit=0").unwrap_err();
+        assert!(matches!(error, ApiError::BadRequest(_)));
+        assert_eq!(error.to_string(), "limit must be greater than 0");
     }
 }

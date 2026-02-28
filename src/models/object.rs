@@ -72,7 +72,7 @@ pub struct ObjectsByClass {
     pub count: i64,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct HubuumObjectWithPath {
     pub id: i32,
     pub name: String,

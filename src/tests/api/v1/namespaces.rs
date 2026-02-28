@@ -5,10 +5,12 @@ mod tests {
         UpdateNamespace,
     };
 
+    use crate::models::pagination::NEXT_CURSOR_HEADER;
     use crate::tests::api_operations::{
         delete_request, get_request, patch_request, post_request, put_request,
     };
     use crate::tests::asserts::assert_response_status;
+    use crate::tests::asserts::header_value;
     use crate::tests::{
         create_namespace, create_test_group, create_test_user, ensure_admin_group,
         setup_pool_and_tokens,
@@ -458,6 +460,16 @@ mod tests {
         assert!(permissions.iter().any(|p| p.group.id == group_one.id));
         assert!(permissions.iter().any(|p| p.group.id == group_two.id));
 
+        let filtered_endpoint = format!(
+            "{NAMESPACE_ENDPOINT}/{}/permissions?groupname__contains={}&sort=id",
+            ns.id, group_one.groupname
+        );
+        let resp = get_request(&pool, &admin_token, &filtered_endpoint).await;
+        let resp = assert_response_status(resp, http::StatusCode::OK).await;
+        let filtered_permissions: Vec<GroupPermission> = test::read_body_json(resp).await;
+        assert_eq!(filtered_permissions.len(), 1);
+        assert_eq!(filtered_permissions[0].group.id, group_one.id);
+
         let limited_endpoint = format!(
             "{NAMESPACE_ENDPOINT}/{}/permissions?permissions=ReadCollection&sort=id&limit=1",
             ns.id
@@ -550,6 +562,52 @@ mod tests {
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
         let objects: Vec<Namespace> = test::read_body_json(resp).await;
         assert_eq!(objects.len(), limit);
+
+        for i in created_namespaces {
+            i.delete(&pool).await.unwrap();
+        }
+    }
+
+    #[actix_web::test]
+    async fn test_api_namespaces_cursor_pagination() {
+        let created_namespaces = create_namespaces("api_namespaces_cursor", 6).await;
+
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let comma_separated_ids = created_namespaces
+            .iter()
+            .map(|ns| ns.id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{NAMESPACE_ENDPOINT}/?id={comma_separated_ids}&limit=2&sort=id"),
+        )
+        .await;
+        let resp = assert_response_status(resp, http::StatusCode::OK).await;
+        let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        let objects: Vec<Namespace> = test::read_body_json(resp).await;
+
+        assert_eq!(objects.len(), 2);
+        assert_eq!(objects[0].id, created_namespaces[0].id);
+        assert_eq!(objects[1].id, created_namespaces[1].id);
+        assert!(next_cursor.is_some());
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!(
+                "{NAMESPACE_ENDPOINT}/?id={comma_separated_ids}&limit=2&sort=id&cursor={}",
+                next_cursor.unwrap()
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, http::StatusCode::OK).await;
+        let objects: Vec<Namespace> = test::read_body_json(resp).await;
+        assert_eq!(objects.len(), 2);
+        assert_eq!(objects[0].id, created_namespaces[2].id);
+        assert_eq!(objects[1].id, created_namespaces[3].id);
 
         for i in created_namespaces {
             i.delete(&pool).await.unwrap();

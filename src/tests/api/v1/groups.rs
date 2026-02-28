@@ -4,9 +4,10 @@ mod tests {
     use yare::parameterized;
 
     use crate::models::group::{Group, NewGroup, UpdateGroup};
-    use crate::models::user::User;
+    use crate::models::pagination::NEXT_CURSOR_HEADER;
+    use crate::models::user::{NewUser, User};
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
-    use crate::tests::asserts::assert_response_status;
+    use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
         create_test_admin, create_test_group, create_test_user, setup_pool_and_tokens,
     };
@@ -273,5 +274,132 @@ mod tests {
         for group in created_groups {
             group.delete(&pool).await.unwrap();
         }
+    }
+
+    #[actix_web::test]
+    async fn test_list_groups_cursor_pagination() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let prefix = "cursor-group";
+        let mut created_groups = Vec::new();
+
+        for idx in 0..3 {
+            let group = NewGroup {
+                groupname: format!("{prefix}-{idx}"),
+                description: Some("cursor pagination".to_string()),
+            }
+            .save(&pool)
+            .await
+            .unwrap();
+            created_groups.push(group);
+        }
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{GROUPS_ENDPOINT}?groupname__contains={prefix}&limit=2&sort=id"),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        let groups: Vec<Group> = test::read_body_json(resp).await;
+
+        assert_eq!(groups.len(), 2);
+        assert!(next_cursor.is_some());
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!(
+                "{GROUPS_ENDPOINT}?groupname__contains={prefix}&limit=2&sort=id&cursor={}",
+                next_cursor.unwrap()
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let groups: Vec<Group> = test::read_body_json(resp).await;
+        assert!(!groups.is_empty());
+
+        for group in created_groups {
+            group.delete(&pool).await.unwrap();
+        }
+    }
+
+    #[actix_web::test]
+    async fn test_group_members_cursor_pagination() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let group = create_test_group(&pool).await;
+        let user_one = create_test_user(&pool).await;
+        let user_two = create_test_user(&pool).await;
+
+        group.add_member(&pool, &user_one).await.unwrap();
+        group.add_member(&pool, &user_two).await.unwrap();
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{}/{}/members?limit=1&sort=id", GROUPS_ENDPOINT, group.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        let members: Vec<User> = test::read_body_json(resp).await;
+
+        assert_eq!(members.len(), 1);
+        assert!(next_cursor.is_some());
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!(
+                "{}/{}/members?limit=1&sort=id&cursor={}",
+                GROUPS_ENDPOINT,
+                group.id,
+                next_cursor.unwrap()
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let members: Vec<User> = test::read_body_json(resp).await;
+        assert_eq!(members.len(), 1);
+    }
+
+    #[actix_web::test]
+    async fn test_group_members_filtering() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let group = create_test_group(&pool).await;
+        let matching_user = NewUser {
+            username: format!("filter-group-member-match-{}", group.id),
+            password: "testpassword".to_string(),
+            email: Some(format!("match-{}@example.com", group.id)),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+        let other_user = NewUser {
+            username: format!("filter-group-member-other-{}", group.id),
+            password: "testpassword".to_string(),
+            email: Some(format!("other-{}@example.com", group.id)),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        group.add_member(&pool, &matching_user).await.unwrap();
+        group.add_member(&pool, &other_user).await.unwrap();
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!(
+                "{}/{}/members?username__contains=filter-group-member-match&sort=id",
+                GROUPS_ENDPOINT, group.id
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let members: Vec<User> = test::read_body_json(resp).await;
+
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].id, matching_user.id);
     }
 }

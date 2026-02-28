@@ -12,6 +12,7 @@ actix-web = { version = "4" }
 actix-http = { version = "3" }
 argon2 = { version = "0.5", features = ["std"] }
 bytes = "1"
+base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["env", "derive"] }
 diesel = { version = "2", features = [

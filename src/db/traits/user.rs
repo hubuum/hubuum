@@ -204,7 +204,7 @@ impl User {
     ) -> Result<Vec<User>, ApiError> {
         use crate::schema::users::dsl::{created_at, email, id, updated_at, username, users};
 
-        let query_params = query_options.filters;
+        let query_params = query_options.filters.clone();
 
         debug!(
             message = "Searching users",
@@ -233,42 +233,7 @@ impl User {
             }
         }
 
-        for order in query_options.sort.iter() {
-            match (&order.field, &order.descending) {
-                (FilterField::Id, false) => base_query = base_query.order_by(id.asc()),
-                (FilterField::Id, true) => base_query = base_query.order_by(id.desc()),
-                (FilterField::Name, false) | (FilterField::Username, false) => {
-                    base_query = base_query.order_by(username.asc())
-                }
-                (FilterField::Name, true) | (FilterField::Username, true) => {
-                    base_query = base_query.order_by(username.desc())
-                }
-                (FilterField::Email, false) => base_query = base_query.order_by(email.asc()),
-                (FilterField::Email, true) => base_query = base_query.order_by(email.desc()),
-                (FilterField::CreatedAt, false) => {
-                    base_query = base_query.order_by(created_at.asc())
-                }
-                (FilterField::CreatedAt, true) => {
-                    base_query = base_query.order_by(created_at.desc())
-                }
-                (FilterField::UpdatedAt, false) => {
-                    base_query = base_query.order_by(updated_at.asc())
-                }
-                (FilterField::UpdatedAt, true) => {
-                    base_query = base_query.order_by(updated_at.desc())
-                }
-                _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't orderable (or does not exist) for users",
-                        order.field
-                    )))
-                }
-            }
-        }
-
-        if let Some(limit) = query_options.limit {
-            base_query = base_query.limit(limit as i64);
-        }
+        crate::apply_query_options!(base_query, query_options, User);
 
         trace_query!(base_query, "Searching users");
 
@@ -291,7 +256,7 @@ impl User {
             created_at, description, groupname, groups, id, updated_at,
         };
 
-        let query_params = query_options.filters;
+        let query_params = query_options.filters.clone();
 
         debug!(
             message = "Searching groups",
@@ -322,46 +287,7 @@ impl User {
             }
         }
 
-        for order in query_options.sort.iter() {
-            match (&order.field, &order.descending) {
-                (FilterField::Id, false) => base_query = base_query.order_by(id.asc()),
-                (FilterField::Id, true) => base_query = base_query.order_by(id.desc()),
-                (FilterField::Name, false) | (FilterField::Groupname, false) => {
-                    base_query = base_query.order_by(groupname.asc())
-                }
-                (FilterField::Name, true) | (FilterField::Groupname, true) => {
-                    base_query = base_query.order_by(groupname.desc())
-                }
-                (FilterField::Description, false) => {
-                    base_query = base_query.order_by(description.asc())
-                }
-                (FilterField::Description, true) => {
-                    base_query = base_query.order_by(description.desc())
-                }
-                (FilterField::CreatedAt, false) => {
-                    base_query = base_query.order_by(created_at.asc())
-                }
-                (FilterField::CreatedAt, true) => {
-                    base_query = base_query.order_by(created_at.desc())
-                }
-                (FilterField::UpdatedAt, false) => {
-                    base_query = base_query.order_by(updated_at.asc())
-                }
-                (FilterField::UpdatedAt, true) => {
-                    base_query = base_query.order_by(updated_at.desc())
-                }
-                _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't orderable (or does not exist) for groups",
-                        order.field
-                    )))
-                }
-            }
-        }
-
-        if let Some(limit) = query_options.limit {
-            base_query = base_query.limit(limit as i64);
-        }
+        crate::apply_query_options!(base_query, query_options, Group);
 
         trace_query!(base_query, "Searching groups");
 

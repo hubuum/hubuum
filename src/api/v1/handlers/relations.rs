@@ -2,6 +2,7 @@ use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
+use crate::models::pagination::prepare_db_pagination;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
     HubuumClassRelation, HubuumClassRelationID, HubuumObjectRelation, HubuumObjectRelationID,
@@ -12,7 +13,7 @@ use crate::can;
 use crate::db::traits::UserPermissions;
 use crate::traits::{CanDelete, CanSave, NamespaceAccessors, SelfAccessors};
 
-use crate::utilities::response::json_response;
+use crate::utilities::response::{json_response, paginated_json_response};
 use actix_web::delete;
 use tracing::debug;
 
@@ -49,9 +50,10 @@ async fn get_class_relations(
 
     debug!(message = "Listing class relations", user_id = user.id());
 
-    let classes = user.search_class_relations(&pool, params).await?;
+    let search_params = prepare_db_pagination::<HubuumClassRelation>(&params)?;
+    let classes = user.search_class_relations(&pool, search_params).await?;
 
-    Ok(json_response(classes, StatusCode::OK))
+    paginated_json_response(classes, StatusCode::OK, &params)
 }
 
 #[utoipa::path(
@@ -214,9 +216,10 @@ async fn get_object_relations(
 
     debug!(message = "Listing object relations", user_id = user.id());
 
-    let object_relations = user.search_object_relations(&pool, params).await?;
+    let search_params = prepare_db_pagination::<HubuumObjectRelation>(&params)?;
+    let object_relations = user.search_object_relations(&pool, search_params).await?;
 
-    Ok(json_response(object_relations, StatusCode::OK))
+    paginated_json_response(object_relations, StatusCode::OK, &params)
 }
 
 #[utoipa::path(

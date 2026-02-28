@@ -6,8 +6,9 @@ pub mod tests {
 
     use yare::parameterized;
 
+    use crate::models::pagination::NEXT_CURSOR_HEADER;
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
-    use crate::tests::asserts::assert_response_status;
+    use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::constants::{get_schema, SchemaType};
     use crate::tests::{create_namespace, setup_pool_and_tokens};
     use crate::{assert_contains_all, assert_contains_same_ids};
@@ -422,6 +423,49 @@ pub mod tests {
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let classes: Vec<HubuumClassExpanded> = test::read_body_json(resp).await;
         assert_eq!(classes.len(), limit);
+
+        cleanup(&created_classes).await;
+    }
+
+    #[actix_web::test]
+    async fn test_api_classes_cursor_pagination() {
+        let created_classes = create_test_classes("api_classes_cursor").await;
+
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let namespace_id = created_classes[0].namespace_id;
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{CLASSES_ENDPOINT}?namespaces={namespace_id}&limit=2&sort=id"),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        let classes: Vec<HubuumClassExpanded> = test::read_body_json(resp).await;
+
+        assert_eq!(classes.len(), 2);
+        assert_eq!(classes[0].id, created_classes[0].id);
+        assert_eq!(classes[1].id, created_classes[1].id);
+        assert!(next_cursor.is_some());
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!(
+                "{CLASSES_ENDPOINT}?namespaces={namespace_id}&limit=2&sort=id&cursor={}",
+                next_cursor.unwrap()
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let second_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        let classes: Vec<HubuumClassExpanded> = test::read_body_json(resp).await;
+
+        assert_eq!(classes.len(), 2);
+        assert_eq!(classes[0].id, created_classes[2].id);
+        assert_eq!(classes[1].id, created_classes[3].id);
+        assert!(second_cursor.is_some());
 
         cleanup(&created_classes).await;
     }

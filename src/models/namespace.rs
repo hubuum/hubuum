@@ -89,6 +89,79 @@ fn new_namespace_with_assignee_example() -> NewNamespaceWithAssignee {
     }
 }
 
+fn permission_filter_sql(permission: Permissions, target: bool) -> &'static str {
+    match (permission, target) {
+        (Permissions::ReadCollection, true) => "permissions.has_read_namespace = TRUE",
+        (Permissions::ReadCollection, false) => "permissions.has_read_namespace = FALSE",
+        (Permissions::UpdateCollection, true) => "permissions.has_update_namespace = TRUE",
+        (Permissions::UpdateCollection, false) => "permissions.has_update_namespace = FALSE",
+        (Permissions::DeleteCollection, true) => "permissions.has_delete_namespace = TRUE",
+        (Permissions::DeleteCollection, false) => "permissions.has_delete_namespace = FALSE",
+        (Permissions::DelegateCollection, true) => "permissions.has_delegate_namespace = TRUE",
+        (Permissions::DelegateCollection, false) => "permissions.has_delegate_namespace = FALSE",
+        (Permissions::CreateClass, true) => "permissions.has_create_class = TRUE",
+        (Permissions::CreateClass, false) => "permissions.has_create_class = FALSE",
+        (Permissions::ReadClass, true) => "permissions.has_read_class = TRUE",
+        (Permissions::ReadClass, false) => "permissions.has_read_class = FALSE",
+        (Permissions::UpdateClass, true) => "permissions.has_update_class = TRUE",
+        (Permissions::UpdateClass, false) => "permissions.has_update_class = FALSE",
+        (Permissions::DeleteClass, true) => "permissions.has_delete_class = TRUE",
+        (Permissions::DeleteClass, false) => "permissions.has_delete_class = FALSE",
+        (Permissions::CreateObject, true) => "permissions.has_create_object = TRUE",
+        (Permissions::CreateObject, false) => "permissions.has_create_object = FALSE",
+        (Permissions::ReadObject, true) => "permissions.has_read_object = TRUE",
+        (Permissions::ReadObject, false) => "permissions.has_read_object = FALSE",
+        (Permissions::UpdateObject, true) => "permissions.has_update_object = TRUE",
+        (Permissions::UpdateObject, false) => "permissions.has_update_object = FALSE",
+        (Permissions::DeleteObject, true) => "permissions.has_delete_object = TRUE",
+        (Permissions::DeleteObject, false) => "permissions.has_delete_object = FALSE",
+        (Permissions::CreateClassRelation, true) => {
+            "permissions.has_create_class_relation = TRUE"
+        }
+        (Permissions::CreateClassRelation, false) => {
+            "permissions.has_create_class_relation = FALSE"
+        }
+        (Permissions::ReadClassRelation, true) => "permissions.has_read_class_relation = TRUE",
+        (Permissions::ReadClassRelation, false) => "permissions.has_read_class_relation = FALSE",
+        (Permissions::UpdateClassRelation, true) => {
+            "permissions.has_update_class_relation = TRUE"
+        }
+        (Permissions::UpdateClassRelation, false) => {
+            "permissions.has_update_class_relation = FALSE"
+        }
+        (Permissions::DeleteClassRelation, true) => {
+            "permissions.has_delete_class_relation = TRUE"
+        }
+        (Permissions::DeleteClassRelation, false) => {
+            "permissions.has_delete_class_relation = FALSE"
+        }
+        (Permissions::CreateObjectRelation, true) => {
+            "permissions.has_create_object_relation = TRUE"
+        }
+        (Permissions::CreateObjectRelation, false) => {
+            "permissions.has_create_object_relation = FALSE"
+        }
+        (Permissions::ReadObjectRelation, true) => {
+            "permissions.has_read_object_relation = TRUE"
+        }
+        (Permissions::ReadObjectRelation, false) => {
+            "permissions.has_read_object_relation = FALSE"
+        }
+        (Permissions::UpdateObjectRelation, true) => {
+            "permissions.has_update_object_relation = TRUE"
+        }
+        (Permissions::UpdateObjectRelation, false) => {
+            "permissions.has_update_object_relation = FALSE"
+        }
+        (Permissions::DeleteObjectRelation, true) => {
+            "permissions.has_delete_object_relation = TRUE"
+        }
+        (Permissions::DeleteObjectRelation, false) => {
+            "permissions.has_delete_object_relation = FALSE"
+        }
+    }
+}
+
 pub async fn total_namespace_count(pool: &DbPool) -> Result<i64, ApiError> {
     use crate::schema::namespaces::dsl::*;
 
@@ -107,6 +180,7 @@ pub async fn total_namespace_count(pool: &DbPool) -> Result<i64, ApiError> {
 /// ## Returns
 /// * Ok(Vec(Group, NamespacePermissions)) - List of groups and their permissions
 /// * Err(ApiError) - On query errors only.
+#[allow(dead_code)]
 pub async fn user_on<T: NamespaceAccessors>(
     pool: &DbPool,
     user_id: UserID,
@@ -133,6 +207,66 @@ pub async fn user_on<T: NamespaceAccessors>(
         query.into_iter().map(GroupPermission::from_tuple).collect();
 
     Ok(structured_results)
+}
+
+pub async fn user_on_paginated<T: NamespaceAccessors>(
+    pool: &DbPool,
+    user_id: UserID,
+    namespace_ref: T,
+    query_options: &QueryOptions,
+) -> Result<Vec<GroupPermission>, ApiError> {
+    use crate::models::traits::output::FromTuple;
+    use crate::schema::groups::dsl::{groupname, groups, id as group_table_id};
+    use crate::schema::permissions::dsl::{
+        created_at as permission_created_at, group_id, id as permission_id, namespace_id,
+        permissions, updated_at as permission_updated_at,
+    };
+    use crate::{date_search, numeric_search, string_search};
+    use diesel::prelude::*;
+
+    let mut conn = pool.get()?;
+    let namespace_target_id = namespace_ref.namespace_id(pool).await?;
+    let group_ids_subquery = user_id.group_ids_subquery();
+
+    let mut query = groups
+        .inner_join(permissions.on(group_table_id.eq(group_id)))
+        .filter(namespace_id.eq(namespace_target_id))
+        .filter(group_id.eq_any(group_ids_subquery))
+        .into_boxed();
+
+    for perm in query_options.filters.permissions()?.iter().cloned() {
+        query = query.filter(diesel::dsl::sql::<diesel::sql_types::Bool>(
+            permission_filter_sql(perm, true),
+        ));
+    }
+
+    for param in &query_options.filters {
+        let operator = param.operator.clone();
+        match param.field {
+            FilterField::Id => numeric_search!(query, param, operator, permission_id),
+            FilterField::Name | FilterField::Groupname => {
+                string_search!(query, param, operator, groupname)
+            }
+            FilterField::CreatedAt => {
+                date_search!(query, param, operator, permission_created_at)
+            }
+            FilterField::UpdatedAt => {
+                date_search!(query, param, operator, permission_updated_at)
+            }
+            FilterField::Permissions => {}
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' isn't searchable (or does not exist) for permissions",
+                    param.field
+                )))
+            }
+        }
+    }
+
+    crate::apply_query_options!(query, query_options, GroupPermission);
+
+    let rows = query.load::<(Group, Permission)>(&mut conn)?;
+    Ok(rows.into_iter().map(GroupPermission::from_tuple).collect())
 }
 
 /// Check if a user has a specific permission to any namespace
@@ -233,6 +367,7 @@ pub async fn group_can_on<T: NamespaceAccessors>(
 /// ## Returns
 /// * Ok(Vec<Group>) - List of groups that have the requested permission
 /// * Err(ApiError) - On query errors only.
+#[allow(dead_code)]
 pub async fn groups_can_on(
     pool: &DbPool,
     nid: i32,
@@ -269,6 +404,52 @@ pub async fn groups_can_on(
     Ok(results)
 }
 
+pub async fn groups_can_on_paginated(
+    pool: &DbPool,
+    nid: i32,
+    permission_type: Permissions,
+    query_options: &QueryOptions,
+) -> Result<Vec<Group>, ApiError> {
+    use crate::models::permissions::PermissionFilter;
+    use crate::schema::groups::dsl::{
+        created_at, description, groupname, groups, id as group_table_id, updated_at,
+    };
+    use crate::schema::permissions::dsl::*;
+    use crate::{date_search, numeric_search, string_search};
+    use diesel::prelude::*;
+
+    let mut conn = pool.get()?;
+    let base_query = permissions.into_boxed().filter(namespace_id.eq(nid));
+    let filtered_query = permission_type.create_boxed_filter(base_query, true);
+
+    let mut query = groups
+        .filter(group_table_id.eq_any(filtered_query.select(group_id).distinct()))
+        .into_boxed();
+
+    for param in &query_options.filters {
+        let operator = param.operator.clone();
+        match param.field {
+            FilterField::Id => numeric_search!(query, param, operator, group_table_id),
+            FilterField::Name | FilterField::Groupname => {
+                string_search!(query, param, operator, groupname)
+            }
+            FilterField::Description => string_search!(query, param, operator, description),
+            FilterField::CreatedAt => date_search!(query, param, operator, created_at),
+            FilterField::UpdatedAt => date_search!(query, param, operator, updated_at),
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' isn't searchable (or does not exist) for groups",
+                    param.field
+                )))
+            }
+        }
+    }
+
+    crate::apply_query_options!(query, query_options, Group);
+
+    query.load::<Group>(&mut conn).map_err(ApiError::from)
+}
+
 /// List all groups and their permissions for a namespace
 ///
 /// ## Arguments
@@ -278,6 +459,7 @@ pub async fn groups_can_on(
 /// ## Returns
 /// * Ok(Vec<(Group, NamespacePermissions)>) - List of groups and their permissions
 /// * Err(ApiError) - On query errors only.
+#[allow(dead_code)]
 pub async fn groups_on<T: NamespaceAccessors>(
     pool: &DbPool,
     namespace_ref: T,
@@ -367,6 +549,68 @@ pub async fn groups_on<T: NamespaceAccessors>(
         query.into_iter().map(GroupPermission::from_tuple).collect();
 
     Ok(structured_results)
+}
+
+pub async fn groups_on_paginated<T: NamespaceAccessors>(
+    pool: &DbPool,
+    namespace_ref: T,
+    permissions_filter: Vec<Permissions>,
+    query_options: &QueryOptions,
+) -> Result<Vec<GroupPermission>, ApiError> {
+    use crate::models::traits::output::FromTuple;
+    use crate::schema::groups::dsl::{groupname, groups, id as group_table_id};
+    use crate::schema::permissions::dsl::{
+        created_at as permission_created_at, group_id, id as permission_id, namespace_id,
+        permissions, updated_at as permission_updated_at,
+    };
+    use crate::{date_search, numeric_search, string_search};
+    use diesel::prelude::*;
+
+    let mut conn = pool.get()?;
+    let namespace_target_id = namespace_ref.namespace_id(pool).await?;
+    let mut permission_filters = query_options.filters.permissions()?;
+    permission_filters.ensure_contains(&permissions_filter);
+
+    let mut query = groups
+        .inner_join(permissions.on(group_table_id.eq(group_id)))
+        .filter(namespace_id.eq(namespace_target_id))
+        .into_boxed();
+
+    for perm in permission_filters.iter().cloned() {
+        query = query.filter(diesel::dsl::sql::<diesel::sql_types::Bool>(
+            permission_filter_sql(perm, true),
+        ));
+    }
+
+    for param in &query_options.filters {
+        let operator = param.operator.clone();
+        match param.field {
+            FilterField::Id => numeric_search!(query, param, operator, permission_id),
+            FilterField::Name | FilterField::Groupname => {
+                string_search!(query, param, operator, groupname)
+            }
+            FilterField::CreatedAt => {
+                date_search!(query, param, operator, permission_created_at)
+            }
+            FilterField::UpdatedAt => {
+                date_search!(query, param, operator, permission_updated_at)
+            }
+            FilterField::Permissions => {}
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' isn't searchable (or does not exist) for permissions",
+                    param.field
+                )))
+            }
+        }
+    }
+
+    crate::apply_query_options!(query, query_options, GroupPermission);
+
+    let rows = query
+        .select((groups::all_columns(), permissions::all_columns()))
+        .load::<(Group, Permission)>(&mut conn)?;
+    Ok(rows.into_iter().map(GroupPermission::from_tuple).collect())
 }
 
 /// List all permissions for a given group on a namespace
@@ -520,6 +764,7 @@ mod tests {
                 filters: vec![],
                 sort: vec![],
                 limit: None,
+                cursor: None,
             },
         )
         .await

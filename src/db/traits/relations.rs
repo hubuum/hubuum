@@ -2,6 +2,7 @@ use crate::db::traits::ClassRelation;
 
 use crate::db::{with_connection, DbPool};
 use crate::errors::ApiError;
+use crate::models::search::{FilterField, QueryOptions};
 use crate::models::{
     user_can_on_any, HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, HubuumObject,
     HubuumObjectTransitiveLink, User,
@@ -39,6 +40,15 @@ where
         other: &C2,
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError> {
         <C1 as Relations<C1, C2>>::relations_between(pool, self, other).await
+    }
+
+    async fn relations_to_paginated(
+        &self,
+        pool: &DbPool,
+        other: &C2,
+        query_options: &QueryOptions,
+    ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError> {
+        fetch_relations_paginated(pool, self, other, query_options).await
     }
 
     async fn direct_relation_to(
@@ -115,6 +125,55 @@ where
             .filter(ancestor_class_id.eq(from))
             .filter(descendant_class_id.eq(to))
             .load::<HubuumClassRelationTransitive>(conn)
+    })
+}
+
+async fn fetch_relations_paginated<C1, C2>(
+    pool: &DbPool,
+    from: &C1,
+    to: &C2,
+    query_options: &QueryOptions,
+) -> Result<Vec<HubuumClassRelationTransitive>, ApiError>
+where
+    C1: SelfAccessors<HubuumClass> + Clone + Send + Sync,
+    C2: SelfAccessors<HubuumClass> + Clone + Send + Sync,
+{
+    use crate::schema::hubuumclass_closure::dsl::*;
+    use crate::{array_search, numeric_search};
+    use diesel::prelude::*;
+
+    let (from, to) = (from.id(), to.id());
+    let (from, to) = if from > to { (to, from) } else { (from, to) };
+
+    let mut base_query = hubuumclass_closure
+        .filter(ancestor_class_id.eq(from))
+        .filter(descendant_class_id.eq(to))
+        .into_boxed();
+
+    for param in &query_options.filters {
+        let operator = param.operator.clone();
+        match param.field {
+            FilterField::ClassFrom => {
+                numeric_search!(base_query, param, operator, ancestor_class_id)
+            }
+            FilterField::ClassTo => {
+                numeric_search!(base_query, param, operator, descendant_class_id)
+            }
+            FilterField::Depth => numeric_search!(base_query, param, operator, depth),
+            FilterField::Path => array_search!(base_query, param, operator, path),
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                "Field '{}' isn't searchable (or does not exist) for transitive class relations",
+                param.field
+            )))
+            }
+        }
+    }
+
+    crate::apply_query_options!(base_query, query_options, HubuumClassRelationTransitive);
+
+    with_connection(pool, |conn| {
+        base_query.load::<HubuumClassRelationTransitive>(conn)
     })
 }
 

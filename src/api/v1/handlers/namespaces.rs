@@ -7,9 +7,10 @@ use crate::models::{
     Permissions, PermissionsList, UpdateNamespace, UserID,
 };
 
+use crate::models::pagination::prepare_db_pagination;
 use crate::models::search::parse_query_parameter;
 
-use crate::utilities::response::{json_response, json_response_created};
+use crate::utilities::response::{json_response, json_response_created, paginated_json_response};
 use actix_web::{
     delete, get, http::StatusCode, patch, post, put, routes, web, HttpRequest, Responder,
 };
@@ -55,8 +56,9 @@ pub async fn get_namespaces(
         Err(e) => return Err(e),
     };
 
-    let result = user.search_namespaces(&pool, params).await?;
-    Ok(json_response(result, StatusCode::OK))
+    let search_params = prepare_db_pagination::<Namespace>(&params)?;
+    let result = user.search_namespaces(&pool, search_params).await?;
+    paginated_json_response(result, StatusCode::OK, &params)
 }
 
 #[utoipa::path(
@@ -235,13 +237,13 @@ pub async fn get_namespace_permissions(
     namespace_id: web::Path<NamespaceID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    use crate::models::namespace::groups_on;
-
     info!(
         message = "Namespace permissions list requested",
         requestor = requestor.user.username,
         namespace_id = namespace_id.id()
     );
+
+    let params = parse_query_parameter(req.query_string())?;
 
     let namespace = namespace_id.instance(&pool).await?;
     can!(
@@ -251,9 +253,11 @@ pub async fn get_namespace_permissions(
         namespace
     );
 
-    let query_options = parse_query_parameter(req.query_string())?;
-    let permissions = groups_on(&pool, namespace, vec![], query_options).await?;
-    Ok(json_response(permissions, StatusCode::OK))
+    let search_params = prepare_db_pagination::<GroupPermission>(&params)?;
+    let permissions =
+        crate::models::namespace::groups_on_paginated(&pool, namespace, vec![], &search_params)
+            .await?;
+    paginated_json_response(permissions, StatusCode::OK, &params)
 }
 
 /// List all permissions for a given group on a namespace
@@ -630,10 +634,10 @@ pub async fn get_namespace_user_permissions(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
     params: web::Path<(NamespaceID, UserID)>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    use crate::models::namespace::user_on;
-
     let (namespace_id, user_id) = params.into_inner();
+    let query_options = parse_query_parameter(req.query_string())?;
 
     info!(
         message = "Namespace user permissions list requested",
@@ -650,13 +654,16 @@ pub async fn get_namespace_user_permissions(
         namespace
     );
 
-    let permissions = user_on(&pool, user_id, namespace).await?;
+    let search_params = prepare_db_pagination::<GroupPermission>(&query_options)?;
+    let permissions: Vec<GroupPermission> =
+        crate::models::namespace::user_on_paginated(&pool, user_id, namespace, &search_params)
+            .await?;
 
     if permissions.is_empty() {
         return Ok(json_response((), StatusCode::NOT_FOUND));
     }
 
-    Ok(json_response(permissions, StatusCode::OK))
+    paginated_json_response(permissions, StatusCode::OK, &query_options)
 }
 
 /// List all groups that have any permissions on a namespace
@@ -680,10 +687,10 @@ pub async fn get_namespace_groups_with_permission(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
     params: web::Path<(NamespaceID, Permissions)>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    use crate::models::namespace::groups_can_on;
-
     let (namespace_id, permission) = params.into_inner();
+    let query_options = parse_query_parameter(req.query_string())?;
 
     info!(
         message = "Namespace groups with permission list requested",
@@ -700,7 +707,14 @@ pub async fn get_namespace_groups_with_permission(
         namespace
     );
 
-    let groups = groups_can_on(&pool, namespace.id, permission).await?;
+    let search_params = prepare_db_pagination::<Group>(&query_options)?;
+    let groups = crate::models::namespace::groups_can_on_paginated(
+        &pool,
+        namespace.id,
+        permission,
+        &search_params,
+    )
+    .await?;
 
-    Ok(json_response(groups, StatusCode::OK))
+    paginated_json_response(groups, StatusCode::OK, &query_options)
 }

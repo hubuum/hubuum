@@ -1251,6 +1251,7 @@ dependencies = [
  "actix-service",
  "actix-web",
  "argon2",
+ "base64",
  "bytes",
  "chrono",
  "clap",

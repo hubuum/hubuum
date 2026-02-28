@@ -124,9 +124,12 @@ impl<T: AsRef<str>> CustomStringExtensions for T {
                                 ApiError::BadRequest(format!("Invalid date format: {}", part))
                             })?
                             .and_hms_opt(0, 0, 0)
-                            .ok_or_else(|| ApiError::BadRequest(
-                                format!("Failed to create time for date: {}", part)
-                            ))
+                            .ok_or_else(|| {
+                                ApiError::BadRequest(format!(
+                                    "Failed to create time for date: {}",
+                                    part
+                                ))
+                            })
                     })
             })
             .collect()

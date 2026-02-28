@@ -1,6 +1,8 @@
 // src/models/group.rs
 
 use crate::errors::ApiError;
+use crate::models::search::FilterField;
+use crate::models::search::QueryOptions;
 use crate::models::user_group::NewUserGroup;
 use crate::schema::groups;
 
@@ -70,6 +72,47 @@ impl Group {
             .inner_join(users.on(id.eq(user_id)))
             .select((id, username, password, email, created_at, updated_at))
             .load::<User>(&mut pool.get()?)?)
+    }
+
+    pub async fn members_paginated(
+        &self,
+        pool: &DbPool,
+        query_options: &QueryOptions,
+    ) -> Result<Vec<User>, ApiError> {
+        use crate::schema::user_groups::dsl::{group_id, user_groups, user_id};
+        use crate::schema::users::dsl::{
+            created_at, email, id, password, updated_at, username, users,
+        };
+        use crate::{date_search, numeric_search, string_search};
+
+        let mut base_query = user_groups
+            .filter(group_id.eq(self.id))
+            .inner_join(users.on(id.eq(user_id)))
+            .select((id, username, password, email, created_at, updated_at))
+            .into_boxed();
+
+        for param in &query_options.filters {
+            let operator = param.operator.clone();
+            match param.field {
+                FilterField::Id => numeric_search!(base_query, param, operator, id),
+                FilterField::Name | FilterField::Username => {
+                    string_search!(base_query, param, operator, username)
+                }
+                FilterField::Email => string_search!(base_query, param, operator, email),
+                FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
+                FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for users",
+                        param.field
+                    )))
+                }
+            }
+        }
+
+        crate::apply_query_options!(base_query, query_options, User);
+
+        Ok(base_query.load::<User>(&mut pool.get()?)?)
     }
 
     /// Add a member to a group. If the user is already a member, do nothing.

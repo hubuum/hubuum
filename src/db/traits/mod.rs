@@ -38,7 +38,13 @@ pub trait Status<T> {
 /// active tokens, and this trait would allow us to get all of them.
 pub trait ActiveTokens {
     /// Get all active tokens for a given structure.
+    #[allow(dead_code)]
     async fn tokens(&self, pool: &DbPool) -> Result<Vec<UserToken>, ApiError>;
+    async fn tokens_paginated(
+        &self,
+        pool: &DbPool,
+        query_options: &QueryOptions,
+    ) -> Result<Vec<UserToken>, ApiError>;
 }
 
 /// Trait for getting the namespace(s) of a structure from the backend database.
@@ -99,6 +105,13 @@ where
         other: &C2,
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError>;
 
+    async fn relations_to_paginated(
+        &self,
+        pool: &DbPool,
+        other: &C2,
+        query_options: &QueryOptions,
+    ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError>;
+
     /// Check if a direct relation exists between self and another class
     async fn direct_relation_to(
         &self,
@@ -112,6 +125,7 @@ where
     C1: SelfAccessors<HubuumClass> + Clone + Send + Sync,
     Self: SelfAccessors<HubuumClass>,
 {
+    #[allow(dead_code)]
     async fn transitive_relations(
         &self,
         pool: &DbPool,
@@ -124,6 +138,47 @@ where
                 .or_filter(ancestor_class_id.eq(self.id()))
                 .or_filter(descendant_class_id.eq(self.id()))
                 .load::<HubuumClassRelationTransitive>(conn)
+        })
+    }
+
+    async fn transitive_relations_paginated(
+        &self,
+        pool: &DbPool,
+        query_options: &QueryOptions,
+    ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError> {
+        use crate::schema::hubuumclass_closure::dsl::*;
+        use crate::{array_search, numeric_search};
+        use diesel::prelude::*;
+
+        let mut base_query = hubuumclass_closure
+            .or_filter(ancestor_class_id.eq(self.id()))
+            .or_filter(descendant_class_id.eq(self.id()))
+            .into_boxed();
+
+        for param in &query_options.filters {
+            let operator = param.operator.clone();
+            match param.field {
+                FilterField::ClassFrom => {
+                    numeric_search!(base_query, param, operator, ancestor_class_id)
+                }
+                FilterField::ClassTo => {
+                    numeric_search!(base_query, param, operator, descendant_class_id)
+                }
+                FilterField::Depth => numeric_search!(base_query, param, operator, depth),
+                FilterField::Path => array_search!(base_query, param, operator, path),
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for transitive class relations",
+                        param.field
+                    )))
+                }
+            }
+        }
+
+        crate::apply_query_options!(base_query, query_options, HubuumClassRelationTransitive);
+
+        with_connection(pool, |conn| {
+            base_query.load::<HubuumClassRelationTransitive>(conn)
         })
     }
 
@@ -178,46 +233,7 @@ where
             }
         }
 
-        for order in query_options.sort.iter() {
-            match (&order.field, &order.descending) {
-                (FilterField::Id, false) => base_query = base_query.order_by(id.asc()),
-                (FilterField::Id, true) => base_query = base_query.order_by(id.desc()),
-                (FilterField::ClassFrom, false) => {
-                    base_query = base_query.order_by(from_hubuum_class_id.asc())
-                }
-                (FilterField::ClassFrom, true) => {
-                    base_query = base_query.order_by(from_hubuum_class_id.desc())
-                }
-                (FilterField::ClassTo, false) => {
-                    base_query = base_query.order_by(to_hubuum_class_id.asc())
-                }
-                (FilterField::ClassTo, true) => {
-                    base_query = base_query.order_by(to_hubuum_class_id.desc())
-                }
-                (FilterField::CreatedAt, false) => {
-                    base_query = base_query.order_by(created_at.asc())
-                }
-                (FilterField::CreatedAt, true) => {
-                    base_query = base_query.order_by(created_at.desc())
-                }
-                (FilterField::UpdatedAt, false) => {
-                    base_query = base_query.order_by(updated_at.asc())
-                }
-                (FilterField::UpdatedAt, true) => {
-                    base_query = base_query.order_by(updated_at.desc())
-                }
-                _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't orderable (or does not exist) for class relations",
-                        order.field
-                    )))
-                }
-            }
-        }
-
-        if let Some(limit) = query_options.limit {
-            base_query = base_query.limit(limit as i64);
-        }
+        crate::apply_query_options!(base_query, query_options, HubuumClassRelation);
 
         trace_query!(base_query, "Searching relations");
 

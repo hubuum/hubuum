@@ -82,6 +82,7 @@ mod test {
                 filters: tc.query.clone(),
                 sort: vec![],
                 limit: None,
+                cursor: None,
             };
 
             let hits = admin_user
