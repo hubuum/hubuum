@@ -203,4 +203,75 @@ mod tests {
         user.delete(&pool).await.unwrap();
         group.delete(&pool).await.unwrap();
     }
+
+    #[parameterized(
+        id_asc = { "id.asc", &[0, 1, 2] },
+        id_desc = { "id.desc", &[2, 1, 0] },
+        name_asc = { "name.asc", &[0, 1, 2] },
+        name_desc = { "name.desc", &[2, 1, 0] },
+    )]
+    #[test_macro(actix_web::test)]
+    async fn test_list_groups_sorted(sort_order: &str, expected_order: &[usize]) {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let prefix = format!("test_list_groups_sorted_{}", sort_order.replace('.', "_"));
+
+        let mut created_groups = Vec::new();
+        for i in 0..3 {
+            let group = NewGroup {
+                groupname: format!("{prefix}_{i}"),
+                description: Some(format!("{prefix}_description_{i}")),
+            }
+            .save(&pool)
+            .await
+            .unwrap();
+            created_groups.push(group);
+        }
+
+        let url = format!("{GROUPS_ENDPOINT}?groupname__contains={prefix}&sort={sort_order}");
+        let resp = get_request(&pool, &admin_token, &url).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let groups: Vec<Group> = test::read_body_json(resp).await;
+
+        assert_eq!(groups.len(), created_groups.len());
+        assert_eq!(groups[0].id, created_groups[expected_order[0]].id);
+        assert_eq!(groups[1].id, created_groups[expected_order[1]].id);
+        assert_eq!(groups[2].id, created_groups[expected_order[2]].id);
+
+        for group in created_groups {
+            group.delete(&pool).await.unwrap();
+        }
+    }
+
+    #[parameterized(
+        limit_1 = { 1 },
+        limit_2 = { 2 },
+        limit_5 = { 3 },
+    )]
+    #[test_macro(actix_web::test)]
+    async fn test_list_groups_limit(limit: usize) {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let prefix = format!("test_list_groups_limit_{limit}");
+
+        let mut created_groups = Vec::new();
+        for i in 0..3 {
+            let group = NewGroup {
+                groupname: format!("{prefix}_{i}"),
+                description: Some(format!("{prefix}_description_{i}")),
+            }
+            .save(&pool)
+            .await
+            .unwrap();
+            created_groups.push(group);
+        }
+
+        let url = format!("{GROUPS_ENDPOINT}?groupname__contains={prefix}&sort=id&limit={limit}");
+        let resp = get_request(&pool, &admin_token, &url).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let groups: Vec<Group> = test::read_body_json(resp).await;
+        assert_eq!(groups.len(), limit);
+
+        for group in created_groups {
+            group.delete(&pool).await.unwrap();
+        }
+    }
 }

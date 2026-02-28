@@ -3,8 +3,10 @@ mod tests {
     use actix_web::{http::StatusCode, test};
     use yare::parameterized;
 
-    use crate::models::{        
-        HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, HubuumObject, HubuumObjectRelation, HubuumObjectWithPath, NamespaceID, NewHubuumClassRelation, NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation, Permissions
+    use crate::models::{
+        HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, HubuumObject,
+        HubuumObjectRelation, HubuumObjectWithPath, NamespaceID, NewHubuumClassRelation,
+        NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation, Permissions,
     };
     use crate::traits::{CanSave, PermissionController, SelfAccessors};
     use crate::{assert_contains_all, assert_contains_same_ids};
@@ -111,6 +113,42 @@ mod tests {
 
         assert_contains_same_ids!(&relations, &relations_in_namespace);
         assert_contains_all!(&relations, &relations_in_namespace);
+
+        cleanup(&classes).await;
+    }
+
+    #[actix_web::test]
+    async fn test_get_class_relations_sorted_and_limited() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let (classes, relations) =
+            create_classes_and_relations(&pool, "get_class_relations_sorted_and_limited").await;
+
+        let class_ids = classes
+            .iter()
+            .map(|class| class.id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let sorted_url =
+            format!("{CLASS_RELATIONS_ENDPOINT}?from_classes={class_ids}&sort=id.desc");
+        let resp = get_request(&pool, &admin_token, &sorted_url).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let sorted_relations: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
+
+        assert_eq!(sorted_relations.len(), relations.len());
+        assert_eq!(sorted_relations[0].id, relations[4].id);
+        assert_eq!(sorted_relations[1].id, relations[3].id);
+        assert_eq!(sorted_relations[2].id, relations[2].id);
+
+        let limited_url =
+            format!("{CLASS_RELATIONS_ENDPOINT}?from_classes={class_ids}&sort=id&limit=2");
+        let resp = get_request(&pool, &admin_token, &limited_url).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let limited_relations: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
+
+        assert_eq!(limited_relations.len(), 2);
+        assert_eq!(limited_relations[0].id, relations[0].id);
+        assert_eq!(limited_relations[1].id, relations[1].id);
 
         cleanup(&classes).await;
     }
@@ -315,7 +353,7 @@ mod tests {
 
     // classidx of obj1, obj1_idx, obj2_idx, relation_idx, exists
     #[parameterized(
-        relation_12_rel_true = { 0, 0, 1, 0, true },        
+        relation_12_rel_true = { 0, 0, 1, 0, true },
         relation_12_rel_false_c1 = { 1, 0, 1, 0, false }, // Gets the wrong class
         relation_21_rel_true = { 1, 1, 0, 0, true }, // This is the same as relation_12_true, relations are bidirectional
         relation_32_true = { 2, 2, 1, 1, true },
@@ -334,9 +372,8 @@ mod tests {
         relation_index: usize,
         exists: bool,
     ) {
-        let unique = format!(
-            "get_object_relation_param_{from_index}_{to_index}_{relation_index}_{exists}"
-        );
+        let unique =
+            format!("get_object_relation_param_{from_index}_{to_index}_{relation_index}_{exists}");
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
         let (classes, relations) = create_classes_and_relations(&pool, &unique).await;
         let objects = create_objects_in_classes(&pool, &classes).await;
@@ -354,7 +391,10 @@ mod tests {
 
         let endpoint = format!(
             "/api/v1/classes/{}/{}/relations/{}/{}",
-            classes[class_index].id, objects[from_index].id, objects[to_index].hubuum_class_id, objects[to_index].id
+            classes[class_index].id,
+            objects[from_index].id,
+            objects[to_index].hubuum_class_id,
+            objects[to_index].id
         );
 
         let resp = get_request(&pool, &admin_token, &endpoint).await;
@@ -380,9 +420,60 @@ mod tests {
                 );
                 assert_eq!(relation_response.to_hubuum_object_id, objects[to_index].id);
             }
-        } else if !(resp.status() == StatusCode::NOT_FOUND || resp.status() == StatusCode::BAD_REQUEST) {
-            panic!("Expected NOT_FOUND/BAD_REQUEST from {}, got {:?} ({:?})", endpoint, resp.status(), test::read_body(resp).await);  
+        } else if !(resp.status() == StatusCode::NOT_FOUND
+            || resp.status() == StatusCode::BAD_REQUEST)
+        {
+            panic!(
+                "Expected NOT_FOUND/BAD_REQUEST from {}, got {:?} ({:?})",
+                endpoint,
+                resp.status(),
+                test::read_body(resp).await
+            );
         }
+
+        cleanup(&classes).await;
+    }
+
+    #[actix_web::test]
+    async fn test_get_object_relations_sorted_and_limited() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let (classes, class_relations) =
+            create_classes_and_relations(&pool, "get_object_relations_sorted_and_limited").await;
+        let objects = create_objects_in_classes(&pool, &classes).await;
+
+        let rel_1 =
+            create_object_relation(&pool, &objects[0], &objects[1], &class_relations[0]).await;
+        let rel_2 =
+            create_object_relation(&pool, &objects[1], &objects[2], &class_relations[1]).await;
+        let rel_3 =
+            create_object_relation(&pool, &objects[2], &objects[3], &class_relations[2]).await;
+        let object_relations = [rel_1, rel_2, rel_3];
+
+        let class_relation_ids = class_relations[0..3]
+            .iter()
+            .map(|relation| relation.id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let sorted_url =
+            format!("{OBJECT_RELATIONS_ENDPOINT}?class_relation={class_relation_ids}&sort=id.desc");
+        let resp = get_request(&pool, &admin_token, &sorted_url).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let sorted_relations: Vec<HubuumObjectRelation> = test::read_body_json(resp).await;
+        assert_eq!(sorted_relations.len(), object_relations.len());
+        assert_eq!(sorted_relations[0].id, object_relations[2].id);
+        assert_eq!(sorted_relations[1].id, object_relations[1].id);
+        assert_eq!(sorted_relations[2].id, object_relations[0].id);
+
+        let limited_url = format!(
+            "{OBJECT_RELATIONS_ENDPOINT}?class_relation={class_relation_ids}&sort=id&limit=2"
+        );
+        let resp = get_request(&pool, &admin_token, &limited_url).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let limited_relations: Vec<HubuumObjectRelation> = test::read_body_json(resp).await;
+        assert_eq!(limited_relations.len(), 2);
+        assert_eq!(limited_relations[0].id, object_relations[0].id);
+        assert_eq!(limited_relations[1].id, object_relations[1].id);
 
         cleanup(&classes).await;
     }
@@ -399,19 +490,27 @@ mod tests {
         rel_0_0_depth_gt = { 0, 0, StatusCode::OK, "?depth__gt=1", vec![4]},
         rel_0_0_depth_lt = { 0, 0, StatusCode::OK, "?depth__lt=1", vec![]},
         rel_0_0_path_equals_0_1 = { 0, 0, StatusCode::OK, "?path=<0>,<1>", vec![1]},
-        rel_0_0_path_equals_0_2 = { 0, 0, StatusCode::OK, "?path=<0>,<1>,<2>", vec![2]}, 
+        rel_0_0_path_equals_0_2 = { 0, 0, StatusCode::OK, "?path=<0>,<1>,<2>", vec![2]},
         rel_0_0_path_contains = { 0, 0, StatusCode::OK, "?path__contains=<1>", vec![1,2]},
         rel_1_2_empty = { 1, 1, StatusCode::OK, "", vec![2]},
         rel_0_0_invalid_key = { 0, 0, StatusCode::BAD_REQUEST, "?nosuchkey=foo", vec![]},
-        
-        rel_0_0_invalid_op = { 0, 0, StatusCode::BAD_REQUEST, "?from_name__foo=bar", vec![]},         
+
+        rel_0_0_invalid_op = { 0, 0, StatusCode::BAD_REQUEST, "?from_name__foo=bar", vec![]},
         rel_0_1_wrong_class = { 0, 1, StatusCode::NOT_FOUND, "", vec![]},
     )]
     #[test_macro(actix_web::test)]
-    async fn test_filter_related_objects(class_index: usize, object_index: usize, status: StatusCode, filter: &str, expected_object_ids: Vec<usize>) {
+    async fn test_filter_related_objects(
+        class_index: usize,
+        object_index: usize,
+        status: StatusCode,
+        filter: &str,
+        expected_object_ids: Vec<usize>,
+    ) {
         use regex::Regex;
 
-        let unique = format!("filter_related_objects_{class_index}_{object_index}_{status}_{filter}").replace(&['=', '&', '?', ' ', '<', '>', ][..], "_");
+        let unique =
+            format!("filter_related_objects_{class_index}_{object_index}_{status}_{filter}")
+                .replace(&['=', '&', '?', ' ', '<', '>'][..], "_");
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
         let (classes, relations) = create_classes_and_relations(&pool, &unique).await;
         let objects = create_objects_in_classes(&pool, &classes).await;
@@ -428,24 +527,32 @@ mod tests {
             objects[index].id.to_string()
         });
 
-        let endpoint = format!( "/api/v1/classes/{}/{}/relations/{}", classes[class_index].id, objects[object_index].id, filter);
+        let endpoint = format!(
+            "/api/v1/classes/{}/{}/relations/{}",
+            classes[class_index].id, objects[object_index].id, filter
+        );
 
         let resp = get_request(&pool, &admin_token, &endpoint).await;
-        let resp = assert_response_status(resp, status).await;        
+        let resp = assert_response_status(resp, status).await;
 
         if status == StatusCode::OK {
             let body = test::read_body(resp).await;
             let objects_fetched: Vec<HubuumObjectWithPath> = serde_json::from_slice(&body).unwrap();
 
-            assert_eq!(objects_fetched.len(), expected_object_ids.len(), "{} -> Expected: {:?}, got: {:?}\nAll objects: {:?}",
+            assert_eq!(
+                objects_fetched.len(),
+                expected_object_ids.len(),
+                "{} -> Expected: {:?}, got: {:?}\nAll objects: {:?}",
                 endpoint,
-                expected_object_ids.iter().map(|i| objects[*i].id).collect::<Vec<_>>(),
+                expected_object_ids
+                    .iter()
+                    .map(|i| objects[*i].id)
+                    .collect::<Vec<_>>(),
                 objects_fetched.iter().map(|o| o.id).collect::<Vec<_>>(),
                 objects
             );
         }
 
         cleanup(&classes).await;
-        
     }
 }

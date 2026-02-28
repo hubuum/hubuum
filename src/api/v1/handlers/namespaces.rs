@@ -233,6 +233,7 @@ pub async fn get_namespace_permissions(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
     namespace_id: web::Path<NamespaceID>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::models::namespace::groups_on;
 
@@ -250,7 +251,8 @@ pub async fn get_namespace_permissions(
         namespace
     );
 
-    let permissions = groups_on(&pool, namespace, vec![]).await?;
+    let query_options = parse_query_parameter(req.query_string())?;
+    let permissions = groups_on(&pool, namespace, vec![], query_options).await?;
     Ok(json_response(permissions, StatusCode::OK))
 }
 

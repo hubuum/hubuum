@@ -2,6 +2,7 @@
 mod tests {
     use crate::models::user::{NewUser, UpdateUser, User};
     use actix_web::{http::StatusCode, test};
+    use yare::parameterized;
 
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::assert_response_status;
@@ -121,5 +122,79 @@ mod tests {
         assert_eq!(patched_user.username, test_user.username);
         assert_ne!(patched_user.password, test_user.password);
         assert_eq!(patched_user.email, test_user.email);
+    }
+
+    #[parameterized(
+        id_asc = { "id.asc", &[0, 1, 2] },
+        id_desc = { "id.desc", &[2, 1, 0] },
+        name_asc = { "name.asc", &[0, 1, 2] },
+        name_desc = { "name.desc", &[2, 1, 0] },
+    )]
+    #[test_macro(actix_web::test)]
+    async fn test_list_users_sorted(sort_order: &str, expected_order: &[usize]) {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let prefix = format!("test_list_users_sorted_{}", sort_order.replace('.', "_"));
+
+        let mut created_users = Vec::new();
+        for i in 0..3 {
+            let user = NewUser {
+                username: format!("{prefix}_{i}"),
+                password: "testpassword".to_string(),
+                email: Some(format!("{prefix}_{i}@example.com")),
+            }
+            .save(&pool)
+            .await
+            .unwrap();
+            created_users.push(user);
+        }
+
+        let url = format!("{USERS_ENDPOINT}?username__contains={prefix}&sort={sort_order}");
+        let resp = get_request(&pool, &admin_token, &url).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let users: Vec<User> = test::read_body_json(resp).await;
+
+        assert_eq!(users.len(), created_users.len());
+        assert_eq!(users[0].id, created_users[expected_order[0]].id);
+        assert_eq!(users[1].id, created_users[expected_order[1]].id);
+        assert_eq!(users[2].id, created_users[expected_order[2]].id);
+
+        for user in created_users {
+            user.delete(&pool).await.unwrap();
+        }
+    }
+
+    #[parameterized(
+        limit_1 = { 1 },
+        limit_2 = { 2 },
+        limit_5 = { 3 },
+    )]
+    #[test_macro(actix_web::test)]
+    async fn test_list_users_limit(limit: usize) {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let prefix = format!("test_list_users_limit_{limit}");
+
+        let mut created_users = Vec::new();
+        for i in 0..3 {
+            let user = NewUser {
+                username: format!("{prefix}_{i}"),
+                password: "testpassword".to_string(),
+                email: Some(format!("{prefix}_{i}@example.com")),
+            }
+            .save(&pool)
+            .await
+            .unwrap();
+            created_users.push(user);
+        }
+
+        let url = format!("{USERS_ENDPOINT}?username__contains={prefix}&sort=id&limit={limit}");
+        let resp = get_request(&pool, &admin_token, &url).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let users: Vec<User> = test::read_body_json(resp).await;
+
+        assert_eq!(users.len(), limit);
+
+        for user in created_users {
+            user.delete(&pool).await.unwrap();
+        }
     }
 }

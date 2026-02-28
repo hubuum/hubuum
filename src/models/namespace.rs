@@ -16,6 +16,7 @@ use crate::schema::namespaces;
 use crate::errors::ApiError;
 
 use crate::models::output::GroupPermission;
+use crate::models::search::{FilterField, QueryOptions, QueryParamsExt};
 use crate::models::{Permission, Permissions};
 
 use crate::db::traits::user::GroupMemberships;
@@ -281,22 +282,80 @@ pub async fn groups_on<T: NamespaceAccessors>(
     pool: &DbPool,
     namespace_ref: T,
     permissions_filter: Vec<Permissions>,
+    query_options: QueryOptions,
 ) -> Result<Vec<GroupPermission>, ApiError> {
     use crate::models::traits::output::FromTuple;
     use crate::models::PermissionFilter;
     use crate::schema::groups::dsl::{groups, id as group_table_id};
-    use crate::schema::permissions::dsl::*;
+    use crate::schema::permissions::dsl::{
+        created_at as permission_created_at, group_id, id as permission_id, namespace_id,
+        permissions, updated_at as permission_updated_at,
+    };
+    use crate::{date_search, numeric_search};
     use diesel::prelude::*;
 
     let mut conn = pool.get()?;
     let namespace_target_id = namespace_ref.namespace_id(pool).await?;
+    let query_params = query_options.filters;
+
+    let mut permission_filters = query_params.permissions()?;
+    permission_filters.ensure_contains(&permissions_filter);
 
     let mut base_query = permissions
         .filter(namespace_id.eq(namespace_target_id))
         .into_boxed();
 
-    for perm in permissions_filter.into_iter() {
+    for perm in permission_filters.iter().cloned() {
         base_query = perm.create_boxed_filter(base_query, true);
+    }
+
+    for param in query_params {
+        let operator = param.operator.clone();
+        match param.field {
+            FilterField::Id => numeric_search!(base_query, param, operator, permission_id),
+            FilterField::CreatedAt => {
+                date_search!(base_query, param, operator, permission_created_at)
+            }
+            FilterField::UpdatedAt => {
+                date_search!(base_query, param, operator, permission_updated_at)
+            }
+            FilterField::Permissions => {} // handled above
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' isn't searchable (or does not exist) for permissions",
+                    param.field
+                )))
+            }
+        }
+    }
+
+    for order in query_options.sort.iter() {
+        match (&order.field, &order.descending) {
+            (FilterField::Id, false) => base_query = base_query.order_by(permission_id.asc()),
+            (FilterField::Id, true) => base_query = base_query.order_by(permission_id.desc()),
+            (FilterField::CreatedAt, false) => {
+                base_query = base_query.order_by(permission_created_at.asc())
+            }
+            (FilterField::CreatedAt, true) => {
+                base_query = base_query.order_by(permission_created_at.desc())
+            }
+            (FilterField::UpdatedAt, false) => {
+                base_query = base_query.order_by(permission_updated_at.asc())
+            }
+            (FilterField::UpdatedAt, true) => {
+                base_query = base_query.order_by(permission_updated_at.desc())
+            }
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' isn't orderable (or does not exist) for permissions",
+                    order.field
+                )))
+            }
+        }
+    }
+
+    if let Some(limit) = query_options.limit {
+        base_query = base_query.limit(limit as i64);
     }
 
     let query = base_query
@@ -453,7 +512,18 @@ mod tests {
         groups_can_on_count(&pool, namespace.id, NP::CreateClass, 1).await;
         groups_can_on_count(&pool, namespace.id, NP::CreateObject, 1).await;
 
-        let all_on = groups_on(&pool, namespace.clone(), vec![]).await.unwrap();
+        let all_on = groups_on(
+            &pool,
+            namespace.clone(),
+            vec![],
+            QueryOptions {
+                filters: vec![],
+                sort: vec![],
+                limit: None,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(all_on.len(), 5);
 
         namespace.delete(&pool).await.unwrap();

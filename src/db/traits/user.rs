@@ -4,8 +4,8 @@ use std::iter::IntoIterator;
 use tracing::{debug, trace};
 
 use crate::models::{Group, Permissions, User, UserID};
-use crate::utilities::auth::hash_password;
 use crate::traits::{GroupAccessors, NamespaceAccessors, SelfAccessors};
+use crate::utilities::auth::hash_password;
 
 use crate::db::{with_connection, DbPool};
 use crate::errors::ApiError;
@@ -19,26 +19,23 @@ impl User {
         use crate::schema::users::dsl::*;
 
         with_connection(pool, |conn| {
-            users
-                .filter(username.eq(username_arg))
-                .first::<User>(conn)
+            users.filter(username.eq(username_arg)).first::<User>(conn)
         })
     }
 
     /// Set a new password for a user
-    /// 
+    ///
     /// The password will be hashed before storing it in the database, so the input should be the
     /// desired plaintext password.
-    pub async fn set_password(&self, pool: &DbPool, new_password: &str) -> Result<(), ApiError> {        
+    pub async fn set_password(&self, pool: &DbPool, new_password: &str) -> Result<(), ApiError> {
         use crate::schema::users::dsl::*;
         debug!(
             message = "Setting new password",
             id = self.id(),
             username = self.username,
         );
-        let new_password = hash_password(new_password).map_err(|e| {
-            ApiError::HashError(format!("Failed to hash password: {e}"))
-        })?;
+        let new_password = hash_password(new_password)
+            .map_err(|e| ApiError::HashError(format!("Failed to hash password: {e}")))?;
 
         with_connection(pool, |conn| {
             diesel::update(users.filter(id.eq(self.id)))
@@ -52,7 +49,7 @@ impl User {
 
 pub trait UserPermissions: SelfAccessors<User> + GroupAccessors + GroupMemberships {
     /// ## Check if a user has a set of permissions in a set of namespaces
-    /// 
+    ///
     /// All permissions must be present in all namespaces for the function to return true.
     ///
     /// ### Parameters
@@ -63,7 +60,7 @@ pub trait UserPermissions: SelfAccessors<User> + GroupAccessors + GroupMembershi
     ///
     /// ### Returns
     ///
-    /// * Nothing if the user has the required permissions, or an ApiError::Forbidden if they do not.    
+    /// * Nothing if the user has the required permissions, or an ApiError::Forbidden if they do not.
     async fn can<P, N, I>(
         &self,
         pool: &DbPool,
@@ -75,10 +72,10 @@ pub trait UserPermissions: SelfAccessors<User> + GroupAccessors + GroupMembershi
         I: IntoIterator<Item = N>,
         N: NamespaceAccessors,
     {
-        use futures::stream::{self, StreamExt, TryStreamExt};
-        use diesel::{dsl::sql, sql_types::BigInt};
-        use std::collections::HashSet;
         use crate::models::PermissionFilter;
+        use diesel::{dsl::sql, sql_types::BigInt};
+        use futures::stream::{self, StreamExt, TryStreamExt};
+        use std::collections::HashSet;
 
         if self.is_admin(pool).await? {
             return Ok(());
@@ -87,7 +84,7 @@ pub trait UserPermissions: SelfAccessors<User> + GroupAccessors + GroupMembershi
         let lookup_table = crate::schema::permissions::dsl::permissions;
         let group_id_field = crate::schema::permissions::dsl::group_id;
         let namespace_id_field = crate::schema::permissions::dsl::namespace_id;
-    
+
         let group_id_subquery = self.group_ids_subquery();
 
         let namespace_ids: HashSet<i32> = stream::iter(namespaces)
@@ -101,24 +98,26 @@ pub trait UserPermissions: SelfAccessors<User> + GroupAccessors + GroupMembershi
             .into_boxed()
             .filter(namespace_id_field.eq_any(&namespace_ids))
             .filter(group_id_field.eq_any(group_id_subquery));
-    
+
         // Apply all permission filters
         for perm in permissions {
             base_query = perm.create_boxed_filter(base_query, true);
         }
-    
+
         // Count the number of distinct namespaces that match all criteria
         let matching_namespaces_count = with_connection(pool, |conn| {
             base_query
                 .select(sql::<BigInt>("COUNT(DISTINCT namespace_id)"))
                 .first::<i64>(conn)
         })?;
-    
+
         // Check if the count of matching namespaces equals the number of input namespaces
         if matching_namespaces_count as usize == namespace_ids.len() {
             Ok(())
         } else {
-            Err(ApiError::Forbidden("User does not have the required permissions".to_string()))
+            Err(ApiError::Forbidden(
+                "User does not have the required permissions".to_string(),
+            ))
         }
     }
 }
@@ -133,9 +132,9 @@ pub trait GroupMemberships: SelfAccessors<User> {
     }
 
     /// Check if the user is in a group by name
-    /// 
+    ///
     /// This function checks if the user is a member of a group with the specified name.
-    /// 
+    ///
     /// ## Parameters
     ///
     /// * `groupname_queried` - The name of the group to check for membership.
@@ -146,17 +145,21 @@ pub trait GroupMemberships: SelfAccessors<User> {
     /// * Ok(true) if the user is in the group
     /// * Ok(false) if the user is not in the group
     /// * Err(ApiError) if something failed.
-    async fn is_in_group_by_name(&self, groupname_queried: &str, pool: &DbPool) -> Result<bool, ApiError> {
-        use diesel::dsl::{exists, select};
+    async fn is_in_group_by_name(
+        &self,
+        groupname_queried: &str,
+        pool: &DbPool,
+    ) -> Result<bool, ApiError> {
         use crate::schema::groups::dsl::{groupname, groups};
-        use crate::schema::user_groups::dsl::{user_id as ug_user_id,user_groups};
+        use crate::schema::user_groups::dsl::{user_groups, user_id as ug_user_id};
+        use diesel::dsl::{exists, select};
 
         let is_in_group = with_connection(pool, |conn| {
             select(exists(
                 user_groups
                     .inner_join(groups)
                     .filter(ug_user_id.eq(self.id()))
-                    .filter(groupname.eq(groupname_queried))
+                    .filter(groupname.eq(groupname_queried)),
             ))
             .get_result(conn)
         })?;
@@ -172,11 +175,13 @@ pub trait GroupMemberships: SelfAccessors<User> {
     }
 
     /// Check if the user is an admin
-    /// 
+    ///
     /// This function checks the user's admin status in the database, but checking if they are
     /// a member of the group with the name "admin".
     async fn is_admin(&self, pool: &DbPool) -> Result<bool, ApiError> {
-        let is_admin = self.is_in_group_by_name(&self.admin_groupname().await?, pool).await?;
+        let is_admin = self
+            .is_in_group_by_name(&self.admin_groupname().await?, pool)
+            .await?;
 
         trace!(
             message = "Admin check result",
@@ -195,9 +200,9 @@ impl User {
     pub async fn search_users(
         &self,
         pool: &DbPool,
-        query_options: QueryOptions
+        query_options: QueryOptions,
     ) -> Result<Vec<User>, ApiError> {
-        use crate::schema::users::dsl::*;
+        use crate::schema::users::dsl::{created_at, email, id, updated_at, username, users};
 
         let query_params = query_options.filters;
 
@@ -228,12 +233,51 @@ impl User {
             }
         }
 
+        for order in query_options.sort.iter() {
+            match (&order.field, &order.descending) {
+                (FilterField::Id, false) => base_query = base_query.order_by(id.asc()),
+                (FilterField::Id, true) => base_query = base_query.order_by(id.desc()),
+                (FilterField::Name, false) | (FilterField::Username, false) => {
+                    base_query = base_query.order_by(username.asc())
+                }
+                (FilterField::Name, true) | (FilterField::Username, true) => {
+                    base_query = base_query.order_by(username.desc())
+                }
+                (FilterField::Email, false) => base_query = base_query.order_by(email.asc()),
+                (FilterField::Email, true) => base_query = base_query.order_by(email.desc()),
+                (FilterField::CreatedAt, false) => {
+                    base_query = base_query.order_by(created_at.asc())
+                }
+                (FilterField::CreatedAt, true) => {
+                    base_query = base_query.order_by(created_at.desc())
+                }
+                (FilterField::UpdatedAt, false) => {
+                    base_query = base_query.order_by(updated_at.asc())
+                }
+                (FilterField::UpdatedAt, true) => {
+                    base_query = base_query.order_by(updated_at.desc())
+                }
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't orderable (or does not exist) for users",
+                        order.field
+                    )))
+                }
+            }
+        }
+
+        if let Some(limit) = query_options.limit {
+            base_query = base_query.limit(limit as i64);
+        }
+
         trace_query!(base_query, "Searching users");
 
-        let result = with_connection(pool, |conn| base_query
-            .select(users::all_columns())
-            .distinct() // TODO: Is it the joins that makes this required?
-            .load::<User>(conn))?;
+        let result = with_connection(pool, |conn| {
+            base_query
+                .select(users::all_columns())
+                .distinct() // TODO: Is it the joins that makes this required?
+                .load::<User>(conn)
+        })?;
 
         Ok(result)
     }
@@ -241,9 +285,11 @@ impl User {
     pub async fn search_groups(
         &self,
         pool: &DbPool,
-        query_options: QueryOptions
+        query_options: QueryOptions,
     ) -> Result<Vec<Group>, ApiError> {
-        use crate::schema::groups::dsl::{id, created_at, updated_at, groupname, description, groups};
+        use crate::schema::groups::dsl::{
+            created_at, description, groupname, groups, id, updated_at,
+        };
 
         let query_params = query_options.filters;
 
@@ -261,8 +307,10 @@ impl User {
             match param.field {
                 FilterField::Id => numeric_search!(base_query, param, operator, id),
                 FilterField::Name => string_search!(base_query, param, operator, groupname),
-                FilterField::Groupname => string_search!(base_query, param, operator, groupname),                
-                FilterField::Description => string_search!(base_query, param, operator, description),
+                FilterField::Groupname => string_search!(base_query, param, operator, groupname),
+                FilterField::Description => {
+                    string_search!(base_query, param, operator, description)
+                }
                 FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
                 FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
                 _ => {
@@ -274,16 +322,58 @@ impl User {
             }
         }
 
+        for order in query_options.sort.iter() {
+            match (&order.field, &order.descending) {
+                (FilterField::Id, false) => base_query = base_query.order_by(id.asc()),
+                (FilterField::Id, true) => base_query = base_query.order_by(id.desc()),
+                (FilterField::Name, false) | (FilterField::Groupname, false) => {
+                    base_query = base_query.order_by(groupname.asc())
+                }
+                (FilterField::Name, true) | (FilterField::Groupname, true) => {
+                    base_query = base_query.order_by(groupname.desc())
+                }
+                (FilterField::Description, false) => {
+                    base_query = base_query.order_by(description.asc())
+                }
+                (FilterField::Description, true) => {
+                    base_query = base_query.order_by(description.desc())
+                }
+                (FilterField::CreatedAt, false) => {
+                    base_query = base_query.order_by(created_at.asc())
+                }
+                (FilterField::CreatedAt, true) => {
+                    base_query = base_query.order_by(created_at.desc())
+                }
+                (FilterField::UpdatedAt, false) => {
+                    base_query = base_query.order_by(updated_at.asc())
+                }
+                (FilterField::UpdatedAt, true) => {
+                    base_query = base_query.order_by(updated_at.desc())
+                }
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't orderable (or does not exist) for groups",
+                        order.field
+                    )))
+                }
+            }
+        }
+
+        if let Some(limit) = query_options.limit {
+            base_query = base_query.limit(limit as i64);
+        }
+
         trace_query!(base_query, "Searching groups");
 
-        let result = with_connection(pool, |conn| base_query
-            .select(groups::all_columns())
-            .distinct() 
-            .load::<Group>(conn))?;
+        let result = with_connection(pool, |conn| {
+            base_query
+                .select(groups::all_columns())
+                .distinct()
+                .load::<Group>(conn)
+        })?;
 
         Ok(result)
     }
-
 }
 
 #[cfg(test)]
@@ -304,13 +394,13 @@ mod tests {
         u1_ns1_classreadcreate_true = { 0, vec![0], vec![P::ReadClass, P::CreateClass], true },
         u1_ns2_classdelete_true = { 0, vec![1], vec![P::DeleteClass], true },
         u1_ns2_classcreate_true = { 0, vec![1], vec![P::CreateClass], true },
-        u1_ns2_classcreatedelete_true = { 0, vec![1], vec![P::CreateClass, P::DeleteClass], true },        
+        u1_ns2_classcreatedelete_true = { 0, vec![1], vec![P::CreateClass, P::DeleteClass], true },
         u1_ns12_classcreate_true = { 0, vec![0,1], vec![P::CreateClass], true },
 
         u1_ns1_objectread_false = { 0, vec![0], vec![P::ReadObject], false },
         u1_ns1_namespacecreate_false = { 0, vec![0], vec![P::ReadCollection], false },
         u1_ns12_classreadcreate_false = { 0, vec![0,1], vec![P::CreateClass, P::ReadClass], false },
-        u1_ns12_classreadcreatedelete_false = { 0, vec![0,1], vec![P::CreateClass, P::ReadClass, P::DeleteClass], false }, 
+        u1_ns12_classreadcreatedelete_false = { 0, vec![0,1], vec![P::CreateClass, P::ReadClass, P::DeleteClass], false },
 
         u2_ns1_objectread_true = { 1, vec![0], vec![P::ReadObject], true },
         u2_ns1_objectcreate_true = { 1, vec![0], vec![P::CreateObject], true },
@@ -318,7 +408,7 @@ mod tests {
         u2_ns2_objectdelete_true = { 1, vec![1], vec![P::DeleteObject], true },
         u2_ns2_objectcreate_true = { 1, vec![1], vec![P::CreateObject], true },
         u2_ns2_objectcreatedelete_true = { 1, vec![1], vec![P::CreateObject, P::DeleteObject], true },
-        
+
 
     )]
     #[test_macro(actix_web::test)]
@@ -345,14 +435,18 @@ mod tests {
             expected
         );
 
-        let namespaces = [create_namespace(&pool, &format!("test_user_can_ns1_{suffix}"))
+        let namespaces = [
+            create_namespace(&pool, &format!("test_user_can_ns1_{suffix}"))
                 .await
                 .unwrap(),
             create_namespace(&pool, &format!("test_user_can_ns2_{suffix}"))
                 .await
-                .unwrap()];
-        let groups = [create_test_group(&pool).await,
-            create_test_group(&pool).await];
+                .unwrap(),
+        ];
+        let groups = [
+            create_test_group(&pool).await,
+            create_test_group(&pool).await,
+        ];
         let users = [
             create_user_with_params(&pool, &format!("test_user_can_u1_{suffix}"), "foo").await,
             create_user_with_params(&pool, &format!("test_user_can_u2_{suffix}"), "foo").await,
@@ -406,23 +500,23 @@ mod tests {
         match (result, expected) {
             (Ok(()), true) => {
                 // Success case: We expected permission and got it
-            },
+            }
             (Err(ApiError::Forbidden(_)), false) => {
                 // Expected failure case: We expected no permission and got Forbidden error
-            },
+            }
             (Ok(()), false) => {
                 if user.is_admin(&pool).await.unwrap() {
                     panic!("Expected permission check to fail, but it succeeded (user is admin)");
                 } else {
                     panic!("Expected permission check to fail, but it succeeded");
                 }
-            },
+            }
             (Err(ApiError::Forbidden(msg)), true) => {
                 panic!("Expected permission check to succeed, but got Forbidden error: {msg}");
-            },
+            }
             (Err(e), _) => {
                 panic!("Unexpected error occurred: {e:?}");
-            },
+            }
         }
     }
 }

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::models::{
-        GroupPermission, Namespace, NewNamespaceWithAssignee, Permission, Permissions,
+        GroupPermission, Namespace, NewGroup, NewNamespaceWithAssignee, Permission, Permissions,
         UpdateNamespace,
     };
 
@@ -408,6 +408,68 @@ mod tests {
 
         test_group.delete(&pool).await.unwrap();
         test_user.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_api_namespace_permissions_sorted_and_limited() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let ns = create_namespace(&pool, "test_namespace_permissions_sorted_and_limited")
+            .await
+            .unwrap();
+
+        let group_one = NewGroup {
+            groupname: format!("test_namespace_permissions_sorted_{}_a", ns.id),
+            description: Some(format!(
+                "test_namespace_permissions_sorted_{}_description_a",
+                ns.id
+            )),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+        let group_two = NewGroup {
+            groupname: format!("test_namespace_permissions_sorted_{}_b", ns.id),
+            description: Some(format!(
+                "test_namespace_permissions_sorted_{}_description_b",
+                ns.id
+            )),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        ns.grant_one(&pool, group_one.id, Permissions::ReadCollection)
+            .await
+            .unwrap();
+        ns.grant_one(&pool, group_two.id, Permissions::ReadCollection)
+            .await
+            .unwrap();
+
+        let sorted_endpoint = format!(
+            "{NAMESPACE_ENDPOINT}/{}/permissions?permissions=ReadCollection&sort=id.desc",
+            ns.id
+        );
+        let resp = get_request(&pool, &admin_token, &sorted_endpoint).await;
+        let resp = assert_response_status(resp, http::StatusCode::OK).await;
+        let permissions: Vec<GroupPermission> = test::read_body_json(resp).await;
+
+        assert!(permissions.len() >= 2);
+        assert!(permissions[0].permission.id > permissions[1].permission.id);
+        assert!(permissions.iter().any(|p| p.group.id == group_one.id));
+        assert!(permissions.iter().any(|p| p.group.id == group_two.id));
+
+        let limited_endpoint = format!(
+            "{NAMESPACE_ENDPOINT}/{}/permissions?permissions=ReadCollection&sort=id&limit=1",
+            ns.id
+        );
+        let resp = get_request(&pool, &admin_token, &limited_endpoint).await;
+        let resp = assert_response_status(resp, http::StatusCode::OK).await;
+        let limited_permissions: Vec<GroupPermission> = test::read_body_json(resp).await;
+        assert_eq!(limited_permissions.len(), 1);
+
+        group_one.delete(&pool).await.unwrap();
+        group_two.delete(&pool).await.unwrap();
+        ns.delete(&pool).await.unwrap();
     }
 
     #[parameterized(

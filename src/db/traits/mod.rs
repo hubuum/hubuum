@@ -178,6 +178,47 @@ where
             }
         }
 
+        for order in query_options.sort.iter() {
+            match (&order.field, &order.descending) {
+                (FilterField::Id, false) => base_query = base_query.order_by(id.asc()),
+                (FilterField::Id, true) => base_query = base_query.order_by(id.desc()),
+                (FilterField::ClassFrom, false) => {
+                    base_query = base_query.order_by(from_hubuum_class_id.asc())
+                }
+                (FilterField::ClassFrom, true) => {
+                    base_query = base_query.order_by(from_hubuum_class_id.desc())
+                }
+                (FilterField::ClassTo, false) => {
+                    base_query = base_query.order_by(to_hubuum_class_id.asc())
+                }
+                (FilterField::ClassTo, true) => {
+                    base_query = base_query.order_by(to_hubuum_class_id.desc())
+                }
+                (FilterField::CreatedAt, false) => {
+                    base_query = base_query.order_by(created_at.asc())
+                }
+                (FilterField::CreatedAt, true) => {
+                    base_query = base_query.order_by(created_at.desc())
+                }
+                (FilterField::UpdatedAt, false) => {
+                    base_query = base_query.order_by(updated_at.asc())
+                }
+                (FilterField::UpdatedAt, true) => {
+                    base_query = base_query.order_by(updated_at.desc())
+                }
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't orderable (or does not exist) for class relations",
+                        order.field
+                    )))
+                }
+            }
+        }
+
+        if let Some(limit) = query_options.limit {
+            base_query = base_query.limit(limit as i64);
+        }
+
         trace_query!(base_query, "Searching relations");
 
         with_connection(pool, |conn| {
