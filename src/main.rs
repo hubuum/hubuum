@@ -9,6 +9,7 @@ mod middlewares;
 mod models;
 mod schema;
 mod tests;
+mod tls;
 mod traits;
 mod utilities;
 
@@ -24,16 +25,13 @@ use tracing_subscriber::{
     filter::EnvFilter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
 };
 
+use crate::api::openapi::openapi_json as openapi_json_handler;
 use crate::config::get_config;
 use crate::errors::{
     fatal_error, json_error_handler, EXIT_CODE_CONFIG_ERROR, EXIT_CODE_INIT_ERROR,
     EXIT_CODE_TLS_ERROR,
 };
 use crate::utilities::is_valid_log_level;
-use crate::api::openapi::openapi_json as openapi_json_handler;
-
-#[cfg(all(feature = "tls-openssl", feature = "tls-rustls"))]
-compile_error!("Features `tls-openssl` and `tls-rustls` are mutually exclusive");
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -115,6 +113,7 @@ async fn main() -> std::io::Result<()> {
             cert,
             key,
             config.tls_key_passphrase.as_deref(),
+            config.tls_backend,
         ) {
             Ok(srv) => srv,
             Err(e) => fatal_error(
@@ -137,193 +136,4 @@ async fn main() -> std::io::Result<()> {
     };
 
     server.workers(config.actix_workers).run().await
-}
-
-// TLS module if neither tls-rustls or tls-openssl are set.
-#[cfg(not(any(feature = "tls-rustls", feature = "tls-openssl")))]
-mod tls {
-    use actix_http::{Request, Response};
-    use actix_service::{IntoServiceFactory, ServiceFactory};
-    use actix_web::{body::MessageBody, dev::AppConfig, Error, HttpServer};
-    pub fn configure_server<F, I, S, B>(
-        _: HttpServer<F, I, S, B>,
-        _: &str,
-        _: &str,
-        _: &str,
-        _: Option<&str>,
-    ) -> std::io::Result<HttpServer<F, I, S, B>>
-    where
-        F: Fn() -> I + Send + Clone + 'static,
-        I: IntoServiceFactory<S, Request>,
-        S: ServiceFactory<Request, Config = AppConfig> + 'static,
-        S::Error: Into<Error>,
-        S::InitError: std::fmt::Debug,
-        S::Response: Into<Response<B>>,
-        B: MessageBody + 'static,
-    {
-        Err(std::io::Error::other(
-            "TLS certificate and key offered, but no TLS feature enabled during build. Please enable either `tls-rustls` or `tls-openssl` during build to use TLS"
-        ))
-    }
-}
-
-#[cfg(feature = "tls-rustls")]
-mod tls {
-    use actix_http::{Request, Response};
-    use actix_service::{IntoServiceFactory, ServiceFactory};
-    use actix_web::{body::MessageBody, dev::AppConfig, Error, HttpServer};
-    use rustls::{
-        pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer},
-        ServerConfig,
-    };
-    use tracing::info;
-
-    pub fn configure_server<F, I, S, B>(
-        server: HttpServer<F, I, S, B>,
-        bind_address: &str,
-        cert: &str,
-        key: &str,
-        pass: Option<&str>,
-    ) -> std::io::Result<HttpServer<F, I, S, B>>
-    where
-        F: Fn() -> I + Send + Clone + 'static,
-        I: IntoServiceFactory<S, Request>,
-        S: ServiceFactory<Request, Config = AppConfig> + 'static,
-        S::Error: Into<Error>,
-        S::InitError: std::fmt::Debug,
-        S::Response: Into<Response<B>>,
-        B: MessageBody + 'static,
-    {
-        if pass.is_some() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Using encrypted TLS key with passphrase is not supported with rustls feature",
-            ));
-        }
-
-        rustls::crypto::aws_lc_rs::default_provider()
-            .install_default()
-            .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to install crypto provider: {:?}", e),
-                )
-            })?;
-
-        let cert_chain = CertificateDer::pem_file_iter(cert)
-            .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Failed to read certificate file: {}", e),
-                )
-            })?
-            .flatten()
-            .collect();
-
-        let key_der = PrivateKeyDer::from_pem_file(key).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Failed to read key file: {}", e),
-            )
-        })?;
-
-        let rustls_config = ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(cert_chain, key_der)
-            .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Failed to configure TLS: {}", e),
-                )
-            })?;
-
-        info!("Server binding with rustls to https://{}", bind_address);
-        server
-            .bind_rustls_0_23(bind_address, rustls_config)
-            .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to bind server: {}", e),
-                )
-            })
-    }
-}
-
-#[cfg(feature = "tls-openssl")]
-mod tls {
-    use actix_http::{Request, Response};
-    use actix_service::{IntoServiceFactory, ServiceFactory};
-    use actix_web::{body::MessageBody, dev::AppConfig, Error, HttpServer};
-    use openssl::{
-        pkey::PKey,
-        ssl::{SslAcceptor, SslFiletype, SslMethod},
-    };
-    use std::{fs::File, io::Read};
-    use tracing::info;
-
-    pub fn configure_server<F, I, S, B>(
-        server: HttpServer<F, I, S, B>,
-        bind_address: &str,
-        cert: &str,
-        key: &str,
-        pass: Option<&str>,
-    ) -> std::io::Result<HttpServer<F, I, S, B>>
-    where
-        F: Fn() -> I + Send + Clone + 'static,
-        I: IntoServiceFactory<S, Request>,
-        S: ServiceFactory<Request, Config = AppConfig> + 'static,
-        S::Error: Into<Error>,
-        S::InitError: std::fmt::Debug,
-        S::Response: Into<Response<B>>,
-        B: MessageBody + 'static,
-    {
-        let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("unable to create SSL acceptor: {}", e),
-            )
-        })?;
-
-        if let Some(pass) = pass {
-            let mut buf = Vec::new();
-            File::open(key)?.read_to_end(&mut buf)?;
-            let pkey =
-                PKey::private_key_from_pem_passphrase(&buf, pass.as_bytes()).map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!("unable to decrypt private key: {}", e),
-                    )
-                })?;
-            builder.set_private_key(&pkey).map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("unable to set private key: {}", e),
-                )
-            })?;
-        } else {
-            builder
-                .set_private_key_file(key, SslFiletype::PEM)
-                .map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!("unable to load private key file: {}", e),
-                    )
-                })?;
-        }
-
-        builder.set_certificate_chain_file(cert).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("unable to load certificate chain: {}", e),
-            )
-        })?;
-
-        info!("Server binding with openssl to https://{}", bind_address);
-        server.bind_openssl(bind_address, builder).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to bind server: {}", e),
-            )
-        })
-    }
 }
