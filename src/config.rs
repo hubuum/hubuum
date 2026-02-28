@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::sync::{LazyLock, Mutex};
 #[cfg(not(test))]
 use std::sync::{RwLock, RwLockReadGuard};
 
@@ -97,7 +99,10 @@ pub fn get_config() -> Result<RwLockReadGuard<'static, AppConfig>, ApiError> {
 }
 
 #[cfg(test)]
-pub fn get_config() -> Result<AppConfig, ApiError> {
+static TEST_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+#[cfg(test)]
+fn get_config_from_env() -> Result<AppConfig, ApiError> {
     use std::env;
 
     // Helper function to read an environment variable or return a default value
@@ -138,18 +143,18 @@ pub fn get_config() -> Result<AppConfig, ApiError> {
 }
 
 #[cfg(test)]
+pub fn get_config() -> Result<AppConfig, ApiError> {
+    let _lock = TEST_ENV_LOCK.lock().unwrap();
+    get_config_from_env()
+}
+
+#[cfg(test)]
 mod tests {
-    use std::{
-        env,
-        ffi::OsString,
-        sync::{LazyLock, Mutex},
-    };
+    use std::{env, ffi::OsString};
 
     use clap::Parser;
 
-    use super::{get_config, AppConfig, TlsBackend};
-
-    static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+    use super::{get_config_from_env, AppConfig, TlsBackend, TEST_ENV_LOCK};
 
     struct EnvVarGuard {
         key: &'static str,
@@ -180,11 +185,11 @@ mod tests {
 
     #[test]
     fn tls_backend_env_var_is_parsed_by_clap_and_test_config_loader() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
         let _guard = EnvVarGuard::set("HUBUUM_TLS_BACKEND", Some("OpEnSsL"));
 
         let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
-        let loaded = get_config().unwrap();
+        let loaded = get_config_from_env().unwrap();
 
         assert_eq!(parsed.tls_backend, Some(TlsBackend::Openssl));
         assert_eq!(loaded.tls_backend, Some(TlsBackend::Openssl));
@@ -192,11 +197,11 @@ mod tests {
 
     #[test]
     fn tls_backend_defaults_to_none_when_env_var_is_unset() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
         let _guard = EnvVarGuard::set("HUBUUM_TLS_BACKEND", None);
 
         let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
-        let loaded = get_config().unwrap();
+        let loaded = get_config_from_env().unwrap();
 
         assert_eq!(parsed.tls_backend, None);
         assert_eq!(loaded.tls_backend, None);
@@ -204,7 +209,7 @@ mod tests {
 
     #[test]
     fn tls_backend_invalid_env_var_is_rejected_by_clap_parser() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
         let _guard = EnvVarGuard::set("HUBUUM_TLS_BACKEND", Some("bogus"));
 
         let error = AppConfig::try_parse_from(["hubuum-server"]).unwrap_err();
