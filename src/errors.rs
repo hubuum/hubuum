@@ -285,15 +285,14 @@ mod tests {
             .connection_timeout(std::time::Duration::from_millis(1))
             .build(manager);
 
-        if let Ok(pool) = pool_result
-            && let Err(pool_error) = pool.get()
-        {
-            let api_error = ApiError::from(pool_error);
-            match api_error {
-                ApiError::DbConnectionError(_) => {
+        if let Ok(pool) = pool_result {
+            let result = crate::db::with_connection(&pool, |_conn| Ok(()));
+            match result {
+                Err(ApiError::DbConnectionError(_)) => {
                     // Expected
                 }
-                _ => panic!("Expected DbConnectionError from PoolError"),
+                Err(other) => panic!("Expected DbConnectionError from PoolError, got: {other:?}"),
+                Ok(_) => panic!("Expected pool connection to fail"),
             }
         }
     }

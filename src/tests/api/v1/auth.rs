@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use crate::config::get_config;
-    use crate::db::init_pool;
     use crate::db::traits::ActiveTokens;
+    use crate::db::{init_pool, with_connection};
     use crate::models::user::LoginUser;
     use crate::tests::{create_test_admin, create_test_user};
     use crate::{api, assert_not_contains};
@@ -21,7 +21,6 @@ mod tests {
     async fn test_valid_login() {
         let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
-        let mut conn = pool.get().expect("Failed to get db connection");
 
         let new_user = create_test_user(&pool).await;
 
@@ -102,11 +101,13 @@ mod tests {
         // Verify token in database and that it belongs to the user
         use crate::models::token::UserToken;
         use crate::schema::tokens::dsl::*;
-        let token_exists = tokens
-            .filter(token.eq(&token_value))
-            .filter(user_id.eq(new_user.id))
-            .first::<UserToken>(&mut conn)
-            .is_ok();
+        let token_exists = with_connection(&pool, |conn| {
+            tokens
+                .filter(token.eq(&token_value))
+                .filter(user_id.eq(new_user.id))
+                .first::<UserToken>(conn)
+        })
+        .is_ok();
 
         assert!(token_exists, "Token not found in database");
 
