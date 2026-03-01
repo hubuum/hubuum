@@ -6,7 +6,7 @@ pub mod tests {
 
     use yare::parameterized;
 
-    use crate::models::pagination::NEXT_CURSOR_HEADER;
+    use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::constants::{get_schema, SchemaType};
@@ -427,8 +427,9 @@ pub mod tests {
         cleanup(&created_classes).await;
     }
 
+    // Covers docs/querying.md "Cursor pagination" (`X-Next-Cursor` is absent on the last page).
     #[actix_web::test]
-    async fn test_api_classes_cursor_pagination() {
+    async fn docs_api_classes_cursor_pagination() {
         let created_classes = create_test_classes("api_classes_cursor").await;
 
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
@@ -466,6 +467,24 @@ pub mod tests {
         assert_eq!(classes[0].id, created_classes[2].id);
         assert_eq!(classes[1].id, created_classes[3].id);
         assert!(second_cursor.is_some());
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!(
+                "{CLASSES_ENDPOINT}?namespaces={namespace_id}&limit=2&sort=id&cursor={}",
+                second_cursor.unwrap()
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let final_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        let classes: Vec<HubuumClassExpanded> = test::read_body_json(resp).await;
+
+        assert_eq!(classes.len(), 2);
+        assert_eq!(classes[0].id, created_classes[4].id);
+        assert_eq!(classes[1].id, created_classes[5].id);
+        assert!(final_cursor.is_none());
 
         cleanup(&created_classes).await;
     }

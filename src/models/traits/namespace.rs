@@ -5,10 +5,12 @@ use crate::models::namespace::{
     Namespace, NamespaceID, NewNamespace, NewNamespaceWithAssignee, UpdateNamespace,
 };
 use crate::models::permissions::{NewPermission, Permission, Permissions, PermissionsList};
+use crate::models::search::{FilterField, SortParam};
 use crate::models::traits::GroupAccessors;
 use crate::models::user::User;
 use crate::traits::{
-    CanDelete, CanSave, CanUpdate, NamespaceAccessors, PermissionController, SelfAccessors,
+    CanDelete, CanSave, CanUpdate, CursorPaginated, CursorSqlField, CursorSqlMapping,
+    CursorSqlType, NamespaceAccessors, PermissionController, SelfAccessors,
 };
 use diesel::prelude::*;
 use tracing::debug;
@@ -321,3 +323,71 @@ impl NewNamespace {
 
 impl PermissionController for Namespace {}
 impl PermissionController for NamespaceID {}
+
+impl CursorPaginated for Namespace {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(
+            field,
+            FilterField::Id | FilterField::Name | FilterField::CreatedAt | FilterField::UpdatedAt
+        )
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<crate::traits::CursorValue, ApiError> {
+        Ok(match field {
+            FilterField::Id => crate::traits::CursorValue::Integer(self.id as i64),
+            FilterField::Name => crate::traits::CursorValue::String(self.name.clone()),
+            FilterField::CreatedAt => crate::traits::CursorValue::DateTime(self.created_at),
+            FilterField::UpdatedAt => crate::traits::CursorValue::DateTime(self.updated_at),
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for namespaces",
+                    field
+                )))
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        Self::default_sort()
+    }
+}
+
+impl CursorSqlMapping for Namespace {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorSqlField {
+                column: "namespaces.id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Name => CursorSqlField {
+                column: "namespaces.name",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::CreatedAt => CursorSqlField {
+                column: "namespaces.created_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::UpdatedAt => CursorSqlField {
+                column: "namespaces.updated_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for namespaces",
+                    field
+                )))
+            }
+        })
+    }
+}

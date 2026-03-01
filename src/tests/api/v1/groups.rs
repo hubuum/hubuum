@@ -4,8 +4,8 @@ mod tests {
     use yare::parameterized;
 
     use crate::models::group::{Group, NewGroup, UpdateGroup};
-    use crate::models::pagination::NEXT_CURSOR_HEADER;
     use crate::models::user::{NewUser, User};
+    use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{

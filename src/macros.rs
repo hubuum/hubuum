@@ -138,10 +138,9 @@ macro_rules! json_search {
             // Get the object IDs that match the JSON data queries. This is a complexly built
             // query that is executed and we fish out the IDs from the result.
             let json_data_integers = $me.json_data_subquery($pool, json_data_queries)?;
-            if !json_data_integers.is_empty() {
-                // If we get any object IDs, filter the database field we requested on these values.
-                $query = $query.filter($dbfield.eq_any(json_data_integers))
-            }
+            // Apply the filter even when the subquery matches no objects so the overall result
+            // set is empty rather than silently ignoring the JSON predicate.
+            $query = $query.filter($dbfield.eq_any(json_data_integers))
         }
     }};
 }

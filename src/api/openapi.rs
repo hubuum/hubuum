@@ -1,6 +1,5 @@
 use crate::api::handlers::{auth, meta};
 use crate::api::v1::handlers::{classes, groups, namespaces, relations, users};
-use crate::models::pagination::{DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, NEXT_CURSOR_HEADER};
 use crate::models::{
     Group, GroupPermission, HubuumClass, HubuumClassExpanded, HubuumClassRelation,
     HubuumClassRelationTransitive, HubuumObject, HubuumObjectRelation, HubuumObjectWithPath,
@@ -9,6 +8,7 @@ use crate::models::{
     NewNamespaceWithAssignee, NewUser, ObjectsByClass, Permission, Permissions, UpdateGroup,
     UpdateHubuumClass, UpdateHubuumObject, UpdateNamespace, UpdateUser, User, UserToken,
 };
+use crate::pagination::{page_limits_or_defaults, NEXT_CURSOR_HEADER};
 use actix_web::{HttpResponse, Responder};
 use serde::Serialize;
 use utoipa::openapi::header::Header;
@@ -289,12 +289,13 @@ fn is_cursor_paginated_get(path: &str, method: &str) -> bool {
 }
 
 fn add_cursor_pagination_docs(operation: &mut Operation) {
+    let (default_page_limit, max_page_limit) = page_limits_or_defaults();
     let parameters = operation.parameters.get_or_insert_with(Vec::new);
     ensure_query_parameter(
         parameters,
         "limit",
         &format!(
-            "Maximum number of items to return. Defaults to {DEFAULT_PAGE_LIMIT}. Maximum is {MAX_PAGE_LIMIT}."
+            "Maximum number of items to return. Defaults to {default_page_limit}. Maximum is {max_page_limit}."
         ),
         Type::Integer,
     );

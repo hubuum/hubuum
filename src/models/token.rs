@@ -11,7 +11,11 @@ use utoipa::ToSchema;
 
 use crate::db::DbPool;
 use crate::errors::ApiError;
+use crate::models::search::{FilterField, SortParam};
 use crate::schema::tokens;
+use crate::traits::{
+    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+};
 
 #[derive(
     Serialize, Deserialize, Queryable, Insertable, Selectable, QueryableByName, Clone, ToSchema,
@@ -53,5 +57,67 @@ impl Token {
         let mut conn = pool.get()?;
         diesel::delete(tokens.filter(token.eq(&self.0))).execute(&mut conn)?;
         Ok(())
+    }
+}
+
+impl CursorPaginated for UserToken {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(field, FilterField::IssuedAt | FilterField::Name)
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        Ok(match field {
+            FilterField::IssuedAt => CursorValue::DateTime(self.issued),
+            FilterField::Name => CursorValue::String(self.token.clone()),
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for user tokens",
+                    field
+                )))
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![
+            SortParam {
+                field: FilterField::IssuedAt,
+                descending: true,
+            },
+            SortParam {
+                field: FilterField::Name,
+                descending: false,
+            },
+        ]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Name,
+            descending: false,
+        }]
+    }
+}
+
+impl CursorSqlMapping for UserToken {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
+        Ok(match field {
+            FilterField::IssuedAt => CursorSqlField {
+                column: "tokens.issued",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Name => CursorSqlField {
+                column: "tokens.token",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for user tokens",
+                    field
+                )))
+            }
+        })
     }
 }

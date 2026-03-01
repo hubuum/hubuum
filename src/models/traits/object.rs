@@ -8,11 +8,15 @@ use crate::models::traits::GroupAccessors;
 
 use crate::models::class::{HubuumClass, HubuumClassID};
 use crate::models::namespace::Namespace;
-use crate::models::object::{HubuumObject, HubuumObjectID, NewHubuumObject, UpdateHubuumObject};
+use crate::models::object::{
+    HubuumObject, HubuumObjectID, HubuumObjectWithPath, NewHubuumObject, UpdateHubuumObject,
+};
 use crate::models::permissions::{NewPermission, Permission, Permissions, PermissionsList};
+use crate::models::search::{FilterField, SortParam};
 use crate::models::user::User;
 use crate::traits::{
-    CanDelete, CanSave, CanUpdate, ClassAccessors, NamespaceAccessors, PermissionController,
+    CanDelete, CanSave, CanUpdate, ClassAccessors, CursorPaginated, CursorSqlField,
+    CursorSqlMapping, CursorSqlType, CursorValue, NamespaceAccessors, PermissionController,
     SelfAccessors, Validate, ValidateAgainstSchema,
 };
 
@@ -269,3 +273,198 @@ impl ClassAccessors for HubuumObjectID {
 
 impl PermissionController for HubuumObject {}
 impl PermissionController for HubuumObjectID {}
+
+impl CursorPaginated for HubuumObject {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(
+            field,
+            FilterField::Id
+                | FilterField::Name
+                | FilterField::Namespaces
+                | FilterField::NamespaceId
+                | FilterField::ClassId
+                | FilterField::Classes
+                | FilterField::CreatedAt
+                | FilterField::UpdatedAt
+        )
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorValue::Integer(self.id as i64),
+            FilterField::Name => CursorValue::String(self.name.clone()),
+            FilterField::Namespaces | FilterField::NamespaceId => {
+                CursorValue::Integer(self.namespace_id as i64)
+            }
+            FilterField::ClassId | FilterField::Classes => {
+                CursorValue::Integer(self.hubuum_class_id as i64)
+            }
+            FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
+            FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for objects",
+                    field
+                )))
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        Self::default_sort()
+    }
+}
+
+impl CursorSqlMapping for HubuumObject {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorSqlField {
+                column: "hubuumobject.id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Name => CursorSqlField {
+                column: "hubuumobject.name",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::Namespaces | FilterField::NamespaceId => CursorSqlField {
+                column: "hubuumobject.namespace_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::ClassId | FilterField::Classes => CursorSqlField {
+                column: "hubuumobject.hubuum_class_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::CreatedAt => CursorSqlField {
+                column: "hubuumobject.created_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::UpdatedAt => CursorSqlField {
+                column: "hubuumobject.updated_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for objects",
+                    field
+                )))
+            }
+        })
+    }
+}
+
+impl CursorPaginated for HubuumObjectWithPath {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(
+            field,
+            FilterField::Id
+                | FilterField::Name
+                | FilterField::Namespaces
+                | FilterField::NamespaceId
+                | FilterField::ClassId
+                | FilterField::Classes
+                | FilterField::CreatedAt
+                | FilterField::UpdatedAt
+                | FilterField::Path
+        )
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorValue::Integer(self.id as i64),
+            FilterField::Name => CursorValue::String(self.name.clone()),
+            FilterField::Namespaces | FilterField::NamespaceId => {
+                CursorValue::Integer(self.namespace_id as i64)
+            }
+            FilterField::ClassId | FilterField::Classes => {
+                CursorValue::Integer(self.hubuum_class_id as i64)
+            }
+            FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
+            FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            FilterField::Path => CursorValue::IntegerArray(self.path.clone()),
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for related objects",
+                    field
+                )))
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![
+            SortParam {
+                field: FilterField::Path,
+                descending: false,
+            },
+            SortParam {
+                field: FilterField::Id,
+                descending: false,
+            },
+        ]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        Self::default_sort()
+    }
+}
+
+impl CursorSqlMapping for HubuumObjectWithPath {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorSqlField {
+                column: "object_closure_view.descendant_object_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Name => CursorSqlField {
+                column: "object_closure_view.descendant_name",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::Namespaces | FilterField::NamespaceId => CursorSqlField {
+                column: "object_closure_view.descendant_namespace_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::ClassId | FilterField::Classes => CursorSqlField {
+                column: "object_closure_view.descendant_class_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::CreatedAt => CursorSqlField {
+                column: "object_closure_view.descendant_created_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::UpdatedAt => CursorSqlField {
+                column: "object_closure_view.descendant_updated_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Path => CursorSqlField {
+                column: "object_closure_view.path",
+                sql_type: CursorSqlType::IntegerArray,
+                nullable: false,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for related objects",
+                    field
+                )))
+            }
+        })
+    }
+}

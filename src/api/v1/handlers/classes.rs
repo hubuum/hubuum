@@ -8,8 +8,8 @@ use crate::db::traits::{ClassRelation, ObjectRelationMemberships, UserPermission
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
-use crate::models::pagination::prepare_db_pagination;
 use crate::models::traits::{ExpandNamespace, ToHubuumObjects};
+use crate::pagination::prepare_db_pagination;
 use crate::utilities::response::{
     json_response, json_response_created, paginated_json_mapped_response, paginated_json_response,
 };

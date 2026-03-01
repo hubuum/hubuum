@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use crate::models::group::NewGroup;
-    use crate::models::pagination::NEXT_CURSOR_HEADER;
     use crate::models::user::{NewUser, UpdateUser, User};
+    use crate::pagination::NEXT_CURSOR_HEADER;
     use actix_web::{http::StatusCode, test};
     use yare::parameterized;
 

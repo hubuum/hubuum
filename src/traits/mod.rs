@@ -10,6 +10,8 @@ use crate::models::{
 
 pub use crate::db::traits::user::GroupMemberships;
 pub use crate::models::traits::{GroupAccessors, Search};
+pub mod pagination;
+pub use crate::traits::pagination::*;
 
 pub trait CanDelete {
     async fn delete(&self, pool: &DbPool) -> Result<(), ApiError>;

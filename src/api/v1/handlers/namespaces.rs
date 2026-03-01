@@ -7,8 +7,8 @@ use crate::models::{
     Permissions, PermissionsList, UpdateNamespace, UserID,
 };
 
-use crate::models::pagination::prepare_db_pagination;
 use crate::models::search::parse_query_parameter;
+use crate::pagination::prepare_db_pagination;
 
 use crate::utilities::response::{json_response, json_response_created, paginated_json_response};
 use actix_web::{

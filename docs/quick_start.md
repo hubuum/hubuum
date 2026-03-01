@@ -20,6 +20,13 @@ Hubuum can be configured using environment variables or command-line arguments. 
 | `HUBUUM_DATABASE_URL` | `postgres://localhost` | PostgreSQL connection URL |
 | `HUBUUM_DB_POOL_SIZE` | `10` | Maximum number of database connections in the pool |
 
+### Pagination Configuration
+
+| Variable | Default | Description |
+| -------- | ------- | ----------- |
+| `HUBUUM_DEFAULT_PAGE_LIMIT` | `100` | Default number of items per page |
+| `HUBUUM_MAX_PAGE_LIMIT` | `250` | Maximum number of items per page |
+
 ### Authentication & Authorization
 
 | Variable | Default | Description |
@@ -54,17 +61,6 @@ The application uses specific exit codes to indicate different failure modes, wh
 ```bash
 # Check if server started successfully
 ./hubuum-server || echo "Server failed with exit code $?"
-
-# Restart on config errors only
-./hubuum-server
-if [ $? -eq 2 ]; then
-    echo "Configuration error - check environment variables"
-fi
-
-# Container health checks
-if ! timeout 5 ./hubuum-server --help > /dev/null; then
-    exit 1
-fi
 ```
 
 ### First-Time Bootstrap

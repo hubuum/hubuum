@@ -115,23 +115,17 @@ fn permission_filter_sql(permission: Permissions, target: bool) -> &'static str 
         (Permissions::UpdateObject, false) => "permissions.has_update_object = FALSE",
         (Permissions::DeleteObject, true) => "permissions.has_delete_object = TRUE",
         (Permissions::DeleteObject, false) => "permissions.has_delete_object = FALSE",
-        (Permissions::CreateClassRelation, true) => {
-            "permissions.has_create_class_relation = TRUE"
-        }
+        (Permissions::CreateClassRelation, true) => "permissions.has_create_class_relation = TRUE",
         (Permissions::CreateClassRelation, false) => {
             "permissions.has_create_class_relation = FALSE"
         }
         (Permissions::ReadClassRelation, true) => "permissions.has_read_class_relation = TRUE",
         (Permissions::ReadClassRelation, false) => "permissions.has_read_class_relation = FALSE",
-        (Permissions::UpdateClassRelation, true) => {
-            "permissions.has_update_class_relation = TRUE"
-        }
+        (Permissions::UpdateClassRelation, true) => "permissions.has_update_class_relation = TRUE",
         (Permissions::UpdateClassRelation, false) => {
             "permissions.has_update_class_relation = FALSE"
         }
-        (Permissions::DeleteClassRelation, true) => {
-            "permissions.has_delete_class_relation = TRUE"
-        }
+        (Permissions::DeleteClassRelation, true) => "permissions.has_delete_class_relation = TRUE",
         (Permissions::DeleteClassRelation, false) => {
             "permissions.has_delete_class_relation = FALSE"
         }
@@ -141,12 +135,8 @@ fn permission_filter_sql(permission: Permissions, target: bool) -> &'static str 
         (Permissions::CreateObjectRelation, false) => {
             "permissions.has_create_object_relation = FALSE"
         }
-        (Permissions::ReadObjectRelation, true) => {
-            "permissions.has_read_object_relation = TRUE"
-        }
-        (Permissions::ReadObjectRelation, false) => {
-            "permissions.has_read_object_relation = FALSE"
-        }
+        (Permissions::ReadObjectRelation, true) => "permissions.has_read_object_relation = TRUE",
+        (Permissions::ReadObjectRelation, false) => "permissions.has_read_object_relation = FALSE",
         (Permissions::UpdateObjectRelation, true) => {
             "permissions.has_update_object_relation = TRUE"
         }

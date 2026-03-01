@@ -6,7 +6,7 @@ mod tests {
     use crate::traits::{CanDelete, CanSave};
     use actix_web::{http::StatusCode, test};
 
-    use crate::models::pagination::NEXT_CURSOR_HEADER;
+    use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::constants::{get_schema, SchemaType};
@@ -235,6 +235,105 @@ mod tests {
         let objects_from_api: Vec<HubuumObject> = test::read_body_json(resp).await;
 
         assert_eq!(objects_from_api.len(), objects.len());
+    }
+
+    // Covers docs/querying.md "JSON filtering" object `json_data` examples.
+    #[parameterized(
+        filter_status_equals = {
+            "json_data__equals=status=active",
+            vec!["json_filter_object_0", "json_filter_object_2"]
+        },
+        filter_hostname_contains = {
+            "json_data__contains=hostname=srv",
+            vec!["json_filter_object_0", "json_filter_object_1"]
+        },
+        filter_missing_path = {
+            "json_data__equals=missing=value",
+            vec![]
+        }
+    )]
+    #[test_macro(actix_web::test)]
+    async fn docs_api_objects_filter_json_data_examples(
+        query_string: &str,
+        expected_names: Vec<&str>,
+    ) {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+
+        let namespace_name = format!(
+            "test_api_objects_filter_json_data_examples_{}",
+            query_string
+                .chars()
+                .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+                .collect::<String>()
+        );
+        let namespace = create_namespace(&pool, &namespace_name).await.unwrap();
+        let class = NewHubuumClass {
+            namespace_id: namespace.id,
+            name: format!("json filter class {namespace_name}"),
+            description: format!("json filter class {namespace_name}"),
+            json_schema: None,
+            validate_schema: None,
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        let test_objects = [
+            (
+                "json_filter_object_0",
+                serde_json::json!({
+                    "hostname": "srv-01",
+                    "status": "active",
+                    "ip": "10.0.0.10"
+                }),
+            ),
+            (
+                "json_filter_object_1",
+                serde_json::json!({
+                    "hostname": "srv-02",
+                    "status": "inactive",
+                    "ip": "10.0.0.11"
+                }),
+            ),
+            (
+                "json_filter_object_2",
+                serde_json::json!({
+                    "hostname": "db-01",
+                    "status": "active",
+                    "ip": "10.0.0.12"
+                }),
+            ),
+        ];
+
+        for (name, data) in test_objects {
+            NewHubuumObject {
+                namespace_id: namespace.id,
+                hubuum_class_id: class.id,
+                data,
+                name: name.to_string(),
+                description: name.to_string(),
+            }
+            .save(&pool)
+            .await
+            .unwrap();
+        }
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!(
+                "{OBJECT_ENDPOINT}/{}/?namespaces={}&{}&sort=id",
+                class.id, namespace.id, query_string
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let objects: Vec<HubuumObject> = test::read_body_json(resp).await;
+
+        let object_names: Vec<&str> = objects.iter().map(|object| object.name.as_str()).collect();
+        assert_eq!(object_names, expected_names);
+
+        namespace.delete(&pool).await.unwrap();
     }
 
     #[parameterized(

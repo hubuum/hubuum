@@ -7,8 +7,8 @@ use std::collections::HashSet;
 use std::str::FromStr;
 use tracing::debug;
 
-use crate::models::pagination::validate_page_limit;
 use crate::models::permissions::{Permissions, PermissionsList};
+use crate::pagination::validate_page_limit;
 use crate::traits::SelfAccessors;
 use crate::utilities::extensions::CustomStringExtensions;
 use crate::{errors::ApiError, schema::hubuumobject::data};
@@ -1136,7 +1136,8 @@ macro_rules! filter_fields {
         /// Each enum variant corresponds to a field that can be searched on. As a general rule, fields that may
         /// be issued repeatedly in the query string are puralized while fields that are unique are singular.
         ///
-        /// JSON fields (JsonSchema and JsonData) also have a table field, which is used for JSON SQL query generation
+        /// JSON fields (JsonSchema and JsonData aliases) also have a table field, which is used for
+        /// JSON SQL query generation
         /// to map into the correct JSON field in the database as these fields do not use the macro–defined searches
         /// and interpolate the field directly.
         #[derive(Debug, PartialEq, Clone)]
@@ -1174,7 +1175,9 @@ macro_rules! filter_fields {
             pub fn table_field(&self) -> &'static str {
                 match self {
                     FilterField::JsonSchema => "json_schema",
-                    FilterField::JsonData => "json_data",
+                    FilterField::JsonData
+                    | FilterField::JsonDataFrom
+                    | FilterField::JsonDataTo => "data",
                     _ => panic!("{:?} should not be used as a table field", self),
                 }
             }
@@ -1859,10 +1862,72 @@ mod test {
         assert_eq!(error.to_string(), "duplicate cursor");
     }
 
+    // Covers docs/querying.md "Sorting" (`order_by` is accepted as an alias).
+    #[test]
+    fn docs_parse_query_parameter_accepts_order_by_alias() {
+        let query_options = parse_query_parameter("order_by=name.desc,id.asc").unwrap();
+
+        assert_eq!(query_options.sort.len(), 2);
+        assert_eq!(query_options.sort[0].field, FilterField::Name);
+        assert!(query_options.sort[0].descending);
+        assert_eq!(query_options.sort[1].field, FilterField::Id);
+        assert!(!query_options.sort[1].descending);
+    }
+
+    // Covers docs/querying.md "Query syntax" (`field=value` means `field__equals=value`).
+    #[test]
+    fn docs_parse_query_parameter_plain_filter_defaults_to_equals() {
+        let query_options = parse_query_parameter("name=alpha").unwrap();
+
+        assert_eq!(query_options.filters.len(), 1);
+        assert_eq!(query_options.filters[0].field, FilterField::Name);
+        assert_eq!(
+            query_options.filters[0].operator,
+            SearchOperator::Equals { is_negated: false }
+        );
+        assert_eq!(query_options.filters[0].value, "alpha");
+    }
+
+    // Covers docs/querying.md "Negation" (`not_` works with `between`).
+    #[test]
+    fn docs_parse_query_parameter_accepts_negated_between_filter() {
+        let query_options = parse_query_parameter(
+            "created_at__not_between=2026-01-01T00:00:00Z,2026-02-01T00:00:00Z",
+        )
+        .unwrap();
+
+        assert_eq!(query_options.filters.len(), 1);
+        assert_eq!(query_options.filters[0].field, FilterField::CreatedAt);
+        assert_eq!(
+            query_options.filters[0].operator,
+            SearchOperator::Between { is_negated: true }
+        );
+        assert_eq!(
+            query_options.filters[0].value,
+            "2026-01-01T00:00:00Z,2026-02-01T00:00:00Z"
+        );
+    }
+
+    // Covers docs/querying.md "JSON filtering" (`json_data` aliases target object JSON payload data).
+    #[test]
+    fn docs_json_data_aliases_map_to_object_data_column() {
+        assert_eq!(FilterField::JsonData.table_field(), "data");
+        assert_eq!(FilterField::JsonDataFrom.table_field(), "data");
+        assert_eq!(FilterField::JsonDataTo.table_field(), "data");
+    }
+
     #[test]
     fn test_parse_query_parameter_rejects_zero_limit() {
         let error = parse_query_parameter("limit=0").unwrap_err();
         assert!(matches!(error, ApiError::BadRequest(_)));
         assert_eq!(error.to_string(), "limit must be greater than 0");
+    }
+
+    // Covers docs/querying.md "Cursor pagination" (maximum page size is `250`).
+    #[test]
+    fn docs_parse_query_parameter_rejects_limit_above_maximum() {
+        let error = parse_query_parameter("limit=251").unwrap_err();
+        assert!(matches!(error, ApiError::BadRequest(_)));
+        assert_eq!(error.to_string(), "limit must be at most 250");
     }
 }

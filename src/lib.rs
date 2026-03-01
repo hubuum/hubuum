@@ -9,6 +9,7 @@ pub mod logger;
 pub mod macros;
 pub mod middlewares;
 pub mod models;
+pub mod pagination;
 pub mod schema;
 pub mod tests;
 pub mod traits;

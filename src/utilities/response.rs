@@ -7,8 +7,8 @@ use std::collections::HashSet;
 use tracing::debug;
 
 use crate::errors::ApiError;
-use crate::models::pagination::{finalize_page, next_cursor_header, CursorPaginated};
 use crate::models::search::QueryOptions;
+use crate::pagination::{finalize_page, next_cursor_header, CursorPaginated};
 
 static NO_CONTENT_STATUS_CODES: Lazy<HashSet<StatusCode>> = Lazy::new(|| {
     let mut m = HashSet::new();

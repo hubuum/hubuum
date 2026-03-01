@@ -11,7 +11,7 @@ use tracing::debug;
 
 use crate::api::v1::handlers::namespaces;
 use crate::models::search::{
-    FilterField, ParsedQueryParam, QueryOptions, QueryParamsExt, SearchOperator,
+    FilterField, ParsedQueryParam, QueryOptions, QueryParamsExt, SearchOperator, SortParam,
 };
 use crate::models::traits::ExpandNamespaceFromMap;
 use crate::models::{
@@ -22,7 +22,10 @@ use crate::models::{
 
 use crate::schema::hubuumclass::namespace_id;
 use crate::schema::{hubuumclass, hubuumobject};
-use crate::traits::{ClassAccessors, NamespaceAccessors, SelfAccessors};
+use crate::traits::{
+    ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+    NamespaceAccessors, SelfAccessors,
+};
 
 use crate::db::{with_connection, DbPool};
 use crate::errors::ApiError;
@@ -1195,6 +1198,92 @@ impl GroupAccessors for &UserID {}
 
 impl Search for User {}
 impl Search for UserID {}
+
+fn string_or_null(value: Option<&str>) -> CursorValue {
+    match value {
+        Some(value) => CursorValue::String(value.to_string()),
+        None => CursorValue::Null,
+    }
+}
+
+impl CursorPaginated for User {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(
+            field,
+            FilterField::Id
+                | FilterField::Name
+                | FilterField::Username
+                | FilterField::Email
+                | FilterField::CreatedAt
+                | FilterField::UpdatedAt
+        )
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorValue::Integer(self.id as i64),
+            FilterField::Name | FilterField::Username => CursorValue::String(self.username.clone()),
+            FilterField::Email => string_or_null(self.email.as_deref()),
+            FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
+            FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for users",
+                    field
+                )))
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        Self::default_sort()
+    }
+}
+
+impl CursorSqlMapping for User {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorSqlField {
+                column: "users.id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Name | FilterField::Username => CursorSqlField {
+                column: "users.username",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::Email => CursorSqlField {
+                column: "users.email",
+                sql_type: CursorSqlType::String,
+                nullable: true,
+            },
+            FilterField::CreatedAt => CursorSqlField {
+                column: "users.created_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::UpdatedAt => CursorSqlField {
+                column: "users.updated_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for users",
+                    field
+                )))
+            }
+        })
+    }
+}
 
 impl SelfAccessors<User> for User {
     fn id(&self) -> i32 {

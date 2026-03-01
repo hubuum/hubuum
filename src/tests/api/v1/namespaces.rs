@@ -5,7 +5,7 @@ mod tests {
         UpdateNamespace,
     };
 
-    use crate::models::pagination::NEXT_CURSOR_HEADER;
+    use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::tests::api_operations::{
         delete_request, get_request, patch_request, post_request, put_request,
     };
