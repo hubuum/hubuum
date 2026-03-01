@@ -214,7 +214,6 @@ pub async fn user_on_paginated<T: NamespaceAccessors>(
     use crate::{date_search, numeric_search, string_search};
     use diesel::prelude::*;
 
-    let mut conn = pool.get()?;
     let namespace_target_id = namespace_ref.namespace_id(pool).await?;
     let group_ids_subquery = user_id.group_ids_subquery_from_backend();
 
@@ -255,7 +254,7 @@ pub async fn user_on_paginated<T: NamespaceAccessors>(
 
     crate::apply_query_options!(query, query_options, GroupPermission);
 
-    let rows = query.load::<(Group, Permission)>(&mut conn)?;
+    let rows = with_connection(pool, |conn| query.load::<(Group, Permission)>(conn))?;
     Ok(rows.into_iter().map(GroupPermission::from_tuple).collect())
 }
 
@@ -408,7 +407,6 @@ pub async fn groups_can_on_paginated(
     use crate::{date_search, numeric_search, string_search};
     use diesel::prelude::*;
 
-    let mut conn = pool.get()?;
     let base_query = permissions.into_boxed().filter(namespace_id.eq(nid));
     let filtered_query = permission_type.create_boxed_filter(base_query, true);
 
@@ -437,7 +435,7 @@ pub async fn groups_can_on_paginated(
 
     crate::apply_query_options!(query, query_options, Group);
 
-    query.load::<Group>(&mut conn).map_err(ApiError::from)
+    with_connection(pool, |conn| query.load::<Group>(conn))
 }
 
 /// List all groups and their permissions for a namespace
@@ -557,7 +555,6 @@ pub async fn groups_on_paginated<T: NamespaceAccessors>(
     use crate::{date_search, numeric_search, string_search};
     use diesel::prelude::*;
 
-    let mut conn = pool.get()?;
     let namespace_target_id = namespace_ref.namespace_id(pool).await?;
     let mut permission_filters = query_options.filters.permissions()?;
     permission_filters.ensure_contains(&permissions_filter);
@@ -598,9 +595,10 @@ pub async fn groups_on_paginated<T: NamespaceAccessors>(
 
     crate::apply_query_options!(query, query_options, GroupPermission);
 
-    let rows = query
-        .select((groups::all_columns(), permissions::all_columns()))
-        .load::<(Group, Permission)>(&mut conn)?;
+    let rows = with_connection(pool, |conn| {
+        query.select((groups::all_columns(), permissions::all_columns()))
+            .load::<(Group, Permission)>(conn)
+    })?;
     Ok(rows.into_iter().map(GroupPermission::from_tuple).collect())
 }
 
