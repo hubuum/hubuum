@@ -1,3 +1,7 @@
+use crate::db::traits::user::{
+    CreateUserRecord, DeleteUserRecord, OwnedUserTokenRecord, StoreUserTokenRecord,
+    UpdateUserRecord,
+};
 use crate::models::group::Group;
 use crate::models::token::{Token, UserToken};
 use crate::models::user_group::UserGroup;
@@ -25,14 +29,9 @@ pub struct User {
 
 impl User {
     pub async fn create_token(&self, pool: &DbPool) -> Result<Token, ApiError> {
-        use crate::schema::tokens::dsl::*;
         let generated_token = crate::utilities::auth::generate_token();
 
-        with_connection(pool, |conn| {
-            diesel::insert_into(crate::schema::tokens::table)
-                .values((user_id.eq(self.id), token.eq(&generated_token.get_token())))
-                .execute(conn)
-        })?;
+        self.store_user_token_record(pool, &generated_token).await?;
 
         Ok(generated_token)
     }
@@ -42,37 +41,19 @@ impl User {
         token_param: Token,
         pool: &DbPool,
     ) -> Result<UserToken, ApiError> {
-        use crate::schema::tokens::dsl::*;
-
-        with_connection(pool, |conn| {
-            tokens
-                .filter(user_id.eq(self.id))
-                .filter(token.eq(token_param.get_token()))
-                .first::<crate::models::token::UserToken>(conn)
-        })
+        self.load_owned_user_token_record(&token_param, pool).await
     }
 
     pub async fn delete_token(&self, token_param: Token, pool: &DbPool) -> Result<usize, ApiError> {
-        use crate::schema::tokens::dsl::*;
-        with_connection(pool, |conn| {
-            diesel::delete(tokens.filter(user_id.eq(self.id)))
-                .filter(token.eq(token_param.get_token()))
-                .execute(conn)
-        })
+        self.delete_owned_user_token_record(&token_param, pool).await
     }
 
     pub async fn delete_all_tokens(&self, pool: &DbPool) -> Result<usize, ApiError> {
-        use crate::schema::tokens::dsl::*;
-        with_connection(pool, |conn| {
-            diesel::delete(tokens.filter(user_id.eq(self.id))).execute(conn)
-        })
+        self.delete_all_user_tokens_record(pool).await
     }
 
     pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
-        use crate::schema::users::dsl::*;
-        with_connection(pool, |conn| {
-            diesel::delete(users.filter(id.eq(self.id))).execute(conn)
-        })
+        self.delete_user_record(pool).await
     }
 }
 
@@ -106,13 +87,8 @@ impl UpdateUser {
     }
 
     pub async fn save(self, user_id: i32, pool: &DbPool) -> Result<User, ApiError> {
-        use crate::schema::users::dsl::*;
         let hashed = self.hash_password()?;
-        with_connection(pool, |conn| {
-            diesel::update(users.filter(id.eq(user_id)))
-                .set(hashed)
-                .get_result::<User>(conn)
-        })
+        hashed.update_user_record(user_id, pool).await
     }
 }
 
@@ -140,13 +116,8 @@ impl NewUser {
     }
 
     pub async fn save(self, pool: &DbPool) -> Result<User, ApiError> {
-        use crate::schema::users::dsl::*;
         let hashed = self.hash_password()?;
-        with_connection(pool, |conn| {
-            diesel::insert_into(users)
-                .values(&hashed)
-                .get_result::<User>(conn)
-        })
+        hashed.create_user_record(pool).await
     }
 
     pub fn hash_password(mut self) -> Result<Self, ApiError> {
@@ -167,8 +138,8 @@ pub struct UserID(pub i32);
 
 impl UserID {
     pub async fn user(&self, pool: &DbPool) -> Result<User, ApiError> {
-        use crate::schema::users::dsl::*;
-        with_connection(pool, |conn| users.filter(id.eq(self.0)).first::<User>(conn))
+        use crate::db::traits::user::LoadUserRecord;
+        self.load_user_record(pool).await
     }
 
     /*
@@ -186,10 +157,7 @@ impl UserID {
     */
 
     pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
-        use crate::schema::users::dsl::*;
-        with_connection(pool, |conn| {
-            diesel::delete(users.filter(id.eq(self.0))).execute(conn)
-        })
+        self.delete_user_record(pool).await
     }
 }
 
