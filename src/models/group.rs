@@ -14,18 +14,21 @@ use crate::traits::{
     CanSave, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
     SelfAccessors,
 };
+use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 
 use crate::db::{with_connection, DbPool};
 
 #[derive(Serialize, Deserialize, ToSchema)]
 pub struct GroupID(pub i32);
 
-impl SelfAccessors<Group> for GroupID {
-    fn id(&self) -> i32 {
+impl IdAccessor for GroupID {
+    fn accessor_id(&self) -> i32 {
         self.0
     }
+}
 
-    async fn instance(&self, pool: &DbPool) -> Result<Group, ApiError> {
+impl InstanceAdapter<Group> for GroupID {
+    async fn instance_adapter(&self, pool: &DbPool) -> Result<Group, ApiError> {
         self.group(pool).await
     }
 }
@@ -56,12 +59,14 @@ pub struct Group {
     pub updated_at: chrono::NaiveDateTime,
 }
 
-impl SelfAccessors<Group> for Group {
-    fn id(&self) -> i32 {
+impl IdAccessor for Group {
+    fn accessor_id(&self) -> i32 {
         self.id
     }
+}
 
-    async fn instance(&self, _pool: &DbPool) -> Result<Group, ApiError> {
+impl InstanceAdapter<Group> for Group {
+    async fn instance_adapter(&self, _pool: &DbPool) -> Result<Group, ApiError> {
         Ok(self.clone())
     }
 }

@@ -16,6 +16,7 @@ use crate::traits::{
     CanUpdate, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType,
     NamespaceAccessors, PermissionController, SelfAccessors,
 };
+use crate::traits::accessors::{IdAccessor, InstanceAdapter, NamespaceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 use diesel::prelude::*;
 use tracing::debug;
@@ -60,64 +61,48 @@ impl SaveAdapter for NewNamespaceWithAssignee {
     }
 }
 
-impl SelfAccessors<Namespace> for Namespace {
-    fn id(&self) -> i32 {
+impl IdAccessor for Namespace {
+    fn accessor_id(&self) -> i32 {
         self.id
     }
+}
 
-    async fn instance(&self, _pool: &DbPool) -> Result<Namespace, ApiError> {
+impl InstanceAdapter<Namespace> for Namespace {
+    async fn instance_adapter(&self, _pool: &DbPool) -> Result<Namespace, ApiError> {
         Ok(self.clone())
     }
 }
 
-impl NamespaceAccessors for Namespace {
-    async fn namespace(&self, _pool: &DbPool) -> Result<Namespace, ApiError> {
+impl NamespaceAdapter for Namespace {
+    async fn namespace_adapter(&self, _pool: &DbPool) -> Result<Namespace, ApiError> {
         Ok(self.clone())
     }
 
-    async fn namespace_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
+    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<i32, ApiError> {
         Ok(self.id)
     }
 }
 
-impl NamespaceAccessors for &Namespace {
-    async fn namespace(&self, _pool: &DbPool) -> Result<Namespace, ApiError> {
-        Ok((**self).clone())
-    }
-
-    async fn namespace_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.id)
-    }
-}
-
-impl SelfAccessors<Namespace> for NamespaceID {
-    fn id(&self) -> i32 {
+impl IdAccessor for NamespaceID {
+    fn accessor_id(&self) -> i32 {
         self.0
     }
+}
 
-    async fn instance(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
+impl InstanceAdapter<Namespace> for NamespaceID {
+    async fn instance_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
         self.namespace(pool).await
     }
 }
 
-impl NamespaceAccessors for NamespaceID {
-    async fn namespace_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
+impl NamespaceAdapter for NamespaceID {
+    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<i32, ApiError> {
         Ok(self.0)
     }
 
-    async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
+    async fn namespace_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
         use crate::db::traits::GetNamespace;
         self.namespace_from_backend(pool).await
-    }
-}
-
-impl NamespaceAccessors for &NamespaceID {
-    async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        self.instance(pool).await
-    }
-
-    async fn namespace_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.0)
     }
 }
 

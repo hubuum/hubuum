@@ -12,23 +12,28 @@ use crate::models::{
     HubuumObjectRelationID, HubuumObjectWithPath, NewHubuumObjectRelation, ObjectClosureView,
 };
 use crate::traits::SelfAccessors;
+use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter};
 
-impl SelfAccessors<HubuumObjectRelation> for HubuumObjectRelationID {
-    fn id(&self) -> i32 {
+impl IdAccessor for HubuumObjectRelationID {
+    fn accessor_id(&self) -> i32 {
         self.0
     }
+}
 
-    async fn instance(&self, pool: &DbPool) -> Result<HubuumObjectRelation, ApiError> {
+impl InstanceAdapter<HubuumObjectRelation> for HubuumObjectRelationID {
+    async fn instance_adapter(&self, pool: &DbPool) -> Result<HubuumObjectRelation, ApiError> {
         self.load_object_relation_record(pool).await
     }
 }
-impl SelfAccessors<HubuumObjectRelation> for HubuumObjectRelation {
-    fn id(&self) -> i32 {
+impl IdAccessor for HubuumObjectRelation {
+    fn accessor_id(&self) -> i32 {
         self.id
     }
+}
 
-    async fn instance(&self, _pool: &DbPool) -> Result<HubuumObjectRelation, ApiError> {
+impl InstanceAdapter<HubuumObjectRelation> for HubuumObjectRelation {
+    async fn instance_adapter(&self, _pool: &DbPool) -> Result<HubuumObjectRelation, ApiError> {
         Ok(*self)
     }
 }

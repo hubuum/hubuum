@@ -26,6 +26,7 @@ use crate::traits::{
     ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
     NamespaceAccessors, SelfAccessors,
 };
+use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 
 use crate::db::traits::user::{
     LoadPermittedNamespaces, LoadUserGroups, LoadUserRecord, QueryJsonDataIds,
@@ -291,41 +292,27 @@ impl CursorSqlMapping for User {
     }
 }
 
-impl SelfAccessors<User> for User {
-    fn id(&self) -> i32 {
+impl IdAccessor for User {
+    fn accessor_id(&self) -> i32 {
         self.id
     }
+}
 
-    async fn instance(&self, _pool: &DbPool) -> Result<User, ApiError> {
+impl InstanceAdapter<User> for User {
+    async fn instance_adapter(&self, _pool: &DbPool) -> Result<User, ApiError> {
         Ok(self.clone())
     }
 }
 
-impl SelfAccessors<User> for UserID {
-    fn id(&self) -> i32 {
+impl IdAccessor for UserID {
+    fn accessor_id(&self) -> i32 {
         self.0
     }
+}
 
-    async fn instance(&self, pool: &DbPool) -> Result<User, ApiError> {
+impl InstanceAdapter<User> for UserID {
+    async fn instance_adapter(&self, pool: &DbPool) -> Result<User, ApiError> {
         self.load_user_record(pool).await
-    }
-}
-
-impl SelfAccessors<User> for &User {
-    fn id(&self) -> i32 {
-        (*self).id()
-    }
-    async fn instance(&self, pool: &DbPool) -> Result<User, ApiError> {
-        (*self).instance(pool).await
-    }
-}
-
-impl SelfAccessors<User> for &UserID {
-    fn id(&self) -> i32 {
-        (*self).id()
-    }
-    async fn instance(&self, pool: &DbPool) -> Result<User, ApiError> {
-        (*self).instance(pool).await
     }
 }
 

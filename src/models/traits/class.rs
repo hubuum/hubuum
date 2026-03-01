@@ -3,6 +3,9 @@ use diesel::prelude::*;
 use crate::traits::{
     CanUpdate, ClassAccessors, NamespaceAccessors, PermissionController, SelfAccessors,
 };
+use crate::traits::accessors::{
+    ClassAdapter, IdAccessor, InstanceAdapter, NamespaceAdapter,
+};
 
 use crate::db::traits::class::{
     ClassNamespaceLookup, CreateClassRecord, DeleteClassRecord, LoadClassRecord, UpdateClassRecord,
@@ -53,102 +56,66 @@ impl UpdateAdapter for UpdateHubuumClass {
     }
 }
 
-impl SelfAccessors<HubuumClass> for HubuumClass {
-    fn id(&self) -> i32 {
+impl IdAccessor for HubuumClass {
+    fn accessor_id(&self) -> i32 {
         self.id
     }
+}
 
-    async fn instance(&self, _pool: &DbPool) -> Result<HubuumClass, ApiError> {
+impl InstanceAdapter<HubuumClass> for HubuumClass {
+    async fn instance_adapter(&self, _pool: &DbPool) -> Result<HubuumClass, ApiError> {
         Ok(self.clone())
     }
 }
 
-impl SelfAccessors<HubuumClass> for &HubuumClass {
-    fn id(&self) -> i32 {
-        self.id
-    }
-
-    async fn instance(&self, _pool: &DbPool) -> Result<HubuumClass, ApiError> {
-        Ok((**self).clone())
-    }
-}
-
-impl ClassAccessors for HubuumClass {
-    async fn class_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
+impl ClassAdapter for HubuumClass {
+    async fn class_id_adapter(&self, _pool: &DbPool) -> Result<i32, ApiError> {
         Ok(self.id)
     }
 
-    async fn class(&self, _pool: &DbPool) -> Result<HubuumClass, ApiError> {
+    async fn class_adapter(&self, _pool: &DbPool) -> Result<HubuumClass, ApiError> {
         Ok(self.clone())
     }
 }
 
-impl ClassAccessors for &HubuumClass {
-    async fn class(&self, _pool: &DbPool) -> Result<HubuumClass, ApiError> {
-        Ok((**self).clone())
-    }
-
-    async fn class_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.id)
-    }
-}
-
-impl NamespaceAccessors for HubuumClass {
-    async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
+impl NamespaceAdapter for HubuumClass {
+    async fn namespace_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
         self.lookup_class_namespace(pool).await
     }
 
-    async fn namespace_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
+    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<i32, ApiError> {
         Ok(self.namespace_id)
     }
 }
 
-impl SelfAccessors<HubuumClass> for HubuumClassID {
-    fn id(&self) -> i32 {
+impl IdAccessor for HubuumClassID {
+    fn accessor_id(&self) -> i32 {
         self.0
     }
+}
 
-    async fn instance(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
+impl InstanceAdapter<HubuumClass> for HubuumClassID {
+    async fn instance_adapter(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
         self.class(pool).await
     }
 }
 
-impl SelfAccessors<HubuumClass> for &HubuumClassID {
-    fn id(&self) -> i32 {
-        self.0
-    }
-
-    async fn instance(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
-        self.class(pool).await
-    }
-}
-
-impl ClassAccessors for HubuumClassID {
-    async fn class_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
+impl ClassAdapter for HubuumClassID {
+    async fn class_id_adapter(&self, _pool: &DbPool) -> Result<i32, ApiError> {
         Ok(self.0)
     }
 
-    async fn class(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
+    async fn class_adapter(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
         self.load_class_record(pool).await
     }
 }
 
-impl ClassAccessors for &HubuumClassID {
-    async fn class(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
-        (*self).class(pool).await
-    }
-
-    async fn class_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.0)
-    }
-}
-
-impl NamespaceAccessors for HubuumClassID {
-    async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
+impl NamespaceAdapter for HubuumClassID {
+    async fn namespace_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
         self.lookup_class_namespace(pool).await
     }
 
-    async fn namespace_id(&self, pool: &DbPool) -> Result<i32, ApiError> {
+    async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<i32, ApiError> {
         Ok(self.namespace(pool).await?.id)
     }
 }
