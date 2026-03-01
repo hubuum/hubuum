@@ -50,19 +50,19 @@ The current benchmark targets are split one benchmark binary per file so CI can 
 cargo bench --bench parse_query_parameter_callgrind
 cargo bench --bench parse_integer_list_callgrind
 cargo bench --bench json_sql_filters_callgrind
+cargo bench --bench object_validation_geo_callgrind
+cargo bench --bench object_validation_nested_callgrind
 cargo bench --bench database_url_parsing_criterion -- --noplot
-cargo bench --bench namespace_roundtrip_criterion -- --noplot
 ```
 
 `iai-callgrind` requires `valgrind` to be installed locally.
 
-The Criterion benchmark always measures database URL parsing, and will additionally run namespace create/delete timing when either `HUBUUM_BENCH_DATABASE_URL` or `HUBUUM_DATABASE_URL` points to a migrated PostgreSQL database.
-
 ### CI behavior
 
-- `iai-callgrind` runs as a separate gating benchmark workflow job.
-- Criterion runs in its own PR job with `fail_on_regression: false`, so timing regressions are reported but do not fail the workflow.
-- The current Criterion DB benchmark self-skips when no benchmark database URL is configured in the environment.
+- The benchmark workflow runs both backends in one combined `backend: all` job, so PRs get a single consolidated benchmark report.
+- `iai-callgrind` remains the practical gating signal with a low regression threshold.
+- Criterion still runs in the same combined job, but uses a very high regression threshold so it reports timing changes without acting as a meaningful gate.
+- The current benchmark set is fully self-contained and does not require a database in CI.
 
 ### Adding or modifying benchmarks
 
@@ -72,4 +72,3 @@ The Criterion benchmark always measures database URL parsing, and will additiona
 - Include `callgrind` in the benchmark filename when it should be auto-discovered by the CI workflow.
 - Include `criterion` in the benchmark filename when it should be Criterion-only in CI autodiscovery.
 - Prefer deterministic library-level code paths such as parsers, query builders, and serialization helpers over handlers that require network or database setup.
-- For DB-oriented Criterion benches, make the database URL opt-in and skip cleanly when the environment is not provisioned.
