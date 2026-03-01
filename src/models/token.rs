@@ -1,16 +1,12 @@
-use argon2::password_hash::rand_core::le;
 use chrono::NaiveDateTime;
 
-use chrono::{Duration, Utc};
-
-use diesel::QueryableByName;
 use diesel::prelude::*;
 use diesel::sql_types::{Integer, Text, Timestamp};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::db::traits::user::DeleteTokenRecord;
-use crate::db::{with_connection, DbPool};
+use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::schema::tokens;

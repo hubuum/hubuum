@@ -6,7 +6,9 @@ use utoipa::ToSchema;
 use crate::db::traits::object::{
     objects_per_class_count_from_backend, total_object_count_from_backend,
 };
-use crate::db::{with_connection, DbPool};
+#[cfg(test)]
+use crate::db::with_connection;
+use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::schema::hubuumobject;
 
