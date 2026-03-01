@@ -92,7 +92,7 @@ where
 /// Check what permissions a user has to a given namespace
 ///
 /// ## Arguments
-/// * pool - Database connection pool
+/// * backend - Backend context used to execute the query
 /// * user_id - ID of the user to check permissions for
 /// * namespace_ref - Namespace or NamespaceID to check permissions for
 ///
@@ -130,8 +130,8 @@ where
 /// Check if a user has a specific permission to any namespace
 ///
 /// ## Arguments
-/// * pool - Database connection pool
-/// * user_id - ID of the user to check permissions for
+/// * backend - Backend context used to execute the query
+/// * user_id - User accessor to check permissions for
 /// * permission_type - Type of permission to check
 ///
 /// ## Returns
@@ -155,7 +155,7 @@ where
 /// Check if a group has a specific permission to a given namespace ID
 ///
 /// ## Arguments
-/// * pool - Database connection pool
+/// * backend - Backend context used to execute the query
 /// * gid - ID of the group to check permissions for
 /// * permission_type - Type of permission to check
 /// * namespace_ref - Namespace or NamespaceID to check permissions for
@@ -185,7 +185,7 @@ where
 /// Check what groups have a specific permission to a given namespace ID
 ///
 /// ## Arguments
-/// * pool - Database connection pool
+/// * backend - Backend context used to execute the query
 /// * nid - ID of the namespace to check permissions for
 /// * permission_type - Type of permission to check
 ///
@@ -225,8 +225,8 @@ where
 /// List all groups and their permissions for a namespace
 ///
 /// ## Arguments
-/// * pool - Database connection pool
-/// * nid - ID of the namespace to check permissions for
+/// * backend - Backend context used to execute the query
+/// * namespace_ref - Namespace or NamespaceID to check permissions for
 ///
 /// ## Returns
 /// * Ok(Vec<(Group, NamespacePermissions)>) - List of groups and their permissions

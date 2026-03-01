@@ -97,8 +97,8 @@ impl Group {
     /// Add a member to a group. If the user is already a member, do nothing.
     ///
     /// ## Arguments
+    /// * `backend` - The backend context used to persist the membership
     /// * `user` - The user to add to the group
-    /// * `pool` - The database connection pool
     ///
     /// ## Returns
     /// * `Ok(())` if the user was added to the group

@@ -23,22 +23,22 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// the namespace_id. To avoid creating the class multiple times during use
     /// do this:
     /// ```ignore
-    /// class = class_id.class(pool).await?;
-    /// if (class.user_can(pool, userid, Permissions::ReadClass).await?) {
+    /// class = class_id.class(backend).await?;
+    /// if (class.user_can(backend, userid, Permissions::ReadClass).await?) {
     ///     return Ok(class);
     /// }
     /// ```
     /// And not this:
     /// ```ignore
-    /// if (class_id.user_can(pool, userid, Permissions::ReadClass).await?) {
-    ///    return Ok(class_id.class(pool).await?);
+    /// if (class_id.user_can(backend, userid, Permissions::ReadClass).await?) {
+    ///    return Ok(class_id.class(backend).await?);
     /// }
     /// ```
     ///
     /// ## Arguments
     ///
-    /// * `pool` - The database pool to use for the query.
-    /// * `user_id` - The user to check permissions for.
+    /// * `backend` - The backend context to use for the query.
+    /// * `user` - The user to check permissions for.
     /// * `permission` - The permission to check.
     ///
     /// ## Returns
@@ -51,7 +51,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// ## Example
     ///
     /// ```ignore
-    /// if (hubuum_class_or_classid.user_can(pool, userid, ClassPermissions::ReadClass).await?) {
+    /// if (hubuum_class_or_classid.user_can(backend, userid, ClassPermissions::ReadClass).await?) {
     ///     // Do something
     /// }
     async fn user_can<U: SelfAccessors<User> + GroupAccessors + GroupMemberships>(
@@ -77,24 +77,24 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// do this:
     /// ```ignore
     /// permissions = vec![Permissions::ReadClass, Permissions::UpdateClass];
-    /// class = class_id.class(pool).await?;
-    /// if (class.user_can(pool, userid, permissions).await?) {
+    /// class = class_id.class(backend).await?;
+    /// if (class.user_can(backend, userid, permissions).await?) {
     ///     return Ok(class);
     /// }
     /// ```
     /// And not this:
     /// ```ignore
     /// permissions = vec![Permissions::ReadClass, Permissions::UpdateClass];
-    /// if (class_id.user_can(pool, userid, permissions).await?) {
-    ///    return Ok(class_id.class(pool).await?);
+    /// if (class_id.user_can(backend, userid, permissions).await?) {
+    ///    return Ok(class_id.class(backend).await?);
     /// }
     /// ```
     ///
     /// ## Arguments
     ///
-    /// * `pool` - The database pool to use for the query.
-    /// * `user_id` - The user to check permissions for.
-    /// * `permission` - The permission to check.
+    /// * `backend` - The backend context to use for the query.
+    /// * `user` - The user to check permissions for.
+    /// * `permission` - The permissions to check.
     ///
     /// ## Returns
     ///
@@ -106,7 +106,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// ## Example
     ///
     /// ```ignore
-    /// if (hubuum_class_or_classid.user_can(pool, userid, ClassPermissions::ReadClass).await?) {
+    /// if (hubuum_class_or_classid.user_can(backend, userid, ClassPermissions::ReadClass).await?) {
     ///     // Do something
     /// }
     async fn user_can_all<U: SelfAccessors<User> + GroupAccessors + GroupMemberships>(
@@ -129,8 +129,8 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     ///
     /// ## Arguments
     ///
-    /// - `pool` - A connection pool to the database.
-    /// - `group_identifier` - The group ID to grant the permissions to.
+    /// - `backend` - The backend context to use for the query.
+    /// - `group_id_for_grant` - The group ID to grant the permissions to.
     /// - `permission_list` - A list of permissions to grant, wrapped in a PermissionsList.
     ///
     /// ## Returns
@@ -177,8 +177,8 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     ///
     /// ## Arguments
     ///
-    /// - `pool` - A connection pool to the database.
-    /// - `group_identifier` - The group ID to revoke the permissions from.
+    /// - `backend` - The backend context to use for the query.
+    /// - `group_id_for_revoke` - The group ID to revoke the permissions from.
     /// - `permission_list` - A list of permissions to revoke, wrapped in a PermissionsList.
     ///
     /// ## Returns
@@ -212,7 +212,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     ///
     /// ## Arguments
     ///
-    /// - `pool` - A connection pool to the database.
+    /// - `backend` - The backend context to use for the query.
     /// - `group_identifier` - The group ID to grant the permission to.
     /// - `permission` - The permission to grant.
     ///
@@ -244,7 +244,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     ///
     /// ## Arguments
     ///
-    /// - `pool` - A connection pool to the database.
+    /// - `backend` - The backend context to use for the query.
     /// - `group_identifier` - The group ID to revoke the permission from.
     /// - `permission` - The permission to revoke.
     ///
@@ -277,7 +277,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     ///
     /// ## Arguments
     ///
-    /// - `pool` - A connection pool to the database.
+    /// - `backend` - The backend context to use for the query.
     /// - `group_identifier` - The group ID to set the permissions for.
     /// - `permission_list` - A list of permissions to set, wrapped in a PermissionsList.
     ///
@@ -302,8 +302,8 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     ///
     /// ## Arguments
     ///
-    /// - `pool` - A connection pool to the database.
-    /// - `group_identifier` - The group ID to revoke the permissions from.
+    /// - `backend` - The backend context to use for the query.
+    /// - `group_id_for_revoke` - The group ID to revoke the permissions from.
     ///
     /// ## Returns
     ///
