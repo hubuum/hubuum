@@ -13,10 +13,15 @@ use crate::traits::{
     SelfAccessors,
 };
 
+/// Convert a `(Group, T)` tuple into a richer output type.
 pub trait FromTuple<T> {
     fn from_tuple(t: (Group, T)) -> Self;
 }
 
+/// Expand a value by loading its namespace from the backend.
+///
+/// Use this when the caller has a backend context available and wants a fully expanded output
+/// value rather than an ID-only representation.
 pub trait ExpandNamespace<T> {
     async fn expand_namespace<C>(&self, backend: &C) -> Result<T, ApiError>
     where
@@ -43,6 +48,7 @@ impl ExpandNamespace<HubuumClassExpanded> for HubuumClass {
     }
 }
 
+/// Expand a value by looking up namespaces in a precomputed map rather than hitting the backend.
 pub trait ExpandNamespaceFromMap<T> {
     fn expand_namespace_from_map(&self, namespace_map: &HashMap<i32, Namespace>) -> T;
 }

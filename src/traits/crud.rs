@@ -3,12 +3,20 @@ use crate::errors::ApiError;
 
 use super::context::BackendContext;
 
+/// Delete the value represented by `self`.
+///
+/// This is the public model-facing delete API. The actual backend-specific work is delegated to
+/// hidden adapter traits so implementations can stay thin.
 pub trait CanDelete {
     async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>
     where
         C: BackendContext + ?Sized;
 }
 
+/// Persist `self` and return the saved representation.
+///
+/// `Output` is usually the persisted model type. For example, saving a `NewNamespace` returns a
+/// `Namespace`, while saving an existing value may also return the updated persisted value.
 pub trait CanSave {
     type Output;
     async fn save<C>(&self, backend: &C) -> Result<Self::Output, ApiError>
@@ -16,6 +24,10 @@ pub trait CanSave {
         C: BackendContext + ?Sized;
 }
 
+/// Update an existing persisted value and return the updated representation.
+///
+/// `entry_id` identifies the stored record that should be updated. `Output` is the persisted type
+/// returned after the update completes.
 pub trait CanUpdate {
     type Output;
     async fn update<C>(&self, backend: &C, entry_id: i32) -> Result<Self::Output, ApiError>
@@ -83,6 +95,10 @@ where
 }
 
 #[allow(dead_code)]
+/// Validate a value in its full domain context.
+///
+/// Unlike purely local validation, implementations may consult the backend when validation depends
+/// on related persisted state, such as a class schema or permissions.
 pub trait Validate {
     /// Complete validation of the object.
     ///
@@ -95,6 +111,7 @@ pub trait Validate {
 }
 
 #[allow(dead_code)]
+/// Validate a value against a supplied schema without loading additional backend state.
 pub trait ValidateAgainstSchema {
     /// Validate the object's data against the class's JSON schema.
     ///

@@ -35,6 +35,10 @@ use crate::db::traits::user::{
 use crate::db::DbPool;
 use crate::errors::ApiError;
 
+/// Search resources that are visible to a user.
+///
+/// The methods on this trait delegate into backend search implementations while keeping the
+/// model-facing API expressed in terms of `User` / `UserID` style accessors.
 pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors {
     async fn search_namespaces<C>(
         &self,
@@ -111,6 +115,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
     }
 }
 
+/// Access groups and related backend-backed filters for a user.
 pub trait GroupAccessors: SelfAccessors<User> {
     /// Return all groups that the user is a member of.
     #[allow(async_fn_in_trait, dead_code)]
@@ -134,6 +139,9 @@ pub trait GroupAccessors: SelfAccessors<User> {
             .await
     }
 
+    /// Execute the JSON schema filter query for classes and return matching class IDs.
+    ///
+    /// The name is historical: this returns the executed result set rather than a Diesel subquery.
     fn json_schema_subquery<C>(
         &self,
         backend: &C,
@@ -145,7 +153,9 @@ pub trait GroupAccessors: SelfAccessors<User> {
         self.query_class_ids_for_json_schema(backend.db_pool(), json_schema_query_params)
     }
 
-    // Umm, async? Also, the name implies we return a subquery, but we return the Vec<i32> of the executed query.
+    /// Execute the JSON data filter query for objects and return matching object IDs.
+    ///
+    /// The name is historical: this returns the executed result set rather than a Diesel subquery.
     fn json_data_subquery<C>(
         &self,
         backend: &C,
@@ -158,6 +168,7 @@ pub trait GroupAccessors: SelfAccessors<User> {
     }
 }
 
+/// Access namespaces that are visible to a user through direct or group-derived permissions.
 pub trait UserNamespaceAccessors: SelfAccessors<User> + GroupAccessors {
     /// Return all namespaces that the user has NamespacePermissions::ReadCollection on.
     #[allow(dead_code)] // Lazy-used in tests.

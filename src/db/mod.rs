@@ -52,6 +52,20 @@ fn acquire_connection(
     }
 }
 
+/// Run database work on a single pooled connection without starting an explicit transaction.
+///
+/// Use this for:
+/// - single read queries
+/// - single-statement writes
+/// - other DB work that does not require all-or-nothing rollback across multiple statements
+///
+/// The closure may return any error type `E` as long as it can be converted into [`ApiError`].
+/// In practice this means the closure can return either Diesel errors directly or higher-level
+/// domain errors that already map into `ApiError`.
+///
+/// Note: block closures that use `?` and end with `Ok(...)` may require an explicit closure
+/// return type, for example:
+/// `with_connection(pool, |conn| -> Result<_, diesel::result::Error> { ... })`
 pub fn with_connection<F, R, E>(pool: &DbPool, f: F) -> Result<R, ApiError>
 where
     F: FnOnce(&mut PgConnection) -> Result<R, E>,
@@ -61,6 +75,21 @@ where
     f(&mut conn).map_err(ApiError::from)
 }
 
+/// Run database work inside a SQL transaction on a single pooled connection.
+///
+/// Use this when correctness depends on all enclosed operations succeeding or failing together.
+/// If the closure returns `Ok`, the transaction is committed. If it returns `Err`, the
+/// transaction is rolled back and the error is mapped into [`ApiError`].
+///
+/// This is the right helper for multi-step writes such as:
+/// - create + related insert
+/// - read/modify/write sequences that must be atomic
+/// - permission mutations that must not leave partial state behind
+///
+/// As with [`with_connection`], the closure may return any error type `E` that converts into
+/// [`ApiError`]. Block closures that end with `Ok(...)` may need an explicit closure return type,
+/// for example:
+/// `with_transaction(pool, |conn| -> Result<_, ApiError> { ... })`
 pub fn with_transaction<F, R, E>(pool: &DbPool, f: F) -> Result<R, ApiError>
 where
     F: FnOnce(&mut PgConnection) -> Result<R, E>,

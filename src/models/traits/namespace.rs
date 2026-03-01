@@ -107,6 +107,10 @@ impl NamespaceAdapter for NamespaceID {
 }
 
 impl NewNamespace {
+    /// Create a namespace and grant the full namespace permission set to the assignee group.
+    ///
+    /// This is a convenience wrapper around the backend transaction that creates the namespace
+    /// record and the corresponding permission record together.
     pub async fn save_and_grant_all_to<C>(
         self,
         backend: &C,
@@ -119,6 +123,11 @@ impl NewNamespace {
             .await
     }
 
+    /// Persist the namespace and apply permissions using the assignee embedded in the supplied
+    /// `NewNamespaceWithAssignee`.
+    ///
+    /// This delegates into the same backend helper as [`Self::save_and_grant_all_to`], but takes
+    /// the assignee from the provided wrapper value.
     pub async fn update_with_permissions<C>(
         self,
         backend: &C,
