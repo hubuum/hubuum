@@ -13,16 +13,17 @@ use crate::models::search::{FilterField, SortParam};
 use crate::models::traits::GroupAccessors;
 use crate::models::user::User;
 use crate::traits::{
-    CanDelete, CanSave, CanUpdate, CursorPaginated, CursorSqlField, CursorSqlMapping,
-    CursorSqlType, NamespaceAccessors, PermissionController, SelfAccessors,
+    CanUpdate, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType,
+    NamespaceAccessors, PermissionController, SelfAccessors,
 };
+use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 use diesel::prelude::*;
 use tracing::debug;
 
-impl CanSave for Namespace {
+impl SaveAdapter for Namespace {
     type Output = Namespace;
 
-    async fn save(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
+    async fn save_adapter(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
         let updated_namespace = UpdateNamespace {
             name: Some(self.name.clone()),
             description: Some(self.description.clone()),
@@ -31,73 +32,30 @@ impl CanSave for Namespace {
     }
 }
 
-impl CanDelete for Namespace {
-    /// Delete a namespace
-    ///
-    /// This does not check for permissions, it only deletes the namespace.
-    /// It is assumed that permissions are already checked before calling this method.
-    /// See `user_can` for permission checking.
-    ///
-    /// Note: This will also delete all objects and classes in the namespace, as well
-    /// as all permissions related to the namespace.
-    ///
-    /// ## Arguments
-    /// * pool - Database connection pool
-    ///
-    /// ## Returns
-    /// * Ok() - On success
-    /// * Err(ApiError) - On query errors only.
-    async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
+impl DeleteAdapter for Namespace {
+    async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
         self.delete_namespace_record(pool).await
     }
 }
 
-impl CanDelete for NamespaceID {
-    /// Delete a namespace
-    ///
-    /// This does not check for permissions, it only deletes the namespace.
-    /// It is assumed that permissions are already checked before calling this method.
-    /// See `user_can` for permission checking.
-    ///
-    /// Note: This will also delete all objects and classes in the namespace, as well
-    /// as all permissions related to the namespace.
-    ///
-    /// ## Arguments
-    /// * pool - Database connection pool
-    ///
-    /// ## Returns
-    /// * Ok() - On success
-    /// * Err(ApiError) - On query errors only.
-    async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
+impl DeleteAdapter for NamespaceID {
+    async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
         self.delete_namespace_record(pool).await
     }
 }
 
-impl CanUpdate for UpdateNamespace {
+impl UpdateAdapter for UpdateNamespace {
     type Output = Namespace;
 
-    /// Update a namespace
-    ///
-    /// This does not check for permissions, it only updates the namespace.
-    /// It is assumed that permissions are already checked before calling this method.
-    /// See `user_can` for permission checking.
-    ///
-    /// ## Arguments
-    /// * pool - Database connection pool
-    /// * new_data - New data to update the namespace with
-    ///
-    /// ## Returns
-    /// * Ok(Namespace) - Updated namespace
-    /// * Err(ApiError) - On query errors only.
-    async fn update(&self, pool: &DbPool, nid: i32) -> Result<Self::Output, ApiError> {
+    async fn update_adapter(&self, pool: &DbPool, nid: i32) -> Result<Self::Output, ApiError> {
         self.update_namespace_record(pool, nid).await
     }
 }
 
-impl CanSave for NewNamespaceWithAssignee {
+impl SaveAdapter for NewNamespaceWithAssignee {
     type Output = Namespace;
 
-    async fn save(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
+    async fn save_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
         self.save_namespace_with_assignee_record(pool).await
     }
 }

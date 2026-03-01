@@ -15,6 +15,56 @@ pub trait CanUpdate {
     async fn update(&self, pool: &DbPool, entry_id: i32) -> Result<Self::Output, ApiError>;
 }
 
+#[doc(hidden)]
+pub trait DeleteAdapter {
+    async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError>;
+}
+
+impl<T> CanDelete for T
+where
+    T: DeleteAdapter,
+{
+    async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
+        self.delete_adapter(pool).await
+    }
+}
+
+#[doc(hidden)]
+pub trait SaveAdapter {
+    type Output;
+
+    async fn save_adapter(&self, pool: &DbPool) -> Result<Self::Output, ApiError>;
+}
+
+impl<T> CanSave for T
+where
+    T: SaveAdapter,
+{
+    type Output = T::Output;
+
+    async fn save(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
+        self.save_adapter(pool).await
+    }
+}
+
+#[doc(hidden)]
+pub trait UpdateAdapter {
+    type Output;
+
+    async fn update_adapter(&self, pool: &DbPool, entry_id: i32) -> Result<Self::Output, ApiError>;
+}
+
+impl<T> CanUpdate for T
+where
+    T: UpdateAdapter,
+{
+    type Output = T::Output;
+
+    async fn update(&self, pool: &DbPool, entry_id: i32) -> Result<Self::Output, ApiError> {
+        self.update_adapter(pool, entry_id).await
+    }
+}
+
 #[allow(dead_code)]
 pub trait Validate {
     /// Complete validation of the object.

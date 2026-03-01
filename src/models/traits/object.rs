@@ -15,10 +15,11 @@ use crate::models::permissions::{NewPermission, Permission, Permissions, Permiss
 use crate::models::search::{FilterField, SortParam};
 use crate::models::user::User;
 use crate::traits::{
-    CanDelete, CanSave, CanUpdate, ClassAccessors, CursorPaginated, CursorSqlField,
-    CursorSqlMapping, CursorSqlType, CursorValue, NamespaceAccessors, PermissionController,
-    SelfAccessors, Validate, ValidateAgainstSchema,
+    ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType,
+    CursorValue, NamespaceAccessors, PermissionController, SelfAccessors, Validate,
+    ValidateAgainstSchema,
 };
+use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 
 impl HubuumObject {
     /// Create a new HubuumObject merged with the update object.
@@ -85,32 +86,32 @@ impl Validate for (&UpdateHubuumObject, i32) {
 //
 // Save/Update/Delete
 //
-impl CanSave for HubuumObject {
+impl SaveAdapter for HubuumObject {
     type Output = HubuumObject;
 
-    async fn save(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
+    async fn save_adapter(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
         self.save_object_record(pool).await
     }
 }
 
-impl CanSave for NewHubuumObject {
+impl SaveAdapter for NewHubuumObject {
     type Output = HubuumObject;
 
-    async fn save(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
+    async fn save_adapter(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
         self.save_object_record(pool).await
     }
 }
 
-impl CanUpdate for UpdateHubuumObject {
+impl UpdateAdapter for UpdateHubuumObject {
     type Output = HubuumObject;
 
-    async fn update(&self, pool: &DbPool, object_id: i32) -> Result<Self::Output, ApiError> {
+    async fn update_adapter(&self, pool: &DbPool, object_id: i32) -> Result<Self::Output, ApiError> {
         self.update_object_record(pool, object_id).await
     }
 }
 
-impl CanDelete for HubuumObject {
-    async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
+impl DeleteAdapter for HubuumObject {
+    async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
         self.delete_object_record(pool).await
     }
 }

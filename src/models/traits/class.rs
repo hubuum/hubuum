@@ -1,25 +1,24 @@
 use diesel::prelude::*;
 
 use crate::traits::{
-    CanDelete, CanSave, CanUpdate, ClassAccessors, NamespaceAccessors, PermissionController,
-    SelfAccessors,
+    CanUpdate, ClassAccessors, NamespaceAccessors, PermissionController, SelfAccessors,
 };
 
 use crate::db::traits::class::{
     ClassNamespaceLookup, CreateClassRecord, DeleteClassRecord, LoadClassRecord, UpdateClassRecord,
 };
+use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::models::traits::GroupAccessors;
 
 use crate::models::{
-    HubuumClass, HubuumClassID, Namespace, NewHubuumClass, PermissionsList, UpdateHubuumClass, User,
+    HubuumClass, HubuumClassID, Namespace, NewHubuumClass, UpdateHubuumClass,
 };
 
-impl CanSave for HubuumClass {
+impl SaveAdapter for HubuumClass {
     type Output = HubuumClass;
 
-    async fn save(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
+    async fn save_adapter(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
         let update = UpdateHubuumClass {
             name: Some(self.name.clone()),
             namespace_id: Some(self.namespace_id),
@@ -32,24 +31,24 @@ impl CanSave for HubuumClass {
     }
 }
 
-impl CanDelete for HubuumClass {
-    async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
+impl DeleteAdapter for HubuumClass {
+    async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
         self.delete_class_record(pool).await
     }
 }
 
-impl CanSave for NewHubuumClass {
+impl SaveAdapter for NewHubuumClass {
     type Output = HubuumClass;
 
-    async fn save(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
+    async fn save_adapter(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
         self.create_class_record(pool).await
     }
 }
 
-impl CanUpdate for UpdateHubuumClass {
+impl UpdateAdapter for UpdateHubuumClass {
     type Output = HubuumClass;
 
-    async fn update(&self, pool: &DbPool, class_id: i32) -> Result<HubuumClass, ApiError> {
+    async fn update_adapter(&self, pool: &DbPool, class_id: i32) -> Result<HubuumClass, ApiError> {
         self.update_class_record(pool, class_id).await
     }
 }

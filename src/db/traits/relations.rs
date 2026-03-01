@@ -505,6 +505,17 @@ impl DeleteClassRelationRecord for HubuumClassRelation {
     }
 }
 
+impl DeleteClassRelationRecord for HubuumClassRelationID {
+    async fn delete_class_relation_record(&self, pool: &DbPool) -> Result<(), ApiError> {
+        use crate::schema::hubuumclass_relation::dsl::{hubuumclass_relation, id};
+
+        with_connection(pool, |conn| {
+            diesel::delete(hubuumclass_relation.filter(id.eq(self.0))).execute(conn)
+        })?;
+        Ok(())
+    }
+}
+
 pub trait SaveClassRelationRecord {
     async fn save_class_relation_record(
         &self,

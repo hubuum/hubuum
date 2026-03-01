@@ -5,7 +5,7 @@ pub mod crud;
 pub mod pagination;
 pub mod permissions;
 
-pub use accessors::*;
-pub use crud::*;
+pub use accessors::{ClassAccessors, NamespaceAccessors, ObjectAccessors, SelfAccessors};
+pub use crud::{CanDelete, CanSave, CanUpdate, Validate, ValidateAgainstSchema};
 pub use pagination::*;
-pub use permissions::*;
+pub use permissions::PermissionController;

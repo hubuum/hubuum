@@ -11,7 +11,8 @@ use crate::models::{
     HubuumClassRelationID, HubuumObject, HubuumObjectID, HubuumObjectRelation,
     HubuumObjectRelationID, HubuumObjectWithPath, NewHubuumObjectRelation, ObjectClosureView,
 };
-use crate::traits::{CanDelete, CanSave, SelfAccessors};
+use crate::traits::SelfAccessors;
+use crate::traits::crud::{DeleteAdapter, SaveAdapter};
 
 impl SelfAccessors<HubuumObjectRelation> for HubuumObjectRelationID {
     fn id(&self) -> i32 {
@@ -32,22 +33,22 @@ impl SelfAccessors<HubuumObjectRelation> for HubuumObjectRelation {
     }
 }
 
-impl CanDelete for HubuumObjectRelation {
-    async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
+impl DeleteAdapter for HubuumObjectRelation {
+    async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
         self.delete_object_relation_record(pool).await
     }
 }
 
-impl CanDelete for HubuumObjectRelationID {
-    async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
+impl DeleteAdapter for HubuumObjectRelationID {
+    async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
         self.delete_object_relation_record(pool).await
     }
 }
 
-impl CanSave for NewHubuumObjectRelation {
+impl SaveAdapter for NewHubuumObjectRelation {
     type Output = HubuumObjectRelation;
 
-    async fn save(&self, pool: &DbPool) -> Result<HubuumObjectRelation, ApiError> {
+    async fn save_adapter(&self, pool: &DbPool) -> Result<HubuumObjectRelation, ApiError> {
         self.save_object_relation_record(pool).await
     }
 }
