@@ -1,13 +1,17 @@
+use crate::db::traits::group::{
+    DeleteUserGroupRecord, SaveUserGroupRecord, UserGroupGroupLookup, UserGroupUserLookup,
+};
 use crate::models::user::User;
 use crate::{models::group::Group, traits::CanSave};
 
 use crate::errors::ApiError;
 use crate::schema::user_groups;
 
-use crate::db::{with_connection, DbPool};
+use crate::db::DbPool;
 
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
+use crate::traits::crud::SaveAdapter;
 
 #[derive(Serialize, Deserialize, Queryable, Insertable, Associations)]
 #[diesel(belongs_to(User))]
@@ -27,53 +31,28 @@ pub struct NewUserGroup {
     pub group_id: i32,
 }
 
-impl CanSave for NewUserGroup {
+impl SaveAdapter for NewUserGroup {
     type Output = UserGroup;
-    async fn save(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
-        use crate::schema::user_groups::dsl::*;
-        with_connection(pool, |conn| {
-            diesel::insert_into(user_groups)
-                .values(self)
-                .get_result(conn)
-        })
+
+    async fn save_adapter(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
+        self.save_user_group_record(pool).await
     }
 }
 
 impl UserGroup {
     pub async fn user(&self, pool: &DbPool) -> Result<User, ApiError> {
-        use crate::schema::users::dsl::*;
-        with_connection(pool, |conn| {
-            users.filter(id.eq(self.user_id)).first::<User>(conn)
-        })
+        self.load_user_group_user(pool).await
     }
 
     pub async fn group(&self, pool: &DbPool) -> Result<Group, ApiError> {
-        use crate::schema::groups::dsl::*;
-        with_connection(pool, |conn| {
-            groups.filter(id.eq(self.group_id)).first::<Group>(conn)
-        })
+        self.load_user_group_group(pool).await
     }
 
     pub async fn save(&self, pool: &DbPool) -> Result<UserGroup, ApiError> {
-        use crate::schema::user_groups::dsl::*;
-        with_connection(pool, |conn| {
-            diesel::insert_into(user_groups)
-                .values(self)
-                .get_result(conn)
-        })
+        self.save_user_group_record(pool).await
     }
 
     pub async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
-        use crate::schema::user_groups::dsl::*;
-        with_connection(pool, |conn| {
-            diesel::delete(
-                user_groups
-                    .filter(user_id.eq(self.user_id))
-                    .filter(group_id.eq(self.group_id)),
-            )
-            .execute(conn)
-        })?;
-
-        Ok(())
+        self.delete_user_group_record(pool).await
     }
 }

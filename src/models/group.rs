@@ -1,5 +1,8 @@
 // src/models/group.rs
 
+use crate::db::traits::group::{
+    DeleteGroupRecord, GroupMembersBackend, LoadGroupRecord, SaveGroupRecord, UpdateGroupRecord,
+};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, QueryOptions, SortParam};
 use crate::models::user_group::NewUserGroup;
@@ -16,7 +19,7 @@ use crate::traits::{
 };
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 
-use crate::db::{with_connection, DbPool};
+use crate::db::DbPool;
 
 #[derive(Serialize, Deserialize, ToSchema)]
 pub struct GroupID(pub i32);
@@ -35,17 +38,11 @@ impl InstanceAdapter<Group> for GroupID {
 
 impl GroupID {
     pub async fn group(&self, pool: &DbPool) -> Result<Group, ApiError> {
-        use crate::schema::groups::dsl::*;
-        with_connection(pool, |conn| {
-            groups.filter(id.eq(self.0)).first::<Group>(conn)
-        })
+        self.load_group_record(pool).await
     }
 
     pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
-        use crate::schema::groups::dsl::*;
-        with_connection(pool, |conn| {
-            diesel::delete(groups.filter(id.eq(self.0))).execute(conn)
-        })
+        self.delete_group_record(pool).await
     }
 }
 
@@ -73,16 +70,7 @@ impl InstanceAdapter<Group> for Group {
 
 impl Group {
     pub async fn members(&self, pool: &DbPool) -> Result<Vec<User>, ApiError> {
-        use crate::schema::user_groups::dsl::{group_id, user_groups, user_id};
-        use crate::schema::users::dsl::*;
-
-        with_connection(pool, |conn| {
-            user_groups
-                .filter(group_id.eq(self.id))
-                .inner_join(users.on(id.eq(user_id)))
-                .select((id, username, password, email, created_at, updated_at))
-                .load::<User>(conn)
-        })
+        self.load_group_members(pool).await
     }
 
     pub async fn members_paginated(
@@ -90,40 +78,7 @@ impl Group {
         pool: &DbPool,
         query_options: &QueryOptions,
     ) -> Result<Vec<User>, ApiError> {
-        use crate::schema::user_groups::dsl::{group_id, user_groups, user_id};
-        use crate::schema::users::dsl::{
-            created_at, email, id, password, updated_at, username, users,
-        };
-        use crate::{date_search, numeric_search, string_search};
-
-        let mut base_query = user_groups
-            .filter(group_id.eq(self.id))
-            .inner_join(users.on(id.eq(user_id)))
-            .select((id, username, password, email, created_at, updated_at))
-            .into_boxed();
-
-        for param in &query_options.filters {
-            let operator = param.operator.clone();
-            match param.field {
-                FilterField::Id => numeric_search!(base_query, param, operator, id),
-                FilterField::Name | FilterField::Username => {
-                    string_search!(base_query, param, operator, username)
-                }
-                FilterField::Email => string_search!(base_query, param, operator, email),
-                FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
-                FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
-                _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't searchable (or does not exist) for users",
-                        param.field
-                    )));
-                }
-            }
-        }
-
-        crate::apply_query_options!(base_query, query_options, User);
-
-        Ok(base_query.load::<User>(&mut pool.get()?)?)
+        self.load_group_members_paginated(pool, query_options).await
     }
 
     /// Add a member to a group. If the user is already a member, do nothing.
@@ -149,19 +104,11 @@ impl Group {
     }
 
     pub async fn remove_member(&self, user: &User, pool: &DbPool) -> Result<(), ApiError> {
-        use crate::schema::user_groups::dsl::*;
-
-        with_connection(pool, |conn| {
-            diesel::delete(user_groups.filter(user_id.eq(user.id))).execute(conn)
-        })?;
-        Ok(())
+        self.remove_group_member_from_backend(user, pool).await
     }
 
     pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
-        use crate::schema::groups::dsl::*;
-        with_connection(pool, |conn| {
-            diesel::delete(groups.filter(id.eq(self.id))).execute(conn)
-        })
+        self.delete_group_record(pool).await
     }
 }
 
@@ -182,12 +129,7 @@ impl NewGroup {
     }
 
     pub async fn save(&self, pool: &DbPool) -> Result<Group, ApiError> {
-        use crate::schema::groups::dsl::*;
-        with_connection(pool, |conn| {
-            diesel::insert_into(groups)
-                .values(self)
-                .get_result::<Group>(conn)
-        })
+        self.save_group_record(pool).await
     }
 }
 
@@ -200,12 +142,7 @@ pub struct UpdateGroup {
 
 impl UpdateGroup {
     pub async fn save(&self, group_id: i32, pool: &DbPool) -> Result<Group, ApiError> {
-        use crate::schema::groups::dsl::*;
-        with_connection(pool, |conn| {
-            diesel::update(groups.filter(id.eq(group_id)))
-                .set(self)
-                .get_result::<Group>(conn)
-        })
+        self.update_group_record(group_id, pool).await
     }
 }
 
