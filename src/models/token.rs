@@ -11,7 +11,7 @@ use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::schema::tokens;
 use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+    BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
 
 #[derive(
@@ -48,8 +48,11 @@ impl Token {
         }
     }
 
-    pub async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
-        self.delete_token_record(pool).await
+    pub async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.delete_token_record(backend.db_pool()).await
     }
 }
 

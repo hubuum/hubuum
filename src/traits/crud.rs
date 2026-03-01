@@ -1,18 +1,26 @@
 use crate::db::DbPool;
 use crate::errors::ApiError;
 
+use super::context::BackendContext;
+
 pub trait CanDelete {
-    async fn delete(&self, pool: &DbPool) -> Result<(), ApiError>;
+    async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized;
 }
 
 pub trait CanSave {
     type Output;
-    async fn save(&self, pool: &DbPool) -> Result<Self::Output, ApiError>;
+    async fn save<C>(&self, backend: &C) -> Result<Self::Output, ApiError>
+    where
+        C: BackendContext + ?Sized;
 }
 
 pub trait CanUpdate {
     type Output;
-    async fn update(&self, pool: &DbPool, entry_id: i32) -> Result<Self::Output, ApiError>;
+    async fn update<C>(&self, backend: &C, entry_id: i32) -> Result<Self::Output, ApiError>
+    where
+        C: BackendContext + ?Sized;
 }
 
 #[doc(hidden)]
@@ -24,8 +32,11 @@ impl<T> CanDelete for T
 where
     T: DeleteAdapter,
 {
-    async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
-        self.delete_adapter(pool).await
+    async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.delete_adapter(backend.db_pool()).await
     }
 }
 
@@ -42,8 +53,11 @@ where
 {
     type Output = T::Output;
 
-    async fn save(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
-        self.save_adapter(pool).await
+    async fn save<C>(&self, backend: &C) -> Result<Self::Output, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.save_adapter(backend.db_pool()).await
     }
 }
 
@@ -60,8 +74,11 @@ where
 {
     type Output = T::Output;
 
-    async fn update(&self, pool: &DbPool, entry_id: i32) -> Result<Self::Output, ApiError> {
-        self.update_adapter(pool, entry_id).await
+    async fn update<C>(&self, backend: &C, entry_id: i32) -> Result<Self::Output, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.update_adapter(backend.db_pool(), entry_id).await
     }
 }
 
@@ -72,7 +89,9 @@ pub trait Validate {
     /// This returns errors if:
     /// - If the object's class requires validation (validate_schema), and the object's data
     ///   fails validation against the class's JSON schema (json_schema).
-    async fn validate(&self, pool: &DbPool) -> Result<(), ApiError>;
+    async fn validate<C>(&self, backend: &C) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized;
 }
 
 #[allow(dead_code)]

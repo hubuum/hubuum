@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use tracing::warn;
 
-use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::group::Group;
 use crate::models::search::{FilterField, SortParam};
@@ -10,7 +9,8 @@ use crate::models::{
     Permissions, PermissionsList,
 };
 use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue, SelfAccessors,
+    BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+    SelfAccessors,
 };
 
 pub trait FromTuple<T> {
@@ -18,12 +18,17 @@ pub trait FromTuple<T> {
 }
 
 pub trait ExpandNamespace<T> {
-    async fn expand_namespace(&self, pool: &crate::db::DbPool) -> Result<T, ApiError>;
+    async fn expand_namespace<C>(&self, backend: &C) -> Result<T, ApiError>
+    where
+        C: BackendContext + ?Sized;
 }
 
 impl ExpandNamespace<HubuumClassExpanded> for HubuumClass {
-    async fn expand_namespace(&self, pool: &DbPool) -> Result<HubuumClassExpanded, ApiError> {
-        let namespace = NamespaceID(self.namespace_id).instance(pool).await?;
+    async fn expand_namespace<C>(&self, backend: &C) -> Result<HubuumClassExpanded, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        let namespace = NamespaceID(self.namespace_id).instance(backend).await?;
 
         Ok(HubuumClassExpanded {
             id: self.id,

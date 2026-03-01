@@ -13,6 +13,7 @@ use utoipa::ToSchema;
 use crate::db::DbPool;
 
 use crate::errors::ApiError;
+use crate::traits::BackendContext;
 
 use tracing::{error, warn};
 
@@ -28,33 +29,50 @@ pub struct User {
 }
 
 impl User {
-    pub async fn create_token(&self, pool: &DbPool) -> Result<Token, ApiError> {
+    pub async fn create_token<C>(&self, backend: &C) -> Result<Token, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
         let generated_token = crate::utilities::auth::generate_token();
 
-        self.store_user_token_record(pool, &generated_token).await?;
+        self.store_user_token_record(backend.db_pool(), &generated_token)
+            .await?;
 
         Ok(generated_token)
     }
 
-    pub async fn token_is_mine(
+    pub async fn token_is_mine<C>(
         &self,
         token_param: Token,
-        pool: &DbPool,
-    ) -> Result<UserToken, ApiError> {
-        self.load_owned_user_token_record(&token_param, pool).await
-    }
-
-    pub async fn delete_token(&self, token_param: Token, pool: &DbPool) -> Result<usize, ApiError> {
-        self.delete_owned_user_token_record(&token_param, pool)
+        backend: &C,
+    ) -> Result<UserToken, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.load_owned_user_token_record(&token_param, backend.db_pool())
             .await
     }
 
-    pub async fn delete_all_tokens(&self, pool: &DbPool) -> Result<usize, ApiError> {
-        self.delete_all_user_tokens_record(pool).await
+    pub async fn delete_token<C>(&self, token_param: Token, backend: &C) -> Result<usize, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.delete_owned_user_token_record(&token_param, backend.db_pool())
+            .await
     }
 
-    pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
-        self.delete_user_record(pool).await
+    pub async fn delete_all_tokens<C>(&self, backend: &C) -> Result<usize, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.delete_all_user_tokens_record(backend.db_pool()).await
+    }
+
+    pub async fn delete<C>(&self, backend: &C) -> Result<usize, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.delete_user_record(backend.db_pool()).await
     }
 }
 
@@ -87,9 +105,12 @@ impl UpdateUser {
         Ok(self)
     }
 
-    pub async fn save(self, user_id: i32, pool: &DbPool) -> Result<User, ApiError> {
+    pub async fn save<C>(self, user_id: i32, backend: &C) -> Result<User, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
         let hashed = self.hash_password()?;
-        hashed.update_user_record(user_id, pool).await
+        hashed.update_user_record(user_id, backend.db_pool()).await
     }
 }
 
@@ -116,9 +137,12 @@ impl NewUser {
         }
     }
 
-    pub async fn save(self, pool: &DbPool) -> Result<User, ApiError> {
+    pub async fn save<C>(self, backend: &C) -> Result<User, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
         let hashed = self.hash_password()?;
-        hashed.create_user_record(pool).await
+        hashed.create_user_record(backend.db_pool()).await
     }
 
     pub fn hash_password(mut self) -> Result<Self, ApiError> {
@@ -138,13 +162,19 @@ impl NewUser {
 pub struct UserID(pub i32);
 
 impl UserID {
-    pub async fn user(&self, pool: &DbPool) -> Result<User, ApiError> {
+    pub async fn user<C>(&self, backend: &C) -> Result<User, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
         use crate::db::traits::user::LoadUserRecord;
-        self.load_user_record(pool).await
+        self.load_user_record(backend.db_pool()).await
     }
 
-    pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
-        self.delete_user_record(pool).await
+    pub async fn delete<C>(&self, backend: &C) -> Result<usize, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.delete_user_record(backend.db_pool()).await
     }
 }
 
@@ -162,12 +192,15 @@ pub struct LoginUser {
 impl LoginUser {
     /// Check if the user exists and the plaintext password in the struct
     /// matches the hashed password in the database.
-    pub async fn login(self, pool: &DbPool) -> Result<User, ApiError> {
+    pub async fn login<C>(self, backend: &C) -> Result<User, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
         // We could do .first::<User>(&mut conn)? here, due to the way errors.rs uses "From"
         // to map diesel errors. But, we specifically map Diesel's NotFound to our own NotFound
         // which would lead to a 404 instead of a 401, leaking information about the existence
         // of the user.
-        let user = match User::get_by_username(pool, &self.username).await {
+        let user = match User::get_by_username(backend.db_pool(), &self.username).await {
             Ok(user) => user,
             Err(_) => {
                 warn!(

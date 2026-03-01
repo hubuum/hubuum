@@ -12,12 +12,12 @@ use crate::models::permissions::{NewPermission, Permission, Permissions, Permiss
 use crate::models::search::{FilterField, SortParam};
 use crate::models::traits::GroupAccessors;
 use crate::models::user::User;
-use crate::traits::{
-    CanUpdate, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType,
-    NamespaceAccessors, PermissionController, SelfAccessors,
-};
 use crate::traits::accessors::{IdAccessor, InstanceAdapter, NamespaceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
+use crate::traits::{
+    BackendContext, CanUpdate, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType,
+    NamespaceAccessors, PermissionController, SelfAccessors,
+};
 use diesel::prelude::*;
 use tracing::debug;
 
@@ -107,20 +107,27 @@ impl NamespaceAdapter for NamespaceID {
 }
 
 impl NewNamespace {
-    pub async fn save_and_grant_all_to(
+    pub async fn save_and_grant_all_to<C>(
         self,
-        pool: &DbPool,
+        backend: &C,
         assignee: GroupID,
-    ) -> Result<Namespace, ApiError> {
-        self.save_namespace_for_group_record(pool, assignee.0).await
+    ) -> Result<Namespace, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.save_namespace_for_group_record(backend.db_pool(), assignee.0)
+            .await
     }
 
-    pub async fn update_with_permissions(
+    pub async fn update_with_permissions<C>(
         self,
-        pool: &DbPool,
+        backend: &C,
         ns_with_assignee: NewNamespaceWithAssignee,
-    ) -> Result<Namespace, ApiError> {
-        self.save_namespace_for_group_record(pool, ns_with_assignee.group_id)
+    ) -> Result<Namespace, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.save_namespace_for_group_record(backend.db_pool(), ns_with_assignee.group_id)
             .await
     }
 }

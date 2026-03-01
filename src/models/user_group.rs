@@ -6,12 +6,13 @@ use crate::{models::group::Group, traits::CanSave};
 
 use crate::errors::ApiError;
 use crate::schema::user_groups;
+use crate::traits::BackendContext;
 
 use crate::db::DbPool;
 
+use crate::traits::crud::SaveAdapter;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
-use crate::traits::crud::SaveAdapter;
 
 #[derive(Serialize, Deserialize, Queryable, Insertable, Associations)]
 #[diesel(belongs_to(User))]
@@ -40,19 +41,31 @@ impl SaveAdapter for NewUserGroup {
 }
 
 impl UserGroup {
-    pub async fn user(&self, pool: &DbPool) -> Result<User, ApiError> {
-        self.load_user_group_user(pool).await
+    pub async fn user<C>(&self, backend: &C) -> Result<User, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.load_user_group_user(backend.db_pool()).await
     }
 
-    pub async fn group(&self, pool: &DbPool) -> Result<Group, ApiError> {
-        self.load_user_group_group(pool).await
+    pub async fn group<C>(&self, backend: &C) -> Result<Group, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.load_user_group_group(backend.db_pool()).await
     }
 
-    pub async fn save(&self, pool: &DbPool) -> Result<UserGroup, ApiError> {
-        self.save_user_group_record(pool).await
+    pub async fn save<C>(&self, backend: &C) -> Result<UserGroup, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.save_user_group_record(backend.db_pool()).await
     }
 
-    pub async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
-        self.delete_user_group_record(pool).await
+    pub async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.delete_user_group_record(backend.db_pool()).await
     }
 }

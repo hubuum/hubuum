@@ -2,12 +2,11 @@ use serde::Serialize;
 
 use crate::db::traits::permissions::PermissionControllerBackend;
 use crate::db::traits::user::GroupMemberships;
-use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::models::{Permission, Permissions, PermissionsList, User};
 use crate::models::traits::GroupAccessors;
+use crate::models::{Permission, Permissions, PermissionsList, User};
 
-use super::{NamespaceAccessors, SelfAccessors};
+use super::{BackendContext, NamespaceAccessors, SelfAccessors};
 
 #[allow(dead_code)]
 pub trait PermissionController: Serialize + NamespaceAccessors {
@@ -57,11 +56,11 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// }
     async fn user_can<U: SelfAccessors<User> + GroupAccessors + GroupMemberships>(
         &self,
-        pool: &DbPool,
+        backend: &impl BackendContext,
         user: U,
         permission: Permissions,
     ) -> Result<bool, ApiError> {
-        self.user_can_all(pool, user, vec![permission]).await
+        self.user_can_all(backend, user, vec![permission]).await
     }
 
     /// Check if the user has all the given permissions on the object.
@@ -112,11 +111,12 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// }
     async fn user_can_all<U: SelfAccessors<User> + GroupAccessors + GroupMemberships>(
         &self,
-        pool: &DbPool,
+        backend: &impl BackendContext,
         user: U,
         permission: Vec<Permissions>,
     ) -> Result<bool, ApiError> {
-        self.user_can_all_from_backend(pool, user, permission).await
+        self.user_can_all_from_backend(backend.db_pool(), user, permission)
+            .await
     }
 
     /// Grant a set of permissions to a group.
@@ -138,11 +138,11 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// The permission object that holds the permissions for the group.
     async fn grant(
         &self,
-        pool: &DbPool,
+        backend: &impl BackendContext,
         group_id_for_grant: i32,
         permission_list: PermissionsList<Permissions>,
     ) -> Result<Permission, ApiError> {
-        self.apply_permissions(pool, group_id_for_grant, permission_list, false)
+        self.apply_permissions(backend, group_id_for_grant, permission_list, false)
             .await
     }
 
@@ -152,13 +152,13 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// - When `replace_existing` is true, any existing permissions are cleared first.
     async fn apply_permissions(
         &self,
-        pool: &DbPool,
+        backend: &impl BackendContext,
         group_id_for_grant: i32,
         permission_list: PermissionsList<Permissions>,
         replace_existing: bool,
     ) -> Result<Permission, ApiError> {
         self.apply_permissions_from_backend(
-            pool,
+            backend.db_pool(),
             group_id_for_grant,
             permission_list,
             replace_existing,
@@ -187,12 +187,16 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// did not have any permissions, an ApiError::NotFound is returned.
     async fn revoke(
         &self,
-        pool: &DbPool,
+        backend: &impl BackendContext,
         group_id_for_revoke: i32,
         permission_list: PermissionsList<Permissions>,
     ) -> Result<Permission, ApiError> {
-        self.revoke_permissions_from_backend(pool, group_id_for_revoke, permission_list)
-            .await
+        self.revoke_permissions_from_backend(
+            backend.db_pool(),
+            group_id_for_revoke,
+            permission_list,
+        )
+        .await
     }
 
     /// Grant a specific permission to a group.
@@ -217,12 +221,12 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// The permission object that holds the permissions for the group.
     async fn grant_one(
         &self,
-        pool: &DbPool,
+        backend: &impl BackendContext,
         group_identifier: i32,
         permission: Permissions,
     ) -> Result<Permission, ApiError> {
         self.grant(
-            pool,
+            backend,
             group_identifier,
             PermissionsList::new(vec![permission]),
         )
@@ -250,12 +254,12 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// did not have the permission, an ApiError::NotFound is returned.
     async fn revoke_one(
         &self,
-        pool: &DbPool,
+        backend: &impl BackendContext,
         group_identifier: i32,
         permission: Permissions,
     ) -> Result<Permission, ApiError> {
         self.revoke(
-            pool,
+            backend,
             group_identifier,
             PermissionsList::new(vec![permission]),
         )
@@ -282,11 +286,11 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// The permission object that holds the permissions for the group.
     async fn set_permissions(
         &self,
-        pool: &DbPool,
+        backend: &impl BackendContext,
         group_identifier: i32,
         permission_list: PermissionsList<Permissions>,
     ) -> Result<Permission, ApiError> {
-        self.apply_permissions(pool, group_identifier, permission_list, true)
+        self.apply_permissions(backend, group_identifier, permission_list, true)
             .await
     }
 
@@ -306,10 +310,10 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// An empty result.
     async fn revoke_all(
         &self,
-        pool: &DbPool,
+        backend: &impl BackendContext,
         group_id_for_revoke: i32,
     ) -> Result<(), ApiError> {
-        self.revoke_all_from_backend(pool, group_id_for_revoke)
+        self.revoke_all_from_backend(backend.db_pool(), group_id_for_revoke)
             .await
     }
 }

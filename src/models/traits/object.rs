@@ -14,15 +14,13 @@ use crate::models::object::{
 use crate::models::permissions::{NewPermission, Permission, Permissions, PermissionsList};
 use crate::models::search::{FilterField, SortParam};
 use crate::models::user::User;
+use crate::traits::accessors::{ClassAdapter, IdAccessor, InstanceAdapter, NamespaceAdapter};
+use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 use crate::traits::{
-    ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType,
-    CursorValue, NamespaceAccessors, PermissionController, SelfAccessors, Validate,
+    BackendContext, ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping,
+    CursorSqlType, CursorValue, NamespaceAccessors, PermissionController, SelfAccessors, Validate,
     ValidateAgainstSchema,
 };
-use crate::traits::accessors::{
-    ClassAdapter, IdAccessor, InstanceAdapter, NamespaceAdapter,
-};
-use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 
 impl HubuumObject {
     /// Create a new HubuumObject merged with the update object.
@@ -57,8 +55,11 @@ impl HubuumObject {
 
 // Validators
 impl Validate for HubuumObject {
-    async fn validate(&self, pool: &DbPool) -> Result<(), ApiError> {
-        self.validate_object_record(pool).await
+    async fn validate<C>(&self, backend: &C) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.validate_object_record(backend.db_pool()).await
     }
 }
 
@@ -69,8 +70,11 @@ impl ValidateAgainstSchema for HubuumObject {
 }
 
 impl Validate for NewHubuumObject {
-    async fn validate(&self, pool: &DbPool) -> Result<(), ApiError> {
-        self.validate_object_record(pool).await
+    async fn validate<C>(&self, backend: &C) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.validate_object_record(backend.db_pool()).await
     }
 }
 
@@ -81,8 +85,11 @@ impl ValidateAgainstSchema for NewHubuumObject {
 }
 
 impl Validate for (&UpdateHubuumObject, i32) {
-    async fn validate(&self, pool: &DbPool) -> Result<(), ApiError> {
-        self.validate_object_record(pool).await
+    async fn validate<C>(&self, backend: &C) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.validate_object_record(backend.db_pool()).await
     }
 }
 
@@ -108,7 +115,11 @@ impl SaveAdapter for NewHubuumObject {
 impl UpdateAdapter for UpdateHubuumObject {
     type Output = HubuumObject;
 
-    async fn update_adapter(&self, pool: &DbPool, object_id: i32) -> Result<Self::Output, ApiError> {
+    async fn update_adapter(
+        &self,
+        pool: &DbPool,
+        object_id: i32,
+    ) -> Result<Self::Output, ApiError> {
         self.update_object_record(pool, object_id).await
     }
 }

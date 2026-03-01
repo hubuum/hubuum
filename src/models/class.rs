@@ -6,6 +6,7 @@ use crate::db::traits::class::total_class_count_from_backend;
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::schema::hubuumclass;
+use crate::traits::BackendContext;
 
 #[derive(Serialize, Deserialize, Queryable, Clone, PartialEq, Debug, ToSchema)]
 #[diesel(table_name = hubuumclass )]
@@ -67,8 +68,11 @@ pub struct HubuumClassWithPath {
 #[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
 pub struct HubuumClassID(pub i32);
 
-pub async fn total_class_count(pool: &DbPool) -> Result<i64, ApiError> {
-    total_class_count_from_backend(pool).await
+pub async fn total_class_count<C>(backend: &C) -> Result<i64, ApiError>
+where
+    C: BackendContext + ?Sized,
+{
+    total_class_count_from_backend(backend.db_pool()).await
 }
 
 #[allow(dead_code)]

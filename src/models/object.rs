@@ -11,6 +11,7 @@ use crate::db::with_connection;
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::schema::hubuumobject;
+use crate::traits::BackendContext;
 
 #[derive(Serialize, Deserialize, Queryable, Clone, PartialEq, Debug, QueryableByName, ToSchema)]
 #[diesel(table_name = hubuumobject)]
@@ -89,12 +90,18 @@ pub struct HubuumObjectWithPath {
     pub path: Vec<i32>,
 }
 
-pub async fn total_object_count(pool: &DbPool) -> Result<i64, ApiError> {
-    total_object_count_from_backend(pool).await
+pub async fn total_object_count<C>(backend: &C) -> Result<i64, ApiError>
+where
+    C: BackendContext + ?Sized,
+{
+    total_object_count_from_backend(backend.db_pool()).await
 }
 
-pub async fn objects_per_class_count(pool: &DbPool) -> Result<Vec<ObjectsByClass>, ApiError> {
-    objects_per_class_count_from_backend(pool).await
+pub async fn objects_per_class_count<C>(backend: &C) -> Result<Vec<ObjectsByClass>, ApiError>
+where
+    C: BackendContext + ?Sized,
+{
+    objects_per_class_count_from_backend(backend.db_pool()).await
 }
 
 #[allow(dead_code)]

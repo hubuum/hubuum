@@ -24,8 +24,8 @@ use crate::schema::hubuumclass::namespace_id;
 use crate::schema::{hubuumclass, hubuumobject};
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{
-    ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-    NamespaceAccessors, SelfAccessors,
+    BackendContext, ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping,
+    CursorSqlType, CursorValue, NamespaceAccessors, SelfAccessors,
 };
 
 use crate::db::traits::user::{
@@ -36,59 +36,77 @@ use crate::db::DbPool;
 use crate::errors::ApiError;
 
 pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors {
-    async fn search_namespaces(
+    async fn search_namespaces<C>(
         &self,
-        pool: &DbPool,
+        backend: &C,
         query_options: QueryOptions,
-    ) -> Result<Vec<Namespace>, ApiError> {
-        self.search_namespaces_from_backend(pool, query_options)
+    ) -> Result<Vec<Namespace>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.search_namespaces_from_backend(backend.db_pool(), query_options)
             .await
     }
 
-    async fn search_classes(
+    async fn search_classes<C>(
         &self,
-        pool: &DbPool,
+        backend: &C,
         query_options: QueryOptions,
-    ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
-        self.search_classes_from_backend(pool, query_options).await
-    }
-
-    async fn search_objects(
-        &self,
-        pool: &DbPool,
-        query_options: QueryOptions,
-    ) -> Result<Vec<HubuumObject>, ApiError> {
-        self.search_objects_from_backend(pool, query_options).await
-    }
-
-    async fn search_class_relations(
-        &self,
-        pool: &DbPool,
-        query_options: QueryOptions,
-    ) -> Result<Vec<HubuumClassRelation>, ApiError> {
-        self.search_class_relations_from_backend(pool, query_options)
+    ) -> Result<Vec<HubuumClassExpanded>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.search_classes_from_backend(backend.db_pool(), query_options)
             .await
     }
 
-    async fn search_object_relations(
+    async fn search_objects<C>(
         &self,
-        pool: &DbPool,
+        backend: &C,
         query_options: QueryOptions,
-    ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
-        self.search_object_relations_from_backend(pool, query_options)
+    ) -> Result<Vec<HubuumObject>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.search_objects_from_backend(backend.db_pool(), query_options)
             .await
     }
 
-    async fn search_objects_related_to<O>(
+    async fn search_class_relations<C>(
         &self,
-        pool: &DbPool,
+        backend: &C,
+        query_options: QueryOptions,
+    ) -> Result<Vec<HubuumClassRelation>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.search_class_relations_from_backend(backend.db_pool(), query_options)
+            .await
+    }
+
+    async fn search_object_relations<C>(
+        &self,
+        backend: &C,
+        query_options: QueryOptions,
+    ) -> Result<Vec<HubuumObjectRelation>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.search_object_relations_from_backend(backend.db_pool(), query_options)
+            .await
+    }
+
+    async fn search_objects_related_to<C, O>(
+        &self,
+        backend: &C,
         object: O,
         query_options: QueryOptions,
     ) -> Result<Vec<ObjectClosureView>, ApiError>
     where
+        C: BackendContext + ?Sized,
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
-        self.search_objects_related_to_from_backend(pool, object, query_options)
+        self.search_objects_related_to_from_backend(backend.db_pool(), object, query_options)
             .await
     }
 }
@@ -96,54 +114,72 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
 pub trait GroupAccessors: SelfAccessors<User> {
     /// Return all groups that the user is a member of.
     #[allow(async_fn_in_trait, dead_code)]
-    async fn groups(&self, pool: &DbPool) -> Result<Vec<Group>, ApiError> {
-        self.load_user_groups(pool).await
+    async fn groups<C>(&self, backend: &C) -> Result<Vec<Group>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.load_user_groups(backend.db_pool()).await
     }
 
     #[allow(async_fn_in_trait)]
-    async fn groups_paginated(
+    async fn groups_paginated<C>(
         &self,
-        pool: &DbPool,
+        backend: &C,
         query_options: &QueryOptions,
-    ) -> Result<Vec<Group>, ApiError> {
-        self.load_user_groups_paginated(pool, query_options).await
+    ) -> Result<Vec<Group>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.load_user_groups_paginated(backend.db_pool(), query_options)
+            .await
     }
 
-    fn json_schema_subquery(
+    fn json_schema_subquery<C>(
         &self,
-        pool: &DbPool,
+        backend: &C,
         json_schema_query_params: Vec<&ParsedQueryParam>,
-    ) -> Result<Vec<i32>, ApiError> {
-        self.query_class_ids_for_json_schema(pool, json_schema_query_params)
+    ) -> Result<Vec<i32>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.query_class_ids_for_json_schema(backend.db_pool(), json_schema_query_params)
     }
 
     // Umm, async? Also, the name implies we return a subquery, but we return the Vec<i32> of the executed query.
-    fn json_data_subquery(
+    fn json_data_subquery<C>(
         &self,
-        pool: &DbPool,
+        backend: &C,
         json_schema_query_params: Vec<&ParsedQueryParam>,
-    ) -> Result<Vec<i32>, ApiError> {
-        self.query_object_ids_for_json_data(pool, json_schema_query_params)
+    ) -> Result<Vec<i32>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.query_object_ids_for_json_data(backend.db_pool(), json_schema_query_params)
     }
 }
 
 pub trait UserNamespaceAccessors: SelfAccessors<User> + GroupAccessors {
     /// Return all namespaces that the user has NamespacePermissions::ReadCollection on.
     #[allow(dead_code)] // Lazy-used in tests.
-    async fn namespaces_read(&self, pool: &DbPool) -> Result<Vec<Namespace>, ApiError> {
-        self.namespaces(pool, &[Permissions::ReadCollection]).await
+    async fn namespaces_read<C>(&self, backend: &C) -> Result<Vec<Namespace>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.namespaces(backend, &[Permissions::ReadCollection])
+            .await
     }
 
     /// Return all namespaces that the user has the given permissions on.
-    async fn namespaces<'a, I>(
+    async fn namespaces<'a, C, I>(
         &self,
-        pool: &DbPool,
+        backend: &C,
         permissions_list: &'a I,
     ) -> Result<Vec<Namespace>, ApiError>
     where
+        C: BackendContext + ?Sized,
         &'a I: IntoIterator<Item = &'a Permissions>,
     {
-        self.load_namespaces_with_permissions(pool, permissions_list)
+        self.load_namespaces_with_permissions(backend.db_pool(), permissions_list)
             .await
     }
 }

@@ -18,7 +18,7 @@ use crate::models::search::QueryOptions;
 use crate::models::{Permission, Permissions};
 
 use crate::models::traits::GroupAccessors;
-use crate::traits::{NamespaceAccessors, SelfAccessors};
+use crate::traits::{BackendContext, NamespaceAccessors, SelfAccessors};
 
 #[derive(Serialize, Deserialize, Queryable, PartialEq, Debug, Clone, Selectable, ToSchema)]
 #[diesel(table_name = namespaces)]
@@ -82,8 +82,11 @@ fn new_namespace_with_assignee_example() -> NewNamespaceWithAssignee {
     }
 }
 
-pub async fn total_namespace_count(pool: &DbPool) -> Result<i64, ApiError> {
-    namespace_backend::total_namespace_count_from_backend(pool).await
+pub async fn total_namespace_count<C>(backend: &C) -> Result<i64, ApiError>
+where
+    C: BackendContext + ?Sized,
+{
+    namespace_backend::total_namespace_count_from_backend(backend.db_pool()).await
 }
 
 /// Check what permissions a user has to a given namespace
@@ -98,21 +101,30 @@ pub async fn total_namespace_count(pool: &DbPool) -> Result<i64, ApiError> {
 /// * Err(ApiError) - On query errors only.
 #[allow(dead_code)]
 pub async fn user_on<T: NamespaceAccessors>(
-    pool: &DbPool,
+    backend: &impl BackendContext,
     user_id: UserID,
     namespace_ref: T,
 ) -> Result<Vec<GroupPermission>, ApiError> {
-    namespace_backend::user_on_from_backend(pool, user_id, namespace_ref).await
+    namespace_backend::user_on_from_backend(backend.db_pool(), user_id, namespace_ref).await
 }
 
-pub async fn user_on_paginated<T: NamespaceAccessors>(
-    pool: &DbPool,
+pub async fn user_on_paginated<C, T>(
+    backend: &C,
     user_id: UserID,
     namespace_ref: T,
     query_options: &QueryOptions,
-) -> Result<Vec<GroupPermission>, ApiError> {
-    namespace_backend::user_on_paginated_from_backend(pool, user_id, namespace_ref, query_options)
-        .await
+) -> Result<Vec<GroupPermission>, ApiError>
+where
+    C: BackendContext + ?Sized,
+    T: NamespaceAccessors,
+{
+    namespace_backend::user_on_paginated_from_backend(
+        backend.db_pool(),
+        user_id,
+        namespace_ref,
+        query_options,
+    )
+    .await
 }
 
 /// Check if a user has a specific permission to any namespace
@@ -127,12 +139,17 @@ pub async fn user_on_paginated<T: NamespaceAccessors>(
 ///   If no matching namespaces are found, an empty list is returned
 /// * Err(ApiError) - On query errors only.
 #[allow(dead_code)]
-pub async fn user_can_on_any<U: SelfAccessors<User> + GroupAccessors>(
-    pool: &DbPool,
+pub async fn user_can_on_any<C, U>(
+    backend: &C,
     user_id: U,
     permission_type: Permissions,
-) -> Result<Vec<Namespace>, ApiError> {
-    namespace_backend::user_can_on_any_from_backend(pool, user_id, permission_type).await
+) -> Result<Vec<Namespace>, ApiError>
+where
+    C: BackendContext + ?Sized,
+    U: SelfAccessors<User> + GroupAccessors,
+{
+    namespace_backend::user_can_on_any_from_backend(backend.db_pool(), user_id, permission_type)
+        .await
 }
 
 /// Check if a group has a specific permission to a given namespace ID
@@ -146,13 +163,23 @@ pub async fn user_can_on_any<U: SelfAccessors<User> + GroupAccessors>(
 /// ## Returns
 /// * Ok(bool) - True if the group has the requested permission
 /// * Err(ApiError) - On query errors only.
-pub async fn group_can_on<T: NamespaceAccessors>(
-    pool: &DbPool,
+pub async fn group_can_on<C, T>(
+    backend: &C,
     gid: i32,
     namespace_ref: T,
     permission_type: Permissions,
-) -> Result<bool, ApiError> {
-    namespace_backend::group_can_on_from_backend(pool, gid, namespace_ref, permission_type).await
+) -> Result<bool, ApiError>
+where
+    C: BackendContext + ?Sized,
+    T: NamespaceAccessors,
+{
+    namespace_backend::group_can_on_from_backend(
+        backend.db_pool(),
+        gid,
+        namespace_ref,
+        permission_type,
+    )
+    .await
 }
 
 /// Check what groups have a specific permission to a given namespace ID
@@ -166,22 +193,28 @@ pub async fn group_can_on<T: NamespaceAccessors>(
 /// * Ok(Vec<Group>) - List of groups that have the requested permission
 /// * Err(ApiError) - On query errors only.
 #[allow(dead_code)]
-pub async fn groups_can_on(
-    pool: &DbPool,
+pub async fn groups_can_on<C>(
+    backend: &C,
     nid: i32,
     permission_type: Permissions,
-) -> Result<Vec<Group>, ApiError> {
-    namespace_backend::groups_can_on_from_backend(pool, nid, permission_type).await
+) -> Result<Vec<Group>, ApiError>
+where
+    C: BackendContext + ?Sized,
+{
+    namespace_backend::groups_can_on_from_backend(backend.db_pool(), nid, permission_type).await
 }
 
-pub async fn groups_can_on_paginated(
-    pool: &DbPool,
+pub async fn groups_can_on_paginated<C>(
+    backend: &C,
     nid: i32,
     permission_type: Permissions,
     query_options: &QueryOptions,
-) -> Result<Vec<Group>, ApiError> {
+) -> Result<Vec<Group>, ApiError>
+where
+    C: BackendContext + ?Sized,
+{
     namespace_backend::groups_can_on_paginated_from_backend(
-        pool,
+        backend.db_pool(),
         nid,
         permission_type,
         query_options,
@@ -199,14 +232,18 @@ pub async fn groups_can_on_paginated(
 /// * Ok(Vec<(Group, NamespacePermissions)>) - List of groups and their permissions
 /// * Err(ApiError) - On query errors only.
 #[allow(dead_code)]
-pub async fn groups_on<T: NamespaceAccessors>(
-    pool: &DbPool,
+pub async fn groups_on<C, T>(
+    backend: &C,
     namespace_ref: T,
     permissions_filter: Vec<Permissions>,
     query_options: QueryOptions,
-) -> Result<Vec<GroupPermission>, ApiError> {
+) -> Result<Vec<GroupPermission>, ApiError>
+where
+    C: BackendContext + ?Sized,
+    T: NamespaceAccessors,
+{
     namespace_backend::groups_on_from_backend(
-        pool,
+        backend.db_pool(),
         namespace_ref,
         permissions_filter,
         query_options,
@@ -214,14 +251,18 @@ pub async fn groups_on<T: NamespaceAccessors>(
     .await
 }
 
-pub async fn groups_on_paginated<T: NamespaceAccessors>(
-    pool: &DbPool,
+pub async fn groups_on_paginated<C, T>(
+    backend: &C,
     namespace_ref: T,
     permissions_filter: Vec<Permissions>,
     query_options: &QueryOptions,
-) -> Result<Vec<GroupPermission>, ApiError> {
+) -> Result<Vec<GroupPermission>, ApiError>
+where
+    C: BackendContext + ?Sized,
+    T: NamespaceAccessors,
+{
     namespace_backend::groups_on_paginated_from_backend(
-        pool,
+        backend.db_pool(),
         namespace_ref,
         permissions_filter,
         query_options,
@@ -230,8 +271,11 @@ pub async fn groups_on_paginated<T: NamespaceAccessors>(
 }
 
 /// List all permissions for a given group on a namespace
-pub async fn group_on(pool: &DbPool, nid: i32, gid: i32) -> Result<Permission, ApiError> {
-    namespace_backend::group_on_from_backend(pool, nid, gid).await
+pub async fn group_on<C>(backend: &C, nid: i32, gid: i32) -> Result<Permission, ApiError>
+where
+    C: BackendContext + ?Sized,
+{
+    namespace_backend::group_on_from_backend(backend.db_pool(), nid, gid).await
 }
 
 #[cfg(test)]

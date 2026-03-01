@@ -13,11 +13,11 @@ use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::traits::{
-    CanSave, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-    SelfAccessors,
-};
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
+use crate::traits::{
+    BackendContext, CanSave, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType,
+    CursorValue, SelfAccessors,
+};
 
 use crate::db::DbPool;
 
@@ -37,12 +37,18 @@ impl InstanceAdapter<Group> for GroupID {
 }
 
 impl GroupID {
-    pub async fn group(&self, pool: &DbPool) -> Result<Group, ApiError> {
-        self.load_group_record(pool).await
+    pub async fn group<C>(&self, backend: &C) -> Result<Group, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.load_group_record(backend.db_pool()).await
     }
 
-    pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
-        self.delete_group_record(pool).await
+    pub async fn delete<C>(&self, backend: &C) -> Result<usize, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.delete_group_record(backend.db_pool()).await
     }
 }
 
@@ -69,16 +75,23 @@ impl InstanceAdapter<Group> for Group {
 }
 
 impl Group {
-    pub async fn members(&self, pool: &DbPool) -> Result<Vec<User>, ApiError> {
-        self.load_group_members(pool).await
+    pub async fn members<C>(&self, backend: &C) -> Result<Vec<User>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.load_group_members(backend.db_pool()).await
     }
 
-    pub async fn members_paginated(
+    pub async fn members_paginated<C>(
         &self,
-        pool: &DbPool,
+        backend: &C,
         query_options: &QueryOptions,
-    ) -> Result<Vec<User>, ApiError> {
-        self.load_group_members_paginated(pool, query_options).await
+    ) -> Result<Vec<User>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.load_group_members_paginated(backend.db_pool(), query_options)
+            .await
     }
 
     /// Add a member to a group. If the user is already a member, do nothing.
@@ -92,23 +105,33 @@ impl Group {
     /// * `Err(ApiError)` if the user was not added to the group
     ///
     /// If the user is already a member of the group, this function is a safe noop.
-    pub async fn add_member(&self, pool: &DbPool, user: &User) -> Result<(), ApiError> {
+    pub async fn add_member<C>(&self, backend: &C, user: &User) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
         NewUserGroup {
             user_id: user.id,
             group_id: self.id,
         }
-        .save(pool)
+        .save(backend)
         .await?;
 
         Ok(())
     }
 
-    pub async fn remove_member(&self, user: &User, pool: &DbPool) -> Result<(), ApiError> {
-        self.remove_group_member_from_backend(user, pool).await
+    pub async fn remove_member<C>(&self, user: &User, backend: &C) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.remove_group_member_from_backend(user, backend.db_pool())
+            .await
     }
 
-    pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
-        self.delete_group_record(pool).await
+    pub async fn delete<C>(&self, backend: &C) -> Result<usize, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.delete_group_record(backend.db_pool()).await
     }
 }
 
@@ -128,8 +151,11 @@ impl NewGroup {
         }
     }
 
-    pub async fn save(&self, pool: &DbPool) -> Result<Group, ApiError> {
-        self.save_group_record(pool).await
+    pub async fn save<C>(&self, backend: &C) -> Result<Group, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.save_group_record(backend.db_pool()).await
     }
 }
 
@@ -141,8 +167,11 @@ pub struct UpdateGroup {
 }
 
 impl UpdateGroup {
-    pub async fn save(&self, group_id: i32, pool: &DbPool) -> Result<Group, ApiError> {
-        self.update_group_record(group_id, pool).await
+    pub async fn save<C>(&self, group_id: i32, backend: &C) -> Result<Group, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.update_group_record(group_id, backend.db_pool()).await
     }
 }
 
