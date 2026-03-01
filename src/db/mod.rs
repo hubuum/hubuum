@@ -3,6 +3,8 @@ pub mod traits;
 use diesel::PgConnection;
 use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
+use diesel::r2d2::PooledConnection;
+use diesel::Connection;
 
 use std::time::Duration;
 use tracing::{debug, error, warn};
@@ -15,15 +17,14 @@ pub type DbPool = Pool<ConnectionManager<PgConnection>>;
 const MAX_RETRIES: u32 = 3;
 const RETRY_DELAY: Duration = Duration::from_millis(100);
 
-pub fn with_connection<F, R>(pool: &DbPool, f: F) -> Result<R, ApiError>
-where
-    F: FnOnce(&mut PgConnection) -> Result<R, diesel::result::Error>,
-{
+fn acquire_connection(
+    pool: &DbPool,
+) -> Result<PooledConnection<ConnectionManager<PgConnection>>, ApiError> {
     let mut last_error = None;
 
     for attempt in 1..=MAX_RETRIES {
         match pool.get() {
-            Ok(mut conn) => return f(&mut conn).map_err(ApiError::from),
+            Ok(conn) => return Ok(conn),
             Err(e) => {
                 warn!(
                     "Failed to get database connection (attempt {}): {}",
@@ -49,6 +50,22 @@ where
             "Failed to establish database connection after retries".to_string(),
         )),
     }
+}
+
+pub fn with_connection<F, R>(pool: &DbPool, f: F) -> Result<R, ApiError>
+where
+    F: FnOnce(&mut PgConnection) -> Result<R, diesel::result::Error>,
+{
+    let mut conn = acquire_connection(pool)?;
+    f(&mut conn).map_err(ApiError::from)
+}
+
+pub fn with_transaction<F, R>(pool: &DbPool, f: F) -> Result<R, ApiError>
+where
+    F: FnOnce(&mut PgConnection) -> Result<R, ApiError>,
+{
+    let mut conn = acquire_connection(pool)?;
+    conn.transaction::<R, ApiError, _>(|conn| f(conn))
 }
 
 pub fn init_pool(database_url: &str, max_size: u32) -> DbPool {

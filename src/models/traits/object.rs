@@ -2,7 +2,11 @@ use diesel::prelude::*;
 use jsonschema;
 use serde_json;
 
-use crate::db::{DbPool, with_connection};
+use crate::db::traits::object::{
+    CreateObjectRecord, DeleteObjectRecord, LoadObjectRecord, ObjectClassLookup,
+    ObjectNamespaceLookup, UpdateObjectRecord,
+};
+use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::traits::GroupAccessors;
 
@@ -135,13 +139,7 @@ impl CanSave for NewHubuumObject {
         use crate::schema::hubuumobject::dsl::*;
 
         self.validate(pool).await?;
-
-        let mut conn = pool.get()?;
-        let result = diesel::insert_into(hubuumobject)
-            .values(self)
-            .get_result::<Self::Output>(&mut conn)?;
-
-        Ok(result)
+        self.create_object_record(pool).await
     }
 }
 
@@ -149,26 +147,13 @@ impl CanUpdate for UpdateHubuumObject {
     type Output = HubuumObject;
 
     async fn update(&self, pool: &DbPool, object_id: i32) -> Result<Self::Output, ApiError> {
-        use crate::schema::hubuumobject::dsl::*;
-
-        let mut conn = pool.get()?;
-        let result = diesel::update(hubuumobject)
-            .filter(id.eq(object_id))
-            .set(self)
-            .get_result::<Self::Output>(&mut conn)?;
-
-        Ok(result)
+        self.update_object_record(pool, object_id).await
     }
 }
 
 impl CanDelete for HubuumObject {
     async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
-        use crate::schema::hubuumobject::dsl::{hubuumobject, id};
-
-        let mut conn = pool.get()?;
-        diesel::delete(hubuumobject.filter(id.eq(self.id))).execute(&mut conn)?;
-
-        Ok(())
+        self.delete_object_record(pool).await
     }
 }
 
@@ -187,14 +172,7 @@ impl SelfAccessors<HubuumObject> for HubuumObject {
 
 impl NamespaceAccessors for HubuumObject {
     async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        use crate::schema::namespaces::dsl::{id, namespaces};
-
-        let mut conn = pool.get()?;
-        let namespace = namespaces
-            .filter(id.eq(self.namespace_id))
-            .first::<Namespace>(&mut conn)?;
-
-        Ok(namespace)
+        self.lookup_object_namespace(pool).await
     }
 
     async fn namespace_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
@@ -204,14 +182,7 @@ impl NamespaceAccessors for HubuumObject {
 
 impl ClassAccessors for HubuumObject {
     async fn class(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
-        use crate::schema::hubuumclass::dsl::{hubuumclass, id};
-
-        let mut conn = pool.get()?;
-        let class = hubuumclass
-            .filter(id.eq(self.hubuum_class_id))
-            .first::<HubuumClass>(&mut conn)?;
-
-        Ok(class)
+        self.lookup_object_class(pool).await
     }
 
     async fn class_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
@@ -225,28 +196,13 @@ impl SelfAccessors<HubuumObject> for HubuumObjectID {
     }
 
     async fn instance(&self, pool: &DbPool) -> Result<HubuumObject, ApiError> {
-        use crate::schema::hubuumobject::dsl::{hubuumobject, id};
-        use diesel::prelude::*;
-
-        let mut conn = pool.get()?;
-        let object = hubuumobject
-            .filter(id.eq(self.0))
-            .first::<HubuumObject>(&mut conn)?;
-
-        Ok(object)
+        self.load_object_record(pool).await
     }
 }
 
 impl NamespaceAccessors for HubuumObjectID {
     async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        use crate::schema::hubuumobject::dsl::{hubuumobject, id};
-
-        let mut conn = pool.get()?;
-        let object = hubuumobject
-            .filter(id.eq(self.0))
-            .first::<HubuumObject>(&mut conn)?;
-
-        object.namespace(pool).await
+        self.lookup_object_namespace(pool).await
     }
 
     async fn namespace_id(&self, pool: &DbPool) -> Result<i32, ApiError> {
@@ -256,14 +212,7 @@ impl NamespaceAccessors for HubuumObjectID {
 
 impl ClassAccessors for HubuumObjectID {
     async fn class(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
-        use crate::schema::hubuumobject::dsl::{hubuumobject, id};
-
-        let mut conn = pool.get()?;
-        let object = hubuumobject
-            .filter(id.eq(self.0))
-            .first::<HubuumObject>(&mut conn)?;
-
-        object.class(pool).await
+        self.lookup_object_class(pool).await
     }
 
     async fn class_id(&self, pool: &DbPool) -> Result<i32, ApiError> {

@@ -4,7 +4,7 @@ use diesel::sql_types::{BigInt, Integer, Jsonb, Text, Timestamp};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::DbPool;
+use crate::db::{with_connection, DbPool};
 use crate::errors::ApiError;
 use crate::schema::hubuumobject;
 
@@ -88,20 +88,15 @@ pub struct HubuumObjectWithPath {
 pub async fn total_object_count(pool: &DbPool) -> Result<i64, ApiError> {
     use crate::schema::hubuumobject::dsl::*;
 
-    let mut conn = pool.get()?;
-    let count = hubuumobject.count().get_result::<i64>(&mut conn)?;
-
-    Ok(count)
+    with_connection(pool, |conn| hubuumobject.count().get_result::<i64>(conn))
 }
 
 pub async fn objects_per_class_count(pool: &DbPool) -> Result<Vec<ObjectsByClass>, ApiError> {
-    let mut conn = pool.get()?;
-
     let raw_query =
         "SELECT hubuum_class_id, COUNT(*) as count FROM hubuumobject GROUP BY hubuum_class_id";
-    let results = sql_query(raw_query).load::<ObjectsByClass>(&mut conn)?;
-
-    Ok(results)
+    with_connection(pool, |conn| {
+        sql_query(raw_query).load::<ObjectsByClass>(conn)
+    })
 }
 
 #[allow(dead_code)]

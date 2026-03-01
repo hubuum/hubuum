@@ -1,11 +1,14 @@
 use crate::db::traits::ClassRelation;
+use diesel::prelude::*;
 
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, QueryOptions};
 use crate::models::{
-    HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, HubuumObject,
-    HubuumObjectTransitiveLink, User, user_can_on_any,
+    user_can_on_any, HubuumClass, HubuumClassRelation, HubuumClassRelationID,
+    HubuumClassRelationTransitive, HubuumObject, HubuumObjectID, HubuumObjectRelation,
+    HubuumObjectRelationID, HubuumObjectTransitiveLink, NewHubuumClassRelation,
+    NewHubuumObjectRelation, User,
 };
 
 use crate::traits::{GroupAccessors, SelfAccessors};
@@ -206,6 +209,178 @@ where
                     namespaces.into_iter().map(|n| n.id()).collect::<Vec<_>>(),
                 )
                 .load::<HubuumObjectTransitiveLink>(conn)
+        })
+    }
+}
+
+pub trait LoadClassRelationRecord {
+    async fn load_class_relation_record(
+        &self,
+        pool: &DbPool,
+    ) -> Result<HubuumClassRelation, ApiError>;
+}
+
+impl LoadClassRelationRecord for HubuumClassRelationID {
+    async fn load_class_relation_record(
+        &self,
+        pool: &DbPool,
+    ) -> Result<HubuumClassRelation, ApiError> {
+        use crate::schema::hubuumclass_relation::dsl::{hubuumclass_relation, id};
+
+        with_connection(pool, |conn| {
+            hubuumclass_relation
+                .filter(id.eq(self.0))
+                .first::<HubuumClassRelation>(conn)
+        })
+    }
+}
+
+pub trait DeleteClassRelationRecord {
+    async fn delete_class_relation_record(&self, pool: &DbPool) -> Result<(), ApiError>;
+}
+
+impl DeleteClassRelationRecord for HubuumClassRelation {
+    async fn delete_class_relation_record(&self, pool: &DbPool) -> Result<(), ApiError> {
+        use crate::schema::hubuumclass_relation::dsl::{hubuumclass_relation, id};
+
+        with_connection(pool, |conn| {
+            diesel::delete(hubuumclass_relation.filter(id.eq(self.id))).execute(conn)
+        })?;
+        Ok(())
+    }
+}
+
+pub trait SaveClassRelationRecord {
+    async fn save_class_relation_record(
+        &self,
+        pool: &DbPool,
+    ) -> Result<HubuumClassRelation, ApiError>;
+}
+
+impl SaveClassRelationRecord for NewHubuumClassRelation {
+    async fn save_class_relation_record(
+        &self,
+        pool: &DbPool,
+    ) -> Result<HubuumClassRelation, ApiError> {
+        use crate::schema::hubuumclass_relation::dsl::hubuumclass_relation;
+
+        if self.from_hubuum_class_id == self.to_hubuum_class_id {
+            return Err(ApiError::BadRequest(
+                "from_hubuum_class_id and to_hubuum_class_id cannot be the same".to_string(),
+            ));
+        }
+
+        with_connection(pool, |conn| {
+            diesel::insert_into(hubuumclass_relation)
+                .values(self)
+                .get_result(conn)
+        })
+    }
+}
+
+pub trait LoadObjectRelationRecord {
+    async fn load_object_relation_record(
+        &self,
+        pool: &DbPool,
+    ) -> Result<HubuumObjectRelation, ApiError>;
+}
+
+impl LoadObjectRelationRecord for HubuumObjectRelationID {
+    async fn load_object_relation_record(
+        &self,
+        pool: &DbPool,
+    ) -> Result<HubuumObjectRelation, ApiError> {
+        use crate::schema::hubuumobject_relation::dsl::{hubuumobject_relation, id};
+
+        with_connection(pool, |conn| {
+            hubuumobject_relation
+                .filter(id.eq(self.0))
+                .first::<HubuumObjectRelation>(conn)
+        })
+    }
+}
+
+pub trait DeleteObjectRelationRecord {
+    async fn delete_object_relation_record(&self, pool: &DbPool) -> Result<(), ApiError>;
+}
+
+impl DeleteObjectRelationRecord for HubuumObjectRelation {
+    async fn delete_object_relation_record(&self, pool: &DbPool) -> Result<(), ApiError> {
+        use crate::schema::hubuumobject_relation::dsl::{hubuumobject_relation, id};
+
+        with_connection(pool, |conn| {
+            diesel::delete(hubuumobject_relation.filter(id.eq(self.id))).execute(conn)
+        })?;
+        Ok(())
+    }
+}
+
+impl DeleteObjectRelationRecord for HubuumObjectRelationID {
+    async fn delete_object_relation_record(&self, pool: &DbPool) -> Result<(), ApiError> {
+        use crate::schema::hubuumobject_relation::dsl::{hubuumobject_relation, id};
+
+        with_connection(pool, |conn| {
+            diesel::delete(hubuumobject_relation.filter(id.eq(self.0))).execute(conn)
+        })?;
+        Ok(())
+    }
+}
+
+pub trait SaveObjectRelationRecord {
+    async fn save_object_relation_record(
+        &self,
+        pool: &DbPool,
+    ) -> Result<HubuumObjectRelation, ApiError>;
+}
+
+impl SaveObjectRelationRecord for NewHubuumObjectRelation {
+    async fn save_object_relation_record(
+        &self,
+        pool: &DbPool,
+    ) -> Result<HubuumObjectRelation, ApiError> {
+        use crate::schema::hubuumobject_relation::dsl::hubuumobject_relation;
+
+        if self.from_hubuum_object_id == self.to_hubuum_object_id {
+            return Err(ApiError::BadRequest(
+                "from_hubuum_object_id and to_hubuum_object_id cannot be the same".to_string(),
+            ));
+        }
+
+        let obj1 = match HubuumObjectID(self.from_hubuum_object_id)
+            .instance(pool)
+            .await
+        {
+            Ok(obj1) => obj1,
+            Err(_) => {
+                return Err(ApiError::NotFound(
+                    "from_hubuum_object_id not found".to_string(),
+                ));
+            }
+        };
+
+        let obj2 = match HubuumObjectID(self.to_hubuum_object_id)
+            .instance(pool)
+            .await
+        {
+            Ok(obj2) => obj2,
+            Err(_) => {
+                return Err(ApiError::NotFound(
+                    "to_hubuum_object_id not found".to_string(),
+                ));
+            }
+        };
+
+        if obj1.hubuum_class_id == obj2.hubuum_class_id {
+            return Err(ApiError::BadRequest(
+                "from_hubuum_object_id and to_hubuum_object_id must not have the same class"
+                    .to_string(),
+            ));
+        }
+
+        with_connection(pool, |conn| {
+            diesel::insert_into(hubuumobject_relation)
+                .values(self)
+                .get_result(conn)
         })
     }
 }

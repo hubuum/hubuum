@@ -188,7 +188,6 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
             return Ok(true);
         }
 
-        let mut conn = pool.get()?;
         let group_id_subquery = user.group_ids_subquery();
 
         // Note that self.namespace_id(pool).await? is only a query if the caller is a HubuumClassID, otherwise
@@ -202,7 +201,9 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
             base_query = perm.create_boxed_filter(base_query, true);
         }
 
-        let result = base_query.first::<Permission>(&mut conn).optional()?;
+        let result = crate::db::with_connection(pool, |conn| {
+            base_query.first::<Permission>(conn).optional()
+        })?;
 
         Ok(result.is_some())
     }
@@ -248,11 +249,9 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
         use crate::schema::permissions::dsl::*;
 
         // If the group already has permissions, update the permissions in permissions. Otherwise, insert a new row.
-        let mut conn = pool.get()?;
-
         let nid = self.namespace_id(pool).await?;
 
-        conn.transaction::<_, ApiError, _>(|conn| {
+        crate::db::with_transaction(pool, |conn| {
             let existing_entry = permissions
                 .filter(namespace_id.eq(nid))
                 .filter(group_id.eq(group_id_for_grant))
@@ -429,11 +428,9 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     ) -> Result<Permission, ApiError> {
         use crate::schema::permissions::dsl::*;
 
-        let mut conn = pool.get()?;
-
         let nid = self.namespace_id(pool).await?;
 
-        conn.transaction::<_, ApiError, _>(|conn| {
+        crate::db::with_transaction(pool, |conn| {
             permissions
                 .filter(namespace_id.eq(nid))
                 .filter(group_id.eq(group_id_for_revoke))
@@ -621,15 +618,20 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// ## Returns
     ///
     /// An empty result.
-    async fn revoke_all(&self, pool: &DbPool, group_id_for_revoke: i32) -> Result<(), ApiError> {
+    async fn revoke_all(
+        &self,
+        pool: &DbPool,
+        group_id_for_revoke: i32,
+    ) -> Result<(), ApiError> {
         use crate::schema::permissions::dsl::*;
 
-        let mut conn = pool.get()?;
-
-        diesel::delete(permissions)
-            .filter(namespace_id.eq(self.namespace_id(pool).await?))
-            .filter(group_id.eq(group_id_for_revoke))
-            .execute(&mut conn)?;
+        let namespace_id_for_revoke = self.namespace_id(pool).await?;
+        crate::db::with_connection(pool, |conn| {
+            diesel::delete(permissions)
+                .filter(namespace_id.eq(namespace_id_for_revoke))
+                .filter(group_id.eq(group_id_for_revoke))
+                .execute(conn)
+        })?;
 
         Ok(())
     }

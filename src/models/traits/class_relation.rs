@@ -5,8 +5,11 @@ use tracing::{debug, trace};
 
 use serde::{Deserialize, Serialize};
 
-use crate::db::DbPool;
+use crate::db::traits::relations::{
+    DeleteClassRelationRecord, LoadClassRelationRecord, SaveClassRelationRecord,
+};
 use crate::db::traits::GetNamespace;
+use crate::db::DbPool;
 use crate::{errors::ApiError, schema::hubuumclass_relation, schema::hubuumobject_relation};
 
 use crate::models::search::{FilterField, SortParam};
@@ -27,15 +30,7 @@ impl SelfAccessors<HubuumClassRelation> for HubuumClassRelationID {
     }
 
     async fn instance(&self, pool: &DbPool) -> Result<HubuumClassRelation, ApiError> {
-        use crate::schema::hubuumclass_relation::dsl::{hubuumclass_relation, id};
-        use diesel::prelude::*;
-
-        let mut conn = pool.get()?;
-        let class = hubuumclass_relation
-            .filter(id.eq(self.0))
-            .first::<HubuumClassRelation>(&mut conn)?;
-
-        Ok(class)
+        self.load_class_relation_record(pool).await
     }
 }
 impl SelfAccessors<HubuumClassRelation> for HubuumClassRelation {
@@ -50,12 +45,7 @@ impl SelfAccessors<HubuumClassRelation> for HubuumClassRelation {
 
 impl CanDelete for HubuumClassRelation {
     async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
-        use crate::schema::hubuumclass_relation::dsl::*;
-
-        let mut conn = pool.get()?;
-        diesel::delete(hubuumclass_relation.filter(id.eq(self.id))).execute(&mut conn)?;
-
-        Ok(())
+        self.delete_class_relation_record(pool).await
     }
 }
 
@@ -63,20 +53,7 @@ impl CanSave for NewHubuumClassRelation {
     type Output = HubuumClassRelation;
 
     async fn save(&self, pool: &DbPool) -> Result<HubuumClassRelation, ApiError> {
-        use crate::schema::hubuumclass_relation::dsl::hubuumclass_relation;
-
-        if self.from_hubuum_class_id == self.to_hubuum_class_id {
-            return Err(ApiError::BadRequest(
-                "from_hubuum_class_id and to_hubuum_class_id cannot be the same".to_string(),
-            ));
-        }
-
-        let mut conn = pool.get()?;
-        let result = diesel::insert_into(hubuumclass_relation)
-            .values(self)
-            .get_result(&mut conn)?;
-
-        Ok(result)
+        self.save_class_relation_record(pool).await
     }
 }
 

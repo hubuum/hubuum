@@ -9,7 +9,7 @@ use diesel::sql_types::{Integer, Text, Timestamp};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::DbPool;
+use crate::db::{with_connection, DbPool};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::schema::tokens;
@@ -54,8 +54,9 @@ impl Token {
     pub async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::tokens::dsl::{token, tokens};
 
-        let mut conn = pool.get()?;
-        diesel::delete(tokens.filter(token.eq(&self.0))).execute(&mut conn)?;
+        with_connection(pool, |conn| {
+            diesel::delete(tokens.filter(token.eq(&self.0))).execute(conn)
+        })?;
         Ok(())
     }
 }

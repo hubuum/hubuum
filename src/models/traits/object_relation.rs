@@ -1,5 +1,8 @@
 use diesel::prelude::*;
 
+use crate::db::traits::relations::{
+    DeleteObjectRelationRecord, LoadObjectRelationRecord, SaveObjectRelationRecord,
+};
 use crate::db::DbPool;
 
 use crate::errors::ApiError;
@@ -16,15 +19,7 @@ impl SelfAccessors<HubuumObjectRelation> for HubuumObjectRelationID {
     }
 
     async fn instance(&self, pool: &DbPool) -> Result<HubuumObjectRelation, ApiError> {
-        use crate::schema::hubuumobject_relation::dsl::{hubuumobject_relation, id};
-        use diesel::prelude::*;
-
-        let mut conn = pool.get()?;
-        let class = hubuumobject_relation
-            .filter(id.eq(self.0))
-            .first::<HubuumObjectRelation>(&mut conn)?;
-
-        Ok(class)
+        self.load_object_relation_record(pool).await
     }
 }
 impl SelfAccessors<HubuumObjectRelation> for HubuumObjectRelation {
@@ -39,23 +34,13 @@ impl SelfAccessors<HubuumObjectRelation> for HubuumObjectRelation {
 
 impl CanDelete for HubuumObjectRelation {
     async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
-        use crate::schema::hubuumobject_relation::dsl::*;
-
-        let mut conn = pool.get()?;
-        diesel::delete(hubuumobject_relation.filter(id.eq(self.id))).execute(&mut conn)?;
-
-        Ok(())
+        self.delete_object_relation_record(pool).await
     }
 }
 
 impl CanDelete for HubuumObjectRelationID {
     async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
-        use crate::schema::hubuumobject_relation::dsl::*;
-
-        let mut conn = pool.get()?;
-        diesel::delete(hubuumobject_relation.filter(id.eq(self.0))).execute(&mut conn)?;
-
-        Ok(())
+        self.delete_object_relation_record(pool).await
     }
 }
 
@@ -63,51 +48,7 @@ impl CanSave for NewHubuumObjectRelation {
     type Output = HubuumObjectRelation;
 
     async fn save(&self, pool: &DbPool) -> Result<HubuumObjectRelation, ApiError> {
-        use crate::schema::hubuumobject_relation::dsl::hubuumobject_relation;
-
-        if self.from_hubuum_object_id == self.to_hubuum_object_id {
-            return Err(ApiError::BadRequest(
-                "from_hubuum_object_id and to_hubuum_object_id cannot be the same".to_string(),
-            ));
-        }
-
-        let obj1 = match HubuumObjectID(self.from_hubuum_object_id)
-            .instance(pool)
-            .await
-        {
-            Ok(obj1) => obj1,
-            Err(_) => {
-                return Err(ApiError::NotFound(
-                    "from_hubuum_object_id not found".to_string(),
-                ));
-            }
-        };
-
-        let obj2 = match HubuumObjectID(self.to_hubuum_object_id)
-            .instance(pool)
-            .await
-        {
-            Ok(obj2) => obj2,
-            Err(_) => {
-                return Err(ApiError::NotFound(
-                    "to_hubuum_object_id not found".to_string(),
-                ));
-            }
-        };
-
-        if obj1.hubuum_class_id == obj2.hubuum_class_id {
-            return Err(ApiError::BadRequest(
-                "from_hubuum_object_id and to_hubuum_object_id must not have the same class"
-                    .to_string(),
-            ));
-        }
-
-        let mut conn = pool.get()?;
-        let result = diesel::insert_into(hubuumobject_relation)
-            .values(self)
-            .get_result(&mut conn)?;
-
-        Ok(result)
+        self.save_object_relation_record(pool).await
     }
 }
 

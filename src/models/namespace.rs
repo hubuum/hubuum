@@ -181,17 +181,16 @@ pub async fn user_on<T: NamespaceAccessors>(
     use crate::schema::permissions::dsl::{group_id, namespace_id, permissions};
     use diesel::prelude::*;
 
-    let mut conn = pool.get()?;
     let namespace_target_id = namespace_ref.namespace_id(pool).await?;
-
     let group_ids_subquery = user_id.group_ids_subquery();
-
-    let query = groups
-        .inner_join(permissions.on(group_table_id.eq(group_id)))
-        .filter(namespace_id.eq(namespace_target_id))
-        .filter(group_id.eq_any(group_ids_subquery))
-        .select((groups::all_columns(), permissions::all_columns()))
-        .load::<(Group, Permission)>(&mut conn)?;
+    let query = with_connection(pool, |conn| {
+        groups
+            .inner_join(permissions.on(group_table_id.eq(group_id)))
+            .filter(namespace_id.eq(namespace_target_id))
+            .filter(group_id.eq_any(group_ids_subquery))
+            .select((groups::all_columns(), permissions::all_columns()))
+            .load::<(Group, Permission)>(conn)
+    })?;
 
     let structured_results: Vec<GroupPermission> =
         query.into_iter().map(GroupPermission::from_tuple).collect();
@@ -281,8 +280,6 @@ pub async fn user_can_on_any<U: SelfAccessors<User> + GroupAccessors>(
     use crate::schema::permissions::dsl::*;
     use diesel::prelude::*;
 
-    let mut conn = pool.get()?;
-
     let base_query = if user_id.instance(pool).await?.is_admin(pool).await? {
         permissions.into_boxed()
     } else {
@@ -294,15 +291,18 @@ pub async fn user_can_on_any<U: SelfAccessors<User> + GroupAccessors>(
     };
 
     let filtered_query = permission_type.create_boxed_filter(base_query, true);
+    let accessible_namespace_ids = with_connection(pool, |conn| {
+        filtered_query.select(namespace_id).load::<i32>(conn)
+    })?;
 
-    let accessible_namespace_ids = filtered_query.select(namespace_id).load::<i32>(&mut conn)?;
-
-    let accessible_namespaces = if !accessible_namespace_ids.is_empty() {
-        namespaces::table
-            .filter(namespaces::id.eq_any(accessible_namespace_ids))
-            .load::<Namespace>(&mut conn)?
-    } else {
+    let accessible_namespaces = if accessible_namespace_ids.is_empty() {
         vec![]
+    } else {
+        with_connection(pool, |conn| {
+            namespaces::table
+                .filter(namespaces::id.eq_any(accessible_namespace_ids))
+                .load::<Namespace>(conn)
+        })?
     };
 
     Ok(accessible_namespaces)
@@ -329,16 +329,13 @@ pub async fn group_can_on<T: NamespaceAccessors>(
     use crate::schema::permissions::dsl::*;
     use diesel::prelude::*;
 
-    let mut conn = pool.get()?;
-
     let base_query = permissions
         .into_boxed()
         .filter(group_id.eq(gid))
         .filter(namespace_id.eq(namespace_ref.namespace_id(pool).await?));
 
     let filtered_query = permission_type.create_boxed_filter(base_query, true);
-
-    let result = filtered_query.execute(&mut conn)?;
+    let result = with_connection(pool, |conn| filtered_query.execute(conn))?;
 
     if result == 0 {
         return Ok(false);
@@ -368,8 +365,6 @@ pub async fn groups_can_on(
     use crate::schema::permissions::dsl::*;
     use diesel::prelude::*;
 
-    let mut conn = pool.get()?;
-
     // Adapted to start with a base query that might include a subquery for group IDs
     let base_query = permissions.into_boxed().filter(namespace_id.eq(nid));
 
@@ -377,16 +372,20 @@ pub async fn groups_can_on(
     let filtered_query = permission_type.create_boxed_filter(base_query, true);
 
     // Selecting namespace IDs from the filtered query
-    let group_ids = filtered_query
-        .select(group_id)
-        .distinct() // Ensuring distinct group IDs to avoid duplicates
-        .load::<i32>(&mut conn)?;
+    let group_ids = with_connection(pool, |conn| {
+        filtered_query
+            .select(group_id)
+            .distinct() // Ensuring distinct group IDs to avoid duplicates
+            .load::<i32>(conn)
+    })?;
 
     // Finally, fetching groups based on the obtained group IDs
     let results = if !group_ids.is_empty() {
-        groups
-            .filter(group_table_id.eq_any(group_ids))
-            .load::<Group>(&mut conn)?
+        with_connection(pool, |conn| {
+            groups
+                .filter(group_table_id.eq_any(group_ids))
+                .load::<Group>(conn)
+        })?
     } else {
         Vec::new() // Returning an empty vector if no group IDs were found
     };
@@ -466,7 +465,6 @@ pub async fn groups_on<T: NamespaceAccessors>(
     use crate::{date_search, numeric_search};
     use diesel::prelude::*;
 
-    let mut conn = pool.get()?;
     let namespace_target_id = namespace_ref.namespace_id(pool).await?;
     let query_params = query_options.filters;
 
@@ -530,10 +528,12 @@ pub async fn groups_on<T: NamespaceAccessors>(
         base_query = base_query.limit(limit as i64);
     }
 
-    let query = base_query
-        .inner_join(groups.on(group_table_id.eq(group_id)))
-        .select((groups::all_columns(), permissions::all_columns()))
-        .load::<(Group, Permission)>(&mut conn)?;
+    let query = with_connection(pool, |conn| {
+        base_query
+            .inner_join(groups.on(group_table_id.eq(group_id)))
+            .select((groups::all_columns(), permissions::all_columns()))
+            .load::<(Group, Permission)>(conn)
+    })?;
 
     let structured_results: Vec<GroupPermission> =
         query.into_iter().map(GroupPermission::from_tuple).collect();
@@ -608,14 +608,12 @@ pub async fn group_on(pool: &DbPool, nid: i32, gid: i32) -> Result<Permission, A
     use crate::schema::permissions::dsl::*;
     use diesel::prelude::*;
 
-    let mut conn = pool.get()?;
-
-    let results = permissions
-        .filter(namespace_id.eq(nid))
-        .filter(group_id.eq(gid))
-        .first::<Permission>(&mut conn)?;
-
-    Ok(results)
+    with_connection(pool, |conn| {
+        permissions
+            .filter(namespace_id.eq(nid))
+            .filter(group_id.eq(gid))
+            .first::<Permission>(conn)
+    })
 }
 
 #[cfg(test)]

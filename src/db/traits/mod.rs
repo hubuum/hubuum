@@ -137,6 +137,8 @@ where
             hubuumclass_closure
                 .or_filter(ancestor_class_id.eq(self.id()))
                 .or_filter(descendant_class_id.eq(self.id()))
+                .then_order_by(depth.asc())
+                .then_order_by(descendant_class_id.asc())
                 .load::<HubuumClassRelationTransitive>(conn)
         })
     }

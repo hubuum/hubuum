@@ -6,7 +6,7 @@ use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::DbPool;
+use crate::db::{with_connection, DbPool};
 
 use crate::errors::ApiError;
 
@@ -28,10 +28,13 @@ impl User {
         use crate::schema::tokens::dsl::*;
         let generated_token = crate::utilities::auth::generate_token();
 
-        Ok(diesel::insert_into(crate::schema::tokens::table)
-            .values((user_id.eq(self.id), token.eq(&generated_token.get_token())))
-            .execute(&mut pool.get()?)
-            .map(|_| generated_token)?)
+        with_connection(pool, |conn| {
+            diesel::insert_into(crate::schema::tokens::table)
+                .values((user_id.eq(self.id), token.eq(&generated_token.get_token())))
+                .execute(conn)
+        })?;
+
+        Ok(generated_token)
     }
 
     pub async fn token_is_mine(
@@ -41,31 +44,35 @@ impl User {
     ) -> Result<UserToken, ApiError> {
         use crate::schema::tokens::dsl::*;
 
-        let mut conn = pool.get()?;
-
-        let result = tokens
-            .filter(user_id.eq(self.id))
-            .filter(token.eq(token_param.get_token()))
-            .first::<crate::models::token::UserToken>(&mut conn)?;
-
-        Ok(result)
+        with_connection(pool, |conn| {
+            tokens
+                .filter(user_id.eq(self.id))
+                .filter(token.eq(token_param.get_token()))
+                .first::<crate::models::token::UserToken>(conn)
+        })
     }
 
     pub async fn delete_token(&self, token_param: Token, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::tokens::dsl::*;
-        Ok(diesel::delete(tokens.filter(user_id.eq(self.id)))
-            .filter(token.eq(token_param.get_token()))
-            .execute(&mut pool.get()?)?)
+        with_connection(pool, |conn| {
+            diesel::delete(tokens.filter(user_id.eq(self.id)))
+                .filter(token.eq(token_param.get_token()))
+                .execute(conn)
+        })
     }
 
     pub async fn delete_all_tokens(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::tokens::dsl::*;
-        Ok(diesel::delete(tokens.filter(user_id.eq(self.id))).execute(&mut pool.get()?)?)
+        with_connection(pool, |conn| {
+            diesel::delete(tokens.filter(user_id.eq(self.id))).execute(conn)
+        })
     }
 
     pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::users::dsl::*;
-        Ok(diesel::delete(users.filter(id.eq(self.id))).execute(&mut pool.get()?)?)
+        with_connection(pool, |conn| {
+            diesel::delete(users.filter(id.eq(self.id))).execute(conn)
+        })
     }
 }
 
@@ -100,9 +107,12 @@ impl UpdateUser {
 
     pub async fn save(self, user_id: i32, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::*;
-        Ok(diesel::update(users.filter(id.eq(user_id)))
-            .set(self.hash_password()?)
-            .get_result::<User>(&mut pool.get()?)?)
+        let hashed = self.hash_password()?;
+        with_connection(pool, |conn| {
+            diesel::update(users.filter(id.eq(user_id)))
+                .set(hashed)
+                .get_result::<User>(conn)
+        })
     }
 }
 
@@ -131,9 +141,12 @@ impl NewUser {
 
     pub async fn save(self, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::*;
-        Ok(diesel::insert_into(users)
-            .values(&self.hash_password()?)
-            .get_result::<User>(&mut pool.get()?)?)
+        let hashed = self.hash_password()?;
+        with_connection(pool, |conn| {
+            diesel::insert_into(users)
+                .values(&hashed)
+                .get_result::<User>(conn)
+        })
     }
 
     pub fn hash_password(mut self) -> Result<Self, ApiError> {
@@ -155,9 +168,7 @@ pub struct UserID(pub i32);
 impl UserID {
     pub async fn user(&self, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::*;
-        Ok(users
-            .filter(id.eq(self.0))
-            .first::<User>(&mut pool.get()?)?)
+        with_connection(pool, |conn| users.filter(id.eq(self.0)).first::<User>(conn))
     }
 
     /*
@@ -176,7 +187,9 @@ impl UserID {
 
     pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::users::dsl::*;
-        Ok(diesel::delete(users.filter(id.eq(self.0))).execute(&mut pool.get()?)?)
+        with_connection(pool, |conn| {
+            diesel::delete(users.filter(id.eq(self.0))).execute(conn)
+        })
     }
 }
 
@@ -197,16 +210,15 @@ impl LoginUser {
     pub async fn login(self, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::*;
 
-        let mut conn = pool.get()?;
-
         // We could do .first::<User>(&mut conn)? here, due to the way errors.rs uses "From"
         // to map diesel errors. But, we specifically map Diesel's NotFound to our own NotFound
         // which would lead to a 404 instead of a 401, leaking information about the existence
         // of the user.
-        let user = match users
-            .filter(username.eq(&self.username))
-            .first::<User>(&mut conn)
-        {
+        let user = match with_connection(pool, |conn| {
+            users
+                .filter(username.eq(&self.username))
+                .first::<User>(conn)
+        }) {
             Ok(user) => user,
             Err(_) => {
                 warn!(

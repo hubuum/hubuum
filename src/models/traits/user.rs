@@ -27,7 +27,11 @@ use crate::traits::{
     NamespaceAccessors, SelfAccessors,
 };
 
-use crate::db::{DbPool, with_connection};
+use crate::db::traits::user::{
+    LoadPermittedNamespaces, LoadUserGroups, LoadUserRecord, QueryJsonDataIds,
+    QueryJsonSchemaIds,
+};
+use crate::db::{with_connection, DbPool};
 use crate::errors::ApiError;
 use crate::utilities::extensions::CustomStringExtensions;
 
@@ -936,18 +940,7 @@ pub trait GroupAccessors: SelfAccessors<User> {
     /// Return all groups that the user is a member of.
     #[allow(async_fn_in_trait, dead_code)]
     async fn groups(&self, pool: &DbPool) -> Result<Vec<Group>, ApiError> {
-        use crate::schema::groups::dsl::*;
-        use crate::schema::user_groups::dsl::{group_id, user_groups, user_id};
-
-        let group_list = with_connection(pool, |conn| {
-            user_groups
-                .inner_join(groups.on(id.eq(group_id)))
-                .filter(user_id.eq(self.id()))
-                .select(groups::all_columns())
-                .load::<Group>(conn)
-        })?;
-
-        Ok(group_list)
+        self.load_user_groups(pool).await
     }
 
     #[allow(async_fn_in_trait)]
@@ -1043,52 +1036,7 @@ pub trait GroupAccessors: SelfAccessors<User> {
         pool: &DbPool,
         json_schema_query_params: Vec<&ParsedQueryParam>,
     ) -> Result<Vec<i32>, ApiError> {
-        use crate::models::class::ClassIdResult;
-        use crate::models::search::{Operator, SQLValue};
-
-        if json_schema_query_params.is_empty() {
-            return Err(ApiError::BadRequest(
-                "No json_schema query parameters provided".to_string(),
-            ));
-        }
-
-        let raw_sql_prefix = "select id from hubuumclass where";
-        let mut raw_sql_clauses: Vec<String> = vec![];
-        let mut bind_varaibles: Vec<SQLValue> = vec![];
-
-        for param in json_schema_query_params {
-            let clause = param.as_json_sql()?;
-            debug!(message = "JSON Schema subquery", stage = "Clause", clause = ?clause);
-            raw_sql_clauses.push(clause.sql);
-            bind_varaibles.extend(clause.bind_variables);
-        }
-
-        let raw_sql = format!("{} {}", raw_sql_prefix, raw_sql_clauses.join(" and "))
-            .replace_question_mark_with_indexed_n();
-
-        debug!(message = "JSON Schema subquery", stage = "Complete", raw_sql = ?raw_sql, bind_variables = ?bind_varaibles);
-
-        let mut query = diesel::sql_query(raw_sql).into_boxed();
-
-        for bind_var in bind_varaibles {
-            match bind_var {
-                SQLValue::Integer(i) => query = query.bind::<diesel::sql_types::Integer, _>(i),
-                SQLValue::String(s) => query = query.bind::<diesel::sql_types::Text, _>(s),
-                SQLValue::Boolean(b) => query = query.bind::<diesel::sql_types::Bool, _>(b),
-                SQLValue::Float(f) => query = query.bind::<diesel::sql_types::Float8, _>(f),
-                SQLValue::Date(d) => query = query.bind::<diesel::sql_types::Timestamp, _>(d),
-            }
-        }
-
-        trace_query!(query, "JSONB Schema subquery");
-
-        let result_ids = with_connection(pool, |conn| query.get_results::<ClassIdResult>(conn))?;
-        let ids: Vec<i32> = result_ids
-            .into_iter()
-            .map(|r: ClassIdResult| r.id)
-            .collect();
-
-        Ok(ids)
+        self.query_class_ids_for_json_schema(pool, json_schema_query_params)
     }
 
     // Umm, async? Also, the name implies we return a subquery, but we return the Vec<i32> of the executed query.
@@ -1097,52 +1045,7 @@ pub trait GroupAccessors: SelfAccessors<User> {
         pool: &DbPool,
         json_schema_query_params: Vec<&ParsedQueryParam>,
     ) -> Result<Vec<i32>, ApiError> {
-        use crate::models::object::ObjectIDResult;
-        use crate::models::search::{Operator, SQLValue};
-
-        if json_schema_query_params.is_empty() {
-            return Err(ApiError::BadRequest(
-                "No json_data query parameters provided".to_string(),
-            ));
-        }
-
-        let raw_sql_prefix = "select id from hubuumobject where";
-        let mut raw_sql_clauses: Vec<String> = vec![];
-        let mut bind_varaibles: Vec<SQLValue> = vec![];
-
-        for param in json_schema_query_params {
-            let clause = param.as_json_sql()?;
-            debug!(message = "JSON Data subquery", stage = "Clause", clause = ?clause);
-            raw_sql_clauses.push(clause.sql);
-            bind_varaibles.extend(clause.bind_variables);
-        }
-
-        let raw_sql = format!("{} {}", raw_sql_prefix, raw_sql_clauses.join(" and "))
-            .replace_question_mark_with_indexed_n();
-
-        debug!(message = "JSON Data subquery", stage = "Complete", raw_sql = ?raw_sql, bind_variables = ?bind_varaibles);
-
-        let mut query = diesel::sql_query(raw_sql).into_boxed();
-
-        for bind_var in bind_varaibles {
-            match bind_var {
-                SQLValue::Integer(i) => query = query.bind::<diesel::sql_types::Integer, _>(i),
-                SQLValue::String(s) => query = query.bind::<diesel::sql_types::Text, _>(s),
-                SQLValue::Boolean(b) => query = query.bind::<diesel::sql_types::Bool, _>(b),
-                SQLValue::Float(f) => query = query.bind::<diesel::sql_types::Float8, _>(f),
-                SQLValue::Date(d) => query = query.bind::<diesel::sql_types::Timestamp, _>(d),
-            }
-        }
-
-        trace_query!(query, "JSONB Data subquery");
-
-        let result_ids = with_connection(pool, |conn| query.get_results::<ObjectIDResult>(conn))?;
-        let ids: Vec<i32> = result_ids
-            .into_iter()
-            .map(|r: ObjectIDResult| r.id)
-            .collect();
-
-        Ok(ids)
+        self.query_object_ids_for_json_data(pool, json_schema_query_params)
     }
 }
 
@@ -1162,28 +1065,8 @@ pub trait UserNamespaceAccessors: SelfAccessors<User> + GroupAccessors {
     where
         &'a I: IntoIterator<Item = &'a Permissions>,
     {
-        use crate::models::PermissionFilter;
-        use crate::schema::namespaces::dsl::{id as namespaces_table_id, namespaces};
-        use crate::schema::permissions::dsl::{group_id, namespace_id, permissions};
-
-        let groups_id_subquery = self.group_ids_subquery();
-
-        let mut base_query = permissions
-            .into_boxed()
-            .filter(group_id.eq_any(groups_id_subquery));
-
-        for perm in permissions_list {
-            base_query = perm.create_boxed_filter(base_query, true);
-        }
-
-        let result = with_connection(pool, |conn| {
-            base_query
-                .inner_join(namespaces.on(namespace_id.eq(namespaces_table_id)))
-                .select(namespaces::all_columns())
-                .load::<Namespace>(conn)
-        })?;
-
-        Ok(result)
+        self.load_namespaces_with_permissions(pool, permissions_list)
+            .await
     }
 }
 
@@ -1301,8 +1184,7 @@ impl SelfAccessors<User> for UserID {
     }
 
     async fn instance(&self, pool: &DbPool) -> Result<User, ApiError> {
-        use crate::schema::users::dsl::*;
-        with_connection(pool, |conn| users.filter(id.eq(self.0)).first::<User>(conn))
+        self.load_user_record(pool).await
     }
 }
 

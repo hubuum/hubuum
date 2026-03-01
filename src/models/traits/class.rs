@@ -5,6 +5,9 @@ use crate::traits::{
     SelfAccessors,
 };
 
+use crate::db::traits::class::{
+    ClassNamespaceLookup, CreateClassRecord, DeleteClassRecord, LoadClassRecord, UpdateClassRecord,
+};
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::traits::GroupAccessors;
@@ -31,12 +34,7 @@ impl CanSave for HubuumClass {
 
 impl CanDelete for HubuumClass {
     async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
-        use crate::schema::hubuumclass::dsl::*;
-
-        let mut conn = pool.get()?;
-        diesel::delete(hubuumclass.filter(id.eq(self.id))).execute(&mut conn)?;
-
-        Ok(())
+        self.delete_class_record(pool).await
     }
 }
 
@@ -44,14 +42,7 @@ impl CanSave for NewHubuumClass {
     type Output = HubuumClass;
 
     async fn save(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
-        use crate::schema::hubuumclass::dsl::*;
-
-        let mut conn = pool.get()?;
-        let result = diesel::insert_into(hubuumclass)
-            .values(self)
-            .get_result(&mut conn)?;
-
-        Ok(result)
+        self.create_class_record(pool).await
     }
 }
 
@@ -59,14 +50,7 @@ impl CanUpdate for UpdateHubuumClass {
     type Output = HubuumClass;
 
     async fn update(&self, pool: &DbPool, class_id: i32) -> Result<HubuumClass, ApiError> {
-        use crate::schema::hubuumclass::dsl::{hubuumclass, id};
-
-        let mut conn = pool.get()?;
-        let result = diesel::update(hubuumclass.filter(id.eq(class_id)))
-            .set(self)
-            .get_result(&mut conn)?;
-
-        Ok(result)
+        self.update_class_record(pool, class_id).await
     }
 }
 
@@ -112,14 +96,7 @@ impl ClassAccessors for &HubuumClass {
 
 impl NamespaceAccessors for HubuumClass {
     async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        use crate::schema::namespaces::dsl::{id, namespaces};
-
-        let mut conn = pool.get()?;
-        let namespace = namespaces
-            .filter(id.eq(self.namespace_id))
-            .first::<Namespace>(&mut conn)?;
-
-        Ok(namespace)
+        self.lookup_class_namespace(pool).await
     }
 
     async fn namespace_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
@@ -153,15 +130,7 @@ impl ClassAccessors for HubuumClassID {
     }
 
     async fn class(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
-        use crate::schema::hubuumclass::dsl::{hubuumclass, id};
-        use diesel::prelude::*;
-
-        let mut conn = pool.get()?;
-        let class = hubuumclass
-            .filter(id.eq(self.0))
-            .first::<HubuumClass>(&mut conn)?;
-
-        Ok(class)
+        self.load_class_record(pool).await
     }
 }
 
@@ -177,14 +146,7 @@ impl ClassAccessors for &HubuumClassID {
 
 impl NamespaceAccessors for HubuumClassID {
     async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        use crate::schema::hubuumclass::dsl::{hubuumclass, id};
-
-        let mut conn = pool.get()?;
-        let class = hubuumclass
-            .filter(id.eq(self.0))
-            .first::<HubuumClass>(&mut conn)?;
-
-        class.namespace(pool).await
+        self.lookup_class_namespace(pool).await
     }
 
     async fn namespace_id(&self, pool: &DbPool) -> Result<i32, ApiError> {
