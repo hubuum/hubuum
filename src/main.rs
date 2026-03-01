@@ -7,6 +7,7 @@ mod logger;
 mod macros;
 mod middlewares;
 mod models;
+mod pagination;
 mod schema;
 mod tests;
 mod tls;

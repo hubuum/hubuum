@@ -1,110 +1,205 @@
 # Querying against the Hubuum API
 
-The Hubuum API provides a powerful querying system that allows you to filter and sort data in a variety of ways. This document will provide an overview of the querying system and how to use it.
+Hubuum list endpoints share a common query interface for filtering, sorting, and cursor pagination. These query options are applied in the database, not by loading a full result set into memory first.
 
-## Querying Basics
+The response body for list endpoints remains a plain JSON array. Pagination state is returned in the `X-Next-Cursor` response header.
 
-Query parameters are passed to the API as query string parameters. Each part (split on `&`) is on the format `key__operator=value`. The `key` is the field you want to filter on, the `operator` is the operation you want to perform, and the `value` is the value you want to filter on. Supported operators are:
+For endpoint-specific field support, see [query_support_matrix.md](query_support_matrix.md).
 
-For string fields:
+## Query syntax
 
-- `equals`: The field is equal to the value.
-- `iequals`: The field is equal to the value, case-insensitive.
-- `contains`: The field contains the value.
-- `icontains`: The field contains the value, case-insensitive.
-- `startswith`: The field starts with the value.
-- `istartswith`: The field starts with the value, case-insensitive.
-- `endswith`: The field ends with the value.
-- `iendswith`: The field ends with the value, case-insensitive.
-- `like`: The field is like the value.
-- `regex`: The field matches the regex pattern in the value.
+Query parameters are passed as standard query string parameters:
 
-For numeric and date fields:
+- `field=value` means `field__equals=value`
+- `field__operator=value` applies an explicit operator
+- filters are combined with `AND`
+- repeated `sort` fields are expressed as a comma-separated list
 
-- `gt`: The field is greater than the value.
-- `gte`: The field is greater than or equal to the value.
-- `lt`: The field is less than the value.
-- `lte`: The field is less than or equal to the value.
-- `between`: The field is between the two values.
+Example:
 
-For array fields:
+```text
+/api/v1/iam/users?username__contains=alice&email__endswith=@example.org&sort=username.asc
+```
 
-- `contains`: The array contains the value, eg `array_field__contains=1`.
-- `equals`: The array is equal to the value, expressed as a comma-separated list, eg `array_field=1,2,3` (identical to `array_field__equals=1,2,3`).
+## Supported operators
 
-For boolean fields:
+### String fields
 
-- `equals`: The field is equal to the value, eg `boolean_field__equals=true`.
+- `equals`
+- `iequals`
+- `contains`
+- `icontains`
+- `startswith`
+- `istartswith`
+- `endswith`
+- `iendswith`
+- `like`
+- `regex`
+
+### Numeric and date fields
+
+- `equals`
+- `gt`
+- `gte`
+- `lt`
+- `lte`
+- `between`
+
+### Array fields
+
+- `equals`
+- `contains`
+
+### Boolean fields
+
+- `equals`
 
 ## Negation
 
-You can negate a filter by prefixing the operator with `not_`. For example, to find all employees that are not named "John", you can use the filter `username__not_equals=John`.
+You can negate an operator by prefixing it with `not_`.
 
-## Combining filters
+Examples:
 
-You can combine filters by separating them with `&`. For example, to find all employees named "John" that are in the "Engineering" department, you can use the filter `username__equals=John&department__equals=Engineering`. All filters are combined with an AND operation.
-
-## Examples
-
-Employees with the the exact username "John": `api/v1/iam/users/?username__equals=John`.
-Employees with the username "John" or "john": `api/v1/iam/users/?username__iequals=john`.
-Employees with the username containing "John": `api/v1/iam/users/?username__contains=John`.
-Employees not named "John" or "john": `api/v1/iam/users/?username__not_icontains=John`.
-Employees with the username starting with "John" and ending with "Smith": `api/v1/iam/users/?username__startswith=John&username__endswith=Smith`.
-
-## JSON filtering
-
-These filters can also be applied to nested JSON fields. If you have a JSON schema that looks like this:
-
-```json
-{
-    "$id": "https://example.com/geographical-location.schema.json",
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "title": "Geographical Location",
-    "description": "A geographical location",
-    "required": [ "latitude", "longitude" ],
-    "type": "object",
-    "properties": {
-        "latitude": {
-            "type": "number",
-            "minimum": -90,
-            "maximum": 90
-        },
-        "longitude": {
-            "type": "number",
-            "minimum": -180,
-            "maximum": 180
-        }
-    },
-    "required": [ "latitude", "longitude" ]
-}
-```
-
-You can find all entries use this schema and that are south of the equator (ie, whos latitude is negative) by searching for
-`json_schema__lt=properties,latitude,minimum=0`. If the path does not exist, the filter will NOT match but it will not fail.
+- `username__not_equals=alice`
+- `name__not_icontains=test`
+- `created_at__not_between=2026-01-01T00:00:00Z,2026-02-01T00:00:00Z`
 
 ## Sorting
 
-You can sort the results of a query by adding a `sort` query parameter. The value of the `sort` parameter is a comma-separated list of fields to sort by. Each field can be followed by `.asc` or `.desc` to specify the sort direction. You may currently only sort by top-level fields.
+Use `sort` to request ordering. `order_by` is accepted as an alias.
 
-The fields you may sort on depends on the resource being queried. Currently supported resources and fields are:
+Supported forms:
 
-- Namespaces (`/api/v1/namespaces/`): `id`, `name`, `created_at`, `updated_at`
-- Classes (`/api/v1/classes/`): `id`, `name`, `namespaces`, `created_at`, `updated_at`
-- Objects (`/api/v1/classes/{class_id}/`): `id`, `name`, `namespaces`, `classid`, `created_at`, `updated_at` (the `classid` sort option exists for possible future endpoints)
+- `sort=id`
+- `sort=id.asc`
+- `sort=id.desc`
+- `sort=-id`
+- `sort=namespace_id.asc,name.desc`
 
-### Examples
+Notes:
 
-- Sorting by name in ascending order: `?sort=name.asc`
-- Sorting by name in descending order: `?sort=name.desc`
-- Sorting by created_at in ascending order: `?sort=created_at.asc`
-- Sorting an object search by namespaces descending, then class_id ascending, then object_id in descending order: `/api/v1/classes/4/?sort=namespaces.desc,class_id.asc,object_id.desc`
+- Sort support is endpoint-specific.
+- Cursor pagination requires a stable sort, so Hubuum appends a deterministic tie-breaker automatically.
+- If you omit `sort`, each endpoint uses its own default stable sort.
+- Some relation endpoints support sorting on contextual fields like `from_*`, `to_*`, `depth`, and `path`.
 
-### Notes
+## Cursor pagination
 
-- The parameter `order_by` is an alias for `sort` and can be used interchangeably.
-- The sort order is adhered to, so if you specify multiple fields to sort by, the results will be sorted by the first field, then the second field, and so on.
+List endpoints use cursor pagination.
 
-## Limit
+Parameters:
 
-You can limit the number of results returned by a query by adding a `limit` query parameter. The value of the `limit` parameter is the maximum number of results to return. For example, to return only 10 results, you can add the following query: `?limit=10`.
+- `limit`: maximum number of items to return
+- `sort`: page order
+- `cursor`: opaque token returned by a previous response
+
+Limits:
+
+- default page size: `100`
+- maximum page size: `250`
+
+Behavior:
+
+- the current page is returned as a JSON array
+- if another page exists, the response includes `X-Next-Cursor`
+- send that cursor back unchanged to fetch the next page
+- if `X-Next-Cursor` is absent, there is no next page
+
+Example:
+
+```text
+GET /api/v1/classes?namespaces=12&limit=2&sort=id.asc
+```
+
+Example response header:
+
+```text
+X-Next-Cursor: eyJzb3J0cyI6W3siZmllbGQiOiJpZCIsImRlc2NlbmRpbmciOmZhbHNlfV0sInZhbHVlcyI6W3sidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6Mn1dfQ
+```
+
+Next page:
+
+```text
+GET /api/v1/classes?namespaces=12&limit=2&sort=id.asc&cursor=eyJzb3J0cyI6W3siZmllbGQiOiJpZCIsImRlc2NlbmRpbmciOmZhbHNlfV0sInZhbHVlcyI6W3sidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6Mn1dfQ
+```
+
+## JSON filtering
+
+JSON filters are only available on endpoints that expose JSON-backed fields such as `json_schema`, `json_data`, `from_json_data`, or `to_json_data`.
+
+### Class `json_schema` example
+
+If a class schema contains a numeric property definition such as:
+
+```json
+{
+  "properties": {
+    "latitude": {
+      "type": "number",
+      "minimum": -90,
+      "maximum": 90
+    }
+  }
+}
+```
+
+you can filter classes whose schema defines a latitude minimum below zero:
+
+```text
+/api/v1/classes?json_schema__lt=properties,latitude,minimum=0
+```
+
+### Object `json_data` example
+
+If objects store payloads such as:
+
+```json
+{
+  "hostname": "srv-01",
+  "status": "active",
+  "ip": "10.0.0.10"
+}
+```
+
+you can filter objects in a class by JSON field value:
+
+```text
+/api/v1/classes/12/?json_data__equals=status=active
+```
+
+You can also use string-oriented operators for textual JSON values:
+
+```text
+/api/v1/classes/12/?json_data__contains=hostname=srv
+```
+
+If the JSON path does not exist, the filter does not match, but it does not fail the request.
+
+## Contextual endpoints
+
+Some list endpoints derive part of the query from the path.
+
+Examples:
+
+- `/api/v1/classes/{class_id}/relations` always constrains the result to the class in the path
+- `/api/v1/classes/{class_id}/` always constrains the result to objects in that class
+- `/api/v1/classes/{class_id}/{from_object_id}/relations` always constrains the result to objects related to the source object in the path
+
+Permission checks are also applied before returning results, so the effective result set is always the intersection of:
+
+- the path context
+- the authenticated caller's permissions
+- the query filters you supplied
+
+## Endpoint coverage
+
+The shared query interface is currently used by:
+
+- user lists, user tokens, and user groups
+- group lists and group members
+- namespace lists and namespace permission listings
+- class lists, class permissions, class relations, transitive relations, and objects in class
+- global class relation and object relation lists
+- related-object listings
+
+For the exact filter and sort fields per endpoint, see [query_support_matrix.md](query_support_matrix.md).

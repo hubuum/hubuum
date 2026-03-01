@@ -124,6 +124,7 @@ mod test {
             filters: query,
             sort: vec![],
             limit: None,
+            cursor: None,
         };
 
         let admin_user = ensure_admin_user(&pool).await;

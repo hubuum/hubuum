@@ -9,13 +9,16 @@ use crate::db::traits::GetNamespace;
 use crate::db::DbPool;
 use crate::{errors::ApiError, schema::hubuumclass_relation, schema::hubuumobject_relation};
 
+use crate::models::search::{FilterField, SortParam};
 use crate::models::{
-    ClassClosureView, HubuumClass, HubuumClassRelation, HubuumClassRelationID, HubuumClassWithPath,
-    HubuumObject, HubuumObjectRelation, HubuumObjectRelationID, Namespace, NewHubuumClassRelation,
-    NewHubuumObjectRelation,
+    ClassClosureView, HubuumClass, HubuumClassRelation, HubuumClassRelationID,
+    HubuumClassRelationTransitive, HubuumClassWithPath, HubuumObject, HubuumObjectRelation,
+    HubuumObjectRelationID, Namespace, NewHubuumClassRelation, NewHubuumObjectRelation,
+    ObjectClosureView,
 };
 use crate::traits::{
-    CanDelete, CanSave, ClassAccessors, NamespaceAccessors, ObjectAccessors, SelfAccessors,
+    CanDelete, CanSave, ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping,
+    CursorSqlType, CursorValue, NamespaceAccessors, ObjectAccessors, SelfAccessors,
 };
 
 impl SelfAccessors<HubuumClassRelation> for HubuumClassRelationID {
@@ -286,5 +289,447 @@ impl ToHubuumClasses for Vec<ClassClosureView> {
         self.into_iter()
             .map(|ocv| ocv.to_ascendant_class())
             .collect()
+    }
+}
+
+impl CursorPaginated for HubuumClassRelation {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(
+            field,
+            FilterField::Id
+                | FilterField::ClassFrom
+                | FilterField::ClassTo
+                | FilterField::CreatedAt
+                | FilterField::UpdatedAt
+        )
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorValue::Integer(self.id as i64),
+            FilterField::ClassFrom => CursorValue::Integer(self.from_hubuum_class_id as i64),
+            FilterField::ClassTo => CursorValue::Integer(self.to_hubuum_class_id as i64),
+            FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
+            FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for class relations",
+                    field
+                )))
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        Self::default_sort()
+    }
+}
+
+impl CursorSqlMapping for HubuumClassRelation {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorSqlField {
+                column: "hubuumclass_relation.id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::ClassFrom => CursorSqlField {
+                column: "hubuumclass_relation.from_hubuum_class_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::ClassTo => CursorSqlField {
+                column: "hubuumclass_relation.to_hubuum_class_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::CreatedAt => CursorSqlField {
+                column: "hubuumclass_relation.created_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::UpdatedAt => CursorSqlField {
+                column: "hubuumclass_relation.updated_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for class relations",
+                    field
+                )))
+            }
+        })
+    }
+}
+
+impl CursorPaginated for HubuumObjectRelation {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(
+            field,
+            FilterField::Id
+                | FilterField::ClassRelation
+                | FilterField::ObjectFrom
+                | FilterField::ObjectTo
+                | FilterField::CreatedAt
+                | FilterField::UpdatedAt
+        )
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorValue::Integer(self.id as i64),
+            FilterField::ClassRelation => CursorValue::Integer(self.class_relation_id as i64),
+            FilterField::ObjectFrom => CursorValue::Integer(self.from_hubuum_object_id as i64),
+            FilterField::ObjectTo => CursorValue::Integer(self.to_hubuum_object_id as i64),
+            FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
+            FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for object relations",
+                    field
+                )))
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        Self::default_sort()
+    }
+}
+
+impl CursorSqlMapping for HubuumObjectRelation {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorSqlField {
+                column: "hubuumobject_relation.id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::ClassRelation => CursorSqlField {
+                column: "hubuumobject_relation.class_relation_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::ObjectFrom => CursorSqlField {
+                column: "hubuumobject_relation.from_hubuum_object_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::ObjectTo => CursorSqlField {
+                column: "hubuumobject_relation.to_hubuum_object_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::CreatedAt => CursorSqlField {
+                column: "hubuumobject_relation.created_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::UpdatedAt => CursorSqlField {
+                column: "hubuumobject_relation.updated_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for object relations",
+                    field
+                )))
+            }
+        })
+    }
+}
+
+impl CursorPaginated for HubuumClassRelationTransitive {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(
+            field,
+            FilterField::ClassFrom | FilterField::ClassTo | FilterField::Depth | FilterField::Path
+        )
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        Ok(match field {
+            FilterField::ClassFrom => CursorValue::Integer(self.ancestor_class_id as i64),
+            FilterField::ClassTo => CursorValue::Integer(self.descendant_class_id as i64),
+            FilterField::Depth => CursorValue::Integer(self.depth as i64),
+            FilterField::Path => {
+                CursorValue::IntegerArray(self.path.iter().filter_map(|item| *item).collect())
+            }
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for transitive class relations",
+                    field
+                )))
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![
+            SortParam {
+                field: FilterField::Depth,
+                descending: false,
+            },
+            SortParam {
+                field: FilterField::Path,
+                descending: false,
+            },
+        ]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        vec![
+            SortParam {
+                field: FilterField::ClassFrom,
+                descending: false,
+            },
+            SortParam {
+                field: FilterField::ClassTo,
+                descending: false,
+            },
+            SortParam {
+                field: FilterField::Depth,
+                descending: false,
+            },
+            SortParam {
+                field: FilterField::Path,
+                descending: false,
+            },
+        ]
+    }
+}
+
+impl CursorSqlMapping for HubuumClassRelationTransitive {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
+        Ok(match field {
+            FilterField::ClassFrom => CursorSqlField {
+                column: "hubuumclass_closure.ancestor_class_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::ClassTo => CursorSqlField {
+                column: "hubuumclass_closure.descendant_class_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Depth => CursorSqlField {
+                column: "hubuumclass_closure.depth",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Path => CursorSqlField {
+                column: "hubuumclass_closure.path",
+                sql_type: CursorSqlType::IntegerArray,
+                nullable: true,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for transitive class relations",
+                    field
+                )))
+            }
+        })
+    }
+}
+
+impl CursorPaginated for ObjectClosureView {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(
+            field,
+            FilterField::Id
+                | FilterField::Name
+                | FilterField::Description
+                | FilterField::Namespaces
+                | FilterField::NamespaceId
+                | FilterField::ClassId
+                | FilterField::Classes
+                | FilterField::CreatedAt
+                | FilterField::UpdatedAt
+                | FilterField::ObjectFrom
+                | FilterField::ObjectTo
+                | FilterField::ClassFrom
+                | FilterField::ClassTo
+                | FilterField::NamespacesFrom
+                | FilterField::NamespacesTo
+                | FilterField::NameFrom
+                | FilterField::NameTo
+                | FilterField::DescriptionFrom
+                | FilterField::DescriptionTo
+                | FilterField::CreatedAtFrom
+                | FilterField::CreatedAtTo
+                | FilterField::UpdatedAtFrom
+                | FilterField::UpdatedAtTo
+                | FilterField::Depth
+                | FilterField::Path
+        )
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        Ok(match field {
+            FilterField::Id | FilterField::ObjectTo => {
+                CursorValue::Integer(self.descendant_object_id as i64)
+            }
+            FilterField::ObjectFrom => CursorValue::Integer(self.ancestor_object_id as i64),
+            FilterField::Name | FilterField::NameTo => {
+                CursorValue::String(self.descendant_name.clone())
+            }
+            FilterField::NameFrom => CursorValue::String(self.ancestor_name.clone()),
+            FilterField::Description | FilterField::DescriptionTo => {
+                CursorValue::String(self.descendant_description.clone())
+            }
+            FilterField::DescriptionFrom => CursorValue::String(self.ancestor_description.clone()),
+            FilterField::Namespaces | FilterField::NamespaceId | FilterField::NamespacesTo => {
+                CursorValue::Integer(self.descendant_namespace_id as i64)
+            }
+            FilterField::NamespacesFrom => CursorValue::Integer(self.ancestor_namespace_id as i64),
+            FilterField::ClassId | FilterField::Classes | FilterField::ClassTo => {
+                CursorValue::Integer(self.descendant_class_id as i64)
+            }
+            FilterField::ClassFrom => CursorValue::Integer(self.ancestor_class_id as i64),
+            FilterField::CreatedAt | FilterField::CreatedAtTo => {
+                CursorValue::DateTime(self.descendant_created_at)
+            }
+            FilterField::CreatedAtFrom => CursorValue::DateTime(self.ancestor_created_at),
+            FilterField::UpdatedAt | FilterField::UpdatedAtTo => {
+                CursorValue::DateTime(self.descendant_updated_at)
+            }
+            FilterField::UpdatedAtFrom => CursorValue::DateTime(self.ancestor_updated_at),
+            FilterField::Depth => CursorValue::Integer(self.depth as i64),
+            FilterField::Path => CursorValue::IntegerArray(self.path.clone()),
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for related objects",
+                    field
+                )))
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![
+            SortParam {
+                field: FilterField::Path,
+                descending: false,
+            },
+            SortParam {
+                field: FilterField::Id,
+                descending: false,
+            },
+        ]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        Self::default_sort()
+    }
+}
+
+impl CursorSqlMapping for ObjectClosureView {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
+        Ok(match field {
+            FilterField::Id | FilterField::ObjectTo => CursorSqlField {
+                column: "object_closure_view.descendant_object_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::ObjectFrom => CursorSqlField {
+                column: "object_closure_view.ancestor_object_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Name | FilterField::NameTo => CursorSqlField {
+                column: "object_closure_view.descendant_name",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::NameFrom => CursorSqlField {
+                column: "object_closure_view.ancestor_name",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::Description | FilterField::DescriptionTo => CursorSqlField {
+                column: "object_closure_view.descendant_description",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::DescriptionFrom => CursorSqlField {
+                column: "object_closure_view.ancestor_description",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::Namespaces | FilterField::NamespaceId | FilterField::NamespacesTo => {
+                CursorSqlField {
+                    column: "object_closure_view.descendant_namespace_id",
+                    sql_type: CursorSqlType::Integer,
+                    nullable: false,
+                }
+            }
+            FilterField::NamespacesFrom => CursorSqlField {
+                column: "object_closure_view.ancestor_namespace_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::ClassId | FilterField::Classes | FilterField::ClassTo => CursorSqlField {
+                column: "object_closure_view.descendant_class_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::ClassFrom => CursorSqlField {
+                column: "object_closure_view.ancestor_class_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::CreatedAt | FilterField::CreatedAtTo => CursorSqlField {
+                column: "object_closure_view.descendant_created_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::CreatedAtFrom => CursorSqlField {
+                column: "object_closure_view.ancestor_created_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::UpdatedAt | FilterField::UpdatedAtTo => CursorSqlField {
+                column: "object_closure_view.descendant_updated_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::UpdatedAtFrom => CursorSqlField {
+                column: "object_closure_view.ancestor_updated_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Depth => CursorSqlField {
+                column: "object_closure_view.depth",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Path => CursorSqlField {
+                column: "object_closure_view.path",
+                sql_type: CursorSqlType::IntegerArray,
+                nullable: false,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for related objects",
+                    field
+                )))
+            }
+        })
     }
 }

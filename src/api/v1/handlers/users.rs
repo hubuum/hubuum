@@ -5,7 +5,8 @@ use crate::extractors::{AdminAccess, AdminOrSelfAccess, UserAccess};
 use crate::models::search::parse_query_parameter;
 use crate::models::user::{NewUser, UpdateUser, UserID};
 use crate::models::{Group, User, UserToken};
-use crate::utilities::response::{json_response, json_response_created};
+use crate::pagination::prepare_db_pagination;
+use crate::utilities::response::{json_response, json_response_created, paginated_json_response};
 use actix_web::{delete, get, http::StatusCode, patch, routes, web, HttpRequest, Responder};
 use serde_json::json;
 use tracing::debug;
@@ -39,9 +40,10 @@ pub async fn get_users(
 
     debug!(message = "User list requested", requestor = user.username);
 
-    let result = user.search_users(&pool, params).await?;
+    let search_params = prepare_db_pagination::<User>(&params)?;
+    let result = user.search_users(&pool, search_params).await?;
 
-    Ok(json_response(result, StatusCode::OK))
+    paginated_json_response(result, StatusCode::OK, &params)
 }
 
 #[utoipa::path(
@@ -98,8 +100,11 @@ pub async fn get_user_tokens(
     pool: web::Data<DbPool>,
     user_id: web::Path<UserID>,
     requestor: AdminOrSelfAccess,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::db::traits::ActiveTokens;
+    let params = parse_query_parameter(req.query_string())?;
+
     let user = user_id.into_inner().user(&pool).await?;
     debug!(
         message = "User tokens requested",
@@ -107,8 +112,9 @@ pub async fn get_user_tokens(
         requestor = requestor.user.id
     );
 
-    let valid_tokens = user.tokens(&pool).await?;
-    Ok(json_response(valid_tokens, StatusCode::OK))
+    let search_params = prepare_db_pagination::<UserToken>(&params)?;
+    let valid_tokens = user.tokens_paginated(&pool, &search_params).await?;
+    paginated_json_response(valid_tokens, StatusCode::OK, &params)
 }
 
 #[utoipa::path(
@@ -160,8 +166,10 @@ pub async fn get_user_groups(
     pool: web::Data<DbPool>,
     user_id: web::Path<UserID>,
     requestor: AdminOrSelfAccess,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::models::traits::GroupAccessors;
+    let params = parse_query_parameter(req.query_string())?;
 
     let user = user_id.into_inner().user(&pool).await?;
     debug!(
@@ -170,8 +178,9 @@ pub async fn get_user_groups(
         requestor = requestor.user.id
     );
 
-    let groups = user.groups(&pool).await?;
-    Ok(json_response(groups, StatusCode::OK))
+    let search_params = prepare_db_pagination::<Group>(&params)?;
+    let groups = user.groups_paginated(&pool, &search_params).await?;
+    paginated_json_response(groups, StatusCode::OK, &params)
 }
 
 #[utoipa::path(

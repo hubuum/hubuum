@@ -1,11 +1,13 @@
 #[cfg(test)]
 mod tests {
+    use crate::models::group::NewGroup;
     use crate::models::user::{NewUser, UpdateUser, User};
+    use crate::pagination::NEXT_CURSOR_HEADER;
     use actix_web::{http::StatusCode, test};
     use yare::parameterized;
 
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
-    use crate::tests::asserts::assert_response_status;
+    use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{create_test_admin, create_test_user, setup_pool_and_tokens};
 
     const USERS_ENDPOINT: &str = "/api/v1/iam/users";
@@ -196,5 +198,160 @@ mod tests {
         for user in created_users {
             user.delete(&pool).await.unwrap();
         }
+    }
+
+    #[actix_web::test]
+    async fn test_list_users_cursor_pagination() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let prefix = "cursor_user";
+        let mut created_users = Vec::new();
+
+        for idx in 0..3 {
+            created_users.push(
+                NewUser {
+                    username: format!("{prefix}_{idx}"),
+                    password: "testpassword".to_string(),
+                    email: Some(format!("{prefix}_{idx}@example.com")),
+                }
+                .save(&pool)
+                .await
+                .unwrap(),
+            );
+        }
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{USERS_ENDPOINT}?username__contains={prefix}&limit=2&sort=id"),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        let users: Vec<User> = test::read_body_json(resp).await;
+
+        assert_eq!(users.len(), 2);
+        assert!(next_cursor.is_some());
+        assert!(users[0].id < users[1].id);
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!(
+                "{USERS_ENDPOINT}?username__contains={prefix}&limit=2&sort=id&cursor={}",
+                next_cursor.unwrap()
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let users: Vec<User> = test::read_body_json(resp).await;
+        assert!(!users.is_empty());
+
+        for user in created_users {
+            user.delete(&pool).await.unwrap();
+        }
+    }
+
+    #[actix_web::test]
+    async fn test_user_tokens_cursor_pagination() {
+        let (pool, _, _) = setup_pool_and_tokens().await;
+        let test_user = create_test_user(&pool).await;
+        let token = test_user.create_token(&pool).await.unwrap().get_token();
+
+        test_user.create_token(&pool).await.unwrap();
+        test_user.create_token(&pool).await.unwrap();
+
+        let resp = get_request(
+            &pool,
+            &token,
+            &format!("{}/{}/tokens?limit=1", USERS_ENDPOINT, test_user.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        let tokens: Vec<crate::models::UserToken> = test::read_body_json(resp).await;
+
+        assert_eq!(tokens.len(), 1);
+        assert!(next_cursor.is_some());
+
+        let resp = get_request(
+            &pool,
+            &token,
+            &format!(
+                "{}/{}/tokens?limit=1&cursor={}",
+                USERS_ENDPOINT,
+                test_user.id,
+                next_cursor.unwrap()
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let tokens: Vec<crate::models::UserToken> = test::read_body_json(resp).await;
+        assert_eq!(tokens.len(), 1);
+    }
+
+    #[actix_web::test]
+    async fn test_user_groups_filtering() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let user = create_test_user(&pool).await;
+        let matching_group = NewGroup {
+            groupname: format!("filter-user-groups-{}", user.id),
+            description: Some("matching group".to_string()),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+        let other_group = NewGroup {
+            groupname: format!("other-user-groups-{}", user.id),
+            description: Some("non-matching group".to_string()),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        matching_group.add_member(&pool, &user).await.unwrap();
+        other_group.add_member(&pool, &user).await.unwrap();
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!(
+                "{}/{}/groups?groupname__contains=filter-user-groups&sort=id",
+                USERS_ENDPOINT, user.id
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let groups: Vec<crate::models::Group> = test::read_body_json(resp).await;
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].id, matching_group.id);
+
+        matching_group.delete(&pool).await.unwrap();
+        other_group.delete(&pool).await.unwrap();
+        user.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_user_tokens_filtering() {
+        let (pool, _, _) = setup_pool_and_tokens().await;
+        let user = create_test_user(&pool).await;
+        let auth_token = user.create_token(&pool).await.unwrap().get_token();
+        let matching_token = user.create_token(&pool).await.unwrap().get_token();
+        user.create_token(&pool).await.unwrap();
+
+        let resp = get_request(
+            &pool,
+            &auth_token,
+            &format!(
+                "{}/{}/tokens?name={matching_token}&sort=name",
+                USERS_ENDPOINT, user.id
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let tokens: Vec<crate::models::UserToken> = test::read_body_json(resp).await;
+
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].token, matching_token);
     }
 }

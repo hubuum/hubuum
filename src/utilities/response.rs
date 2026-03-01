@@ -1,10 +1,14 @@
 use actix_web::{http::StatusCode, HttpResponse};
 use serde::Serialize;
 
-use std::collections::HashMap;
-use tracing::debug;
 use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::collections::HashSet;
+use tracing::debug;
+
+use crate::errors::ApiError;
+use crate::models::search::QueryOptions;
+use crate::pagination::{finalize_page, next_cursor_header, CursorPaginated};
 
 static NO_CONTENT_STATUS_CODES: Lazy<HashSet<StatusCode>> = Lazy::new(|| {
     let mut m = HashSet::new();
@@ -28,7 +32,7 @@ pub fn json_response<T: Serialize>(data: T, status: StatusCode) -> HttpResponse 
 pub fn json_response_with_header<T: Serialize>(
     data: T,
     status: StatusCode,
-    headers: Option<HashMap<&str, &str>>,
+    headers: Option<HashMap<String, String>>,
 ) -> HttpResponse {
     let mut response_builder = HttpResponse::build(status);
 
@@ -49,7 +53,42 @@ pub fn json_response_with_header<T: Serialize>(
 
 pub fn json_response_created<T: Serialize>(object: T, location: &str) -> HttpResponse {
     let mut headers = HashMap::new();
-    headers.insert("Location", location);
+    headers.insert("Location".to_string(), location.to_string());
 
     json_response_with_header(object, StatusCode::CREATED, Some(headers))
+}
+
+pub fn paginated_json_response<T>(
+    data: Vec<T>,
+    status: StatusCode,
+    query_options: &QueryOptions,
+) -> Result<HttpResponse, ApiError>
+where
+    T: Serialize + CursorPaginated,
+{
+    let page = finalize_page(data, query_options)?;
+    Ok(json_response_with_header(
+        page.items,
+        status,
+        next_cursor_header(&page.next_cursor),
+    ))
+}
+
+pub fn paginated_json_mapped_response<T, U, F>(
+    data: Vec<T>,
+    status: StatusCode,
+    query_options: &QueryOptions,
+    map: F,
+) -> Result<HttpResponse, ApiError>
+where
+    T: CursorPaginated,
+    U: Serialize,
+    F: FnOnce(Vec<T>) -> Vec<U>,
+{
+    let page = finalize_page(data, query_options)?;
+    Ok(json_response_with_header(
+        map(page.items),
+        status,
+        next_cursor_header(&page.next_cursor),
+    ))
 }

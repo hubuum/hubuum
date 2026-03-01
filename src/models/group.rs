@@ -1,6 +1,7 @@
 // src/models/group.rs
 
 use crate::errors::ApiError;
+use crate::models::search::{FilterField, QueryOptions, SortParam};
 use crate::models::user_group::NewUserGroup;
 use crate::schema::groups;
 
@@ -9,7 +10,10 @@ use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::traits::{CanSave, SelfAccessors};
+use crate::traits::{
+    CanSave, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+    SelfAccessors,
+};
 
 use crate::db::DbPool;
 
@@ -70,6 +74,47 @@ impl Group {
             .inner_join(users.on(id.eq(user_id)))
             .select((id, username, password, email, created_at, updated_at))
             .load::<User>(&mut pool.get()?)?)
+    }
+
+    pub async fn members_paginated(
+        &self,
+        pool: &DbPool,
+        query_options: &QueryOptions,
+    ) -> Result<Vec<User>, ApiError> {
+        use crate::schema::user_groups::dsl::{group_id, user_groups, user_id};
+        use crate::schema::users::dsl::{
+            created_at, email, id, password, updated_at, username, users,
+        };
+        use crate::{date_search, numeric_search, string_search};
+
+        let mut base_query = user_groups
+            .filter(group_id.eq(self.id))
+            .inner_join(users.on(id.eq(user_id)))
+            .select((id, username, password, email, created_at, updated_at))
+            .into_boxed();
+
+        for param in &query_options.filters {
+            let operator = param.operator.clone();
+            match param.field {
+                FilterField::Id => numeric_search!(base_query, param, operator, id),
+                FilterField::Name | FilterField::Username => {
+                    string_search!(base_query, param, operator, username)
+                }
+                FilterField::Email => string_search!(base_query, param, operator, email),
+                FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
+                FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for users",
+                        param.field
+                    )))
+                }
+            }
+        }
+
+        crate::apply_query_options!(base_query, query_options, User);
+
+        Ok(base_query.load::<User>(&mut pool.get()?)?)
     }
 
     /// Add a member to a group. If the user is already a member, do nothing.
@@ -159,5 +204,86 @@ fn new_group_example() -> NewGroup {
 fn update_group_example() -> UpdateGroup {
     UpdateGroup {
         groupname: Some("platform-ops".to_string()),
+    }
+}
+
+impl CursorPaginated for Group {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(
+            field,
+            FilterField::Id
+                | FilterField::Name
+                | FilterField::Groupname
+                | FilterField::Description
+                | FilterField::CreatedAt
+                | FilterField::UpdatedAt
+        )
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorValue::Integer(self.id as i64),
+            FilterField::Name | FilterField::Groupname => {
+                CursorValue::String(self.groupname.clone())
+            }
+            FilterField::Description => CursorValue::String(self.description.clone()),
+            FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
+            FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for groups",
+                    field
+                )))
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        Self::default_sort()
+    }
+}
+
+impl CursorSqlMapping for Group {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorSqlField {
+                column: "groups.id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Name | FilterField::Groupname => CursorSqlField {
+                column: "groups.groupname",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::Description => CursorSqlField {
+                column: "groups.description",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::CreatedAt => CursorSqlField {
+                column: "groups.created_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::UpdatedAt => CursorSqlField {
+                column: "groups.updated_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for groups",
+                    field
+                )))
+            }
+        })
     }
 }

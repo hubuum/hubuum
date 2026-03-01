@@ -3,11 +3,11 @@
 use serde_json::Value;
 use yare::parameterized;
 
+use crate::errors::ApiError;
 use crate::models::{Namespace, NewHubuumClass, NewHubuumObject, UpdateHubuumObject};
 use crate::tests::constants::{get_schema, SchemaType};
 use crate::tests::{create_namespace, get_pool_and_config};
 use crate::traits::{CanDelete, CanSave, Validate, ValidateAgainstSchema};
-use crate::errors::ApiError;
 
 /// Sets up a Geo class (with its namespace) for testing.
 /// The identifier string is used to create unique names.
@@ -46,7 +46,7 @@ fn assert_validation_result(result: Result<(), ApiError>, expected: bool, contex
     }
 }
 
-#[parameterized(    
+#[parameterized(
     ok_40_74 = { r#"{"latitude": 40.7128, "longitude": -74.0060}"#, true },
     failed_91_74 = { r#"{"latitude": 91, "longitude": 200}"#, false },
     failed_neg91_74 = { r#"{"latitude": -91, "longitude": 200}"#, false },
@@ -88,7 +88,7 @@ async fn test_validate_object(json_data: &str, expected: bool) {
     ns.delete(&pool).await.expect("Failed to delete namespace");
 }
 
-#[parameterized(    
+#[parameterized(
     ok_40_74 = { r#"{"latitude": -40.7128, "longitude": 74.0060}"#, true },
     failed_91_74 = { r#"{"latitude": 91, "longitude": 75}"#, false },
     failed_neg91_74 = { r#"{"latitude": -91, "longitude": 74}"#, false },
@@ -100,7 +100,7 @@ async fn test_validate_update_object(json_data: &str, expected: bool) {
     // The base data for the original object.
     let base_data = r#"{"latitude": 40.7128, "longitude": -74.0060}"#;
     let obj_name = format!("{json_data}_test_validate_update_object");
-    
+
     let base_data = serde_json::from_str::<Value>(base_data).unwrap();
     let updated_data = serde_json::from_str::<Value>(json_data).unwrap();
 
@@ -115,14 +115,17 @@ async fn test_validate_update_object(json_data: &str, expected: bool) {
         hubuum_class_id: class.id,
         data: base_data,
         description: "Test object".to_string(),
-    }.save(&pool).await.expect("Failed to create object");
+    }
+    .save(&pool)
+    .await
+    .expect("Failed to create object");
 
     // Build the update with the new JSON data.
     let update_object = UpdateHubuumObject {
         name: None,
         namespace_id: None,
         hubuum_class_id: None,
-        description: None,        
+        description: None,
         data: Some(updated_data.clone()),
     };
 

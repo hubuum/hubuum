@@ -11,18 +11,21 @@ use tracing::debug;
 
 use crate::api::v1::handlers::namespaces;
 use crate::models::search::{
-    FilterField, ParsedQueryParam, QueryOptions, QueryParamsExt, SearchOperator,
+    FilterField, ParsedQueryParam, QueryOptions, QueryParamsExt, SearchOperator, SortParam,
 };
 use crate::models::traits::ExpandNamespaceFromMap;
 use crate::models::{
     class, group, permissions, ClassClosureView, Group, HubuumClass, HubuumClassExpanded,
-    HubuumClassRelation, HubuumObject, HubuumObjectRelation, Namespace, ObjectClosureView,
-    Permission, Permissions, User, UserID,
+    HubuumClassRelation, HubuumObject, HubuumObjectRelation, HubuumObjectWithPath, Namespace,
+    ObjectClosureView, Permission, Permissions, User, UserID,
 };
 
 use crate::schema::hubuumclass::namespace_id;
 use crate::schema::{hubuumclass, hubuumobject};
-use crate::traits::{ClassAccessors, NamespaceAccessors, SelfAccessors};
+use crate::traits::{
+    ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+    NamespaceAccessors, SelfAccessors,
+};
 
 use crate::db::{with_connection, DbPool};
 use crate::errors::ApiError;
@@ -42,7 +45,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             group_id, namespace_id as permissions_nid, permissions,
         };
 
-        let query_params = query_options.filters;
+        let query_params = query_options.filters.clone();
 
         debug!(
             message = "Searching namespaces",
@@ -111,39 +114,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             }
         }
 
-        for order in query_options.sort.iter() {
-            use crate::schema::namespaces::dsl::{
-                created_at, id as namespace_id, name, updated_at,
-            };
-            match (&order.field, &order.descending) {
-                (FilterField::Id, false) => base_query = base_query.order_by(namespace_id.asc()),
-                (FilterField::Id, true) => base_query = base_query.order_by(namespace_id.desc()),
-                (FilterField::CreatedAt, false) => {
-                    base_query = base_query.order_by(created_at.asc())
-                }
-                (FilterField::CreatedAt, true) => {
-                    base_query = base_query.order_by(created_at.desc())
-                }
-                (FilterField::UpdatedAt, false) => {
-                    base_query = base_query.order_by(updated_at.asc())
-                }
-                (FilterField::UpdatedAt, true) => {
-                    base_query = base_query.order_by(updated_at.desc())
-                }
-                (FilterField::Name, false) => base_query = base_query.order_by(name.asc()),
-                (FilterField::Name, true) => base_query = base_query.order_by(name.desc()),
-                _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't orderable (or does not exist) for namespaces",
-                        order.field
-                    )))
-                }
-            }
-        }
-
-        if let Some(limit) = query_options.limit {
-            base_query = base_query.limit(limit as i64);
-        }
+        crate::apply_query_options!(base_query, query_options, Namespace);
 
         let result = with_connection(pool, |conn| {
             base_query
@@ -165,7 +136,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         };
         use crate::schema::permissions::dsl::*;
 
-        let query_params = query_options.filters;
+        let query_params = query_options.filters.clone();
 
         debug!(
             message = "Searching classes",
@@ -282,46 +253,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             }
         }
 
-        for order in query_options.sort.iter() {
-            use crate::schema::hubuumclass::dsl::{
-                created_at, id as hubuum_class_id, name, namespace_id as hubuum_classes_nid,
-                updated_at,
-            };
-            match (&order.field, &order.descending) {
-                (FilterField::Id, false) => base_query = base_query.order_by(hubuum_class_id.asc()),
-                (FilterField::Id, true) => base_query = base_query.order_by(hubuum_class_id.desc()),
-                (FilterField::CreatedAt, false) => {
-                    base_query = base_query.order_by(created_at.asc())
-                }
-                (FilterField::CreatedAt, true) => {
-                    base_query = base_query.order_by(created_at.desc())
-                }
-                (FilterField::UpdatedAt, false) => {
-                    base_query = base_query.order_by(updated_at.asc())
-                }
-                (FilterField::UpdatedAt, true) => {
-                    base_query = base_query.order_by(updated_at.desc())
-                }
-                (FilterField::Name, false) => base_query = base_query.order_by(name.asc()),
-                (FilterField::Name, true) => base_query = base_query.order_by(name.desc()),
-                (FilterField::NamespaceId, false) => {
-                    base_query = base_query.order_by(hubuum_classes_nid.asc())
-                }
-                (FilterField::NamespaceId, true) => {
-                    base_query = base_query.order_by(hubuum_classes_nid.desc())
-                }
-                _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't orderable (or does not exist) for classes",
-                        order.field
-                    )))
-                }
-            }
-        }
-
-        if let Some(limit) = query_options.limit {
-            base_query = base_query.limit(limit as i64);
-        }
+        crate::apply_query_options!(base_query, query_options, HubuumClassExpanded);
 
         trace_query!(base_query, "Searching classes");
 
@@ -354,7 +286,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         };
         use crate::schema::permissions::dsl::*;
 
-        let query_params = query_options.filters;
+        let query_params = query_options.filters.clone();
 
         debug!(
             message = "Searching objects",
@@ -481,56 +413,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             }
         }
 
-        for order in query_options.sort.iter() {
-            use crate::schema::hubuumobject::dsl::{
-                created_at, hubuum_class_id, id as hubuum_object_id, name,
-                namespace_id as hubuum_object_nid, updated_at,
-            };
-            match (&order.field, &order.descending) {
-                (FilterField::Id, false) => {
-                    base_query = base_query.order_by(hubuum_object_id.asc())
-                }
-                (FilterField::Id, true) => {
-                    base_query = base_query.order_by(hubuum_object_id.desc())
-                }
-                (FilterField::ClassId, false) => {
-                    base_query = base_query.order_by(hubuum_class_id.asc())
-                }
-                (FilterField::ClassId, true) => {
-                    base_query = base_query.order_by(hubuum_class_id.desc())
-                }
-                (FilterField::NamespaceId, false) => {
-                    base_query = base_query.order_by(hubuum_object_nid.asc())
-                }
-                (FilterField::NamespaceId, true) => {
-                    base_query = base_query.order_by(hubuum_object_nid.desc())
-                }
-                (FilterField::CreatedAt, false) => {
-                    base_query = base_query.order_by(created_at.asc())
-                }
-                (FilterField::CreatedAt, true) => {
-                    base_query = base_query.order_by(created_at.desc())
-                }
-                (FilterField::UpdatedAt, false) => {
-                    base_query = base_query.order_by(updated_at.asc())
-                }
-                (FilterField::UpdatedAt, true) => {
-                    base_query = base_query.order_by(updated_at.desc())
-                }
-                (FilterField::Name, false) => base_query = base_query.order_by(name.asc()),
-                (FilterField::Name, true) => base_query = base_query.order_by(name.desc()),
-                _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't orderable (or does not exist) for classes",
-                        order.field
-                    )))
-                }
-            }
-        }
-
-        if let Some(limit) = query_options.limit {
-            base_query = base_query.limit(limit as i64);
-        }
+        crate::apply_query_options!(base_query, query_options, HubuumObject);
 
         trace_query!(base_query, "Searching objects");
 
@@ -573,7 +456,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         use diesel::alias;
         use std::collections::HashSet;
 
-        let query_params = query_options.filters;
+        let query_params = query_options.filters.clone();
 
         debug!(
             message = "Searching class relations",
@@ -617,6 +500,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                     filters: vec![qparam],
                     sort: vec![],
                     limit: None,
+                    cursor: None,
                 };
                 let classes = self.search_classes(pool, query_options).await?;
                 let class_ids: Vec<i32> = classes.iter().map(|c| c.id).collect();
@@ -719,54 +603,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             }
         }
 
-        for order in query_options.sort.iter() {
-            match (&order.field, &order.descending) {
-                (FilterField::Id, false) => {
-                    base_query = base_query.order_by(hubuum_class_relation_id.asc())
-                }
-                (FilterField::Id, true) => {
-                    base_query = base_query.order_by(hubuum_class_relation_id.desc())
-                }
-                (FilterField::ClassFrom, false) => {
-                    base_query = base_query.order_by(from_hubuum_class_id.asc())
-                }
-                (FilterField::ClassFrom, true) => {
-                    base_query = base_query.order_by(from_hubuum_class_id.desc())
-                }
-                (FilterField::ClassTo, false) => {
-                    base_query = base_query.order_by(to_hubuum_class_id.asc())
-                }
-                (FilterField::ClassTo, true) => {
-                    base_query = base_query.order_by(to_hubuum_class_id.desc())
-                }
-                (FilterField::CreatedAt, false) => {
-                    base_query = base_query
-                        .order_by(crate::schema::hubuumclass_relation::dsl::created_at.asc())
-                }
-                (FilterField::CreatedAt, true) => {
-                    base_query = base_query
-                        .order_by(crate::schema::hubuumclass_relation::dsl::created_at.desc())
-                }
-                (FilterField::UpdatedAt, false) => {
-                    base_query = base_query
-                        .order_by(crate::schema::hubuumclass_relation::dsl::updated_at.asc())
-                }
-                (FilterField::UpdatedAt, true) => {
-                    base_query = base_query
-                        .order_by(crate::schema::hubuumclass_relation::dsl::updated_at.desc())
-                }
-                _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't orderable (or does not exist) for class relations",
-                        order.field
-                    )))
-                }
-            }
-        }
-
-        if let Some(limit) = query_options.limit {
-            base_query = base_query.limit(limit as i64);
-        }
+        crate::apply_query_options!(base_query, query_options, HubuumClassRelation);
 
         trace_query!(base_query, "Searching class relations");
 
@@ -808,7 +645,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         use diesel::alias;
         use std::collections::HashSet;
 
-        let query_params = query_options.filters;
+        let query_params = query_options.filters.clone();
 
         debug!(
             message = "Searching object relations",
@@ -904,60 +741,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
             }
         }
 
-        for order in query_options.sort.iter() {
-            match (&order.field, &order.descending) {
-                (FilterField::Id, false) => {
-                    base_query = base_query.order_by(hubuum_object_relation_id.asc())
-                }
-                (FilterField::Id, true) => {
-                    base_query = base_query.order_by(hubuum_object_relation_id.desc())
-                }
-                (FilterField::ClassRelation, false) => {
-                    base_query = base_query.order_by(class_relation_id.asc())
-                }
-                (FilterField::ClassRelation, true) => {
-                    base_query = base_query.order_by(class_relation_id.desc())
-                }
-                (FilterField::ObjectFrom, false) => {
-                    base_query = base_query.order_by(from_hubuum_object_id.asc())
-                }
-                (FilterField::ObjectFrom, true) => {
-                    base_query = base_query.order_by(from_hubuum_object_id.desc())
-                }
-                (FilterField::ObjectTo, false) => {
-                    base_query = base_query.order_by(to_hubuum_object_id.asc())
-                }
-                (FilterField::ObjectTo, true) => {
-                    base_query = base_query.order_by(to_hubuum_object_id.desc())
-                }
-                (FilterField::CreatedAt, false) => {
-                    base_query = base_query
-                        .order_by(crate::schema::hubuumobject_relation::dsl::created_at.asc())
-                }
-                (FilterField::CreatedAt, true) => {
-                    base_query = base_query
-                        .order_by(crate::schema::hubuumobject_relation::dsl::created_at.desc())
-                }
-                (FilterField::UpdatedAt, false) => {
-                    base_query = base_query
-                        .order_by(crate::schema::hubuumobject_relation::dsl::updated_at.asc())
-                }
-                (FilterField::UpdatedAt, true) => {
-                    base_query = base_query
-                        .order_by(crate::schema::hubuumobject_relation::dsl::updated_at.desc())
-                }
-                _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't orderable (or does not exist) for object relations",
-                        order.field
-                    )))
-                }
-            }
-        }
-
-        if let Some(limit) = query_options.limit {
-            base_query = base_query.limit(limit as i64);
-        }
+        crate::apply_query_options!(base_query, query_options, HubuumObjectRelation);
 
         trace_query!(base_query, "Searching object relations");
 
@@ -983,7 +767,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         use crate::schema::object_closure_view::dsl as obj;
         use diesel::prelude::*;
 
-        let query_params = query_options.filters;
+        let query_params = query_options.filters.clone();
 
         debug!(
             message = "Searching objects related to object",
@@ -1059,44 +843,44 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                 FilterField::ObjectFrom => {
                     numeric_search!(base_query, param, operator, obj::ancestor_object_id)
                 }
-                FilterField::ObjectTo => {
+                FilterField::Id | FilterField::ObjectTo => {
                     numeric_search!(base_query, param, operator, obj::descendant_object_id)
                 }
                 FilterField::ClassFrom => {
                     numeric_search!(base_query, param, operator, obj::ancestor_class_id)
                 }
-                FilterField::ClassTo => {
+                FilterField::ClassId | FilterField::Classes | FilterField::ClassTo => {
                     numeric_search!(base_query, param, operator, obj::descendant_class_id)
+                }
+                FilterField::Namespaces | FilterField::NamespaceId | FilterField::NamespacesTo => {
+                    numeric_search!(base_query, param, operator, obj::descendant_namespace_id)
                 }
                 FilterField::NamespacesFrom => {
                     numeric_search!(base_query, param, operator, obj::ancestor_namespace_id)
                 }
-                FilterField::NamespacesTo => {
-                    numeric_search!(base_query, param, operator, obj::descendant_namespace_id)
+                FilterField::Name | FilterField::NameTo => {
+                    string_search!(base_query, param, operator, obj::descendant_name)
                 }
                 FilterField::NameFrom => {
                     string_search!(base_query, param, operator, obj::ancestor_name)
                 }
-                FilterField::NameTo => {
-                    string_search!(base_query, param, operator, obj::descendant_name)
+                FilterField::Description | FilterField::DescriptionTo => {
+                    string_search!(base_query, param, operator, obj::descendant_description)
                 }
                 FilterField::DescriptionFrom => {
                     string_search!(base_query, param, operator, obj::ancestor_description)
                 }
-                FilterField::DescriptionTo => {
-                    string_search!(base_query, param, operator, obj::descendant_description)
+                FilterField::CreatedAt | FilterField::CreatedAtTo => {
+                    date_search!(base_query, param, operator, obj::descendant_created_at)
                 }
                 FilterField::CreatedAtFrom => {
                     date_search!(base_query, param, operator, obj::ancestor_created_at)
                 }
-                FilterField::CreatedAtTo => {
-                    date_search!(base_query, param, operator, obj::descendant_created_at)
+                FilterField::UpdatedAt | FilterField::UpdatedAtTo => {
+                    date_search!(base_query, param, operator, obj::descendant_updated_at)
                 }
                 FilterField::UpdatedAtFrom => {
                     date_search!(base_query, param, operator, obj::ancestor_updated_at)
-                }
-                FilterField::UpdatedAtTo => {
-                    date_search!(base_query, param, operator, obj::descendant_updated_at)
                 }
                 FilterField::JsonDataFrom => {
                     json_search!(
@@ -1126,113 +910,14 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                 }
                 _ => {
                     return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't searchable (or does not exist) for object relations",
+                        "Field '{}' isn't searchable (or does not exist) for related objects",
                         param.field
                     )))
                 }
             }
         }
 
-        for order in query_options.sort.iter() {
-            match (&order.field, &order.descending) {
-                (FilterField::ObjectFrom, false) => {
-                    base_query = base_query.order_by(obj::ancestor_object_id.asc())
-                }
-                (FilterField::ObjectFrom, true) => {
-                    base_query = base_query.order_by(obj::ancestor_object_id.desc())
-                }
-                (FilterField::ObjectTo, false) => {
-                    base_query = base_query.order_by(obj::descendant_object_id.asc())
-                }
-                (FilterField::ObjectTo, true) => {
-                    base_query = base_query.order_by(obj::descendant_object_id.desc())
-                }
-                (FilterField::ClassFrom, false) => {
-                    base_query = base_query.order_by(obj::ancestor_class_id.asc())
-                }
-                (FilterField::ClassFrom, true) => {
-                    base_query = base_query.order_by(obj::ancestor_class_id.desc())
-                }
-                (FilterField::ClassTo, false) => {
-                    base_query = base_query.order_by(obj::descendant_class_id.asc())
-                }
-                (FilterField::ClassTo, true) => {
-                    base_query = base_query.order_by(obj::descendant_class_id.desc())
-                }
-                (FilterField::NamespacesFrom, false) => {
-                    base_query = base_query.order_by(obj::ancestor_namespace_id.asc())
-                }
-                (FilterField::NamespacesFrom, true) => {
-                    base_query = base_query.order_by(obj::ancestor_namespace_id.desc())
-                }
-                (FilterField::NamespacesTo, false) => {
-                    base_query = base_query.order_by(obj::descendant_namespace_id.asc())
-                }
-                (FilterField::NamespacesTo, true) => {
-                    base_query = base_query.order_by(obj::descendant_namespace_id.desc())
-                }
-                (FilterField::NameFrom, false) => {
-                    base_query = base_query.order_by(obj::ancestor_name.asc())
-                }
-                (FilterField::NameFrom, true) => {
-                    base_query = base_query.order_by(obj::ancestor_name.desc())
-                }
-                (FilterField::NameTo, false) => {
-                    base_query = base_query.order_by(obj::descendant_name.asc())
-                }
-                (FilterField::NameTo, true) => {
-                    base_query = base_query.order_by(obj::descendant_name.desc())
-                }
-                (FilterField::DescriptionFrom, false) => {
-                    base_query = base_query.order_by(obj::ancestor_description.asc())
-                }
-                (FilterField::DescriptionFrom, true) => {
-                    base_query = base_query.order_by(obj::ancestor_description.desc())
-                }
-                (FilterField::DescriptionTo, false) => {
-                    base_query = base_query.order_by(obj::descendant_description.asc())
-                }
-                (FilterField::DescriptionTo, true) => {
-                    base_query = base_query.order_by(obj::descendant_description.desc())
-                }
-                (FilterField::CreatedAtFrom, false) => {
-                    base_query = base_query.order_by(obj::ancestor_created_at.asc())
-                }
-                (FilterField::CreatedAtFrom, true) => {
-                    base_query = base_query.order_by(obj::ancestor_created_at.desc())
-                }
-                (FilterField::CreatedAtTo, false) => {
-                    base_query = base_query.order_by(obj::descendant_created_at.asc())
-                }
-                (FilterField::CreatedAtTo, true) => {
-                    base_query = base_query.order_by(obj::descendant_created_at.desc())
-                }
-                (FilterField::UpdatedAtFrom, false) => {
-                    base_query = base_query.order_by(obj::ancestor_updated_at.asc())
-                }
-                (FilterField::UpdatedAtFrom, true) => {
-                    base_query = base_query.order_by(obj::ancestor_updated_at.desc())
-                }
-                (FilterField::UpdatedAtTo, false) => {
-                    base_query = base_query.order_by(obj::descendant_updated_at.asc())
-                }
-                (FilterField::UpdatedAtTo, true) => {
-                    base_query = base_query.order_by(obj::descendant_updated_at.desc())
-                }
-                (FilterField::Depth, false) => base_query = base_query.order_by(obj::depth.asc()),
-                (FilterField::Depth, true) => base_query = base_query.order_by(obj::depth.desc()),
-                _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't orderable (or does not exist) for related objects",
-                        order.field
-                    )))
-                }
-            }
-        }
-
-        if let Some(limit) = query_options.limit {
-            base_query = base_query.limit(limit as i64);
-        }
+        crate::apply_query_options!(base_query, query_options, ObjectClosureView);
 
         trace_query!(base_query, "Searching object relations");
 
@@ -1263,6 +948,48 @@ pub trait GroupAccessors: SelfAccessors<User> {
         })?;
 
         Ok(group_list)
+    }
+
+    #[allow(async_fn_in_trait)]
+    async fn groups_paginated(
+        &self,
+        pool: &DbPool,
+        query_options: &QueryOptions,
+    ) -> Result<Vec<Group>, ApiError> {
+        use crate::schema::groups::dsl::*;
+        use crate::schema::user_groups::dsl::{group_id, user_groups, user_id};
+        use crate::{date_search, numeric_search, string_search};
+
+        let mut base_query = user_groups
+            .inner_join(groups.on(id.eq(group_id)))
+            .filter(user_id.eq(self.id()))
+            .select(groups::all_columns())
+            .into_boxed();
+
+        for param in &query_options.filters {
+            let operator = param.operator.clone();
+            match param.field {
+                FilterField::Id => numeric_search!(base_query, param, operator, id),
+                FilterField::Name | FilterField::Groupname => {
+                    string_search!(base_query, param, operator, groupname)
+                }
+                FilterField::Description => {
+                    string_search!(base_query, param, operator, description)
+                }
+                FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
+                FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for groups",
+                        param.field
+                    )))
+                }
+            }
+        }
+
+        crate::apply_query_options!(base_query, query_options, Group);
+
+        with_connection(pool, |conn| base_query.load::<Group>(conn))
     }
 
     /*
@@ -1472,6 +1199,92 @@ impl GroupAccessors for &UserID {}
 impl Search for User {}
 impl Search for UserID {}
 
+fn string_or_null(value: Option<&str>) -> CursorValue {
+    match value {
+        Some(value) => CursorValue::String(value.to_string()),
+        None => CursorValue::Null,
+    }
+}
+
+impl CursorPaginated for User {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(
+            field,
+            FilterField::Id
+                | FilterField::Name
+                | FilterField::Username
+                | FilterField::Email
+                | FilterField::CreatedAt
+                | FilterField::UpdatedAt
+        )
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorValue::Integer(self.id as i64),
+            FilterField::Name | FilterField::Username => CursorValue::String(self.username.clone()),
+            FilterField::Email => string_or_null(self.email.as_deref()),
+            FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
+            FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for users",
+                    field
+                )))
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        Self::default_sort()
+    }
+}
+
+impl CursorSqlMapping for User {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorSqlField {
+                column: "users.id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Name | FilterField::Username => CursorSqlField {
+                column: "users.username",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::Email => CursorSqlField {
+                column: "users.email",
+                sql_type: CursorSqlType::String,
+                nullable: true,
+            },
+            FilterField::CreatedAt => CursorSqlField {
+                column: "users.created_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::UpdatedAt => CursorSqlField {
+                column: "users.updated_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for users",
+                    field
+                )))
+            }
+        })
+    }
+}
+
 impl SelfAccessors<User> for User {
     fn id(&self) -> i32 {
         self.id
@@ -1531,6 +1344,7 @@ mod test {
             filters: vec![filter.clone()],
             sort: vec![],
             limit: None,
+            cursor: None,
         }
     }
 
@@ -1649,6 +1463,7 @@ mod test {
                     filters: vec![],
                     sort: vec![],
                     limit: None,
+                    cursor: None,
                 },
             )
             .await

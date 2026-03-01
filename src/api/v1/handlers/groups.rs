@@ -5,7 +5,8 @@ use crate::extractors::{AdminAccess, UserAccess};
 use crate::models::group::{GroupID, NewGroup, UpdateGroup};
 use crate::models::search::parse_query_parameter;
 use crate::models::{Group, User, UserID};
-use crate::utilities::response::{json_response, json_response_created};
+use crate::pagination::prepare_db_pagination;
+use crate::utilities::response::{json_response, json_response_created, paginated_json_response};
 use actix_web::{delete, get, http::StatusCode, patch, post, routes, web, HttpRequest, Responder};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -50,9 +51,10 @@ pub async fn get_groups(
         params = ?params
     );
 
-    let result = user.search_groups(&pool, params).await?;
+    let search_params = prepare_db_pagination::<Group>(&params)?;
+    let result = user.search_groups(&pool, search_params).await?;
 
-    Ok(json_response(result, StatusCode::OK))
+    paginated_json_response(result, StatusCode::OK, &params)
 }
 
 #[utoipa::path(
@@ -205,7 +207,10 @@ pub async fn get_group_members(
     pool: web::Data<DbPool>,
     group_id: web::Path<GroupID>,
     requestor: UserAccess,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
+    let params = parse_query_parameter(req.query_string())?;
+
     let group = group_id.group(&pool).await?;
 
     debug!(
@@ -214,9 +219,10 @@ pub async fn get_group_members(
         requestor = requestor.user.id
     );
 
-    let members = group.members(&pool).await?;
+    let search_params = prepare_db_pagination::<User>(&params)?;
+    let members = group.members_paginated(&pool, &search_params).await?;
 
-    Ok(json_response(members, StatusCode::OK))
+    paginated_json_response(members, StatusCode::OK, &params)
 }
 
 #[utoipa::path(

@@ -129,7 +129,7 @@ pub struct ClassClosureView {
     pub descendant_updated_at: chrono::NaiveDateTime,
 }
 
-#[derive(Debug, Queryable, Selectable, Serialize, Deserialize)]
+#[derive(Debug, Queryable, Selectable, Serialize, Deserialize, Clone)]
 #[diesel(table_name = object_closure_view)]
 pub struct ObjectClosureView {
     pub ancestor_object_id: i32,

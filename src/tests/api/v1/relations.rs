@@ -8,11 +8,12 @@ mod tests {
         HubuumObjectRelation, HubuumObjectWithPath, NamespaceID, NewHubuumClassRelation,
         NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation, Permissions,
     };
+    use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::traits::{CanSave, PermissionController, SelfAccessors};
     use crate::{assert_contains_all, assert_contains_same_ids};
 
     use crate::tests::api_operations::{delete_request, get_request, post_request};
-    use crate::tests::asserts::assert_response_status;
+    use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{create_test_group, ensure_normal_user, setup_pool_and_tokens};
     // use crate::{assert_contains_all, assert_contains_same_ids};
 
@@ -75,13 +76,52 @@ mod tests {
         classes: &[HubuumClass],
     ) -> Vec<crate::models::HubuumObject> {
         let mut objects = Vec::new();
-        for class in classes {
+        for (index, class) in classes.iter().enumerate() {
+            let data = match index {
+                0 => serde_json::json!({
+                    "role": "source-root",
+                    "hostname": "root-01",
+                    "env": "prod",
+                    "service": "gateway"
+                }),
+                1 => serde_json::json!({
+                    "role": "service-api",
+                    "hostname": "api-01",
+                    "env": "prod",
+                    "service": "api"
+                }),
+                2 => serde_json::json!({
+                    "role": "service-db",
+                    "hostname": "db-01",
+                    "env": "prod",
+                    "service": "db"
+                }),
+                3 => serde_json::json!({
+                    "role": "service-worker",
+                    "hostname": "worker-01",
+                    "env": "stage",
+                    "service": "worker"
+                }),
+                4 => serde_json::json!({
+                    "role": "service-cache",
+                    "hostname": "cache-01",
+                    "env": "stage",
+                    "service": "cache"
+                }),
+                _ => serde_json::json!({
+                    "role": format!("service-{index}"),
+                    "hostname": format!("node-{index:02}"),
+                    "env": "stage",
+                    "service": "misc"
+                }),
+            };
+
             let object = NewHubuumObject {
                 hubuum_class_id: class.id,
                 namespace_id: class.namespace_id,
                 name: format!("object_in_{}", class.name),
                 description: format!("Object in class {}", class.description),
-                data: serde_json::json!({}),
+                data,
             };
 
             objects.push(object.save(pool).await.unwrap());
@@ -149,6 +189,46 @@ mod tests {
         assert_eq!(limited_relations.len(), 2);
         assert_eq!(limited_relations[0].id, relations[0].id);
         assert_eq!(limited_relations[1].id, relations[1].id);
+
+        cleanup(&classes).await;
+    }
+
+    #[actix_web::test]
+    async fn test_get_class_relations_cursor_pagination() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let (classes, _relations) =
+            create_classes_and_relations(&pool, "get_class_relations_cursor").await;
+        let class_ids = classes
+            .iter()
+            .map(|class| class.id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{CLASS_RELATIONS_ENDPOINT}?from_classes={class_ids}&limit=2&sort=id"),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        let relations: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
+
+        assert_eq!(relations.len(), 2);
+        assert!(next_cursor.is_some());
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!(
+                "{CLASS_RELATIONS_ENDPOINT}?from_classes={class_ids}&limit=2&sort=id&cursor={}",
+                next_cursor.unwrap()
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let relations: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
+        assert!(!relations.is_empty());
 
         cleanup(&classes).await;
     }
@@ -486,8 +566,8 @@ mod tests {
         rel_0_0_from_name = { 0, 0, StatusCode::OK, "?from_name__contains=0", vec![1,2,4]},
         rel_0_0_to_name = { 0, 0, StatusCode::OK, "?to_name__endswith=api_class_2", vec![1]},
         rel_0_0_to_desc = { 0, 0, StatusCode::OK, "?to_description__endswith=api_description_2", vec![1]},
-        rel_0_0_depth_eq = { 0, 0, StatusCode::OK, "?depth=1", vec![1,2]},
-        rel_0_0_depth_gt = { 0, 0, StatusCode::OK, "?depth__gt=1", vec![4]},
+        rel_0_0_depth_eq = { 0, 0, StatusCode::OK, "?depth=1", vec![1,4]},
+        rel_0_0_depth_gt = { 0, 0, StatusCode::OK, "?depth__gt=1", vec![2]},
         rel_0_0_depth_lt = { 0, 0, StatusCode::OK, "?depth__lt=1", vec![]},
         rel_0_0_path_equals_0_1 = { 0, 0, StatusCode::OK, "?path=<0>,<1>", vec![1]},
         rel_0_0_path_equals_0_2 = { 0, 0, StatusCode::OK, "?path=<0>,<1>,<2>", vec![2]},
@@ -538,10 +618,15 @@ mod tests {
         if status == StatusCode::OK {
             let body = test::read_body(resp).await;
             let objects_fetched: Vec<HubuumObjectWithPath> = serde_json::from_slice(&body).unwrap();
+            let expected_ids: Vec<i32> = expected_object_ids
+                .iter()
+                .map(|i| objects[*i].id)
+                .collect::<Vec<_>>();
+            let fetched_ids = objects_fetched.iter().map(|o| o.id).collect::<Vec<_>>();
 
             assert_eq!(
-                objects_fetched.len(),
-                expected_object_ids.len(),
+                fetched_ids,
+                expected_ids,
                 "{} -> Expected: {:?}, got: {:?}\nAll objects: {:?}",
                 endpoint,
                 expected_object_ids
@@ -552,6 +637,52 @@ mod tests {
                 objects
             );
         }
+
+        cleanup(&classes).await;
+    }
+
+    // Covers docs/relationship_endpoints.md "Querying related objects" (`from_json_data` and `to_json_data`).
+    #[parameterized(
+        docs_from_json_data_matches_ancestor = { "?from_json_data__equals=role=source-root", vec![1,2,4] },
+        docs_from_json_data_does_not_match_descendant_fields = { "?from_json_data__equals=hostname=api-01", vec![] },
+        docs_to_json_data_matches_descendants = { "?to_json_data__equals=env=prod", vec![1,2] },
+        docs_to_json_data_does_not_match_ancestor_fields = { "?to_json_data__equals=role=source-root", vec![] }
+    )]
+    #[test_macro(actix_web::test)]
+    async fn docs_api_related_objects_filter_json_data_examples(
+        filter: &str,
+        expected_object_ids: Vec<usize>,
+    ) {
+        let unique = format!("docs_related_objects_json_{}", filter)
+            .replace(&['=', '&', '?', ' ', '<', '>'][..], "_");
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let (classes, relations) = create_classes_and_relations(&pool, &unique).await;
+        let objects = create_objects_in_classes(&pool, &classes).await;
+
+        let _ = create_object_relation(&pool, &objects[0], &objects[1], &relations[0]).await;
+        let _ = create_object_relation(&pool, &objects[1], &objects[2], &relations[1]).await;
+        let class_relation_15 = create_relation(&pool, &classes[0], &classes[4]).await;
+        let _ = create_object_relation(&pool, &objects[0], &objects[4], &class_relation_15).await;
+
+        let endpoint = format!(
+            "/api/v1/classes/{}/{}/relations/{}",
+            classes[0].id, objects[0].id, filter
+        );
+
+        let resp = get_request(&pool, &admin_token, &endpoint).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let objects_fetched: Vec<HubuumObjectWithPath> = test::read_body_json(resp).await;
+
+        let expected_ids = expected_object_ids
+            .iter()
+            .map(|i| objects[*i].id)
+            .collect::<Vec<_>>();
+        let fetched_ids = objects_fetched
+            .iter()
+            .map(|object| object.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(fetched_ids, expected_ids, "{endpoint}");
 
         cleanup(&classes).await;
     }

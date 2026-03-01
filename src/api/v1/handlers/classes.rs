@@ -9,14 +9,17 @@ use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::traits::{ExpandNamespace, ToHubuumObjects};
-use crate::utilities::response::{json_response, json_response_created};
+use crate::pagination::prepare_db_pagination;
+use crate::utilities::response::{
+    json_response, json_response_created, paginated_json_mapped_response, paginated_json_response,
+};
 
 use crate::models::{
     GroupPermission, HubuumClassExpanded, HubuumClassID, HubuumClassRelation,
     HubuumClassRelationID, HubuumClassRelationTransitive, HubuumObject, HubuumObjectID,
     HubuumObjectRelation, HubuumObjectWithPath, NamespaceID, NewHubuumClass,
-    NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation, Permissions,
-    UpdateHubuumClass, UpdateHubuumObject,
+    NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation, ObjectClosureView,
+    Permissions, UpdateHubuumClass, UpdateHubuumObject,
 };
 use crate::traits::{CanDelete, CanSave, CanUpdate, NamespaceAccessors, Search, SelfAccessors};
 
@@ -53,9 +56,10 @@ async fn get_classes(
 
     debug!(message = "Listing classes", user_id = user.id());
 
-    let classes = user.search_classes(&pool, params).await?;
+    let search_params = prepare_db_pagination::<HubuumClassExpanded>(&params)?;
+    let classes = user.search_classes(&pool, search_params).await?;
 
-    Ok(json_response(classes, StatusCode::OK))
+    paginated_json_response(classes, StatusCode::OK, &params)
 }
 
 #[utoipa::path(
@@ -240,12 +244,12 @@ async fn get_class_permissions(
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    use crate::models::groups_on;
+    use crate::models::namespace::groups_on_paginated;
     use crate::traits::NamespaceAccessors;
 
     let user = requestor.user;
     let class_id = class_id.into_inner();
-    let query_options = parse_query_parameter(req.query_string())?;
+    let params = parse_query_parameter(req.query_string())?;
 
     debug!(
         message = "Getting class permissions",
@@ -257,7 +261,8 @@ async fn get_class_permissions(
     can!(&pool, user, [Permissions::ReadClass], class);
 
     let nid = class.namespace_id(&pool).await?;
-    let permissions = groups_on(
+    let search_params = prepare_db_pagination::<GroupPermission>(&params)?;
+    let permissions = groups_on_paginated(
         &pool,
         NamespaceID(nid),
         vec![
@@ -266,11 +271,11 @@ async fn get_class_permissions(
             Permissions::ReadClass,
             Permissions::DeleteClass,
         ],
-        query_options,
+        &search_params,
     )
     .await?;
 
-    Ok(json_response(permissions, StatusCode::OK))
+    paginated_json_response(permissions, StatusCode::OK, &params)
 }
 
 // Contextual get for class relations
@@ -315,8 +320,9 @@ async fn get_class_relations(
     params.ensure_filter_exact(FilterField::ClassFrom, &class_id);
 
     // TODO: Migrate to user search for permissions.
-    let relations = class_id.search_relations(&pool, &params).await?;
-    Ok(json_response(relations, StatusCode::OK))
+    let search_params = prepare_db_pagination::<HubuumClassRelation>(&params)?;
+    let relations = class_id.search_relations(&pool, &search_params).await?;
+    paginated_json_response(relations, StatusCode::OK, &params)
 }
 
 // Contextual post for class relations
@@ -477,11 +483,13 @@ async fn get_class_relations_transitive(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
     class_id: web::Path<HubuumClassID>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::db::traits::SelfRelations;
 
     let user = requestor.user;
     let class_id = class_id.into_inner();
+    let params = parse_query_parameter(req.query_string())?;
 
     debug!(
         message = "Getting class relations",
@@ -489,8 +497,11 @@ async fn get_class_relations_transitive(
         class_id = class_id.id()
     );
 
-    let relations = class_id.transitive_relations(&pool).await?;
-    Ok(json_response(relations, StatusCode::OK))
+    let search_params = prepare_db_pagination::<HubuumClassRelationTransitive>(&params)?;
+    let relations = class_id
+        .transitive_relations_paginated(&pool, &search_params)
+        .await?;
+    paginated_json_response(relations, StatusCode::OK, &params)
 }
 
 #[utoipa::path(
@@ -513,9 +524,11 @@ async fn get_class_relations_transitive_to_class(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
     class_ids: web::Path<(HubuumClassID, HubuumClassID)>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = requestor.user;
     let (class_id, class_id_to) = class_ids.into_inner();
+    let params = parse_query_parameter(req.query_string())?;
 
     debug!(
         message = "Getting class relations to class",
@@ -524,8 +537,11 @@ async fn get_class_relations_transitive_to_class(
         class_id_to = class_id_to.id()
     );
 
-    let relations = class_id.relations_to(&pool, &class_id_to).await?;
-    Ok(json_response(relations, StatusCode::OK))
+    let search_params = prepare_db_pagination::<HubuumClassRelationTransitive>(&params)?;
+    let relations = class_id
+        .relations_to_paginated(&pool, &class_id_to, &search_params)
+        .await?;
+    paginated_json_response(relations, StatusCode::OK, &params)
 }
 
 //
@@ -574,9 +590,10 @@ async fn get_objects_in_class(
         query = query_string
     );
 
-    let objects = user.search_objects(&pool, params).await?;
+    let search_params = prepare_db_pagination::<HubuumObject>(&params)?;
+    let objects = user.search_objects(&pool, search_params).await?;
 
-    Ok(json_response(objects, StatusCode::OK))
+    paginated_json_response(objects, StatusCode::OK, &params)
 }
 
 #[utoipa::path(
@@ -788,13 +805,14 @@ async fn list_related_objects(
         query = query_string,
     );
 
-    // We could map this directly from the database? Meh.
+    let search_params = prepare_db_pagination::<ObjectClosureView>(&params)?;
     let hits = user
-        .search_objects_related_to(&pool, from_object, params)
-        .await?
-        .to_descendant_objects_with_path();
+        .search_objects_related_to(&pool, from_object, search_params)
+        .await?;
 
-    Ok(json_response(hits, StatusCode::OK))
+    paginated_json_mapped_response(hits, StatusCode::OK, &params, |page| {
+        page.to_descendant_objects_with_path()
+    })
 }
 
 #[utoipa::path(

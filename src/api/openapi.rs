@@ -8,11 +8,14 @@ use crate::models::{
     NewNamespaceWithAssignee, NewUser, ObjectsByClass, Permission, Permissions, UpdateGroup,
     UpdateHubuumClass, UpdateHubuumObject, UpdateNamespace, UpdateUser, User, UserToken,
 };
+use crate::pagination::{page_limits_or_defaults, NEXT_CURSOR_HEADER};
 use actix_web::{HttpResponse, Responder};
 use serde::Serialize;
-use utoipa::openapi::path::{Operation, PathItem};
+use utoipa::openapi::header::Header;
+use utoipa::openapi::path::{Operation, Parameter, ParameterBuilder, ParameterIn, PathItem};
 use utoipa::openapi::security::{Http, HttpAuthScheme, SecurityScheme};
 use utoipa::openapi::OpenApi as OpenApiDoc;
+use utoipa::openapi::{Object, RefOr, Required, Type};
 use utoipa::{Modify, OpenApi, ToSchema};
 
 #[derive(OpenApi)]
@@ -251,8 +254,122 @@ impl Modify for OperationDefaults {
                         path
                     ));
                 }
+
+                if is_cursor_paginated_get(path, method) {
+                    add_cursor_pagination_docs(operation);
+                }
             });
         }
+    }
+}
+
+fn is_cursor_paginated_get(path: &str, method: &str) -> bool {
+    method.eq_ignore_ascii_case("get")
+        && matches!(
+            path,
+            "/api/v1/iam/users"
+                | "/api/v1/iam/users/{user_id}/tokens"
+                | "/api/v1/iam/users/{user_id}/groups"
+                | "/api/v1/iam/groups"
+                | "/api/v1/iam/groups/{group_id}/members"
+                | "/api/v1/namespaces"
+                | "/api/v1/namespaces/{namespace_id}/permissions"
+                | "/api/v1/namespaces/{namespace_id}/permissions/user/{user_id}"
+                | "/api/v1/namespaces/{namespace_id}/has_permissions/{permission}"
+                | "/api/v1/relations/classes"
+                | "/api/v1/relations/objects"
+                | "/api/v1/classes"
+                | "/api/v1/classes/{class_id}/permissions"
+                | "/api/v1/classes/{class_id}/relations"
+                | "/api/v1/classes/{class_id}/relations/transitive/"
+                | "/api/v1/classes/{class_id}/relations/transitive/class/{class_id_to}"
+                | "/api/v1/classes/{class_id}/"
+                | "/api/v1/classes/{class_id}/{from_object_id}/relations"
+        )
+}
+
+fn add_cursor_pagination_docs(operation: &mut Operation) {
+    let (default_page_limit, max_page_limit) = page_limits_or_defaults();
+    let parameters = operation.parameters.get_or_insert_with(Vec::new);
+    ensure_query_parameter(
+        parameters,
+        "limit",
+        &format!(
+            "Maximum number of items to return. Defaults to {default_page_limit}. Maximum is {max_page_limit}."
+        ),
+        Type::Integer,
+    );
+    ensure_query_parameter(
+        parameters,
+        "sort",
+        "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+        Type::String,
+    );
+    ensure_query_parameter(
+        parameters,
+        "cursor",
+        "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+        Type::String,
+    );
+
+    if let Some(description) = operation.description.as_mut() {
+        let pagination_text = format!(
+            " Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `{NEXT_CURSOR_HEADER}` response header."
+        );
+        if !description.contains(NEXT_CURSOR_HEADER) {
+            description.push_str(&pagination_text);
+        }
+    }
+
+    if let Some(response) = operation.responses.responses.get_mut("200") {
+        add_next_cursor_header(response);
+    }
+}
+
+fn ensure_query_parameter(
+    parameters: &mut Vec<Parameter>,
+    name: &str,
+    description: &str,
+    schema_type: Type,
+) {
+    if parameters.iter().any(|parameter| {
+        parameter.name == name && matches!(parameter.parameter_in, ParameterIn::Query)
+    }) {
+        return;
+    }
+
+    parameters.push(
+        ParameterBuilder::new()
+            .name(name)
+            .parameter_in(ParameterIn::Query)
+            .required(Required::False)
+            .description(Some(description))
+            .schema(Some(Object::with_type(schema_type)))
+            .build(),
+    );
+}
+
+fn add_next_cursor_header(response: &mut RefOr<utoipa::openapi::response::Response>) {
+    let RefOr::T(response) = response else {
+        return;
+    };
+
+    response
+        .headers
+        .entry(NEXT_CURSOR_HEADER.to_string())
+        .or_insert_with(|| {
+            let mut header = Header::default();
+            header.description = Some(
+                "Opaque cursor for the next page. This header is omitted when there are no more results."
+                    .to_string(),
+            );
+            header
+        });
+
+    if !response.description.contains(NEXT_CURSOR_HEADER) {
+        response.description.push_str(&format!(
+            " The response body contains the current page items as a JSON array. Use the `{NEXT_CURSOR_HEADER}` header, when present, to request the next page."
+        ));
     }
 }
 
@@ -490,6 +607,36 @@ mod tests {
             json.pointer("/components/securitySchemes/bearer_auth/scheme")
                 .and_then(Value::as_str)
                 == Some("bearer")
+        );
+    }
+
+    #[test]
+    fn openapi_documents_cursor_pagination_for_list_endpoints() {
+        let json = openapi_json();
+
+        let parameters = json
+            .pointer("/paths/~1api~1v1~1classes/get/parameters")
+            .and_then(Value::as_array)
+            .expect("classes list parameters must be present");
+
+        let parameter_names = parameters
+            .iter()
+            .filter_map(|parameter| parameter.get("name").and_then(Value::as_str))
+            .collect::<HashSet<_>>();
+
+        assert!(parameter_names.contains("limit"));
+        assert!(parameter_names.contains("sort"));
+        assert!(parameter_names.contains("cursor"));
+
+        let header_description = json
+            .pointer(
+                "/paths/~1api~1v1~1classes/get/responses/200/headers/X-Next-Cursor/description",
+            )
+            .and_then(Value::as_str);
+
+        assert!(
+            header_description.is_some(),
+            "X-Next-Cursor header must be documented for paginated list responses"
         );
     }
 

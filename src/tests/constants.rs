@@ -1,8 +1,8 @@
 use serde_json;
 
+use once_cell::sync::Lazy;
 use serde_json::Value;
 use std::collections::HashMap;
-use once_cell::sync::Lazy;
 
 // Define an enum with variants for each schema
 #[derive(Debug, PartialEq, Eq, Hash)]
