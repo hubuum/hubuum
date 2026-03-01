@@ -3,13 +3,14 @@ use diesel::prelude::*;
 
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
-use crate::models::search::{FilterField, QueryOptions};
+use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions};
 use crate::models::{
     user_can_on_any, HubuumClass, HubuumClassRelation, HubuumClassRelationID,
     HubuumClassRelationTransitive, HubuumObject, HubuumObjectID, HubuumObjectRelation,
     HubuumObjectRelationID, HubuumObjectTransitiveLink, NewHubuumClassRelation,
     NewHubuumObjectRelation, User,
 };
+use crate::{date_search, numeric_search, string_search, trace_query};
 
 use crate::traits::{GroupAccessors, SelfAccessors};
 
@@ -17,6 +18,104 @@ use super::{ObjectRelationsFromUser, Relations, SelfRelations};
 
 impl<C1> SelfRelations<HubuumClass> for C1 where C1: SelfAccessors<HubuumClass> + Clone + Send + Sync
 {}
+
+pub trait SelfRelationsBackend {
+    async fn transitive_relations_from_backend(
+        &self,
+        pool: &DbPool,
+    ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError>;
+
+    async fn relations_from_backend(&self, pool: &DbPool) -> Result<Vec<HubuumClassRelation>, ApiError>;
+
+    async fn search_relations_from_backend(
+        &self,
+        pool: &DbPool,
+        query_options: &QueryOptions,
+    ) -> Result<Vec<HubuumClassRelation>, ApiError>;
+}
+
+impl<T> SelfRelationsBackend for T
+where
+    T: SelfAccessors<HubuumClass> + Clone + Send + Sync,
+{
+    async fn transitive_relations_from_backend(
+        &self,
+        pool: &DbPool,
+    ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError> {
+        use crate::schema::hubuumclass_closure::dsl::*;
+
+        with_connection(pool, |conn| {
+            hubuumclass_closure
+                .or_filter(ancestor_class_id.eq(self.id()))
+                .or_filter(descendant_class_id.eq(self.id()))
+                .then_order_by(depth.asc())
+                .then_order_by(descendant_class_id.asc())
+                .load::<HubuumClassRelationTransitive>(conn)
+        })
+    }
+
+    async fn relations_from_backend(
+        &self,
+        pool: &DbPool,
+    ) -> Result<Vec<HubuumClassRelation>, ApiError> {
+        use crate::schema::hubuumclass_relation::dsl::*;
+
+        with_connection(pool, |conn| {
+            hubuumclass_relation
+                .or_filter(from_hubuum_class_id.eq(self.id()))
+                .or_filter(to_hubuum_class_id.eq(self.id()))
+                .load::<HubuumClassRelation>(conn)
+        })
+    }
+
+    async fn search_relations_from_backend(
+        &self,
+        pool: &DbPool,
+        query_options: &QueryOptions,
+    ) -> Result<Vec<HubuumClassRelation>, ApiError> {
+        use crate::schema::hubuumclass_relation::dsl::*;
+
+        let query_params = query_options.filters.clone();
+        let mut base_query = hubuumclass_relation.into_boxed();
+        for param in query_params {
+            let operator = param.operator.clone();
+            match param.field {
+                FilterField::Id => {
+                    numeric_search!(base_query, param, operator, id)
+                }
+                FilterField::ClassFrom => {
+                    numeric_search!(base_query, param, operator, from_hubuum_class_id)
+                }
+                FilterField::ClassTo => {
+                    numeric_search!(base_query, param, operator, to_hubuum_class_id)
+                }
+                FilterField::CreatedAt => {
+                    date_search!(base_query, param, operator, created_at)
+                }
+                FilterField::UpdatedAt => {
+                    date_search!(base_query, param, operator, updated_at)
+                }
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for class relations",
+                        param.field
+                    )))
+                }
+            }
+        }
+
+        crate::apply_query_options!(base_query, query_options, HubuumClassRelation);
+
+        trace_query!(base_query, "Searching relations");
+
+        with_connection(pool, |conn| {
+            base_query
+                .select(hubuumclass_relation::all_columns())
+                .distinct()
+                .load::<HubuumClassRelation>(conn)
+        })
+    }
+}
 
 impl<C1, C2> Relations<C1, C2> for C1
 where
@@ -209,6 +308,162 @@ where
                     namespaces.into_iter().map(|n| n.id()).collect::<Vec<_>>(),
                 )
                 .load::<HubuumObjectTransitiveLink>(conn)
+        })
+    }
+}
+
+pub trait ObjectRelationMembershipsBackend {
+    async fn is_member_of_class_relation_from_backend(
+        &self,
+        pool: &DbPool,
+        class_relation: &HubuumClassRelation,
+    ) -> Result<bool, ApiError>;
+
+    async fn object_relation_from_backend<O, C>(
+        &self,
+        pool: &DbPool,
+        class: &C,
+        target_object: &O,
+    ) -> Result<HubuumObjectRelation, ApiError>
+    where
+        C: SelfAccessors<HubuumClass> + Clone + Send + Sync,
+        O: SelfAccessors<HubuumObject> + Clone + Send + Sync;
+
+    async fn related_objects_from_backend<C>(
+        &self,
+        pool: &DbPool,
+        class: &C,
+        query_params: &[ParsedQueryParam],
+    ) -> Result<Vec<HubuumObject>, ApiError>
+    where
+        C: SelfAccessors<HubuumClass> + Clone + Send + Sync;
+}
+
+impl<T> ObjectRelationMembershipsBackend for T
+where
+    T: SelfAccessors<HubuumObject> + Clone + Send + Sync,
+{
+    async fn is_member_of_class_relation_from_backend(
+        &self,
+        pool: &DbPool,
+        class_relation: &HubuumClassRelation,
+    ) -> Result<bool, ApiError> {
+        use crate::schema::hubuumclass_relation::dsl as class_rel;
+        use crate::schema::hubuumobject_relation::dsl as obj_rel;
+
+        with_connection(pool, |conn| {
+            obj_rel::hubuumobject_relation
+                .inner_join(class_rel::hubuumclass_relation)
+                .filter(
+                    obj_rel::from_hubuum_object_id
+                        .eq(self.id())
+                        .or(obj_rel::to_hubuum_object_id.eq(self.id())),
+                )
+                .filter(class_rel::id.eq(class_relation.id))
+                .select(obj_rel::id)
+                .first::<i32>(conn)
+                .optional()
+        })
+        .map(|result| result.is_some())
+    }
+
+    async fn object_relation_from_backend<O, C>(
+        &self,
+        pool: &DbPool,
+        class: &C,
+        target_object: &O,
+    ) -> Result<HubuumObjectRelation, ApiError>
+    where
+        C: SelfAccessors<HubuumClass> + Clone + Send + Sync,
+        O: SelfAccessors<HubuumObject> + Clone + Send + Sync,
+    {
+        use crate::schema::hubuumclass_relation::dsl as class_rel;
+        use crate::schema::hubuumobject_relation::dsl as obj_rel;
+
+        let (from, to) = (self.id(), target_object.id());
+        let (from, to) = if from > to { (to, from) } else { (from, to) };
+
+        with_connection(pool, |conn| {
+            obj_rel::hubuumobject_relation
+                .inner_join(class_rel::hubuumclass_relation)
+                .filter(
+                    obj_rel::from_hubuum_object_id
+                        .eq(from)
+                        .and(obj_rel::to_hubuum_object_id.eq(to)),
+                )
+                .filter(
+                    class_rel::from_hubuum_class_id
+                        .eq(class.id())
+                        .or(class_rel::to_hubuum_class_id.eq(class.id())),
+                )
+                .select(obj_rel::hubuumobject_relation::all_columns())
+                .first::<HubuumObjectRelation>(conn)
+        })
+    }
+
+    async fn related_objects_from_backend<C>(
+        &self,
+        pool: &DbPool,
+        class: &C,
+        query_params: &[ParsedQueryParam],
+    ) -> Result<Vec<HubuumObject>, ApiError>
+    where
+        C: SelfAccessors<HubuumClass> + Clone + Send + Sync,
+    {
+        use crate::schema::hubuumclass_relation::dsl as class_rel;
+        use crate::schema::hubuumobject::dsl as obj;
+        use crate::schema::hubuumobject_relation::dsl as obj_rel;
+
+        let mut base_query = obj::hubuumobject.into_boxed();
+        for param in query_params {
+            let operator = param.operator.clone();
+            match param.field {
+                FilterField::CreatedAt => {
+                    date_search!(base_query, param, operator, obj::created_at)
+                }
+                FilterField::UpdatedAt => {
+                    date_search!(base_query, param, operator, obj::updated_at)
+                }
+                FilterField::Namespaces => {
+                    numeric_search!(base_query, param, operator, obj::namespace_id)
+                }
+                FilterField::Description => {
+                    string_search!(base_query, param, operator, obj::description)
+                }
+                FilterField::Name => {
+                    string_search!(base_query, param, operator, obj::name)
+                }
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for objects",
+                        param.field
+                    )))
+                }
+            }
+        }
+
+        with_connection(pool, |conn| {
+            base_query
+                .inner_join(
+                    obj_rel::hubuumobject_relation.on(obj::id.eq(obj_rel::from_hubuum_object_id)),
+                )
+                .inner_join(
+                    class_rel::hubuumclass_relation
+                        .on(obj_rel::class_relation_id.eq(class_rel::id)),
+                )
+                .filter(
+                    obj_rel::from_hubuum_object_id
+                        .eq(self.id())
+                        .or(obj_rel::to_hubuum_object_id.eq(self.id())),
+                )
+                .filter(
+                    class_rel::from_hubuum_class_id
+                        .eq(class.id())
+                        .or(class_rel::to_hubuum_class_id.eq(class.id())),
+                )
+                .select(obj::hubuumobject::all_columns())
+                .distinct()
+                .load::<HubuumObject>(conn)
         })
     }
 }

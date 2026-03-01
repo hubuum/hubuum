@@ -1,16 +1,12 @@
-use diesel::prelude::*;
-use jsonschema;
-use serde_json;
-
 use crate::db::traits::object::{
-    CreateObjectRecord, DeleteObjectRecord, LoadObjectRecord, ObjectClassLookup,
-    ObjectNamespaceLookup, UpdateObjectRecord,
+    DeleteObjectRecord, LoadObjectRecord, ObjectClassLookup, ObjectNamespaceLookup,
+    SaveObjectRecord, UpdateObjectRecord, ValidateObjectRecord, ValidateObjectSchema,
 };
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::traits::GroupAccessors;
 
-use crate::models::class::{HubuumClass, HubuumClassID};
+use crate::models::class::HubuumClass;
 use crate::models::namespace::Namespace;
 use crate::models::object::{
     HubuumObject, HubuumObjectID, HubuumObjectWithPath, NewHubuumObject, UpdateHubuumObject,
@@ -58,58 +54,31 @@ impl HubuumObject {
 // Validators
 impl Validate for HubuumObject {
     async fn validate(&self, pool: &DbPool) -> Result<(), ApiError> {
-        let class = HubuumClassID(self.hubuum_class_id).class(pool).await?;
-
-        if class.validate_schema
-            && let Some(ref schema) = class.json_schema
-        {
-            self.validate_against_schema(schema).await?;
-        }
-        Ok(())
+        self.validate_object_record(pool).await
     }
 }
 
 impl ValidateAgainstSchema for HubuumObject {
     async fn validate_against_schema(&self, schema: &serde_json::Value) -> Result<(), ApiError> {
-        jsonschema::validate(schema, &self.data)
-            .map_err(|err| ApiError::ValidationError(err.to_string()))?;
-        Ok(())
+        self.validate_object_schema(schema)
     }
 }
 
 impl Validate for NewHubuumObject {
     async fn validate(&self, pool: &DbPool) -> Result<(), ApiError> {
-        let class = HubuumClassID(self.hubuum_class_id).class(pool).await?;
-
-        if class.validate_schema
-            && let Some(ref schema) = class.json_schema
-        {
-            self.validate_against_schema(schema).await?;
-        }
-        Ok(())
+        self.validate_object_record(pool).await
     }
 }
 
 impl ValidateAgainstSchema for NewHubuumObject {
     async fn validate_against_schema(&self, schema: &serde_json::Value) -> Result<(), ApiError> {
-        jsonschema::validate(schema, &self.data)
-            .map_err(|err| ApiError::ValidationError(err.to_string()))?;
-        Ok(())
+        self.validate_object_schema(schema)
     }
 }
 
 impl Validate for (&UpdateHubuumObject, i32) {
     async fn validate(&self, pool: &DbPool) -> Result<(), ApiError> {
-        let (update_obj, object_id) = self;
-        let original = HubuumObjectID(*object_id).instance(pool).await?;
-        let merged = original.merge_update(update_obj);
-        let class = HubuumClassID(merged.hubuum_class_id).class(pool).await?;
-        if class.validate_schema
-            && let Some(ref schema) = class.json_schema
-        {
-            merged.validate_against_schema(schema).await?;
-        }
-        Ok(())
+        self.validate_object_record(pool).await
     }
 }
 
@@ -120,15 +89,7 @@ impl CanSave for HubuumObject {
     type Output = HubuumObject;
 
     async fn save(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
-        let updated_object = UpdateHubuumObject {
-            name: Some(self.name.clone()),
-            namespace_id: Some(self.namespace_id),
-            hubuum_class_id: Some(self.hubuum_class_id),
-            data: Some(self.data.clone()),
-            description: Some(self.description.clone()),
-        };
-        (&updated_object, self.id).validate(pool).await?;
-        updated_object.update(pool, self.id).await
+        self.save_object_record(pool).await
     }
 }
 
@@ -136,10 +97,7 @@ impl CanSave for NewHubuumObject {
     type Output = HubuumObject;
 
     async fn save(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
-        use crate::schema::hubuumobject::dsl::*;
-
-        self.validate(pool).await?;
-        self.create_object_record(pool).await
+        self.save_object_record(pool).await
     }
 }
 

@@ -1,12 +1,16 @@
 use diesel::prelude::*;
+use jsonschema;
+use serde_json;
 
 use crate::db::traits::GetObject;
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::{
-    HubuumClass, HubuumObject, HubuumObjectID, HubuumObjectRelation, HubuumObjectRelationID,
+    HubuumClass, HubuumClassID, HubuumObject, HubuumObjectID, HubuumObjectRelation,
+    HubuumObjectRelationID,
     Namespace, NewHubuumObject, NewHubuumObjectRelation, UpdateHubuumObject,
 };
+use crate::traits::{ClassAccessors, SelfAccessors};
 
 impl GetObject<(HubuumObject, HubuumObject)> for HubuumObjectRelationID {
     async fn object_from_backend(
@@ -130,6 +134,98 @@ impl CreateObjectRecord for NewHubuumObject {
                 .values(self)
                 .get_result::<HubuumObject>(conn)
         })
+    }
+}
+
+pub trait ValidateObjectSchema {
+    fn validate_object_schema(&self, schema: &serde_json::Value) -> Result<(), ApiError>;
+}
+
+impl ValidateObjectSchema for HubuumObject {
+    fn validate_object_schema(&self, schema: &serde_json::Value) -> Result<(), ApiError> {
+        jsonschema::validate(schema, &self.data)
+            .map_err(|err| ApiError::ValidationError(err.to_string()))?;
+        Ok(())
+    }
+}
+
+impl ValidateObjectSchema for NewHubuumObject {
+    fn validate_object_schema(&self, schema: &serde_json::Value) -> Result<(), ApiError> {
+        jsonschema::validate(schema, &self.data)
+            .map_err(|err| ApiError::ValidationError(err.to_string()))?;
+        Ok(())
+    }
+}
+
+pub trait ValidateObjectRecord {
+    async fn validate_object_record(&self, pool: &DbPool) -> Result<(), ApiError>;
+}
+
+impl ValidateObjectRecord for HubuumObject {
+    async fn validate_object_record(&self, pool: &DbPool) -> Result<(), ApiError> {
+        let class = HubuumClassID(self.hubuum_class_id).class(pool).await?;
+
+        if class.validate_schema {
+            if let Some(ref schema) = class.json_schema {
+                self.validate_object_schema(schema)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl ValidateObjectRecord for NewHubuumObject {
+    async fn validate_object_record(&self, pool: &DbPool) -> Result<(), ApiError> {
+        let class = HubuumClassID(self.hubuum_class_id).class(pool).await?;
+
+        if class.validate_schema {
+            if let Some(ref schema) = class.json_schema {
+                self.validate_object_schema(schema)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl ValidateObjectRecord for (&UpdateHubuumObject, i32) {
+    async fn validate_object_record(&self, pool: &DbPool) -> Result<(), ApiError> {
+        let (update_obj, object_id) = self;
+        let original = HubuumObjectID(*object_id).instance(pool).await?;
+        let merged = original.merge_update(update_obj);
+        let class = HubuumClassID(merged.hubuum_class_id).class(pool).await?;
+
+        if class.validate_schema {
+            if let Some(ref schema) = class.json_schema {
+                merged.validate_object_schema(schema)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+pub trait SaveObjectRecord {
+    async fn save_object_record(&self, pool: &DbPool) -> Result<HubuumObject, ApiError>;
+}
+
+impl SaveObjectRecord for HubuumObject {
+    async fn save_object_record(&self, pool: &DbPool) -> Result<HubuumObject, ApiError> {
+        let updated_object = UpdateHubuumObject {
+            name: Some(self.name.clone()),
+            namespace_id: Some(self.namespace_id),
+            hubuum_class_id: Some(self.hubuum_class_id),
+            data: Some(self.data.clone()),
+            description: Some(self.description.clone()),
+        };
+
+        (&updated_object, self.id).validate_object_record(pool).await?;
+        updated_object.update_object_record(pool, self.id).await
+    }
+}
+
+impl SaveObjectRecord for NewHubuumObject {
+    async fn save_object_record(&self, pool: &DbPool) -> Result<HubuumObject, ApiError> {
+        self.validate_object_record(pool).await?;
+        self.create_object_record(pool).await
     }
 }
 

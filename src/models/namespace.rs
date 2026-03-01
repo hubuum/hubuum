@@ -19,7 +19,7 @@ use crate::models::output::GroupPermission;
 use crate::models::search::{FilterField, QueryOptions, QueryParamsExt};
 use crate::models::{Permission, Permissions};
 
-use crate::db::traits::user::GroupMemberships;
+use crate::db::traits::user::{GroupIdsSubqueryBackend, GroupMemberships};
 use crate::models::traits::GroupAccessors;
 use crate::traits::{NamespaceAccessors, SelfAccessors};
 
@@ -182,7 +182,7 @@ pub async fn user_on<T: NamespaceAccessors>(
     use diesel::prelude::*;
 
     let namespace_target_id = namespace_ref.namespace_id(pool).await?;
-    let group_ids_subquery = user_id.group_ids_subquery();
+    let group_ids_subquery = user_id.group_ids_subquery_from_backend();
     let query = with_connection(pool, |conn| {
         groups
             .inner_join(permissions.on(group_table_id.eq(group_id)))
@@ -204,6 +204,7 @@ pub async fn user_on_paginated<T: NamespaceAccessors>(
     namespace_ref: T,
     query_options: &QueryOptions,
 ) -> Result<Vec<GroupPermission>, ApiError> {
+    use crate::db::traits::user::GroupIdsSubqueryBackend;
     use crate::models::traits::output::FromTuple;
     use crate::schema::groups::dsl::{groupname, groups, id as group_table_id};
     use crate::schema::permissions::dsl::{
@@ -215,7 +216,7 @@ pub async fn user_on_paginated<T: NamespaceAccessors>(
 
     let mut conn = pool.get()?;
     let namespace_target_id = namespace_ref.namespace_id(pool).await?;
-    let group_ids_subquery = user_id.group_ids_subquery();
+    let group_ids_subquery = user_id.group_ids_subquery_from_backend();
 
     let mut query = groups
         .inner_join(permissions.on(group_table_id.eq(group_id)))
@@ -283,7 +284,7 @@ pub async fn user_can_on_any<U: SelfAccessors<User> + GroupAccessors>(
     let base_query = if user_id.instance(pool).await?.is_admin(pool).await? {
         permissions.into_boxed()
     } else {
-        let group_ids_subquery = user_id.group_ids_subquery();
+        let group_ids_subquery = user_id.group_ids_subquery_from_backend();
 
         permissions
             .into_boxed()
