@@ -311,7 +311,7 @@ impl SaveNamespaceForGroupRecord for NewNamespace {
         use crate::schema::namespaces::dsl::namespaces;
         use crate::schema::permissions::dsl::permissions;
 
-        with_transaction(pool, |conn| {
+        with_transaction(pool, |conn| -> Result<Namespace, ApiError> {
             let namespace = diesel::insert_into(namespaces)
                 .values(self)
                 .get_result::<Namespace>(conn)?;

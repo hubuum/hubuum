@@ -38,9 +38,8 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
             base_query = permission.create_boxed_filter(base_query, true);
         }
 
-        let result: Option<Permission> = with_connection(pool, |conn| {
-            base_query.first::<Permission>(conn).optional()
-        })?;
+        let result: Option<Permission> =
+            with_connection(pool, |conn| base_query.first::<Permission>(conn).optional())?;
 
         Ok(result.is_some())
     }
@@ -56,7 +55,7 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
 
         let nid = self.namespace_id(pool).await?;
 
-        with_transaction(pool, |conn| {
+        with_transaction(pool, |conn| -> Result<Permission, ApiError> {
             let existing_entry = permissions
                 .filter(namespace_id.eq(nid))
                 .filter(group_id.eq(group_id_for_grant))
@@ -218,7 +217,7 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
 
         let nid = self.namespace_id(pool).await?;
 
-        with_transaction(pool, |conn| {
+        with_transaction(pool, |conn| -> Result<Permission, ApiError> {
             permissions
                 .filter(namespace_id.eq(nid))
                 .filter(group_id.eq(group_id_for_revoke))

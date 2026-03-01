@@ -286,7 +286,7 @@ mod tests {
             .build(manager);
 
         if let Ok(pool) = pool_result {
-            let result = crate::db::with_connection(&pool, |_conn| Ok(()));
+            let result = crate::db::with_connection(&pool, |_conn| Ok::<(), ApiError>(()));
             match result {
                 Err(ApiError::DbConnectionError(_)) => {
                     // Expected

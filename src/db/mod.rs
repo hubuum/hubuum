@@ -52,20 +52,22 @@ fn acquire_connection(
     }
 }
 
-pub fn with_connection<F, R>(pool: &DbPool, f: F) -> Result<R, ApiError>
+pub fn with_connection<F, R, E>(pool: &DbPool, f: F) -> Result<R, ApiError>
 where
-    F: FnOnce(&mut PgConnection) -> Result<R, diesel::result::Error>,
+    F: FnOnce(&mut PgConnection) -> Result<R, E>,
+    ApiError: From<E>,
 {
     let mut conn = acquire_connection(pool)?;
     f(&mut conn).map_err(ApiError::from)
 }
 
-pub fn with_transaction<F, R>(pool: &DbPool, f: F) -> Result<R, ApiError>
+pub fn with_transaction<F, R, E>(pool: &DbPool, f: F) -> Result<R, ApiError>
 where
-    F: FnOnce(&mut PgConnection) -> Result<R, ApiError>,
+    F: FnOnce(&mut PgConnection) -> Result<R, E>,
+    ApiError: From<E>,
 {
     let mut conn = acquire_connection(pool)?;
-    conn.transaction::<R, ApiError, _>(|conn| f(conn))
+    conn.transaction::<R, ApiError, _>(|conn| f(conn).map_err(ApiError::from))
 }
 
 pub fn init_pool(database_url: &str, max_size: u32) -> DbPool {
