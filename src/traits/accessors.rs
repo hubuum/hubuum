@@ -170,6 +170,7 @@ pub trait ObjectAccessors<O = HubuumObject, I = i32> {
 
 #[doc(hidden)]
 pub(crate) trait ObjectAdapter<O = HubuumObject, I = i32> {
+    #[allow(dead_code)]
     async fn object_adapter(&self, pool: &DbPool) -> Result<O, ApiError>;
     async fn object_id_adapter(&self, pool: &DbPool) -> Result<I, ApiError>;
 }
