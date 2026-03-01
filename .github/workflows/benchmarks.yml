@@ -1,0 +1,36 @@
+name: Benchmarks
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  iai-callgrind:
+    name: IAI Callgrind
+    uses: terjekv/github-action-iai-callgrind/.github/workflows/rust-pr-bench.yml@v2
+    secrets: inherit
+    with:
+      backend: iai-callgrind
+      auto_discover: true
+      feature_sets_json: >-
+        [
+          {"name":"default","features":""}
+        ]
+
+  criterion:
+    name: Criterion
+    uses: terjekv/github-action-iai-callgrind/.github/workflows/rust-pr-bench.yml@v2
+    secrets: inherit
+    with:
+      backend: criterion
+      auto_discover: true
+      criterion_statistic: median
+      criterion_cli_args: "--noplot --sample-size 40 --measurement-time 4"
+      fail_on_regression: false
+      feature_sets_json: >-
+        [
+          {"name":"default","features":""}
+        ]
