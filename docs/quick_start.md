@@ -124,4 +124,5 @@ services:
 - [Development Setup](development.md) - Git hooks, testing, and development workflow
 - [Permissions](permissions.md) - Access control and authorization system
 - [Querying](querying.md) - API query syntax and filtering
+- [Query Support Matrix](query_support_matrix.md) - Endpoint-by-endpoint filter and sort support
 - [Relationships](relationship_endpoints.md) - Working with object relationships
