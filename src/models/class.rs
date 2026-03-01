@@ -2,7 +2,8 @@ use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::{DbPool, with_connection};
+use crate::db::traits::class::total_class_count_from_backend;
+use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::schema::hubuumclass;
 
@@ -67,11 +68,7 @@ pub struct HubuumClassWithPath {
 pub struct HubuumClassID(pub i32);
 
 pub async fn total_class_count(pool: &DbPool) -> Result<i64, ApiError> {
-    use crate::schema::hubuumclass::dsl::*;
-
-    let count = with_connection(pool, |conn| hubuumclass.count().get_result::<i64>(conn))?;
-
-    Ok(count)
+    total_class_count_from_backend(pool).await
 }
 
 #[allow(dead_code)]

@@ -1,4 +1,5 @@
 use diesel::prelude::*;
+use diesel::sql_query;
 use jsonschema;
 use serde_json;
 
@@ -7,8 +8,8 @@ use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::{
     HubuumClass, HubuumClassID, HubuumObject, HubuumObjectID, HubuumObjectRelation,
-    HubuumObjectRelationID,
-    Namespace, NewHubuumObject, NewHubuumObjectRelation, UpdateHubuumObject,
+    HubuumObjectRelationID, Namespace, NewHubuumObject, NewHubuumObjectRelation, ObjectsByClass,
+    UpdateHubuumObject,
 };
 use crate::traits::{ClassAccessors, SelfAccessors};
 
@@ -217,7 +218,9 @@ impl SaveObjectRecord for HubuumObject {
             description: Some(self.description.clone()),
         };
 
-        (&updated_object, self.id).validate_object_record(pool).await?;
+        (&updated_object, self.id)
+            .validate_object_record(pool)
+            .await?;
         updated_object.update_object_record(pool, self.id).await
     }
 }
@@ -317,4 +320,20 @@ impl ObjectClassLookup for HubuumObjectID {
             .lookup_object_class(pool)
             .await
     }
+}
+
+pub async fn total_object_count_from_backend(pool: &DbPool) -> Result<i64, ApiError> {
+    use crate::schema::hubuumobject::dsl::*;
+
+    with_connection(pool, |conn| hubuumobject.count().get_result::<i64>(conn))
+}
+
+pub async fn objects_per_class_count_from_backend(
+    pool: &DbPool,
+) -> Result<Vec<ObjectsByClass>, ApiError> {
+    let raw_query =
+        "SELECT hubuum_class_id, COUNT(*) as count FROM hubuumobject GROUP BY hubuum_class_id";
+    with_connection(pool, |conn| {
+        sql_query(raw_query).load::<ObjectsByClass>(conn)
+    })
 }

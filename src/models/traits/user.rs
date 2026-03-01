@@ -22,17 +22,17 @@ use crate::models::{
 
 use crate::schema::hubuumclass::namespace_id;
 use crate::schema::{hubuumclass, hubuumobject};
+use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{
     ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
     NamespaceAccessors, SelfAccessors,
 };
-use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 
 use crate::db::traits::user::{
-    LoadPermittedNamespaces, LoadUserGroups, LoadUserRecord, QueryJsonDataIds,
-    QueryJsonSchemaIds, UserSearchBackend,
+    LoadPermittedNamespaces, LoadUserGroups, LoadUserGroupsPaginated, LoadUserRecord,
+    QueryJsonDataIds, QueryJsonSchemaIds, UserSearchBackend,
 };
-use crate::db::{with_connection, DbPool};
+use crate::db::DbPool;
 use crate::errors::ApiError;
 
 pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors {
@@ -41,7 +41,8 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         pool: &DbPool,
         query_options: QueryOptions,
     ) -> Result<Vec<Namespace>, ApiError> {
-        self.search_namespaces_from_backend(pool, query_options).await
+        self.search_namespaces_from_backend(pool, query_options)
+            .await
     }
 
     async fn search_classes(
@@ -105,55 +106,8 @@ pub trait GroupAccessors: SelfAccessors<User> {
         pool: &DbPool,
         query_options: &QueryOptions,
     ) -> Result<Vec<Group>, ApiError> {
-        use crate::schema::groups::dsl::*;
-        use crate::schema::user_groups::dsl::{group_id, user_groups, user_id};
-        use crate::{date_search, numeric_search, string_search};
-
-        let mut base_query = user_groups
-            .inner_join(groups.on(id.eq(group_id)))
-            .filter(user_id.eq(self.id()))
-            .select(groups::all_columns())
-            .into_boxed();
-
-        for param in &query_options.filters {
-            let operator = param.operator.clone();
-            match param.field {
-                FilterField::Id => numeric_search!(base_query, param, operator, id),
-                FilterField::Name | FilterField::Groupname => {
-                    string_search!(base_query, param, operator, groupname)
-                }
-                FilterField::Description => {
-                    string_search!(base_query, param, operator, description)
-                }
-                FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
-                FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
-                _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't searchable (or does not exist) for groups",
-                        param.field
-                    )));
-                }
-            }
-        }
-
-        crate::apply_query_options!(base_query, query_options, Group);
-
-        with_connection(pool, |conn| base_query.load::<Group>(conn))
+        self.load_user_groups_paginated(pool, query_options).await
     }
-
-    /*
-      async fn group_ids(&self, pool: &DbPool) -> Result<Vec<i32>, ApiError> {
-          use crate::schema::user_groups::dsl::{group_id, user_groups, user_id};
-
-          let mut conn = pool.get()?;
-          let group_list = user_groups
-              .filter(user_id.eq(self.id()))
-              .select(group_id)
-              .load::<i32>(&mut conn)?;
-
-          Ok(group_list)
-      }
-    */
 
     fn json_schema_subquery(
         &self,

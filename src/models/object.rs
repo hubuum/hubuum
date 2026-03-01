@@ -1,9 +1,11 @@
 use diesel::prelude::*;
-use diesel::sql_query;
 use diesel::sql_types::{BigInt, Integer, Jsonb, Text, Timestamp};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::db::traits::object::{
+    objects_per_class_count_from_backend, total_object_count_from_backend,
+};
 use crate::db::{with_connection, DbPool};
 use crate::errors::ApiError;
 use crate::schema::hubuumobject;
@@ -86,17 +88,11 @@ pub struct HubuumObjectWithPath {
 }
 
 pub async fn total_object_count(pool: &DbPool) -> Result<i64, ApiError> {
-    use crate::schema::hubuumobject::dsl::*;
-
-    with_connection(pool, |conn| hubuumobject.count().get_result::<i64>(conn))
+    total_object_count_from_backend(pool).await
 }
 
 pub async fn objects_per_class_count(pool: &DbPool) -> Result<Vec<ObjectsByClass>, ApiError> {
-    let raw_query =
-        "SELECT hubuum_class_id, COUNT(*) as count FROM hubuumobject GROUP BY hubuum_class_id";
-    with_connection(pool, |conn| {
-        sql_query(raw_query).load::<ObjectsByClass>(conn)
-    })
+    objects_per_class_count_from_backend(pool).await
 }
 
 #[allow(dead_code)]
@@ -169,14 +165,15 @@ pub mod tests {
     pub async fn verify_no_such_object(pool: &DbPool, object_id: i32) {
         use crate::schema::hubuumobject::dsl::*;
 
-        let mut conn = pool.get().unwrap();
-        let result = hubuumobject
-            .filter(id.eq(object_id))
-            .first::<HubuumObject>(&mut conn);
+        let result = with_connection(pool, |conn| {
+            hubuumobject
+                .filter(id.eq(object_id))
+                .first::<HubuumObject>(conn)
+        });
 
         match result {
             Ok(_) => panic!("Object {object_id} should not exist"),
-            Err(diesel::result::Error::NotFound) => (),
+            Err(ApiError::NotFound(_)) => (),
             Err(e) => panic!("Error: {e}"),
         }
     }

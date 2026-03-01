@@ -10,7 +10,7 @@ use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::{with_connection, DbPool};
+use crate::db::DbPool;
 
 use crate::errors::ApiError;
 
@@ -45,7 +45,8 @@ impl User {
     }
 
     pub async fn delete_token(&self, token_param: Token, pool: &DbPool) -> Result<usize, ApiError> {
-        self.delete_owned_user_token_record(&token_param, pool).await
+        self.delete_owned_user_token_record(&token_param, pool)
+            .await
     }
 
     pub async fn delete_all_tokens(&self, pool: &DbPool) -> Result<usize, ApiError> {
@@ -142,20 +143,6 @@ impl UserID {
         self.load_user_record(pool).await
     }
 
-    /*
-    pub async fn group_ids(&self, pool: &DbPool) -> Result<Vec<i32>, ApiError> {
-        use crate::schema::user_groups::dsl::*;
-
-        let mut conn = pool.get()?;
-        let result = user_groups
-            .filter(user_id.eq(self.0))
-            .select(group_id)
-            .load::<i32>(&mut conn)?;
-
-        Ok(result)
-    }
-    */
-
     pub async fn delete(&self, pool: &DbPool) -> Result<usize, ApiError> {
         self.delete_user_record(pool).await
     }
@@ -176,17 +163,11 @@ impl LoginUser {
     /// Check if the user exists and the plaintext password in the struct
     /// matches the hashed password in the database.
     pub async fn login(self, pool: &DbPool) -> Result<User, ApiError> {
-        use crate::schema::users::dsl::*;
-
         // We could do .first::<User>(&mut conn)? here, due to the way errors.rs uses "From"
         // to map diesel errors. But, we specifically map Diesel's NotFound to our own NotFound
         // which would lead to a 404 instead of a 401, leaking information about the existence
         // of the user.
-        let user = match with_connection(pool, |conn| {
-            users
-                .filter(username.eq(&self.username))
-                .first::<User>(conn)
-        }) {
+        let user = match User::get_by_username(pool, &self.username).await {
             Ok(user) => user,
             Err(_) => {
                 warn!(

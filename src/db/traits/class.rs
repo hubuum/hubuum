@@ -188,3 +188,9 @@ impl ClassNamespaceLookup for HubuumClassID {
             .await
     }
 }
+
+pub async fn total_class_count_from_backend(pool: &DbPool) -> Result<i64, ApiError> {
+    use crate::schema::hubuumclass::dsl::*;
+
+    with_connection(pool, |conn| hubuumclass.count().get_result::<i64>(conn))
+}
