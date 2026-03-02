@@ -6,8 +6,8 @@ mod test {
     use crate::models::group::GroupID;
     use crate::models::search::{ParsedQueryParam, QueryOptions, SearchOperator};
     use crate::models::{HubuumClass, Namespace, NewNamespace};
-    use crate::tests::constants::{get_schema, SchemaType};
-    use crate::tests::{ensure_admin_group, test_context, TestContext};
+    use crate::tests::constants::{SchemaType, get_schema};
+    use crate::tests::{TestContext, ensure_admin_group, test_context};
     use crate::traits::{CanDelete, CanSave, Search};
 
     struct TestCase {

@@ -238,8 +238,8 @@ macro_rules! assert_contains_same_ids {
 /// #[rstest]
 /// #[actix_web::test]
 /// async fn test_api_classes_get(#[future(awt)] test_context: TestContext) {
-///     let created_classes = create_test_classes("get").await;
 ///     let context = test_context;
+///     let created_classes = create_test_classes(&context, "get").await;
 ///
 ///     let resp = get_request(&context.pool, &context.admin_token, CLASSES_ENDPOINT).await;
 ///     let resp = assert_response_status(resp, http::StatusCode::OK).await;

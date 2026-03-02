@@ -14,7 +14,7 @@ mod tls;
 mod traits;
 mod utilities;
 
-use actix_web::{middleware::Logger, web, web::Data, web::JsonConfig, App, HttpServer};
+use actix_web::{App, HttpServer, middleware::Logger, web, web::Data, web::JsonConfig};
 use db::init_pool;
 #[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;
@@ -29,8 +29,8 @@ use tracing_subscriber::{
 use crate::api::openapi::openapi_json as openapi_json_handler;
 use crate::config::get_config;
 use crate::errors::{
-    fatal_error, json_error_handler, EXIT_CODE_CONFIG_ERROR, EXIT_CODE_INIT_ERROR,
-    EXIT_CODE_TLS_ERROR,
+    EXIT_CODE_CONFIG_ERROR, EXIT_CODE_INIT_ERROR, EXIT_CODE_TLS_ERROR, fatal_error,
+    json_error_handler,
 };
 use crate::utilities::is_valid_log_level;
 

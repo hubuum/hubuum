@@ -18,7 +18,7 @@ use crate::models::{
 use crate::traits::{GroupAccessors, SelfAccessors};
 use crate::{date_search, numeric_search, string_search, trace_query};
 
-use super::{with_connection, DbPool};
+use super::{DbPool, with_connection};
 
 /// Trait for checking if a structure is valid/active/etc in the database.
 ///
@@ -170,7 +170,7 @@ where
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for transitive class relations",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -228,7 +228,7 @@ where
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for class relations",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -365,7 +365,7 @@ where
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for objects",
                         param.field
-                    )))
+                    )));
                 }
             }
         }

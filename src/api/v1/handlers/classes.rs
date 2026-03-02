@@ -1,11 +1,11 @@
-use actix_web::{delete, get, http::StatusCode, patch, post, routes, web, HttpRequest, Responder};
+use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 
 use tracing::{debug, info};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::can;
-use crate::db::traits::{ClassRelation, ObjectRelationMemberships, UserPermissions};
 use crate::db::DbPool;
+use crate::db::traits::{ClassRelation, ObjectRelationMemberships, UserPermissions};
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::traits::{ExpandNamespace, ToHubuumObjects};
@@ -24,7 +24,7 @@ use crate::models::{
 use crate::traits::{CanDelete, CanSave, CanUpdate, NamespaceAccessors, Search, SelfAccessors};
 
 use super::check_if_object_in_class;
-use crate::models::search::{parse_query_parameter, FilterField};
+use crate::models::search::{FilterField, parse_query_parameter};
 
 // GET /api/v1/classes, list all classes the user may see.
 #[utoipa::path(

@@ -2,7 +2,7 @@ use diesel::prelude::*;
 use jsonschema;
 use serde_json;
 
-use crate::db::{with_connection, DbPool};
+use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::traits::GroupAccessors;
 
@@ -56,7 +56,9 @@ impl Validate for HubuumObject {
     async fn validate(&self, pool: &DbPool) -> Result<(), ApiError> {
         let class = HubuumClassID(self.hubuum_class_id).class(pool).await?;
 
-        if class.validate_schema && let Some(ref schema) = class.json_schema {
+        if class.validate_schema
+            && let Some(ref schema) = class.json_schema
+        {
             self.validate_against_schema(schema).await?;
         }
         Ok(())
@@ -75,7 +77,9 @@ impl Validate for NewHubuumObject {
     async fn validate(&self, pool: &DbPool) -> Result<(), ApiError> {
         let class = HubuumClassID(self.hubuum_class_id).class(pool).await?;
 
-        if class.validate_schema && let Some(ref schema) = class.json_schema {
+        if class.validate_schema
+            && let Some(ref schema) = class.json_schema
+        {
             self.validate_against_schema(schema).await?;
         }
         Ok(())
@@ -96,7 +100,9 @@ impl Validate for (&UpdateHubuumObject, i32) {
         let original = HubuumObjectID(*object_id).instance(pool).await?;
         let merged = original.merge_update(update_obj);
         let class = HubuumClassID(merged.hubuum_class_id).class(pool).await?;
-        if class.validate_schema && let Some(ref schema) = class.json_schema {
+        if class.validate_schema
+            && let Some(ref schema) = class.json_schema
+        {
             merged.validate_against_schema(schema).await?;
         }
         Ok(())
@@ -299,7 +305,7 @@ impl CursorPaginated for HubuumObject {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for objects",
                     field
-                )))
+                )));
             }
         })
     }
@@ -353,7 +359,7 @@ impl CursorSqlMapping for HubuumObject {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for objects",
                     field
-                )))
+                )));
             }
         })
     }
@@ -392,7 +398,7 @@ impl CursorPaginated for HubuumObjectWithPath {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for related objects",
                     field
-                )))
+                )));
             }
         })
     }
@@ -457,7 +463,7 @@ impl CursorSqlMapping for HubuumObjectWithPath {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for related objects",
                     field
-                )))
+                )));
             }
         })
     }

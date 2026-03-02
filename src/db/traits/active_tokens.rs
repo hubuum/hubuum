@@ -1,5 +1,5 @@
 use crate::db::traits::ActiveTokens;
-use crate::db::{with_connection, DbPool};
+use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, QueryOptions};
 use crate::models::{User, UserToken};
@@ -60,7 +60,7 @@ async fn active_tokens_by_user_id_paginated(
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' isn't searchable (or does not exist) for user tokens",
                     param.field
-                )))
+                )));
             }
         }
     }

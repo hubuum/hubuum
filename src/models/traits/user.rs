@@ -2,7 +2,7 @@ use argon2::password_hash::rand_core::le;
 use diesel::dsl::Filter;
 use diesel::query_builder;
 use diesel::sql_types::Integer;
-use diesel::{pg::Pg, ExpressionMethods, JoinOnDsl, QueryDsl, RunQueryDsl, Table};
+use diesel::{ExpressionMethods, JoinOnDsl, QueryDsl, RunQueryDsl, Table, pg::Pg};
 
 use std::iter::IntoIterator;
 
@@ -15,9 +15,9 @@ use crate::models::search::{
 };
 use crate::models::traits::ExpandNamespaceFromMap;
 use crate::models::{
-    class, group, permissions, ClassClosureView, Group, HubuumClass, HubuumClassExpanded,
-    HubuumClassRelation, HubuumObject, HubuumObjectRelation, HubuumObjectWithPath, Namespace,
-    ObjectClosureView, Permission, Permissions, User, UserID,
+    ClassClosureView, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
+    HubuumObjectRelation, HubuumObjectWithPath, Namespace, ObjectClosureView, Permission,
+    Permissions, User, UserID, class, group, permissions,
 };
 
 use crate::schema::hubuumclass::namespace_id;
@@ -27,7 +27,7 @@ use crate::traits::{
     NamespaceAccessors, SelfAccessors,
 };
 
-use crate::db::{with_connection, DbPool};
+use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::utilities::extensions::CustomStringExtensions;
 
@@ -109,7 +109,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for namespaces",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -248,7 +248,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for classes",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -408,7 +408,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for objects",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -598,7 +598,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for class relations",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -736,7 +736,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for object relations",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -912,7 +912,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for related objects",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -982,7 +982,7 @@ pub trait GroupAccessors: SelfAccessors<User> {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for groups",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -1230,7 +1230,7 @@ impl CursorPaginated for User {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for users",
                     field
-                )))
+                )));
             }
         })
     }
@@ -1279,7 +1279,7 @@ impl CursorSqlMapping for User {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for users",
                     field
-                )))
+                )));
             }
         })
     }
@@ -1332,8 +1332,8 @@ mod test {
     use super::*;
     use crate::models::{GroupID, NewHubuumClass, Permissions, PermissionsList};
     use crate::tests::{
-        create_test_group, create_test_user, ensure_admin_group, ensure_admin_user, test_context,
-        TestContext,
+        TestContext, create_test_group, create_test_user, ensure_admin_group, ensure_admin_user,
+        test_context,
     };
     use crate::traits::PermissionController;
     use crate::traits::{CanDelete, CanSave};
@@ -1517,9 +1517,7 @@ mod test {
             .unwrap();
         assert_contains!(&nslist, &ns);
 
-        ns.revoke_all(&context.pool, test_group_2.id)
-            .await
-            .unwrap();
+        ns.revoke_all(&context.pool, test_group_2.id).await.unwrap();
 
         let nslist = test_user_2
             .search_namespaces(

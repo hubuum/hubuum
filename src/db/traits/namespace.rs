@@ -2,7 +2,7 @@ use diesel::prelude::*;
 use tracing::{debug, trace};
 
 use crate::db::traits::GetNamespace;
-use crate::db::{with_connection, DbPool};
+use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::{HubuumClassRelation, NewHubuumObjectRelation};
 use crate::models::{HubuumObjectRelation, NewHubuumClassRelation};

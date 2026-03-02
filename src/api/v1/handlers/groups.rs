@@ -7,7 +7,7 @@ use crate::models::search::parse_query_parameter;
 use crate::models::{Group, User, UserID};
 use crate::pagination::prepare_db_pagination;
 use crate::utilities::response::{json_response, json_response_created, paginated_json_response};
-use actix_web::{delete, get, http::StatusCode, patch, post, routes, web, HttpRequest, Responder};
+use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::debug;

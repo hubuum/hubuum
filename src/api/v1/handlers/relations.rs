@@ -19,7 +19,7 @@ use tracing::debug;
 
 use crate::traits::Search;
 
-use actix_web::{get, http::StatusCode, routes, web, HttpRequest, Responder};
+use actix_web::{HttpRequest, Responder, get, http::StatusCode, routes, web};
 
 #[utoipa::path(
     get,

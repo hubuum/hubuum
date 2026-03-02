@@ -8,7 +8,7 @@ mod tests {
 
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
-    use crate::tests::{create_test_admin, create_test_user, test_context, TestContext};
+    use crate::tests::{TestContext, create_test_admin, create_test_user, test_context};
 
     const USERS_ENDPOINT: &str = "/api/v1/iam/users";
 
@@ -18,7 +18,11 @@ mod tests {
         requester: &User,
         expected_status: StatusCode,
     ) {
-        let token = requester.create_token(&context.pool).await.unwrap().get_token();
+        let token = requester
+            .create_token(&context.pool)
+            .await
+            .unwrap()
+            .get_token();
 
         let resp = get_request(
             &context.pool,
@@ -40,7 +44,11 @@ mod tests {
         requester: &User,
         expected_status: StatusCode,
     ) {
-        let token = requester.create_token(&context.pool).await.unwrap().get_token();
+        let token = requester
+            .create_token(&context.pool)
+            .await
+            .unwrap()
+            .get_token();
 
         let resp = get_request(
             &context.pool,
@@ -65,8 +73,13 @@ mod tests {
 
         // Tokens are admin_or_self. Note that the format is (target, requester, expected_status).
         check_show_user_tokens(&context, &test_user, &test_user, StatusCode::OK).await;
-        check_show_user_tokens(&context, &test_admin_user, &test_user, StatusCode::FORBIDDEN)
-            .await;
+        check_show_user_tokens(
+            &context,
+            &test_admin_user,
+            &test_user,
+            StatusCode::FORBIDDEN,
+        )
+        .await;
         check_show_user_tokens(&context, &test_user, &test_admin_user, StatusCode::OK).await;
     }
 
@@ -214,10 +227,7 @@ mod tests {
     #[case::limit_2(2)]
     #[case::limit_5(3)]
     #[actix_web::test]
-    async fn test_list_users_limit(
-        #[case] limit: usize,
-        #[future(awt)] test_context: TestContext,
-    ) {
+    async fn test_list_users_limit(#[case] limit: usize, #[future(awt)] test_context: TestContext) {
         let context = test_context;
         let prefix = format!("test_list_users_limit_{limit}");
 
@@ -303,7 +313,11 @@ mod tests {
     async fn test_user_tokens_cursor_pagination(#[future(awt)] test_context: TestContext) {
         let context = test_context;
         let test_user = create_test_user(&context.pool).await;
-        let token = test_user.create_token(&context.pool).await.unwrap().get_token();
+        let token = test_user
+            .create_token(&context.pool)
+            .await
+            .unwrap()
+            .get_token();
 
         test_user.create_token(&context.pool).await.unwrap();
         test_user.create_token(&context.pool).await.unwrap();
@@ -357,7 +371,10 @@ mod tests {
         .await
         .unwrap();
 
-        matching_group.add_member(&context.pool, &user).await.unwrap();
+        matching_group
+            .add_member(&context.pool, &user)
+            .await
+            .unwrap();
         other_group.add_member(&context.pool, &user).await.unwrap();
 
         let resp = get_request(

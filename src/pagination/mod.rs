@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{get_config, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT};
+use crate::config::{DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, get_config};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, QueryOptions, SortParam};
 pub use crate::traits::pagination::{

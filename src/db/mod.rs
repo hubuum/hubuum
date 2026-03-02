@@ -1,13 +1,13 @@
 pub mod traits;
 
+use diesel::PgConnection;
 use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
-use diesel::PgConnection;
 
 use std::time::Duration;
 use tracing::{debug, error, warn};
 
-use crate::errors::{fatal_error, ApiError, EXIT_CODE_CONFIG_ERROR, EXIT_CODE_DATABASE_ERROR};
+use crate::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, EXIT_CODE_DATABASE_ERROR, fatal_error};
 use crate::utilities::db::DatabaseUrlComponents;
 
 pub type DbPool = Pool<ConnectionManager<PgConnection>>;
@@ -86,8 +86,8 @@ pub fn init_pool(database_url: &str, max_size: u32) -> DbPool {
 mod tests {
     use crate::config::get_config;
     use crate::errors::ApiError;
-    use diesel::r2d2::{ConnectionManager, Pool};
     use diesel::PgConnection;
+    use diesel::r2d2::{ConnectionManager, Pool};
 
     #[test]
     fn test_init_pool() {

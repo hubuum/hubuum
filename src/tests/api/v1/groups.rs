@@ -9,7 +9,7 @@ mod tests {
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
-        create_test_admin, create_test_group, create_test_user, test_context, TestContext,
+        TestContext, create_test_admin, create_test_group, create_test_user, test_context,
     };
 
     const GROUPS_ENDPOINT: &str = "/api/v1/iam/groups";
@@ -20,7 +20,11 @@ mod tests {
         requester: &User,
         expected_status: StatusCode,
     ) {
-        let token = requester.create_token(&context.pool).await.unwrap().get_token();
+        let token = requester
+            .create_token(&context.pool)
+            .await
+            .unwrap()
+            .get_token();
 
         let resp = get_request(
             &context.pool,
@@ -44,7 +48,10 @@ mod tests {
         let test_admin = create_test_admin(&context.pool).await;
 
         let test_group = create_test_group(&context.pool).await;
-        test_group.add_member(&context.pool, &test_user).await.unwrap();
+        test_group
+            .add_member(&context.pool, &test_user)
+            .await
+            .unwrap();
 
         let test_admin_group = create_test_group(&context.pool).await;
 
@@ -429,7 +436,10 @@ mod tests {
         .await
         .unwrap();
 
-        group.add_member(&context.pool, &matching_user).await.unwrap();
+        group
+            .add_member(&context.pool, &matching_user)
+            .await
+            .unwrap();
         group.add_member(&context.pool, &other_user).await.unwrap();
 
         let resp = get_request(

@@ -10,7 +10,7 @@ mod test {
     use crate::models::{
         HubuumClass, HubuumClassRelation, Namespace, NewHubuumClassRelation, NewNamespace,
     };
-    use crate::tests::{ensure_admin_group, test_context, TestContext};
+    use crate::tests::{TestContext, ensure_admin_group, test_context};
     use crate::traits::{CanDelete, CanSave, Search};
 
     async fn create_data(

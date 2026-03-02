@@ -4,25 +4,25 @@ use rstest::rstest;
 use serde_json::Value;
 
 use crate::errors::ApiError;
-use crate::models::{Namespace, NewHubuumClass, NewHubuumObject, UpdateHubuumObject};
-use crate::tests::constants::{get_schema, SchemaType};
-use crate::tests::{create_namespace, get_pool_and_config};
-use crate::traits::{CanDelete, CanSave, Validate, ValidateAgainstSchema};
+use crate::models::{NewHubuumClass, NewHubuumObject, UpdateHubuumObject};
+use crate::tests::constants::{SchemaType, get_schema};
+use crate::tests::{NamespaceFixture, TestScope};
+use crate::traits::{CanSave, Validate, ValidateAgainstSchema};
 
 /// Sets up a Geo class (with its namespace) for testing.
 /// The identifier string is used to create unique names.
-async fn setup_geo_class(identifier: &str) -> (Namespace, NewHubuumClass, Value) {
-    let (pool, _) = get_pool_and_config().await;
-    let ns = create_namespace(&pool, &format!("Validation_test_{identifier}"))
-        .await
-        .expect("Failed to create namespace");
+async fn setup_geo_class(identifier: &str) -> (NamespaceFixture, NewHubuumClass, Value) {
+    let scope = TestScope::new();
+    let ns = scope
+        .namespace_fixture(&format!("Validation_test_{identifier}"))
+        .await;
     // Get the Geo schema.
     let schema = get_schema(SchemaType::Geo);
     let new_class = NewHubuumClass {
         name: format!("{identifier}_class"),
         validate_schema: Some(true),
         json_schema: Some(schema.clone()),
-        namespace_id: ns.id,
+        namespace_id: ns.namespace.id,
         description: "Geo class".to_string(),
     };
     (ns, new_class, schema.clone())
@@ -64,14 +64,14 @@ async fn test_validate_object(#[case] json_data: &str, #[case] expected: bool) {
     let data = serde_json::from_str::<Value>(json_data).unwrap();
     let obj_name = format!("{json_data}_test_validate_object");
 
-    let (pool, _) = get_pool_and_config().await;
     let (ns, new_class, _schema) = setup_geo_class(&format!("new_{json_data}")).await;
+    let pool = ns.pool.clone();
 
     // Save the class and build the new object.
     let class = new_class.save(&pool).await.expect("Failed to create class");
     let object = NewHubuumObject {
         name: obj_name,
-        namespace_id: ns.id,
+        namespace_id: ns.namespace.id,
         hubuum_class_id: class.id,
         data: data.clone(),
         description: "Test object".to_string(),
@@ -87,7 +87,7 @@ async fn test_validate_object(#[case] json_data: &str, #[case] expected: bool) {
     let object_validate = object.validate(&pool).await;
     assert_validation_result(object_validate, expected, "Object validation");
 
-    ns.delete(&pool).await.expect("Failed to delete namespace");
+    ns.cleanup().await.expect("Failed to delete namespace");
 }
 
 #[rstest]
@@ -105,14 +105,14 @@ async fn test_validate_update_object(#[case] json_data: &str, #[case] expected: 
     let base_data = serde_json::from_str::<Value>(base_data).unwrap();
     let updated_data = serde_json::from_str::<Value>(json_data).unwrap();
 
-    let (pool, _) = get_pool_and_config().await;
     let (ns, new_class, _schema) = setup_geo_class(&format!("update_{json_data}")).await;
+    let pool = ns.pool.clone();
 
     // Save the class and then create an object with the base data.
     let class = new_class.save(&pool).await.expect("Failed to create class");
     let object = NewHubuumObject {
         name: obj_name,
-        namespace_id: ns.id,
+        namespace_id: ns.namespace.id,
         hubuum_class_id: class.id,
         data: base_data,
         description: "Test object".to_string(),
@@ -133,5 +133,5 @@ async fn test_validate_update_object(#[case] json_data: &str, #[case] expected: 
     let validate = (&update_object, object.id).validate(&pool).await;
     assert_validation_result(validate, expected, "Update object validation");
 
-    ns.delete(&pool).await.expect("Failed to delete namespace");
+    ns.cleanup().await.expect("Failed to delete namespace");
 }

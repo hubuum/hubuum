@@ -7,7 +7,7 @@ use crate::models::user::{NewUser, UpdateUser, UserID};
 use crate::models::{Group, User, UserToken};
 use crate::pagination::prepare_db_pagination;
 use crate::utilities::response::{json_response, json_response_created, paginated_json_response};
-use actix_web::{delete, get, http::StatusCode, patch, routes, web, HttpRequest, Responder};
+use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, routes, web};
 use serde_json::json;
 use tracing::debug;
 

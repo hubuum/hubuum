@@ -9,14 +9,13 @@ mod tests {
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
-    use crate::tests::constants::{get_schema, SchemaType};
-    use crate::tests::{create_namespace, get_test_pool, test_context, TestContext};
+    use crate::tests::constants::{SchemaType, get_schema};
+    use crate::tests::{ObjectFixture, TestContext, create_object_fixture, test_context};
     // use crate::{assert_contains_all, assert_contains_same_ids};
 
     use crate::tests::api::v1::classes::tests::{cleanup, create_test_classes};
 
     const OBJECT_ENDPOINT: &str = "/api/v1/classes";
-
     fn object_in_class_endpoint(class_id: i32, object_id: i32) -> String {
         format!("{OBJECT_ENDPOINT}/{class_id}/{object_id}")
     }
@@ -25,51 +24,52 @@ mod tests {
         format!("{OBJECT_ENDPOINT}/{class_id}/")
     }
 
-    async fn create_test_objects(prefix: &str, count: usize) -> Vec<HubuumObject> {
-        let pool = get_test_pool();
-
-        let namespace = create_namespace(&pool, prefix).await.unwrap();
+    async fn create_test_objects(
+        context: &TestContext,
+        prefix: &str,
+        count: usize,
+    ) -> ObjectFixture {
         let class = NewHubuumClass {
-            namespace_id: namespace.id,
+            namespace_id: 0,
             name: format!("test class {prefix}"),
             description: "Test class description".to_string(),
             json_schema: None,
             validate_schema: None,
-        }
-        .save(&pool)
-        .await
-        .unwrap();
+        };
 
         let mut objects = Vec::new();
 
         for i in 0..count {
-            let object = NewHubuumObject {
-                namespace_id: namespace.id,
-                hubuum_class_id: class.id,
+            objects.push(NewHubuumObject {
+                namespace_id: 0,
+                hubuum_class_id: 0,
                 data: serde_json::json!({"test": format!("data_{i}")}),
                 name: format!("{prefix} test object {i}"),
                 description: format!("{prefix} test object description {i}"),
-            };
-            objects.push(object.save(&pool).await.unwrap());
+            });
         }
-        objects
+
+        create_object_fixture(
+            &context.pool,
+            context.namespace_fixture(prefix).await,
+            class,
+            objects,
+        )
+        .await
+        .unwrap()
     }
 
     #[rstest]
     #[actix_rt::test]
     async fn get_patch_and_delete_objects_in_class(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-
-        let namespace = create_namespace(&context.pool, "get_patch_and_delete_objects_in_class")
-            .await
-            .unwrap();
-        let classes = create_test_classes("get_patch_and_delete_objects_in_class").await;
+        let classes = create_test_classes(&context, "get_patch_and_delete_objects_in_class").await;
 
         let class = &classes[0];
 
         let object = NewHubuumObject {
-            namespace_id: namespace.id,
-            hubuum_class_id: classes[0].id,
+            namespace_id: class.namespace_id,
+            hubuum_class_id: class.id,
             data: serde_json::json!({"test": "data"}),
             name: "test object".to_string(),
             description: "test object description".to_string(),
@@ -164,14 +164,13 @@ mod tests {
                 .collect::<Vec<String>>()
                 .join("_")
         );
-        let namespace = create_namespace(&context.pool, &literal).await.unwrap();
-        let classes = create_test_classes(&literal).await;
+        let classes = create_test_classes(&context, &literal).await;
 
         for (class_id, expected_status) in class_ids.iter().zip(expected_statuses.iter()) {
             let class = &classes[*class_id as usize];
 
             let object = NewHubuumObject {
-                namespace_id: namespace.id,
+                namespace_id: class.namespace_id,
                 hubuum_class_id: class.id,
                 data: serde_json::json!({"test": "data"}),
                 name: "test create object".to_string(),
@@ -204,18 +203,14 @@ mod tests {
                 assert_eq!(created_object_url, object_url);
             }
         }
-        namespace.delete(&context.pool).await.unwrap();
+        cleanup(&classes).await;
     }
 
     #[rstest]
     #[actix_rt::test]
     async fn get_objects_in_class(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-
-        let namespace = create_namespace(&context.pool, "get_objects_in_class")
-            .await
-            .unwrap();
-        let classes = create_test_classes("get_objects_in_class").await;
+        let classes = create_test_classes(&context, "get_objects_in_class").await;
 
         let class = &classes[0];
 
@@ -223,7 +218,7 @@ mod tests {
 
         for i in 0..5 {
             let object = NewHubuumObject {
-                namespace_id: namespace.id,
+                namespace_id: class.namespace_id,
                 hubuum_class_id: classes[0].id,
                 data: serde_json::json!({"test": format!("data_{i}")}),
                 name: format!("test get objects {i}"),
@@ -242,6 +237,7 @@ mod tests {
         let objects_from_api: Vec<HubuumObject> = test::read_body_json(resp).await;
 
         assert_eq!(objects_from_api.len(), objects.len());
+        cleanup(&classes).await;
     }
 
     // Covers docs/querying.md "JSON filtering" object `json_data` examples.
@@ -270,11 +266,9 @@ mod tests {
                 .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
                 .collect::<String>()
         );
-        let namespace = create_namespace(&context.pool, &namespace_name)
-            .await
-            .unwrap();
+        let namespace = context.namespace_fixture(&namespace_name).await;
         let class = NewHubuumClass {
-            namespace_id: namespace.id,
+            namespace_id: namespace.namespace.id,
             name: format!("json filter class {namespace_name}"),
             description: format!("json filter class {namespace_name}"),
             json_schema: None,
@@ -313,7 +307,7 @@ mod tests {
 
         for (name, data) in test_objects {
             NewHubuumObject {
-                namespace_id: namespace.id,
+                namespace_id: namespace.namespace.id,
                 hubuum_class_id: class.id,
                 data,
                 name: name.to_string(),
@@ -329,7 +323,7 @@ mod tests {
             &context.admin_token,
             &format!(
                 "{OBJECT_ENDPOINT}/{}/?namespaces={}&{}&sort=id",
-                class.id, namespace.id, query_string
+                class.id, namespace.namespace.id, query_string
             ),
         )
         .await;
@@ -339,7 +333,7 @@ mod tests {
         let object_names: Vec<&str> = objects.iter().map(|object| object.name.as_str()).collect();
         assert_eq!(object_names, expected_names);
 
-        namespace.delete(&context.pool).await.unwrap();
+        namespace.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -365,12 +359,12 @@ mod tests {
 
         let unique_name = format!("{json_data}_create_objects_in_class_failing_validation");
 
-        let namespace = create_namespace(&context.pool, &unique_name).await.unwrap();
+        let namespace = context.namespace_fixture(&unique_name).await;
 
         let schema = get_schema(SchemaType::Geo);
         let class = NewHubuumClass {
             name: unique_name.clone(),
-            namespace_id: namespace.id,
+            namespace_id: namespace.namespace.id,
             description: "Test class".to_string(),
             json_schema: Some(schema.clone()),
             validate_schema: Some(true),
@@ -381,7 +375,7 @@ mod tests {
 
         let object = NewHubuumObject {
             name: unique_name.clone(),
-            namespace_id: namespace.id,
+            namespace_id: namespace.namespace.id,
             hubuum_class_id: class.id,
             data: serde_json::from_str(json_data).unwrap(),
             description: "Test object".to_string(),
@@ -421,6 +415,8 @@ mod tests {
                 "Expected 'validation error', got: {error_text}"
             );
         }
+
+        namespace.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -438,14 +434,14 @@ mod tests {
         #[case] expected_id_order: &[usize],
         #[future(awt)] test_context: TestContext,
     ) {
+        let context = test_context;
         let created_objects = create_test_objects(
+            &context,
             &format!("api_objects_sorted_{sort_order}_{expected_id_order:?}"),
             4,
         )
         .await;
-
-        let context = test_context;
-        let namespace_id = created_objects[0].namespace_id;
+        let namespace_id = created_objects.namespace_id();
 
         let sort_order = if sort_order.is_empty() {
             ""
@@ -453,7 +449,7 @@ mod tests {
             &format!("&sort={sort_order}")
         };
 
-        let class_id = created_objects[0].hubuum_class_id;
+        let class_id = created_objects.class_id();
         let resp = get_request(
             &context.pool,
             &context.admin_token,
@@ -466,6 +462,7 @@ mod tests {
         assert_eq!(objects[0].id, created_objects[expected_id_order[0]].id);
         assert_eq!(objects[1].id, created_objects[expected_id_order[1]].id);
         assert_eq!(objects[2].id, created_objects[expected_id_order[2]].id);
+        created_objects.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -477,11 +474,11 @@ mod tests {
         #[case] limit: usize,
         #[future(awt)] test_context: TestContext,
     ) {
-        let created_objects = create_test_objects(&format!("api_objects_limit_{limit}"), 6).await;
-
         let context = test_context;
-        let namespace_id = created_objects[0].namespace_id;
-        let class_id = created_objects[0].hubuum_class_id;
+        let created_objects =
+            create_test_objects(&context, &format!("api_objects_limit_{limit}"), 6).await;
+        let namespace_id = created_objects.namespace_id();
+        let class_id = created_objects.class_id();
 
         // Limit to 2 results
         let resp = get_request(
@@ -495,15 +492,16 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let objects: Vec<HubuumObject> = test::read_body_json(resp).await;
         assert_eq!(objects.len(), limit);
+        created_objects.cleanup().await.unwrap();
     }
 
     #[rstest]
     #[actix_web::test]
     async fn test_api_objects_cursor_pagination(#[future(awt)] test_context: TestContext) {
-        let created_objects = create_test_objects("api_objects_cursor", 6).await;
         let context = test_context;
-        let namespace_id = created_objects[0].namespace_id;
-        let class_id = created_objects[0].hubuum_class_id;
+        let created_objects = create_test_objects(&context, "api_objects_cursor", 6).await;
+        let namespace_id = created_objects.namespace_id();
+        let class_id = created_objects.class_id();
 
         let resp = get_request(
             &context.pool,
@@ -535,5 +533,6 @@ mod tests {
         assert_eq!(objects.len(), 2);
         assert_eq!(objects[0].id, created_objects[2].id);
         assert_eq!(objects[1].id, created_objects[3].id);
+        created_objects.cleanup().await.unwrap();
     }
 }

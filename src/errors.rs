@@ -1,5 +1,5 @@
 use actix_web::{
-    error::JsonPayloadError, http::StatusCode, HttpRequest, HttpResponse, ResponseError,
+    HttpRequest, HttpResponse, ResponseError, error::JsonPayloadError, http::StatusCode,
 };
 use diesel::r2d2::PoolError;
 use diesel::result::{DatabaseErrorKind, Error as DieselError};
@@ -276,8 +276,8 @@ mod tests {
     #[test]
     fn test_api_error_from_pool_error() {
         // Test that PoolError converts to DbConnectionError
-        use diesel::r2d2::ConnectionManager;
         use diesel::PgConnection;
+        use diesel::r2d2::ConnectionManager;
 
         let manager = ConnectionManager::<PgConnection>::new("postgres://invalid:5432/nonexistent");
         let pool_result = diesel::r2d2::Pool::builder()
@@ -285,7 +285,9 @@ mod tests {
             .connection_timeout(std::time::Duration::from_millis(1))
             .build(manager);
 
-        if let Ok(pool) = pool_result && let Err(pool_error) = pool.get() {
+        if let Ok(pool) = pool_result
+            && let Err(pool_error) = pool.get()
+        {
             let api_error = ApiError::from(pool_error);
             match api_error {
                 ApiError::DbConnectionError(_) => {

@@ -1,4 +1,4 @@
-use crate::db::{with_connection, DbPool};
+use crate::db::{DbPool, with_connection};
 use crate::models::user::User;
 
 use diesel::prelude::*;

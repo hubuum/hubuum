@@ -131,7 +131,7 @@ pub mod tests {
 
     use super::*;
     use crate::models::class::tests::{create_class, verify_no_such_class};
-    use crate::tests::{create_namespace, get_pool_and_config};
+    use crate::tests::TestScope;
 
     use crate::models::class::HubuumClass;
     use crate::models::namespace::Namespace;
@@ -210,17 +210,24 @@ pub mod tests {
 
     #[actix_rt::test]
     async fn test_creating_object_manual_delete() {
-        let (pool, _) = get_pool_and_config().await;
-        let namespace = create_namespace(&pool, "object_manual_test").await.unwrap();
-        let class = create_class(&pool, &namespace, "test creating object").await;
+        let scope = TestScope::new();
+        let pool = scope.pool.clone();
+        let namespace = scope.namespace_fixture("object_manual_test").await;
+        let class = create_class(&pool, &namespace.namespace, "test creating object").await;
 
         let obj_name = "test manual object creation";
 
         let object_data = serde_json::json!({"test": "data"});
 
-        let object = create_object(&pool, class.id, namespace.id, obj_name, object_data.clone())
-            .await
-            .unwrap();
+        let object = create_object(
+            &pool,
+            class.id,
+            namespace.namespace.id,
+            obj_name,
+            object_data.clone(),
+        )
+        .await
+        .unwrap();
         assert_eq!(object.name, obj_name);
 
         let fetched_object = get_object(&pool, object.id).await;
@@ -234,6 +241,6 @@ pub mod tests {
         class.delete(&pool).await.unwrap();
         verify_no_such_class(&pool, class.id).await;
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.cleanup().await.unwrap();
     }
 }

@@ -107,7 +107,7 @@ impl Group {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for users",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -233,7 +233,7 @@ impl CursorPaginated for Group {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for groups",
                     field
-                )))
+                )));
             }
         })
     }
@@ -282,7 +282,7 @@ impl CursorSqlMapping for Group {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for groups",
                     field
-                )))
+                )));
             }
         })
     }

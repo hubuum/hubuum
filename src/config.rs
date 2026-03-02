@@ -217,8 +217,8 @@ mod tests {
     use clap::Parser;
 
     use super::{
-        get_config_from_env, AppConfig, TlsBackend, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT,
-        TEST_ENV_LOCK,
+        AppConfig, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, TEST_ENV_LOCK, TlsBackend,
+        get_config_from_env,
     };
 
     struct EnvVarGuard {

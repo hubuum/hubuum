@@ -241,7 +241,7 @@ macro_rules! numeric_search {
                 return Err(ApiError::OperatorMismatch(format!(
                     "Operator '{:?}' not implemented for field '{}' (type: numeric)",
                     $operator, $parsed_query_param.field
-                )))
+                )));
             }
         };
     }};
@@ -332,7 +332,7 @@ macro_rules! date_search {
                 return Err(ApiError::OperatorMismatch(format!(
                     "Operator '{:?}' not implemented for field '{}' (type: date)",
                     $operator, $parsed_query_param.field
-                )))
+                )));
             }
         };
     }};
@@ -381,7 +381,7 @@ macro_rules! array_search {
                 return Err(ApiError::OperatorMismatch(format!(
                     "Operator '{:?}' not implemented for field '{}' (type: array)",
                     $operator, $param.field
-                )))
+                )));
             }
         }
     }};
@@ -448,7 +448,7 @@ macro_rules! string_search {
                 return Err(ApiError::OperatorMismatch(format!(
                     "Operator '{:?}' not implemented for field '{}' (type: string)",
                     $operator, $param.field
-                )))
+                )));
             }
         }
     }};
@@ -482,7 +482,7 @@ macro_rules! boolean_search {
                 return Err(ApiError::OperatorMismatch(format!(
                     "Operator '{:?}' not implemented for field '{}' (type: boolean)",
                     $operator, $param.field
-                )))
+                )));
             }
         }
     }};

@@ -2,11 +2,11 @@
 mod tests {
     use rstest::rstest;
 
-    use actix_web::http::{header::HeaderValue, StatusCode};
+    use actix_web::http::{StatusCode, header::HeaderValue};
 
     use crate::tests::api_operations::get_request_with_correlation;
     use crate::tests::asserts::assert_response_status;
-    use crate::tests::{test_context, TestContext};
+    use crate::tests::{TestContext, test_context};
 
     const ENDPOINT: &str = "/api/v1/classes/";
 

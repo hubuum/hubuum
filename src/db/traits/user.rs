@@ -7,7 +7,7 @@ use crate::models::{Group, Permissions, User, UserID};
 use crate::traits::{GroupAccessors, NamespaceAccessors, SelfAccessors};
 use crate::utilities::auth::hash_password;
 
-use crate::db::{with_connection, DbPool};
+use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 
 use crate::models::search::{FilterField, QueryOptions};
@@ -228,7 +228,7 @@ impl User {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for users",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -282,7 +282,7 @@ impl User {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for groups",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -308,9 +308,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::models::{Permissions as P, PermissionsList as PL};
-    use crate::tests::{
-        create_namespace, create_test_group, create_user_with_params, get_pool_and_config,
-    };
+    use crate::tests::{TestScope, create_test_group, create_user_with_params};
     use crate::traits::PermissionController;
 
     // user_idx, namespaces_idx, permissions, expected
@@ -344,7 +342,8 @@ mod tests {
         #[case] permissions: Vec<Permissions>,
         #[case] expected: bool,
     ) {
-        let (pool, _) = get_pool_and_config().await;
+        let scope = TestScope::new();
+        let pool = scope.pool.clone();
         let suffix = format!(
             "_{}_{}_{}_{}",
             user_idx,
@@ -362,12 +361,12 @@ mod tests {
         );
 
         let namespaces = [
-            create_namespace(&pool, &format!("test_user_can_ns1_{suffix}"))
-                .await
-                .unwrap(),
-            create_namespace(&pool, &format!("test_user_can_ns2_{suffix}"))
-                .await
-                .unwrap(),
+            scope
+                .namespace_fixture(&format!("test_user_can_ns1_{suffix}"))
+                .await,
+            scope
+                .namespace_fixture(&format!("test_user_can_ns2_{suffix}"))
+                .await,
         ];
         let groups = [
             create_test_group(&pool).await,
@@ -382,6 +381,7 @@ mod tests {
         groups[1].add_member(&pool, &users[1]).await.unwrap();
 
         namespaces[0]
+            .namespace
             .grant(
                 &pool,
                 groups[0].id,
@@ -390,6 +390,7 @@ mod tests {
             .await
             .unwrap();
         namespaces[1]
+            .namespace
             .grant(
                 &pool,
                 groups[0].id,
@@ -399,6 +400,7 @@ mod tests {
             .unwrap();
 
         namespaces[0]
+            .namespace
             .grant(
                 &pool,
                 groups[1].id,
@@ -407,6 +409,7 @@ mod tests {
             .await
             .unwrap();
         namespaces[1]
+            .namespace
             .grant(
                 &pool,
                 groups[1].id,
@@ -418,7 +421,7 @@ mod tests {
         let user = &users[user_idx];
         let namespaces = namespaces_idx
             .iter()
-            .map(|i| &namespaces[*i])
+            .map(|i| &namespaces[*i].namespace)
             .collect::<Vec<_>>();
 
         let result = user.can(&pool, permissions, namespaces).await;

@@ -1,14 +1,14 @@
 use actix_service::{Service, Transform};
 use actix_web::{
+    Error,
     dev::ServiceRequest,
     dev::ServiceResponse,
     http::header::{HeaderName, HeaderValue},
-    Error,
 };
 use futures_util::future::{self, LocalBoxFuture, Ready};
 use std::task::{Context, Poll};
 use std::time::Instant;
-use tracing::{info, span, Instrument, Level};
+use tracing::{Instrument, Level, info, span};
 use uuid::Uuid;
 
 const CORRELATION_ID: HeaderName = HeaderName::from_static("x-correlation-id");

@@ -342,7 +342,7 @@ impl CursorPaginated for Namespace {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for namespaces",
                     field
-                )))
+                )));
             }
         })
     }
@@ -386,7 +386,7 @@ impl CursorSqlMapping for Namespace {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for namespaces",
                     field
-                )))
+                )));
             }
         })
     }

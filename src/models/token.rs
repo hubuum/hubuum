@@ -3,9 +3,9 @@ use chrono::NaiveDateTime;
 
 use chrono::{Duration, Utc};
 
+use diesel::QueryableByName;
 use diesel::prelude::*;
 use diesel::sql_types::{Integer, Text, Timestamp};
-use diesel::QueryableByName;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -73,7 +73,7 @@ impl CursorPaginated for UserToken {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for user tokens",
                     field
-                )))
+                )));
             }
         })
     }
@@ -116,7 +116,7 @@ impl CursorSqlMapping for UserToken {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for user tokens",
                     field
-                )))
+                )));
             }
         })
     }

@@ -5,8 +5,8 @@ use tracing::{debug, trace};
 
 use serde::{Deserialize, Serialize};
 
-use crate::db::traits::GetNamespace;
 use crate::db::DbPool;
+use crate::db::traits::GetNamespace;
 use crate::{errors::ApiError, schema::hubuumclass_relation, schema::hubuumobject_relation};
 
 use crate::models::search::{FilterField, SortParam};
@@ -315,7 +315,7 @@ impl CursorPaginated for HubuumClassRelation {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for class relations",
                     field
-                )))
+                )));
             }
         })
     }
@@ -364,7 +364,7 @@ impl CursorSqlMapping for HubuumClassRelation {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for class relations",
                     field
-                )))
+                )));
             }
         })
     }
@@ -395,7 +395,7 @@ impl CursorPaginated for HubuumObjectRelation {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for object relations",
                     field
-                )))
+                )));
             }
         })
     }
@@ -449,7 +449,7 @@ impl CursorSqlMapping for HubuumObjectRelation {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for object relations",
                     field
-                )))
+                )));
             }
         })
     }
@@ -475,7 +475,7 @@ impl CursorPaginated for HubuumClassRelationTransitive {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for transitive class relations",
                     field
-                )))
+                )));
             }
         })
     }
@@ -542,7 +542,7 @@ impl CursorSqlMapping for HubuumClassRelationTransitive {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for transitive class relations",
                     field
-                )))
+                )));
             }
         })
     }
@@ -616,7 +616,7 @@ impl CursorPaginated for ObjectClosureView {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for related objects",
                     field
-                )))
+                )));
             }
         })
     }
@@ -728,7 +728,7 @@ impl CursorSqlMapping for ObjectClosureView {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for related objects",
                     field
-                )))
+                )));
             }
         })
     }

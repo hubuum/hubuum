@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 use actix_web::web::Json;
-use chrono::{format, DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc, format};
 use diesel::dsl::Filter;
 use diesel::sql_types::Bool;
 use std::collections::HashSet;
@@ -389,7 +389,7 @@ impl ParsedQueryParam {
             _ => {
                 return Err(ApiError::BadRequest(
                     "Expected exactly two parts of key=value".to_string(),
-                ))
+                ));
             }
         };
 
@@ -445,7 +445,7 @@ impl ParsedQueryParam {
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Invalid operator for JSON: '{op:?}'"
-                )))
+                )));
             }
         };
 
@@ -454,7 +454,7 @@ impl ParsedQueryParam {
                 return Err(ApiError::BadRequest(format!(
                     "Invalid JSON type mapping between key '{}' and operator '{:?}'",
                     key, self.operator
-                )))
+                )));
             }
             Some(SQLMappedType::String) | Some(SQLMappedType::None) => {
                 bind_variables.push(SQLValue::String(value));
@@ -1355,26 +1355,66 @@ mod test {
             TestCase {
                 query_string: "name__icontains=foo&description=bar",
                 expected: vec![
-                    pq("name", SearchOperator::IContains{ is_negated: false }, "foo"),
-                    pq("description", SearchOperator::Equals{ is_negated: false}, "bar"),
+                    pq(
+                        "name",
+                        SearchOperator::IContains { is_negated: false },
+                        "foo",
+                    ),
+                    pq(
+                        "description",
+                        SearchOperator::Equals { is_negated: false },
+                        "bar",
+                    ),
                 ],
             },
             TestCase {
                 query_string: "name__contains=foo&description__icontains=bar&created_at__gte=2021-01-01&updated_at__lte=2021-12-31",
                 expected: vec![
-                    pq("name", SearchOperator::Contains{ is_negated: false}, "foo"),
-                    pq("description", SearchOperator::IContains{ is_negated: false}, "bar"),
-                    pq("created_at", SearchOperator::Gte{ is_negated: false}, "2021-01-01"),
-                    pq("updated_at", SearchOperator::Lte{ is_negated: false}, "2021-12-31"),
+                    pq(
+                        "name",
+                        SearchOperator::Contains { is_negated: false },
+                        "foo",
+                    ),
+                    pq(
+                        "description",
+                        SearchOperator::IContains { is_negated: false },
+                        "bar",
+                    ),
+                    pq(
+                        "created_at",
+                        SearchOperator::Gte { is_negated: false },
+                        "2021-01-01",
+                    ),
+                    pq(
+                        "updated_at",
+                        SearchOperator::Lte { is_negated: false },
+                        "2021-12-31",
+                    ),
                 ],
             },
             TestCase {
                 query_string: "name__not_icontains=foo&description=bar&permissions=CanRead&validate_schema=true",
                 expected: vec![
-                    pq("name", SearchOperator::IContains{ is_negated: true}, "foo"),
-                    pq("description", SearchOperator::Equals{ is_negated: false}, "bar"),
-                    pq("permissions", SearchOperator::Equals{ is_negated: false}, "CanRead"),
-                    pq("validate_schema", SearchOperator::Equals{ is_negated: false}, "true"),
+                    pq(
+                        "name",
+                        SearchOperator::IContains { is_negated: true },
+                        "foo",
+                    ),
+                    pq(
+                        "description",
+                        SearchOperator::Equals { is_negated: false },
+                        "bar",
+                    ),
+                    pq(
+                        "permissions",
+                        SearchOperator::Equals { is_negated: false },
+                        "CanRead",
+                    ),
+                    pq(
+                        "validate_schema",
+                        SearchOperator::Equals { is_negated: false },
+                        "true",
+                    ),
                 ],
             },
         ];

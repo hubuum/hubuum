@@ -1,7 +1,7 @@
 use crate::api as prod_api;
 use crate::db::DbPool;
 use crate::middlewares::tracing::TracingMiddleware;
-use actix_web::{http, test, web::Data, App};
+use actix_web::{App, http, test, web::Data};
 use serde::Serialize;
 
 fn create_token_header(token: &str) -> (http::header::HeaderName, String) {
