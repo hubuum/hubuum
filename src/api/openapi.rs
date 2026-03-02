@@ -426,10 +426,8 @@ fn build_operation_id(method: &str, path: &str) -> String {
     let mut operation_id = String::new();
     for (index, part) in parts.iter().enumerate() {
         let mut normalized = split_identifier_words(part);
-        if index == 0 {
-            if let Some(first) = normalized.first_mut() {
-                *first = first.to_ascii_lowercase();
-            }
+        if index == 0 && let Some(first) = normalized.first_mut() {
+            *first = first.to_ascii_lowercase();
         }
         operation_id.push_str(&camel_case(&normalized, index == 0));
     }

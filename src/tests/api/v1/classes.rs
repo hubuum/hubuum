@@ -4,13 +4,13 @@ pub mod tests {
     use crate::traits::{CanDelete, CanSave};
     use actix_web::{http::StatusCode, test};
 
-    use yare::parameterized;
+    use rstest::rstest;
 
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::constants::{get_schema, SchemaType};
-    use crate::tests::{create_namespace, setup_pool_and_tokens};
+    use crate::tests::{create_namespace, get_test_pool, test_context, TestContext};
     use crate::{assert_contains_all, assert_contains_same_ids};
 
     const CLASSES_ENDPOINT: &str = "/api/v1/classes";
@@ -26,7 +26,7 @@ pub mod tests {
     /// 4-5: Address
     /// 6: Geo
     pub async fn create_test_classes(prefix: &str) -> Vec<HubuumClass> {
-        let (pool, _, _) = setup_pool_and_tokens().await;
+        let pool = get_test_pool();
 
         let ns = create_namespace(&pool, &format!("{prefix}_api_create_test_classes"))
             .await
@@ -57,7 +57,7 @@ pub mod tests {
     }
 
     pub async fn cleanup(classes: &[HubuumClass]) {
-        let (pool, _, _) = setup_pool_and_tokens().await;
+        let pool = get_test_pool();
         let namespaces = classes
             .iter()
             .map(|c| NamespaceID(c.namespace_id))
@@ -68,11 +68,13 @@ pub mod tests {
         }
     }
 
-    async fn api_get_classes_with_query_string(query_string: &str) -> Vec<HubuumClassExpanded> {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+    async fn api_get_classes_with_query_string(
+        context: &TestContext,
+        query_string: &str,
+    ) -> Vec<HubuumClassExpanded> {
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!("{CLASSES_ENDPOINT}?{query_string}"),
         )
         .await;
@@ -82,13 +84,13 @@ pub mod tests {
         classes
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_api_classes_get() {
+    async fn test_api_classes_get(#[future(awt)] test_context: TestContext) {
         let created_classes = create_test_classes("get").await;
+        let context = test_context;
 
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-
-        let resp = get_request(&pool, &admin_token, CLASSES_ENDPOINT).await;
+        let resp = get_request(&context.pool, &context.admin_token, CLASSES_ENDPOINT).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let classes: Vec<HubuumClassExpanded> = test::read_body_json(resp).await;
 
@@ -99,57 +101,78 @@ pub mod tests {
         assert_contains_all!(&classes, &created_classes);
 
         // Check that we can do api/v1/classes/ as well as api/v1/classes
-        let resp = get_request(&pool, &admin_token, &format!("{CLASSES_ENDPOINT}/")).await;
+        let resp = get_request(&context.pool, &context.admin_token, &format!("{CLASSES_ENDPOINT}/"))
+            .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let classes: Vec<HubuumClassExpanded> = test::read_body_json(resp).await;
         assert_contains_all!(&classes, &created_classes);
         cleanup(&created_classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_api_classes_get_filtered_name_equals() {
+    async fn test_api_classes_get_filtered_name_equals(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
         let created_classes = create_test_classes("get_filtered_name_equals").await;
         let query_string = format!("name={}", created_classes[0].name);
-        let classes = api_get_classes_with_query_string(&query_string).await;
+        let classes = api_get_classes_with_query_string(&context, &query_string).await;
         assert_eq!(classes.len(), 1);
         assert_eq!(classes[0].name, created_classes[0].name);
         cleanup(&created_classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_api_classes_get_filtered_name_contains() {
+    async fn test_api_classes_get_filtered_name_contains(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
         let created_classes = create_test_classes("get_filtered_name_contains").await;
         let query_string = "name__contains=get_filtered_name_contains";
-        let classes = api_get_classes_with_query_string(query_string).await;
+        let classes = api_get_classes_with_query_string(&context, query_string).await;
         assert_contains_same_ids!(&classes, &created_classes);
         cleanup(&created_classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_api_classes_get_filtered_description_contains() {
+    async fn test_api_classes_get_filtered_description_contains(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
         let created_classes = create_test_classes("get_filtered_description_contains").await;
         let query_string = "description__contains=get_filtered_description_contains";
-        let classes = api_get_classes_with_query_string(query_string).await;
+        let classes = api_get_classes_with_query_string(&context, query_string).await;
         assert_contains_same_ids!(&classes, &created_classes);
         cleanup(&created_classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_api_classes_get_filtered_description_and_not_name_contains() {
+    async fn test_api_classes_get_filtered_description_and_not_name_contains(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
         let created_classes =
             create_test_classes("get_filtered_description_and_not_name_contains").await;
         let query_string =
             "description__contains=get_filtered_description_and_not_name_contains&name__not_contains=1";
-        let classes = api_get_classes_with_query_string(query_string).await;
+        let classes = api_get_classes_with_query_string(&context, query_string).await;
         assert_eq!(classes.len(), 5);
         cleanup(&created_classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_api_classes_get_filtered_namespaces_equals() {
+    async fn test_api_classes_get_filtered_namespaces_equals(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
         let created_classes = create_test_classes("get_filtered_namespaces_equals").await;
         let query_string = format!("namespaces={}", created_classes[0].namespace_id);
-        let classes = api_get_classes_with_query_string(&query_string).await;
+        let classes = api_get_classes_with_query_string(&context, &query_string).await;
         assert_contains_same_ids!(&classes, &created_classes);
         cleanup(&created_classes).await;
     }
@@ -158,8 +181,10 @@ pub mod tests {
         format!("{prefix}&{query_string}")
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_api_classes_get_filtered_json_schema() {
+    async fn test_api_classes_get_filtered_json_schema(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
         let prefix = "get_filtered_classes_json_schema";
         let base_filter = format!("name__contains={prefix}");
 
@@ -167,19 +192,19 @@ pub mod tests {
         let created_classes = create_test_classes("get_filtered_classes_json_schema").await;
 
         let query_string = combine_query_string(&base_filter, "json_schema__contains=$id=blog");
-        let classes = api_get_classes_with_query_string(&query_string).await;
+        let classes = api_get_classes_with_query_string(&context, &query_string).await;
         assert_eq!(classes.len(), 3);
         assert_contains_same_ids!(&classes, &created_classes[0..3]);
 
         let query_string =
             combine_query_string(&base_filter, "json_schema__contains=description=blog");
-        let classes = api_get_classes_with_query_string(&query_string).await;
+        let classes = api_get_classes_with_query_string(&context, &query_string).await;
         assert_eq!(classes.len(), 3);
         assert_contains_same_ids!(&classes, &created_classes[0..3]);
 
         let query_string =
             combine_query_string(&base_filter, "json_schema__not_contains=description=blog");
-        let classes = api_get_classes_with_query_string(&query_string).await;
+        let classes = api_get_classes_with_query_string(&context, &query_string).await;
         assert_eq!(classes.len(), 3);
         assert_contains_same_ids!(&classes, &created_classes[3..6]);
 
@@ -187,34 +212,34 @@ pub mod tests {
             &base_filter,
             "json_schema__lt=properties,latitude,minimum=0",
         );
-        let classes = api_get_classes_with_query_string(&query_string).await;
+        let classes = api_get_classes_with_query_string(&context, &query_string).await;
         assert_eq!(classes.len(), 1);
         assert_eq!(&classes[0], &created_classes[5]);
 
         let query_string =
             combine_query_string(&base_filter, "json_schema=properties,latitude,minimum=-90");
-        let classes = api_get_classes_with_query_string(&query_string).await;
+        let classes = api_get_classes_with_query_string(&context, &query_string).await;
         assert_eq!(classes.len(), 1);
         assert_eq!(&classes[0], &created_classes[5]);
 
         let query_string =
             combine_query_string(&base_filter, "json_schema__contains=required=region");
-        let classes = api_get_classes_with_query_string(&query_string).await;
+        let classes = api_get_classes_with_query_string(&context, &query_string).await;
         assert_eq!(classes.len(), 2);
         assert_contains_same_ids!(&classes, &created_classes[3..5]);
         cleanup(&created_classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_api_classes_get_by_id() {
+    async fn test_api_classes_get_by_id(#[future(awt)] test_context: TestContext) {
         let created_classes = create_test_classes("api_classes_get_by_id").await;
-
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let context = test_context;
 
         for class in &created_classes {
             let resp = get_request(
-                &pool,
-                &admin_token,
+                &context.pool,
+                &context.admin_token,
                 &format!("{}/{}", CLASSES_ENDPOINT, class.id),
             )
             .await;
@@ -225,22 +250,26 @@ pub mod tests {
         cleanup(&created_classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_api_classes_get_failure() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+    async fn test_api_classes_get_failure(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
 
         // It'd be really nice if we could garantee that this id doesn't exist...
         for id in 999990..1000000 {
-            let resp = get_request(&pool, &admin_token, &format!("{CLASSES_ENDPOINT}/{id}")).await;
+            let resp =
+                get_request(&context.pool, &context.admin_token, &format!("{CLASSES_ENDPOINT}/{id}"))
+                    .await;
             assert_response_status(resp, StatusCode::NOT_FOUND).await;
         }
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_api_classes_create() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+    async fn test_api_classes_create(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
 
-        let ns = create_namespace(&pool, "api_create_test_classes")
+        let ns = create_namespace(&context.pool, "api_create_test_classes")
             .await
             .unwrap();
 
@@ -252,14 +281,20 @@ pub mod tests {
             validate_schema: Some(false),
         };
 
-        let resp = post_request(&pool, &admin_token, CLASSES_ENDPOINT, &new_class).await;
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            CLASSES_ENDPOINT,
+            &new_class,
+        )
+        .await;
 
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
         let headers = resp.headers().clone();
         let created_class_from_create: HubuumClassExpanded = test::read_body_json(resp).await;
         let created_class_url = headers.get("Location").unwrap().to_str().unwrap();
 
-        let resp = get_request(&pool, &admin_token, created_class_url).await;
+        let resp = get_request(&context.pool, &context.admin_token, created_class_url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let created_class: HubuumClassExpanded = test::read_body_json(resp).await;
 
@@ -270,16 +305,17 @@ pub mod tests {
         );
 
         assert_eq!(created_class, created_class_from_create);
-        ns.delete(&pool).await.unwrap();
+        ns.delete(&context.pool).await.unwrap();
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_api_classes_patch() {
+    async fn test_api_classes_patch(#[future(awt)] test_context: TestContext) {
         use crate::models::UpdateHubuumClass;
 
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let context = test_context;
 
-        let ns = create_namespace(&pool, "api_patch_test_classes")
+        let ns = create_namespace(&context.pool, "api_patch_test_classes")
             .await
             .unwrap();
 
@@ -290,7 +326,7 @@ pub mod tests {
             json_schema: Some(get_schema(SchemaType::Blog).clone()),
             validate_schema: None,
         };
-        let created_class = new_class.save(&pool).await.unwrap();
+        let created_class = new_class.save(&context.pool).await.unwrap();
 
         let update_class = UpdateHubuumClass {
             name: Some("api_patch_test_classes_2".to_string()),
@@ -301,8 +337,8 @@ pub mod tests {
         };
 
         let resp = patch_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!("{}/{}", CLASSES_ENDPOINT, created_class.id),
             &update_class,
         )
@@ -311,8 +347,8 @@ pub mod tests {
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let updated_class_from_patch: HubuumClassExpanded = test::read_body_json(resp).await;
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!("{}/{}", CLASSES_ENDPOINT, created_class.id),
         )
         .await;
@@ -338,23 +374,24 @@ pub mod tests {
         assert!(!updated_class_from_patch.validate_schema);
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_api_classes_delete() {
+    async fn test_api_classes_delete(#[future(awt)] test_context: TestContext) {
         let created_classes = create_test_classes("api_classes_delete").await;
+        let context = test_context;
 
         for class in &created_classes {
-            let (pool, admin_token, _) = setup_pool_and_tokens().await;
             let resp = delete_request(
-                &pool,
-                &admin_token,
+                &context.pool,
+                &context.admin_token,
                 &format!("{}/{}", CLASSES_ENDPOINT, class.id),
             )
             .await;
             assert_response_status(resp, StatusCode::NO_CONTENT).await;
 
             let resp = get_request(
-                &pool,
-                &admin_token,
+                &context.pool,
+                &context.admin_token,
                 &format!("{}/{}", CLASSES_ENDPOINT, class.id),
             )
             .await;
@@ -362,21 +399,21 @@ pub mod tests {
         }
     }
 
-    #[parameterized(
-        unsorted = { "", &[0, 1, 2] },
-        sorted_id_default = { "id", &[0, 1, 2] },
-        sorted_id_explicit_asc = { "id.asc", &[0, 1, 2] },
-        sorted_id_descending = { "id.desc", &[5, 4, 3] }
-
-    )]
-    #[test_macro(actix_web::test)]
-    async fn test_api_classes_sorted(sort_order: &str, expected_id_order: &[usize]) {
+    #[rstest]
+    #[case::sorted_id_default("id", &[0, 1, 2])]
+    #[case::sorted_id_explicit_asc("id.asc", &[0, 1, 2])]
+    #[case::sorted_id_descending("id.desc", &[5, 4, 3])]
+    #[actix_web::test]
+    async fn test_api_classes_sorted(
+        #[case] sort_order: &str,
+        #[case] expected_id_order: &[usize],
+        #[future(awt)] test_context: TestContext,
+    ) {
         let created_classes = create_test_classes(&format!(
             "api_classes_sorted_{sort_order}_{expected_id_order:?}"
         ))
         .await;
-
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let context = test_context;
         let namespace_id = created_classes[0].namespace_id;
 
         let sort_order = if sort_order.is_empty() {
@@ -386,8 +423,8 @@ pub mod tests {
         };
 
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!("{CLASSES_ENDPOINT}?namespaces={namespace_id}{sort_order}"),
         )
         .await;
@@ -401,22 +438,23 @@ pub mod tests {
         cleanup(&created_classes).await;
     }
 
-    #[parameterized(
-        limit_2 = { 2 },
-        limit_5 = { 5 },
-        limit_7 = { 6 } // Max possible hits
-    )]
-    #[test_macro(actix_web::test)]
-    async fn test_api_classes_limit(limit: usize) {
+    #[rstest]
+    #[case::limit_2(2)]
+    #[case::limit_5(5)]
+    #[case::limit_7(6)]
+    #[actix_web::test]
+    async fn test_api_classes_limit(
+        #[case] limit: usize,
+        #[future(awt)] test_context: TestContext,
+    ) {
         let created_classes = create_test_classes(&format!("api_classes_limit_{limit}")).await;
-
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let context = test_context;
         let namespace_id = created_classes[0].namespace_id;
 
         // Limit to 2 results
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!("{CLASSES_ENDPOINT}?namespaces={namespace_id}&limit={limit}&sort=id"),
         )
         .await;
@@ -428,16 +466,16 @@ pub mod tests {
     }
 
     // Covers docs/querying.md "Cursor pagination" (`X-Next-Cursor` is absent on the last page).
+    #[rstest]
     #[actix_web::test]
-    async fn docs_api_classes_cursor_pagination() {
+    async fn docs_api_classes_cursor_pagination(#[future(awt)] test_context: TestContext) {
         let created_classes = create_test_classes("api_classes_cursor").await;
-
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let context = test_context;
         let namespace_id = created_classes[0].namespace_id;
 
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!("{CLASSES_ENDPOINT}?namespaces={namespace_id}&limit=2&sort=id"),
         )
         .await;
@@ -451,8 +489,8 @@ pub mod tests {
         assert!(next_cursor.is_some());
 
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!(
                 "{CLASSES_ENDPOINT}?namespaces={namespace_id}&limit=2&sort=id&cursor={}",
                 next_cursor.unwrap()
@@ -469,8 +507,8 @@ pub mod tests {
         assert!(second_cursor.is_some());
 
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!(
                 "{CLASSES_ENDPOINT}?namespaces={namespace_id}&limit=2&sort=id&cursor={}",
                 second_cursor.unwrap()

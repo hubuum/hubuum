@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use yare::parameterized;
+    use rstest::rstest;
 
     use crate::models::{HubuumObject, NewHubuumClass, NewHubuumObject, UpdateHubuumObject};
     use crate::traits::{CanDelete, CanSave};
@@ -10,7 +10,7 @@ mod tests {
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::constants::{get_schema, SchemaType};
-    use crate::tests::{create_namespace, setup_pool_and_tokens};
+    use crate::tests::{create_namespace, get_test_pool, test_context, TestContext};
     // use crate::{assert_contains_all, assert_contains_same_ids};
 
     use crate::tests::api::v1::classes::tests::{cleanup, create_test_classes};
@@ -26,7 +26,7 @@ mod tests {
     }
 
     async fn create_test_objects(prefix: &str, count: usize) -> Vec<HubuumObject> {
-        let (pool, _, _) = setup_pool_and_tokens().await;
+        let pool = get_test_pool();
 
         let namespace = create_namespace(&pool, prefix).await.unwrap();
         let class = NewHubuumClass {
@@ -55,11 +55,12 @@ mod tests {
         objects
     }
 
+    #[rstest]
     #[actix_rt::test]
-    async fn get_patch_and_delete_objects_in_class() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+    async fn get_patch_and_delete_objects_in_class(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
 
-        let namespace = create_namespace(&pool, "get_patch_and_delete_objects_in_class")
+        let namespace = create_namespace(&context.pool, "get_patch_and_delete_objects_in_class")
             .await
             .unwrap();
         let classes = create_test_classes("get_patch_and_delete_objects_in_class").await;
@@ -74,11 +75,11 @@ mod tests {
             description: "test object description".to_string(),
         };
 
-        let object = object.save(&pool).await.unwrap();
+        let object = object.save(&context.pool).await.unwrap();
 
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &object_in_class_endpoint(class.id, object.id),
         )
         .await;
@@ -97,8 +98,8 @@ mod tests {
         };
 
         let resp = patch_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &object_in_class_endpoint(class.id, object.id),
             updated_object,
         )
@@ -109,8 +110,8 @@ mod tests {
         assert_eq!(updated_object_from_req.name, "updated object");
 
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &object_in_class_endpoint(class.id, object.id),
         )
         .await;
@@ -120,8 +121,8 @@ mod tests {
         assert_eq!(updated_object_from_api, updated_object_from_req);
 
         let resp = delete_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &object_in_class_endpoint(class.id, object.id),
         )
         .await;
@@ -129,8 +130,8 @@ mod tests {
         assert_response_status(resp, StatusCode::NO_CONTENT).await;
 
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &object_in_class_endpoint(class.id, object.id),
         )
         .await;
@@ -142,16 +143,19 @@ mod tests {
     // This will create objects with the same name but potentially in differnet classes.
     // This is to test that the name is unique within the class.
     // [class_idx1, class_idx2] [expected_status1, expected_status2]
-    #[parameterized(
-        class_0_0_conflict = {[0, 0], [StatusCode::CREATED, StatusCode::CONFLICT]},
-        class_0_1_ok = {[0, 1], [StatusCode::CREATED, StatusCode::CREATED]},
-        class_0_2_ok = {[0, 2], [StatusCode::CREATED, StatusCode::CREATED]},
-        class_1_1_conflict = {[1, 1], [StatusCode::CREATED, StatusCode::CONFLICT]},
-        class_2_2_conflict = {[2, 2], [StatusCode::CREATED, StatusCode::CONFLICT]},
-
-    )]
-    #[test_macro(actix_web::test)]
-    async fn create_object_in_class(class_ids: [i32; 2], expected_statuses: [StatusCode; 2]) {
+    #[rstest]
+    #[case::class_0_0_conflict([0, 0], [StatusCode::CREATED, StatusCode::CONFLICT])]
+    #[case::class_0_1_ok([0, 1], [StatusCode::CREATED, StatusCode::CREATED])]
+    #[case::class_0_2_ok([0, 2], [StatusCode::CREATED, StatusCode::CREATED])]
+    #[case::class_1_1_conflict([1, 1], [StatusCode::CREATED, StatusCode::CONFLICT])]
+    #[case::class_2_2_conflict([2, 2], [StatusCode::CREATED, StatusCode::CONFLICT])]
+    #[actix_web::test]
+    async fn create_object_in_class(
+        #[case] class_ids: [i32; 2],
+        #[case] expected_statuses: [StatusCode; 2],
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
         let literal = format!(
             "create_object_in_class_{}",
             class_ids
@@ -160,10 +164,7 @@ mod tests {
                 .collect::<Vec<String>>()
                 .join("_")
         );
-
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-
-        let namespace = create_namespace(&pool, &literal).await.unwrap();
+        let namespace = create_namespace(&context.pool, &literal).await.unwrap();
         let classes = create_test_classes(&literal).await;
 
         for (class_id, expected_status) in class_ids.iter().zip(expected_statuses.iter()) {
@@ -178,8 +179,8 @@ mod tests {
             };
 
             let resp = post_request(
-                &pool,
-                &admin_token,
+                &context.pool,
+                &context.admin_token,
                 &format!("{}/{}/", OBJECT_ENDPOINT, class.id),
                 &object,
             )
@@ -203,14 +204,15 @@ mod tests {
                 assert_eq!(created_object_url, object_url);
             }
         }
-        namespace.delete(&pool).await.unwrap();
+        namespace.delete(&context.pool).await.unwrap();
     }
 
+    #[rstest]
     #[actix_rt::test]
-    async fn get_objects_in_class() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+    async fn get_objects_in_class(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
 
-        let namespace = create_namespace(&pool, "get_objects_in_class")
+        let namespace = create_namespace(&context.pool, "get_objects_in_class")
             .await
             .unwrap();
         let classes = create_test_classes("get_objects_in_class").await;
@@ -227,10 +229,15 @@ mod tests {
                 name: format!("test get objects {i}"),
                 description: format!("test object description {i}"),
             };
-            objects.push(object.save(&pool).await.unwrap());
+            objects.push(object.save(&context.pool).await.unwrap());
         }
 
-        let resp = get_request(&pool, &admin_token, &objects_in_class_endpoint(class.id)).await;
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &objects_in_class_endpoint(class.id),
+        )
+        .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let objects_from_api: Vec<HubuumObject> = test::read_body_json(resp).await;
 
@@ -238,26 +245,23 @@ mod tests {
     }
 
     // Covers docs/querying.md "JSON filtering" object `json_data` examples.
-    #[parameterized(
-        filter_status_equals = {
-            "json_data__equals=status=active",
-            vec!["json_filter_object_0", "json_filter_object_2"]
-        },
-        filter_hostname_contains = {
-            "json_data__contains=hostname=srv",
-            vec!["json_filter_object_0", "json_filter_object_1"]
-        },
-        filter_missing_path = {
-            "json_data__equals=missing=value",
-            vec![]
-        }
+    #[rstest]
+    #[case::filter_status_equals(
+        "json_data__equals=status=active",
+        vec!["json_filter_object_0", "json_filter_object_2"]
     )]
-    #[test_macro(actix_web::test)]
+    #[case::filter_hostname_contains(
+        "json_data__contains=hostname=srv",
+        vec!["json_filter_object_0", "json_filter_object_1"]
+    )]
+    #[case::filter_missing_path("json_data__equals=missing=value", vec![])]
+    #[actix_web::test]
     async fn docs_api_objects_filter_json_data_examples(
-        query_string: &str,
-        expected_names: Vec<&str>,
+        #[case] query_string: &str,
+        #[case] expected_names: Vec<&str>,
+        #[future(awt)] test_context: TestContext,
     ) {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let context = test_context;
 
         let namespace_name = format!(
             "test_api_objects_filter_json_data_examples_{}",
@@ -266,7 +270,9 @@ mod tests {
                 .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
                 .collect::<String>()
         );
-        let namespace = create_namespace(&pool, &namespace_name).await.unwrap();
+        let namespace = create_namespace(&context.pool, &namespace_name)
+            .await
+            .unwrap();
         let class = NewHubuumClass {
             namespace_id: namespace.id,
             name: format!("json filter class {namespace_name}"),
@@ -274,7 +280,7 @@ mod tests {
             json_schema: None,
             validate_schema: None,
         }
-        .save(&pool)
+        .save(&context.pool)
         .await
         .unwrap();
 
@@ -313,14 +319,14 @@ mod tests {
                 name: name.to_string(),
                 description: name.to_string(),
             }
-            .save(&pool)
+            .save(&context.pool)
             .await
             .unwrap();
         }
 
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!(
                 "{OBJECT_ENDPOINT}/{}/?namespaces={}&{}&sort=id",
                 class.id, namespace.id, query_string
@@ -333,27 +339,33 @@ mod tests {
         let object_names: Vec<&str> = objects.iter().map(|object| object.name.as_str()).collect();
         assert_eq!(object_names, expected_names);
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.delete(&context.pool).await.unwrap();
     }
 
-    #[parameterized(
-        ok_40_74 = { r#"{"latitude": 40.7128, "longitude": -74.0060}"#, true },
-        failed_91_74 = { r#"{"latitude": 91, "longitude": 200}"#, false },
-        failed_neg91_74 = { r#"{"latitude": -91, "longitude": 200}"#, false },
-        failed_40_181 = { r#"{"latitude": 40.7128, "longitude": 181}"#, false },
-        failed_40_neg181 = { r#"{"latitude": 40.7128, "longitude": -181}"#, false },
-        failed_100_200 = { r#"{"latitude": 100, "longitude": 200}"#, false },
-        failed_lat_missing = { r#"{"longitude": 0}"#, false },
-        failed_long_missing = { r#"{"latitude": 0}"#, false },
-        ok_extra_fields = { r#"{"latitude": 40.7128, "longitude": -74.0060, "extra_field": "value"}"#, true },
+    #[rstest]
+    #[case::ok_40_74(r#"{"latitude": 40.7128, "longitude": -74.0060}"#, true)]
+    #[case::failed_91_74(r#"{"latitude": 91, "longitude": 200}"#, false)]
+    #[case::failed_neg91_74(r#"{"latitude": -91, "longitude": 200}"#, false)]
+    #[case::failed_40_181(r#"{"latitude": 40.7128, "longitude": 181}"#, false)]
+    #[case::failed_40_neg181(r#"{"latitude": 40.7128, "longitude": -181}"#, false)]
+    #[case::failed_100_200(r#"{"latitude": 100, "longitude": 200}"#, false)]
+    #[case::failed_lat_missing(r#"{"longitude": 0}"#, false)]
+    #[case::failed_long_missing(r#"{"latitude": 0}"#, false)]
+    #[case::ok_extra_fields(
+        r#"{"latitude": 40.7128, "longitude": -74.0060, "extra_field": "value"}"#,
+        true
     )]
-    #[test_macro(actix_web::test)]
-    async fn create_objects_in_class_failing_validation(json_data: &str, expected: bool) {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+    #[actix_web::test]
+    async fn create_objects_in_class_failing_validation(
+        #[case] json_data: &str,
+        #[case] expected: bool,
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
 
         let unique_name = format!("{json_data}_create_objects_in_class_failing_validation");
 
-        let namespace = create_namespace(&pool, &unique_name).await.unwrap();
+        let namespace = create_namespace(&context.pool, &unique_name).await.unwrap();
 
         let schema = get_schema(SchemaType::Geo);
         let class = NewHubuumClass {
@@ -363,7 +375,7 @@ mod tests {
             json_schema: Some(schema.clone()),
             validate_schema: Some(true),
         }
-        .save(&pool)
+        .save(&context.pool)
         .await
         .unwrap();
 
@@ -376,8 +388,8 @@ mod tests {
         };
 
         let resp = post_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!("{}/{}/", OBJECT_ENDPOINT, class.id),
             &object,
         )
@@ -400,7 +412,7 @@ mod tests {
             assert_eq!(object_from_api.data, object.data);
             assert_eq!(object_from_api.namespace_id, object.namespace_id);
             assert_eq!(object_from_api.hubuum_class_id, object.hubuum_class_id);
-            object_from_api.delete(&pool).await.unwrap();
+            object_from_api.delete(&context.pool).await.unwrap();
         } else {
             let error_message: serde_json::Value = test::read_body_json(resp).await;
             let error_text = error_message["error"].as_str().unwrap().to_lowercase();
@@ -411,27 +423,28 @@ mod tests {
         }
     }
 
-    #[parameterized(
-        unsorted = { "", &[0, 1, 2] },
-        sorted_id_default = { "id", &[0, 1, 2] },
-        sorted_id_explicit_asc = { "id.asc", &[0, 1, 2] },
-        sorted_id_descending = { "id.desc", &[3, 2, 1] },
-        sorted_name_asc = { "name.asc", &[0, 1, 2] },
-        sorted_name_desc = { "name.desc", &[3, 2, 1] },
-        sorted_created_at_asc = { "created_at.asc", &[0, 1, 2] },
-        sorted_created_at_desc = { "created_at.desc", &[3, 2, 1] },
-        sorted_namespace_and_id_asc = { "namespace_id.asc,id.asc", &[0, 1, 2] },
-
-    )]
-    #[test_macro(actix_web::test)]
-    async fn test_api_objects_sorted(sort_order: &str, expected_id_order: &[usize]) {
+    #[rstest]
+    #[case::sorted_id_default("id", &[0, 1, 2])]
+    #[case::sorted_id_explicit_asc("id.asc", &[0, 1, 2])]
+    #[case::sorted_id_descending("id.desc", &[3, 2, 1])]
+    #[case::sorted_name_asc("name.asc", &[0, 1, 2])]
+    #[case::sorted_name_desc("name.desc", &[3, 2, 1])]
+    #[case::sorted_created_at_asc("created_at.asc", &[0, 1, 2])]
+    #[case::sorted_created_at_desc("created_at.desc", &[3, 2, 1])]
+    #[case::sorted_namespace_and_id_asc("namespace_id.asc,id.asc", &[0, 1, 2])]
+    #[actix_web::test]
+    async fn test_api_objects_sorted(
+        #[case] sort_order: &str,
+        #[case] expected_id_order: &[usize],
+        #[future(awt)] test_context: TestContext,
+    ) {
         let created_objects = create_test_objects(
             &format!("api_objects_sorted_{sort_order}_{expected_id_order:?}"),
             4,
         )
         .await;
 
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let context = test_context;
         let namespace_id = created_objects[0].namespace_id;
 
         let sort_order = if sort_order.is_empty() {
@@ -442,8 +455,8 @@ mod tests {
 
         let class_id = created_objects[0].hubuum_class_id;
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!("{OBJECT_ENDPOINT}/{class_id}/?namespaces={namespace_id}{sort_order}"),
         )
         .await;
@@ -455,23 +468,25 @@ mod tests {
         assert_eq!(objects[2].id, created_objects[expected_id_order[2]].id);
     }
 
-    #[parameterized(
-        limit_2 = { 2 },
-        limit_5 = { 5 },
-        limit_7 = { 6 } // Max possible hits
-    )]
-    #[test_macro(actix_web::test)]
-    async fn test_api_objects_limit(limit: usize) {
+    #[rstest]
+    #[case::limit_2(2)]
+    #[case::limit_5(5)]
+    #[case::limit_7(6)]
+    #[actix_web::test]
+    async fn test_api_objects_limit(
+        #[case] limit: usize,
+        #[future(awt)] test_context: TestContext,
+    ) {
         let created_objects = create_test_objects(&format!("api_objects_limit_{limit}"), 6).await;
 
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let context = test_context;
         let namespace_id = created_objects[0].namespace_id;
         let class_id = created_objects[0].hubuum_class_id;
 
         // Limit to 2 results
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!(
                 "{OBJECT_ENDPOINT}/{class_id}/?namespaces={namespace_id}&limit={limit}&sort=id"
             ),
@@ -482,17 +497,17 @@ mod tests {
         assert_eq!(objects.len(), limit);
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_api_objects_cursor_pagination() {
+    async fn test_api_objects_cursor_pagination(#[future(awt)] test_context: TestContext) {
         let created_objects = create_test_objects("api_objects_cursor", 6).await;
-
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let context = test_context;
         let namespace_id = created_objects[0].namespace_id;
         let class_id = created_objects[0].hubuum_class_id;
 
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!("{OBJECT_ENDPOINT}/{class_id}/?namespaces={namespace_id}&limit=2&sort=id"),
         )
         .await;
@@ -506,8 +521,8 @@ mod tests {
         assert!(next_cursor.is_some());
 
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!(
                 "{OBJECT_ENDPOINT}/{class_id}/?namespaces={namespace_id}&limit=2&sort=id&cursor={}",
                 next_cursor.unwrap()

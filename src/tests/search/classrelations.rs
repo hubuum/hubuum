@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod test {
     use regex::Regex;
-    use yare::parameterized;
+    use rstest::rstest;
 
     use crate::db::DbPool;
     use crate::models::class::NewHubuumClass;
@@ -10,7 +10,7 @@ mod test {
     use crate::models::{
         HubuumClass, HubuumClassRelation, Namespace, NewHubuumClassRelation, NewNamespace,
     };
-    use crate::tests::{ensure_admin_group, ensure_admin_user, setup_pool_and_tokens};
+    use crate::tests::{ensure_admin_group, test_context, TestContext};
     use crate::traits::{CanDelete, CanSave, Search};
 
     async fn create_data(
@@ -79,24 +79,48 @@ mod test {
 
     // field, operator, value, list_of_expected_ids
     // Note: The relations are class-0 -> class-1 and class-1 -> class-2.
-    #[parameterized(
-        search_by_id = { FilterField::ClassFrom,  SearchOperator::Equals { is_negated: false }, "<0>", vec![0] },
-        search_by_class_from_name_contains = { FilterField::ClassFromName,  SearchOperator::Contains { is_negated: false }, "class_field", vec![0,1] },
-        search_by_class_from_name_endswith = { FilterField::ClassFromName,  SearchOperator::EndsWith { is_negated: false }, "class-0", vec![0] },
-        search_by_class_to_name_contains = { FilterField::ClassToName,  SearchOperator::Contains { is_negated: false }, "class_field", vec![0,1] },
-        search_by_class_to_name_endswith = { FilterField::ClassToName,  SearchOperator::EndsWith { is_negated: false }, "class-1", vec![0] },
-
+    #[rstest]
+    #[case::search_by_id(
+        FilterField::ClassFrom,
+        SearchOperator::Equals { is_negated: false },
+        "<0>",
+        vec![0]
     )]
-    #[test_macro(actix_rt::test)]
+    #[case::search_by_class_from_name_contains(
+        FilterField::ClassFromName,
+        SearchOperator::Contains { is_negated: false },
+        "class_field",
+        vec![0, 1]
+    )]
+    #[case::search_by_class_from_name_endswith(
+        FilterField::ClassFromName,
+        SearchOperator::EndsWith { is_negated: false },
+        "class-0",
+        vec![0]
+    )]
+    #[case::search_by_class_to_name_contains(
+        FilterField::ClassToName,
+        SearchOperator::Contains { is_negated: false },
+        "class_field",
+        vec![0, 1]
+    )]
+    #[case::search_by_class_to_name_endswith(
+        FilterField::ClassToName,
+        SearchOperator::EndsWith { is_negated: false },
+        "class-1",
+        vec![0]
+    )]
+    #[actix_rt::test]
     async fn test_filter_by_class_field(
-        field: FilterField,
-        operator: SearchOperator,
-        value: &str,
-        list_of_expected_ids: Vec<usize>,
+        #[case] field: FilterField,
+        #[case] operator: SearchOperator,
+        #[case] value: &str,
+        #[case] list_of_expected_ids: Vec<usize>,
+        #[future(awt)] test_context: TestContext,
     ) {
+        let context = test_context;
         let prefix = format!("test_filter_by_class_field_{field}_{operator}_{value}");
-        let (pool, _, _) = setup_pool_and_tokens().await;
-        let (namespace, _classes, relations) = create_data(&pool, &prefix).await;
+        let (namespace, _classes, relations) = create_data(&context.pool, &prefix).await;
 
         let re = Regex::new(r"<(\d+)>").unwrap();
         let value = re.replace_all(value, |caps: &regex::Captures| {
@@ -127,9 +151,9 @@ mod test {
             cursor: None,
         };
 
-        let admin_user = ensure_admin_user(&pool).await;
-        let result = admin_user
-            .search_class_relations(&pool, query)
+        let result = context
+            .admin_user
+            .search_class_relations(&context.pool, query)
             .await
             .unwrap();
 
@@ -155,6 +179,6 @@ mod test {
             _ => {}
         }
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.delete(&context.pool).await.unwrap();
     }
 }

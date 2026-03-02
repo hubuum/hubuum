@@ -235,12 +235,13 @@ macro_rules! assert_contains_same_ids {
 /// ### Examples
 ///
 /// ```rust,ignore
+/// #[rstest]
 /// #[actix_web::test]
-/// async fn test_api_classes_get() {
+/// async fn test_api_classes_get(#[future(awt)] test_context: TestContext) {
 ///     let created_classes = create_test_classes("get").await;
-///     let (pool, admin_token, _) = setup_pool_and_tokens().await;
+///     let context = test_context;
 ///
-///     let resp = get_request(&pool, &admin_token, CLASSES_ENDPOINT).await;
+///     let resp = get_request(&context.pool, &context.admin_token, CLASSES_ENDPOINT).await;
 ///     let resp = assert_response_status(resp, http::StatusCode::OK).await;
 ///     let classes: Vec<crate::models::class::HubuumClass> = test::read_body_json(resp).await;@
 ///     assert_contains_all!(&classes, &created_classes);

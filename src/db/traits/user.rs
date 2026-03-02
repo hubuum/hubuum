@@ -305,7 +305,7 @@ impl User {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yare::parameterized;
+    use rstest::rstest;
 
     use crate::models::{Permissions as P, PermissionsList as PL};
     use crate::tests::{
@@ -314,35 +314,35 @@ mod tests {
     use crate::traits::PermissionController;
 
     // user_idx, namespaces_idx, permissions, expected
-    #[parameterized(
-        u1_ns1_classread_true = { 0, vec![0], vec![P::ReadClass], true },
-        u1_ns1_classcreate_true = { 0, vec![0], vec![P::CreateClass], true },
-        u1_ns1_classreadcreate_true = { 0, vec![0], vec![P::ReadClass, P::CreateClass], true },
-        u1_ns2_classdelete_true = { 0, vec![1], vec![P::DeleteClass], true },
-        u1_ns2_classcreate_true = { 0, vec![1], vec![P::CreateClass], true },
-        u1_ns2_classcreatedelete_true = { 0, vec![1], vec![P::CreateClass, P::DeleteClass], true },
-        u1_ns12_classcreate_true = { 0, vec![0,1], vec![P::CreateClass], true },
-
-        u1_ns1_objectread_false = { 0, vec![0], vec![P::ReadObject], false },
-        u1_ns1_namespacecreate_false = { 0, vec![0], vec![P::ReadCollection], false },
-        u1_ns12_classreadcreate_false = { 0, vec![0,1], vec![P::CreateClass, P::ReadClass], false },
-        u1_ns12_classreadcreatedelete_false = { 0, vec![0,1], vec![P::CreateClass, P::ReadClass, P::DeleteClass], false },
-
-        u2_ns1_objectread_true = { 1, vec![0], vec![P::ReadObject], true },
-        u2_ns1_objectcreate_true = { 1, vec![0], vec![P::CreateObject], true },
-        u2_ns1_objectreadcreate_true = { 1, vec![0], vec![P::ReadObject, P::CreateObject], true },
-        u2_ns2_objectdelete_true = { 1, vec![1], vec![P::DeleteObject], true },
-        u2_ns2_objectcreate_true = { 1, vec![1], vec![P::CreateObject], true },
-        u2_ns2_objectcreatedelete_true = { 1, vec![1], vec![P::CreateObject, P::DeleteObject], true },
-
-
+    #[rstest]
+    #[case::u1_ns1_classread_true(0, vec![0], vec![P::ReadClass], true)]
+    #[case::u1_ns1_classcreate_true(0, vec![0], vec![P::CreateClass], true)]
+    #[case::u1_ns1_classreadcreate_true(0, vec![0], vec![P::ReadClass, P::CreateClass], true)]
+    #[case::u1_ns2_classdelete_true(0, vec![1], vec![P::DeleteClass], true)]
+    #[case::u1_ns2_classcreate_true(0, vec![1], vec![P::CreateClass], true)]
+    #[case::u1_ns2_classcreatedelete_true(0, vec![1], vec![P::CreateClass, P::DeleteClass], true)]
+    #[case::u1_ns12_classcreate_true(0, vec![0, 1], vec![P::CreateClass], true)]
+    #[case::u1_ns1_objectread_false(0, vec![0], vec![P::ReadObject], false)]
+    #[case::u1_ns1_namespacecreate_false(0, vec![0], vec![P::ReadCollection], false)]
+    #[case::u1_ns12_classreadcreate_false(0, vec![0, 1], vec![P::CreateClass, P::ReadClass], false)]
+    #[case::u1_ns12_classreadcreatedelete_false(
+        0,
+        vec![0, 1],
+        vec![P::CreateClass, P::ReadClass, P::DeleteClass],
+        false
     )]
-    #[test_macro(actix_web::test)]
+    #[case::u2_ns1_objectread_true(1, vec![0], vec![P::ReadObject], true)]
+    #[case::u2_ns1_objectcreate_true(1, vec![0], vec![P::CreateObject], true)]
+    #[case::u2_ns1_objectreadcreate_true(1, vec![0], vec![P::ReadObject, P::CreateObject], true)]
+    #[case::u2_ns2_objectdelete_true(1, vec![1], vec![P::DeleteObject], true)]
+    #[case::u2_ns2_objectcreate_true(1, vec![1], vec![P::CreateObject], true)]
+    #[case::u2_ns2_objectcreatedelete_true(1, vec![1], vec![P::CreateObject, P::DeleteObject], true)]
+    #[actix_web::test]
     async fn test_user_can(
-        user_idx: usize,
-        namespaces_idx: Vec<usize>,
-        permissions: Vec<Permissions>,
-        expected: bool,
+        #[case] user_idx: usize,
+        #[case] namespaces_idx: Vec<usize>,
+        #[case] permissions: Vec<Permissions>,
+        #[case] expected: bool,
     ) {
         let (pool, _) = get_pool_and_config().await;
         let suffix = format!(

@@ -966,7 +966,7 @@ fn get_jsonb_field_type_from_json_schema(
 
     for key in key.split(',') {
         match current_schema {
-            Value::Object(ref map) => {
+            Value::Object(map) => {
                 if let Some(sub_schema) = map.get("properties").and_then(|p| p.get(key)) {
                     current_schema = sub_schema;
                 } else if let Some(items_schema) = map.get("items") {
@@ -1226,7 +1226,7 @@ filter_fields!(
     (Path, "path"),
 );
 
-// TODO: Rewrite to use yare::parametrized...
+// TODO: Rewrite to use rstest cases...
 #[cfg(test)]
 mod test {
     use std::vec;

@@ -1,7 +1,7 @@
 #![cfg(test)]
 
+use rstest::rstest;
 use serde_json::Value;
-use yare::parameterized;
 
 use crate::errors::ApiError;
 use crate::models::{Namespace, NewHubuumClass, NewHubuumObject, UpdateHubuumObject};
@@ -46,19 +46,21 @@ fn assert_validation_result(result: Result<(), ApiError>, expected: bool, contex
     }
 }
 
-#[parameterized(
-    ok_40_74 = { r#"{"latitude": 40.7128, "longitude": -74.0060}"#, true },
-    failed_91_74 = { r#"{"latitude": 91, "longitude": 200}"#, false },
-    failed_neg91_74 = { r#"{"latitude": -91, "longitude": 200}"#, false },
-    failed_40_181 = { r#"{"latitude": 40.7128, "longitude": 181}"#, false },
-    failed_40_neg181 = { r#"{"latitude": 40.7128, "longitude": -181}"#, false },
-    failed_100_200 = { r#"{"latitude": 100, "longitude": 200}"#, false },
-    failed_lat_missing = { r#"{"longitude": 0}"#, false },
-    failed_long_missing = { r#"{"latitude": 0}"#, false },
-    ok_extra_fields = { r#"{"latitude": 40.7128, "longitude": -74.0060, "extra_field": "value"}"#, true },
+#[rstest]
+#[case::ok_40_74(r#"{"latitude": 40.7128, "longitude": -74.0060}"#, true)]
+#[case::failed_91_74(r#"{"latitude": 91, "longitude": 200}"#, false)]
+#[case::failed_neg91_74(r#"{"latitude": -91, "longitude": 200}"#, false)]
+#[case::failed_40_181(r#"{"latitude": 40.7128, "longitude": 181}"#, false)]
+#[case::failed_40_neg181(r#"{"latitude": 40.7128, "longitude": -181}"#, false)]
+#[case::failed_100_200(r#"{"latitude": 100, "longitude": 200}"#, false)]
+#[case::failed_lat_missing(r#"{"longitude": 0}"#, false)]
+#[case::failed_long_missing(r#"{"latitude": 0}"#, false)]
+#[case::ok_extra_fields(
+    r#"{"latitude": 40.7128, "longitude": -74.0060, "extra_field": "value"}"#,
+    true
 )]
-#[test_macro(actix_web::test)]
-async fn test_validate_object(json_data: &str, expected: bool) {
+#[actix_web::test]
+async fn test_validate_object(#[case] json_data: &str, #[case] expected: bool) {
     let data = serde_json::from_str::<Value>(json_data).unwrap();
     let obj_name = format!("{json_data}_test_validate_object");
 
@@ -88,15 +90,14 @@ async fn test_validate_object(json_data: &str, expected: bool) {
     ns.delete(&pool).await.expect("Failed to delete namespace");
 }
 
-#[parameterized(
-    ok_40_74 = { r#"{"latitude": -40.7128, "longitude": 74.0060}"#, true },
-    failed_91_74 = { r#"{"latitude": 91, "longitude": 75}"#, false },
-    failed_neg91_74 = { r#"{"latitude": -91, "longitude": 74}"#, false },
-    failed_lat_missing = { r#"{"longitude": 0}"#, false },
-    failed_long_missing = { r#"{"latitude": 0}"#, false },
-)]
-#[test_macro(actix_web::test)]
-async fn test_validate_update_object(json_data: &str, expected: bool) {
+#[rstest]
+#[case::ok_40_74(r#"{"latitude": -40.7128, "longitude": 74.0060}"#, true)]
+#[case::failed_91_74(r#"{"latitude": 91, "longitude": 75}"#, false)]
+#[case::failed_neg91_74(r#"{"latitude": -91, "longitude": 74}"#, false)]
+#[case::failed_lat_missing(r#"{"longitude": 0}"#, false)]
+#[case::failed_long_missing(r#"{"latitude": 0}"#, false)]
+#[actix_web::test]
+async fn test_validate_update_object(#[case] json_data: &str, #[case] expected: bool) {
     // The base data for the original object.
     let base_data = r#"{"latitude": 40.7128, "longitude": -74.0060}"#;
     let obj_name = format!("{json_data}_test_validate_update_object");

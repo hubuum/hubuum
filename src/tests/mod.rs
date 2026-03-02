@@ -12,6 +12,8 @@ pub mod validation;
 
 use actix_web::web;
 use diesel::prelude::*;
+#[cfg(test)]
+use rstest::fixture;
 
 use crate::config::{get_config, AppConfig};
 use crate::db::init_pool;
@@ -31,6 +33,33 @@ static POOL: Lazy<DbPool> = Lazy::new(|| {
     let config = get_config().unwrap();
     init_pool(&config.database_url, 20)
 });
+
+#[derive(Clone)]
+pub struct TestContext {
+    pub pool: web::Data<DbPool>,
+    pub admin_user: User,
+    pub admin_token: String,
+    pub normal_user: User,
+    pub normal_token: String,
+}
+
+impl TestContext {
+    pub async fn new() -> Self {
+        let pool = get_test_pool();
+        let admin_user = create_test_admin(&pool).await;
+        let admin_token = admin_user.create_token(&pool).await.unwrap().get_token();
+        let normal_user = create_test_user(&pool).await;
+        let normal_token = normal_user.create_token(&pool).await.unwrap().get_token();
+
+        Self {
+            pool,
+            admin_user,
+            admin_token,
+            normal_user,
+            normal_token,
+        }
+    }
+}
 
 pub async fn create_user_with_params(pool: &DbPool, username: &str, password: &str) -> User {
     let result = NewUser {
@@ -198,6 +227,16 @@ pub async fn get_pool_and_config() -> (DbPool, AppConfig) {
     (pool, config.clone())
 }
 
+pub fn get_test_pool() -> web::Data<DbPool> {
+    web::Data::new(POOL.clone())
+}
+
+#[cfg(test)]
+#[fixture]
+pub async fn test_context() -> TestContext {
+    TestContext::new().await
+}
+
 pub async fn create_namespace(pool: &DbPool, ns_name: &str) -> Result<Namespace, ApiError> {
     let admin_group = ensure_admin_group(pool).await;
     let assignee = GroupID(admin_group.id);
@@ -209,37 +248,6 @@ pub async fn create_namespace(pool: &DbPool, ns_name: &str) -> Result<Namespace,
     }
     .save(pool)
     .await
-}
-
-/// Initialize useful data for tests
-///
-/// This function will ensure that the following exists:
-/// * An admin user (with the username "admin")
-/// * A normal user (with the username "normal")
-///
-/// However, as the users are not that interesting, we simply
-/// return the tokens for the users.
-///
-/// ## Returns
-/// * pool - The database pool
-/// * admin_token_string - The token for the admin user
-/// * normal_token_string - The token for the normal user
-pub async fn setup_pool_and_tokens() -> (web::Data<DbPool>, String, String) {
-    let pool = web::Data::new(POOL.clone());
-    let admin_token_string = ensure_admin_user(&pool)
-        .await
-        .create_token(&pool)
-        .await
-        .unwrap()
-        .get_token();
-    let normal_token_string = ensure_normal_user(&pool)
-        .await
-        .create_token(&pool)
-        .await
-        .unwrap()
-        .get_token();
-
-    (pool, admin_token_string, normal_token_string)
 }
 
 pub fn generate_all_subsets<T: Clone>(items: &[T]) -> Vec<Vec<T>> {

@@ -179,6 +179,7 @@ fn new_hubuum_object_relation_example() -> NewHubuumObjectRelation {
 #[cfg(test)]
 pub mod tests {
     use hubuumobject_relation::class_relation_id;
+    use rstest::rstest;
 
     use super::*;
     use crate::db::traits::ClassRelation;
@@ -186,7 +187,7 @@ pub mod tests {
     use crate::models::object::tests::create_object;
     use crate::models::traits::class_relation;
     use crate::models::{HubuumClass, HubuumObject, Namespace};
-    use crate::tests::{create_namespace, get_pool_and_config};
+    use crate::tests::{create_namespace, get_pool_and_config, test_context, TestContext};
     use crate::traits::{
         CanDelete, CanSave, CanUpdate, ClassAccessors, NamespaceAccessors, SelfAccessors,
     };
@@ -505,11 +506,12 @@ pub mod tests {
         namespace.delete(&pool).await.unwrap();
     }
 
+    #[rstest]
     #[actix_rt::test]
-    async fn test_finding_object_relations() {
+    async fn test_finding_object_relations(#[future(awt)] test_context: TestContext) {
         use crate::db::traits::ObjectRelationsFromUser;
-        use crate::tests::ensure_admin_user;
-        let (pool, _) = get_pool_and_config().await;
+        let context = test_context;
+        let pool = &context.pool;
 
         let (namespace, class1, class2) =
             create_namespace_and_classes("find_object_relations").await;
@@ -517,7 +519,7 @@ pub mod tests {
         let nid = namespace.id;
         let json = serde_json::json!({"test": "data"});
         let object1 = create_object(
-            &pool,
+            pool,
             class1.id,
             nid,
             "o1_find_object relation",
@@ -526,7 +528,7 @@ pub mod tests {
         .await
         .unwrap();
         let object2 = create_object(
-            &pool,
+            pool,
             class2.id,
             nid,
             "o2_find_object relation",
@@ -535,12 +537,12 @@ pub mod tests {
         .await
         .unwrap();
 
-        let class_rel = create_class_relation(&pool, &class1, &class2).await;
-        let object_rel = create_object_relation(&pool, &class_rel, &object1, &object2).await;
+        let class_rel = create_class_relation(pool, &class1, &class2).await;
+        let object_rel = create_object_relation(pool, &class_rel, &object1, &object2).await;
 
-        let admin_user = ensure_admin_user(&pool).await;
-        let rels = admin_user
-            .get_related_objects(&pool, &object1, &class2)
+        let rels = context
+            .admin_user
+            .get_related_objects(pool, &object1, &class2)
             .await
             .unwrap();
 
@@ -548,9 +550,9 @@ pub mod tests {
         assert_eq!(rels[0].target_object_id, object2.id);
         assert_eq!(rels[0].path, vec![object1.id, object2.id]);
 
-        class_rel.delete(&pool).await.unwrap();
-        verify_no_such_object_relation(&pool, object_rel.id).await;
+        class_rel.delete(pool).await.unwrap();
+        verify_no_such_object_relation(pool, object_rel.id).await;
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.delete(pool).await.unwrap();
     }
 }

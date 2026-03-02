@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use actix_web::{http::StatusCode, test};
-    use yare::parameterized;
+    use rstest::rstest;
 
     use crate::models::{
         HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, HubuumObject,
@@ -14,7 +14,7 @@ mod tests {
 
     use crate::tests::api_operations::{delete_request, get_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
-    use crate::tests::{create_test_group, ensure_normal_user, setup_pool_and_tokens};
+    use crate::tests::{create_test_group, ensure_normal_user, test_context, TestContext};
     // use crate::{assert_contains_all, assert_contains_same_ids};
 
     use crate::tests::api::v1::classes::tests::{cleanup, create_test_classes};
@@ -130,13 +130,14 @@ mod tests {
         objects
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_get_class_relations_list() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+    async fn test_get_class_relations_list(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
         let (classes, relations) =
-            create_classes_and_relations(&pool, "get_class_relations_list").await;
+            create_classes_and_relations(&context.pool, "get_class_relations_list").await;
 
-        let resp = get_request(&pool, &admin_token, CLASS_RELATIONS_ENDPOINT).await;
+        let resp = get_request(&context.pool, &context.admin_token, CLASS_RELATIONS_ENDPOINT).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let relations_fetched_all: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
 
@@ -157,11 +158,15 @@ mod tests {
         cleanup(&classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_get_class_relations_sorted_and_limited() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+    async fn test_get_class_relations_sorted_and_limited(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
         let (classes, relations) =
-            create_classes_and_relations(&pool, "get_class_relations_sorted_and_limited").await;
+            create_classes_and_relations(&context.pool, "get_class_relations_sorted_and_limited")
+                .await;
 
         let class_ids = classes
             .iter()
@@ -171,7 +176,7 @@ mod tests {
 
         let sorted_url =
             format!("{CLASS_RELATIONS_ENDPOINT}?from_classes={class_ids}&sort=id.desc");
-        let resp = get_request(&pool, &admin_token, &sorted_url).await;
+        let resp = get_request(&context.pool, &context.admin_token, &sorted_url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let sorted_relations: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
 
@@ -182,7 +187,7 @@ mod tests {
 
         let limited_url =
             format!("{CLASS_RELATIONS_ENDPOINT}?from_classes={class_ids}&sort=id&limit=2");
-        let resp = get_request(&pool, &admin_token, &limited_url).await;
+        let resp = get_request(&context.pool, &context.admin_token, &limited_url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let limited_relations: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
 
@@ -193,11 +198,14 @@ mod tests {
         cleanup(&classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_get_class_relations_cursor_pagination() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+    async fn test_get_class_relations_cursor_pagination(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
         let (classes, _relations) =
-            create_classes_and_relations(&pool, "get_class_relations_cursor").await;
+            create_classes_and_relations(&context.pool, "get_class_relations_cursor").await;
         let class_ids = classes
             .iter()
             .map(|class| class.id.to_string())
@@ -205,8 +213,8 @@ mod tests {
             .join(",");
 
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!("{CLASS_RELATIONS_ENDPOINT}?from_classes={class_ids}&limit=2&sort=id"),
         )
         .await;
@@ -218,8 +226,8 @@ mod tests {
         assert!(next_cursor.is_some());
 
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!(
                 "{CLASS_RELATIONS_ENDPOINT}?from_classes={class_ids}&limit=2&sort=id&cursor={}",
                 next_cursor.unwrap()
@@ -233,17 +241,18 @@ mod tests {
         cleanup(&classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_get_class_relation_list_via_class() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+    async fn test_get_class_relation_list_via_class(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
         let (classes, _) =
-            create_classes_and_relations(&pool, "get_class_relation_list_via_class").await;
+            create_classes_and_relations(&context.pool, "get_class_relation_list_via_class").await;
 
         let class = &classes[0];
 
         // Check direct relations. The first class has relations to the second and the fifth.
         let endpoint = format!("/api/v1/classes/{}/relations/", class.id);
-        let resp = get_request(&pool, &admin_token, &endpoint).await;
+        let resp = get_request(&context.pool, &context.admin_token, &endpoint).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let relations_fetched: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
 
@@ -256,10 +265,12 @@ mod tests {
         // So for the first class, we relations[0] relations..id
         let endpoint = format!("/api/v1/classes/{}/relations/transitive/", class.id);
 
-        let resp = get_request(&pool, &admin_token, &endpoint).await;
+        let resp = get_request(&context.pool, &context.admin_token, &endpoint).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let relations_fetched: Vec<HubuumClassRelationTransitive> =
+        let mut relations_fetched: Vec<HubuumClassRelationTransitive> =
             test::read_body_json(resp).await;
+
+        relations_fetched.sort_by_key(|relation| (relation.depth, relation.descendant_class_id));
 
         assert_eq!(relations_fetched.len(), 5);
         for (i, relation) in relations_fetched.iter().enumerate() {
@@ -279,13 +290,20 @@ mod tests {
         cleanup(&classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_get_class_relation() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let (classes, relations) = create_classes_and_relations(&pool, "get_class_relation").await;
+    async fn test_get_class_relation(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let (classes, relations) =
+            create_classes_and_relations(&context.pool, "get_class_relation").await;
         let relation = &relations[0];
 
-        let resp = get_request(&pool, &admin_token, &relation_endpoint(relation.id)).await;
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &relation_endpoint(relation.id),
+        )
+        .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
 
         let relation_response: HubuumClassRelation = test::read_body_json(resp).await;
@@ -294,47 +312,69 @@ mod tests {
         cleanup(&classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_deleting_class_relation_from_global() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+    async fn test_deleting_class_relation_from_global(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
         let (classes, relations) =
-            create_classes_and_relations(&pool, "deleting_class_relation_from_global").await;
+            create_classes_and_relations(&context.pool, "deleting_class_relation_from_global")
+                .await;
         let relation = &relations[0];
 
-        let resp = delete_request(&pool, &admin_token, &relation_endpoint(relation.id)).await;
+        let resp = delete_request(
+            &context.pool,
+            &context.admin_token,
+            &relation_endpoint(relation.id),
+        )
+        .await;
         let _ = assert_response_status(resp, StatusCode::NO_CONTENT).await;
 
-        let resp = get_request(&pool, &admin_token, &relation_endpoint(relation.id)).await;
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &relation_endpoint(relation.id),
+        )
+        .await;
         let _ = assert_response_status(resp, StatusCode::NOT_FOUND).await;
 
         cleanup(&classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_deleting_class_relation_from_class() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+    async fn test_deleting_class_relation_from_class(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
         let (classes, relations) =
-            create_classes_and_relations(&pool, "deleting_class_relation_from_class").await;
+            create_classes_and_relations(&context.pool, "deleting_class_relation_from_class")
+                .await;
         let relation = &relations[0];
 
         let endpoint = format!(
             "/api/v1/classes/{}/relations/{}",
             classes[0].id, relation.id
         );
-        let resp = delete_request(&pool, &admin_token, &endpoint).await;
+        let resp = delete_request(&context.pool, &context.admin_token, &endpoint).await;
         let _ = assert_response_status(resp, StatusCode::NO_CONTENT).await;
 
-        let resp = get_request(&pool, &admin_token, &relation_endpoint(relation.id)).await;
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &relation_endpoint(relation.id),
+        )
+        .await;
         let _ = assert_response_status(resp, StatusCode::NOT_FOUND).await;
 
         cleanup(&classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_deleting_class_relation_from_class_with_wrong_relation() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+    async fn test_deleting_class_relation_from_class_with_wrong_relation(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
         let (classes, relations) = create_classes_and_relations(
-            &pool,
+            &context.pool,
             "deleting_class_relation_from_class_with_wrong_relation",
         )
         .await;
@@ -344,15 +384,16 @@ mod tests {
             "/api/v1/classes/{}/relations/{}",
             classes[0].id, relation.id
         );
-        let resp = delete_request(&pool, &admin_token, &endpoint).await;
+        let resp = delete_request(&context.pool, &context.admin_token, &endpoint).await;
         let _ = assert_response_status(resp, StatusCode::BAD_REQUEST).await;
 
         cleanup(&classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_creating_class_relation_from_class() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+    async fn test_creating_class_relation_from_class(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
         let classes = create_test_classes("creating_class_relation_from_class").await;
 
         let content = NewHubuumClassRelationFromClass {
@@ -360,7 +401,7 @@ mod tests {
         };
 
         let endpoint = format!("/api/v1/classes/{}/relations/", classes[0].id);
-        let resp = post_request(&pool, &admin_token, &endpoint, &content).await;
+        let resp = post_request(&context.pool, &context.admin_token, &endpoint, &content).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
         let relation_response: HubuumClassRelation = test::read_body_json(resp).await;
 
@@ -368,8 +409,8 @@ mod tests {
         assert_eq!(relation_response.to_hubuum_class_id, classes[1].id);
 
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &relation_endpoint(relation_response.id),
         )
         .await;
@@ -380,41 +421,43 @@ mod tests {
         cleanup(&classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_get_class_relation_with_permissions() {
-        let (pool, _, _) = setup_pool_and_tokens().await;
-        let user = ensure_normal_user(&pool).await;
-        let token = user.create_token(&pool).await.unwrap().get_token();
-        let group = create_test_group(&pool).await;
+    async fn test_get_class_relation_with_permissions(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let user = ensure_normal_user(&context.pool).await;
+        let token = user.create_token(&context.pool).await.unwrap().get_token();
+        let group = create_test_group(&context.pool).await;
 
-        group.add_member(&pool, &user).await.unwrap();
+        group.add_member(&context.pool, &user).await.unwrap();
 
         let (classes, relations) =
-            create_classes_and_relations(&pool, "get_class_relation_with_permissions").await;
+            create_classes_and_relations(&context.pool, "get_class_relation_with_permissions")
+                .await;
         let namespace = NamespaceID(classes[0].namespace_id)
-            .instance(&pool)
+            .instance(&context.pool)
             .await
             .unwrap();
 
         let relation = &relations[0];
 
         // No permissions so far.
-        let resp = get_request(&pool, &token, CLASS_RELATIONS_ENDPOINT).await;
+        let resp = get_request(&context.pool, &token, CLASS_RELATIONS_ENDPOINT).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
 
         let relations_fetched_all: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
         assert!(relations_fetched_all.is_empty());
 
-        let resp = get_request(&pool, &token, &relation_endpoint(relation.id)).await;
+        let resp = get_request(&context.pool, &token, &relation_endpoint(relation.id)).await;
         let _ = assert_response_status(resp, StatusCode::FORBIDDEN).await;
 
         // Grant permissions to the group (and indirectly to the user).
         namespace
-            .grant_one(&pool, group.id, Permissions::ReadClassRelation)
+            .grant_one(&context.pool, group.id, Permissions::ReadClassRelation)
             .await
             .unwrap();
 
-        let resp = get_request(&pool, &token, CLASS_RELATIONS_ENDPOINT).await;
+        let resp = get_request(&context.pool, &token, CLASS_RELATIONS_ENDPOINT).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
 
         let relations_fetched_all: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
@@ -422,7 +465,7 @@ mod tests {
         assert_contains_all!(&relations, &relations_fetched_all);
         assert_contains_same_ids!(&relations, &relations_fetched_all);
 
-        let resp = get_request(&pool, &token, &relation_endpoint(relation.id)).await;
+        let resp = get_request(&context.pool, &token, &relation_endpoint(relation.id)).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
 
         let relation_response: HubuumClassRelation = test::read_body_json(resp).await;
@@ -432,40 +475,41 @@ mod tests {
     }
 
     // classidx of obj1, obj1_idx, obj2_idx, relation_idx, exists
-    #[parameterized(
-        relation_12_rel_true = { 0, 0, 1, 0, true },
-        relation_12_rel_false_c1 = { 1, 0, 1, 0, false }, // Gets the wrong class
-        relation_21_rel_true = { 1, 1, 0, 0, true }, // This is the same as relation_12_true, relations are bidirectional
-        relation_32_true = { 2, 2, 1, 1, true },
-        relation_15_true = { 0, 0, 4, 2, true },
-        relation_34_false = { 2, 2, 3, 0, false },
-        relation_45_false_r0 = { 3, 3, 4, 0, false },
-        relation_45_false_r1 = { 3, 3, 4, 1, false },
-        relation_45_false_r2 = { 3, 3, 4, 2, false },
-
-    )]
-    #[test_macro(actix_web::test)]
+    #[rstest]
+    #[case::relation_12_rel_true(0, 0, 1, 0, true)]
+    #[case::relation_12_rel_false_c1(1, 0, 1, 0, false)]
+    #[case::relation_21_rel_true(1, 1, 0, 0, true)]
+    #[case::relation_32_true(2, 2, 1, 1, true)]
+    #[case::relation_15_true(0, 0, 4, 2, true)]
+    #[case::relation_34_false(2, 2, 3, 0, false)]
+    #[case::relation_45_false_r0(3, 3, 4, 0, false)]
+    #[case::relation_45_false_r1(3, 3, 4, 1, false)]
+    #[case::relation_45_false_r2(3, 3, 4, 2, false)]
+    #[actix_web::test]
     async fn test_get_object_relation_param(
-        class_index: usize,
-        from_index: usize,
-        to_index: usize,
-        relation_index: usize,
-        exists: bool,
+        #[case] class_index: usize,
+        #[case] from_index: usize,
+        #[case] to_index: usize,
+        #[case] relation_index: usize,
+        #[case] exists: bool,
+        #[future(awt)] test_context: TestContext,
     ) {
         let unique =
             format!("get_object_relation_param_{from_index}_{to_index}_{relation_index}_{exists}");
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let (classes, relations) = create_classes_and_relations(&pool, &unique).await;
-        let objects = create_objects_in_classes(&pool, &classes).await;
+        let context = test_context;
+        let (classes, relations) = create_classes_and_relations(&context.pool, &unique).await;
+        let objects = create_objects_in_classes(&context.pool, &classes).await;
 
         // Create relations as in the original test
         let relation_12 =
-            create_object_relation(&pool, &objects[0], &objects[1], &relations[0]).await;
+            create_object_relation(&context.pool, &objects[0], &objects[1], &relations[0]).await;
         let relation_23 =
-            create_object_relation(&pool, &objects[1], &objects[2], &relations[1]).await;
-        let class_relation_15 = create_relation(&pool, &classes[0], &classes[4]).await;
+            create_object_relation(&context.pool, &objects[1], &objects[2], &relations[1]).await;
+        let class_relation_15 =
+            create_relation(&context.pool, &classes[0], &classes[4]).await;
         let relation_15 =
-            create_object_relation(&pool, &objects[0], &objects[4], &class_relation_15).await;
+            create_object_relation(&context.pool, &objects[0], &objects[4], &class_relation_15)
+                .await;
 
         let relations = vec![relation_12, relation_23, relation_15];
 
@@ -477,7 +521,7 @@ mod tests {
             objects[to_index].id
         );
 
-        let resp = get_request(&pool, &admin_token, &endpoint).await;
+        let resp = get_request(&context.pool, &context.admin_token, &endpoint).await;
 
         if exists {
             let resp = assert_response_status(resp, StatusCode::OK).await;
@@ -514,19 +558,29 @@ mod tests {
         cleanup(&classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_get_object_relations_sorted_and_limited() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+    async fn test_get_object_relations_sorted_and_limited(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
         let (classes, class_relations) =
-            create_classes_and_relations(&pool, "get_object_relations_sorted_and_limited").await;
-        let objects = create_objects_in_classes(&pool, &classes).await;
+            create_classes_and_relations(
+                &context.pool,
+                "get_object_relations_sorted_and_limited",
+            )
+            .await;
+        let objects = create_objects_in_classes(&context.pool, &classes).await;
 
         let rel_1 =
-            create_object_relation(&pool, &objects[0], &objects[1], &class_relations[0]).await;
+            create_object_relation(&context.pool, &objects[0], &objects[1], &class_relations[0])
+                .await;
         let rel_2 =
-            create_object_relation(&pool, &objects[1], &objects[2], &class_relations[1]).await;
+            create_object_relation(&context.pool, &objects[1], &objects[2], &class_relations[1])
+                .await;
         let rel_3 =
-            create_object_relation(&pool, &objects[2], &objects[3], &class_relations[2]).await;
+            create_object_relation(&context.pool, &objects[2], &objects[3], &class_relations[2])
+                .await;
         let object_relations = [rel_1, rel_2, rel_3];
 
         let class_relation_ids = class_relations[0..3]
@@ -537,7 +591,7 @@ mod tests {
 
         let sorted_url =
             format!("{OBJECT_RELATIONS_ENDPOINT}?class_relation={class_relation_ids}&sort=id.desc");
-        let resp = get_request(&pool, &admin_token, &sorted_url).await;
+        let resp = get_request(&context.pool, &context.admin_token, &sorted_url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let sorted_relations: Vec<HubuumObjectRelation> = test::read_body_json(resp).await;
         assert_eq!(sorted_relations.len(), object_relations.len());
@@ -548,7 +602,7 @@ mod tests {
         let limited_url = format!(
             "{OBJECT_RELATIONS_ENDPOINT}?class_relation={class_relation_ids}&sort=id&limit=2"
         );
-        let resp = get_request(&pool, &admin_token, &limited_url).await;
+        let resp = get_request(&context.pool, &context.admin_token, &limited_url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let limited_relations: Vec<HubuumObjectRelation> = test::read_body_json(resp).await;
         assert_eq!(limited_relations.len(), 2);
@@ -561,44 +615,57 @@ mod tests {
     // class_idx object_idx, expected_code, filter, expected_object_ids
     // TODO: Add tests against _classes / _namespaces / _object
     // Note that <int> in the filter will be replaced with the object id with that index.
-    #[parameterized(
-        rel_0_0_empty = { 0, 0, StatusCode::OK, "", vec![1,2,4]},
-        rel_0_0_from_name = { 0, 0, StatusCode::OK, "?from_name__contains=0", vec![1,2,4]},
-        rel_0_0_to_name = { 0, 0, StatusCode::OK, "?to_name__endswith=api_class_2", vec![1]},
-        rel_0_0_to_desc = { 0, 0, StatusCode::OK, "?to_description__endswith=api_description_2", vec![1]},
-        rel_0_0_depth_eq = { 0, 0, StatusCode::OK, "?depth=1", vec![1,4]},
-        rel_0_0_depth_gt = { 0, 0, StatusCode::OK, "?depth__gt=1", vec![2]},
-        rel_0_0_depth_lt = { 0, 0, StatusCode::OK, "?depth__lt=1", vec![]},
-        rel_0_0_path_equals_0_1 = { 0, 0, StatusCode::OK, "?path=<0>,<1>", vec![1]},
-        rel_0_0_path_equals_0_2 = { 0, 0, StatusCode::OK, "?path=<0>,<1>,<2>", vec![2]},
-        rel_0_0_path_contains = { 0, 0, StatusCode::OK, "?path__contains=<1>", vec![1,2]},
-        rel_1_2_empty = { 1, 1, StatusCode::OK, "", vec![2]},
-        rel_0_0_invalid_key = { 0, 0, StatusCode::BAD_REQUEST, "?nosuchkey=foo", vec![]},
-
-        rel_0_0_invalid_op = { 0, 0, StatusCode::BAD_REQUEST, "?from_name__foo=bar", vec![]},
-        rel_0_1_wrong_class = { 0, 1, StatusCode::NOT_FOUND, "", vec![]},
+    #[rstest]
+    #[case::rel_0_0_empty(0, 0, StatusCode::OK, "", vec![1, 2, 4])]
+    #[case::rel_0_0_from_name(0, 0, StatusCode::OK, "?from_name__contains=0", vec![1, 2, 4])]
+    #[case::rel_0_0_to_name(0, 0, StatusCode::OK, "?to_name__endswith=api_class_2", vec![1])]
+    #[case::rel_0_0_to_desc(
+        0,
+        0,
+        StatusCode::OK,
+        "?to_description__endswith=api_description_2",
+        vec![1]
     )]
-    #[test_macro(actix_web::test)]
+    #[case::rel_0_0_depth_eq(0, 0, StatusCode::OK, "?depth=1", vec![1, 4])]
+    #[case::rel_0_0_depth_gt(0, 0, StatusCode::OK, "?depth__gt=1", vec![2])]
+    #[case::rel_0_0_depth_lt(0, 0, StatusCode::OK, "?depth__lt=1", vec![])]
+    #[case::rel_0_0_path_equals_0_1(0, 0, StatusCode::OK, "?path=<0>,<1>", vec![1])]
+    #[case::rel_0_0_path_equals_0_2(0, 0, StatusCode::OK, "?path=<0>,<1>,<2>", vec![2])]
+    #[case::rel_0_0_path_contains(0, 0, StatusCode::OK, "?path__contains=<1>", vec![1, 2])]
+    #[case::rel_1_2_empty(1, 1, StatusCode::OK, "", vec![2])]
+    #[case::rel_0_0_invalid_key(0, 0, StatusCode::BAD_REQUEST, "?nosuchkey=foo", vec![])]
+    #[case::rel_0_0_invalid_op(0, 0, StatusCode::BAD_REQUEST, "?from_name__foo=bar", vec![])]
+    #[case::rel_0_1_wrong_class(0, 1, StatusCode::NOT_FOUND, "", vec![])]
+    #[actix_web::test]
     async fn test_filter_related_objects(
-        class_index: usize,
-        object_index: usize,
-        status: StatusCode,
-        filter: &str,
-        expected_object_ids: Vec<usize>,
+        #[case] class_index: usize,
+        #[case] object_index: usize,
+        #[case] status: StatusCode,
+        #[case] filter: &str,
+        #[case] expected_object_ids: Vec<usize>,
+        #[future(awt)] test_context: TestContext,
     ) {
         use regex::Regex;
 
         let unique =
             format!("filter_related_objects_{class_index}_{object_index}_{status}_{filter}")
                 .replace(&['=', '&', '?', ' ', '<', '>'][..], "_");
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let (classes, relations) = create_classes_and_relations(&pool, &unique).await;
-        let objects = create_objects_in_classes(&pool, &classes).await;
+        let context = test_context;
+        let (classes, relations) = create_classes_and_relations(&context.pool, &unique).await;
+        let objects = create_objects_in_classes(&context.pool, &classes).await;
 
-        let _ = create_object_relation(&pool, &objects[0], &objects[1], &relations[0]).await;
-        let _ = create_object_relation(&pool, &objects[1], &objects[2], &relations[1]).await;
-        let class_relation_15 = create_relation(&pool, &classes[0], &classes[4]).await;
-        let _ = create_object_relation(&pool, &objects[0], &objects[4], &class_relation_15).await;
+        let _ =
+            create_object_relation(&context.pool, &objects[0], &objects[1], &relations[0]).await;
+        let _ =
+            create_object_relation(&context.pool, &objects[1], &objects[2], &relations[1]).await;
+        let class_relation_15 = create_relation(&context.pool, &classes[0], &classes[4]).await;
+        let _ = create_object_relation(
+            &context.pool,
+            &objects[0],
+            &objects[4],
+            &class_relation_15,
+        )
+        .await;
 
         // replace <int> in the filter with the object id with that index.
         let re = Regex::new(r"<(\d+)>").unwrap();
@@ -612,7 +679,7 @@ mod tests {
             classes[class_index].id, objects[object_index].id, filter
         );
 
-        let resp = get_request(&pool, &admin_token, &endpoint).await;
+        let resp = get_request(&context.pool, &context.admin_token, &endpoint).await;
         let resp = assert_response_status(resp, status).await;
 
         if status == StatusCode::OK {
@@ -642,34 +709,54 @@ mod tests {
     }
 
     // Covers docs/relationship_endpoints.md "Querying related objects" (`from_json_data` and `to_json_data`).
-    #[parameterized(
-        docs_from_json_data_matches_ancestor = { "?from_json_data__equals=role=source-root", vec![1,2,4] },
-        docs_from_json_data_does_not_match_descendant_fields = { "?from_json_data__equals=hostname=api-01", vec![] },
-        docs_to_json_data_matches_descendants = { "?to_json_data__equals=env=prod", vec![1,2] },
-        docs_to_json_data_does_not_match_ancestor_fields = { "?to_json_data__equals=role=source-root", vec![] }
+    #[rstest]
+    #[case::docs_from_json_data_matches_ancestor(
+        "?from_json_data__equals=role=source-root",
+        vec![1, 2, 4]
     )]
-    #[test_macro(actix_web::test)]
+    #[case::docs_from_json_data_does_not_match_descendant_fields(
+        "?from_json_data__equals=hostname=api-01",
+        vec![]
+    )]
+    #[case::docs_to_json_data_matches_descendants(
+        "?to_json_data__equals=env=prod",
+        vec![1, 2]
+    )]
+    #[case::docs_to_json_data_does_not_match_ancestor_fields(
+        "?to_json_data__equals=role=source-root",
+        vec![]
+    )]
+    #[actix_web::test]
     async fn docs_api_related_objects_filter_json_data_examples(
-        filter: &str,
-        expected_object_ids: Vec<usize>,
+        #[case] filter: &str,
+        #[case] expected_object_ids: Vec<usize>,
+        #[future(awt)] test_context: TestContext,
     ) {
         let unique = format!("docs_related_objects_json_{}", filter)
             .replace(&['=', '&', '?', ' ', '<', '>'][..], "_");
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let (classes, relations) = create_classes_and_relations(&pool, &unique).await;
-        let objects = create_objects_in_classes(&pool, &classes).await;
+        let context = test_context;
+        let (classes, relations) = create_classes_and_relations(&context.pool, &unique).await;
+        let objects = create_objects_in_classes(&context.pool, &classes).await;
 
-        let _ = create_object_relation(&pool, &objects[0], &objects[1], &relations[0]).await;
-        let _ = create_object_relation(&pool, &objects[1], &objects[2], &relations[1]).await;
-        let class_relation_15 = create_relation(&pool, &classes[0], &classes[4]).await;
-        let _ = create_object_relation(&pool, &objects[0], &objects[4], &class_relation_15).await;
+        let _ =
+            create_object_relation(&context.pool, &objects[0], &objects[1], &relations[0]).await;
+        let _ =
+            create_object_relation(&context.pool, &objects[1], &objects[2], &relations[1]).await;
+        let class_relation_15 = create_relation(&context.pool, &classes[0], &classes[4]).await;
+        let _ = create_object_relation(
+            &context.pool,
+            &objects[0],
+            &objects[4],
+            &class_relation_15,
+        )
+        .await;
 
         let endpoint = format!(
             "/api/v1/classes/{}/{}/relations/{}",
             classes[0].id, objects[0].id, filter
         );
 
-        let resp = get_request(&pool, &admin_token, &endpoint).await;
+        let resp = get_request(&context.pool, &context.admin_token, &endpoint).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let objects_fetched: Vec<HubuumObjectWithPath> = test::read_body_json(resp).await;
 
