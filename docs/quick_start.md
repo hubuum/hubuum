@@ -13,6 +13,13 @@ Hubuum can be configured using environment variables or command-line arguments. 
 | `HUBUUM_LOG_LEVEL` | `info` | Logging level (trace, debug, info, warn, error) |
 | `HUBUUM_ACTIX_WORKERS` | `4` | Number of Actix worker threads |
 
+### Access Control Configuration
+
+| Variable | Default | Description |
+| -------- | ------- | ----------- |
+| `HUBUUM_CLIENT_ALLOWLIST` | `127.0.0.1,::1` | Comma-separated list of allowed client IPs or CIDRs (e.g., `10.0.0.0/24,2001:db8::/32`) |
+| `HUBUUM_TRUST_IP_HEADERS` | `true` | Whether to trust `X-Forwarded-For` and similar headers for client IP detection |
+
 ### Database Configuration
 
 | Variable | Default | Description |
