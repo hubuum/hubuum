@@ -6,6 +6,7 @@ pub mod acl;
 pub mod api;
 pub mod api_operations;
 pub mod asserts;
+pub mod client_allowlist;
 pub mod constants;
 pub mod search;
 pub mod validation;

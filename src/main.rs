@@ -88,9 +88,18 @@ async fn main() -> std::io::Result<()> {
         );
     }
 
+    let client_allowlist = config.client_allowlist.clone();
+    let trust_ip_headers = config.trust_ip_headers;
+
     let server = HttpServer::new(move || {
         let app = App::new()
-            .wrap(middlewares::tracing::TracingMiddleware)
+            .wrap(middlewares::ClientAllowlistMiddleware::new_with_trust(
+                client_allowlist.clone(),
+                trust_ip_headers,
+            ))
+            .wrap(middlewares::TracingMiddleware::new_with_trust(
+                trust_ip_headers,
+            ))
             .wrap(Logger::default())
             .app_data(Data::new(pool.clone()))
             .app_data(JsonConfig::default().error_handler(json_error_handler))

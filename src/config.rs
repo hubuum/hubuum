@@ -4,9 +4,12 @@ use std::sync::{LazyLock, Mutex};
 use std::sync::{RwLock, RwLockReadGuard};
 
 use clap::{Parser, ValueEnum};
+use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 #[cfg(not(test))]
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
+use std::str::FromStr;
 
 use crate::errors::ApiError;
 
@@ -105,6 +108,18 @@ pub struct AppConfig {
         default_value = None
     )]
     pub tls_backend: Option<TlsBackend>,
+
+    /// Trust proxy IP headers (X-Forwarded-For/Forwarded). If false, use peer address only.
+    #[clap(long, default_value = "true", env = "HUBUUM_TRUST_IP_HEADERS")]
+    pub trust_ip_headers: bool,
+
+    /// Whitelist of client IPs or CIDRs ("*" allows all)
+    #[clap(long, default_value = "127.0.0.1,::1", env = "HUBUUM_CLIENT_ALLOWLIST", value_parser = parse_client_allowlist)]
+    pub client_allowlist: ClientAllowlist,
+}
+
+fn parse_client_allowlist(s: &str) -> Result<ClientAllowlist, String> {
+    ClientAllowlist::from_str(s).map_err(|e| e.to_string())
 }
 
 impl AppConfig {
@@ -175,6 +190,13 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         })
     }
 
+    fn env_or_default_client_allowlist(key: &str, default: &str) -> ClientAllowlist {
+        env::var(key)
+            .unwrap_or_else(|_| default.to_string())
+            .parse()
+            .unwrap_or_else(|e: ApiError| panic!("Invalid client allowlist in {key}: {e}"))
+    }
+
     let config = AppConfig {
         bind_ip: env_or_default("HUBUUM_BIND_IP", "127.0.0.1"),
         port: env_or_default("HUBUUM_BIND_PORT", "8080")
@@ -199,9 +221,114 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         tls_key_path: env_or_default_opt("HUBUUM_TLS_KEY_PATH", None),
         tls_key_passphrase: env_or_default_opt("HUBUUM_TLS_KEY_PASSPHRASE", None),
         tls_backend: env_or_default_tls_backend("HUBUUM_TLS_BACKEND"),
+        trust_ip_headers: env_or_default("HUBUUM_TRUST_IP_HEADERS", "true")
+            .parse()
+            .unwrap_or(true),
+        client_allowlist: env_or_default_client_allowlist(
+            "HUBUUM_CLIENT_ALLOWLIST",
+            "127.0.0.1,::1",
+        ),
     };
 
     config.validate()
+}
+
+/// Client IP allowlist - either allow all (`*`) or specific IPs/CIDRs
+#[derive(Debug, Clone)]
+pub enum ClientAllowlist {
+    Any,
+    Nets(Vec<IpNet>),
+}
+
+impl Serialize for ClientAllowlist {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            ClientAllowlist::Any => serializer.serialize_str("*"),
+            ClientAllowlist::Nets(nets) => {
+                let s = nets
+                    .iter()
+                    .map(|n| n.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                serializer.serialize_str(&s)
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ClientAllowlist {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        ClientAllowlist::from_str(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+impl ClientAllowlist {
+    /// Parse a CLI/env string into a ClientAllowlist
+    pub fn parse_cli(input: &str) -> Result<Self, ApiError> {
+        let trimmed = input.trim();
+
+        if trimmed == "*" {
+            return Ok(Self::Any);
+        }
+
+        let nets: Vec<IpNet> = trimmed
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+            .map(Self::parse_net)
+            .collect::<Result<_, _>>()?;
+
+        if nets.is_empty() {
+            return Err(ApiError::BadRequest(
+                "client allowlist cannot be empty".into(),
+            ));
+        }
+
+        Ok(Self::Nets(nets))
+    }
+
+    /// Check if an IP address is allowed
+    pub fn allows(&self, ip: IpAddr) -> bool {
+        match self {
+            ClientAllowlist::Any => true,
+            ClientAllowlist::Nets(nets) => nets.iter().any(|net| match (net, ip) {
+                (IpNet::V4(net), IpAddr::V4(addr)) => net.contains(&addr),
+                (IpNet::V6(net), IpAddr::V6(addr)) => net.contains(&addr),
+                _ => false,
+            }),
+        }
+    }
+
+    /// Parse a network CIDR or single IP
+    fn parse_net(raw: &str) -> Result<IpNet, ApiError> {
+        IpNet::from_str(raw)
+            .or_else(|_| Self::ip_to_host_net(raw))
+            .map_err(|_| ApiError::BadRequest(format!("Invalid IP/CIDR: {}", raw)))
+    }
+
+    /// Convert a single IP address to a /32 or /128 network
+    fn ip_to_host_net(raw: &str) -> Result<IpNet, ()> {
+        let ip: IpAddr = raw.parse().map_err(|_| ())?;
+        match ip {
+            IpAddr::V4(addr) => Ipv4Net::new(addr, 32).map(IpNet::from).map_err(|_| ()),
+            IpAddr::V6(addr) => Ipv6Net::new(addr, 128).map(IpNet::from).map_err(|_| ()),
+        }
+    }
+}
+
+impl FromStr for ClientAllowlist {
+    type Err = ApiError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse_cli(s)
+    }
 }
 
 #[cfg(test)]

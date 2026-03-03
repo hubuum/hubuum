@@ -16,7 +16,7 @@ pub async fn get_request_with_correlation(
 ) -> actix_web::dev::ServiceResponse {
     let app = test::init_service(
         App::new()
-            .wrap(TracingMiddleware)
+            .wrap(TracingMiddleware::new())
             .app_data(Data::new(pool.clone()))
             .configure(prod_api::config),
     )
@@ -60,7 +60,7 @@ where
 {
     let app = test::init_service(
         App::new()
-            .wrap(TracingMiddleware)
+            .wrap(TracingMiddleware::new())
             .app_data(Data::new(pool.clone()))
             .configure(prod_api::config),
     )
@@ -81,7 +81,7 @@ pub async fn delete_request(
 ) -> actix_web::dev::ServiceResponse {
     let app = test::init_service(
         App::new()
-            .wrap(TracingMiddleware)
+            .wrap(TracingMiddleware::new())
             .app_data(Data::new(pool.clone()))
             .configure(prod_api::config),
     )
@@ -105,7 +105,7 @@ where
 {
     let app = test::init_service(
         App::new()
-            .wrap(TracingMiddleware)
+            .wrap(TracingMiddleware::new())
             .app_data(Data::new(pool.clone()))
             .configure(prod_api::config),
     )
@@ -130,7 +130,7 @@ where
 {
     let app = test::init_service(
         App::new()
-            .wrap(TracingMiddleware)
+            .wrap(TracingMiddleware::new())
             .app_data(Data::new(pool.clone()))
             .configure(prod_api::config),
     )

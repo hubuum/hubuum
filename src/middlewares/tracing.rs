@@ -11,11 +11,34 @@ use std::time::Instant;
 use tracing::{Instrument, Level, info, span};
 use uuid::Uuid;
 
+use super::client_allowlist::extract_client_ip;
+
 const CORRELATION_ID: HeaderName = HeaderName::from_static("x-correlation-id");
 const REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
 // Middleware factory
-pub struct TracingMiddleware;
+#[derive(Clone)]
+pub struct TracingMiddleware {
+    trust_ip_headers: bool,
+}
+
+impl Default for TracingMiddleware {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TracingMiddleware {
+    pub fn new() -> Self {
+        Self {
+            trust_ip_headers: true,
+        }
+    }
+
+    pub fn new_with_trust(trust_ip_headers: bool) -> Self {
+        Self { trust_ip_headers }
+    }
+}
 
 impl<S, B> Transform<S, ServiceRequest> for TracingMiddleware
 where
@@ -30,12 +53,16 @@ where
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        future::ready(Ok(TracingMiddlewareService { service }))
+        future::ready(Ok(TracingMiddlewareService {
+            service,
+            trust_ip_headers: self.trust_ip_headers,
+        }))
     }
 }
 
 pub struct TracingMiddlewareService<S> {
     service: S,
+    trust_ip_headers: bool,
 }
 
 impl<S, B> Service<ServiceRequest> for TracingMiddlewareService<S>
@@ -65,9 +92,11 @@ where
 
         let method = req.method().to_string();
         let path = req.path().to_string();
+        let client_ip = extract_client_ip(&req, self.trust_ip_headers);
+        let client_ip_s = client_ip.map(|ip| ip.to_string());
 
         let start_time = Instant::now();
-        info!(request_id = %request_id, correlation_id = ?correlation_id, message = "Request start", method = &method, path = &path);
+        info!(request_id = %request_id, correlation_id = ?correlation_id, message = "Request start", method = &method, path = &path, client_ip = client_ip_s.as_deref());
 
         let fut = self.service.call(req);
 
@@ -85,7 +114,7 @@ where
                 }
 
                 let elapsed_time = start_time.elapsed();
-                info!(message = "Request end", method = &method, path = &path, run_time = ?elapsed_time);
+                info!(message = "Request end", method = &method, path = &path, client_ip = client_ip_s.as_deref(), run_time = ?elapsed_time);
 
                 Ok(res)
             }
