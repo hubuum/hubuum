@@ -4839,6 +4839,88 @@
           }
         ]
       }
+    },
+    "/api/v1/reports": {
+      "post": {
+        "tags": [
+          "reports"
+        ],
+        "summary": "Post Api V1 Reports",
+        "description": "Auto-generated documentation for POST /api/v1/reports.",
+        "operationId": "postApiV1Reports",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Rendered report output. The response format depends on `output.content_type` or the `Accept` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportJsonResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "Not acceptable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -5696,6 +5778,282 @@
           "DeleteObjectRelation"
         ]
       },
+      "ReportContentType": {
+        "type": "string",
+        "enum": [
+          "application/json",
+          "text/plain",
+          "text/html",
+          "text/csv"
+        ]
+      },
+      "ReportJsonResponse": {
+        "type": "object",
+        "required": [
+          "items",
+          "meta",
+          "warnings"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {}
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ReportMeta"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReportWarning"
+            }
+          }
+        },
+        "example": {
+          "items": [
+            {
+              "id": 1,
+              "name": "srv-01"
+            },
+            {
+              "id": 2,
+              "name": "srv-02"
+            }
+          ],
+          "meta": {
+            "content_type": "application/json",
+            "count": 2,
+            "scope": {
+              "class_id": 42,
+              "kind": "objects_in_class",
+              "object_id": null
+            },
+            "truncated": false
+          },
+          "warnings": []
+        }
+      },
+      "ReportLimits": {
+        "type": "object",
+        "properties": {
+          "max_items": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "max_output_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          }
+        },
+        "example": {
+          "max_items": 100,
+          "max_output_bytes": 262144
+        }
+      },
+      "ReportMeta": {
+        "type": "object",
+        "required": [
+          "count",
+          "truncated",
+          "scope",
+          "content_type"
+        ],
+        "properties": {
+          "content_type": {
+            "$ref": "#/components/schemas/ReportContentType"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ReportScope"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "example": {
+          "content_type": "application/json",
+          "count": 2,
+          "scope": {
+            "class_id": 42,
+            "kind": "objects_in_class",
+            "object_id": null
+          },
+          "truncated": false
+        }
+      },
+      "ReportMissingDataPolicy": {
+        "type": "string",
+        "enum": [
+          "strict",
+          "null",
+          "omit"
+        ]
+      },
+      "ReportOutputRequest": {
+        "type": "object",
+        "properties": {
+          "content_type": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportContentType"
+              }
+            ]
+          },
+          "template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "example": {
+          "content_type": "text/plain",
+          "template": "{{#each items}}{{this.name}}\n{{/each}}"
+        }
+      },
+      "ReportRequest": {
+        "type": "object",
+        "required": [
+          "scope"
+        ],
+        "properties": {
+          "limits": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportLimits"
+              }
+            ]
+          },
+          "missing_data_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportMissingDataPolicy"
+              }
+            ]
+          },
+          "output": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportOutputRequest"
+              }
+            ]
+          },
+          "query": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ReportScope"
+          }
+        },
+        "example": {
+          "limits": {
+            "max_items": 100,
+            "max_output_bytes": 262144
+          },
+          "missing_data_policy": "strict",
+          "output": {
+            "content_type": "text/plain",
+            "template": "{{#each items}}{{this.name}}\n{{/each}}"
+          },
+          "query": "name__icontains=server&sort=name",
+          "scope": {
+            "class_id": 42,
+            "kind": "objects_in_class",
+            "object_id": null
+          }
+        }
+      },
+      "ReportScope": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "class_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ReportScopeKind"
+          },
+          "object_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        },
+        "example": {
+          "class_id": 42,
+          "kind": "objects_in_class",
+          "object_id": null
+        }
+      },
+      "ReportScopeKind": {
+        "type": "string",
+        "enum": [
+          "namespaces",
+          "classes",
+          "objects_in_class",
+          "class_relations",
+          "object_relations",
+          "related_objects"
+        ]
+      },
+      "ReportWarning": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "example": {
+          "code": "missing_value",
+          "message": "Template lookup failed",
+          "path": "this.data.owner"
+        }
+      },
       "UpdateGroup": {
         "type": "object",
         "properties": {
@@ -5933,6 +6291,10 @@
     {
       "name": "classes",
       "description": "Class and object-in-class endpoints"
+    },
+    {
+      "name": "reports",
+      "description": "Server-side report execution endpoints"
     }
   ]
 }

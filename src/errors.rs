@@ -40,6 +40,8 @@ pub enum ApiError {
     Unauthorized(String),
     InternalServerError(String),
     Forbidden(String),
+    NotAcceptable(String),
+    PayloadTooLarge(String),
     DatabaseError(String),
     Conflict(String),
     NotFound(String),
@@ -100,6 +102,10 @@ impl ResponseError for ApiError {
             ApiError::Forbidden(message) => {
                 HttpResponse::Forbidden().json(json!({ "error": "Forbidden", "message": message }))
             }
+            ApiError::NotAcceptable(message) => HttpResponse::NotAcceptable()
+                .json(json!({ "error": "Not Acceptable", "message": message })),
+            ApiError::PayloadTooLarge(message) => HttpResponse::PayloadTooLarge()
+                .json(json!({ "error": "Payload Too Large", "message": message })),
             ApiError::InternalServerError(message) => HttpResponse::InternalServerError()
                 .json(json!({ "error": "Internal Server Error", "message": message })),
             ApiError::Unauthorized(message) => HttpResponse::Unauthorized()
@@ -128,6 +134,8 @@ impl ResponseError for ApiError {
         match self {
             ApiError::Conflict(_) => StatusCode::CONFLICT,
             ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
+            ApiError::NotAcceptable(_) => StatusCode::NOT_ACCEPTABLE,
+            ApiError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             ApiError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             ApiError::InternalServerError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::DatabaseError(_) => StatusCode::INTERNAL_SERVER_ERROR,
