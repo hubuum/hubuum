@@ -1,12 +1,14 @@
 use crate::api::handlers::{auth, meta};
-use crate::api::v1::handlers::{classes, groups, namespaces, relations, users};
+use crate::api::v1::handlers::{classes, groups, namespaces, relations, reports, users};
 use crate::models::{
     Group, GroupPermission, HubuumClass, HubuumClassExpanded, HubuumClassRelation,
     HubuumClassRelationTransitive, HubuumObject, HubuumObjectRelation, HubuumObjectWithPath,
     LoginUser, Namespace, NewGroup, NewHubuumClass, NewHubuumClassRelation,
     NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation,
-    NewNamespaceWithAssignee, NewUser, ObjectsByClass, Permission, Permissions, UpdateGroup,
-    UpdateHubuumClass, UpdateHubuumObject, UpdateNamespace, UpdateUser, User, UserToken,
+    NewNamespaceWithAssignee, NewUser, ObjectsByClass, Permission, Permissions, ReportContentType,
+    ReportJsonResponse, ReportLimits, ReportMeta, ReportMissingDataPolicy, ReportOutputRequest,
+    ReportRequest, ReportScope, ReportScopeKind, ReportWarning, UpdateGroup, UpdateHubuumClass,
+    UpdateHubuumObject, UpdateNamespace, UpdateUser, User, UserToken,
 };
 use crate::pagination::{page_limits_or_defaults, NEXT_CURSOR_HEADER};
 use actix_web::{HttpResponse, Responder};
@@ -73,6 +75,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         relations::get_object_relation,
         relations::create_object_relation,
         relations::delete_object_relation,
+        reports::run_report,
         classes::get_classes,
         classes::create_class,
         classes::get_class,
@@ -130,6 +133,17 @@ use utoipa::{Modify, OpenApi, ToSchema};
             HubuumObjectWithPath,
             HubuumObjectRelation,
             NewHubuumObjectRelation
+            ,
+            ReportScopeKind,
+            ReportScope,
+            ReportContentType,
+            ReportOutputRequest,
+            ReportMissingDataPolicy,
+            ReportLimits,
+            ReportRequest,
+            ReportWarning,
+            ReportMeta,
+            ReportJsonResponse
         )
     ),
     modifiers(&SecurityAddon, &OperationDefaults),
@@ -140,7 +154,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
         (name = "groups", description = "Group management endpoints"),
         (name = "namespaces", description = "Namespace and permission endpoints"),
         (name = "relations", description = "Class and object relation endpoints"),
-        (name = "classes", description = "Class and object-in-class endpoints")
+        (name = "classes", description = "Class and object-in-class endpoints"),
+        (name = "reports", description = "Server-side report execution endpoints")
     )
 )]
 pub struct ApiDoc;
@@ -566,6 +581,7 @@ mod tests {
             "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}/{permission}",
             "/api/v1/namespaces/{namespace_id}/permissions/user/{user_id}",
             "/api/v1/namespaces/{namespace_id}/has_permissions/{permission}",
+            "/api/v1/reports",
             "/api/v1/relations/classes",
             "/api/v1/relations/classes/{relation_id}",
             "/api/v1/relations/objects",
@@ -595,6 +611,7 @@ mod tests {
 
         assert!(json.pointer("/paths/~1api~1v1~1iam~1users/get").is_some());
         assert!(json.pointer("/paths/~1api~1v1~1iam~1users/post").is_some());
+        assert!(json.pointer("/paths/~1api~1v1~1reports/post").is_some());
         assert!(json
             .pointer("/paths/~1api~1v1~1relations~1objects/post")
             .is_some());

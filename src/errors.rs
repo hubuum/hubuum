@@ -40,6 +40,8 @@ pub enum ApiError {
     Unauthorized(String),
     InternalServerError(String),
     Forbidden(String),
+    NotAcceptable(String),
+    PayloadTooLarge(String),
     DatabaseError(String),
     Conflict(String),
     NotFound(String),
@@ -79,6 +81,8 @@ impl fmt::Display for ApiError {
             ApiError::NotFound(ref message) => write!(f, "{message}"),
             ApiError::Conflict(ref message) => write!(f, "{message}"),
             ApiError::Forbidden(ref message) => write!(f, "{message}"),
+            ApiError::NotAcceptable(ref message) => write!(f, "{message}"),
+            ApiError::PayloadTooLarge(ref message) => write!(f, "{message}"),
             ApiError::InternalServerError(ref message) => write!(f, "{message}"),
             ApiError::Unauthorized(ref message) => write!(f, "{message}"),
             ApiError::DatabaseError(ref message) => write!(f, "{message}"),
@@ -100,6 +104,10 @@ impl ResponseError for ApiError {
             ApiError::Forbidden(ref message) => {
                 HttpResponse::Forbidden().json(json!({ "error": "Forbidden", "message": message }))
             }
+            ApiError::NotAcceptable(ref message) => HttpResponse::NotAcceptable()
+                .json(json!({ "error": "Not Acceptable", "message": message })),
+            ApiError::PayloadTooLarge(ref message) => HttpResponse::PayloadTooLarge()
+                .json(json!({ "error": "Payload Too Large", "message": message })),
             ApiError::InternalServerError(ref message) => HttpResponse::InternalServerError()
                 .json(json!({ "error": "Internal Server Error", "message": message })),
             ApiError::Unauthorized(ref message) => HttpResponse::Unauthorized()
@@ -128,6 +136,8 @@ impl ResponseError for ApiError {
         match self {
             ApiError::Conflict(_) => StatusCode::CONFLICT,
             ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
+            ApiError::NotAcceptable(_) => StatusCode::NOT_ACCEPTABLE,
+            ApiError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             ApiError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             ApiError::InternalServerError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::DatabaseError(_) => StatusCode::INTERNAL_SERVER_ERROR,
