@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::{
-    errors::ApiError, schema::hubuumclass_closure, schema::hubuumclass_relation,
-    schema::hubuumobject_relation,
+    schema::hubuumclass_closure, schema::hubuumclass_relation, schema::hubuumobject_relation,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

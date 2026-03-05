@@ -661,7 +661,9 @@ pub trait UserSearchBackend: SelfAccessors<User> + GroupAccessors + UserNamespac
     where
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
-        use crate::schema::object_closure_view::dsl as obj;
+        use crate::schema::hubuumobject;
+        use crate::schema::hubuumobject_closure::dsl as obj_closure;
+        use diesel::alias;
 
         let query_params = query_options.filters.clone();
 
@@ -718,63 +720,149 @@ pub trait UserSearchBackend: SelfAccessors<User> + GroupAccessors + UserNamespac
             namespace_ids = ?namespace_ids
         );
 
-        let mut base_query = obj::object_closure_view.into_boxed();
+        let (ancestor_object, descendant_object) = alias!(
+            crate::schema::hubuumobject as ancestor_object,
+            crate::schema::hubuumobject as descendant_object,
+        );
+
+        let mut base_query =
+            obj_closure::hubuumobject_closure
+                .inner_join(ancestor_object.on(
+                    obj_closure::ancestor_object_id.eq(ancestor_object.field(hubuumobject::id)),
+                ))
+                .inner_join(descendant_object.on(
+                    obj_closure::descendant_object_id.eq(descendant_object.field(hubuumobject::id)),
+                ))
+                .into_boxed();
         base_query = base_query
-            .filter(obj::ancestor_namespace_id.eq_any(&namespace_ids))
-            .filter(obj::descendant_namespace_id.eq_any(&namespace_ids));
+            .filter(
+                ancestor_object
+                    .field(hubuumobject::namespace_id)
+                    .eq_any(&namespace_ids),
+            )
+            .filter(
+                descendant_object
+                    .field(hubuumobject::namespace_id)
+                    .eq_any(&namespace_ids),
+            );
 
         for param in &query_params {
             use crate::{array_search, date_search, json_search, numeric_search, string_search};
             let operator = param.operator.clone();
             match &param.field {
                 FilterField::ObjectFrom => {
-                    numeric_search!(base_query, param, operator, obj::ancestor_object_id)
+                    numeric_search!(base_query, param, operator, obj_closure::ancestor_object_id)
                 }
                 FilterField::Id | FilterField::ObjectTo => {
-                    numeric_search!(base_query, param, operator, obj::descendant_object_id)
+                    numeric_search!(
+                        base_query,
+                        param,
+                        operator,
+                        obj_closure::descendant_object_id
+                    )
                 }
                 FilterField::ClassFrom => {
-                    numeric_search!(base_query, param, operator, obj::ancestor_class_id)
+                    numeric_search!(
+                        base_query,
+                        param,
+                        operator,
+                        ancestor_object.field(hubuumobject::hubuum_class_id)
+                    )
                 }
                 FilterField::ClassId | FilterField::Classes | FilterField::ClassTo => {
-                    numeric_search!(base_query, param, operator, obj::descendant_class_id)
+                    numeric_search!(
+                        base_query,
+                        param,
+                        operator,
+                        descendant_object.field(hubuumobject::hubuum_class_id)
+                    )
                 }
                 FilterField::Namespaces | FilterField::NamespaceId | FilterField::NamespacesTo => {
-                    numeric_search!(base_query, param, operator, obj::descendant_namespace_id)
+                    numeric_search!(
+                        base_query,
+                        param,
+                        operator,
+                        descendant_object.field(hubuumobject::namespace_id)
+                    )
                 }
                 FilterField::NamespacesFrom => {
-                    numeric_search!(base_query, param, operator, obj::ancestor_namespace_id)
+                    numeric_search!(
+                        base_query,
+                        param,
+                        operator,
+                        ancestor_object.field(hubuumobject::namespace_id)
+                    )
                 }
                 FilterField::Name | FilterField::NameTo => {
-                    string_search!(base_query, param, operator, obj::descendant_name)
+                    string_search!(
+                        base_query,
+                        param,
+                        operator,
+                        descendant_object.field(hubuumobject::name)
+                    )
                 }
                 FilterField::NameFrom => {
-                    string_search!(base_query, param, operator, obj::ancestor_name)
+                    string_search!(
+                        base_query,
+                        param,
+                        operator,
+                        ancestor_object.field(hubuumobject::name)
+                    )
                 }
                 FilterField::Description | FilterField::DescriptionTo => {
-                    string_search!(base_query, param, operator, obj::descendant_description)
+                    string_search!(
+                        base_query,
+                        param,
+                        operator,
+                        descendant_object.field(hubuumobject::description)
+                    )
                 }
                 FilterField::DescriptionFrom => {
-                    string_search!(base_query, param, operator, obj::ancestor_description)
+                    string_search!(
+                        base_query,
+                        param,
+                        operator,
+                        ancestor_object.field(hubuumobject::description)
+                    )
                 }
                 FilterField::CreatedAt | FilterField::CreatedAtTo => {
-                    date_search!(base_query, param, operator, obj::descendant_created_at)
+                    date_search!(
+                        base_query,
+                        param,
+                        operator,
+                        descendant_object.field(hubuumobject::created_at)
+                    )
                 }
                 FilterField::CreatedAtFrom => {
-                    date_search!(base_query, param, operator, obj::ancestor_created_at)
+                    date_search!(
+                        base_query,
+                        param,
+                        operator,
+                        ancestor_object.field(hubuumobject::created_at)
+                    )
                 }
                 FilterField::UpdatedAt | FilterField::UpdatedAtTo => {
-                    date_search!(base_query, param, operator, obj::descendant_updated_at)
+                    date_search!(
+                        base_query,
+                        param,
+                        operator,
+                        descendant_object.field(hubuumobject::updated_at)
+                    )
                 }
                 FilterField::UpdatedAtFrom => {
-                    date_search!(base_query, param, operator, obj::ancestor_updated_at)
+                    date_search!(
+                        base_query,
+                        param,
+                        operator,
+                        ancestor_object.field(hubuumobject::updated_at)
+                    )
                 }
                 FilterField::JsonDataFrom => {
                     json_search!(
                         base_query,
                         query_params,
                         FilterField::JsonDataFrom,
-                        obj::ancestor_object_id,
+                        obj_closure::ancestor_object_id,
                         self,
                         pool
                     )
@@ -784,13 +872,15 @@ pub trait UserSearchBackend: SelfAccessors<User> + GroupAccessors + UserNamespac
                         base_query,
                         query_params,
                         FilterField::JsonDataTo,
-                        obj::descendant_object_id,
+                        obj_closure::descendant_object_id,
                         self,
                         pool
                     )
                 }
-                FilterField::Depth => numeric_search!(base_query, param, operator, obj::depth),
-                FilterField::Path => array_search!(base_query, param, operator, obj::path),
+                FilterField::Depth => {
+                    numeric_search!(base_query, param, operator, obj_closure::depth)
+                }
+                FilterField::Path => array_search!(base_query, param, operator, obj_closure::path),
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for object relations",
@@ -806,7 +896,28 @@ pub trait UserSearchBackend: SelfAccessors<User> + GroupAccessors + UserNamespac
 
         with_connection(pool, |conn| {
             base_query
-                .select(obj::object_closure_view::all_columns())
+                .select((
+                    obj_closure::ancestor_object_id,
+                    obj_closure::descendant_object_id,
+                    obj_closure::depth,
+                    diesel::dsl::sql::<diesel::sql_types::Array<diesel::sql_types::Integer>>(
+                        "hubuumobject_closure.path",
+                    ),
+                    ancestor_object.field(hubuumobject::name),
+                    descendant_object.field(hubuumobject::name),
+                    ancestor_object.field(hubuumobject::namespace_id),
+                    descendant_object.field(hubuumobject::namespace_id),
+                    ancestor_object.field(hubuumobject::hubuum_class_id),
+                    descendant_object.field(hubuumobject::hubuum_class_id),
+                    ancestor_object.field(hubuumobject::description),
+                    descendant_object.field(hubuumobject::description),
+                    ancestor_object.field(hubuumobject::data),
+                    descendant_object.field(hubuumobject::data),
+                    ancestor_object.field(hubuumobject::created_at),
+                    descendant_object.field(hubuumobject::created_at),
+                    ancestor_object.field(hubuumobject::updated_at),
+                    descendant_object.field(hubuumobject::updated_at),
+                ))
                 .distinct()
                 .load::<ObjectClosureView>(conn)
         })
