@@ -37,3 +37,36 @@ cargo clippy --all-targets
 # Fix clippy issues with automatic suggestions
 cargo clippy --all-targets --fix
 ```
+
+## Architecture Overview
+
+The codebase is intentionally split into model-facing APIs and database-facing implementations.
+
+- `src/models/*`:
+  Public domain models and high-level operations.
+  These should not contain Diesel query construction for non-trivial backend logic.
+- `src/traits/*`:
+  Public behavioral interfaces used by handlers and models.
+  `BackendContext` is the boundary type that allows these APIs to accept either `DbPool` or wrappers (for example `web::Data<DbPool>`).
+- `src/db/traits/*`:
+  Diesel/Postgres-backed implementations behind the public traits.
+  This is where query details, joins, filters, and transactions belong.
+
+### Practical layering rule
+
+When adding a feature:
+
+1. Extend or add a trait in `src/traits` (or `src/models/traits`) that expresses the behavior.
+2. Implement database details in `src/db/traits`.
+3. Keep model methods thin by delegating to backend traits.
+
+### Module layout notes
+
+To keep backend code navigable, large trait backends are split into focused modules:
+
+- `src/db/traits/user/`:
+  `auth.rs`, `membership.rs`, `permissions.rs`, `search.rs`
+- `src/db/traits/namespace/`:
+  `relations.rs`, `records.rs`, `permissions.rs`
+
+The `mod.rs` files in these folders re-export the public backend traits so existing imports (`crate::db::traits::user::*`, `crate::db::traits::namespace::*`) keep working.

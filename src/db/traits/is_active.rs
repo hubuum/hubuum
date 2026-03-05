@@ -14,11 +14,11 @@ impl Status<UserToken> for Token {
         let hours = 24; // FIXME: Make this configurable
 
         let token_result = with_connection(pool, |conn| {
-            Ok(diesel::sql_query("SELECT * FROM tokens WHERE token = $1 AND issued > (CURRENT_TIMESTAMP - ($2 || ' hours')::INTERVAL)")
+            diesel::sql_query("SELECT * FROM tokens WHERE token = $1 AND issued > (CURRENT_TIMESTAMP - ($2 || ' hours')::INTERVAL)")
                 .bind::<Text, _>(&token)
                 .bind::<Integer, _>(hours)
-                .load::<UserToken>(conn))
-        })?;
+                .load::<UserToken>(conn)
+        });
 
         match token_result {
             Ok(token_list) => {

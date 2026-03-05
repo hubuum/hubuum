@@ -1,20 +1,16 @@
-use argon2::password_hash::rand_core::le;
 use chrono::NaiveDateTime;
 
-use chrono::{Duration, Utc};
-
-use diesel::QueryableByName;
 use diesel::prelude::*;
 use diesel::sql_types::{Integer, Text, Timestamp};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::DbPool;
+use crate::db::traits::user::DeleteTokenRecord;
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::schema::tokens;
 use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+    BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
 
 #[derive(
@@ -51,12 +47,11 @@ impl Token {
         }
     }
 
-    pub async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
-        use crate::schema::tokens::dsl::{token, tokens};
-
-        let mut conn = pool.get()?;
-        diesel::delete(tokens.filter(token.eq(&self.0))).execute(&mut conn)?;
-        Ok(())
+    pub async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.delete_token_record(backend.db_pool()).await
     }
 }
 

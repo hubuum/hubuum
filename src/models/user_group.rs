@@ -1,11 +1,16 @@
+use crate::db::traits::group::{
+    DeleteUserGroupRecord, SaveUserGroupRecord, UserGroupGroupLookup, UserGroupUserLookup,
+};
+use crate::models::group::Group;
 use crate::models::user::User;
-use crate::{models::group::Group, traits::CanSave};
 
 use crate::errors::ApiError;
 use crate::schema::user_groups;
+use crate::traits::BackendContext;
 
 use crate::db::DbPool;
 
+use crate::traits::crud::SaveAdapter;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -27,47 +32,40 @@ pub struct NewUserGroup {
     pub group_id: i32,
 }
 
-impl CanSave for NewUserGroup {
+impl SaveAdapter for NewUserGroup {
     type Output = UserGroup;
-    async fn save(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
-        use crate::schema::user_groups::dsl::*;
-        Ok(diesel::insert_into(user_groups)
-            .values(self)
-            .get_result(&mut pool.get()?)?)
+
+    async fn save_adapter(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
+        self.save_user_group_record(pool).await
     }
 }
 
 impl UserGroup {
-    pub async fn user(&self, pool: &DbPool) -> Result<User, ApiError> {
-        use crate::schema::users::dsl::*;
-        Ok(users
-            .filter(id.eq(self.user_id))
-            .first::<User>(&mut pool.get()?)?)
+    pub async fn user<C>(&self, backend: &C) -> Result<User, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.load_user_group_user(backend.db_pool()).await
     }
 
-    pub async fn group(&self, pool: &DbPool) -> Result<Group, ApiError> {
-        use crate::schema::groups::dsl::*;
-        Ok(groups
-            .filter(id.eq(self.group_id))
-            .first::<Group>(&mut pool.get()?)?)
+    pub async fn group<C>(&self, backend: &C) -> Result<Group, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.load_user_group_group(backend.db_pool()).await
     }
 
-    pub async fn save(&self, pool: &DbPool) -> Result<UserGroup, ApiError> {
-        use crate::schema::user_groups::dsl::*;
-        Ok(diesel::insert_into(user_groups)
-            .values(self)
-            .get_result(&mut pool.get()?)?)
+    pub async fn save<C>(&self, backend: &C) -> Result<UserGroup, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.save_user_group_record(backend.db_pool()).await
     }
 
-    pub async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
-        use crate::schema::user_groups::dsl::*;
-        diesel::delete(
-            user_groups
-                .filter(user_id.eq(self.user_id))
-                .filter(group_id.eq(self.group_id)),
-        )
-        .execute(&mut pool.get()?)?;
-
-        Ok(())
+    pub async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.delete_user_group_record(backend.db_pool()).await
     }
 }

@@ -1,29 +1,38 @@
 use std::collections::HashMap;
 use tracing::warn;
 
-use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::group::Group;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     GroupPermission, HubuumClass, HubuumClassExpanded, Namespace, NamespaceID, Permission,
-    Permissions, PermissionsList,
 };
 use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue, SelfAccessors,
+    BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+    SelfAccessors,
 };
 
+/// Convert a `(Group, T)` tuple into a richer output type.
 pub trait FromTuple<T> {
     fn from_tuple(t: (Group, T)) -> Self;
 }
 
+/// Expand a value by loading its namespace from the backend.
+///
+/// Use this when the caller has a backend context available and wants a fully expanded output
+/// value rather than an ID-only representation.
 pub trait ExpandNamespace<T> {
-    async fn expand_namespace(&self, pool: &crate::db::DbPool) -> Result<T, ApiError>;
+    async fn expand_namespace<C>(&self, backend: &C) -> Result<T, ApiError>
+    where
+        C: BackendContext + ?Sized;
 }
 
 impl ExpandNamespace<HubuumClassExpanded> for HubuumClass {
-    async fn expand_namespace(&self, pool: &DbPool) -> Result<HubuumClassExpanded, ApiError> {
-        let namespace = NamespaceID(self.namespace_id).instance(pool).await?;
+    async fn expand_namespace<C>(&self, backend: &C) -> Result<HubuumClassExpanded, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        let namespace = NamespaceID(self.namespace_id).instance(backend).await?;
 
         Ok(HubuumClassExpanded {
             id: self.id,
@@ -38,6 +47,7 @@ impl ExpandNamespace<HubuumClassExpanded> for HubuumClass {
     }
 }
 
+/// Expand a value by looking up namespaces in a precomputed map rather than hitting the backend.
 pub trait ExpandNamespaceFromMap<T> {
     fn expand_namespace_from_map(&self, namespace_map: &HashMap<i32, Namespace>) -> T;
 }

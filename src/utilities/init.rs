@@ -3,7 +3,7 @@
 
 use crate::models::user::NewUser;
 
-use crate::db::DbPool;
+use crate::db::{DbPool, with_connection};
 
 use diesel::prelude::*;
 
@@ -19,19 +19,7 @@ pub type InitError = String;
 pub type InitResult = Result<(), InitError>;
 
 pub async fn init(pool: DbPool) -> InitResult {
-    let mut conn = match pool.get() {
-        Ok(conn) => conn,
-        Err(e) => {
-            let err_msg = format!(
-                "Failed to get database connection during initialization: {}",
-                e
-            );
-            error!(message = &err_msg);
-            return Err(err_msg);
-        }
-    };
-
-    let users_count = match users.count().get_result::<i64>(&mut conn) {
+    let users_count = match with_connection(&pool, |conn| users.count().get_result::<i64>(conn)) {
         Ok(count) => count,
         Err(e) => {
             let err_msg = format!("Failed to count users during initialization: {}", e);
@@ -40,7 +28,7 @@ pub async fn init(pool: DbPool) -> InitResult {
         }
     };
 
-    let groups_count = match groups.count().get_result::<i64>(&mut conn) {
+    let groups_count = match with_connection(&pool, |conn| groups.count().get_result::<i64>(conn)) {
         Ok(count) => count,
         Err(e) => {
             let err_msg = format!("Failed to count groups during initialization: {}", e);

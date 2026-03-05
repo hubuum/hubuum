@@ -13,6 +13,7 @@ mod tests {
     };
 
     const GROUPS_ENDPOINT: &str = "/api/v1/iam/groups";
+    const USERS_ENDPOINT: &str = "/api/v1/iam/users";
 
     async fn check_show_group(
         context: &TestContext,
@@ -247,6 +248,78 @@ mod tests {
 
         user.delete(&context.pool).await.unwrap();
         group.delete(&context.pool).await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_group_delete_member_only_targets_requested_group(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let first_group = create_test_group(&context.pool).await;
+        let second_group = create_test_group(&context.pool).await;
+        let user = create_test_user(&context.pool).await;
+
+        first_group.add_member(&context.pool, &user).await.unwrap();
+        second_group.add_member(&context.pool, &user).await.unwrap();
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{}/{}/groups?sort=id", USERS_ENDPOINT, user.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let user_groups_before: Vec<Group> = test::read_body_json(resp).await;
+        assert_eq!(user_groups_before.len(), 2);
+        let user_group_ids_before: Vec<i32> =
+            user_groups_before.iter().map(|group| group.id).collect();
+        assert!(user_group_ids_before.contains(&first_group.id));
+        assert!(user_group_ids_before.contains(&second_group.id));
+
+        let resp = delete_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{}/{}/members/{}", GROUPS_ENDPOINT, first_group.id, user.id),
+        )
+        .await;
+        let _ = assert_response_status(resp, StatusCode::NO_CONTENT).await;
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{}/{}/members", GROUPS_ENDPOINT, first_group.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let first_group_members: Vec<User> = test::read_body_json(resp).await;
+        assert_eq!(first_group_members.len(), 0);
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{}/{}/members", GROUPS_ENDPOINT, second_group.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let second_group_members: Vec<User> = test::read_body_json(resp).await;
+        assert_eq!(second_group_members.len(), 1);
+        assert_eq!(second_group_members[0].id, user.id);
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{}/{}/groups?sort=id", USERS_ENDPOINT, user.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let user_groups_after: Vec<Group> = test::read_body_json(resp).await;
+        assert_eq!(user_groups_after.len(), 1);
+        assert_eq!(user_groups_after[0].id, second_group.id);
+
+        user.delete(&context.pool).await.unwrap();
+        first_group.delete(&context.pool).await.unwrap();
+        second_group.delete(&context.pool).await.unwrap();
     }
 
     #[rstest]

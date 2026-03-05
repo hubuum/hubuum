@@ -1,24 +1,25 @@
 use crate::db::DbPool;
+use crate::db::traits::namespace::{
+    DeleteNamespaceRecord, SaveNamespaceForGroupRecord, SaveNamespaceWithAssigneeRecord,
+    UpdateNamespaceRecord,
+};
 use crate::errors::ApiError;
 use crate::models::group::GroupID;
 use crate::models::namespace::{
     Namespace, NamespaceID, NewNamespace, NewNamespaceWithAssignee, UpdateNamespace,
 };
-use crate::models::permissions::{NewPermission, Permission, Permissions, PermissionsList};
 use crate::models::search::{FilterField, SortParam};
-use crate::models::traits::GroupAccessors;
-use crate::models::user::User;
+use crate::traits::accessors::{IdAccessor, InstanceAdapter, NamespaceAdapter};
+use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 use crate::traits::{
-    CanDelete, CanSave, CanUpdate, CursorPaginated, CursorSqlField, CursorSqlMapping,
-    CursorSqlType, NamespaceAccessors, PermissionController, SelfAccessors,
+    BackendContext, CanUpdate, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType,
+    NamespaceAccessors, PermissionController,
 };
-use diesel::prelude::*;
-use tracing::debug;
 
-impl CanSave for Namespace {
+impl SaveAdapter for Namespace {
     type Output = Namespace;
 
-    async fn save(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
+    async fn save_adapter(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
         let updated_namespace = UpdateNamespace {
             name: Some(self.name.clone()),
             description: Some(self.description.clone()),
@@ -27,297 +28,111 @@ impl CanSave for Namespace {
     }
 }
 
-impl CanDelete for Namespace {
-    /// Delete a namespace
-    ///
-    /// This does not check for permissions, it only deletes the namespace.
-    /// It is assumed that permissions are already checked before calling this method.
-    /// See `user_can` for permission checking.
-    ///
-    /// Note: This will also delete all objects and classes in the namespace, as well
-    /// as all permissions related to the namespace.
-    ///
-    /// ## Arguments
-    /// * pool - Database connection pool
-    ///
-    /// ## Returns
-    /// * Ok() - On success
-    /// * Err(ApiError) - On query errors only.
-    async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
-        use crate::schema::namespaces::dsl::*;
-
-        let mut conn = pool.get()?;
-        diesel::delete(namespaces.filter(id.eq(self.id))).execute(&mut conn)?;
-
-        Ok(())
+impl DeleteAdapter for Namespace {
+    async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
+        self.delete_namespace_record(pool).await
     }
 }
 
-impl CanDelete for NamespaceID {
-    /// Delete a namespace
-    ///
-    /// This does not check for permissions, it only deletes the namespace.
-    /// It is assumed that permissions are already checked before calling this method.
-    /// See `user_can` for permission checking.
-    ///
-    /// Note: This will also delete all objects and classes in the namespace, as well
-    /// as all permissions related to the namespace.
-    ///
-    /// ## Arguments
-    /// * pool - Database connection pool
-    ///
-    /// ## Returns
-    /// * Ok() - On success
-    /// * Err(ApiError) - On query errors only.
-    async fn delete(&self, pool: &DbPool) -> Result<(), ApiError> {
-        use crate::schema::namespaces::dsl::*;
-
-        let mut conn = pool.get()?;
-        diesel::delete(namespaces.filter(id.eq(self.0))).execute(&mut conn)?;
-
-        Ok(())
+impl DeleteAdapter for NamespaceID {
+    async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
+        self.delete_namespace_record(pool).await
     }
 }
 
-impl CanUpdate for UpdateNamespace {
+impl UpdateAdapter for UpdateNamespace {
     type Output = Namespace;
 
-    /// Update a namespace
-    ///
-    /// This does not check for permissions, it only updates the namespace.
-    /// It is assumed that permissions are already checked before calling this method.
-    /// See `user_can` for permission checking.
-    ///
-    /// ## Arguments
-    /// * pool - Database connection pool
-    /// * new_data - New data to update the namespace with
-    ///
-    /// ## Returns
-    /// * Ok(Namespace) - Updated namespace
-    /// * Err(ApiError) - On query errors only.
-    async fn update(&self, pool: &DbPool, nid: i32) -> Result<Self::Output, ApiError> {
-        use crate::schema::namespaces::dsl::*;
-
-        let mut conn = pool.get()?;
-        let namespace = diesel::update(namespaces)
-            .filter(id.eq(nid))
-            .set(self)
-            .get_result::<Namespace>(&mut conn)?;
-
-        Ok(namespace)
+    async fn update_adapter(&self, pool: &DbPool, nid: i32) -> Result<Self::Output, ApiError> {
+        self.update_namespace_record(pool, nid).await
     }
 }
 
-impl CanSave for NewNamespaceWithAssignee {
+impl SaveAdapter for NewNamespaceWithAssignee {
     type Output = Namespace;
 
-    async fn save(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        let new_namespace = NewNamespace {
-            name: self.name.clone(),
-            description: self.description.clone(),
-        };
-
-        let mut conn = pool.get()?;
-        conn.transaction::<_, ApiError, _>(|conn| {
-            // Insert the new namespace
-            let namespace = diesel::insert_into(crate::schema::namespaces::table)
-                .values(&new_namespace)
-                .get_result::<Namespace>(conn)?;
-
-            let group_permission = NewPermission {
-                namespace_id: namespace.id,
-                group_id: self.group_id,
-                has_read_namespace: true,
-                has_update_namespace: true,
-                has_delete_namespace: true,
-                has_delegate_namespace: true,
-                has_create_class: true,
-                has_read_class: true,
-                has_update_class: true,
-                has_delete_class: true,
-                has_create_object: true,
-                has_read_object: true,
-                has_update_object: true,
-                has_delete_object: true,
-                has_create_class_relation: true,
-                has_read_class_relation: true,
-                has_update_class_relation: true,
-                has_delete_class_relation: true,
-                has_create_object_relation: true,
-                has_read_object_relation: true,
-                has_update_object_relation: true,
-                has_delete_object_relation: true,
-            };
-
-            diesel::insert_into(crate::schema::permissions::table)
-                .values(&group_permission)
-                .execute(conn)?;
-
-            Ok(namespace)
-        })
+    async fn save_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
+        self.save_namespace_with_assignee_record(pool).await
     }
 }
 
-impl SelfAccessors<Namespace> for Namespace {
-    fn id(&self) -> i32 {
+impl IdAccessor for Namespace {
+    fn accessor_id(&self) -> i32 {
         self.id
     }
+}
 
-    async fn instance(&self, _pool: &DbPool) -> Result<Namespace, ApiError> {
+impl InstanceAdapter<Namespace> for Namespace {
+    async fn instance_adapter(&self, _pool: &DbPool) -> Result<Namespace, ApiError> {
         Ok(self.clone())
     }
 }
 
-impl NamespaceAccessors for Namespace {
-    async fn namespace(&self, _pool: &DbPool) -> Result<Namespace, ApiError> {
+impl NamespaceAdapter for Namespace {
+    async fn namespace_adapter(&self, _pool: &DbPool) -> Result<Namespace, ApiError> {
         Ok(self.clone())
     }
 
-    async fn namespace_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
+    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<i32, ApiError> {
         Ok(self.id)
     }
 }
 
-impl NamespaceAccessors for &Namespace {
-    async fn namespace(&self, _pool: &DbPool) -> Result<Namespace, ApiError> {
-        Ok((**self).clone())
-    }
-
-    async fn namespace_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.id)
-    }
-}
-
-impl SelfAccessors<Namespace> for NamespaceID {
-    fn id(&self) -> i32 {
+impl IdAccessor for NamespaceID {
+    fn accessor_id(&self) -> i32 {
         self.0
     }
+}
 
-    async fn instance(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
+impl InstanceAdapter<Namespace> for NamespaceID {
+    async fn instance_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
         self.namespace(pool).await
     }
 }
 
-impl NamespaceAccessors for NamespaceID {
-    async fn namespace_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
+impl NamespaceAdapter for NamespaceID {
+    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<i32, ApiError> {
         Ok(self.0)
     }
 
-    async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        use crate::schema::namespaces::dsl::{id, namespaces};
-
-        let mut conn = pool.get()?;
-        let namespace = namespaces
-            .filter(id.eq(self.0))
-            .first::<Namespace>(&mut conn)?;
-
-        Ok(namespace)
-    }
-}
-
-impl NamespaceAccessors for &NamespaceID {
-    async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        self.instance(pool).await
-    }
-
-    async fn namespace_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.0)
+    async fn namespace_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
+        use crate::db::traits::GetNamespace;
+        self.namespace_from_backend(pool).await
     }
 }
 
 impl NewNamespace {
-    pub async fn save_and_grant_all_to(
+    /// Create a namespace and grant the full namespace permission set to the assignee group.
+    ///
+    /// This is a convenience wrapper around the backend transaction that creates the namespace
+    /// record and the corresponding permission record together.
+    pub async fn save_and_grant_all_to<C>(
         self,
-        pool: &DbPool,
+        backend: &C,
         assignee: GroupID,
-    ) -> Result<Namespace, ApiError> {
-        use crate::schema::namespaces::dsl::*;
-        use crate::schema::permissions::dsl::permissions;
-
-        let mut conn = pool.get()?;
-        conn.transaction::<_, ApiError, _>(|conn| {
-            let namespace = diesel::insert_into(namespaces)
-                .values(&self)
-                .get_result::<Namespace>(conn)?;
-
-            let group_permission = NewPermission {
-                namespace_id: namespace.id,
-                group_id: assignee.0,
-                has_read_namespace: true,
-                has_update_namespace: true,
-                has_delete_namespace: true,
-                has_delegate_namespace: true,
-                has_create_class: true,
-                has_read_class: true,
-                has_update_class: true,
-                has_delete_class: true,
-                has_create_object: true,
-                has_read_object: true,
-                has_update_object: true,
-                has_delete_object: true,
-                has_create_class_relation: true,
-                has_read_class_relation: true,
-                has_update_class_relation: true,
-                has_delete_class_relation: true,
-                has_create_object_relation: true,
-                has_read_object_relation: true,
-                has_update_object_relation: true,
-                has_delete_object_relation: true,
-            };
-
-            diesel::insert_into(permissions)
-                .values(&group_permission)
-                .execute(conn)?;
-
-            Ok(namespace)
-        })
+    ) -> Result<Namespace, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.save_namespace_for_group_record(backend.db_pool(), assignee.0)
+            .await
     }
 
-    pub async fn update_with_permissions(
+    /// Persist the namespace and apply permissions using the assignee embedded in the supplied
+    /// `NewNamespaceWithAssignee`.
+    ///
+    /// This delegates into the same backend helper as [`Self::save_and_grant_all_to`], but takes
+    /// the assignee from the provided wrapper value.
+    pub async fn update_with_permissions<C>(
         self,
-        pool: &DbPool,
+        backend: &C,
         ns_with_assignee: NewNamespaceWithAssignee,
-    ) -> Result<Namespace, ApiError> {
-        use crate::schema::namespaces::dsl::*;
-        use crate::schema::permissions::dsl::permissions;
-
-        let mut conn = pool.get()?;
-        conn.transaction::<_, ApiError, _>(|conn| {
-            let namespace = diesel::insert_into(namespaces)
-                .values(&self)
-                .get_result::<Namespace>(conn)?;
-
-            let group_permission = NewPermission {
-                namespace_id: namespace.id,
-                group_id: ns_with_assignee.group_id,
-                has_read_namespace: true,
-                has_update_namespace: true,
-                has_delete_namespace: true,
-                has_delegate_namespace: true,
-                has_create_class: true,
-                has_read_class: true,
-                has_update_class: true,
-                has_delete_class: true,
-                has_create_object: true,
-                has_read_object: true,
-                has_update_object: true,
-                has_delete_object: true,
-                has_create_class_relation: true,
-                has_read_class_relation: true,
-                has_update_class_relation: true,
-                has_delete_class_relation: true,
-                has_create_object_relation: true,
-                has_read_object_relation: true,
-                has_update_object_relation: true,
-                has_delete_object_relation: true,
-            };
-
-            diesel::insert_into(permissions)
-                .values(&group_permission)
-                .execute(conn)?;
-
-            Ok(namespace)
-        })
+    ) -> Result<Namespace, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.save_namespace_for_group_record(backend.db_pool(), ns_with_assignee.group_id)
+            .await
     }
 }
 

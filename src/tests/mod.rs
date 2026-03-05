@@ -18,7 +18,7 @@ use rstest::fixture;
 
 use crate::config::{AppConfig, get_config};
 use crate::db::DbPool;
-use crate::db::init_pool;
+use crate::db::{init_pool, with_connection};
 use crate::errors::ApiError;
 use crate::models::group::{Group, NewGroup};
 use crate::models::namespace::{Namespace, NewNamespaceWithAssignee};
@@ -489,9 +489,9 @@ pub async fn create_groups_with_prefix(
 pub async fn ensure_user(pool: &DbPool, uname: &str) -> User {
     use crate::schema::users::dsl::*;
 
-    let mut conn = pool.get().expect("Failed to get db connection");
-
-    let result = users.filter(username.eq(uname)).first::<User>(&mut conn);
+    let result = with_connection(pool, |conn| {
+        users.filter(username.eq(uname)).first::<User>(conn)
+    });
 
     if let Ok(user) = result {
         return user;
@@ -508,10 +508,10 @@ pub async fn ensure_user(pool: &DbPool, uname: &str) -> User {
     if let Err(e) = result {
         match e {
             ApiError::Conflict(_) => {
-                return users
-                    .filter(username.eq(uname))
-                    .first::<User>(&mut conn)
-                    .expect("Failed to fetch user after conflict");
+                return with_connection(pool, |conn| {
+                    users.filter(username.eq(uname)).first::<User>(conn)
+                })
+                .expect("Failed to fetch user after conflict");
             }
             _ => panic!("Failed to create user '{uname}': {e:?}"),
         }
@@ -537,11 +537,9 @@ pub async fn ensure_normal_user(pool: &DbPool) -> User {
 pub async fn ensure_admin_group(pool: &DbPool) -> Group {
     use crate::schema::groups::dsl::*;
 
-    let mut conn = pool.get().expect("Failed to get db connection");
-
-    let result = groups
-        .filter(groupname.eq("admin"))
-        .first::<Group>(&mut conn);
+    let result = with_connection(pool, |conn| {
+        groups.filter(groupname.eq("admin")).first::<Group>(conn)
+    });
 
     if let Ok(group) = result {
         return group;
@@ -557,10 +555,10 @@ pub async fn ensure_admin_group(pool: &DbPool) -> Group {
     if let Err(e) = result {
         match e {
             ApiError::Conflict(_) => {
-                return groups
-                    .filter(groupname.eq("admin"))
-                    .first::<Group>(&mut conn)
-                    .expect("Failed to fetch user after conflict");
+                return with_connection(pool, |conn| {
+                    groups.filter(groupname.eq("admin")).first::<Group>(conn)
+                })
+                .expect("Failed to fetch user after conflict");
             }
             _ => panic!("Failed to create admin group: {e:?}"),
         }

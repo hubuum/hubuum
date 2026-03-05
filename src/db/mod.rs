@@ -1,8 +1,10 @@
 pub mod traits;
 
+use diesel::Connection;
 use diesel::PgConnection;
 use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
+use diesel::r2d2::PooledConnection;
 
 use std::time::Duration;
 use tracing::{debug, error, warn};
@@ -15,15 +17,14 @@ pub type DbPool = Pool<ConnectionManager<PgConnection>>;
 const MAX_RETRIES: u32 = 3;
 const RETRY_DELAY: Duration = Duration::from_millis(100);
 
-pub fn with_connection<F, R>(pool: &DbPool, f: F) -> Result<R, ApiError>
-where
-    F: FnOnce(&mut PgConnection) -> Result<R, diesel::result::Error>,
-{
+fn acquire_connection(
+    pool: &DbPool,
+) -> Result<PooledConnection<ConnectionManager<PgConnection>>, ApiError> {
     let mut last_error = None;
 
     for attempt in 1..=MAX_RETRIES {
         match pool.get() {
-            Ok(mut conn) => return f(&mut conn).map_err(ApiError::from),
+            Ok(conn) => return Ok(conn),
             Err(e) => {
                 warn!(
                     "Failed to get database connection (attempt {}): {}",
@@ -49,6 +50,53 @@ where
             "Failed to establish database connection after retries".to_string(),
         )),
     }
+}
+
+/// Run database work on a single pooled connection without starting an explicit transaction.
+///
+/// Use this for:
+/// - single read queries
+/// - single-statement writes
+/// - other DB work that does not require all-or-nothing rollback across multiple statements
+///
+/// The closure may return any error type `E` as long as it can be converted into [`ApiError`].
+/// In practice this means the closure can return either Diesel errors directly or higher-level
+/// domain errors that already map into `ApiError`.
+///
+/// Note: block closures that use `?` and end with `Ok(...)` may require an explicit closure
+/// return type, for example:
+/// `with_connection(pool, |conn| -> Result<_, diesel::result::Error> { ... })`
+pub fn with_connection<F, R, E>(pool: &DbPool, f: F) -> Result<R, ApiError>
+where
+    F: FnOnce(&mut PgConnection) -> Result<R, E>,
+    ApiError: From<E>,
+{
+    let mut conn = acquire_connection(pool)?;
+    f(&mut conn).map_err(ApiError::from)
+}
+
+/// Run database work inside a SQL transaction on a single pooled connection.
+///
+/// Use this when correctness depends on all enclosed operations succeeding or failing together.
+/// If the closure returns `Ok`, the transaction is committed. If it returns `Err`, the
+/// transaction is rolled back and the error is mapped into [`ApiError`].
+///
+/// This is the right helper for multi-step writes such as:
+/// - create + related insert
+/// - read/modify/write sequences that must be atomic
+/// - permission mutations that must not leave partial state behind
+///
+/// As with [`with_connection`], the closure may return any error type `E` that converts into
+/// [`ApiError`]. Block closures that end with `Ok(...)` may need an explicit closure return type,
+/// for example:
+/// `with_transaction(pool, |conn| -> Result<_, ApiError> { ... })`
+pub fn with_transaction<F, R, E>(pool: &DbPool, f: F) -> Result<R, ApiError>
+where
+    F: FnOnce(&mut PgConnection) -> Result<R, E>,
+    ApiError: From<E>,
+{
+    let mut conn = acquire_connection(pool)?;
+    conn.transaction::<R, ApiError, _>(|conn| f(conn).map_err(ApiError::from))
 }
 
 pub fn init_pool(database_url: &str, max_size: u32) -> DbPool {
@@ -84,17 +132,33 @@ pub fn init_pool(database_url: &str, max_size: u32) -> DbPool {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::config::get_config;
-    use crate::errors::ApiError;
     use diesel::PgConnection;
+    use diesel::dsl::count_star;
+    use diesel::insert_into;
+    use diesel::prelude::*;
     use diesel::r2d2::{ConnectionManager, Pool};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_group_name(prefix: &str) -> String {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("System time before Unix epoch")
+            .as_nanos();
+        let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+        format!("{prefix}_{now}_{counter}")
+    }
 
     #[test]
     fn test_init_pool() {
         let config = get_config().expect("Failed to load config for test");
         let database_url = config.database_url.clone();
         let pool_size = config.db_pool_size;
-        let pool = super::init_pool(&database_url, pool_size);
+        let pool = init_pool(&database_url, pool_size);
         assert_eq!(pool.max_size(), pool_size);
     }
 
@@ -118,7 +182,7 @@ mod tests {
         };
 
         // This should return an error, not panic
-        let result = super::with_connection(&pool, |_conn| Ok::<_, diesel::result::Error>(()));
+        let result = with_connection(&pool, |_conn| Ok::<_, diesel::result::Error>(()));
 
         assert!(result.is_err());
 
@@ -134,12 +198,111 @@ mod tests {
     #[test]
     fn test_with_connection_success_path() {
         let config = get_config().expect("Failed to load config for test");
-        let pool = super::init_pool(&config.database_url, 1);
+        let pool = init_pool(&config.database_url, 1);
 
         // This should succeed
-        let result = super::with_connection(&pool, |_conn| Ok::<i32, diesel::result::Error>(42));
+        let result = with_connection(&pool, |_conn| Ok::<i32, diesel::result::Error>(42));
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 42);
+    }
+
+    #[test]
+    fn test_with_transaction_rolls_back_on_error() {
+        let config = get_config().expect("Failed to load config for test");
+        let pool = init_pool(&config.database_url, 1);
+        let rollback_name = unique_group_name("with_tx_rollback");
+
+        let result: Result<(), ApiError> =
+            with_transaction(&pool, |conn| -> Result<(), diesel::result::Error> {
+                use crate::schema::groups::dsl::{description, groupname, groups};
+
+                insert_into(groups)
+                    .values((
+                        groupname.eq(&rollback_name),
+                        description.eq("rollback-test"),
+                    ))
+                    .execute(conn)?;
+
+                insert_into(groups)
+                    .values((
+                        groupname.eq(&rollback_name),
+                        description.eq("rollback-test-duplicate"),
+                    ))
+                    .execute(conn)?;
+                Ok(())
+            });
+
+        assert!(
+            matches!(result, Err(ApiError::Conflict(_))),
+            "expected unique violation mapped to ApiError::Conflict, got {result:?}",
+        );
+
+        let committed_rows = with_connection(&pool, |conn| {
+            use crate::schema::groups::dsl::{groupname, groups};
+
+            groups
+                .filter(groupname.eq(&rollback_name))
+                .select(count_star())
+                .first::<i64>(conn)
+        })
+        .expect("Failed to count rows after rollback test");
+
+        assert_eq!(
+            committed_rows, 0,
+            "failed transaction should rollback all rows for {rollback_name}",
+        );
+    }
+
+    #[test]
+    fn test_with_transaction_commits_on_success() {
+        let config = get_config().expect("Failed to load config for test");
+        let pool = init_pool(&config.database_url, 1);
+        let first_name = unique_group_name("with_tx_commit_one");
+        let second_name = unique_group_name("with_tx_commit_two");
+
+        let result: Result<(), ApiError> =
+            with_transaction(&pool, |conn| -> Result<(), diesel::result::Error> {
+                use crate::schema::groups::dsl::{description, groupname, groups};
+
+                insert_into(groups)
+                    .values((groupname.eq(&first_name), description.eq("commit-test-one")))
+                    .execute(conn)?;
+
+                insert_into(groups)
+                    .values((
+                        groupname.eq(&second_name),
+                        description.eq("commit-test-two"),
+                    ))
+                    .execute(conn)?;
+                Ok(())
+            });
+
+        assert!(
+            result.is_ok(),
+            "expected transaction commit, got {result:?}"
+        );
+
+        let committed_rows = with_connection(&pool, |conn| {
+            use crate::schema::groups::dsl::{groupname, groups};
+
+            groups
+                .filter(groupname.eq_any(vec![first_name.clone(), second_name.clone()]))
+                .select(count_star())
+                .first::<i64>(conn)
+        })
+        .expect("Failed to count rows after commit test");
+
+        assert_eq!(
+            committed_rows, 2,
+            "successful transaction should commit both rows",
+        );
+
+        let _ = with_connection(&pool, |conn| {
+            use crate::schema::groups::dsl::{groupname, groups};
+
+            diesel::delete(groups.filter(groupname.eq_any(vec![first_name, second_name])))
+                .execute(conn)
+        });
     }
 }

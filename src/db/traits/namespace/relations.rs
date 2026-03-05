@@ -1,14 +1,4 @@
-use diesel::prelude::*;
-use tracing::{debug, trace};
-
-use crate::db::traits::GetNamespace;
-use crate::db::{DbPool, with_connection};
-use crate::errors::ApiError;
-use crate::models::{HubuumClassRelation, NewHubuumObjectRelation};
-use crate::models::{HubuumObjectRelation, NewHubuumClassRelation};
-use crate::models::{HubuumObjectRelationID, Namespace};
-use crate::traits::{ClassAccessors, ObjectAccessors, SelfAccessors};
-
+use super::*;
 impl GetNamespace<(Namespace, Namespace)> for HubuumClassRelation {
     async fn namespace_from_backend(
         &self,

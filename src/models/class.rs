@@ -2,9 +2,10 @@ use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::{DbPool, with_connection};
+use crate::db::traits::class::total_class_count_from_backend;
 use crate::errors::ApiError;
 use crate::schema::hubuumclass;
+use crate::traits::BackendContext;
 
 #[derive(Serialize, Deserialize, Queryable, Clone, PartialEq, Debug, ToSchema)]
 #[diesel(table_name = hubuumclass )]
@@ -66,12 +67,11 @@ pub struct HubuumClassWithPath {
 #[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
 pub struct HubuumClassID(pub i32);
 
-pub async fn total_class_count(pool: &DbPool) -> Result<i64, ApiError> {
-    use crate::schema::hubuumclass::dsl::*;
-
-    let count = with_connection(pool, |conn| hubuumclass.count().get_result::<i64>(conn))?;
-
-    Ok(count)
+pub async fn total_class_count<C>(backend: &C) -> Result<i64, ApiError>
+where
+    C: BackendContext + ?Sized,
+{
+    total_class_count_from_backend(backend.db_pool()).await
 }
 
 #[allow(dead_code)]
@@ -99,6 +99,7 @@ fn update_hubuum_class_example() -> UpdateHubuumClass {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::db::DbPool;
     use crate::models::class::HubuumClass;
     use crate::models::namespace::Namespace;
     use crate::tests::TestScope;

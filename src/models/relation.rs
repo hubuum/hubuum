@@ -1,16 +1,12 @@
 use diesel::prelude::*;
-use diesel::sql_types::{Array, BigInt, Integer, Jsonb, Nullable, Text, Timestamp};
-
-use std::{fmt, fmt::Display, slice};
-
-use crate::db::DbPool;
+use diesel::sql_types::{Array, Integer, Nullable};
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::{
-    errors::ApiError, schema::class_closure_view, schema::hubuumclass_closure,
-    schema::hubuumclass_relation, schema::hubuumobject_relation, schema::object_closure_view,
+    schema::class_closure_view, schema::hubuumclass_closure, schema::hubuumclass_relation,
+    schema::hubuumobject_relation, schema::object_closure_view,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -178,19 +174,17 @@ fn new_hubuum_object_relation_example() -> NewHubuumObjectRelation {
 
 #[cfg(test)]
 pub mod tests {
-    use hubuumobject_relation::class_relation_id;
     use rstest::rstest;
 
     use super::*;
+    use crate::db::DbPool;
     use crate::db::traits::ClassRelation;
+    use crate::errors::ApiError;
     use crate::models::class::tests::create_class;
     use crate::models::object::tests::create_object;
-    use crate::models::traits::class_relation;
     use crate::models::{HubuumClass, HubuumObject};
     use crate::tests::{TestContext, TestScope, test_context};
-    use crate::traits::{
-        CanDelete, CanSave, CanUpdate, ClassAccessors, NamespaceAccessors, SelfAccessors,
-    };
+    use crate::traits::{CanDelete, CanSave, SelfAccessors};
 
     pub async fn create_namespace_and_classes(
         suffix: &str,
@@ -353,7 +347,6 @@ pub mod tests {
 
     #[actix_rt::test]
     async fn test_creating_object_relation() {
-        use crate::models::NewHubuumObject;
         let pool = TestScope::new().pool;
 
         let (namespace, class1, class2) = create_namespace_and_classes("create_object").await;
@@ -390,7 +383,7 @@ pub mod tests {
 
     #[actix_rt::test]
     async fn test_creating_object_relation_failure_class_mismatch() {
-        use crate::db::traits::{ClassRelation, Relations};
+        use crate::db::traits::ClassRelation;
         let pool = TestScope::new().pool;
 
         let (namespace, class1, class2) =

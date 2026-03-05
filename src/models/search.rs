@@ -1,19 +1,16 @@
 #![allow(dead_code)]
-use actix_web::web::Json;
-use chrono::{DateTime, NaiveDateTime, Utc, format};
-use diesel::dsl::Filter;
-use diesel::sql_types::Bool;
+use chrono::NaiveDateTime;
 use std::collections::HashSet;
 use std::str::FromStr;
 use tracing::debug;
 
+use crate::errors::ApiError;
 use crate::models::permissions::{Permissions, PermissionsList};
 use crate::pagination::validate_page_limit;
 use crate::traits::SelfAccessors;
 use crate::utilities::extensions::CustomStringExtensions;
-use crate::{errors::ApiError, schema::hubuumobject::data};
 
-use super::{HubuumClassID, Permission};
+use super::HubuumClassID;
 
 /// ## Parse a query string into search parameters
 ///
@@ -364,11 +361,6 @@ impl ParsedQueryParam {
     ///   * ApiError::InternalServerError if the field is not JSONB
     ///   * ApiError::BadRequest if the value is not a key=value pair
     pub fn as_json_sql(&self) -> Result<SQLComponent, ApiError> {
-        use diesel::dsl::sql;
-        use diesel::expression::AsExpression;
-        use diesel::prelude::*;
-        use serde_json::from_str;
-
         if !self.is_json() {
             return Err(ApiError::InternalServerError(format!(
                 "Attempt to filter '{}' as JSON!",
@@ -1088,7 +1080,7 @@ fn get_sql_mapped_type_from_value(
     value: &str,
     accepted_types: &[SQLMappedType],
 ) -> Option<SQLMappedType> {
-    use chrono::{DateTime, NaiveDate, Utc};
+    use chrono::{DateTime, NaiveDate};
 
     for t in accepted_types {
         match t {
