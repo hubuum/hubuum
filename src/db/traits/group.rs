@@ -154,7 +154,8 @@ impl GroupMembersBackend for Group {
         use crate::schema::user_groups::dsl::*;
 
         with_connection(pool, |conn| {
-            diesel::delete(user_groups.filter(user_id.eq(user.id))).execute(conn)
+            diesel::delete(user_groups.filter(user_id.eq(user.id).and(group_id.eq(self.id))))
+                .execute(conn)
         })?;
         Ok(())
     }
