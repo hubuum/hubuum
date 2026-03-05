@@ -21,6 +21,7 @@ diesel = { version = "2", features = [
     "r2d2",
     "chrono",
 ] }
+ipnet = "2.12"
 futures = "0.3"
 futures-util = "0.3"
 jsonschema = "0"
