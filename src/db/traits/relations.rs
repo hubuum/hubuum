@@ -1,11 +1,11 @@
 use crate::db::traits::ClassRelation;
 
-use crate::db::{with_connection, DbPool};
+use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, QueryOptions};
 use crate::models::{
-    user_can_on_any, HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, HubuumObject,
-    HubuumObjectTransitiveLink, User,
+    HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, HubuumObject,
+    HubuumObjectTransitiveLink, User, user_can_on_any,
 };
 
 use crate::traits::{GroupAccessors, SelfAccessors};
@@ -163,9 +163,9 @@ where
             FilterField::Path => array_search!(base_query, param, operator, path),
             _ => {
                 return Err(ApiError::BadRequest(format!(
-                "Field '{}' isn't searchable (or does not exist) for transitive class relations",
-                param.field
-            )))
+                    "Field '{}' isn't searchable (or does not exist) for transitive class relations",
+                    param.field
+                )));
             }
         }
     }
@@ -193,9 +193,9 @@ where
         C: SelfAccessors<HubuumClass> + Clone + Send + Sync,
     {
         use crate::models::Permissions;
+        use diesel::RunQueryDsl;
         use diesel::sql_query;
         use diesel::sql_types::{Array, Integer};
-        use diesel::RunQueryDsl;
 
         let namespaces = user_can_on_any(pool, self, Permissions::ReadObject).await?;
         with_connection(pool, |conn| {

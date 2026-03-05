@@ -2,7 +2,7 @@ use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::{with_connection, DbPool};
+use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::schema::hubuumclass;
 
@@ -101,7 +101,7 @@ pub mod tests {
     use super::*;
     use crate::models::class::HubuumClass;
     use crate::models::namespace::Namespace;
-    use crate::tests::{create_namespace, get_pool_and_config};
+    use crate::tests::TestScope;
     use crate::traits::{CanDelete, CanSave, CanUpdate, ClassAccessors, NamespaceAccessors};
 
     pub async fn verify_no_such_class(pool: &DbPool, id: i32) {
@@ -136,15 +136,19 @@ pub mod tests {
 
     #[actix_rt::test]
     async fn test_creating_class_and_cascade_delete() {
-        let (pool, _) = get_pool_and_config().await;
+        let scope = TestScope::new();
+        let pool = scope.pool.clone();
 
-        let namespace = create_namespace(&pool, "test").await.unwrap();
+        let namespace = scope.namespace_fixture("test").await;
         //        let admin_group = ensure_admin_group(&pool).await;
 
         let class_name = "test_creating_class";
-        let class = create_class(&pool, &namespace, class_name).await;
+        let class = create_class(&pool, &namespace.namespace, class_name).await;
 
-        assert_eq!(class.namespace_id(&pool).await.unwrap(), namespace.id);
+        assert_eq!(
+            class.namespace_id(&pool).await.unwrap(),
+            namespace.namespace.id
+        );
         assert_eq!(class.name, class_name);
         assert_eq!(class.description, "test");
         assert_eq!(class.json_schema, None);
@@ -154,15 +158,16 @@ pub mod tests {
         assert_eq!(fetched_class, class);
 
         // Deleting the namespace should cascade away the class
-        namespace.delete(&pool).await.unwrap();
+        namespace.cleanup().await.unwrap();
         verify_no_such_class(&pool, class.id).await;
     }
 
     #[actix_rt::test]
     async fn test_updating_class_and_deleting_it() {
-        let (pool, _) = get_pool_and_config().await;
-        let namespace = create_namespace(&pool, "updating_class").await.unwrap();
-        let class = create_class(&pool, &namespace, "test_updating_class").await;
+        let scope = TestScope::new();
+        let pool = scope.pool.clone();
+        let namespace = scope.namespace_fixture("updating_class").await;
+        let class = create_class(&pool, &namespace.namespace, "test_updating_class").await;
 
         let update = UpdateHubuumClass {
             name: Some("test update 2".to_string()),
@@ -184,16 +189,17 @@ pub mod tests {
         updated_class.delete(&pool).await.unwrap();
         verify_no_such_class(&pool, class.id).await;
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.cleanup().await.unwrap();
     }
 
     #[actix_rt::test]
     async fn test_saving_after_changing_class() {
-        let (pool, _) = get_pool_and_config().await;
-        let namespace = create_namespace(&pool, "test_saving_after_changing_class")
-            .await
-            .unwrap();
-        let mut class = create_class(&pool, &namespace, "test saving").await;
+        let scope = TestScope::new();
+        let pool = scope.pool.clone();
+        let namespace = scope
+            .namespace_fixture("test_saving_after_changing_class")
+            .await;
+        let mut class = create_class(&pool, &namespace.namespace, "test saving").await;
 
         class.description = "new description".to_string();
         class.save(&pool).await.unwrap();
@@ -202,7 +208,7 @@ pub mod tests {
 
         assert_eq!(fetched_class.description, "new description");
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.cleanup().await.unwrap();
         verify_no_such_class(&pool, class.id).await;
     }
 }

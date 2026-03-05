@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 use crate::models::group::Group;
 use crate::models::user::{User, UserID};
 
-use crate::db::{with_connection, DbPool};
+use crate::db::{DbPool, with_connection};
 
 use crate::schema::namespaces;
 
@@ -248,7 +248,7 @@ pub async fn user_on_paginated<T: NamespaceAccessors>(
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' isn't searchable (or does not exist) for permissions",
                     param.field
-                )))
+                )));
             }
         }
     }
@@ -430,7 +430,7 @@ pub async fn groups_can_on_paginated(
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' isn't searchable (or does not exist) for groups",
                     param.field
-                )))
+                )));
             }
         }
     }
@@ -456,8 +456,8 @@ pub async fn groups_on<T: NamespaceAccessors>(
     permissions_filter: Vec<Permissions>,
     query_options: QueryOptions,
 ) -> Result<Vec<GroupPermission>, ApiError> {
-    use crate::models::traits::output::FromTuple;
     use crate::models::PermissionFilter;
+    use crate::models::traits::output::FromTuple;
     use crate::schema::groups::dsl::{groups, id as group_table_id};
     use crate::schema::permissions::dsl::{
         created_at as permission_created_at, group_id, id as permission_id, namespace_id,
@@ -496,7 +496,7 @@ pub async fn groups_on<T: NamespaceAccessors>(
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' isn't searchable (or does not exist) for permissions",
                     param.field
-                )))
+                )));
             }
         }
     }
@@ -521,7 +521,7 @@ pub async fn groups_on<T: NamespaceAccessors>(
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' isn't orderable (or does not exist) for permissions",
                     order.field
-                )))
+                )));
             }
         }
     }
@@ -590,7 +590,7 @@ pub async fn groups_on_paginated<T: NamespaceAccessors>(
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' isn't searchable (or does not exist) for permissions",
                     param.field
-                )))
+                )));
             }
         }
     }
@@ -625,7 +625,7 @@ mod tests {
     use super::*;
     use crate::models::group::NewGroup;
     use crate::models::permissions::PermissionsList;
-    use crate::tests::{create_namespace, generate_all_subsets};
+    use crate::tests::{TestScope, generate_all_subsets};
     use crate::traits::{CanDelete, PermissionController};
 
     async fn assign_to_groups(
@@ -670,14 +670,14 @@ mod tests {
 
     #[actix_rt::test]
     async fn grant_to_nonexistent_group() {
-        let (pool, _) = crate::tests::get_pool_and_config().await;
+        let scope = TestScope::new();
+        let pool = scope.pool.clone();
 
-        let namespace = create_namespace(&pool, "grant_to_nonexistent_group")
-            .await
-            .unwrap();
+        let namespace = scope.namespace_fixture("grant_to_nonexistent_group").await;
 
         // This should return an ApiError::NotFound
         let result = namespace
+            .namespace
             .grant_one(&pool, 99999999, Permissions::ReadCollection)
             .await;
 
@@ -687,7 +687,8 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_list_groups_who_can() {
-        let (pool, _) = crate::tests::get_pool_and_config().await;
+        let scope = TestScope::new();
+        let pool = scope.pool.clone();
 
         let mut groups = Vec::new();
         for group_number in [1, 2, 3, 4, 5] {
@@ -703,9 +704,9 @@ mod tests {
             );
         }
 
-        // Note, the admin group createed automatically gets all permissions to namespaces created
-        // via create_namespace, so we have one extra group for all permissions
-        let namespace = create_namespace(&pool, "test_list_groups").await.unwrap();
+        // The fixture owner group is granted full permissions when the namespace is created,
+        // so we have one extra group for all permissions.
+        let namespace = scope.namespace_fixture("test_list_groups").await;
 
         type NP = Permissions;
         type PL = PermissionsList<Permissions>;
@@ -713,42 +714,42 @@ mod tests {
         // Note: Slicing is *NOT* inclusive, so this will assign to groups 0, 1, and 2
         assign_to_groups(
             &pool,
-            &namespace,
+            &namespace.namespace,
             &groups[0..3],
             PL::new([NP::ReadCollection]),
         )
         .await;
 
-        groups_can_on_count(&pool, namespace.id, NP::ReadCollection, 4).await;
-        groups_can_on_count(&pool, namespace.id, NP::UpdateCollection, 1).await;
+        groups_can_on_count(&pool, namespace.namespace.id, NP::ReadCollection, 4).await;
+        groups_can_on_count(&pool, namespace.namespace.id, NP::UpdateCollection, 1).await;
 
         assign_to_groups(
             &pool,
-            &namespace,
+            &namespace.namespace,
             &groups[2..4],
             PL::new([NP::ReadCollection, NP::UpdateCollection]),
         )
         .await;
 
-        groups_can_on_count(&pool, namespace.id, NP::ReadCollection, 5).await;
-        groups_can_on_count(&pool, namespace.id, NP::UpdateCollection, 3).await;
-        groups_can_on_count(&pool, namespace.id, NP::DeleteCollection, 1).await;
+        groups_can_on_count(&pool, namespace.namespace.id, NP::ReadCollection, 5).await;
+        groups_can_on_count(&pool, namespace.namespace.id, NP::UpdateCollection, 3).await;
+        groups_can_on_count(&pool, namespace.namespace.id, NP::DeleteCollection, 1).await;
 
         assign_to_groups(
             &pool,
-            &namespace,
+            &namespace.namespace,
             &groups[3..4],
             PL::new([NP::DelegateCollection]),
         )
         .await;
 
-        groups_can_on_count(&pool, namespace.id, NP::DelegateCollection, 2).await;
-        groups_can_on_count(&pool, namespace.id, NP::CreateClass, 1).await;
-        groups_can_on_count(&pool, namespace.id, NP::CreateObject, 1).await;
+        groups_can_on_count(&pool, namespace.namespace.id, NP::DelegateCollection, 2).await;
+        groups_can_on_count(&pool, namespace.namespace.id, NP::CreateClass, 1).await;
+        groups_can_on_count(&pool, namespace.namespace.id, NP::CreateObject, 1).await;
 
         let all_on = groups_on(
             &pool,
-            namespace.clone(),
+            namespace.namespace.clone(),
             vec![],
             QueryOptions {
                 filters: vec![],
@@ -761,7 +762,7 @@ mod tests {
         .unwrap();
         assert_eq!(all_on.len(), 5);
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.cleanup().await.unwrap();
         for group in groups {
             group.delete(&pool).await.unwrap();
         }
@@ -769,7 +770,8 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_permission_grant_combinations() {
-        let (pool, _) = crate::tests::get_pool_and_config().await;
+        let scope = TestScope::new();
+        let pool = scope.pool.clone();
 
         let permissions = vec![
             Permissions::ReadCollection,
@@ -791,9 +793,9 @@ mod tests {
         let subsets = generate_all_subsets(&permissions);
 
         for subset in subsets.iter() {
-            let namespace = create_namespace(&pool, "test_perm_grant_combinations")
-                .await
-                .unwrap();
+            let namespace = scope
+                .namespace_fixture("test_perm_grant_combinations")
+                .await;
 
             let group = NewGroup {
                 groupname: "test_perm_grant_combinations".to_string(),
@@ -806,6 +808,7 @@ mod tests {
             let group_id = group.id;
             // Grant this subset of permissions
             namespace
+                .namespace
                 .grant(&pool, group_id, PermissionsList::new(subset.clone()))
                 .await
                 .unwrap();
@@ -813,20 +816,22 @@ mod tests {
             // Test that only the granted permissions are set
             for permission in permissions.iter() {
                 let expected = subset.contains(permission);
-                let actual = group_can_on(&pool, group_id, namespace.clone(), *permission)
-                    .await
-                    .unwrap();
+                let actual =
+                    group_can_on(&pool, group_id, namespace.namespace.clone(), *permission)
+                        .await
+                        .unwrap();
                 assert_eq!(expected, actual, "Mismatch for permission {permission:?}");
             }
 
-            namespace.delete(&pool).await.unwrap();
+            namespace.cleanup().await.unwrap();
             group.delete(&pool).await.unwrap();
         }
     }
 
     #[actix_rt::test]
     async fn test_permission_revoke_combinations() {
-        let (pool, _) = crate::tests::get_pool_and_config().await;
+        let scope = TestScope::new();
+        let pool = scope.pool.clone();
 
         type NP = Permissions;
 
@@ -854,9 +859,9 @@ mod tests {
             .filter(|x| !x.is_empty());
 
         for subset in subsets {
-            let namespace = create_namespace(&pool, "test_perm_revoke_ombinations")
-                .await
-                .unwrap();
+            let namespace = scope
+                .namespace_fixture("test_perm_revoke_ombinations")
+                .await;
 
             let group = NewGroup {
                 groupname: "test_perm_revoke_combinations".to_string(),
@@ -869,12 +874,14 @@ mod tests {
             let group_id = group.id;
             // Grant all permissions
             namespace
+                .namespace
                 .grant(&pool, group_id, PermissionsList::new(permissions.clone()))
                 .await
                 .unwrap();
 
             // Revoke this subset of permissions
             namespace
+                .namespace
                 .revoke(&pool, group_id, PermissionsList::new(subset.clone()))
                 .await
                 .unwrap();
@@ -882,13 +889,14 @@ mod tests {
             // Test that only the revoked permissions are set
             for permission in permissions.iter() {
                 let expected = !subset.contains(permission);
-                let actual = group_can_on(&pool, group_id, namespace.clone(), *permission)
-                    .await
-                    .unwrap();
+                let actual =
+                    group_can_on(&pool, group_id, namespace.namespace.clone(), *permission)
+                        .await
+                        .unwrap();
                 assert_eq!(expected, actual, "Mismatch for permission {permission:?}");
             }
 
-            namespace.delete(&pool).await.unwrap();
+            namespace.cleanup().await.unwrap();
             group.delete(&pool).await.unwrap();
         }
     }
@@ -897,13 +905,14 @@ mod tests {
     /// any other permissions.
     #[actix_rt::test]
     async fn test_permission_grant_without_side_effects() {
-        let (pool, _) = crate::tests::get_pool_and_config().await;
+        let scope = TestScope::new();
+        let pool = scope.pool.clone();
 
         type NP = Permissions;
 
-        let namespace = create_namespace(&pool, "test_perm_grant_without_side_effects")
-            .await
-            .unwrap();
+        let namespace = scope
+            .namespace_fixture("test_perm_grant_without_side_effects")
+            .await;
 
         let group = NewGroup {
             groupname: "test_perm_grant_without_side_effects".to_string(),
@@ -916,14 +925,20 @@ mod tests {
         let group_id = group.id;
 
         namespace
+            .namespace
             .grant_one(&pool, group_id, NP::ReadCollection)
             .await
             .unwrap();
 
         assert!(
-            group_can_on(&pool, group_id, namespace.clone(), NP::ReadCollection)
-                .await
-                .unwrap(),
+            group_can_on(
+                &pool,
+                group_id,
+                namespace.namespace.clone(),
+                NP::ReadCollection
+            )
+            .await
+            .unwrap(),
             "Permission {:?} should be set",
             NP::ReadCollection
         );
@@ -936,7 +951,7 @@ mod tests {
             NP::CreateObject,
         ] {
             assert!(
-                !group_can_on(&pool, group_id, namespace.clone(), permission)
+                !group_can_on(&pool, group_id, namespace.namespace.clone(), permission)
                     .await
                     .unwrap(),
                 "Permission {permission:?} should not be set",
@@ -944,13 +959,14 @@ mod tests {
         }
 
         namespace
+            .namespace
             .grant_one(&pool, group_id, NP::UpdateCollection)
             .await
             .unwrap();
 
         for permission in [NP::ReadCollection, NP::UpdateCollection] {
             assert!(
-                group_can_on(&pool, group_id, namespace.clone(), permission)
+                group_can_on(&pool, group_id, namespace.namespace.clone(), permission)
                     .await
                     .unwrap(),
                 "Permission {permission:?} should be set",
@@ -964,7 +980,7 @@ mod tests {
             NP::CreateObject,
         ] {
             assert!(
-                !group_can_on(&pool, group_id, namespace.clone(), permission)
+                !group_can_on(&pool, group_id, namespace.namespace.clone(), permission)
                     .await
                     .unwrap(),
                 "Permission {permission:?} should not be set",
@@ -972,14 +988,20 @@ mod tests {
         }
 
         namespace
+            .namespace
             .revoke_one(&pool, group_id, NP::UpdateCollection)
             .await
             .unwrap();
 
         assert!(
-            group_can_on(&pool, group_id, namespace.clone(), NP::ReadCollection)
-                .await
-                .unwrap(),
+            group_can_on(
+                &pool,
+                group_id,
+                namespace.namespace.clone(),
+                NP::ReadCollection
+            )
+            .await
+            .unwrap(),
             "Permission {:?} should be set",
             NP::ReadCollection
         );
@@ -992,13 +1014,13 @@ mod tests {
             NP::CreateObject,
         ] {
             assert!(
-                !group_can_on(&pool, group_id, namespace.clone(), permission)
+                !group_can_on(&pool, group_id, namespace.namespace.clone(), permission)
                     .await
                     .unwrap(),
                 "Permission {permission:?} should not be set",
             );
         }
-        namespace.delete(&pool).await.unwrap();
+        namespace.cleanup().await.unwrap();
         group.delete(&pool).await.unwrap();
     }
 }

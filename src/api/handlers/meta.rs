@@ -1,16 +1,16 @@
 use crate::api::openapi::{ApiErrorResponse, CountsResponse};
-use crate::db::{with_connection, DbPool};
+use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::extractors::AdminAccess;
 use crate::models::class::total_class_count;
 use crate::models::namespace::total_namespace_count;
 use crate::models::object::{objects_per_class_count, total_object_count};
 use crate::utilities::response::json_response;
-use actix_web::{get, http::StatusCode, web, Responder, ResponseError};
-use diesel::sql_query;
-use diesel::sql_types::{BigInt, Nullable, Timestamp};
+use actix_web::{Responder, ResponseError, get, http::StatusCode, web};
 use diesel::QueryableByName;
 use diesel::RunQueryDsl;
+use diesel::sql_query;
+use diesel::sql_types::{BigInt, Nullable, Timestamp};
 use serde::Serialize;
 use tracing::debug;
 use utoipa::ToSchema;
@@ -65,7 +65,7 @@ pub async fn get_db_state(pool: web::Data<DbPool>, requestor: AdminAccess) -> im
             return ApiError::InternalServerError(format!(
                 "Error getting state for the database: {e}"
             ))
-            .error_response()
+            .error_response();
         }
     };
 

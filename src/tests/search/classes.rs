@@ -1,13 +1,13 @@
 #[cfg(test)]
 mod test {
-    use yare::parameterized;
+    use rstest::rstest;
 
     use crate::models::class::NewHubuumClass;
     use crate::models::group::GroupID;
     use crate::models::search::{ParsedQueryParam, QueryOptions, SearchOperator};
     use crate::models::{HubuumClass, Namespace, NewNamespace};
-    use crate::tests::constants::{get_schema, SchemaType};
-    use crate::tests::{ensure_admin_group, ensure_admin_user, setup_pool_and_tokens};
+    use crate::tests::constants::{SchemaType, get_schema};
+    use crate::tests::{TestContext, ensure_admin_group, test_context};
     use crate::traits::{CanDelete, CanSave, Search};
 
     struct TestCase {
@@ -15,11 +15,12 @@ mod test {
         expected: usize,
     }
 
-    async fn setup_test_structure(prefix: &str) -> (Vec<Namespace>, Vec<HubuumClass>) {
+    async fn setup_test_structure(
+        context: &TestContext,
+        prefix: &str,
+    ) -> (Vec<Namespace>, Vec<HubuumClass>) {
         let pretty_prefix = prefix.replace("_", " ");
-
-        let (pool, _, _) = setup_pool_and_tokens().await;
-        let admin_group = ensure_admin_group(&pool).await;
+        let admin_group = ensure_admin_group(&context.pool).await;
 
         let mut namespaces = vec![];
         let mut classes = vec![];
@@ -34,7 +35,7 @@ mod test {
                     name: namespace_name,
                     description: namespace_description,
                 }
-                .save_and_grant_all_to(&pool, GroupID(admin_group.id))
+                .save_and_grant_all_to(&context.pool, GroupID(admin_group.id))
                 .await
                 .unwrap(),
             );
@@ -64,7 +65,7 @@ mod test {
                     validate_schema: Some(false),
                     namespace_id: nid,
                 }
-                .save(&pool)
+                .save(&context.pool)
                 .await
                 .unwrap(),
             );
@@ -73,10 +74,7 @@ mod test {
         (namespaces, classes)
     }
 
-    async fn check_test_cases(testcases: Vec<TestCase>) {
-        let (pool, _, _) = setup_pool_and_tokens().await;
-        let admin_user = ensure_admin_user(&pool).await;
-
+    async fn check_test_cases(context: &TestContext, testcases: Vec<TestCase>) {
         for tc in testcases {
             let query_options = QueryOptions {
                 filters: tc.query.clone(),
@@ -85,8 +83,9 @@ mod test {
                 cursor: None,
             };
 
-            let hits = admin_user
-                .search_classes(&pool, query_options.clone())
+            let hits = context
+                .admin_user
+                .search_classes(&context.pool, query_options.clone())
                 .await
                 .unwrap();
             assert_eq!(
@@ -99,16 +98,17 @@ mod test {
         }
     }
 
-    async fn cleanup(namespaces: Vec<Namespace>) {
-        let (pool, _, _) = setup_pool_and_tokens().await;
+    async fn cleanup(context: &TestContext, namespaces: Vec<Namespace>) {
         for ns in namespaces {
-            ns.delete(&pool).await.unwrap();
+            ns.delete(&context.pool).await.unwrap();
         }
     }
 
+    #[rstest]
     #[actix_rt::test]
-    async fn test_equals() {
-        let (namespaces, classes) = setup_test_structure("test_user_class_equals").await;
+    async fn test_equals(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let (namespaces, classes) = setup_test_structure(&context, "test_user_class_equals").await;
 
         // Set which namespaces we want to search in
         let comma_separated_namespaces = namespaces
@@ -192,13 +192,15 @@ mod test {
             },
         ];
 
-        check_test_cases(testcases).await;
-        cleanup(namespaces).await;
+        check_test_cases(&context, testcases).await;
+        cleanup(&context, namespaces).await;
     }
 
+    #[rstest]
     #[actix_rt::test]
-    async fn test_class_search() {
-        let (namespaces, classes) = setup_test_structure("test_user_class_search").await;
+    async fn test_class_search(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let (namespaces, classes) = setup_test_structure(&context, "test_user_class_search").await;
 
         let nspqp = ParsedQueryParam::new(
             "namespaces",
@@ -304,13 +306,15 @@ mod test {
             },
         ];
 
-        check_test_cases(testcases).await;
-        cleanup(namespaces).await;
+        check_test_cases(&context, testcases).await;
+        cleanup(&context, namespaces).await;
     }
 
+    #[rstest]
     #[actix_rt::test]
-    async fn test_search_int_ranges() {
-        let (namespaces, _) = setup_test_structure("test_user_class_int_ranges").await;
+    async fn test_search_int_ranges(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let (namespaces, _) = setup_test_structure(&context, "test_user_class_int_ranges").await;
 
         let testcases = vec![
             TestCase {
@@ -408,8 +412,8 @@ mod test {
             },
         ];
 
-        check_test_cases(testcases).await;
-        cleanup(namespaces).await;
+        check_test_cases(&context, testcases).await;
+        cleanup(&context, namespaces).await;
     }
 
     fn generate_test_case_for_json_schema(
@@ -441,19 +445,52 @@ mod test {
         }
     }
 
-    #[parameterized(
-        search_contains = { SearchOperator::Contains { is_negated: false }, "title=Geographical", 1 },
-        search_lt = { SearchOperator::Lt { is_negated: false }, "properties,latitude,minimum=0", 1 },
-        search_gte = { SearchOperator::Gte { is_negated: false }, "properties,latitude,maximum=90", 1 },
-        search_equals = { SearchOperator::Equals { is_negated: false }, "properties,latitude,minimum=0", 0 },
-        search_icontains = { SearchOperator::IContains { is_negated: false }, "description=address", 3 },
-        search_like = { SearchOperator::Like { is_negated: false }, "description=blog", 6 },
-        search_regex = { SearchOperator::Regex { is_negated: false }, "$id=.*ple\\.com.*loc", 1 },
+    #[rstest]
+    #[case::search_contains(
+        SearchOperator::Contains { is_negated: false },
+        "title=Geographical",
+        1
     )]
-    #[test_macro(actix_rt::test)]
-    async fn test_class_search_json_schema(op: SearchOperator, value: &str, hits: usize) {
+    #[case::search_lt(
+        SearchOperator::Lt { is_negated: false },
+        "properties,latitude,minimum=0",
+        1
+    )]
+    #[case::search_gte(
+        SearchOperator::Gte { is_negated: false },
+        "properties,latitude,maximum=90",
+        1
+    )]
+    #[case::search_equals(
+        SearchOperator::Equals { is_negated: false },
+        "properties,latitude,minimum=0",
+        0
+    )]
+    #[case::search_icontains(
+        SearchOperator::IContains { is_negated: false },
+        "description=address",
+        3
+    )]
+    #[case::search_like(
+        SearchOperator::Like { is_negated: false },
+        "description=blog",
+        6
+    )]
+    #[case::search_regex(
+        SearchOperator::Regex { is_negated: false },
+        "$id=.*ple\\.com.*loc",
+        1
+    )]
+    #[actix_rt::test]
+    async fn test_class_search_json_schema(
+        #[case] op: SearchOperator,
+        #[case] value: &str,
+        #[case] hits: usize,
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
         let prefix = format!("class_json_schema_{op}_{value}_{hits}");
-        let (namespaces, _) = setup_test_structure(&prefix).await;
+        let (namespaces, _) = setup_test_structure(&context, &prefix).await;
 
         let testcases = vec![generate_test_case_for_json_schema(
             op,
@@ -462,8 +499,8 @@ mod test {
             hits,
         )];
 
-        check_test_cases(testcases).await;
+        check_test_cases(&context, testcases).await;
 
-        cleanup(namespaces).await;
+        cleanup(&context, namespaces).await;
     }
 }

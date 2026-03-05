@@ -5,8 +5,8 @@ use tracing_subscriber::{
     filter::EnvFilter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
 };
 
-use hubuum::db::{init_pool, DbPool};
-use hubuum::errors::{fatal_error, ApiError, EXIT_CODE_CONFIG_ERROR};
+use hubuum::db::{DbPool, init_pool};
+use hubuum::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
 use hubuum::logger;
 use hubuum::models::User;
 use hubuum::utilities::auth::generate_random_password;

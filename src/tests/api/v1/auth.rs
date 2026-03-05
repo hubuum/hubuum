@@ -7,7 +7,7 @@ mod tests {
     use crate::tests::{create_test_admin, create_test_user};
     use crate::{api, assert_not_contains};
     use actix_web::http::header;
-    use actix_web::{http::StatusCode, test, web, web::Data, App};
+    use actix_web::{App, http::StatusCode, test, web, web::Data};
     use diesel::prelude::*;
 
     const LOGIN_ENDPOINT: &str = "/api/v0/auth/login";

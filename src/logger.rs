@@ -1,7 +1,7 @@
 use tracing::{Event, Subscriber};
-use tracing_subscriber::fmt::format::{FormatEvent, FormatFields, Writer};
 use tracing_subscriber::fmt::FmtContext;
 use tracing_subscriber::fmt::FormattedFields;
+use tracing_subscriber::fmt::format::{FormatEvent, FormatFields, Writer};
 use tracing_subscriber::registry::LookupSpan;
 
 use serde::ser::{SerializeMap, Serializer};
@@ -44,15 +44,14 @@ where
         if let Some(leaf_span) = ctx.lookup_current() {
             for span in leaf_span.scope().from_root() {
                 let ext = span.extensions();
-                if let Some(data) = ext.get::<FormattedFields<N>>() {
-                    if let Ok(serde_json::Value::Object(fields)) =
+                if let Some(data) = ext.get::<FormattedFields<N>>()
+                    && let Ok(serde_json::Value::Object(fields)) =
                         serde_json::from_str::<serde_json::Value>(data)
-                    {
-                        for field in fields {
-                            serializer_map
-                                .serialize_entry(&field.0, &field.1)
-                                .map_err(|_| std::fmt::Error)?;
-                        }
+                {
+                    for field in fields {
+                        serializer_map
+                            .serialize_entry(&field.0, &field.1)
+                            .map_err(|_| std::fmt::Error)?;
                     }
                 }
             }

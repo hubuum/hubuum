@@ -4,7 +4,7 @@ use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, UserAccess};
 use crate::models::{LoginUser, Token, UserID};
 use crate::utilities::response::json_response;
-use actix_web::{get, http::StatusCode, post, web, Responder};
+use actix_web::{Responder, get, http::StatusCode, post, web};
 use serde_json::json;
 use tracing::{debug, warn};
 

@@ -12,7 +12,7 @@ use crate::pagination::prepare_db_pagination;
 
 use crate::utilities::response::{json_response, json_response_created, paginated_json_response};
 use actix_web::{
-    delete, get, http::StatusCode, patch, post, put, routes, web, HttpRequest, Responder,
+    HttpRequest, Responder, delete, get, http::StatusCode, patch, post, put, routes, web,
 };
 use serde_json::json;
 use tracing::{debug, info};

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use actix_web::{http::StatusCode, test};
-    use yare::parameterized;
+    use rstest::rstest;
 
     use crate::models::group::{Group, NewGroup, UpdateGroup};
     use crate::models::user::{NewUser, User};
@@ -9,17 +9,25 @@ mod tests {
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
-        create_test_admin, create_test_group, create_test_user, setup_pool_and_tokens,
+        TestContext, create_test_admin, create_test_group, create_test_user, test_context,
     };
 
     const GROUPS_ENDPOINT: &str = "/api/v1/iam/groups";
 
-    async fn check_show_group(target: &Group, requester: &User, expected_status: StatusCode) {
-        let (pool, _, _) = setup_pool_and_tokens().await;
-        let token = requester.create_token(&pool).await.unwrap().get_token();
+    async fn check_show_group(
+        context: &TestContext,
+        target: &Group,
+        requester: &User,
+        expected_status: StatusCode,
+    ) {
+        let token = requester
+            .create_token(&context.pool)
+            .await
+            .unwrap()
+            .get_token();
 
         let resp = get_request(
-            &pool,
+            &context.pool,
             &token,
             &format!("{}/{}", GROUPS_ENDPOINT, &target.id),
         )
@@ -32,28 +40,33 @@ mod tests {
         }
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_show_group() {
-        let (pool, _, _) = setup_pool_and_tokens().await;
-        let test_user = create_test_user(&pool).await;
-        let test_admin = create_test_admin(&pool).await;
+    async fn test_show_group(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let test_user = create_test_user(&context.pool).await;
+        let test_admin = create_test_admin(&context.pool).await;
 
-        let test_group = create_test_group(&pool).await;
-        test_group.add_member(&pool, &test_user).await.unwrap();
+        let test_group = create_test_group(&context.pool).await;
+        test_group
+            .add_member(&context.pool, &test_user)
+            .await
+            .unwrap();
 
-        let test_admin_group = create_test_group(&pool).await;
+        let test_admin_group = create_test_group(&context.pool).await;
 
         // The format here is (target, requester, expected_status).
         // Check that anyone can see every group.
-        check_show_group(&test_group, &test_user, StatusCode::OK).await;
-        check_show_group(&test_admin_group, &test_user, StatusCode::OK).await;
-        check_show_group(&test_admin_group, &test_admin, StatusCode::OK).await;
-        check_show_group(&test_group, &test_admin, StatusCode::OK).await;
+        check_show_group(&context, &test_group, &test_user, StatusCode::OK).await;
+        check_show_group(&context, &test_admin_group, &test_user, StatusCode::OK).await;
+        check_show_group(&context, &test_admin_group, &test_admin, StatusCode::OK).await;
+        check_show_group(&context, &test_group, &test_admin, StatusCode::OK).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_create_and_delete_group() {
-        let (pool, admin_token, normal_token) = setup_pool_and_tokens().await;
+    async fn test_create_and_delete_group(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
 
         let new_group = NewGroup {
             groupname: "test_create_group_endpoint".to_string(),
@@ -61,16 +74,28 @@ mod tests {
         };
 
         // Just checking that only admins can create groups...
-        let resp = post_request(&pool, &normal_token, GROUPS_ENDPOINT, &new_group).await;
+        let resp = post_request(
+            &context.pool,
+            &context.normal_token,
+            GROUPS_ENDPOINT,
+            &new_group,
+        )
+        .await;
         let _ = assert_response_status(resp, StatusCode::FORBIDDEN).await;
 
-        let resp = post_request(&pool, &admin_token, GROUPS_ENDPOINT, &new_group).await;
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            GROUPS_ENDPOINT,
+            &new_group,
+        )
+        .await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
 
         let headers = resp.headers().clone();
         let created_group_url = headers.get("Location").unwrap().to_str().unwrap();
         let created_group_from_create: Group = test::read_body_json(resp).await;
-        let resp = get_request(&pool, &admin_token, created_group_url).await;
+        let resp = get_request(&context.pool, &context.admin_token, created_group_url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let created_group: Group = test::read_body_json(resp).await;
 
@@ -85,37 +110,50 @@ mod tests {
         assert_eq!(new_group.description, Some(created_group.description));
 
         // And only admins can delete groups...
-        let resp = delete_request(&pool, &normal_token, created_group_url).await;
+        let resp = delete_request(&context.pool, &context.normal_token, created_group_url).await;
         let _ = assert_response_status(resp, StatusCode::FORBIDDEN).await;
 
-        let resp = delete_request(&pool, &admin_token, created_group_url).await;
+        let resp = delete_request(&context.pool, &context.admin_token, created_group_url).await;
         let _ = assert_response_status(resp, StatusCode::NO_CONTENT).await;
 
-        let resp = get_request(&pool, &admin_token, created_group_url).await;
+        let resp = get_request(&context.pool, &context.admin_token, created_group_url).await;
         let _ = assert_response_status(resp, StatusCode::NOT_FOUND).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_patch_group() {
-        let (pool, admin_token, group_token) = setup_pool_and_tokens().await;
+    async fn test_patch_group(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
 
         // Test setting a new password
         let updated_group = UpdateGroup {
             groupname: Some("newgroupname".to_string()),
         };
 
-        let test_group = create_test_group(&pool).await;
+        let test_group = create_test_group(&context.pool).await;
         let patch_url = format!("{}/{}", GROUPS_ENDPOINT, test_group.id);
 
         // Only admins can patch groups...
-        let resp = patch_request(&pool, &group_token, &patch_url, &updated_group).await;
+        let resp = patch_request(
+            &context.pool,
+            &context.normal_token,
+            &patch_url,
+            &updated_group,
+        )
+        .await;
         let _ = assert_response_status(resp, StatusCode::FORBIDDEN).await;
 
-        let resp = patch_request(&pool, &admin_token, &patch_url, &updated_group).await;
+        let resp = patch_request(
+            &context.pool,
+            &context.admin_token,
+            &patch_url,
+            &updated_group,
+        )
+        .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let patched_group: Group = test::read_body_json(resp).await;
 
-        let resp = get_request(&pool, &admin_token, &patch_url).await;
+        let resp = get_request(&context.pool, &context.admin_token, &patch_url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let refetched_group: Group = test::read_body_json(resp).await;
 
@@ -123,47 +161,53 @@ mod tests {
         assert_eq!(patched_group, refetched_group);
     }
 
-    #[parameterized(
-        filter_by_name = { "name", |g: &Group| g.groupname.clone() },
-        filter_by_id   = { "id", |g: &Group| g.id.to_string() },
-        filter_by_desc = { "description", |g: &Group| g.description.clone() }
-    )]
-    #[test_macro(actix_web::test)]
-    async fn test_list_groups_filtered(filter_tpl: &str, filter_arg_fn: fn(&Group) -> String) {
-        // shared setup
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+    #[rstest]
+    #[case::filter_by_name("name")]
+    #[case::filter_by_id("id")]
+    #[case::filter_by_desc("description")]
+    #[actix_web::test]
+    async fn test_list_groups_filtered(
+        #[case] filter_tpl: &str,
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
         let groupname = format!("test_list_groups_filtered_{filter_tpl}");
         let mygroup = NewGroup {
             groupname: groupname.clone(),
             description: Some(groupname.clone()),
         }
-        .save(&pool)
+        .save(&context.pool)
         .await
         .unwrap();
 
-        // build URL from the injected template & closure
-        let arg = filter_arg_fn(&mygroup);
+        let arg = match filter_tpl {
+            "name" => mygroup.groupname.clone(),
+            "id" => mygroup.id.to_string(),
+            "description" => mygroup.description.clone(),
+            other => panic!("unexpected filter template: {other}"),
+        };
         let url = format!("{GROUPS_ENDPOINT}?{filter_tpl}={arg}");
 
-        let resp = get_request(&pool, &admin_token, &url).await;
+        let resp = get_request(&context.pool, &context.admin_token, &url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let groups: Vec<Group> = test::read_body_json(resp).await;
 
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].groupname, mygroup.groupname);
 
-        mygroup.delete(&pool).await.unwrap();
+        mygroup.delete(&context.pool).await.unwrap();
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_group_add_and_delete_member() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let group = create_test_group(&pool).await;
-        let user = create_test_user(&pool).await;
+    async fn test_group_add_and_delete_member(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let group = create_test_group(&context.pool).await;
+        let user = create_test_user(&context.pool).await;
 
         let resp = post_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!("{}/{}/members/{}", GROUPS_ENDPOINT, group.id, user.id),
             &(),
         )
@@ -171,8 +215,8 @@ mod tests {
         let _ = assert_response_status(resp, StatusCode::NO_CONTENT).await;
 
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!("{}/{}/members", GROUPS_ENDPOINT, group.id),
         )
         .await;
@@ -183,16 +227,16 @@ mod tests {
         assert_eq!(members[0].id, user.id);
 
         let resp = delete_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!("{}/{}/members/{}", GROUPS_ENDPOINT, group.id, user.id),
         )
         .await;
         let _ = assert_response_status(resp, StatusCode::NO_CONTENT).await;
 
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!("{}/{}/members", GROUPS_ENDPOINT, group.id),
         )
         .await;
@@ -201,19 +245,22 @@ mod tests {
         let members: Vec<User> = test::read_body_json(resp).await;
         assert_eq!(members.len(), 0);
 
-        user.delete(&pool).await.unwrap();
-        group.delete(&pool).await.unwrap();
+        user.delete(&context.pool).await.unwrap();
+        group.delete(&context.pool).await.unwrap();
     }
 
-    #[parameterized(
-        id_asc = { "id.asc", &[0, 1, 2] },
-        id_desc = { "id.desc", &[2, 1, 0] },
-        name_asc = { "name.asc", &[0, 1, 2] },
-        name_desc = { "name.desc", &[2, 1, 0] },
-    )]
-    #[test_macro(actix_web::test)]
-    async fn test_list_groups_sorted(sort_order: &str, expected_order: &[usize]) {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+    #[rstest]
+    #[case::id_asc("id.asc", &[0, 1, 2])]
+    #[case::id_desc("id.desc", &[2, 1, 0])]
+    #[case::name_asc("name.asc", &[0, 1, 2])]
+    #[case::name_desc("name.desc", &[2, 1, 0])]
+    #[actix_web::test]
+    async fn test_list_groups_sorted(
+        #[case] sort_order: &str,
+        #[case] expected_order: &[usize],
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
         let prefix = format!("test_list_groups_sorted_{}", sort_order.replace('.', "_"));
 
         let mut created_groups = Vec::new();
@@ -222,14 +269,14 @@ mod tests {
                 groupname: format!("{prefix}_{i}"),
                 description: Some(format!("{prefix}_description_{i}")),
             }
-            .save(&pool)
+            .save(&context.pool)
             .await
             .unwrap();
             created_groups.push(group);
         }
 
         let url = format!("{GROUPS_ENDPOINT}?groupname__contains={prefix}&sort={sort_order}");
-        let resp = get_request(&pool, &admin_token, &url).await;
+        let resp = get_request(&context.pool, &context.admin_token, &url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let groups: Vec<Group> = test::read_body_json(resp).await;
 
@@ -239,18 +286,20 @@ mod tests {
         assert_eq!(groups[2].id, created_groups[expected_order[2]].id);
 
         for group in created_groups {
-            group.delete(&pool).await.unwrap();
+            group.delete(&context.pool).await.unwrap();
         }
     }
 
-    #[parameterized(
-        limit_1 = { 1 },
-        limit_2 = { 2 },
-        limit_5 = { 3 },
-    )]
-    #[test_macro(actix_web::test)]
-    async fn test_list_groups_limit(limit: usize) {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+    #[rstest]
+    #[case::limit_1(1)]
+    #[case::limit_2(2)]
+    #[case::limit_5(3)]
+    #[actix_web::test]
+    async fn test_list_groups_limit(
+        #[case] limit: usize,
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
         let prefix = format!("test_list_groups_limit_{limit}");
 
         let mut created_groups = Vec::new();
@@ -259,26 +308,27 @@ mod tests {
                 groupname: format!("{prefix}_{i}"),
                 description: Some(format!("{prefix}_description_{i}")),
             }
-            .save(&pool)
+            .save(&context.pool)
             .await
             .unwrap();
             created_groups.push(group);
         }
 
         let url = format!("{GROUPS_ENDPOINT}?groupname__contains={prefix}&sort=id&limit={limit}");
-        let resp = get_request(&pool, &admin_token, &url).await;
+        let resp = get_request(&context.pool, &context.admin_token, &url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let groups: Vec<Group> = test::read_body_json(resp).await;
         assert_eq!(groups.len(), limit);
 
         for group in created_groups {
-            group.delete(&pool).await.unwrap();
+            group.delete(&context.pool).await.unwrap();
         }
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_list_groups_cursor_pagination() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+    async fn test_list_groups_cursor_pagination(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
         let prefix = "cursor-group";
         let mut created_groups = Vec::new();
 
@@ -287,15 +337,15 @@ mod tests {
                 groupname: format!("{prefix}-{idx}"),
                 description: Some("cursor pagination".to_string()),
             }
-            .save(&pool)
+            .save(&context.pool)
             .await
             .unwrap();
             created_groups.push(group);
         }
 
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!("{GROUPS_ENDPOINT}?groupname__contains={prefix}&limit=2&sort=id"),
         )
         .await;
@@ -307,8 +357,8 @@ mod tests {
         assert!(next_cursor.is_some());
 
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!(
                 "{GROUPS_ENDPOINT}?groupname__contains={prefix}&limit=2&sort=id&cursor={}",
                 next_cursor.unwrap()
@@ -320,23 +370,24 @@ mod tests {
         assert!(!groups.is_empty());
 
         for group in created_groups {
-            group.delete(&pool).await.unwrap();
+            group.delete(&context.pool).await.unwrap();
         }
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_group_members_cursor_pagination() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let group = create_test_group(&pool).await;
-        let user_one = create_test_user(&pool).await;
-        let user_two = create_test_user(&pool).await;
+    async fn test_group_members_cursor_pagination(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let group = create_test_group(&context.pool).await;
+        let user_one = create_test_user(&context.pool).await;
+        let user_two = create_test_user(&context.pool).await;
 
-        group.add_member(&pool, &user_one).await.unwrap();
-        group.add_member(&pool, &user_two).await.unwrap();
+        group.add_member(&context.pool, &user_one).await.unwrap();
+        group.add_member(&context.pool, &user_two).await.unwrap();
 
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!("{}/{}/members?limit=1&sort=id", GROUPS_ENDPOINT, group.id),
         )
         .await;
@@ -348,8 +399,8 @@ mod tests {
         assert!(next_cursor.is_some());
 
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!(
                 "{}/{}/members?limit=1&sort=id&cursor={}",
                 GROUPS_ENDPOINT,
@@ -363,16 +414,17 @@ mod tests {
         assert_eq!(members.len(), 1);
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_group_members_filtering() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let group = create_test_group(&pool).await;
+    async fn test_group_members_filtering(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let group = create_test_group(&context.pool).await;
         let matching_user = NewUser {
             username: format!("filter-group-member-match-{}", group.id),
             password: "testpassword".to_string(),
             email: Some(format!("match-{}@example.com", group.id)),
         }
-        .save(&pool)
+        .save(&context.pool)
         .await
         .unwrap();
         let other_user = NewUser {
@@ -380,16 +432,19 @@ mod tests {
             password: "testpassword".to_string(),
             email: Some(format!("other-{}@example.com", group.id)),
         }
-        .save(&pool)
+        .save(&context.pool)
         .await
         .unwrap();
 
-        group.add_member(&pool, &matching_user).await.unwrap();
-        group.add_member(&pool, &other_user).await.unwrap();
+        group
+            .add_member(&context.pool, &matching_user)
+            .await
+            .unwrap();
+        group.add_member(&context.pool, &other_user).await.unwrap();
 
         let resp = get_request(
-            &pool,
-            &admin_token,
+            &context.pool,
+            &context.admin_token,
             &format!(
                 "{}/{}/members?username__contains=filter-group-member-match&sort=id",
                 GROUPS_ENDPOINT, group.id

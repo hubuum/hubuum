@@ -125,7 +125,7 @@ impl CursorPaginated for HubuumClassExpanded {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for classes",
                     field
-                )))
+                )));
             }
         })
     }
@@ -174,7 +174,7 @@ impl CursorSqlMapping for HubuumClassExpanded {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for classes",
                     field
-                )))
+                )));
             }
         })
     }
@@ -204,7 +204,7 @@ impl CursorPaginated for GroupPermission {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for group permissions",
                     field
-                )))
+                )));
             }
         })
     }
@@ -248,7 +248,7 @@ impl CursorSqlMapping for GroupPermission {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for group permissions",
                     field
-                )))
+                )));
             }
         })
     }

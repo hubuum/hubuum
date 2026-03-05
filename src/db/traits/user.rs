@@ -7,7 +7,7 @@ use crate::models::{Group, Permissions, User, UserID};
 use crate::traits::{GroupAccessors, NamespaceAccessors, SelfAccessors};
 use crate::utilities::auth::hash_password;
 
-use crate::db::{with_connection, DbPool};
+use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 
 use crate::models::search::{FilterField, QueryOptions};
@@ -228,7 +228,7 @@ impl User {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for users",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -282,7 +282,7 @@ impl User {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for groups",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -305,46 +305,45 @@ impl User {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yare::parameterized;
+    use rstest::rstest;
 
     use crate::models::{Permissions as P, PermissionsList as PL};
-    use crate::tests::{
-        create_namespace, create_test_group, create_user_with_params, get_pool_and_config,
-    };
+    use crate::tests::{TestScope, create_test_group, create_user_with_params};
     use crate::traits::PermissionController;
 
     // user_idx, namespaces_idx, permissions, expected
-    #[parameterized(
-        u1_ns1_classread_true = { 0, vec![0], vec![P::ReadClass], true },
-        u1_ns1_classcreate_true = { 0, vec![0], vec![P::CreateClass], true },
-        u1_ns1_classreadcreate_true = { 0, vec![0], vec![P::ReadClass, P::CreateClass], true },
-        u1_ns2_classdelete_true = { 0, vec![1], vec![P::DeleteClass], true },
-        u1_ns2_classcreate_true = { 0, vec![1], vec![P::CreateClass], true },
-        u1_ns2_classcreatedelete_true = { 0, vec![1], vec![P::CreateClass, P::DeleteClass], true },
-        u1_ns12_classcreate_true = { 0, vec![0,1], vec![P::CreateClass], true },
-
-        u1_ns1_objectread_false = { 0, vec![0], vec![P::ReadObject], false },
-        u1_ns1_namespacecreate_false = { 0, vec![0], vec![P::ReadCollection], false },
-        u1_ns12_classreadcreate_false = { 0, vec![0,1], vec![P::CreateClass, P::ReadClass], false },
-        u1_ns12_classreadcreatedelete_false = { 0, vec![0,1], vec![P::CreateClass, P::ReadClass, P::DeleteClass], false },
-
-        u2_ns1_objectread_true = { 1, vec![0], vec![P::ReadObject], true },
-        u2_ns1_objectcreate_true = { 1, vec![0], vec![P::CreateObject], true },
-        u2_ns1_objectreadcreate_true = { 1, vec![0], vec![P::ReadObject, P::CreateObject], true },
-        u2_ns2_objectdelete_true = { 1, vec![1], vec![P::DeleteObject], true },
-        u2_ns2_objectcreate_true = { 1, vec![1], vec![P::CreateObject], true },
-        u2_ns2_objectcreatedelete_true = { 1, vec![1], vec![P::CreateObject, P::DeleteObject], true },
-
-
+    #[rstest]
+    #[case::u1_ns1_classread_true(0, vec![0], vec![P::ReadClass], true)]
+    #[case::u1_ns1_classcreate_true(0, vec![0], vec![P::CreateClass], true)]
+    #[case::u1_ns1_classreadcreate_true(0, vec![0], vec![P::ReadClass, P::CreateClass], true)]
+    #[case::u1_ns2_classdelete_true(0, vec![1], vec![P::DeleteClass], true)]
+    #[case::u1_ns2_classcreate_true(0, vec![1], vec![P::CreateClass], true)]
+    #[case::u1_ns2_classcreatedelete_true(0, vec![1], vec![P::CreateClass, P::DeleteClass], true)]
+    #[case::u1_ns12_classcreate_true(0, vec![0, 1], vec![P::CreateClass], true)]
+    #[case::u1_ns1_objectread_false(0, vec![0], vec![P::ReadObject], false)]
+    #[case::u1_ns1_namespacecreate_false(0, vec![0], vec![P::ReadCollection], false)]
+    #[case::u1_ns12_classreadcreate_false(0, vec![0, 1], vec![P::CreateClass, P::ReadClass], false)]
+    #[case::u1_ns12_classreadcreatedelete_false(
+        0,
+        vec![0, 1],
+        vec![P::CreateClass, P::ReadClass, P::DeleteClass],
+        false
     )]
-    #[test_macro(actix_web::test)]
+    #[case::u2_ns1_objectread_true(1, vec![0], vec![P::ReadObject], true)]
+    #[case::u2_ns1_objectcreate_true(1, vec![0], vec![P::CreateObject], true)]
+    #[case::u2_ns1_objectreadcreate_true(1, vec![0], vec![P::ReadObject, P::CreateObject], true)]
+    #[case::u2_ns2_objectdelete_true(1, vec![1], vec![P::DeleteObject], true)]
+    #[case::u2_ns2_objectcreate_true(1, vec![1], vec![P::CreateObject], true)]
+    #[case::u2_ns2_objectcreatedelete_true(1, vec![1], vec![P::CreateObject, P::DeleteObject], true)]
+    #[actix_web::test]
     async fn test_user_can(
-        user_idx: usize,
-        namespaces_idx: Vec<usize>,
-        permissions: Vec<Permissions>,
-        expected: bool,
+        #[case] user_idx: usize,
+        #[case] namespaces_idx: Vec<usize>,
+        #[case] permissions: Vec<Permissions>,
+        #[case] expected: bool,
     ) {
-        let (pool, _) = get_pool_and_config().await;
+        let scope = TestScope::new();
+        let pool = scope.pool.clone();
         let suffix = format!(
             "_{}_{}_{}_{}",
             user_idx,
@@ -362,12 +361,12 @@ mod tests {
         );
 
         let namespaces = [
-            create_namespace(&pool, &format!("test_user_can_ns1_{suffix}"))
-                .await
-                .unwrap(),
-            create_namespace(&pool, &format!("test_user_can_ns2_{suffix}"))
-                .await
-                .unwrap(),
+            scope
+                .namespace_fixture(&format!("test_user_can_ns1_{suffix}"))
+                .await,
+            scope
+                .namespace_fixture(&format!("test_user_can_ns2_{suffix}"))
+                .await,
         ];
         let groups = [
             create_test_group(&pool).await,
@@ -382,6 +381,7 @@ mod tests {
         groups[1].add_member(&pool, &users[1]).await.unwrap();
 
         namespaces[0]
+            .namespace
             .grant(
                 &pool,
                 groups[0].id,
@@ -390,6 +390,7 @@ mod tests {
             .await
             .unwrap();
         namespaces[1]
+            .namespace
             .grant(
                 &pool,
                 groups[0].id,
@@ -399,6 +400,7 @@ mod tests {
             .unwrap();
 
         namespaces[0]
+            .namespace
             .grant(
                 &pool,
                 groups[1].id,
@@ -407,6 +409,7 @@ mod tests {
             .await
             .unwrap();
         namespaces[1]
+            .namespace
             .grant(
                 &pool,
                 groups[1].id,
@@ -418,7 +421,7 @@ mod tests {
         let user = &users[user_idx];
         let namespaces = namespaces_idx
             .iter()
-            .map(|i| &namespaces[*i])
+            .map(|i| &namespaces[*i].namespace)
             .collect::<Vec<_>>();
 
         let result = user.can(&pool, permissions, namespaces).await;

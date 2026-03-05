@@ -2,7 +2,7 @@ use argon2::password_hash::rand_core::le;
 use diesel::dsl::Filter;
 use diesel::query_builder;
 use diesel::sql_types::Integer;
-use diesel::{pg::Pg, ExpressionMethods, JoinOnDsl, QueryDsl, RunQueryDsl, Table};
+use diesel::{ExpressionMethods, JoinOnDsl, QueryDsl, RunQueryDsl, Table, pg::Pg};
 
 use std::iter::IntoIterator;
 
@@ -15,9 +15,9 @@ use crate::models::search::{
 };
 use crate::models::traits::ExpandNamespaceFromMap;
 use crate::models::{
-    class, group, permissions, ClassClosureView, Group, HubuumClass, HubuumClassExpanded,
-    HubuumClassRelation, HubuumObject, HubuumObjectRelation, HubuumObjectWithPath, Namespace,
-    ObjectClosureView, Permission, Permissions, User, UserID,
+    ClassClosureView, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
+    HubuumObjectRelation, HubuumObjectWithPath, Namespace, ObjectClosureView, Permission,
+    Permissions, User, UserID, class, group, permissions,
 };
 
 use crate::schema::hubuumclass::namespace_id;
@@ -27,7 +27,7 @@ use crate::traits::{
     NamespaceAccessors, SelfAccessors,
 };
 
-use crate::db::{with_connection, DbPool};
+use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::utilities::extensions::CustomStringExtensions;
 
@@ -109,7 +109,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for namespaces",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -248,7 +248,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for classes",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -408,7 +408,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for objects",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -598,7 +598,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for class relations",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -736,7 +736,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for object relations",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -912,7 +912,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for related objects",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -982,7 +982,7 @@ pub trait GroupAccessors: SelfAccessors<User> {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for groups",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -1230,7 +1230,7 @@ impl CursorPaginated for User {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for users",
                     field
-                )))
+                )));
             }
         })
     }
@@ -1279,7 +1279,7 @@ impl CursorSqlMapping for User {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for users",
                     field
-                )))
+                )));
             }
         })
     }
@@ -1332,12 +1332,13 @@ mod test {
     use super::*;
     use crate::models::{GroupID, NewHubuumClass, Permissions, PermissionsList};
     use crate::tests::{
-        create_test_group, create_test_user, ensure_admin_group, ensure_admin_user,
-        setup_pool_and_tokens,
+        TestContext, create_test_group, create_test_user, ensure_admin_group, ensure_admin_user,
+        test_context,
     };
     use crate::traits::PermissionController;
     use crate::traits::{CanDelete, CanSave};
     use crate::{assert_contains, assert_not_contains};
+    use rstest::rstest;
 
     fn make_query_options_from_query_param(filter: &ParsedQueryParam) -> QueryOptions {
         QueryOptions {
@@ -1348,25 +1349,34 @@ mod test {
         }
     }
 
+    #[rstest]
     #[actix_rt::test]
-    async fn test_user_permissions_namespace_and_class_listing() {
+    async fn test_user_permissions_namespace_and_class_listing(
+        #[future(awt)] test_context: TestContext,
+    ) {
         use crate::models::namespace::NewNamespace;
         use crate::models::search::{FilterField, ParsedQueryParam, SearchOperator};
 
-        let (pool, _, _) = setup_pool_and_tokens().await;
-        let test_user_1 = create_test_user(&pool).await;
-        let test_group_1 = create_test_group(&pool).await;
-        let test_user_2 = create_test_user(&pool).await;
-        let test_group_2 = create_test_group(&pool).await;
+        let context = test_context;
+        let test_user_1 = create_test_user(&context.pool).await;
+        let test_group_1 = create_test_group(&context.pool).await;
+        let test_user_2 = create_test_user(&context.pool).await;
+        let test_group_2 = create_test_group(&context.pool).await;
 
-        test_group_1.add_member(&pool, &test_user_1).await.unwrap();
-        test_group_2.add_member(&pool, &test_user_2).await.unwrap();
+        test_group_1
+            .add_member(&context.pool, &test_user_1)
+            .await
+            .unwrap();
+        test_group_2
+            .add_member(&context.pool, &test_user_2)
+            .await
+            .unwrap();
 
         let ns = NewNamespace {
             name: "test_user_namespace_listing".to_string(),
             description: "Test namespace".to_string(),
         }
-        .save_and_grant_all_to(&pool, GroupID(test_group_1.id))
+        .save_and_grant_all_to(&context.pool, GroupID(test_group_1.id))
         .await
         .unwrap();
 
@@ -1377,13 +1387,13 @@ mod test {
             validate_schema: None,
             namespace_id: ns.id,
         }
-        .save(&pool)
+        .save(&context.pool)
         .await
         .unwrap();
 
         class
             .grant(
-                &pool,
+                &context.pool,
                 test_group_1.id,
                 PermissionsList::new([
                     Permissions::ReadClass,
@@ -1409,7 +1419,7 @@ mod test {
 
         let nslist = test_user_1
             .search_namespaces(
-                &pool,
+                &context.pool,
                 make_query_options_from_query_param(&read_namespace_param),
             )
             .await
@@ -1418,7 +1428,7 @@ mod test {
 
         let nslist = test_user_2
             .search_namespaces(
-                &pool,
+                &context.pool,
                 make_query_options_from_query_param(&read_namespace_param),
             )
             .await
@@ -1427,7 +1437,7 @@ mod test {
 
         let classlist = test_user_1
             .search_classes(
-                &pool,
+                &context.pool,
                 make_query_options_from_query_param(&read_class_param),
             )
             .await
@@ -1436,20 +1446,20 @@ mod test {
 
         let classlist = test_user_2
             .search_classes(
-                &pool,
+                &context.pool,
                 make_query_options_from_query_param(&read_class_param),
             )
             .await
             .unwrap();
         assert_not_contains!(&classlist, &class);
 
-        ns.grant_one(&pool, test_group_2.id, Permissions::ReadCollection)
+        ns.grant_one(&context.pool, test_group_2.id, Permissions::ReadCollection)
             .await
             .unwrap();
 
         let nslist = test_user_2
             .search_namespaces(
-                &pool,
+                &context.pool,
                 make_query_options_from_query_param(&read_namespace_param),
             )
             .await
@@ -1458,7 +1468,7 @@ mod test {
 
         let classlist = test_user_1
             .search_classes(
-                &pool,
+                &context.pool,
                 QueryOptions {
                     filters: vec![],
                     sort: vec![],
@@ -1471,13 +1481,13 @@ mod test {
         assert_contains!(&classlist, &class);
 
         class
-            .grant_one(&pool, test_group_2.id, Permissions::ReadClass)
+            .grant_one(&context.pool, test_group_2.id, Permissions::ReadClass)
             .await
             .unwrap();
 
         let classlist = test_user_2
             .search_classes(
-                &pool,
+                &context.pool,
                 make_query_options_from_query_param(&read_class_param),
             )
             .await
@@ -1485,13 +1495,13 @@ mod test {
         assert_contains!(&classlist, &class);
 
         class
-            .revoke_one(&pool, test_group_2.id, Permissions::ReadClass)
+            .revoke_one(&context.pool, test_group_2.id, Permissions::ReadClass)
             .await
             .unwrap();
 
         let classlist = test_user_2
             .search_classes(
-                &pool,
+                &context.pool,
                 make_query_options_from_query_param(&read_class_param),
             )
             .await
@@ -1500,28 +1510,28 @@ mod test {
 
         let nslist = test_user_2
             .search_namespaces(
-                &pool,
+                &context.pool,
                 make_query_options_from_query_param(&read_class_param),
             )
             .await
             .unwrap();
         assert_contains!(&nslist, &ns);
 
-        ns.revoke_all(&pool, test_group_2.id).await.unwrap();
+        ns.revoke_all(&context.pool, test_group_2.id).await.unwrap();
 
         let nslist = test_user_2
             .search_namespaces(
-                &pool,
+                &context.pool,
                 make_query_options_from_query_param(&read_namespace_param),
             )
             .await
             .unwrap();
         assert_not_contains!(&nslist, &ns);
 
-        test_user_1.delete(&pool).await.unwrap();
-        test_user_2.delete(&pool).await.unwrap();
-        test_group_1.delete(&pool).await.unwrap();
-        test_group_2.delete(&pool).await.unwrap();
-        ns.delete(&pool).await.unwrap();
+        test_user_1.delete(&context.pool).await.unwrap();
+        test_user_2.delete(&context.pool).await.unwrap();
+        test_group_1.delete(&context.pool).await.unwrap();
+        test_group_2.delete(&context.pool).await.unwrap();
+        ns.delete(&context.pool).await.unwrap();
     }
 }

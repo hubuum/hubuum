@@ -9,10 +9,11 @@ use actix_web::{http, test};
 ///
 /// ### Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
+/// use hubuum::assert_contains;
 /// let vec = vec![1, 2, 3, 4];
-/// assert_contains!(vec, 3); // Succeeds
-/// assert_contains!(vec, 5); // Panics
+/// assert_contains!(&vec, &3); // Succeeds
+/// assert_contains!(&vec, &5); // Panics
 /// ```
 ///
 /// ### Panics
@@ -50,10 +51,11 @@ macro_rules! assert_contains {
 ///
 /// ### Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
+/// use hubuum::assert_not_contains;
 /// let vec = vec![1, 2, 3, 4];
-/// assert_not_contains!(vec, 5); // Succeeds
-/// assert_not_contains!(vec, 3); // Panics
+/// assert_not_contains!(&vec, &5); // Succeeds
+/// assert_not_contains!(&vec, &3); // Panics
 /// ```
 ///
 /// ### Panics
@@ -96,10 +98,11 @@ macro_rules! assert_not_contains {
 ///
 /// ### Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
+/// use hubuum::assert_contains_all;
 /// let vec = vec![1, 2, 3, 4, 5];
-/// assert_contains_all!(vec, [2, 3, 5]); // Succeeds
-/// assert_contains_all!(vec, [0, 1, 2]); // Panics because 0 is not in `vec`
+/// assert_contains_all!(&vec, [&2, &3, &5]); // Succeeds
+/// assert_contains_all!(&vec, [&0, &1, &2]); // Panics because 0 is not in `vec`
 /// ```
 ///
 /// ### Panics
@@ -147,6 +150,7 @@ macro_rules! assert_contains_all {
 /// ### Examples
 ///
 /// ```rust,ignore
+/// use hubuum::assert_contains_same_ids;
 /// #[derive(Debug)]
 /// struct HubuumClass { id: i32 }
 ///
@@ -162,10 +166,10 @@ macro_rules! assert_contains_all {
 ///     HubuumClass { id: 2 },
 /// ];
 ///
-/// assert_contains_same_ids!(collection1, collection2); // Succeeds
+/// assert_contains_same_ids!(&collection1, &collection2); // Succeeds
 ///
 /// let specific_ids = &[1, 2, 3];
-/// assert_contains_same_ids!(collection1, specific_ids); // Succeeds
+/// assert_contains_same_ids!(&collection1, specific_ids); // Succeeds
 /// ```
 ///
 /// ### Panics
@@ -235,14 +239,15 @@ macro_rules! assert_contains_same_ids {
 /// ### Examples
 ///
 /// ```rust,ignore
+/// #[rstest]
 /// #[actix_web::test]
-/// async fn test_api_classes_get() {
-///     let created_classes = create_test_classes("get").await;
-///     let (pool, admin_token, _) = setup_pool_and_tokens().await;
+/// async fn test_api_classes_get(#[future(awt)] test_context: TestContext) {
+///     let context = test_context;
+///     let created_classes = create_test_classes(&context, "get").await;
 ///
-///     let resp = get_request(&pool, &admin_token, CLASSES_ENDPOINT).await;
+///     let resp = get_request(&context.pool, &context.admin_token, CLASSES_ENDPOINT).await;
 ///     let resp = assert_response_status(resp, http::StatusCode::OK).await;
-///     let classes: Vec<crate::models::class::HubuumClass> = test::read_body_json(resp).await;@
+///     let classes: Vec<crate::models::class::HubuumClass> = test::read_body_json(resp).await;
 ///     assert_contains_all!(&classes, &created_classes);
 /// }
 /// ```

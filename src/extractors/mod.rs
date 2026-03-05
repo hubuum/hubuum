@@ -1,11 +1,11 @@
-use crate::db::traits::user::GroupMemberships;
 use crate::db::DbPool;
+use crate::db::traits::user::GroupMemberships;
 use crate::errors::ApiError;
 use crate::models::token::Token;
 use crate::models::user::User;
 use crate::utilities::iam::get_user_by_id;
 
-use actix_web::{dev::Payload, web::Data, FromRequest, HttpRequest};
+use actix_web::{FromRequest, HttpRequest, dev::Payload, web::Data};
 use futures_util::future::{self, FutureExt};
 use std::pin::Pin;
 use tracing::debug;
@@ -60,7 +60,7 @@ async fn get_user_and_path(
         Err(_) => {
             return Err(ApiError::InternalServerError(
                 "Failed to parse user_id".into(),
-            ))
+            ));
         }
     };
 
@@ -82,7 +82,7 @@ impl FromRequest for UserAccess {
                 return future::ready(Err(ApiError::InternalServerError(
                     "Pool not found".to_string(),
                 )))
-                .boxed_local()
+                .boxed_local();
             }
         };
 
@@ -109,7 +109,7 @@ impl FromRequest for AdminAccess {
                 return future::ready(Err(ApiError::InternalServerError(
                     "Pool not found".to_string(),
                 )))
-                .boxed_local()
+                .boxed_local();
             }
         };
 
@@ -140,7 +140,7 @@ impl FromRequest for AdminOrSelfAccess {
                 return future::ready(Err(ApiError::InternalServerError(
                     "Pool not found".to_string(),
                 )))
-                .boxed_local()
+                .boxed_local();
             }
         };
 

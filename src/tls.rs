@@ -1,6 +1,6 @@
 use actix_http::{Request, Response};
 use actix_service::{IntoServiceFactory, ServiceFactory};
-use actix_web::{body::MessageBody, dev::AppConfig, Error, HttpServer};
+use actix_web::{Error, HttpServer, body::MessageBody, dev::AppConfig};
 
 use crate::config::TlsBackend;
 
@@ -106,8 +106,8 @@ where
 mod tls_rustls {
     use super::*;
     use rustls::{
-        pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer},
         ServerConfig,
+        pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
     };
     use tracing::info;
 
@@ -315,14 +315,18 @@ mod tests {
     fn backend_selection_rejects_tls_requests_when_no_backend_is_enabled() {
         let implicit_backend_error = resolve_backend(None).unwrap_err();
         assert_eq!(implicit_backend_error.kind(), std::io::ErrorKind::Other);
-        assert!(implicit_backend_error
-            .to_string()
-            .contains("no TLS backend was enabled during build"));
+        assert!(
+            implicit_backend_error
+                .to_string()
+                .contains("no TLS backend was enabled during build")
+        );
 
         let explicit_backend_error = resolve_backend(Some(TlsBackend::Rustls)).unwrap_err();
         assert_eq!(explicit_backend_error.kind(), std::io::ErrorKind::Other);
-        assert!(explicit_backend_error
-            .to_string()
-            .contains("TLS backend `rustls` was requested"));
+        assert!(
+            explicit_backend_error
+                .to_string()
+                .contains("TLS backend `rustls` was requested")
+        );
     }
 }

@@ -1,28 +1,34 @@
 #[cfg(test)]
 mod tests {
-    use yare::parameterized;
+    use rstest::rstest;
 
-    use actix_web::http::{header::HeaderValue, StatusCode};
+    use actix_web::http::{StatusCode, header::HeaderValue};
 
     use crate::tests::api_operations::get_request_with_correlation;
     use crate::tests::asserts::assert_response_status;
-    use crate::tests::setup_pool_and_tokens;
+    use crate::tests::{TestContext, test_context};
 
     const ENDPOINT: &str = "/api/v1/classes/";
 
-    #[parameterized(
-        with_correlation_id = { Some("test-correlation-id") },
-        with_empty_correlation_id = { Some("") }, // This means we get an empty x-correlation-id header in the response
-        with_long_correlation_id = { Some("test-correlation-id-long with spaces & weird characters") },
-        without_correlation_id = { None }
-
-    )]
-    #[test_macro(actix_web::test)]
-    async fn test_with_correlation_id(correlation_target: Option<&str>) {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-
-        let resp =
-            get_request_with_correlation(&pool, &admin_token, ENDPOINT, correlation_target).await;
+    #[rstest]
+    #[case::with_correlation_id(Some("test-correlation-id"))]
+    #[case::with_empty_correlation_id(Some(""))]
+    #[case::with_long_correlation_id(Some(
+        "test-correlation-id-long with spaces & weird characters"
+    ))]
+    #[case::without_correlation_id(None)]
+    #[actix_web::test]
+    async fn test_with_correlation_id(
+        #[case] correlation_target: Option<&str>,
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let resp = get_request_with_correlation(
+            &test_context.pool,
+            &test_context.admin_token,
+            ENDPOINT,
+            correlation_target,
+        )
+        .await;
 
         let resp = assert_response_status(resp, StatusCode::OK).await;
 

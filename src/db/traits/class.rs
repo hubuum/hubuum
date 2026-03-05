@@ -1,7 +1,7 @@
 use diesel::prelude::*;
 
 use crate::db::traits::GetClass;
-use crate::db::{with_connection, DbPool};
+use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::{
     HubuumClass, HubuumClassID, HubuumClassRelation, HubuumClassRelationID, NewHubuumClassRelation,

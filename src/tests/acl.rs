@@ -21,7 +21,7 @@ async fn test_endpoint_access() {
     use crate::config::get_config;
     use crate::db::init_pool;
     use crate::models::user::LoginUser;
-    use actix_web::{http::Method, test, web::Data, App};
+    use actix_web::{App, http::Method, test, web::Data};
 
     let config = get_config().unwrap();
     let pool = init_pool(&config.database_url, config.db_pool_size);

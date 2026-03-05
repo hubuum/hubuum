@@ -1,4 +1,4 @@
-use actix_web::{http::StatusCode, HttpResponse};
+use actix_web::{HttpResponse, http::StatusCode};
 use serde::Serialize;
 
 use once_cell::sync::Lazy;
@@ -8,7 +8,7 @@ use tracing::debug;
 
 use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
-use crate::pagination::{finalize_page, next_cursor_header, CursorPaginated};
+use crate::pagination::{CursorPaginated, finalize_page, next_cursor_header};
 
 static NO_CONTENT_STATUS_CODES: Lazy<HashSet<StatusCode>> = Lazy::new(|| {
     let mut m = HashSet::new();

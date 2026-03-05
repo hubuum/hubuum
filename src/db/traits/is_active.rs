@@ -4,7 +4,7 @@ use tracing::warn;
 
 use crate::db::traits::Status;
 
-use crate::db::{with_connection, DbPool};
+use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::{Token, UserToken};
 

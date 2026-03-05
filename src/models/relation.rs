@@ -179,29 +179,31 @@ fn new_hubuum_object_relation_example() -> NewHubuumObjectRelation {
 #[cfg(test)]
 pub mod tests {
     use hubuumobject_relation::class_relation_id;
+    use rstest::rstest;
 
     use super::*;
     use crate::db::traits::ClassRelation;
     use crate::models::class::tests::create_class;
     use crate::models::object::tests::create_object;
     use crate::models::traits::class_relation;
-    use crate::models::{HubuumClass, HubuumObject, Namespace};
-    use crate::tests::{create_namespace, get_pool_and_config};
+    use crate::models::{HubuumClass, HubuumObject};
+    use crate::tests::{TestContext, TestScope, test_context};
     use crate::traits::{
         CanDelete, CanSave, CanUpdate, ClassAccessors, NamespaceAccessors, SelfAccessors,
     };
 
     pub async fn create_namespace_and_classes(
         suffix: &str,
-    ) -> (Namespace, HubuumClass, HubuumClass) {
-        let (pool, _) = get_pool_and_config().await;
+    ) -> (crate::tests::NamespaceFixture, HubuumClass, HubuumClass) {
+        let scope = TestScope::new();
+        let pool = scope.pool.clone();
 
-        let namespace = create_namespace(&pool, &format!("rel_test_{suffix}"))
-            .await
-            .unwrap();
+        let namespace = scope.namespace_fixture(&format!("rel_test_{suffix}")).await;
 
-        let class1 = create_class(&pool, &namespace, &format!("rel_class1_{suffix}")).await;
-        let class2 = create_class(&pool, &namespace, &format!("rel_class2_{suffix}")).await;
+        let class1 =
+            create_class(&pool, &namespace.namespace, &format!("rel_class1_{suffix}")).await;
+        let class2 =
+            create_class(&pool, &namespace.namespace, &format!("rel_class2_{suffix}")).await;
 
         (namespace, class1, class2)
     }
@@ -282,17 +284,17 @@ pub mod tests {
 
     #[actix_rt::test]
     async fn test_creating_class_relation() {
-        let (pool, _) = get_pool_and_config().await;
+        let pool = TestScope::new().pool;
 
         let (namespace, class1, class2) = create_namespace_and_classes("create_class").await;
         let relation = create_class_relation(&pool, &class1, &class2).await;
-        namespace.delete(&pool).await.unwrap();
+        namespace.cleanup().await.unwrap();
         verify_no_such_class_relation(&pool, relation.id).await;
     }
 
     #[actix_rt::test]
     async fn test_creating_class_relation_with_same_classes() {
-        let (pool, _) = get_pool_and_config().await;
+        let pool = TestScope::new().pool;
 
         let (namespace, class1, _) = create_namespace_and_classes("same_classes").await;
         let relation = NewHubuumClassRelation {
@@ -306,12 +308,12 @@ pub mod tests {
             Ok(_) => panic!("Should not be able to create a relation with the same classes"),
         }
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.cleanup().await.unwrap();
     }
 
     #[actix_rt::test]
     async fn test_creating_class_relation_lowest_id_becomes_from() {
-        let (pool, _) = get_pool_and_config().await;
+        let pool = TestScope::new().pool;
 
         let (namespace, class1, class2) = create_namespace_and_classes("lowest_id").await;
         let relation = create_class_relation(&pool, &class2, &class1).await;
@@ -331,14 +333,14 @@ pub mod tests {
             Ok(_) => panic!("Should not be able to create a relation with the same classes"),
         }
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.cleanup().await.unwrap();
 
         verify_no_such_class_relation(&pool, relation.id).await;
     }
 
     #[actix_rt::test]
     async fn test_deleting_class_relation() {
-        let (pool, _) = get_pool_and_config().await;
+        let pool = TestScope::new().pool;
 
         let (namespace, class1, class2) = create_namespace_and_classes("delete_class").await;
         let relation = create_class_relation(&pool, &class1, &class2).await;
@@ -346,17 +348,17 @@ pub mod tests {
         relation.delete(&pool).await.unwrap();
         verify_no_such_class_relation(&pool, relation.id).await;
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.cleanup().await.unwrap();
     }
 
     #[actix_rt::test]
     async fn test_creating_object_relation() {
         use crate::models::NewHubuumObject;
-        let (pool, _) = get_pool_and_config().await;
+        let pool = TestScope::new().pool;
 
         let (namespace, class1, class2) = create_namespace_and_classes("create_object").await;
 
-        let nid = namespace.id;
+        let nid = namespace.namespace.id;
         let json = serde_json::json!({"test": "data"});
         let object1 = create_object(&pool, class1.id, nid, "o1_create relation", json.clone())
             .await
@@ -383,20 +385,25 @@ pub mod tests {
             .unwrap();
 
         assert_eq!(fetched_relation, object_rel);
-        namespace.delete(&pool).await.unwrap();
+        namespace.cleanup().await.unwrap();
     }
 
     #[actix_rt::test]
     async fn test_creating_object_relation_failure_class_mismatch() {
         use crate::db::traits::{ClassRelation, Relations};
-        let (pool, _) = get_pool_and_config().await;
+        let pool = TestScope::new().pool;
 
         let (namespace, class1, class2) =
             create_namespace_and_classes("create_object_class_mismatch").await;
 
-        let class3 = create_class(&pool, &namespace, "class3_create_object_class_mismatch").await;
+        let class3 = create_class(
+            &pool,
+            &namespace.namespace,
+            "class3_create_object_class_mismatch",
+        )
+        .await;
 
-        let nid = namespace.id;
+        let nid = namespace.namespace.id;
         let json = serde_json::json!({"test": "data"});
         let object1 = create_object(&pool, class1.id, nid, "o1_fail relation", json.clone())
             .await
@@ -422,7 +429,9 @@ pub mod tests {
         match object_rel.save(&pool).await {
             Err(ApiError::BadRequest(_)) => {}
             Err(e) => panic!("Unexpected error: {e:?}"),
-            Ok(_) => panic!("Creating a relation should fail when the classes of objects do not match the relation classes"),
+            Ok(_) => panic!(
+                "Creating a relation should fail when the classes of objects do not match the relation classes"
+            ),
         }
 
         let object_rel = NewHubuumObjectRelation {
@@ -451,16 +460,16 @@ pub mod tests {
             ),
         }
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.cleanup().await.unwrap();
     }
 
     #[actix_rt::test]
     async fn test_deleting_object_relation() {
-        let (pool, _) = get_pool_and_config().await;
+        let pool = TestScope::new().pool;
 
         let (namespace, class1, class2) = create_namespace_and_classes("delete_object").await;
 
-        let nid = namespace.id;
+        let nid = namespace.namespace.id;
         let json = serde_json::json!({"test": "data"});
         let object1 = create_object(&pool, class1.id, nid, "o1_delete relation", json.clone())
             .await
@@ -476,17 +485,17 @@ pub mod tests {
         object_rel.delete(&pool).await.unwrap();
         verify_no_such_object_relation(&pool, object_rel.id).await;
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.cleanup().await.unwrap();
     }
 
     #[actix_rt::test]
     async fn test_deleting_class_relation_cascade() {
-        let (pool, _) = get_pool_and_config().await;
+        let pool = TestScope::new().pool;
 
         let (namespace, class1, class2) =
             create_namespace_and_classes("delete_object_cascade").await;
 
-        let nid = namespace.id;
+        let nid = namespace.namespace.id;
         let json = serde_json::json!({"test": "data"});
         let object1 = create_object(&pool, class1.id, nid, "o1_delete relation", json.clone())
             .await
@@ -502,22 +511,23 @@ pub mod tests {
         class_rel.delete(&pool).await.unwrap();
         verify_no_such_object_relation(&pool, object_rel.id).await;
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.cleanup().await.unwrap();
     }
 
+    #[rstest]
     #[actix_rt::test]
-    async fn test_finding_object_relations() {
+    async fn test_finding_object_relations(#[future(awt)] test_context: TestContext) {
         use crate::db::traits::ObjectRelationsFromUser;
-        use crate::tests::ensure_admin_user;
-        let (pool, _) = get_pool_and_config().await;
+        let context = test_context;
+        let pool = &context.pool;
 
         let (namespace, class1, class2) =
             create_namespace_and_classes("find_object_relations").await;
 
-        let nid = namespace.id;
+        let nid = namespace.namespace.id;
         let json = serde_json::json!({"test": "data"});
         let object1 = create_object(
-            &pool,
+            pool,
             class1.id,
             nid,
             "o1_find_object relation",
@@ -526,7 +536,7 @@ pub mod tests {
         .await
         .unwrap();
         let object2 = create_object(
-            &pool,
+            pool,
             class2.id,
             nid,
             "o2_find_object relation",
@@ -535,12 +545,12 @@ pub mod tests {
         .await
         .unwrap();
 
-        let class_rel = create_class_relation(&pool, &class1, &class2).await;
-        let object_rel = create_object_relation(&pool, &class_rel, &object1, &object2).await;
+        let class_rel = create_class_relation(pool, &class1, &class2).await;
+        let object_rel = create_object_relation(pool, &class_rel, &object1, &object2).await;
 
-        let admin_user = ensure_admin_user(&pool).await;
-        let rels = admin_user
-            .get_related_objects(&pool, &object1, &class2)
+        let rels = context
+            .admin_user
+            .get_related_objects(pool, &object1, &class2)
             .await
             .unwrap();
 
@@ -548,9 +558,9 @@ pub mod tests {
         assert_eq!(rels[0].target_object_id, object2.id);
         assert_eq!(rels[0].path, vec![object1.id, object2.id]);
 
-        class_rel.delete(&pool).await.unwrap();
-        verify_no_such_object_relation(&pool, object_rel.id).await;
+        class_rel.delete(pool).await.unwrap();
+        verify_no_such_object_relation(pool, object_rel.id).await;
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.cleanup().await.unwrap();
     }
 }

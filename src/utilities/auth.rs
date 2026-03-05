@@ -3,11 +3,11 @@ extern crate argon2;
 use crate::models::token::Token;
 
 use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
+    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng},
 };
 
-use rand::{distr::Alphanumeric, rng, RngExt};
+use rand::{RngExt, distr::Alphanumeric, rng};
 use sha2::{Digest, Sha512};
 
 use tracing::debug;

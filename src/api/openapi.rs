@@ -8,13 +8,13 @@ use crate::models::{
     NewNamespaceWithAssignee, NewUser, ObjectsByClass, Permission, Permissions, UpdateGroup,
     UpdateHubuumClass, UpdateHubuumObject, UpdateNamespace, UpdateUser, User, UserToken,
 };
-use crate::pagination::{page_limits_or_defaults, NEXT_CURSOR_HEADER};
+use crate::pagination::{NEXT_CURSOR_HEADER, page_limits_or_defaults};
 use actix_web::{HttpResponse, Responder};
 use serde::Serialize;
+use utoipa::openapi::OpenApi as OpenApiDoc;
 use utoipa::openapi::header::Header;
 use utoipa::openapi::path::{Operation, Parameter, ParameterBuilder, ParameterIn, PathItem};
 use utoipa::openapi::security::{Http, HttpAuthScheme, SecurityScheme};
-use utoipa::openapi::OpenApi as OpenApiDoc;
 use utoipa::openapi::{Object, RefOr, Required, Type};
 use utoipa::{Modify, OpenApi, ToSchema};
 
@@ -426,10 +426,10 @@ fn build_operation_id(method: &str, path: &str) -> String {
     let mut operation_id = String::new();
     for (index, part) in parts.iter().enumerate() {
         let mut normalized = split_identifier_words(part);
-        if index == 0 {
-            if let Some(first) = normalized.first_mut() {
-                *first = first.to_ascii_lowercase();
-            }
+        if index == 0
+            && let Some(first) = normalized.first_mut()
+        {
+            *first = first.to_ascii_lowercase();
         }
         operation_id.push_str(&camel_case(&normalized, index == 0));
     }
@@ -497,8 +497,8 @@ fn capitalize(input: &str) -> String {
 mod tests {
     use super::*;
     use actix_web::{
-        http::{Method, StatusCode},
         App,
+        http::{Method, StatusCode},
     };
     use serde_json::Value;
     use std::collections::{BTreeSet, HashSet};
@@ -595,9 +595,10 @@ mod tests {
 
         assert!(json.pointer("/paths/~1api~1v1~1iam~1users/get").is_some());
         assert!(json.pointer("/paths/~1api~1v1~1iam~1users/post").is_some());
-        assert!(json
-            .pointer("/paths/~1api~1v1~1relations~1objects/post")
-            .is_some());
+        assert!(
+            json.pointer("/paths/~1api~1v1~1relations~1objects/post")
+                .is_some()
+        );
         assert!(
             json.pointer("/components/securitySchemes/bearer_auth/type")
                 .and_then(Value::as_str)
