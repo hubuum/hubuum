@@ -20,6 +20,8 @@ Hubuum can be configured using environment variables or command-line arguments. 
 | `HUBUUM_CLIENT_ALLOWLIST` | `127.0.0.1,::1` | Comma-separated list of allowed client IPs or CIDRs (e.g., `10.0.0.0/24,2001:db8::/32`) |
 | `HUBUUM_TRUST_IP_HEADERS` | `true` | Whether to trust `X-Forwarded-For` and `Forwarded-For` headers for client IP detection |
 
+**Container note**: The default `HUBUUM_CLIENT_ALLOWLIST=127.0.0.1,::1` is loopback-only. In containerized setups, clients commonly arrive from bridge/network IPs, not loopback. For local/dev containers, set `HUBUUM_CLIENT_ALLOWLIST=*`. For production, prefer explicit CIDRs/IP ranges.
+
 ### Database Configuration
 
 | Variable | Default | Description |
@@ -116,6 +118,7 @@ services:
       HUBUUM_BIND_IP: "0.0.0.0"
       HUBUUM_DATABASE_URL: "postgres://hubuum:password@postgres:5432/hubuum"
       HUBUUM_LOG_LEVEL: "info"
+      HUBUUM_CLIENT_ALLOWLIST: "*"
     ports:
       - "8080:8080"
     depends_on:

@@ -57,5 +57,12 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/iam/users
 - To disable Swagger UI in production builds, build without default features (or without `swagger-ui`):
   - `cargo build --no-default-features`
 
+### Container Networking Note
+
+- The default client allowlist is loopback-only (`127.0.0.1,::1`).
+- In containers, inbound clients usually do not appear as loopback, so requests may be rejected unless you set `HUBUUM_CLIENT_ALLOWLIST`.
+- For local/dev container setups, `HUBUUM_CLIENT_ALLOWLIST=*` is common.
+- For production, prefer explicit CIDRs/IPs instead of `*`.
+
 [^1]: Hubuum is probably a loanword from Akkadian.
 [^2]: [JSON schema](https://json-schema.org) is a powerful tool for validating the structure of JSON data. It allows you to define the expected format of your data, including required fields, data types, and constraints on values.
