@@ -126,23 +126,23 @@ where
 
         let raw_sql_prefix = "select id from hubuumclass where";
         let mut raw_sql_clauses: Vec<String> = vec![];
-        let mut bind_varaibles: Vec<SQLValue> = vec![];
+        let mut bind_variables: Vec<SQLValue> = vec![];
 
         for param in json_schema_query_params {
             let clause = param.as_json_sql()?;
             debug!(message = "JSON Schema subquery", stage = "Clause", clause = ?clause);
             raw_sql_clauses.push(clause.sql);
-            bind_varaibles.extend(clause.bind_variables);
+            bind_variables.extend(clause.bind_variables);
         }
 
         let raw_sql = format!("{} {}", raw_sql_prefix, raw_sql_clauses.join(" and "))
             .replace_question_mark_with_indexed_n();
 
-        debug!(message = "JSON Schema subquery", stage = "Complete", raw_sql = ?raw_sql, bind_variables = ?bind_varaibles);
+        debug!(message = "JSON Schema subquery", stage = "Complete", raw_sql = ?raw_sql, bind_variables = ?bind_variables);
 
         let mut query = diesel::sql_query(raw_sql).into_boxed();
 
-        for bind_var in bind_varaibles {
+        for bind_var in bind_variables {
             match bind_var {
                 SQLValue::Integer(i) => query = query.bind::<diesel::sql_types::Integer, _>(i),
                 SQLValue::String(s) => query = query.bind::<diesel::sql_types::Text, _>(s),
@@ -187,23 +187,23 @@ where
 
         let raw_sql_prefix = "select id from hubuumobject where";
         let mut raw_sql_clauses: Vec<String> = vec![];
-        let mut bind_varaibles: Vec<SQLValue> = vec![];
+        let mut bind_variables: Vec<SQLValue> = vec![];
 
         for param in json_data_query_params {
             let clause = param.as_json_sql()?;
             debug!(message = "JSON Data subquery", stage = "Clause", clause = ?clause);
             raw_sql_clauses.push(clause.sql);
-            bind_varaibles.extend(clause.bind_variables);
+            bind_variables.extend(clause.bind_variables);
         }
 
         let raw_sql = format!("{} {}", raw_sql_prefix, raw_sql_clauses.join(" and "))
             .replace_question_mark_with_indexed_n();
 
-        debug!(message = "JSON Data subquery", stage = "Complete", raw_sql = ?raw_sql, bind_variables = ?bind_varaibles);
+        debug!(message = "JSON Data subquery", stage = "Complete", raw_sql = ?raw_sql, bind_variables = ?bind_variables);
 
         let mut query = diesel::sql_query(raw_sql).into_boxed();
 
-        for bind_var in bind_varaibles {
+        for bind_var in bind_variables {
             match bind_var {
                 SQLValue::Integer(i) => query = query.bind::<diesel::sql_types::Integer, _>(i),
                 SQLValue::String(s) => query = query.bind::<diesel::sql_types::Text, _>(s),

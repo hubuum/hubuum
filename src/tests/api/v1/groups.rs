@@ -272,7 +272,8 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let user_groups_before: Vec<Group> = test::read_body_json(resp).await;
         assert_eq!(user_groups_before.len(), 2);
-        let user_group_ids_before: Vec<i32> = user_groups_before.iter().map(|group| group.id).collect();
+        let user_group_ids_before: Vec<i32> =
+            user_groups_before.iter().map(|group| group.id).collect();
         assert!(user_group_ids_before.contains(&first_group.id));
         assert!(user_group_ids_before.contains(&second_group.id));
 
