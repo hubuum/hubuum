@@ -1,7 +1,7 @@
 use diesel::prelude::*;
 use serde::Serialize;
 
-use crate::db::{with_connection, with_transaction, DbPool};
+use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::models::{
     NewPermission, Permission, PermissionFilter, Permissions, PermissionsList, UpdatePermission,

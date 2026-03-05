@@ -1,6 +1,6 @@
 use diesel::prelude::*;
 
-use crate::db::{with_connection, DbPool};
+use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, QueryOptions};
 use crate::models::{Group, GroupID, NewGroup, NewUserGroup, UpdateGroup, User, UserGroup};
@@ -14,7 +14,9 @@ impl LoadGroupRecord for GroupID {
     async fn load_group_record(&self, pool: &DbPool) -> Result<Group, ApiError> {
         use crate::schema::groups::dsl::{groups, id};
 
-        with_connection(pool, |conn| groups.filter(id.eq(self.0)).first::<Group>(conn))
+        with_connection(pool, |conn| {
+            groups.filter(id.eq(self.0)).first::<Group>(conn)
+        })
     }
 }
 
@@ -26,7 +28,9 @@ impl DeleteGroupRecord for GroupID {
     async fn delete_group_record(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::groups::dsl::{groups, id};
 
-        with_connection(pool, |conn| diesel::delete(groups.filter(id.eq(self.0))).execute(conn))
+        with_connection(pool, |conn| {
+            diesel::delete(groups.filter(id.eq(self.0))).execute(conn)
+        })
     }
 }
 
@@ -34,7 +38,9 @@ impl DeleteGroupRecord for Group {
     async fn delete_group_record(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::groups::dsl::{groups, id};
 
-        with_connection(pool, |conn| diesel::delete(groups.filter(id.eq(self.id))).execute(conn))
+        with_connection(pool, |conn| {
+            diesel::delete(groups.filter(id.eq(self.id))).execute(conn)
+        })
     }
 }
 
@@ -130,7 +136,7 @@ impl GroupMembersBackend for Group {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for users",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -210,7 +216,9 @@ impl UserGroupUserLookup for UserGroup {
     async fn load_user_group_user(&self, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::{id, users};
 
-        with_connection(pool, |conn| users.filter(id.eq(self.user_id)).first::<User>(conn))
+        with_connection(pool, |conn| {
+            users.filter(id.eq(self.user_id)).first::<User>(conn)
+        })
     }
 }
 
@@ -222,6 +230,8 @@ impl UserGroupGroupLookup for UserGroup {
     async fn load_user_group_group(&self, pool: &DbPool) -> Result<Group, ApiError> {
         use crate::schema::groups::dsl::{groups, id};
 
-        with_connection(pool, |conn| groups.filter(id.eq(self.group_id)).first::<Group>(conn))
+        with_connection(pool, |conn| {
+            groups.filter(id.eq(self.group_id)).first::<Group>(conn)
+        })
     }
 }

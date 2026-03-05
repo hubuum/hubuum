@@ -1,7 +1,5 @@
 use actix_service::{Service, Transform};
-use actix_web::{
-    error::ErrorForbidden, dev::ServiceRequest, dev::ServiceResponse, Error,
-};
+use actix_web::{Error, dev::ServiceRequest, dev::ServiceResponse, error::ErrorForbidden};
 use futures_util::future::{self, LocalBoxFuture, Ready};
 use std::net::{IpAddr, SocketAddr};
 use std::task::{Context, Poll};

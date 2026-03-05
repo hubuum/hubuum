@@ -166,10 +166,10 @@ impl ValidateObjectRecord for HubuumObject {
     async fn validate_object_record(&self, pool: &DbPool) -> Result<(), ApiError> {
         let class = HubuumClassID(self.hubuum_class_id).class(pool).await?;
 
-        if class.validate_schema {
-            if let Some(ref schema) = class.json_schema {
-                self.validate_object_schema(schema)?;
-            }
+        if class.validate_schema
+            && let Some(ref schema) = class.json_schema
+        {
+            self.validate_object_schema(schema)?;
         }
         Ok(())
     }
@@ -179,10 +179,10 @@ impl ValidateObjectRecord for NewHubuumObject {
     async fn validate_object_record(&self, pool: &DbPool) -> Result<(), ApiError> {
         let class = HubuumClassID(self.hubuum_class_id).class(pool).await?;
 
-        if class.validate_schema {
-            if let Some(ref schema) = class.json_schema {
-                self.validate_object_schema(schema)?;
-            }
+        if class.validate_schema
+            && let Some(ref schema) = class.json_schema
+        {
+            self.validate_object_schema(schema)?;
         }
         Ok(())
     }
@@ -195,10 +195,10 @@ impl ValidateObjectRecord for (&UpdateHubuumObject, i32) {
         let merged = original.merge_update(update_obj);
         let class = HubuumClassID(merged.hubuum_class_id).class(pool).await?;
 
-        if class.validate_schema {
-            if let Some(ref schema) = class.json_schema {
-                merged.validate_object_schema(schema)?;
-            }
+        if class.validate_schema
+            && let Some(ref schema) = class.json_schema
+        {
+            merged.validate_object_schema(schema)?;
         }
         Ok(())
     }

@@ -3,7 +3,7 @@
 
 // A typical use is to combine the output of multiple models into a single response
 
-use crate::models::{Group, HubuumClass, Namespace, Permission};
+use crate::models::{Group, HubuumClass, Permission};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 

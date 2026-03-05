@@ -1,16 +1,8 @@
-use diesel::prelude::*;
-use std::{fmt, fmt::Display, slice};
-
-use tracing::{debug, trace};
-
-use serde::{Deserialize, Serialize};
-
+use crate::db::DbPool;
 use crate::db::traits::relations::{
     DeleteClassRelationRecord, LoadClassRelationRecord, SaveClassRelationRecord,
 };
-use crate::db::traits::GetNamespace;
-use crate::db::DbPool;
-use crate::{errors::ApiError, schema::hubuumclass_relation, schema::hubuumobject_relation};
+use crate::errors::ApiError;
 
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
@@ -19,14 +11,14 @@ use crate::models::{
     HubuumObjectRelationID, Namespace, NewHubuumClassRelation, NewHubuumObjectRelation,
     ObjectClosureView,
 };
-use crate::traits::{
-    ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType,
-    CursorValue, NamespaceAccessors, ObjectAccessors, SelfAccessors,
-};
 use crate::traits::accessors::{
     ClassAdapter, IdAccessor, InstanceAdapter, NamespaceAdapter, ObjectAdapter,
 };
 use crate::traits::crud::{DeleteAdapter, SaveAdapter};
+use crate::traits::{
+    ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+    NamespaceAccessors, ObjectAccessors, SelfAccessors,
+};
 
 impl IdAccessor for HubuumClassRelationID {
     fn accessor_id(&self) -> i32 {
@@ -173,7 +165,10 @@ impl ClassAdapter<(HubuumClass, HubuumClass), (i32, i32)> for NewHubuumClassRela
 }
 
 impl ObjectAdapter<(HubuumObject, HubuumObject), (i32, i32)> for NewHubuumObjectRelation {
-    async fn object_adapter(&self, pool: &DbPool) -> Result<(HubuumObject, HubuumObject), ApiError> {
+    async fn object_adapter(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(HubuumObject, HubuumObject), ApiError> {
         use crate::db::traits::GetObject;
         self.object_from_backend(pool).await
     }
@@ -184,7 +179,10 @@ impl ObjectAdapter<(HubuumObject, HubuumObject), (i32, i32)> for NewHubuumObject
 }
 
 impl ObjectAdapter<(HubuumObject, HubuumObject), (i32, i32)> for HubuumObjectRelationID {
-    async fn object_adapter(&self, pool: &DbPool) -> Result<(HubuumObject, HubuumObject), ApiError> {
+    async fn object_adapter(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(HubuumObject, HubuumObject), ApiError> {
         use crate::db::traits::GetObject;
         self.object_from_backend(pool).await
     }
@@ -195,7 +193,10 @@ impl ObjectAdapter<(HubuumObject, HubuumObject), (i32, i32)> for HubuumObjectRel
 }
 
 impl ObjectAdapter<(HubuumObject, HubuumObject), (i32, i32)> for HubuumObjectRelation {
-    async fn object_adapter(&self, pool: &DbPool) -> Result<(HubuumObject, HubuumObject), ApiError> {
+    async fn object_adapter(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(HubuumObject, HubuumObject), ApiError> {
         use crate::db::traits::GetObject;
         self.object_from_backend(pool).await
     }

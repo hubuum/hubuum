@@ -5,10 +5,10 @@ use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions};
 use crate::models::{
-    user_can_on_any, HubuumClass, HubuumClassRelation, HubuumClassRelationID,
-    HubuumClassRelationTransitive, HubuumObject, HubuumObjectID, HubuumObjectRelation,
-    HubuumObjectRelationID, HubuumObjectTransitiveLink, NewHubuumClassRelation,
-    NewHubuumObjectRelation, User,
+    HubuumClass, HubuumClassRelation, HubuumClassRelationID, HubuumClassRelationTransitive,
+    HubuumObject, HubuumObjectID, HubuumObjectRelation, HubuumObjectRelationID,
+    HubuumObjectTransitiveLink, NewHubuumClassRelation, NewHubuumObjectRelation, User,
+    user_can_on_any,
 };
 use crate::{date_search, numeric_search, string_search, trace_query};
 
@@ -25,7 +25,10 @@ pub trait SelfRelationsBackend {
         pool: &DbPool,
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError>;
 
-    async fn relations_from_backend(&self, pool: &DbPool) -> Result<Vec<HubuumClassRelation>, ApiError>;
+    async fn relations_from_backend(
+        &self,
+        pool: &DbPool,
+    ) -> Result<Vec<HubuumClassRelation>, ApiError>;
 
     async fn search_relations_from_backend(
         &self,
@@ -99,7 +102,7 @@ where
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for class relations",
                         param.field
-                    )))
+                    )));
                 }
             }
         }
@@ -437,7 +440,7 @@ where
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for objects",
                         param.field
-                    )))
+                    )));
                 }
             }
         }

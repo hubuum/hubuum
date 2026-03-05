@@ -6,7 +6,6 @@ use crate::models::group::Group;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     GroupPermission, HubuumClass, HubuumClassExpanded, Namespace, NamespaceID, Permission,
-    Permissions, PermissionsList,
 };
 use crate::traits::{
     BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,

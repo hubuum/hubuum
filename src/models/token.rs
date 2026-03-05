@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::db::traits::user::DeleteTokenRecord;
-use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::schema::tokens;

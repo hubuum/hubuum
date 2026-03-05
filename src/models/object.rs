@@ -8,7 +8,6 @@ use crate::db::traits::object::{
 };
 #[cfg(test)]
 use crate::db::with_connection;
-use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::schema::hubuumobject;
 use crate::traits::BackendContext;
@@ -128,13 +127,12 @@ fn update_hubuum_object_example() -> UpdateHubuumObject {
 
 #[cfg(test)]
 pub mod tests {
-
     use super::*;
-    use crate::models::class::tests::{create_class, verify_no_such_class};
-    use crate::tests::TestScope;
-
+    use crate::db::DbPool;
     use crate::models::class::HubuumClass;
+    use crate::models::class::tests::{create_class, verify_no_such_class};
     use crate::models::namespace::Namespace;
+    use crate::tests::TestScope;
     use crate::traits::{CanDelete, CanSave, SelfAccessors};
 
     #[allow(dead_code)]

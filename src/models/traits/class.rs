@@ -1,22 +1,14 @@
-use diesel::prelude::*;
+use crate::traits::accessors::{ClassAdapter, IdAccessor, InstanceAdapter, NamespaceAdapter};
+use crate::traits::{CanUpdate, ClassAccessors, NamespaceAccessors, PermissionController};
 
-use crate::traits::{
-    CanUpdate, ClassAccessors, NamespaceAccessors, PermissionController, SelfAccessors,
-};
-use crate::traits::accessors::{
-    ClassAdapter, IdAccessor, InstanceAdapter, NamespaceAdapter,
-};
-
+use crate::db::DbPool;
 use crate::db::traits::class::{
     ClassNamespaceLookup, CreateClassRecord, DeleteClassRecord, LoadClassRecord, UpdateClassRecord,
 };
-use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
-use crate::db::DbPool;
 use crate::errors::ApiError;
+use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 
-use crate::models::{
-    HubuumClass, HubuumClassID, Namespace, NewHubuumClass, UpdateHubuumClass,
-};
+use crate::models::{HubuumClass, HubuumClassID, Namespace, NewHubuumClass, UpdateHubuumClass};
 
 impl SaveAdapter for HubuumClass {
     type Output = HubuumClass;

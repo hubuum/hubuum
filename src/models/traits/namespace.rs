@@ -1,25 +1,20 @@
+use crate::db::DbPool;
 use crate::db::traits::namespace::{
     DeleteNamespaceRecord, SaveNamespaceForGroupRecord, SaveNamespaceWithAssigneeRecord,
     UpdateNamespaceRecord,
 };
-use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::group::GroupID;
 use crate::models::namespace::{
     Namespace, NamespaceID, NewNamespace, NewNamespaceWithAssignee, UpdateNamespace,
 };
-use crate::models::permissions::{NewPermission, Permission, Permissions, PermissionsList};
 use crate::models::search::{FilterField, SortParam};
-use crate::models::traits::GroupAccessors;
-use crate::models::user::User;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter, NamespaceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 use crate::traits::{
     BackendContext, CanUpdate, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType,
-    NamespaceAccessors, PermissionController, SelfAccessors,
+    NamespaceAccessors, PermissionController,
 };
-use diesel::prelude::*;
-use tracing::debug;
 
 impl SaveAdapter for Namespace {
     type Output = Namespace;

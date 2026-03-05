@@ -1,10 +1,10 @@
 pub mod traits;
 
+use diesel::Connection;
 use diesel::PgConnection;
 use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
 use diesel::r2d2::PooledConnection;
-use diesel::Connection;
 
 use std::time::Duration;
 use tracing::{debug, error, warn};

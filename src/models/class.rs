@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::db::traits::class::total_class_count_from_backend;
-use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::schema::hubuumclass;
 use crate::traits::BackendContext;
@@ -100,6 +99,7 @@ fn update_hubuum_class_example() -> UpdateHubuumClass {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::db::DbPool;
     use crate::models::class::HubuumClass;
     use crate::models::namespace::Namespace;
     use crate::tests::TestScope;

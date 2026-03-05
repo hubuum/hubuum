@@ -16,7 +16,7 @@ use diesel::prelude::*;
 #[cfg(test)]
 use rstest::fixture;
 
-use crate::config::{get_config, AppConfig};
+use crate::config::{AppConfig, get_config};
 use crate::db::DbPool;
 use crate::db::{init_pool, with_connection};
 use crate::errors::ApiError;

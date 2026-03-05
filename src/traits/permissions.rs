@@ -54,12 +54,16 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// if (hubuum_class_or_classid.user_can(backend, userid, ClassPermissions::ReadClass).await?) {
     ///     // Do something
     /// }
-    async fn user_can<U: SelfAccessors<User> + GroupAccessors + GroupMemberships>(
+    async fn user_can<C, U>(
         &self,
-        backend: &impl BackendContext,
+        backend: &C,
         user: U,
         permission: Permissions,
-    ) -> Result<bool, ApiError> {
+    ) -> Result<bool, ApiError>
+    where
+        C: BackendContext + ?Sized,
+        U: SelfAccessors<User> + GroupAccessors + GroupMemberships,
+    {
         self.user_can_all(backend, user, vec![permission]).await
     }
 
@@ -109,12 +113,16 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// if (hubuum_class_or_classid.user_can(backend, userid, ClassPermissions::ReadClass).await?) {
     ///     // Do something
     /// }
-    async fn user_can_all<U: SelfAccessors<User> + GroupAccessors + GroupMemberships>(
+    async fn user_can_all<C, U>(
         &self,
-        backend: &impl BackendContext,
+        backend: &C,
         user: U,
         permission: Vec<Permissions>,
-    ) -> Result<bool, ApiError> {
+    ) -> Result<bool, ApiError>
+    where
+        C: BackendContext + ?Sized,
+        U: SelfAccessors<User> + GroupAccessors + GroupMemberships,
+    {
         self.user_can_all_from_backend(backend.db_pool(), user, permission)
             .await
     }
@@ -136,12 +144,15 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// ## Returns
     ///
     /// The permission object that holds the permissions for the group.
-    async fn grant(
+    async fn grant<C>(
         &self,
-        backend: &impl BackendContext,
+        backend: &C,
         group_id_for_grant: i32,
         permission_list: PermissionsList<Permissions>,
-    ) -> Result<Permission, ApiError> {
+    ) -> Result<Permission, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
         self.apply_permissions(backend, group_id_for_grant, permission_list, false)
             .await
     }
@@ -150,13 +161,16 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     ///
     /// - When `replace_existing` is false, no permissions are removed from the group.
     /// - When `replace_existing` is true, any existing permissions are cleared first.
-    async fn apply_permissions(
+    async fn apply_permissions<C>(
         &self,
-        backend: &impl BackendContext,
+        backend: &C,
         group_id_for_grant: i32,
         permission_list: PermissionsList<Permissions>,
         replace_existing: bool,
-    ) -> Result<Permission, ApiError> {
+    ) -> Result<Permission, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
         self.apply_permissions_from_backend(
             backend.db_pool(),
             group_id_for_grant,
@@ -185,12 +199,15 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     ///
     /// The permission object that holds the permissions for the group. If the group
     /// did not have any permissions, an ApiError::NotFound is returned.
-    async fn revoke(
+    async fn revoke<C>(
         &self,
-        backend: &impl BackendContext,
+        backend: &C,
         group_id_for_revoke: i32,
         permission_list: PermissionsList<Permissions>,
-    ) -> Result<Permission, ApiError> {
+    ) -> Result<Permission, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
         self.revoke_permissions_from_backend(
             backend.db_pool(),
             group_id_for_revoke,
@@ -219,12 +236,15 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// ## Returns
     ///
     /// The permission object that holds the permissions for the group.
-    async fn grant_one(
+    async fn grant_one<C>(
         &self,
-        backend: &impl BackendContext,
+        backend: &C,
         group_identifier: i32,
         permission: Permissions,
-    ) -> Result<Permission, ApiError> {
+    ) -> Result<Permission, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
         self.grant(
             backend,
             group_identifier,
@@ -252,12 +272,15 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     ///
     /// The permission object that holds the permissions for the group. If the group
     /// did not have the permission, an ApiError::NotFound is returned.
-    async fn revoke_one(
+    async fn revoke_one<C>(
         &self,
-        backend: &impl BackendContext,
+        backend: &C,
         group_identifier: i32,
         permission: Permissions,
-    ) -> Result<Permission, ApiError> {
+    ) -> Result<Permission, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
         self.revoke(
             backend,
             group_identifier,
@@ -284,12 +307,15 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// ## Returns
     ///
     /// The permission object that holds the permissions for the group.
-    async fn set_permissions(
+    async fn set_permissions<C>(
         &self,
-        backend: &impl BackendContext,
+        backend: &C,
         group_identifier: i32,
         permission_list: PermissionsList<Permissions>,
-    ) -> Result<Permission, ApiError> {
+    ) -> Result<Permission, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
         self.apply_permissions(backend, group_identifier, permission_list, true)
             .await
     }
@@ -308,11 +334,10 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// ## Returns
     ///
     /// An empty result.
-    async fn revoke_all(
-        &self,
-        backend: &impl BackendContext,
-        group_id_for_revoke: i32,
-    ) -> Result<(), ApiError> {
+    async fn revoke_all<C>(&self, backend: &C, group_id_for_revoke: i32) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
         self.revoke_all_from_backend(backend.db_pool(), group_id_for_revoke)
             .await
     }

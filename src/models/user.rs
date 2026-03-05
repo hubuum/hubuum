@@ -2,15 +2,11 @@ use crate::db::traits::user::{
     CreateUserRecord, DeleteUserRecord, OwnedUserTokenRecord, StoreUserTokenRecord,
     UpdateUserRecord,
 };
-use crate::models::group::Group;
 use crate::models::token::{Token, UserToken};
-use crate::models::user_group::UserGroup;
 use crate::schema::users;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
-
-use crate::db::DbPool;
 
 use crate::errors::ApiError;
 use crate::traits::BackendContext;

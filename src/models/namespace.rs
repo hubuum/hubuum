@@ -7,8 +7,6 @@ use crate::db::traits::namespace as namespace_backend;
 use crate::models::group::Group;
 use crate::models::user::{User, UserID};
 
-use crate::db::DbPool;
-
 use crate::schema::namespaces;
 
 use crate::errors::ApiError;
@@ -100,11 +98,15 @@ where
 /// * Ok(Vec(Group, NamespacePermissions)) - List of groups and their permissions
 /// * Err(ApiError) - On query errors only.
 #[allow(dead_code)]
-pub async fn user_on<T: NamespaceAccessors>(
-    backend: &impl BackendContext,
+pub async fn user_on<C, T>(
+    backend: &C,
     user_id: UserID,
     namespace_ref: T,
-) -> Result<Vec<GroupPermission>, ApiError> {
+) -> Result<Vec<GroupPermission>, ApiError>
+where
+    C: BackendContext + ?Sized,
+    T: NamespaceAccessors,
+{
     namespace_backend::user_on_from_backend(backend.db_pool(), user_id, namespace_ref).await
 }
 
@@ -283,10 +285,11 @@ mod tests {
     use std::vec;
 
     use super::*;
+    use crate::db::DbPool;
     use crate::models::group::NewGroup;
     use crate::models::permissions::PermissionsList;
     use crate::tests::{TestScope, generate_all_subsets};
-    use crate::traits::{CanDelete, PermissionController};
+    use crate::traits::PermissionController;
 
     async fn assign_to_groups(
         pool: &DbPool,

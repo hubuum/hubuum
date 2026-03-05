@@ -11,6 +11,7 @@ pub mod user;
 #[allow(unused_imports)]
 pub use user::UserPermissions;
 
+use super::{DbPool, with_connection};
 use crate::db::traits::relations::{ObjectRelationMembershipsBackend, SelfRelationsBackend};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions};
@@ -19,7 +20,6 @@ use crate::models::{
     HubuumObjectRelation, HubuumObjectTransitiveLink, Namespace, User, UserToken,
 };
 use crate::traits::{GroupAccessors, SelfAccessors};
-use super::{with_connection, DbPool};
 
 /// Trait for checking if a structure is valid/active/etc in the database.
 ///
@@ -186,7 +186,8 @@ where
         pool: &DbPool,
         query_options: &QueryOptions,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
-        self.search_relations_from_backend(pool, query_options).await
+        self.search_relations_from_backend(pool, query_options)
+            .await
     }
 }
 

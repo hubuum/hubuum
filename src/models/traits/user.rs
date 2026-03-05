@@ -1,38 +1,22 @@
-use argon2::password_hash::rand_core::le;
-use diesel::dsl::Filter;
-use diesel::query_builder;
-use diesel::sql_types::Integer;
-use diesel::{ExpressionMethods, JoinOnDsl, QueryDsl, RunQueryDsl, Table, pg::Pg};
-
 use std::iter::IntoIterator;
 
-use futures::future::try_join_all;
-use tracing::debug;
-
-use crate::api::v1::handlers::namespaces;
-use crate::models::search::{
-    FilterField, ParsedQueryParam, QueryOptions, QueryParamsExt, SearchOperator, SortParam,
-};
-use crate::models::traits::ExpandNamespaceFromMap;
+use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, SortParam};
 use crate::models::{
-    ClassClosureView, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
-    HubuumObjectRelation, HubuumObjectWithPath, Namespace, ObjectClosureView, Permission,
-    Permissions, User, UserID, class, group, permissions,
+    Group, HubuumClassExpanded, HubuumClassRelation, HubuumObject, HubuumObjectRelation, Namespace,
+    ObjectClosureView, Permissions, User, UserID,
 };
 
-use crate::schema::hubuumclass::namespace_id;
-use crate::schema::{hubuumclass, hubuumobject};
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{
     BackendContext, ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping,
-    CursorSqlType, CursorValue, NamespaceAccessors, SelfAccessors,
+    CursorSqlType, CursorValue, SelfAccessors,
 };
 
+use crate::db::DbPool;
 use crate::db::traits::user::{
     LoadPermittedNamespaces, LoadUserGroups, LoadUserGroupsPaginated, LoadUserRecord,
     QueryJsonDataIds, QueryJsonSchemaIds, UserSearchBackend,
 };
-use crate::db::DbPool;
 use crate::errors::ApiError;
 
 /// Search resources that are visible to a user.
@@ -324,10 +308,7 @@ mod test {
 
     use super::*;
     use crate::models::{GroupID, NewHubuumClass, Permissions, PermissionsList};
-    use crate::tests::{
-        TestContext, create_test_group, create_test_user, ensure_admin_group, ensure_admin_user,
-        test_context,
-    };
+    use crate::tests::{TestContext, create_test_group, create_test_user, test_context};
     use crate::traits::PermissionController;
     use crate::traits::{CanDelete, CanSave};
     use crate::{assert_contains, assert_not_contains};

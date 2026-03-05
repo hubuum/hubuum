@@ -1,8 +1,8 @@
 use crate::db::traits::group::{
     DeleteUserGroupRecord, SaveUserGroupRecord, UserGroupGroupLookup, UserGroupUserLookup,
 };
+use crate::models::group::Group;
 use crate::models::user::User;
-use crate::{models::group::Group, traits::CanSave};
 
 use crate::errors::ApiError;
 use crate::schema::user_groups;

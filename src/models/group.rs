@@ -16,7 +16,7 @@ use utoipa::ToSchema;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{
     BackendContext, CanSave, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType,
-    CursorValue, SelfAccessors,
+    CursorValue,
 };
 
 use crate::db::DbPool;

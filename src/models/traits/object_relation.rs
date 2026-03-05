@@ -1,17 +1,14 @@
-use diesel::prelude::*;
-
+use crate::db::DbPool;
 use crate::db::traits::relations::{
     DeleteObjectRelationRecord, LoadObjectRelationRecord, SaveObjectRelationRecord,
 };
-use crate::db::DbPool;
 
 use crate::errors::ApiError;
 
 use crate::models::{
-    HubuumClassRelationID, HubuumObject, HubuumObjectID, HubuumObjectRelation,
-    HubuumObjectRelationID, HubuumObjectWithPath, NewHubuumObjectRelation, ObjectClosureView,
+    HubuumObject, HubuumObjectRelation, HubuumObjectRelationID, HubuumObjectWithPath,
+    NewHubuumObjectRelation, ObjectClosureView,
 };
-use crate::traits::SelfAccessors;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter};
 

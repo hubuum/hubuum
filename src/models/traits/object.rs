@@ -1,24 +1,21 @@
+use crate::db::DbPool;
 use crate::db::traits::object::{
     DeleteObjectRecord, LoadObjectRecord, ObjectClassLookup, ObjectNamespaceLookup,
     SaveObjectRecord, UpdateObjectRecord, ValidateObjectRecord, ValidateObjectSchema,
 };
-use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::models::traits::GroupAccessors;
 
 use crate::models::class::HubuumClass;
 use crate::models::namespace::Namespace;
 use crate::models::object::{
     HubuumObject, HubuumObjectID, HubuumObjectWithPath, NewHubuumObject, UpdateHubuumObject,
 };
-use crate::models::permissions::{NewPermission, Permission, Permissions, PermissionsList};
 use crate::models::search::{FilterField, SortParam};
-use crate::models::user::User;
 use crate::traits::accessors::{ClassAdapter, IdAccessor, InstanceAdapter, NamespaceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 use crate::traits::{
     BackendContext, ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping,
-    CursorSqlType, CursorValue, NamespaceAccessors, PermissionController, SelfAccessors, Validate,
+    CursorSqlType, CursorValue, NamespaceAccessors, PermissionController, Validate,
     ValidateAgainstSchema,
 };
 
