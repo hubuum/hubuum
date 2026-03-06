@@ -89,6 +89,8 @@ impl fmt::Display for ApiError {
             ApiError::OperatorMismatch(message) => write!(f, "{message}"),
             ApiError::InvalidIntegerRange(message) => write!(f, "{message}"),
             ApiError::ValidationError(message) => write!(f, "{message}"),
+            ApiError::NotAcceptable(message) => write!(f, "{message}"),
+            ApiError::PayloadTooLarge(message) => write!(f, "{message}"),
         }
     }
 }
