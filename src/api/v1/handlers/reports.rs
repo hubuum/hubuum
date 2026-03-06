@@ -10,16 +10,19 @@ use serde_json::json;
 use tracing::{debug, info, warn};
 
 use crate::api::openapi::ApiErrorResponse;
+use crate::can;
+use crate::db::traits::UserPermissions;
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::{parse_query_parameter, FilterField, ParsedQueryParam, QueryOptions};
 use crate::models::{
-    HubuumClassID, HubuumObjectID, ReportContentType, ReportJsonResponse, ReportMeta,
-    ReportMissingDataPolicy, ReportRequest, ReportScope, ReportScopeKind, ReportWarning,
+    HubuumClassID, HubuumObjectID, NamespaceID, Permissions, ReportContentType, ReportJsonResponse,
+    ReportMeta, ReportMissingDataPolicy, ReportRequest, ReportScope, ReportScopeKind,
+    ReportTemplate, ReportTemplateID, ReportWarning,
 };
 use crate::pagination::page_limits_or_defaults;
-use crate::traits::Search;
+use crate::traits::{NamespaceAccessors, Search, SelfAccessors};
 use crate::utilities::reporting::render_template;
 use crate::utilities::response::json_response_with_header;
 
@@ -33,6 +36,7 @@ struct ReportRuntime {
     report: ReportRequest,
     content_type: ReportContentType,
     missing_data_policy: ReportMissingDataPolicy,
+    template: Option<ReportTemplate>,
 }
 
 struct ReportExecution {
@@ -50,7 +54,7 @@ struct ReportExecution {
     responses(
         (
             status = 200,
-            description = "Rendered report output. The response format depends on `output.content_type` or the `Accept` header.",
+            description = "Rendered report output. JSON is returned by default. Text outputs require `output.template_id`.",
             content(
                 (ReportJsonResponse = "application/json"),
                 (String = "text/plain"),
@@ -82,7 +86,7 @@ pub async fn run_report(
         query = report.query
     );
 
-    let runtime = prepare_report_runtime(&req, report)?;
+    let runtime = prepare_report_runtime(&pool, &req, &user, report).await?;
     let scope = runtime.report.scope.kind;
     let content_type = runtime.content_type;
 
@@ -143,16 +147,52 @@ pub async fn run_report(
     response
 }
 
-fn prepare_report_runtime(req: &HttpRequest, report: ReportRequest) -> Result<ReportRuntime, ApiError> {
+async fn prepare_report_runtime(
+    pool: &DbPool,
+    req: &HttpRequest,
+    user: &crate::models::User,
+    report: ReportRequest,
+) -> Result<ReportRuntime, ApiError> {
     report.scope.validate()?;
 
+    let template = resolve_template(pool, user, &report).await?;
+    let content_type = resolve_content_type(req, template.as_ref())?;
+
+    if template.is_none() && content_type != ReportContentType::ApplicationJson {
+        return Err(ApiError::BadRequest(format!(
+            "Output type '{}' requires output.template_id",
+            content_type.as_mime()
+        )));
+    }
+
     Ok(ReportRuntime {
-        content_type: resolve_content_type(req, report.output.as_ref())?,
+        content_type,
         missing_data_policy: report
             .missing_data_policy
             .unwrap_or(ReportMissingDataPolicy::Strict),
+        template,
         report,
     })
+}
+
+async fn resolve_template(
+    pool: &DbPool,
+    user: &crate::models::User,
+    report: &ReportRequest,
+) -> Result<Option<ReportTemplate>, ApiError> {
+    let Some(template_id) = report.output.as_ref().and_then(|output| output.template_id) else {
+        return Ok(None);
+    };
+
+    let template = ReportTemplateID(template_id).instance(pool).await?;
+    can!(
+        pool,
+        user.clone(),
+        [Permissions::ReadTemplate],
+        NamespaceID(template.namespace_id)
+    );
+
+    Ok(Some(template))
 }
 
 async fn build_report_execution(
@@ -204,7 +244,7 @@ fn render_json_report(
     report: ReportRequest,
     execution: ReportExecution,
 ) -> Result<HttpResponse, ApiError> {
-    ensure_json_output_has_no_template(&report)?;
+    ensure_json_output_has_no_template_id(&report)?;
     let warning_count = warning_count(&execution);
     let truncated = execution.meta.truncated;
 
@@ -227,10 +267,10 @@ fn render_text_report(
     runtime: ReportRuntime,
     execution: ReportExecution,
 ) -> Result<HttpResponse, ApiError> {
-    let template = required_template(&runtime.report, runtime.content_type)?;
+    let template = required_template(&runtime, runtime.content_type)?;
     let context = report_template_context(&runtime.report, &execution);
     let (rendered, template_warnings) = render_template(
-        template,
+        template.template.as_str(),
         &context,
         runtime.content_type,
         runtime.missing_data_policy,
@@ -248,15 +288,15 @@ fn render_text_report(
     Ok(response.body(rendered))
 }
 
-fn ensure_json_output_has_no_template(report: &ReportRequest) -> Result<(), ApiError> {
+fn ensure_json_output_has_no_template_id(report: &ReportRequest) -> Result<(), ApiError> {
     if report
         .output
         .as_ref()
-        .and_then(|output| output.template.as_ref())
+        .and_then(|output| output.template_id)
         .is_some()
     {
         return Err(ApiError::BadRequest(
-            "Templates are only supported for text/plain, text/html, and text/csv output"
+            "Template references are only supported for text/plain, text/html, and text/csv output"
                 .to_string(),
         ));
     }
@@ -265,22 +305,21 @@ fn ensure_json_output_has_no_template(report: &ReportRequest) -> Result<(), ApiE
 }
 
 fn required_template(
-    report: &ReportRequest,
+    runtime: &ReportRuntime,
     content_type: ReportContentType,
-) -> Result<&str, ApiError> {
-    report
-        .output
-        .as_ref()
-        .and_then(|output| output.template.as_deref())
-        .ok_or_else(|| {
-            ApiError::BadRequest(format!(
-                "Output type '{}' requires a template",
-                content_type.as_mime()
-            ))
-        })
+) -> Result<&ReportTemplate, ApiError> {
+    runtime.template.as_ref().ok_or_else(|| {
+        ApiError::BadRequest(format!(
+            "Output type '{}' requires output.template_id",
+            content_type.as_mime()
+        ))
+    })
 }
 
-fn report_template_context(report: &ReportRequest, execution: &ReportExecution) -> serde_json::Value {
+fn report_template_context(
+    report: &ReportRequest,
+    execution: &ReportExecution,
+) -> serde_json::Value {
     json!({
         "items": &execution.items,
         "meta": &execution.meta,
@@ -295,10 +334,11 @@ fn warning_count(execution: &ReportExecution) -> usize {
 
 fn resolve_content_type(
     req: &HttpRequest,
-    output: Option<&crate::models::ReportOutputRequest>,
+    template: Option<&ReportTemplate>,
 ) -> Result<ReportContentType, ApiError> {
-    if let Some(content_type) = output.and_then(|output| output.content_type) {
-        return Ok(content_type);
+    if let Some(template) = template {
+        enforce_accept_matches_template(req, template.content_type)?;
+        return Ok(template.content_type);
     }
 
     let accept = req
@@ -317,18 +357,51 @@ fn resolve_content_type(
         ReportContentType::TextHtml,
         ReportContentType::TextCsv,
     ] {
-        if accept.contains(content_type.as_mime()) {
+        if accept_allows_content_type(&accept, content_type) {
             return Ok(content_type);
         }
-    }
-
-    if accept.contains("*/*") {
-        return Ok(ReportContentType::ApplicationJson);
     }
 
     Err(ApiError::NotAcceptable(
         "No supported report representation matched the Accept header".to_string(),
     ))
+}
+
+fn enforce_accept_matches_template(
+    req: &HttpRequest,
+    template_content_type: ReportContentType,
+) -> Result<(), ApiError> {
+    let accept = req
+        .headers()
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_ascii_lowercase());
+
+    if let Some(accept) = accept {
+        if !accept_allows_content_type(&accept, template_content_type) {
+            return Err(ApiError::NotAcceptable(format!(
+                "Accept header does not allow template output type '{}'",
+                template_content_type.as_mime()
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn accept_allows_content_type(accept: &str, content_type: ReportContentType) -> bool {
+    if accept.contains("*/*") {
+        return true;
+    }
+
+    match content_type {
+        ReportContentType::ApplicationJson => {
+            accept.contains("application/json") || accept.contains("application/*")
+        }
+        ReportContentType::TextPlain | ReportContentType::TextHtml | ReportContentType::TextCsv => {
+            accept.contains(content_type.as_mime()) || accept.contains("text/*")
+        }
+    }
 }
 
 fn prepare_query_options(report: &ReportRequest) -> Result<QueryOptions, ApiError> {
