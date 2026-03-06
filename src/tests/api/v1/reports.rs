@@ -1,18 +1,16 @@
 #[cfg(test)]
 mod tests {
     use actix_web::{
-        App,
         http::{StatusCode, header},
         test,
     };
 
-    use crate::api as prod_api;
-    use crate::middlewares::tracing::TracingMiddleware;
     use crate::models::{
         HubuumClass, NewHubuumObject, NewReportTemplate, ReportContentType, ReportJsonResponse,
         ReportRequest, ReportScope, ReportScopeKind,
     };
     use crate::tests::api::v1::classes::tests::{cleanup, create_test_classes};
+    use crate::tests::api_operations::post_request_with_headers;
     use crate::tests::asserts::assert_response_status;
     use crate::tests::{TestContext, test_context};
     use crate::traits::CanSave;
@@ -93,21 +91,14 @@ mod tests {
             limits: None,
         };
 
-        let app = test::init_service(
-            App::new()
-                .wrap(TracingMiddleware)
-                .app_data(context.pool.clone())
-                .configure(prod_api::config),
+        let resp = post_request_with_headers(
+            &pool,
+            admin_token,
+            REPORTS_ENDPOINT,
+            &body,
+            vec![(header::ACCEPT, "application/json".to_string())],
         )
         .await;
-
-        let resp = test::TestRequest::post()
-            .insert_header((header::AUTHORIZATION, format!("Bearer {admin_token}")))
-            .insert_header((header::ACCEPT, "application/json"))
-            .uri(REPORTS_ENDPOINT)
-            .set_json(&body)
-            .send_request(&app)
-            .await;
 
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let headers = resp.headers().clone();
@@ -162,20 +153,8 @@ mod tests {
             }
         });
 
-        let app = test::init_service(
-            App::new()
-                .wrap(TracingMiddleware)
-                .app_data(context.pool.clone())
-                .configure(prod_api::config),
-        )
-        .await;
-
-        let resp = test::TestRequest::post()
-            .insert_header((header::AUTHORIZATION, format!("Bearer {admin_token}")))
-            .uri(REPORTS_ENDPOINT)
-            .set_json(&body)
-            .send_request(&app)
-            .await;
+        let resp =
+            post_request_with_headers(&pool, admin_token, REPORTS_ENDPOINT, &body, vec![]).await;
 
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let headers = resp.headers().clone();
@@ -215,20 +194,8 @@ mod tests {
             }
         });
 
-        let app = test::init_service(
-            App::new()
-                .wrap(TracingMiddleware)
-                .app_data(context.pool.clone())
-                .configure(prod_api::config),
-        )
-        .await;
-
-        let resp = test::TestRequest::post()
-            .insert_header((header::AUTHORIZATION, format!("Bearer {admin_token}")))
-            .uri(REPORTS_ENDPOINT)
-            .set_json(&body)
-            .send_request(&app)
-            .await;
+        let resp =
+            post_request_with_headers(&pool, admin_token, REPORTS_ENDPOINT, &body, vec![]).await;
 
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
         cleanup(&classes).await;
@@ -249,21 +216,14 @@ mod tests {
             }
         });
 
-        let app = test::init_service(
-            App::new()
-                .wrap(TracingMiddleware)
-                .app_data(context.pool.clone())
-                .configure(prod_api::config),
+        let resp = post_request_with_headers(
+            &pool,
+            admin_token,
+            REPORTS_ENDPOINT,
+            &body,
+            vec![(header::ACCEPT, "text/plain".to_string())],
         )
         .await;
-
-        let resp = test::TestRequest::post()
-            .insert_header((header::AUTHORIZATION, format!("Bearer {admin_token}")))
-            .insert_header((header::ACCEPT, "text/plain"))
-            .uri(REPORTS_ENDPOINT)
-            .set_json(&body)
-            .send_request(&app)
-            .await;
 
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
     }
@@ -296,21 +256,14 @@ mod tests {
             }
         });
 
-        let app = test::init_service(
-            App::new()
-                .wrap(TracingMiddleware)
-                .app_data(context.pool.clone())
-                .configure(prod_api::config),
+        let resp = post_request_with_headers(
+            pool,
+            admin_token,
+            REPORTS_ENDPOINT,
+            body,
+            vec![(header::ACCEPT, "text/html".to_string())],
         )
         .await;
-
-        let resp = test::TestRequest::post()
-            .insert_header((header::AUTHORIZATION, format!("Bearer {admin_token}")))
-            .insert_header((header::ACCEPT, "text/html"))
-            .uri(REPORTS_ENDPOINT)
-            .set_json(&body)
-            .send_request(&app)
-            .await;
 
         assert_response_status(resp, StatusCode::NOT_ACCEPTABLE).await;
         cleanup(&classes).await;
@@ -342,20 +295,8 @@ mod tests {
             }
         });
 
-        let app = test::init_service(
-            App::new()
-                .wrap(TracingMiddleware)
-                .app_data(context.pool.clone())
-                .configure(prod_api::config),
-        )
-        .await;
-
-        let resp = test::TestRequest::post()
-            .insert_header((header::AUTHORIZATION, format!("Bearer {normal_token}")))
-            .uri(REPORTS_ENDPOINT)
-            .set_json(&body)
-            .send_request(&app)
-            .await;
+        let resp =
+            post_request_with_headers(pool, normal_token, REPORTS_ENDPOINT, body, vec![]).await;
 
         assert_response_status(resp, StatusCode::FORBIDDEN).await;
         cleanup(&classes).await;
@@ -377,20 +318,8 @@ mod tests {
             }
         });
 
-        let app = test::init_service(
-            App::new()
-                .wrap(TracingMiddleware)
-                .app_data(context.pool.clone())
-                .configure(prod_api::config),
-        )
-        .await;
-
-        let resp = test::TestRequest::post()
-            .insert_header((header::AUTHORIZATION, format!("Bearer {admin_token}")))
-            .uri(REPORTS_ENDPOINT)
-            .set_json(&body)
-            .send_request(&app)
-            .await;
+        let resp =
+            post_request_with_headers(pool, admin_token, REPORTS_ENDPOINT, body, vec![]).await;
 
         assert_response_status(resp, StatusCode::NOT_FOUND).await;
     }
@@ -422,21 +351,14 @@ mod tests {
             }
         });
 
-        let app = test::init_service(
-            App::new()
-                .wrap(TracingMiddleware)
-                .app_data(context.pool.clone())
-                .configure(prod_api::config),
+        let resp = post_request_with_headers(
+            pool,
+            admin_token,
+            REPORTS_ENDPOINT,
+            body,
+            vec![(header::ACCEPT, "application/json".to_string())],
         )
         .await;
-
-        let resp = test::TestRequest::post()
-            .insert_header((header::AUTHORIZATION, format!("Bearer {admin_token}")))
-            .insert_header((header::ACCEPT, "application/json"))
-            .uri(REPORTS_ENDPOINT)
-            .set_json(&body)
-            .send_request(&app)
-            .await;
 
         assert_response_status(resp, StatusCode::NOT_ACCEPTABLE).await;
         cleanup(&classes).await;
@@ -474,21 +396,14 @@ mod tests {
             }
         });
 
-        let app = test::init_service(
-            App::new()
-                .wrap(TracingMiddleware)
-                .app_data(context.pool.clone())
-                .configure(prod_api::config),
+        let resp = post_request_with_headers(
+            pool,
+            admin_token,
+            REPORTS_ENDPOINT,
+            body,
+            vec![(header::ACCEPT, "text/html".to_string())],
         )
         .await;
-
-        let resp = test::TestRequest::post()
-            .insert_header((header::AUTHORIZATION, format!("Bearer {admin_token}")))
-            .insert_header((header::ACCEPT, "text/html"))
-            .uri(REPORTS_ENDPOINT)
-            .set_json(&body)
-            .send_request(&app)
-            .await;
 
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let headers = resp.headers().clone();
@@ -543,21 +458,14 @@ mod tests {
             }
         });
 
-        let app = test::init_service(
-            App::new()
-                .wrap(TracingMiddleware)
-                .app_data(context.pool.clone())
-                .configure(prod_api::config),
+        let resp = post_request_with_headers(
+            pool,
+            admin_token,
+            REPORTS_ENDPOINT,
+            body,
+            vec![(header::ACCEPT, "text/csv".to_string())],
         )
         .await;
-
-        let resp = test::TestRequest::post()
-            .insert_header((header::AUTHORIZATION, format!("Bearer {admin_token}")))
-            .insert_header((header::ACCEPT, "text/csv"))
-            .uri(REPORTS_ENDPOINT)
-            .set_json(&body)
-            .send_request(&app)
-            .await;
 
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let headers = resp.headers().clone();
