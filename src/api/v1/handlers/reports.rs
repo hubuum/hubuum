@@ -369,10 +369,9 @@ fn extract_quality_value(entry: &str) -> f32 {
         if let Some(value) = param
             .strip_prefix("q=")
             .or_else(|| param.strip_prefix("q ="))
+            .and_then(|v| v.trim().parse::<f32>().ok())
         {
-            if let Ok(q) = value.trim().parse::<f32>() {
-                return q;
-            }
+            return value;
         }
     }
     // Default quality is 1.0 per HTTP spec
