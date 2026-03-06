@@ -147,6 +147,10 @@ impl CanSave for NewNamespaceWithAssignee {
                 has_read_object_relation: true,
                 has_update_object_relation: true,
                 has_delete_object_relation: true,
+                has_read_template: true,
+                has_create_template: true,
+                has_update_template: true,
+                has_delete_template: true,
             };
 
             diesel::insert_into(crate::schema::permissions::table)
@@ -263,6 +267,10 @@ impl NewNamespace {
                 has_read_object_relation: true,
                 has_update_object_relation: true,
                 has_delete_object_relation: true,
+                has_read_template: true,
+                has_create_template: true,
+                has_update_template: true,
+                has_delete_template: true,
             };
 
             diesel::insert_into(permissions)
@@ -310,6 +318,10 @@ impl NewNamespace {
                 has_read_object_relation: true,
                 has_update_object_relation: true,
                 has_delete_object_relation: true,
+                has_read_template: true,
+                has_create_template: true,
+                has_update_template: true,
+                has_delete_template: true,
             };
 
             diesel::insert_into(permissions)

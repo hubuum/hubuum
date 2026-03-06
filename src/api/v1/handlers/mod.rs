@@ -3,6 +3,7 @@ pub mod groups;
 pub mod namespaces;
 pub mod relations;
 pub mod reports;
+pub mod templates;
 pub mod users;
 
 use tracing::debug;

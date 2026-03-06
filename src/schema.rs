@@ -112,6 +112,23 @@ diesel::table! {
         has_delete_object_relation -> Bool,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        has_read_template -> Bool,
+        has_create_template -> Bool,
+        has_update_template -> Bool,
+        has_delete_template -> Bool,
+    }
+}
+
+diesel::table! {
+    report_templates (id) {
+        id -> Int4,
+        namespace_id -> Int4,
+        name -> Varchar,
+        description -> Varchar,
+        content_type -> Varchar,
+        template -> Text,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
     }
 }
 
@@ -188,13 +205,13 @@ diesel::table! {
         descendant_updated_at -> Timestamp,
     }
 }
-
 diesel::joinable!(hubuumclass -> namespaces (namespace_id));
 diesel::joinable!(hubuumobject -> hubuumclass (hubuum_class_id));
 diesel::joinable!(hubuumobject -> namespaces (namespace_id));
 diesel::joinable!(hubuumobject_relation -> hubuumclass_relation (class_relation_id));
 diesel::joinable!(permissions -> groups (group_id));
 diesel::joinable!(permissions -> namespaces (namespace_id));
+diesel::joinable!(report_templates -> namespaces (namespace_id));
 diesel::joinable!(tokens -> users (user_id));
 diesel::joinable!(user_groups -> groups (group_id));
 diesel::joinable!(user_groups -> users (user_id));
@@ -209,6 +226,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     hubuumobject_relation,
     namespaces,
     permissions,
+    report_templates,
     tokens,
     user_groups,
     users,

@@ -6,4 +6,5 @@ pub mod objects;
 pub mod relations;
 pub mod reports;
 pub mod request_and_correlation;
+pub mod templates;
 pub mod users;

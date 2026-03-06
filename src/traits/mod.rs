@@ -202,7 +202,10 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
             base_query = perm.create_boxed_filter(base_query, true);
         }
 
-        let result = base_query.first::<Permission>(&mut conn).optional()?;
+        let result = base_query
+            .select(Permission::as_select())
+            .first::<Permission>(&mut conn)
+            .optional()?;
 
         Ok(result.is_some())
     }
@@ -256,6 +259,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
             let existing_entry = permissions
                 .filter(namespace_id.eq(nid))
                 .filter(group_id.eq(group_id_for_grant))
+                .select(Permission::as_select())
                 .first::<Permission>(conn)
                 .optional()?;
 
@@ -283,6 +287,10 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
                             has_read_object_relation: Some(false),
                             has_update_object_relation: Some(false),
                             has_delete_object_relation: Some(false),
+                            has_read_template: Some(false),
+                            has_create_template: Some(false),
+                            has_update_template: Some(false),
+                            has_delete_template: Some(false),
                         }
                     } else {
                         UpdatePermission::default()
@@ -349,6 +357,18 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
                             Permissions::DeleteObjectRelation => {
                                 update_perm.has_delete_object_relation = Some(true);
                             }
+                            Permissions::ReadTemplate => {
+                                update_perm.has_read_template = Some(true);
+                            }
+                            Permissions::CreateTemplate => {
+                                update_perm.has_create_template = Some(true);
+                            }
+                            Permissions::UpdateTemplate => {
+                                update_perm.has_update_template = Some(true);
+                            }
+                            Permissions::DeleteTemplate => {
+                                update_perm.has_delete_template = Some(true);
+                            }
                         }
                     }
 
@@ -356,6 +376,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
                         .filter(namespace_id.eq(nid))
                         .filter(group_id.eq(group_id_for_grant))
                         .set(&update_perm)
+                        .returning(Permission::as_returning())
                         .get_result(conn)?)
                 }
                 None => {
@@ -393,9 +414,14 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
                             .contains(&Permissions::UpdateObjectRelation),
                         has_delete_object_relation: permission_list
                             .contains(&Permissions::DeleteObjectRelation),
+                        has_read_template: permission_list.contains(&Permissions::ReadTemplate),
+                        has_create_template: permission_list.contains(&Permissions::CreateTemplate),
+                        has_update_template: permission_list.contains(&Permissions::UpdateTemplate),
+                        has_delete_template: permission_list.contains(&Permissions::DeleteTemplate),
                     };
                     Ok(diesel::insert_into(permissions)
                         .values(&new_entry)
+                        .returning(Permission::as_returning())
                         .get_result(conn)?)
                 }
             }
@@ -437,6 +463,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
             permissions
                 .filter(namespace_id.eq(nid))
                 .filter(group_id.eq(group_id_for_revoke))
+                .select(Permission::as_select())
                 .first::<Permission>(conn)?;
 
             let mut update_perm = UpdatePermission::default();
@@ -502,12 +529,25 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
                     Permissions::DeleteObjectRelation => {
                         update_perm.has_delete_object_relation = Some(false);
                     }
+                    Permissions::ReadTemplate => {
+                        update_perm.has_read_template = Some(false);
+                    }
+                    Permissions::CreateTemplate => {
+                        update_perm.has_create_template = Some(false);
+                    }
+                    Permissions::UpdateTemplate => {
+                        update_perm.has_update_template = Some(false);
+                    }
+                    Permissions::DeleteTemplate => {
+                        update_perm.has_delete_template = Some(false);
+                    }
                 }
             }
             Ok(diesel::update(permissions)
                 .filter(namespace_id.eq(nid))
                 .filter(group_id.eq(group_id_for_revoke))
                 .set(&update_perm)
+                .returning(Permission::as_returning())
                 .get_result(conn)?)
         })
     }

@@ -94,13 +94,35 @@ impl ReportContentType {
             ReportContentType::TextCsv => "text/csv",
         }
     }
+
+    pub fn from_mime(value: &str) -> Result<Self, ApiError> {
+        match value {
+            "application/json" => Ok(ReportContentType::ApplicationJson),
+            "text/plain" => Ok(ReportContentType::TextPlain),
+            "text/html" => Ok(ReportContentType::TextHtml),
+            "text/csv" => Ok(ReportContentType::TextCsv),
+            _ => Err(ApiError::BadRequest(format!(
+                "Unsupported report content type: '{}'",
+                value
+            ))),
+        }
+    }
+
+    pub fn ensure_template_output(self) -> Result<Self, ApiError> {
+        match self {
+            ReportContentType::ApplicationJson => Err(ApiError::BadRequest(
+                "Stored templates only support text/plain, text/html, and text/csv".to_string(),
+            )),
+            _ => Ok(self),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[schema(example = openapi_examples::report_output_example)]
+#[serde(deny_unknown_fields)]
 pub struct ReportOutputRequest {
-    pub content_type: Option<ReportContentType>,
-    pub template: Option<String>,
+    pub template_id: Option<i32>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -182,8 +204,7 @@ mod openapi_examples {
 
     pub(super) fn report_output_example() -> ReportOutputRequest {
         ReportOutputRequest {
-            content_type: Some(ReportContentType::TextPlain),
-            template: Some("{{#each items}}{{this.name}}\n{{/each}}".to_string()),
+            template_id: Some(12),
         }
     }
 

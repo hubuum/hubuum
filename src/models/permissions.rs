@@ -30,6 +30,10 @@ pub enum Permissions {
     ReadObjectRelation,
     UpdateObjectRelation,
     DeleteObjectRelation,
+    ReadTemplate,
+    CreateTemplate,
+    UpdateTemplate,
+    DeleteTemplate,
 }
 
 impl Permissions {
@@ -64,6 +68,10 @@ impl Permissions {
             "ReadObjectRelation" => Ok(Permissions::ReadObjectRelation),
             "UpdateObjectRelation" => Ok(Permissions::UpdateObjectRelation),
             "DeleteObjectRelation" => Ok(Permissions::DeleteObjectRelation),
+            "ReadTemplate" => Ok(Permissions::ReadTemplate),
+            "CreateTemplate" => Ok(Permissions::CreateTemplate),
+            "UpdateTemplate" => Ok(Permissions::UpdateTemplate),
+            "DeleteTemplate" => Ok(Permissions::DeleteTemplate),
             _ => Err(ApiError::BadRequest(format!("Invalid permission: '{s}'"))),
         }
     }
@@ -94,6 +102,10 @@ impl Display for Permissions {
                 Permissions::ReadObjectRelation => "ReadObjectRelation",
                 Permissions::UpdateObjectRelation => "UpdateObjectRelation",
                 Permissions::DeleteObjectRelation => "DeleteObjectRelation",
+                Permissions::ReadTemplate => "ReadTemplate",
+                Permissions::CreateTemplate => "CreateTemplate",
+                Permissions::UpdateTemplate => "UpdateTemplate",
+                Permissions::DeleteTemplate => "DeleteTemplate",
             }
         )
     }
@@ -237,11 +249,21 @@ impl<'a> PermissionFilter<'a, permissions::BoxedQuery<'a, diesel::pg::Pg>> for P
             Permissions::DeleteObjectRelation => {
                 query.filter(permissions::has_delete_object_relation.eq(target))
             }
+            Permissions::ReadTemplate => query.filter(permissions::has_read_template.eq(target)),
+            Permissions::CreateTemplate => {
+                query.filter(permissions::has_create_template.eq(target))
+            }
+            Permissions::UpdateTemplate => {
+                query.filter(permissions::has_update_template.eq(target))
+            }
+            Permissions::DeleteTemplate => {
+                query.filter(permissions::has_delete_template.eq(target))
+            }
         }
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, Queryable, Selectable, Clone, Copy, ToSchema)]
 #[diesel(table_name = permissions)]
 pub struct Permission {
     pub id: i32,
@@ -267,6 +289,10 @@ pub struct Permission {
     pub has_read_object_relation: bool,
     pub has_update_object_relation: bool,
     pub has_delete_object_relation: bool,
+    pub has_read_template: bool,
+    pub has_create_template: bool,
+    pub has_update_template: bool,
+    pub has_delete_template: bool,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
 }
@@ -297,6 +323,10 @@ pub struct NewPermission {
     pub has_read_object_relation: bool,
     pub has_update_object_relation: bool,
     pub has_delete_object_relation: bool,
+    pub has_read_template: bool,
+    pub has_create_template: bool,
+    pub has_update_template: bool,
+    pub has_delete_template: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, AsChangeset, Default)]
@@ -322,4 +352,51 @@ pub struct UpdatePermission {
     pub has_read_object_relation: Option<bool>,
     pub has_update_object_relation: Option<bool>,
     pub has_delete_object_relation: Option<bool>,
+    pub has_read_template: Option<bool>,
+    pub has_create_template: Option<bool>,
+    pub has_update_template: Option<bool>,
+    pub has_delete_template: Option<bool>,
+}
+
+#[cfg(test)]
+mod tests {
+    use diesel::prelude::*;
+
+    use super::{PermissionFilter, Permissions};
+    use crate::schema::permissions::dsl::permissions;
+
+    #[test]
+    fn template_permissions_parse_and_display_round_trip() {
+        let fixtures = [
+            ("ReadTemplate", Permissions::ReadTemplate),
+            ("CreateTemplate", Permissions::CreateTemplate),
+            ("UpdateTemplate", Permissions::UpdateTemplate),
+            ("DeleteTemplate", Permissions::DeleteTemplate),
+        ];
+
+        for (name, permission) in fixtures {
+            assert_eq!(Permissions::from_string(name).unwrap(), permission);
+            assert_eq!(permission.to_string(), name);
+        }
+    }
+
+    #[test]
+    fn template_permissions_filter_map_to_expected_columns() {
+        let fixtures = [
+            (Permissions::ReadTemplate, "has_read_template"),
+            (Permissions::CreateTemplate, "has_create_template"),
+            (Permissions::UpdateTemplate, "has_update_template"),
+            (Permissions::DeleteTemplate, "has_delete_template"),
+        ];
+
+        for (permission, expected_column) in fixtures {
+            let base_query = permissions.into_boxed();
+            let filtered = permission.create_boxed_filter(base_query, true);
+            let sql = diesel::debug_query::<diesel::pg::Pg, _>(&filtered).to_string();
+            assert!(
+                sql.contains(expected_column),
+                "Expected SQL to contain '{expected_column}', got: {sql}"
+            );
+        }
+    }
 }
