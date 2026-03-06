@@ -77,7 +77,7 @@ mod tests {
         let admin_token = &context.admin_token;
         let classes = create_test_classes(&context, "report_json").await;
         let class = classes[0].clone();
-        let created_objects = create_report_objects(&pool, &class).await;
+        let created_objects = create_report_objects(pool, &class).await;
 
         let body = ReportRequest {
             scope: ReportScope {
@@ -92,7 +92,7 @@ mod tests {
         };
 
         let resp = post_request_with_headers(
-            &pool,
+            pool,
             admin_token,
             REPORTS_ENDPOINT,
             &body,
@@ -132,9 +132,9 @@ mod tests {
         let admin_token = &context.admin_token;
         let classes = create_test_classes(&context, "report_text").await;
         let class = classes[0].clone();
-        let _created_objects = create_report_objects(&pool, &class).await;
+        let _created_objects = create_report_objects(pool, &class).await;
         let template_id = create_template(
-            &pool,
+            pool,
             class.namespace_id,
             "stored-report-template",
             ReportContentType::TextPlain,
@@ -154,7 +154,7 @@ mod tests {
         });
 
         let resp =
-            post_request_with_headers(&pool, admin_token, REPORTS_ENDPOINT, &body, vec![]).await;
+            post_request_with_headers(pool, admin_token, REPORTS_ENDPOINT, &body, vec![]).await;
 
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let headers = resp.headers().clone();
@@ -178,7 +178,7 @@ mod tests {
         let classes = create_test_classes(&context, "report_content_type_rejected").await;
         let class = classes[0].clone();
         let template_id = create_template(
-            &pool,
+            pool,
             class.namespace_id,
             "template-without-content-type",
             ReportContentType::TextPlain,
@@ -195,7 +195,7 @@ mod tests {
         });
 
         let resp =
-            post_request_with_headers(&pool, admin_token, REPORTS_ENDPOINT, &body, vec![]).await;
+            post_request_with_headers(pool, admin_token, REPORTS_ENDPOINT, &body, vec![]).await;
 
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
         cleanup(&classes).await;
@@ -217,7 +217,7 @@ mod tests {
         });
 
         let resp = post_request_with_headers(
-            &pool,
+            pool,
             admin_token,
             REPORTS_ENDPOINT,
             &body,
@@ -239,7 +239,7 @@ mod tests {
         let classes = create_test_classes(&context, "report_accept_mismatch").await;
         let class = classes[0].clone();
         let template_id = create_template(
-            &pool,
+            pool,
             class.namespace_id,
             "template-accept-mismatch",
             ReportContentType::TextPlain,
@@ -280,7 +280,7 @@ mod tests {
         let classes = create_test_classes(&context, "report_template_permission").await;
         let class = classes[0].clone();
         let template_id = create_template(
-            &pool,
+            pool,
             class.namespace_id,
             "template-read-permission",
             ReportContentType::TextPlain,
@@ -336,7 +336,7 @@ mod tests {
         let class = classes[0].clone();
 
         let template_id = create_template(
-            &pool,
+            pool,
             class.namespace_id,
             "template-accept-json-mismatch",
             ReportContentType::TextPlain,
@@ -374,10 +374,10 @@ mod tests {
         let admin_token = &context.admin_token;
         let classes = create_test_classes(&context, "report_html").await;
         let class = classes[0].clone();
-        let _created_objects = create_report_objects(&pool, &class).await;
+        let _created_objects = create_report_objects(pool, &class).await;
 
         let template_id = create_template(
-            &pool,
+            pool,
             class.namespace_id,
             "stored-html-report-template",
             ReportContentType::TextHtml,
@@ -436,10 +436,10 @@ mod tests {
         let admin_token = &context.admin_token;
         let classes = create_test_classes(&context, "report_csv").await;
         let class = classes[0].clone();
-        let _created_objects = create_report_objects(&pool, &class).await;
+        let _created_objects = create_report_objects(pool, &class).await;
 
         let template_id = create_template(
-            &pool,
+            pool,
             class.namespace_id,
             "stored-csv-report-template",
             ReportContentType::TextCsv,

@@ -112,12 +112,12 @@ impl NewReportTemplate {
 }
 
 impl UpdateReportTemplate {
-    fn as_changeset(self) -> UpdateReportTemplateRow {
+    fn as_changeset(&self) -> UpdateReportTemplateRow {
         UpdateReportTemplateRow {
             namespace_id: self.namespace_id,
-            name: self.name,
-            description: self.description,
-            template: self.template,
+            name: self.name.clone(),
+            description: self.description.clone(),
+            template: self.template.clone(),
         }
     }
 

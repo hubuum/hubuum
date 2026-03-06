@@ -2,8 +2,9 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use actix_web::{
-    http::{header, StatusCode},
-    post, web, HttpRequest, HttpResponse, Responder,
+    HttpRequest, HttpResponse, Responder,
+    http::{StatusCode, header},
+    post, web,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -11,11 +12,11 @@ use tracing::{debug, info, warn};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::can;
-use crate::db::traits::UserPermissions;
 use crate::db::DbPool;
+use crate::db::traits::UserPermissions;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
-use crate::models::search::{parse_query_parameter, FilterField, ParsedQueryParam, QueryOptions};
+use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, parse_query_parameter};
 use crate::models::{
     HubuumClassID, HubuumObjectID, NamespaceID, Permissions, ReportContentType, ReportJsonResponse,
     ReportMeta, ReportMissingDataPolicy, ReportRequest, ReportScope, ReportScopeKind,
@@ -377,13 +378,13 @@ fn enforce_accept_matches_template(
         .and_then(|value| value.to_str().ok())
         .map(|value| value.to_ascii_lowercase());
 
-    if let Some(accept) = accept {
-        if !accept_allows_content_type(&accept, template_content_type) {
-            return Err(ApiError::NotAcceptable(format!(
-                "Accept header does not allow template output type '{}'",
-                template_content_type.as_mime()
-            )));
-        }
+    if let Some(accept) = accept
+        && !accept_allows_content_type(&accept, template_content_type)
+    {
+        return Err(ApiError::NotAcceptable(format!(
+            "Accept header does not allow template output type '{}'",
+            template_content_type.as_mime()
+        )));
     }
 
     Ok(())

@@ -1,10 +1,10 @@
-use actix_web::{delete, get, http::StatusCode, patch, routes, web, HttpRequest, Responder};
+use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, routes, web};
 use tracing::{debug, info};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::can;
-use crate::db::traits::UserPermissions;
 use crate::db::DbPool;
+use crate::db::traits::UserPermissions;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::parse_query_parameter;
@@ -195,15 +195,15 @@ pub async fn patch_template(
         NamespaceID(existing.namespace_id)
     );
 
-    if let Some(target_namespace) = update.namespace_id {
-        if target_namespace != existing.namespace_id {
-            can!(
-                &pool,
-                user,
-                [Permissions::CreateTemplate],
-                NamespaceID(target_namespace)
-            );
-        }
+    if let Some(target_namespace) = update.namespace_id
+        && target_namespace != existing.namespace_id
+    {
+        can!(
+            &pool,
+            user,
+            [Permissions::CreateTemplate],
+            NamespaceID(target_namespace)
+        );
     }
 
     let updated =
