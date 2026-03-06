@@ -304,6 +304,75 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
+    async fn test_run_report_succeeds_with_read_template_permission(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        use crate::models::{Permissions, PermissionsList};
+        use crate::tests::create_test_user;
+        use crate::traits::PermissionController;
+
+        let context = test_context;
+        let pool = &context.pool;
+        let classes = create_test_classes(&context, "report_template_read_granted").await;
+        let class = classes[0].clone();
+        let _created_objects = create_report_objects(pool, &class).await;
+        let template_id = create_template(
+            pool,
+            class.namespace_id,
+            "template-with-permission",
+            ReportContentType::TextPlain,
+            "{{#each items}}{{this.name}}={{this.data.owner}}\\n{{/each}}",
+        )
+        .await;
+
+        // Create a user with only ReadTemplate permission
+        let test_user = create_test_user(pool).await;
+        let user_token = test_user.create_token(pool).await.unwrap().get_token();
+
+        // Grant ReadTemplate permission to the namespace
+        classes
+            .namespace
+            .namespace
+            .grant(
+                pool,
+                classes.namespace.owner_group.id,
+                PermissionsList::new([Permissions::ReadTemplate, Permissions::ReadObject]),
+            )
+            .await
+            .unwrap();
+
+        // Add test user to the group with permissions
+        classes
+            .namespace
+            .owner_group
+            .add_member(pool, &test_user)
+            .await
+            .unwrap();
+
+        let body = serde_json::json!({
+            "scope": {
+                "kind": "objects_in_class",
+                "class_id": class.id
+            },
+            "query": "name__contains=report-&sort=name",
+            "output": {
+                "template_id": template_id
+            }
+        });
+
+        let resp =
+            post_request_with_headers(pool, &user_token, REPORTS_ENDPOINT, body, vec![]).await;
+
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let rendered = String::from_utf8(test::read_body(resp).await.to_vec()).unwrap();
+        assert_eq!(rendered, "report-app-01=alice\\nreport-db-01=bob\\n");
+
+        cleanup(&classes).await;
+        test_user.delete(pool).await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
     async fn test_run_report_nonexistent_template_returns_not_found(
         #[future(awt)] test_context: TestContext,
     ) {

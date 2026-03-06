@@ -362,12 +362,16 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let listed: Vec<ReportTemplate> = test::read_body_json(resp).await;
 
-        assert!(listed
-            .iter()
-            .any(|template| template.id == visible_template.id));
-        assert!(!listed
-            .iter()
-            .any(|template| template.id == hidden_template.id));
+        assert!(
+            listed
+                .iter()
+                .any(|template| template.id == visible_template.id)
+        );
+        assert!(
+            !listed
+                .iter()
+                .any(|template| template.id == hidden_template.id)
+        );
 
         visible_namespace.delete(&pool).await.unwrap();
         hidden_namespace.delete(&pool).await.unwrap();
@@ -418,5 +422,128 @@ mod tests {
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
 
         namespace.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_template_update_content_requires_update_permission() {
+        let (pool, admin_token, _normal_token) = setup_pool_and_tokens().await;
+        let namespace = create_namespace(&pool, "update_content_forbidden").await;
+
+        let create_payload = new_template_payload(namespace.id, "tmpl-update-test");
+        let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &create_payload).await;
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let created: ReportTemplate = test::read_body_json(resp).await;
+
+        let test_user = create_test_user(&pool).await;
+        let test_group = create_test_group(&pool).await;
+        test_group.add_member(&pool, &test_user).await.unwrap();
+        let user_token = test_user.create_token(&pool).await.unwrap().get_token();
+
+        // Grant only ReadTemplate, not UpdateTemplate
+        namespace
+            .grant(
+                &pool,
+                test_group.id,
+                PermissionsList::new([Permissions::ReadTemplate]),
+            )
+            .await
+            .unwrap();
+
+        let update_payload = UpdateReportTemplate {
+            namespace_id: None,
+            name: None,
+            description: Some("updated description".to_string()),
+            template: None,
+        };
+
+        let resp = patch_request(
+            &pool,
+            &user_token,
+            &format!("{TEMPLATES_ENDPOINT}/{}", created.id),
+            &update_payload,
+        )
+        .await;
+        assert_response_status(resp, StatusCode::FORBIDDEN).await;
+
+        // Now grant UpdateTemplate and verify it works
+        namespace
+            .grant(
+                &pool,
+                test_group.id,
+                PermissionsList::new([Permissions::UpdateTemplate]),
+            )
+            .await
+            .unwrap();
+
+        let resp = patch_request(
+            &pool,
+            &user_token,
+            &format!("{TEMPLATES_ENDPOINT}/{}", created.id),
+            &update_payload,
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let updated: ReportTemplate = test::read_body_json(resp).await;
+        assert_eq!(updated.description, "updated description");
+
+        namespace.delete(&pool).await.unwrap();
+        test_group.delete(&pool).await.unwrap();
+        test_user.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_template_delete_requires_delete_permission() {
+        let (pool, admin_token, _normal_token) = setup_pool_and_tokens().await;
+        let namespace = create_namespace(&pool, "delete_forbidden").await;
+
+        let create_payload = new_template_payload(namespace.id, "tmpl-delete-test");
+        let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &create_payload).await;
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let created: ReportTemplate = test::read_body_json(resp).await;
+
+        let test_user = create_test_user(&pool).await;
+        let test_group = create_test_group(&pool).await;
+        test_group.add_member(&pool, &test_user).await.unwrap();
+        let user_token = test_user.create_token(&pool).await.unwrap().get_token();
+
+        // Grant only ReadTemplate and UpdateTemplate, not DeleteTemplate
+        namespace
+            .grant(
+                &pool,
+                test_group.id,
+                PermissionsList::new([Permissions::ReadTemplate, Permissions::UpdateTemplate]),
+            )
+            .await
+            .unwrap();
+
+        let resp = delete_request(
+            &pool,
+            &user_token,
+            &format!("{TEMPLATES_ENDPOINT}/{}", created.id),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::FORBIDDEN).await;
+
+        // Now grant DeleteTemplate and verify it works
+        namespace
+            .grant(
+                &pool,
+                test_group.id,
+                PermissionsList::new([Permissions::DeleteTemplate]),
+            )
+            .await
+            .unwrap();
+
+        let resp = delete_request(
+            &pool,
+            &user_token,
+            &format!("{TEMPLATES_ENDPOINT}/{}", created.id),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::NO_CONTENT).await;
+
+        namespace.delete(&pool).await.unwrap();
+        test_group.delete(&pool).await.unwrap();
+        test_user.delete(&pool).await.unwrap();
     }
 }

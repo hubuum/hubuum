@@ -64,6 +64,25 @@ The following permissions are available for relationships between classes:
 | `delete_class_relationship`   | Allows deleting the relationship. |
 | `create_object_relationship`   | Allows creating relationships between objects adhering of the class relationship. |
 
+### Permissions for templates
+
+Report templates are used to format report output and are scoped to namespaces. The following permissions control access to templates:
+
+| Permission | Description |
+| ---------- | ----------- |
+| `read_template`     | Allows reading templates and using them in report generation. Required to view template definitions or to reference a template when running a report. |
+| `create_template`   | Allows creating new templates within the namespace. Also required when moving a template to a different namespace (as the target namespace permission). |
+| `update_template`   | Allows modifying existing templates (name, description, content, content type). Required when moving a template to a different namespace (as the source namespace permission). |
+| `delete_template`   | Allows deleting templates from the namespace. |
+
+**Important notes about template permissions:**
+
+- Templates are namespace-scoped, meaning all template operations require the appropriate permission on the template's namespace.
+- Using a template in a report requires `read_template` permission on the namespace containing the template.
+- Moving a template between namespaces requires both `update_template` on the source namespace and `create_template` on the target namespace.
+- Templates with the same name cannot exist within the same namespace (enforced by a unique constraint).
+- Valid template content types are: `text/plain`, `text/html`, and `text/csv`. The `application/json` content type is reserved for the default JSON report output and cannot be used for stored templates.
+
 ## Example
 
 ### Part 1: A (relatively) simple example
