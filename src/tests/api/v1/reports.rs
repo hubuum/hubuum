@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod tests {
     use actix_web::{
-        http::{header, StatusCode},
+        App,
+        http::{StatusCode, header},
         test,
         web::Data,
-        App,
     };
 
     use crate::api as prod_api;
@@ -13,9 +13,9 @@ mod tests {
         HubuumClass, NewHubuumObject, ReportJsonResponse, ReportRequest, ReportScope,
         ReportScopeKind,
     };
+    use crate::tests::TestContext;
     use crate::tests::api::v1::classes::tests::{cleanup, create_test_classes};
     use crate::tests::asserts::assert_response_status;
-    use crate::tests::setup_pool_and_tokens;
     use crate::traits::CanSave;
 
     const REPORTS_ENDPOINT: &str = "/api/v1/reports";
@@ -50,10 +50,10 @@ mod tests {
 
     #[actix_web::test]
     async fn test_run_report_returns_json_envelope() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let classes = create_test_classes("report_json").await;
+        let context = TestContext::new().await;
+        let classes = create_test_classes(&context, "report_json").await;
         let class = classes[0].clone();
-        let created_objects = create_report_objects(&pool, &class).await;
+        let created_objects = create_report_objects(&context.pool, &class).await;
 
         let body = ReportRequest {
             scope: ReportScope {
@@ -69,14 +69,17 @@ mod tests {
 
         let app = test::init_service(
             App::new()
-                .wrap(TracingMiddleware)
-                .app_data(Data::new(pool.as_ref().clone()))
+                .wrap(TracingMiddleware::new())
+                .app_data(Data::new(context.pool.as_ref().clone()))
                 .configure(prod_api::config),
         )
         .await;
 
         let resp = test::TestRequest::post()
-            .insert_header((header::AUTHORIZATION, format!("Bearer {admin_token}")))
+            .insert_header((
+                header::AUTHORIZATION,
+                format!("Bearer {}", context.admin_token),
+            ))
             .insert_header((header::ACCEPT, "application/json"))
             .uri(REPORTS_ENDPOINT)
             .set_json(&body)
@@ -107,10 +110,10 @@ mod tests {
 
     #[actix_web::test]
     async fn test_run_report_renders_text_template() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let classes = create_test_classes("report_text").await;
+        let context = TestContext::new().await;
+        let classes = create_test_classes(&context, "report_text").await;
         let class = classes[0].clone();
-        let _created_objects = create_report_objects(&pool, &class).await;
+        let _created_objects = create_report_objects(&context.pool, &class).await;
 
         let body = serde_json::json!({
             "scope": {
@@ -126,14 +129,17 @@ mod tests {
 
         let app = test::init_service(
             App::new()
-                .wrap(TracingMiddleware)
-                .app_data(Data::new(pool.as_ref().clone()))
+                .wrap(TracingMiddleware::new())
+                .app_data(Data::new(context.pool.as_ref().clone()))
                 .configure(prod_api::config),
         )
         .await;
 
         let resp = test::TestRequest::post()
-            .insert_header((header::AUTHORIZATION, format!("Bearer {admin_token}")))
+            .insert_header((
+                header::AUTHORIZATION,
+                format!("Bearer {}", context.admin_token),
+            ))
             .uri(REPORTS_ENDPOINT)
             .set_json(&body)
             .send_request(&app)
@@ -152,7 +158,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_run_report_rejects_unsupported_accept_header() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let context = TestContext::new().await;
 
         let body = serde_json::json!({
             "scope": {
@@ -162,14 +168,17 @@ mod tests {
 
         let app = test::init_service(
             App::new()
-                .wrap(TracingMiddleware)
-                .app_data(Data::new(pool.as_ref().clone()))
+                .wrap(TracingMiddleware::new())
+                .app_data(Data::new(context.pool.as_ref().clone()))
                 .configure(prod_api::config),
         )
         .await;
 
         let resp = test::TestRequest::post()
-            .insert_header((header::AUTHORIZATION, format!("Bearer {admin_token}")))
+            .insert_header((
+                header::AUTHORIZATION,
+                format!("Bearer {}", context.admin_token),
+            ))
             .insert_header((header::ACCEPT, "application/xml"))
             .uri(REPORTS_ENDPOINT)
             .set_json(&body)
@@ -181,10 +190,10 @@ mod tests {
 
     #[actix_web::test]
     async fn test_run_report_returns_payload_too_large_for_small_limit() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let classes = create_test_classes("report_too_large").await;
+        let context = TestContext::new().await;
+        let classes = create_test_classes(&context, "report_too_large").await;
         let class = classes[0].clone();
-        let _created_objects = create_report_objects(&pool, &class).await;
+        let _created_objects = create_report_objects(&context.pool, &class).await;
 
         let body = serde_json::json!({
             "scope": {
@@ -199,14 +208,17 @@ mod tests {
 
         let app = test::init_service(
             App::new()
-                .wrap(TracingMiddleware)
-                .app_data(Data::new(pool.as_ref().clone()))
+                .wrap(TracingMiddleware::new())
+                .app_data(Data::new(context.pool.as_ref().clone()))
                 .configure(prod_api::config),
         )
         .await;
 
         let resp = test::TestRequest::post()
-            .insert_header((header::AUTHORIZATION, format!("Bearer {admin_token}")))
+            .insert_header((
+                header::AUTHORIZATION,
+                format!("Bearer {}", context.admin_token),
+            ))
             .insert_header((header::ACCEPT, "application/json"))
             .uri(REPORTS_ENDPOINT)
             .set_json(&body)
