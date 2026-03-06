@@ -1,10 +1,9 @@
 #[cfg(test)]
 mod tests {
     use actix_web::{
-        http::{header, StatusCode},
-        test,
-        web::Data,
         App,
+        http::{StatusCode, header},
+        test,
     };
 
     use crate::api as prod_api;
@@ -15,8 +14,9 @@ mod tests {
     };
     use crate::tests::api::v1::classes::tests::{cleanup, create_test_classes};
     use crate::tests::asserts::assert_response_status;
-    use crate::tests::setup_pool_and_tokens;
+    use crate::tests::{TestContext, test_context};
     use crate::traits::CanSave;
+    use rstest::rstest;
 
     const REPORTS_ENDPOINT: &str = "/api/v1/reports";
 
@@ -71,10 +71,13 @@ mod tests {
         template.id
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_run_report_returns_json_envelope() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let classes = create_test_classes("report_json").await;
+    async fn test_run_report_returns_json_envelope(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
+        let classes = create_test_classes(&context, "report_json").await;
         let class = classes[0].clone();
         let created_objects = create_report_objects(&pool, &class).await;
 
@@ -93,7 +96,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .wrap(TracingMiddleware)
-                .app_data(Data::new(pool.as_ref().clone()))
+                .app_data(context.pool.clone())
                 .configure(prod_api::config),
         )
         .await;
@@ -128,10 +131,15 @@ mod tests {
         cleanup(&classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_run_report_renders_text_template_from_stored_template() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let classes = create_test_classes("report_text").await;
+    async fn test_run_report_renders_text_template_from_stored_template(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
+        let classes = create_test_classes(&context, "report_text").await;
         let class = classes[0].clone();
         let _created_objects = create_report_objects(&pool, &class).await;
         let template_id = create_template(
@@ -157,7 +165,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .wrap(TracingMiddleware)
-                .app_data(Data::new(pool.as_ref().clone()))
+                .app_data(context.pool.clone())
                 .configure(prod_api::config),
         )
         .await;
@@ -180,10 +188,15 @@ mod tests {
         cleanup(&classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_run_report_rejects_output_content_type_field() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let classes = create_test_classes("report_content_type_rejected").await;
+    async fn test_run_report_rejects_output_content_type_field(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
+        let classes = create_test_classes(&context, "report_content_type_rejected").await;
         let class = classes[0].clone();
         let template_id = create_template(
             &pool,
@@ -205,7 +218,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .wrap(TracingMiddleware)
-                .app_data(Data::new(pool.as_ref().clone()))
+                .app_data(context.pool.clone())
                 .configure(prod_api::config),
         )
         .await;
@@ -221,9 +234,14 @@ mod tests {
         cleanup(&classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_run_report_requires_template_for_non_json_output() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+    async fn test_run_report_requires_template_for_non_json_output(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
 
         let body = serde_json::json!({
             "scope": {
@@ -234,7 +252,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .wrap(TracingMiddleware)
-                .app_data(Data::new(pool.as_ref().clone()))
+                .app_data(context.pool.clone())
                 .configure(prod_api::config),
         )
         .await;
@@ -250,10 +268,15 @@ mod tests {
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_run_report_rejects_accept_mismatch_for_template() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let classes = create_test_classes("report_accept_mismatch").await;
+    async fn test_run_report_rejects_accept_mismatch_for_template(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
+        let classes = create_test_classes(&context, "report_accept_mismatch").await;
         let class = classes[0].clone();
         let template_id = create_template(
             &pool,
@@ -276,7 +299,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .wrap(TracingMiddleware)
-                .app_data(Data::new(pool.as_ref().clone()))
+                .app_data(context.pool.clone())
                 .configure(prod_api::config),
         )
         .await;
@@ -293,10 +316,15 @@ mod tests {
         cleanup(&classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_run_report_requires_read_template_permission() {
-        let (pool, _admin_token, normal_token) = setup_pool_and_tokens().await;
-        let classes = create_test_classes("report_template_permission").await;
+    async fn test_run_report_requires_read_template_permission(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let pool = &context.pool;
+        let normal_token = &context.normal_token;
+        let classes = create_test_classes(&context, "report_template_permission").await;
         let class = classes[0].clone();
         let template_id = create_template(
             &pool,
@@ -317,7 +345,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .wrap(TracingMiddleware)
-                .app_data(Data::new(pool.as_ref().clone()))
+                .app_data(context.pool.clone())
                 .configure(prod_api::config),
         )
         .await;
@@ -333,9 +361,14 @@ mod tests {
         cleanup(&classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_run_report_nonexistent_template_returns_not_found() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+    async fn test_run_report_nonexistent_template_returns_not_found(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
 
         let body = serde_json::json!({
             "scope": { "kind": "classes" },
@@ -347,7 +380,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .wrap(TracingMiddleware)
-                .app_data(Data::new(pool.as_ref().clone()))
+                .app_data(context.pool.clone())
                 .configure(prod_api::config),
         )
         .await;
@@ -362,10 +395,15 @@ mod tests {
         assert_response_status(resp, StatusCode::NOT_FOUND).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_run_report_rejects_accept_application_json_for_template() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let classes = create_test_classes("report_accept_json_mismatch").await;
+    async fn test_run_report_rejects_accept_application_json_for_template(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
+        let classes = create_test_classes(&context, "report_accept_json_mismatch").await;
         let class = classes[0].clone();
 
         let template_id = create_template(
@@ -387,7 +425,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .wrap(TracingMiddleware)
-                .app_data(Data::new(pool.as_ref().clone()))
+                .app_data(context.pool.clone())
                 .configure(prod_api::config),
         )
         .await;
@@ -404,10 +442,15 @@ mod tests {
         cleanup(&classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_run_report_renders_html_template_from_stored_template() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let classes = create_test_classes("report_html").await;
+    async fn test_run_report_renders_html_template_from_stored_template(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
+        let classes = create_test_classes(&context, "report_html").await;
         let class = classes[0].clone();
         let _created_objects = create_report_objects(&pool, &class).await;
 
@@ -434,7 +477,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .wrap(TracingMiddleware)
-                .app_data(Data::new(pool.as_ref().clone()))
+                .app_data(context.pool.clone())
                 .configure(prod_api::config),
         )
         .await;
@@ -452,12 +495,14 @@ mod tests {
         let body = test::read_body(resp).await;
         let rendered = String::from_utf8(body.to_vec()).unwrap();
 
-        assert!(headers
-            .get(header::CONTENT_TYPE)
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .starts_with("text/html"));
+        assert!(
+            headers
+                .get(header::CONTENT_TYPE)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("text/html")
+        );
         assert_eq!(
             rendered,
             "<ul><li>report-app-01:alice</li><li>report-db-01:bob</li></ul>"
@@ -466,10 +511,15 @@ mod tests {
         cleanup(&classes).await;
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn test_run_report_renders_csv_template_from_stored_template() {
-        let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let classes = create_test_classes("report_csv").await;
+    async fn test_run_report_renders_csv_template_from_stored_template(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
+        let classes = create_test_classes(&context, "report_csv").await;
         let class = classes[0].clone();
         let _created_objects = create_report_objects(&pool, &class).await;
 
@@ -496,7 +546,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .wrap(TracingMiddleware)
-                .app_data(Data::new(pool.as_ref().clone()))
+                .app_data(context.pool.clone())
                 .configure(prod_api::config),
         )
         .await;
@@ -514,12 +564,14 @@ mod tests {
         let body = test::read_body(resp).await;
         let rendered = String::from_utf8(body.to_vec()).unwrap();
 
-        assert!(headers
-            .get(header::CONTENT_TYPE)
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .starts_with("text/csv"));
+        assert!(
+            headers
+                .get(header::CONTENT_TYPE)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("text/csv")
+        );
         assert_eq!(
             rendered,
             "name,owner\\nreport-app-01,alice\\nreport-db-01,bob\\n"

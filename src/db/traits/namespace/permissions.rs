@@ -59,6 +59,14 @@ fn permission_filter_sql(permission: Permissions, target: bool) -> &'static str 
         (Permissions::DeleteObjectRelation, false) => {
             "permissions.has_delete_object_relation = FALSE"
         }
+        (Permissions::ReadTemplate, true) => "permissions.has_read_template = TRUE",
+        (Permissions::ReadTemplate, false) => "permissions.has_read_template = FALSE",
+        (Permissions::CreateTemplate, true) => "permissions.has_create_template = TRUE",
+        (Permissions::CreateTemplate, false) => "permissions.has_create_template = FALSE",
+        (Permissions::UpdateTemplate, true) => "permissions.has_update_template = TRUE",
+        (Permissions::UpdateTemplate, false) => "permissions.has_update_template = FALSE",
+        (Permissions::DeleteTemplate, true) => "permissions.has_delete_template = TRUE",
+        (Permissions::DeleteTemplate, false) => "permissions.has_delete_template = FALSE",
     }
 }
 

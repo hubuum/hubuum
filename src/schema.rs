@@ -110,12 +110,12 @@ diesel::table! {
         has_read_object_relation -> Bool,
         has_update_object_relation -> Bool,
         has_delete_object_relation -> Bool,
-        created_at -> Timestamp,
-        updated_at -> Timestamp,
         has_read_template -> Bool,
         has_create_template -> Bool,
         has_update_template -> Bool,
         has_delete_template -> Bool,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
     }
 }
 

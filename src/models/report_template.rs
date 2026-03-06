@@ -2,7 +2,7 @@ use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::{with_connection, DbPool};
+use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, QueryOptions, SortParam};
 use crate::models::{Namespace, NamespaceID, ReportContentType};
@@ -10,7 +10,7 @@ use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
 use crate::schema::report_templates;
-use crate::traits::{NamespaceAccessors, SelfAccessors};
+use crate::traits::accessors::{IdAccessor, InstanceAdapter, NamespaceAdapter};
 use crate::{date_search, numeric_search, string_search};
 
 #[derive(Debug, Clone, Queryable, Selectable)]
@@ -260,44 +260,48 @@ pub async fn list_report_templates(
     rows.into_iter().map(TryInto::try_into).collect()
 }
 
-impl SelfAccessors<ReportTemplate> for ReportTemplate {
-    fn id(&self) -> i32 {
+impl IdAccessor for ReportTemplate {
+    fn accessor_id(&self) -> i32 {
         self.id
     }
+}
 
-    async fn instance(&self, _pool: &DbPool) -> Result<ReportTemplate, ApiError> {
+impl InstanceAdapter<ReportTemplate> for ReportTemplate {
+    async fn instance_adapter(&self, _pool: &DbPool) -> Result<ReportTemplate, ApiError> {
         Ok(self.clone())
     }
 }
 
-impl SelfAccessors<ReportTemplate> for ReportTemplateID {
-    fn id(&self) -> i32 {
+impl IdAccessor for ReportTemplateID {
+    fn accessor_id(&self) -> i32 {
         self.0
     }
+}
 
-    async fn instance(&self, pool: &DbPool) -> Result<ReportTemplate, ApiError> {
+impl InstanceAdapter<ReportTemplate> for ReportTemplateID {
+    async fn instance_adapter(&self, pool: &DbPool) -> Result<ReportTemplate, ApiError> {
         report_template(pool, self.0).await
     }
 }
 
-impl NamespaceAccessors for ReportTemplate {
-    async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        NamespaceID(self.namespace_id).namespace(pool).await
+impl NamespaceAdapter for ReportTemplate {
+    async fn namespace_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
+        NamespaceID(self.namespace_id).namespace_adapter(pool).await
     }
 
-    async fn namespace_id(&self, _pool: &DbPool) -> Result<i32, ApiError> {
+    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<i32, ApiError> {
         Ok(self.namespace_id)
     }
 }
 
-impl NamespaceAccessors for ReportTemplateID {
-    async fn namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        NamespaceID(self.namespace_id(pool).await?)
-            .namespace(pool)
+impl NamespaceAdapter for ReportTemplateID {
+    async fn namespace_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
+        NamespaceID(self.namespace_id_adapter(pool).await?)
+            .namespace_adapter(pool)
             .await
     }
 
-    async fn namespace_id(&self, pool: &DbPool) -> Result<i32, ApiError> {
+    async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<i32, ApiError> {
         use crate::schema::report_templates::dsl::{id, namespace_id, report_templates};
 
         with_connection(pool, |conn| {

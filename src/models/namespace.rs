@@ -691,11 +691,10 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_template_permissions_set_grant_and_revoke() {
-        let (pool, _) = crate::tests::get_pool_and_config().await;
+        let scope = TestScope::new();
+        let pool = scope.pool.clone();
 
-        let namespace = create_namespace(&pool, "test_template_permissions_set_grant_and_revoke")
-            .await
-            .unwrap();
+        let namespace = scope.namespace_fixture("test_template_permissions_set_grant_and_revoke").await;
 
         let group = NewGroup {
             groupname: "test_template_permissions_set_grant_and_revoke".to_string(),
@@ -707,6 +706,7 @@ mod tests {
         let group_id = group.id;
 
         namespace
+            .namespace
             .set_permissions(
                 &pool,
                 group_id,
@@ -718,7 +718,7 @@ mod tests {
         assert!(group_can_on(
             &pool,
             group_id,
-            namespace.clone(),
+            namespace.namespace.clone(),
             Permissions::ReadTemplate
         )
         .await
@@ -726,7 +726,7 @@ mod tests {
         assert!(group_can_on(
             &pool,
             group_id,
-            namespace.clone(),
+            namespace.namespace.clone(),
             Permissions::UpdateTemplate
         )
         .await
@@ -734,7 +734,7 @@ mod tests {
         assert!(!group_can_on(
             &pool,
             group_id,
-            namespace.clone(),
+            namespace.namespace.clone(),
             Permissions::CreateTemplate
         )
         .await
@@ -742,13 +742,14 @@ mod tests {
         assert!(!group_can_on(
             &pool,
             group_id,
-            namespace.clone(),
+            namespace.namespace.clone(),
             Permissions::DeleteTemplate
         )
         .await
         .unwrap());
 
         namespace
+            .namespace
             .grant_one(&pool, group_id, Permissions::CreateTemplate)
             .await
             .unwrap();
@@ -756,13 +757,14 @@ mod tests {
         assert!(group_can_on(
             &pool,
             group_id,
-            namespace.clone(),
+            namespace.namespace.clone(),
             Permissions::CreateTemplate
         )
         .await
         .unwrap());
 
         namespace
+            .namespace
             .revoke_one(&pool, group_id, Permissions::UpdateTemplate)
             .await
             .unwrap();
@@ -770,7 +772,7 @@ mod tests {
         assert!(!group_can_on(
             &pool,
             group_id,
-            namespace.clone(),
+            namespace.namespace.clone(),
             Permissions::UpdateTemplate
         )
         .await
@@ -778,25 +780,24 @@ mod tests {
         assert!(group_can_on(
             &pool,
             group_id,
-            namespace.clone(),
+            namespace.namespace.clone(),
             Permissions::ReadTemplate
         )
         .await
         .unwrap());
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.cleanup().await.unwrap();
         group.delete(&pool).await.unwrap();
     }
 
     #[actix_rt::test]
     async fn test_template_permission_backfill_updates_only_delegators() {
-        let (pool, _) = crate::tests::get_pool_and_config().await;
-        let namespace = create_namespace(&pool, "test_template_permission_backfill")
-            .await
-            .unwrap();
+        let scope = TestScope::new();
+        let pool = scope.pool.clone();
+        let namespace = scope.namespace_fixture("test_template_permission_backfill").await;
 
         let delegate_group = NewGroup {
-            groupname: format!("template_backfill_delegate_{}", namespace.id),
+            groupname: format!("template_backfill_delegate_{}", namespace.namespace.id),
             description: Some("Template backfill delegate group".to_string()),
         }
         .save(&pool)
@@ -804,7 +805,7 @@ mod tests {
         .unwrap();
 
         let non_delegate_group = NewGroup {
-            groupname: format!("template_backfill_non_delegate_{}", namespace.id),
+            groupname: format!("template_backfill_non_delegate_{}", namespace.namespace.id),
             description: Some("Template backfill non-delegate group".to_string()),
         }
         .save(&pool)
@@ -812,15 +813,17 @@ mod tests {
         .unwrap();
 
         namespace
+            .namespace
             .grant_one(&pool, delegate_group.id, Permissions::DelegateCollection)
             .await
             .unwrap();
         namespace
+            .namespace
             .grant_one(&pool, non_delegate_group.id, Permissions::ReadCollection)
             .await
             .unwrap();
 
-        let delegate_before = group_on(&pool, namespace.id, delegate_group.id)
+        let delegate_before = group_on(&pool, namespace.namespace.id, delegate_group.id)
             .await
             .unwrap();
         assert!(delegate_before.has_delegate_namespace);
@@ -829,7 +832,7 @@ mod tests {
         assert!(!delegate_before.has_update_template);
         assert!(!delegate_before.has_delete_template);
 
-        let non_delegate_before = group_on(&pool, namespace.id, non_delegate_group.id)
+        let non_delegate_before = group_on(&pool, namespace.namespace.id, non_delegate_group.id)
             .await
             .unwrap();
         assert!(!non_delegate_before.has_delegate_namespace);
@@ -851,7 +854,7 @@ mod tests {
         .execute(&mut conn)
         .unwrap();
 
-        let delegate_after = group_on(&pool, namespace.id, delegate_group.id)
+        let delegate_after = group_on(&pool, namespace.namespace.id, delegate_group.id)
             .await
             .unwrap();
         assert!(delegate_after.has_delegate_namespace);
@@ -860,7 +863,7 @@ mod tests {
         assert!(delegate_after.has_update_template);
         assert!(delegate_after.has_delete_template);
 
-        let non_delegate_after = group_on(&pool, namespace.id, non_delegate_group.id)
+        let non_delegate_after = group_on(&pool, namespace.namespace.id, non_delegate_group.id)
             .await
             .unwrap();
         assert!(!non_delegate_after.has_delegate_namespace);
@@ -869,7 +872,7 @@ mod tests {
         assert!(!non_delegate_after.has_update_template);
         assert!(!non_delegate_after.has_delete_template);
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.cleanup().await.unwrap();
         delegate_group.delete(&pool).await.unwrap();
         non_delegate_group.delete(&pool).await.unwrap();
     }
