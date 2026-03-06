@@ -91,7 +91,6 @@ pub async fn get_templates(
     );
 
     let search_params = prepare_db_pagination::<ReportTemplate>(&params)?;
-
     let allowed_namespace_ids =
         crate::models::namespace::user_can_on_any(&pool, user, Permissions::ReadTemplate)
             .await?

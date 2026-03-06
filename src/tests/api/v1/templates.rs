@@ -380,6 +380,48 @@ mod tests {
     }
 
     #[actix_web::test]
+    async fn test_template_list_keeps_admin_visibility_without_template_permission_rows() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let namespace = create_namespace(&pool, "admin_list_visibility").await;
+        let admin_group = ensure_admin_group(&pool).await;
+
+        let payload = new_template_payload(namespace.id, "tmpl-admin-visible");
+        let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let created: ReportTemplate = test::read_body_json(resp).await;
+
+        namespace
+            .revoke(
+                &pool,
+                admin_group.id,
+                PermissionsList::new([
+                    Permissions::ReadTemplate,
+                    Permissions::CreateTemplate,
+                    Permissions::UpdateTemplate,
+                    Permissions::DeleteTemplate,
+                ]),
+            )
+            .await
+            .unwrap();
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{TEMPLATES_ENDPOINT}/{}", created.id),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::OK).await;
+
+        let resp = get_request(&pool, &admin_token, TEMPLATES_ENDPOINT).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let listed: Vec<ReportTemplate> = test::read_body_json(resp).await;
+
+        assert!(listed.iter().any(|template| template.id == created.id));
+
+        namespace.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
     async fn test_template_get_and_delete_require_permissions() {
         let (pool, admin_token, normal_token) = setup_pool_and_tokens().await;
         let namespace = create_namespace(&pool, "get_delete_forbidden").await;

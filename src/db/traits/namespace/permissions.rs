@@ -164,9 +164,11 @@ pub async fn user_can_on_any_from_backend<U: SelfAccessors<User> + GroupAccessor
 ) -> Result<Vec<Namespace>, ApiError> {
     use crate::schema::permissions::dsl::*;
 
-    let base_query = if user_id.instance(pool).await?.is_admin(pool).await? {
-        permissions.into_boxed()
-    } else {
+    if user_id.instance(pool).await?.is_admin(pool).await? {
+        return with_connection(pool, |conn| crate::schema::namespaces::table.load::<Namespace>(conn));
+    }
+
+    let base_query = {
         let group_ids_subquery = user_id.group_ids_subquery_from_backend();
 
         permissions
