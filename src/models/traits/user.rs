@@ -3,7 +3,7 @@ use std::iter::IntoIterator;
 use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, SortParam};
 use crate::models::{
     Group, HubuumClassExpanded, HubuumClassRelation, HubuumObject, HubuumObjectRelation, Namespace,
-    ObjectClosureView, Permissions, User, UserID,
+    ObjectClosureRow, Permissions, User, UserID,
 };
 
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
@@ -89,7 +89,7 @@ pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors 
         backend: &C,
         object: O,
         query_options: QueryOptions,
-    ) -> Result<Vec<ObjectClosureView>, ApiError>
+    ) -> Result<Vec<ObjectClosureRow>, ApiError>
     where
         C: BackendContext + ?Sized,
         O: SelfAccessors<HubuumObject> + ClassAccessors,

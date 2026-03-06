@@ -66,6 +66,6 @@ The relation endpoints do not all support the same fields:
 
 - global relation endpoints support relation-centric fields such as `id`, `from_*`, `to_*`, `class_relation`, `created_at`, and `updated_at`
 - transitive endpoints support graph-centric fields such as `depth` and `path`
-- related-object listings support both descendant object aliases like `id`, `name`, `class_id`, `namespace_id` and explicit closure-view fields like `from_name`, `to_name`, `from_json_data`, `to_json_data`, `depth`, and `path`
+- related-object listings support both descendant object aliases like `id`, `name`, `class_id`, `namespace_id` and explicit closure/object-join fields like `from_name`, `to_name`, `from_json_data`, `to_json_data`, `depth`, and `path`
 
 Use [query_support_matrix.md](query_support_matrix.md) for the endpoint-by-endpoint field list.

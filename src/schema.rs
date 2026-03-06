@@ -143,52 +143,6 @@ diesel::table! {
     }
 }
 
-diesel::table! {
-    class_closure_view (ancestor_class_id, descendant_class_id, path) {
-        ancestor_class_id -> Int4,
-        descendant_class_id -> Int4,
-        depth -> Int4,
-        path -> Array<Int4>,
-        ancestor_name -> Text,
-        descendant_name -> Text,
-        ancestor_namespace_id -> Int4,
-        descendant_namespace_id -> Int4,
-        ancestor_json_schema -> Nullable<Jsonb>,
-        descendant_json_schema -> Nullable<Jsonb>,
-        ancestor_validate_schema -> Bool,
-        descendant_validate_schema -> Bool,
-        ancestor_description -> Text,
-        descendant_description -> Text,
-        ancestor_created_at -> Timestamp,
-        descendant_created_at -> Timestamp,
-        ancestor_updated_at -> Timestamp,
-        descendant_updated_at -> Timestamp,
-    }
-}
-
-diesel::table! {
-    object_closure_view (ancestor_object_id, descendant_object_id, path) {
-        ancestor_object_id -> Int4,
-        descendant_object_id -> Int4,
-        depth -> Int4,
-        path -> Array<Int4>,
-        ancestor_name -> Text,
-        descendant_name -> Text,
-        ancestor_namespace_id -> Int4,
-        descendant_namespace_id -> Int4,
-        ancestor_class_id -> Int4,
-        descendant_class_id -> Int4,
-        ancestor_description -> Text,
-        descendant_description -> Text,
-        ancestor_data -> Jsonb,
-        descendant_data -> Jsonb,
-        ancestor_created_at -> Timestamp,
-        descendant_created_at -> Timestamp,
-        ancestor_updated_at -> Timestamp,
-        descendant_updated_at -> Timestamp,
-    }
-}
-
 diesel::joinable!(hubuumclass -> namespaces (namespace_id));
 diesel::joinable!(hubuumobject -> hubuumclass (hubuum_class_id));
 diesel::joinable!(hubuumobject -> namespaces (namespace_id));
@@ -212,6 +166,4 @@ diesel::allow_tables_to_appear_in_same_query!(
     tokens,
     user_groups,
     users,
-    class_closure_view,
-    object_closure_view,
 );

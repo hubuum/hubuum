@@ -348,37 +348,37 @@ impl CursorSqlMapping for HubuumObjectWithPath {
     fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
         Ok(match field {
             FilterField::Id => CursorSqlField {
-                column: "object_closure_view.descendant_object_id",
+                column: "hubuumobject_closure.descendant_object_id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
             FilterField::Name => CursorSqlField {
-                column: "object_closure_view.descendant_name",
+                column: "descendant_object.name",
                 sql_type: CursorSqlType::String,
                 nullable: false,
             },
             FilterField::Namespaces | FilterField::NamespaceId => CursorSqlField {
-                column: "object_closure_view.descendant_namespace_id",
+                column: "descendant_object.namespace_id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
             FilterField::ClassId | FilterField::Classes => CursorSqlField {
-                column: "object_closure_view.descendant_class_id",
+                column: "descendant_object.hubuum_class_id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
             FilterField::CreatedAt => CursorSqlField {
-                column: "object_closure_view.descendant_created_at",
+                column: "descendant_object.created_at",
                 sql_type: CursorSqlType::DateTime,
                 nullable: false,
             },
             FilterField::UpdatedAt => CursorSqlField {
-                column: "object_closure_view.descendant_updated_at",
+                column: "descendant_object.updated_at",
                 sql_type: CursorSqlType::DateTime,
                 nullable: false,
             },
             FilterField::Path => CursorSqlField {
-                column: "object_closure_view.path",
+                column: "hubuumobject_closure.path",
                 sql_type: CursorSqlType::IntegerArray,
                 nullable: false,
             },

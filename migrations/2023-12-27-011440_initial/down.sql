@@ -1,7 +1,3 @@
--- Drop views
-DROP VIEW IF EXISTS object_closure_view;
-DROP VIEW IF EXISTS class_closure_view;
-
 -- Drop triggers
 DROP TRIGGER IF EXISTS cleanup_object_relations ON hubuumclass_relation;
 DROP TRIGGER IF EXISTS check_object_relation ON hubuumobject_relation;

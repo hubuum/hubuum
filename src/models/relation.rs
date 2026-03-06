@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::{
-    schema::class_closure_view, schema::hubuumclass_closure, schema::hubuumclass_relation,
-    schema::hubuumobject_relation, schema::object_closure_view,
+    schema::hubuumclass_closure, schema::hubuumclass_relation, schema::hubuumobject_relation,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -102,9 +101,8 @@ pub struct HubuumObjectTransitiveLink {
     path: Vec<i32>,
 }
 
-#[derive(Debug, Queryable, Selectable, Serialize, Deserialize)]
-#[diesel(table_name = class_closure_view)]
-pub struct ClassClosureView {
+#[derive(Debug, Queryable, Serialize, Deserialize)]
+pub struct ClassClosureRow {
     pub ancestor_class_id: i32,
     pub descendant_class_id: i32,
     pub depth: i32,
@@ -125,9 +123,8 @@ pub struct ClassClosureView {
     pub descendant_updated_at: chrono::NaiveDateTime,
 }
 
-#[derive(Debug, Queryable, Selectable, Serialize, Deserialize, Clone)]
-#[diesel(table_name = object_closure_view)]
-pub struct ObjectClosureView {
+#[derive(Debug, Queryable, Serialize, Deserialize, Clone)]
+pub struct ObjectClosureRow {
     pub ancestor_object_id: i32,
     pub descendant_object_id: i32,
     pub depth: i32,
