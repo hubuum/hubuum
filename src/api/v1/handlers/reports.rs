@@ -3,7 +3,10 @@ use std::time::Instant;
 
 use actix_web::{
     HttpRequest, HttpResponse, Responder,
-    http::{StatusCode, header},
+    http::{
+        StatusCode,
+        header::{Accept, Header},
+    },
     post, web,
 };
 use serde::Serialize;
@@ -333,6 +336,70 @@ fn warning_count(execution: &ReportExecution) -> usize {
     execution.warnings.len()
 }
 
+fn mime_matches(mime: &impl ToString, content_type: ReportContentType) -> bool {
+    let target = content_type.as_mime();
+    let mime_str = mime.to_string();
+
+    // Check for */*
+    if mime_str == "*/*" {
+        return true;
+    }
+
+    // Check for exact match
+    if mime_str == target {
+        return true;
+    }
+
+    // Check for type/* wildcards (e.g., application/*, text/*)
+    let target_parts: Vec<&str> = target.split('/').collect();
+    if target_parts.len() == 2 {
+        let wildcard = format!("{}/*", target_parts[0]);
+        if mime_str == wildcard {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn extract_quality_value(entry: &str) -> f32 {
+    // Split by semicolon to get parameters
+    for part in entry.split(';').skip(1) {
+        let param = part.trim();
+        if let Some(value) = param
+            .strip_prefix("q=")
+            .or_else(|| param.strip_prefix("q ="))
+        {
+            if let Ok(q) = value.trim().parse::<f32>() {
+                return q;
+            }
+        }
+    }
+    // Default quality is 1.0 per HTTP spec
+    1.0
+}
+
+fn all_entries_have_zero_quality(accept_str: &str) -> bool {
+    // Check if ALL entries in Accept header have q=0 (exactly)
+    let entries: Vec<&str> = accept_str
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if entries.is_empty() {
+        return false;
+    }
+
+    for entry in &entries {
+        let quality = extract_quality_value(entry);
+        // If any entry doesn't have q=0, return false
+        if quality != 0.0 {
+            return false;
+        }
+    }
+    true
+}
+
 fn resolve_content_type(
     req: &HttpRequest,
     template: Option<&ReportTemplate>,
@@ -342,24 +409,44 @@ fn resolve_content_type(
         return Ok(template.content_type);
     }
 
-    let accept = req
-        .headers()
-        .get(header::ACCEPT)
-        .and_then(|value| value.to_str().ok())
-        .map(|value| value.to_ascii_lowercase());
-
-    let Some(accept) = accept else {
-        return Ok(ReportContentType::ApplicationJson);
+    //  If there's no Accept header, default to JSON (HTTP semantics)
+    let accept_header = match req.headers().get(actix_web::http::header::ACCEPT) {
+        Some(h) => h,
+        None => return Ok(ReportContentType::ApplicationJson),
     };
 
-    for content_type in [
+    let accept_str = match accept_header.to_str() {
+        Ok(s) => s,
+        Err(_) => return Ok(ReportContentType::ApplicationJson),
+    };
+
+    // Check if all entries have q=0 (explicit rejection of all types)
+    if all_entries_have_zero_quality(accept_str) {
+        return Err(ApiError::NotAcceptable(
+            "Accept header explicitly excludes all types (q=0)".to_string(),
+        ));
+    }
+
+    // Try to parse Accept header using actix's built-in support
+    let accept = match Accept::parse(req) {
+        Ok(a) => a,
+        Err(_) => return Ok(ReportContentType::ApplicationJson),
+    };
+
+    let supported_types = [
         ReportContentType::ApplicationJson,
         ReportContentType::TextPlain,
         ReportContentType::TextHtml,
         ReportContentType::TextCsv,
-    ] {
-        if accept_allows_content_type(&accept, content_type) {
-            return Ok(content_type);
+    ];
+
+    // Accept header is already sorted by q-value (descending) via ranked()
+    // Note: actix's ranked() already filters out q=0 items
+    for mime in accept.ranked() {
+        for content_type in &supported_types {
+            if mime_matches(&mime, *content_type) {
+                return Ok(*content_type);
+            }
         }
     }
 
@@ -372,37 +459,28 @@ fn enforce_accept_matches_template(
     req: &HttpRequest,
     template_content_type: ReportContentType,
 ) -> Result<(), ApiError> {
-    let accept = req
-        .headers()
-        .get(header::ACCEPT)
-        .and_then(|value| value.to_str().ok())
-        .map(|value| value.to_ascii_lowercase());
-
-    if let Some(accept) = accept
-        && !accept_allows_content_type(&accept, template_content_type)
-    {
-        return Err(ApiError::NotAcceptable(format!(
-            "Accept header does not allow template output type '{}'",
-            template_content_type.as_mime()
-        )));
+    // If there's no Accept header, allow any content type (HTTP semantics)
+    if req.headers().get(actix_web::http::header::ACCEPT).is_none() {
+        return Ok(());
     }
 
-    Ok(())
-}
+    let accept = match Accept::parse(req) {
+        Ok(a) => a,
+        Err(_) => return Ok(()), // If parsing fails, allow it
+    };
 
-fn accept_allows_content_type(accept: &str, content_type: ReportContentType) -> bool {
-    if accept.contains("*/*") {
-        return true;
-    }
-
-    match content_type {
-        ReportContentType::ApplicationJson => {
-            accept.contains("application/json") || accept.contains("application/*")
-        }
-        ReportContentType::TextPlain | ReportContentType::TextHtml | ReportContentType::TextCsv => {
-            accept.contains(content_type.as_mime()) || accept.contains("text/*")
+    // Check if any accepted mime type matches the template's content type
+    // Note: actix's ranked() filters out q=0 items automatically
+    for mime in accept.ranked() {
+        if mime_matches(&mime, template_content_type) {
+            return Ok(());
         }
     }
+
+    Err(ApiError::NotAcceptable(format!(
+        "Accept header does not allow template output type '{}'",
+        template_content_type.as_mime()
+    )))
 }
 
 fn prepare_query_options(report: &ReportRequest) -> Result<QueryOptions, ApiError> {
@@ -410,6 +488,14 @@ fn prepare_query_options(report: &ReportRequest) -> Result<QueryOptions, ApiErro
     if query_options.cursor.is_some() {
         return Err(ApiError::BadRequest(
             "Reports do not support cursor pagination".to_string(),
+        ));
+    }
+
+    if let Some(limits) = &report.limits
+        && let Some(0) = limits.max_items
+    {
+        return Err(ApiError::BadRequest(
+            "max_items must be greater than 0".to_string(),
         ));
     }
 

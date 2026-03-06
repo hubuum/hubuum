@@ -556,4 +556,173 @@ mod tests {
 
         cleanup(&classes).await;
     }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_run_report_respects_accept_q_values(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
+        let classes = create_test_classes(&context, "report_q_values").await;
+        let class = classes[0].clone();
+        let _created_objects = create_report_objects(pool, &class).await;
+
+        // Accept header with q-values preferring text/plain over application/json
+        let body = ReportRequest {
+            scope: ReportScope {
+                kind: ReportScopeKind::ObjectsInClass,
+                class_id: Some(class.id),
+                object_id: None,
+            },
+            query: Some("name__contains=report-&sort=name".to_string()),
+            output: None,
+            missing_data_policy: None,
+            limits: None,
+        };
+
+        let resp = post_request_with_headers(
+            pool,
+            admin_token,
+            REPORTS_ENDPOINT,
+            &body,
+            vec![(
+                header::ACCEPT,
+                "application/json;q=0.5, text/plain;q=1.0".to_string(),
+            )],
+        )
+        .await;
+
+        assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_run_report_excludes_q_zero(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
+        let classes = create_test_classes(&context, "report_q_zero_exclude").await;
+        let class = classes[0].clone();
+        let _created_objects = create_report_objects(pool, &class).await;
+
+        let body = ReportRequest {
+            scope: ReportScope {
+                kind: ReportScopeKind::ObjectsInClass,
+                class_id: Some(class.id),
+                object_id: None,
+            },
+            query: Some("name__contains=report-&sort=name".to_string()),
+            output: None,
+            missing_data_policy: None,
+            limits: None,
+        };
+
+        // Accept header explicitly excluding application/json with q=0
+        let resp = post_request_with_headers(
+            pool,
+            admin_token,
+            REPORTS_ENDPOINT,
+            &body,
+            vec![(
+                header::ACCEPT,
+                "application/json;q=0, text/plain;q=0".to_string(),
+            )],
+        )
+        .await;
+
+        assert_response_status(resp, StatusCode::NOT_ACCEPTABLE).await;
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_run_report_wildcard_with_q_values(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
+        let classes = create_test_classes(&context, "report_wildcard_qvalue").await;
+        let class = classes[0].clone();
+        let _created_objects = create_report_objects(pool, &class).await;
+
+        let body = ReportRequest {
+            scope: ReportScope {
+                kind: ReportScopeKind::ObjectsInClass,
+                class_id: Some(class.id),
+                object_id: None,
+            },
+            query: Some("name__contains=report-&sort=name".to_string()),
+            output: None,
+            missing_data_policy: None,
+            limits: None,
+        };
+
+        // Accept: application/*;q=0.9, text/*;q=0.5 should pick application/json
+        let resp = post_request_with_headers(
+            pool,
+            admin_token,
+            REPORTS_ENDPOINT,
+            &body,
+            vec![(
+                header::ACCEPT,
+                "application/*;q=0.9, text/*;q=0.5".to_string(),
+            )],
+        )
+        .await;
+
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let content_type = resp.headers().get(header::CONTENT_TYPE).unwrap();
+        assert!(
+            content_type
+                .to_str()
+                .unwrap()
+                .starts_with("application/json")
+        );
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_run_report_prefers_higher_q_value(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
+        let classes = create_test_classes(&context, "report_prefer_q").await;
+        let class = classes[0].clone();
+        let _created_objects = create_report_objects(pool, &class).await;
+
+        let body = ReportRequest {
+            scope: ReportScope {
+                kind: ReportScopeKind::ObjectsInClass,
+                class_id: Some(class.id),
+                object_id: None,
+            },
+            query: Some("name__contains=report-&sort=name".to_string()),
+            output: None,
+            missing_data_policy: None,
+            limits: None,
+        };
+
+        // Should pick application/json with higher q-value
+        let resp = post_request_with_headers(
+            pool,
+            admin_token,
+            REPORTS_ENDPOINT,
+            &body,
+            vec![(
+                header::ACCEPT,
+                "text/html;q=0.3, application/json;q=0.9, text/plain;q=0.5".to_string(),
+            )],
+        )
+        .await;
+
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let report: ReportJsonResponse = test::read_body_json(resp).await;
+        assert_eq!(report.items.len(), 2);
+
+        cleanup(&classes).await;
+    }
 }

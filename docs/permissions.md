@@ -72,7 +72,7 @@ Report templates are used to format report output and are scoped to namespaces. 
 | ---------- | ----------- |
 | `read_template`     | Allows reading templates and using them in report generation. Required to view template definitions or to reference a template when running a report. |
 | `create_template`   | Allows creating new templates within the namespace. Also required when moving a template to a different namespace (as the target namespace permission). |
-| `update_template`   | Allows modifying existing templates (name, description, content, content type). Required when moving a template to a different namespace (as the source namespace permission). |
+| `update_template`   | Allows modifying existing templates (name, description, template content, namespace). Required when moving a template to a different namespace (as the source namespace permission). |
 | `delete_template`   | Allows deleting templates from the namespace. |
 
 **Important notes about template permissions:**

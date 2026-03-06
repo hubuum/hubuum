@@ -20,8 +20,7 @@ Authentication:
   },
   "query": "name__contains=server&sort=name",
   "output": {
-    "content_type": "text/plain",
-    "template": "{{#each items}}{{this.name}}={{this.data.owner}}\n{{/each}}"
+    "template_id": 12
   },
   "missing_data_policy": "strict",
   "limits": {
@@ -58,11 +57,11 @@ If the rendered response exceeds `limits.max_output_bytes`, the request fails wi
 
 ## Output selection
 
-The server chooses the output format in this order:
+The server determines the output format based on:
 
-1. `output.content_type`, if present
-2. `Accept` header, if present
-3. `application/json`
+1. If `output.template_id` is provided, the stored template's `content_type` is used
+2. Otherwise, the `Accept` header is consulted
+3. If no `Accept` header is present, defaults to `application/json`
 
 Supported output types:
 
@@ -101,9 +100,9 @@ JSON output returns a stable envelope:
 
 ## Template output
 
-`text/plain`, `text/html`, and `text/csv` require `output.template`.
+`text/plain`, `text/html`, and `text/csv` outputs require referencing a stored template via `output.template_id`.
 
-The first version intentionally supports a small template language:
+Templates use a minimal template language:
 
 - `{{path.to.value}}` to interpolate a value
 - `{{this.name}}` inside loops

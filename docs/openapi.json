@@ -4860,7 +4860,7 @@
         },
         "responses": {
           "200": {
-            "description": "Rendered report output. The response format depends on `output.content_type` or the `Accept` header.",
+            "description": "Rendered report output. The response format is determined by the stored template's content type (if template_id is provided) or the Accept header. Defaults to application/json.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4906,6 +4906,16 @@
           },
           "406": {
             "description": "Not acceptable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Rendered report exceeded max_output_bytes",
             "content": {
               "application/json": {
                 "schema": {
@@ -5901,26 +5911,16 @@
       "ReportOutputRequest": {
         "type": "object",
         "properties": {
-          "content_type": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportContentType"
-              }
-            ]
-          },
-          "template": {
+          "template_id": {
             "type": [
-              "string",
+              "integer",
               "null"
-            ]
+            ],
+            "format": "int32"
           }
         },
         "example": {
-          "content_type": "text/plain",
-          "template": "{{#each items}}{{this.name}}\n{{/each}}"
+          "template_id": 12
         }
       },
       "ReportRequest": {
