@@ -694,7 +694,9 @@ mod tests {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
 
-        let namespace = scope.namespace_fixture("test_template_permissions_set_grant_and_revoke").await;
+        let namespace = scope
+            .namespace_fixture("test_template_permissions_set_grant_and_revoke")
+            .await;
 
         let group = NewGroup {
             groupname: "test_template_permissions_set_grant_and_revoke".to_string(),
@@ -715,38 +717,46 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(group_can_on(
-            &pool,
-            group_id,
-            namespace.namespace.clone(),
-            Permissions::ReadTemplate
-        )
-        .await
-        .unwrap());
-        assert!(group_can_on(
-            &pool,
-            group_id,
-            namespace.namespace.clone(),
-            Permissions::UpdateTemplate
-        )
-        .await
-        .unwrap());
-        assert!(!group_can_on(
-            &pool,
-            group_id,
-            namespace.namespace.clone(),
-            Permissions::CreateTemplate
-        )
-        .await
-        .unwrap());
-        assert!(!group_can_on(
-            &pool,
-            group_id,
-            namespace.namespace.clone(),
-            Permissions::DeleteTemplate
-        )
-        .await
-        .unwrap());
+        assert!(
+            group_can_on(
+                &pool,
+                group_id,
+                namespace.namespace.clone(),
+                Permissions::ReadTemplate
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            group_can_on(
+                &pool,
+                group_id,
+                namespace.namespace.clone(),
+                Permissions::UpdateTemplate
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            !group_can_on(
+                &pool,
+                group_id,
+                namespace.namespace.clone(),
+                Permissions::CreateTemplate
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            !group_can_on(
+                &pool,
+                group_id,
+                namespace.namespace.clone(),
+                Permissions::DeleteTemplate
+            )
+            .await
+            .unwrap()
+        );
 
         namespace
             .namespace
@@ -754,14 +764,16 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(group_can_on(
-            &pool,
-            group_id,
-            namespace.namespace.clone(),
-            Permissions::CreateTemplate
-        )
-        .await
-        .unwrap());
+        assert!(
+            group_can_on(
+                &pool,
+                group_id,
+                namespace.namespace.clone(),
+                Permissions::CreateTemplate
+            )
+            .await
+            .unwrap()
+        );
 
         namespace
             .namespace
@@ -769,22 +781,26 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!group_can_on(
-            &pool,
-            group_id,
-            namespace.namespace.clone(),
-            Permissions::UpdateTemplate
-        )
-        .await
-        .unwrap());
-        assert!(group_can_on(
-            &pool,
-            group_id,
-            namespace.namespace.clone(),
-            Permissions::ReadTemplate
-        )
-        .await
-        .unwrap());
+        assert!(
+            !group_can_on(
+                &pool,
+                group_id,
+                namespace.namespace.clone(),
+                Permissions::UpdateTemplate
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            group_can_on(
+                &pool,
+                group_id,
+                namespace.namespace.clone(),
+                Permissions::ReadTemplate
+            )
+            .await
+            .unwrap()
+        );
 
         namespace.cleanup().await.unwrap();
         group.delete(&pool).await.unwrap();
@@ -794,7 +810,9 @@ mod tests {
     async fn test_template_permission_backfill_updates_only_delegators() {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
-        let namespace = scope.namespace_fixture("test_template_permission_backfill").await;
+        let namespace = scope
+            .namespace_fixture("test_template_permission_backfill")
+            .await;
 
         let delegate_group = NewGroup {
             groupname: format!("template_backfill_delegate_{}", namespace.namespace.id),

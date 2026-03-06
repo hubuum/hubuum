@@ -165,7 +165,9 @@ pub async fn user_can_on_any_from_backend<U: SelfAccessors<User> + GroupAccessor
     use crate::schema::permissions::dsl::*;
 
     if user_id.instance(pool).await?.is_admin(pool).await? {
-        return with_connection(pool, |conn| crate::schema::namespaces::table.load::<Namespace>(conn));
+        return with_connection(pool, |conn| {
+            crate::schema::namespaces::table.load::<Namespace>(conn)
+        });
     }
 
     let base_query = {

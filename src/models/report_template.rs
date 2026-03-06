@@ -403,6 +403,10 @@ impl CursorSqlMapping for ReportTemplate {
 
 #[allow(dead_code)]
 fn report_template_example() -> ReportTemplate {
+    let example_timestamp = chrono::NaiveDate::from_ymd_opt(2026, 3, 6)
+        .and_then(|date| date.and_hms_opt(12, 0, 0))
+        .expect("static OpenAPI example timestamp must be valid");
+
     ReportTemplate {
         id: 1,
         namespace_id: 7,
@@ -410,8 +414,8 @@ fn report_template_example() -> ReportTemplate {
         description: "Template for owner listing".to_string(),
         content_type: ReportContentType::TextPlain,
         template: "{{#each items}}{{this.name}}={{this.data.owner}}\\n{{/each}}".to_string(),
-        created_at: chrono::Utc::now().naive_utc(),
-        updated_at: chrono::Utc::now().naive_utc(),
+        created_at: example_timestamp,
+        updated_at: example_timestamp,
     }
 }
 

@@ -57,7 +57,7 @@ fn render_section(
                         return Err(ApiError::BadRequest(format!(
                             "Template path '{}' is not iterable",
                             expr.trim()
-                        )))
+                        )));
                     }
                     ReportMissingDataPolicy::Null | ReportMissingDataPolicy::Omit => {
                         warnings.push(ReportWarning {

@@ -4860,7 +4860,7 @@
         },
         "responses": {
           "200": {
-            "description": "Rendered report output. The response format is determined by the stored template's content type (if template_id is provided) or the Accept header. Defaults to application/json.",
+            "description": "Rendered report output. JSON is returned by default. Text outputs require `output.template_id`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4916,6 +4916,394 @@
           },
           "413": {
             "description": "Rendered report exceeded max_output_bytes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/templates": {
+      "get": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "Get Api V1 Templates",
+        "description": "Auto-generated documentation for GET /api/v1/templates. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1Templates",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Templates visible to caller The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ReportTemplate"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "Post Api V1 Templates",
+        "description": "Auto-generated documentation for POST /api/v1/templates.",
+        "operationId": "postApiV1Templates",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewReportTemplate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Template created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportTemplate"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/templates/{template_id}": {
+      "get": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "Get Api V1 Templates By Template Id",
+        "description": "Auto-generated documentation for GET /api/v1/templates/{template_id}.",
+        "operationId": "getApiV1TemplatesByTemplateId",
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Template ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Template",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportTemplate"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Template not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "Delete Api V1 Templates By Template Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/templates/{template_id}.",
+        "operationId": "deleteApiV1TemplatesByTemplateId",
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Template ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Template deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Template not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "Patch Api V1 Templates By Template Id",
+        "description": "Auto-generated documentation for PATCH /api/v1/templates/{template_id}.",
+        "operationId": "patchApiV1TemplatesByTemplateId",
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Template ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateReportTemplate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Template updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportTemplate"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Template not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
             "content": {
               "application/json": {
                 "schema": {
@@ -5607,6 +5995,41 @@
           "name": "global-assets"
         }
       },
+      "NewReportTemplate": {
+        "type": "object",
+        "required": [
+          "namespace_id",
+          "name",
+          "description",
+          "content_type",
+          "template"
+        ],
+        "properties": {
+          "content_type": {
+            "$ref": "#/components/schemas/ReportContentType"
+          },
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "namespace_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "template": {
+            "type": "string"
+          }
+        },
+        "example": {
+          "content_type": "text/plain",
+          "description": "Template for owner listing",
+          "name": "owner-report",
+          "namespace_id": 7,
+          "template": "{{#each items}}{{this.name}}={{this.data.owner}}\\n{{/each}}"
+        }
+      },
       "NewUser": {
         "type": "object",
         "description": "Struct to create a new user.\n\nThe password is expected to be hashed\nbefore being passed to the database.",
@@ -5677,6 +6100,10 @@
           "has_read_object_relation",
           "has_update_object_relation",
           "has_delete_object_relation",
+          "has_read_template",
+          "has_create_template",
+          "has_update_template",
+          "has_delete_template",
           "created_at",
           "updated_at"
         ],
@@ -5701,6 +6128,9 @@
           "has_create_object_relation": {
             "type": "boolean"
           },
+          "has_create_template": {
+            "type": "boolean"
+          },
           "has_delegate_namespace": {
             "type": "boolean"
           },
@@ -5719,6 +6149,9 @@
           "has_delete_object_relation": {
             "type": "boolean"
           },
+          "has_delete_template": {
+            "type": "boolean"
+          },
           "has_read_class": {
             "type": "boolean"
           },
@@ -5734,6 +6167,9 @@
           "has_read_object_relation": {
             "type": "boolean"
           },
+          "has_read_template": {
+            "type": "boolean"
+          },
           "has_update_class": {
             "type": "boolean"
           },
@@ -5747,6 +6183,9 @@
             "type": "boolean"
           },
           "has_update_object_relation": {
+            "type": "boolean"
+          },
+          "has_update_template": {
             "type": "boolean"
           },
           "id": {
@@ -5785,7 +6224,11 @@
           "CreateObjectRelation",
           "ReadObjectRelation",
           "UpdateObjectRelation",
-          "DeleteObjectRelation"
+          "DeleteObjectRelation",
+          "ReadTemplate",
+          "CreateTemplate",
+          "UpdateTemplate",
+          "DeleteTemplate"
         ]
       },
       "ReportContentType": {
@@ -5919,6 +6362,7 @@
             "format": "int32"
           }
         },
+        "additionalProperties": false,
         "example": {
           "template_id": 12
         }
@@ -5976,8 +6420,7 @@
           },
           "missing_data_policy": "strict",
           "output": {
-            "content_type": "text/plain",
-            "template": "{{#each items}}{{this.name}}\n{{/each}}"
+            "template_id": 12
           },
           "query": "name__icontains=server&sort=name",
           "scope": {
@@ -6027,6 +6470,63 @@
           "object_relations",
           "related_objects"
         ]
+      },
+      "ReportTemplate": {
+        "type": "object",
+        "required": [
+          "id",
+          "namespace_id",
+          "name",
+          "description",
+          "content_type",
+          "template",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "content_type": {
+            "$ref": "#/components/schemas/ReportContentType"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          },
+          "namespace_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "template": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "example": {
+          "content_type": "text/plain",
+          "created_at": "2026-03-06T12:00:00",
+          "description": "Template for owner listing",
+          "id": 1,
+          "name": "owner-report",
+          "namespace_id": 7,
+          "template": "{{#each items}}{{this.name}}={{this.data.owner}}\\n{{/each}}",
+          "updated_at": "2026-03-06T12:00:00"
+        }
+      },
+      "ReportTemplateID": {
+        "type": "integer",
+        "format": "int32"
       },
       "ReportWarning": {
         "type": "object",
@@ -6169,6 +6669,42 @@
           "name": "global-assets"
         }
       },
+      "UpdateReportTemplate": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "namespace_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "example": {
+          "description": "Updated template description",
+          "name": "owner-report-v2",
+          "namespace_id": 9,
+          "template": "{{#each items}}{{this.name}}\\n{{/each}}"
+        }
+      },
       "UpdateUser": {
         "type": "object",
         "description": "Struct to update a user.\n\nThe password, if present, is expected to be hashed\nbefore being passed to the database.",
@@ -6295,6 +6831,10 @@
     {
       "name": "reports",
       "description": "Server-side report execution endpoints"
+    },
+    {
+      "name": "templates",
+      "description": "Stored report template management endpoints"
     }
   ]
 }
