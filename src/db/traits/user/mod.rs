@@ -10,7 +10,7 @@ use crate::models::traits::ExpandNamespaceFromMap;
 use crate::models::traits::user::UserNamespaceAccessors;
 use crate::models::{
     Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
-    HubuumObjectRelation, Namespace, NewUser, ObjectClosureView, Permissions, Token, UpdateUser,
+    HubuumObjectRelation, Namespace, NewUser, ObjectClosureRow, Permissions, Token, UpdateUser,
     User, UserID, UserToken,
 };
 use crate::traits::{ClassAccessors, GroupAccessors, NamespaceAccessors, SelfAccessors};

@@ -102,7 +102,7 @@ pub struct HubuumObjectTransitiveLink {
 }
 
 #[derive(Debug, Queryable, Serialize, Deserialize)]
-pub struct ClassClosureView {
+pub struct ClassClosureRow {
     pub ancestor_class_id: i32,
     pub descendant_class_id: i32,
     pub depth: i32,
@@ -124,7 +124,7 @@ pub struct ClassClosureView {
 }
 
 #[derive(Debug, Queryable, Serialize, Deserialize, Clone)]
-pub struct ObjectClosureView {
+pub struct ObjectClosureRow {
     pub ancestor_object_id: i32,
     pub descendant_object_id: i32,
     pub depth: i32,

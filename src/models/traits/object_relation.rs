@@ -7,7 +7,7 @@ use crate::errors::ApiError;
 
 use crate::models::{
     HubuumObject, HubuumObjectRelation, HubuumObjectRelationID, HubuumObjectWithPath,
-    NewHubuumObjectRelation, ObjectClosureView,
+    NewHubuumObjectRelation, ObjectClosureRow,
 };
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter};
@@ -55,7 +55,7 @@ impl SaveAdapter for NewHubuumObjectRelation {
     }
 }
 
-impl ObjectClosureView {
+impl ObjectClosureRow {
     #[allow(dead_code)]
     pub fn to_descendant_object(&self) -> HubuumObject {
         HubuumObject {
@@ -99,7 +99,7 @@ impl ObjectClosureView {
     }
 }
 
-// Trait for converting iterators of ObjectClosureView to Vec<HubuumObject>
+// Trait for converting iterators of ObjectClosureRow to Vec<HubuumObject>
 #[allow(dead_code)]
 pub trait ToHubuumObjects {
     fn to_descendant_objects(self) -> Vec<HubuumObject>;
@@ -107,7 +107,7 @@ pub trait ToHubuumObjects {
     fn to_ascendant_objects(self) -> Vec<HubuumObject>;
 }
 
-impl ToHubuumObjects for Vec<ObjectClosureView> {
+impl ToHubuumObjects for Vec<ObjectClosureRow> {
     fn to_descendant_objects(self) -> Vec<HubuumObject> {
         self.into_iter()
             .map(|ocv| ocv.to_descendant_object())

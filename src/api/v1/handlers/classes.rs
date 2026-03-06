@@ -18,7 +18,7 @@ use crate::models::{
     GroupPermission, HubuumClassExpanded, HubuumClassID, HubuumClassRelation,
     HubuumClassRelationID, HubuumClassRelationTransitive, HubuumObject, HubuumObjectID,
     HubuumObjectRelation, HubuumObjectWithPath, NamespaceID, NewHubuumClass,
-    NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation, ObjectClosureView,
+    NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation, ObjectClosureRow,
     Permissions, UpdateHubuumClass, UpdateHubuumObject,
 };
 use crate::traits::{CanDelete, CanSave, CanUpdate, NamespaceAccessors, Search, SelfAccessors};
@@ -805,7 +805,7 @@ async fn list_related_objects(
         query = query_string,
     );
 
-    let search_params = prepare_db_pagination::<ObjectClosureView>(&params)?;
+    let search_params = prepare_db_pagination::<ObjectClosureRow>(&params)?;
     let hits = user
         .search_objects_related_to(&pool, from_object, search_params)
         .await?;

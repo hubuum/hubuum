@@ -6,10 +6,10 @@ use crate::errors::ApiError;
 
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
-    ClassClosureView, HubuumClass, HubuumClassRelation, HubuumClassRelationID,
+    ClassClosureRow, HubuumClass, HubuumClassRelation, HubuumClassRelationID,
     HubuumClassRelationTransitive, HubuumClassWithPath, HubuumObject, HubuumObjectRelation,
     HubuumObjectRelationID, Namespace, NewHubuumClassRelation, NewHubuumObjectRelation,
-    ObjectClosureView,
+    ObjectClosureRow,
 };
 use crate::traits::accessors::{
     ClassAdapter, IdAccessor, InstanceAdapter, NamespaceAdapter, ObjectAdapter,
@@ -206,7 +206,7 @@ impl ObjectAdapter<(HubuumObject, HubuumObject), (i32, i32)> for HubuumObjectRel
     }
 }
 
-impl ClassClosureView {
+impl ClassClosureRow {
     #[allow(dead_code)]
     pub fn to_ascendant_class(&self) -> HubuumClass {
         HubuumClass {
@@ -258,7 +258,7 @@ pub trait ToHubuumClasses {
     fn to_ascendant_classes(self) -> Vec<HubuumClass>;
 }
 
-impl ToHubuumClasses for Vec<ClassClosureView> {
+impl ToHubuumClasses for Vec<ClassClosureRow> {
     fn to_descendant_classes(self) -> Vec<HubuumClass> {
         self.into_iter()
             .map(|ocv| ocv.to_descendant_class())
@@ -534,7 +534,7 @@ impl CursorSqlMapping for HubuumClassRelationTransitive {
     }
 }
 
-impl CursorPaginated for ObjectClosureView {
+impl CursorPaginated for ObjectClosureRow {
     fn supports_sort(field: &FilterField) -> bool {
         matches!(
             field,
@@ -625,7 +625,7 @@ impl CursorPaginated for ObjectClosureView {
     }
 }
 
-impl CursorSqlMapping for ObjectClosureView {
+impl CursorSqlMapping for ObjectClosureRow {
     fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
         Ok(match field {
             FilterField::Id | FilterField::ObjectTo => CursorSqlField {

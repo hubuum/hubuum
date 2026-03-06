@@ -657,7 +657,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + GroupAccessors + UserNamespac
         pool: &DbPool,
         object: O,
         query_options: QueryOptions,
-    ) -> Result<Vec<ObjectClosureView>, ApiError>
+    ) -> Result<Vec<ObjectClosureRow>, ApiError>
     where
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
@@ -890,7 +890,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + GroupAccessors + UserNamespac
             }
         }
 
-        crate::apply_query_options!(base_query, query_options, ObjectClosureView);
+        crate::apply_query_options!(base_query, query_options, ObjectClosureRow);
 
         trace_query!(base_query, "Searching object relations");
 
@@ -919,7 +919,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + GroupAccessors + UserNamespac
                     descendant_object.field(hubuumobject::updated_at),
                 ))
                 .distinct()
-                .load::<ObjectClosureView>(conn)
+                .load::<ObjectClosureRow>(conn)
         })
     }
 }
