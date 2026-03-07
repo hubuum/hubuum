@@ -266,8 +266,8 @@ impl TaskRecord {
                 import_results: import_results.clone(),
             },
             details: import_results.map(|results_url| TaskDetails {
-                    import: Some(ImportTaskDetails { results_url }),
-                }),
+                import: Some(ImportTaskDetails { results_url }),
+            }),
         })
     }
 }

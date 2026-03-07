@@ -27,6 +27,7 @@ pub struct TaskCreateRequest {
     pub total_items: i32,
 }
 
+#[cfg(test)]
 pub async fn create_task_record(
     pool: &DbPool,
     new_task: NewTaskRecord,
@@ -171,6 +172,7 @@ pub async fn redact_task_payload(
 }
 
 pub async fn claim_next_queued_task(pool: &DbPool) -> Result<Option<TaskRecord>, ApiError> {
+    use crate::schema::task_events::dsl::task_events;
     use crate::schema::tasks::dsl::{created_at, id, started_at, status, tasks, updated_at};
 
     with_transaction(pool, |conn| -> Result<Option<TaskRecord>, ApiError> {
@@ -195,6 +197,15 @@ pub async fn claim_next_queued_task(pool: &DbPool) -> Result<Option<TaskRecord>,
             ))
             .get_result::<TaskRecord>(conn)?;
 
+        diesel::insert_into(task_events)
+            .values(NewTaskEventRecord {
+                task_id: record.id,
+                event_type: "validating".to_string(),
+                message: "Task claimed for validation".to_string(),
+                data: None,
+            })
+            .execute(conn)?;
+
         Ok(Some(record))
     })
 }
@@ -203,50 +214,50 @@ pub async fn create_generic_task(
     pool: &DbPool,
     request: TaskCreateRequest,
 ) -> Result<TaskRecord, ApiError> {
-    let task = create_task_record(
-        pool,
-        NewTaskRecord {
-            kind: request.kind.as_str().to_string(),
-            status: TaskStatus::Queued.as_str().to_string(),
-            submitted_by: request.submitted_by,
-            idempotency_key: request.idempotency_key,
-            request_hash: request.request_hash,
-            request_payload: Some(request.request_payload),
-            summary: None,
-            total_items: request.total_items,
-            processed_items: 0,
-            success_items: 0,
-            failed_items: 0,
-            request_redacted_at: None,
-            started_at: None,
-            finished_at: None,
-        },
-    )
-    .await?;
+    use crate::schema::task_events::dsl::task_events;
+    use crate::schema::tasks::dsl::tasks;
 
-    append_task_event(
-        pool,
-        NewTaskEventRecord {
-            task_id: task.id,
-            event_type: "queued".to_string(),
-            message: "Task queued".to_string(),
-            data: None,
-        },
-    )
-    .await?;
+    with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
+        let task = diesel::insert_into(tasks)
+            .values(NewTaskRecord {
+                kind: request.kind.as_str().to_string(),
+                status: TaskStatus::Queued.as_str().to_string(),
+                submitted_by: request.submitted_by,
+                idempotency_key: request.idempotency_key,
+                request_hash: request.request_hash,
+                request_payload: Some(request.request_payload),
+                summary: None,
+                total_items: request.total_items,
+                processed_items: 0,
+                success_items: 0,
+                failed_items: 0,
+                request_redacted_at: None,
+                started_at: None,
+                finished_at: None,
+            })
+            .get_result::<TaskRecord>(conn)?;
 
-    Ok(task)
+        diesel::insert_into(task_events)
+            .values(NewTaskEventRecord {
+                task_id: task.id,
+                event_type: "queued".to_string(),
+                message: "Task queued".to_string(),
+                data: None,
+            })
+            .execute(conn)?;
+
+        Ok::<TaskRecord, ApiError>(task)
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::Utc;
     use diesel::prelude::*;
     use futures::executor::block_on;
     use std::sync::mpsc;
     use std::thread;
 
-    use super::create_task_record;
+    use super::{claim_next_queued_task, create_task_record, list_task_events};
     use crate::db::with_transaction;
     use crate::models::{NewTaskRecord, TaskKind, TaskStatus};
     use crate::tests::TestContext;
@@ -304,44 +315,23 @@ mod tests {
         });
 
         let locked_id = locked_rx.recv().unwrap();
-        let claimed = with_transaction(
-            &context.pool,
-            |conn| -> Result<Option<i32>, crate::errors::ApiError> {
-                use crate::schema::tasks::dsl::{
-                    created_at, id, idempotency_key, started_at, status, tasks, updated_at,
-                };
-
-                let Some(task_id_value) = tasks
-                    .filter(status.eq(TaskStatus::Queued.as_str()))
-                    .filter(idempotency_key.like(format!("{claim_prefix}-%")))
-                    .order(created_at.asc())
-                    .for_update()
-                    .skip_locked()
-                    .select(id)
-                    .first::<i32>(conn)
-                    .optional()?
-                else {
-                    return Ok(None);
-                };
-
-                let now = Utc::now().naive_utc();
-                let record = diesel::update(tasks.filter(id.eq(task_id_value)))
-                    .set((
-                        status.eq(TaskStatus::Validating.as_str()),
-                        started_at.eq(Some(now)),
-                        updated_at.eq(now),
-                    ))
-                    .get_result::<crate::models::TaskRecord>(conn)?;
-
-                Ok(Some(record.id))
-            },
-        )
-        .unwrap();
+        let claimed = block_on(claim_next_queued_task(&context.pool))
+            .unwrap()
+            .map(|task| task.id);
         release_tx.send(()).unwrap();
         locker.join().unwrap();
 
         assert!(claimed.is_some());
         assert_ne!(claimed.unwrap(), locked_id);
         assert!(created_ids.contains(&locked_id));
+
+        let claimed_events = block_on(list_task_events(&context.pool, claimed.unwrap())).unwrap();
+        assert_eq!(
+            claimed_events
+                .iter()
+                .filter(|event| event.event_type == "validating")
+                .count(),
+            1
+        );
     }
 }

@@ -4,6 +4,7 @@ mod tests {
     use actix_web::{http::StatusCode, test};
     use chrono::Utc;
     use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl};
+    use futures::join;
     use rstest::rstest;
     use std::time::Duration;
 
@@ -171,6 +172,9 @@ mod tests {
         .await;
         assert_eq!(completed.status, TaskStatus::Succeeded);
         assert!(completed.request_redacted_at.is_some());
+        let finished_at = completed
+            .finished_at
+            .expect("completed import task should have finished_at");
 
         let resp = get_request(
             &context.pool,
@@ -188,6 +192,12 @@ mod tests {
         assert!(event_types.contains(&"validating"));
         assert!(event_types.contains(&"running"));
         assert!(event_types.contains(&"succeeded"));
+        let last_event_at = events
+            .iter()
+            .map(|event| event.created_at)
+            .max()
+            .expect("task should have events");
+        assert!(finished_at >= last_event_at);
 
         let resp = get_request(
             &context.pool,
@@ -199,6 +209,12 @@ mod tests {
         let results: Vec<ImportTaskResultResponse> = test::read_body_json(resp).await;
         assert_eq!(results.len(), 4);
         assert!(results.iter().all(|result| result.outcome == "succeeded"));
+        let last_result_at = results
+            .iter()
+            .map(|result| result.created_at)
+            .max()
+            .expect("import should have results");
+        assert!(finished_at >= last_result_at);
 
         let stored_payload = with_connection(&context.pool, |conn| {
             tasks
@@ -307,7 +323,181 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn test_import_collision_abort_keeps_existing_data(#[future(awt)] test_context: TestContext) {
+    async fn test_import_idempotency_reuses_task_under_concurrent_submissions(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+
+        for iteration in 0..10 {
+            let idempotency = context.scoped_name(&format!("same-task-concurrent-{iteration}"));
+            let body = ImportRequest {
+                version: 1,
+                dry_run: Some(true),
+                mode: None,
+                graph: ImportGraph {
+                    namespaces: vec![ImportNamespaceInput {
+                        ref_: Some("ns:dry".to_string()),
+                        name: context
+                            .scoped_name(&format!("idempotent_import_ns_concurrent_{iteration}")),
+                        description: "Dry run namespace".to_string(),
+                    }],
+                    ..ImportGraph::default()
+                },
+            };
+
+            let first = post_request_with_headers(
+                &context.pool,
+                &context.admin_token,
+                IMPORTS_ENDPOINT,
+                body.clone(),
+                vec![(
+                    actix_web::http::header::HeaderName::from_static("idempotency-key"),
+                    idempotency.clone(),
+                )],
+            );
+            let second = post_request_with_headers(
+                &context.pool,
+                &context.admin_token,
+                IMPORTS_ENDPOINT,
+                body,
+                vec![(
+                    actix_web::http::header::HeaderName::from_static("idempotency-key"),
+                    idempotency,
+                )],
+            );
+
+            let (first, second) = join!(first, second);
+            let first = assert_response_status(first, StatusCode::ACCEPTED).await;
+            let second = assert_response_status(second, StatusCode::ACCEPTED).await;
+            let first_task: TaskResponse = test::read_body_json(first).await;
+            let second_task: TaskResponse = test::read_body_json(second).await;
+
+            assert_eq!(first_task.id, second_task.id);
+        }
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_import_idempotency_conflicts_for_non_import_task_or_changed_payload(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let report_key = context.scoped_name("report-task-idempotency");
+        let report_task = create_task_record(
+            &context.pool,
+            NewTaskRecord {
+                kind: TaskKind::Report.as_str().to_string(),
+                status: TaskStatus::Queued.as_str().to_string(),
+                submitted_by: context.admin_user.id,
+                idempotency_key: Some(report_key.clone()),
+                request_hash: Some(context.scoped_name("report-task-hash")),
+                request_payload: None,
+                summary: None,
+                total_items: 0,
+                processed_items: 0,
+                success_items: 0,
+                failed_items: 0,
+                request_redacted_at: None,
+                started_at: None,
+                finished_at: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let body = ImportRequest {
+            version: 1,
+            dry_run: Some(true),
+            mode: None,
+            graph: ImportGraph {
+                namespaces: vec![ImportNamespaceInput {
+                    ref_: Some("ns:conflict".to_string()),
+                    name: context.scoped_name("idempotency_conflict_namespace"),
+                    description: "Dry run namespace".to_string(),
+                }],
+                ..ImportGraph::default()
+            },
+        };
+
+        let resp = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            IMPORTS_ENDPOINT,
+            &body,
+            vec![(
+                actix_web::http::header::HeaderName::from_static("idempotency-key"),
+                report_key,
+            )],
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::CONFLICT).await;
+        let error: serde_json::Value = test::read_body_json(resp).await;
+        assert!(
+            error["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Idempotency-Key")
+        );
+
+        let reused = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/tasks/{}", report_task.id),
+        )
+        .await;
+        assert_response_status(reused, StatusCode::OK).await;
+
+        let import_key = context.scoped_name("import-task-idempotency");
+        let first = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            IMPORTS_ENDPOINT,
+            &body,
+            vec![(
+                actix_web::http::header::HeaderName::from_static("idempotency-key"),
+                import_key.clone(),
+            )],
+        )
+        .await;
+        let first = assert_response_status(first, StatusCode::ACCEPTED).await;
+        let first_task: TaskResponse = test::read_body_json(first).await;
+
+        let changed_body = ImportRequest {
+            version: 1,
+            dry_run: Some(true),
+            mode: None,
+            graph: ImportGraph {
+                namespaces: vec![ImportNamespaceInput {
+                    ref_: Some("ns:conflict".to_string()),
+                    name: context.scoped_name("idempotency_conflict_namespace_changed"),
+                    description: "Changed dry run namespace".to_string(),
+                }],
+                ..ImportGraph::default()
+            },
+        };
+
+        let second = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            IMPORTS_ENDPOINT,
+            &changed_body,
+            vec![(
+                actix_web::http::header::HeaderName::from_static("idempotency-key"),
+                import_key,
+            )],
+        )
+        .await;
+        assert_response_status(second, StatusCode::CONFLICT).await;
+
+        let completed = wait_for_task(&context, first_task.id, &[TaskStatus::Succeeded]).await;
+        assert_eq!(completed.status, TaskStatus::Succeeded);
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_import_collision_abort_keeps_existing_data(
+        #[future(awt)] test_context: TestContext,
+    ) {
         let context = test_context;
         let fixture = context.namespace_fixture("collision_abort").await;
 
@@ -392,8 +582,12 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let allowed = context.namespace_fixture("permission_continue_allowed").await;
-        let forbidden = context.namespace_fixture("permission_continue_forbidden").await;
+        let allowed = context
+            .namespace_fixture("permission_continue_allowed")
+            .await;
+        let forbidden = context
+            .namespace_fixture("permission_continue_forbidden")
+            .await;
         allowed
             .owner_group
             .add_member(&context.pool, &context.normal_user)
@@ -486,8 +680,20 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let results: Vec<ImportTaskResultResponse> = test::read_body_json(resp).await;
         assert_eq!(results.len(), 2);
-        assert_eq!(results.iter().filter(|result| result.outcome == "succeeded").count(), 1);
-        assert_eq!(results.iter().filter(|result| result.outcome == "failed").count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| result.outcome == "succeeded")
+                .count(),
+            1
+        );
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| result.outcome == "failed")
+                .count(),
+            1
+        );
     }
 
     #[rstest]
@@ -497,7 +703,9 @@ mod tests {
     ) {
         let context = test_context;
         let allowed = context.namespace_fixture("permission_abort_allowed").await;
-        let forbidden = context.namespace_fixture("permission_abort_forbidden").await;
+        let forbidden = context
+            .namespace_fixture("permission_abort_forbidden")
+            .await;
         allowed
             .owner_group
             .add_member(&context.pool, &context.normal_user)

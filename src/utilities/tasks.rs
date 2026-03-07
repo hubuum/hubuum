@@ -11,8 +11,8 @@ use tracing::error;
 use crate::config::{DEFAULT_TASK_POLL_INTERVAL_MS, get_config};
 use crate::db::traits::UserPermissions;
 use crate::db::traits::task::{
-    append_task_event, claim_next_queued_task, insert_import_results, redact_task_payload,
-    update_task_state, TaskStateUpdate,
+    TaskStateUpdate, append_task_event, claim_next_queued_task, insert_import_results,
+    redact_task_payload, update_task_state,
 };
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
@@ -29,7 +29,6 @@ use crate::models::{
 use crate::traits::GroupMemberships;
 
 static TASK_WORKER: Once = Once::new();
-const DRY_RUN_SENTINEL: &str = "__hubuum_import_dry_run__";
 
 #[derive(Clone)]
 struct NamespaceResolution {
@@ -61,6 +60,7 @@ struct PlanningState {
     next_temp_id: i32,
     namespaces_by_ref: HashMap<String, NamespaceResolution>,
     namespaces_by_name: HashMap<String, NamespaceResolution>,
+    namespaces_by_id: HashMap<i32, NamespaceResolution>,
     classes_by_ref: HashMap<String, ClassResolution>,
     classes_by_key: HashMap<(i32, String), ClassResolution>,
     objects_by_ref: HashMap<String, ObjectResolution>,
@@ -89,6 +89,22 @@ struct RuntimeState {
     namespaces_by_ref: HashMap<String, Namespace>,
     classes_by_ref: HashMap<String, HubuumClass>,
     objects_by_ref: HashMap<String, HubuumObject>,
+}
+
+struct TerminalTaskUpdate {
+    status: TaskStatus,
+    summary: String,
+    processed_items: i32,
+    success_items: i32,
+    failed_items: i32,
+    event_data: Option<serde_json::Value>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WorkerLoopAction {
+    Continue,
+    Sleep,
+    Break,
 }
 
 #[derive(Clone)]
@@ -219,9 +235,7 @@ pub fn request_hash(payload: &serde_json::Value) -> Result<String, ApiError> {
 }
 
 fn configured_task_worker_count() -> usize {
-    get_config()
-        .map(|config| config.task_workers)
-        .unwrap_or(1)
+    get_config().map(|config| config.task_workers).unwrap_or(1)
 }
 
 fn configured_task_poll_interval() -> Duration {
@@ -231,15 +245,37 @@ fn configured_task_poll_interval() -> Duration {
     Duration::from_millis(interval_ms)
 }
 
+fn background_worker_action(result: &Result<bool, ApiError>) -> WorkerLoopAction {
+    match result {
+        Ok(true) => WorkerLoopAction::Continue,
+        Ok(false) => WorkerLoopAction::Sleep,
+        Err(err) => {
+            error!(message = "Task worker iteration failed", error = %err);
+            WorkerLoopAction::Sleep
+        }
+    }
+}
+
+fn kick_worker_action(result: &Result<bool, ApiError>) -> WorkerLoopAction {
+    match result {
+        Ok(true) => WorkerLoopAction::Continue,
+        Ok(false) => WorkerLoopAction::Break,
+        Err(err) => {
+            error!(message = "Task worker iteration failed", error = %err);
+            WorkerLoopAction::Break
+        }
+    }
+}
+
 fn spawn_task_worker_loop(pool: DbPool, poll_interval: Duration) {
     actix_rt::spawn(async move {
         loop {
-            match process_one_task(&pool).await {
-                Ok(true) => {}
-                Ok(false) => {}
-                Err(err) => error!(message = "Task worker iteration failed", error = %err),
+            let result = process_one_task(&pool).await;
+            match background_worker_action(&result) {
+                WorkerLoopAction::Continue => continue,
+                WorkerLoopAction::Sleep => sleep(poll_interval).await,
+                WorkerLoopAction::Break => break,
             }
-            sleep(poll_interval).await;
         }
     });
 }
@@ -257,13 +293,10 @@ pub fn ensure_task_worker_running(pool: DbPool) {
 pub fn kick_task_worker(pool: DbPool) {
     actix_rt::spawn(async move {
         loop {
-            match process_one_task(&pool).await {
-                Ok(true) => continue,
-                Ok(false) => break,
-                Err(err) => {
-                    error!(message = "Task worker iteration failed", error = %err);
-                    break;
-                }
+            let result = process_one_task(&pool).await;
+            match kick_worker_action(&result) {
+                WorkerLoopAction::Continue => continue,
+                WorkerLoopAction::Sleep | WorkerLoopAction::Break => break,
             }
         }
     });
@@ -274,60 +307,70 @@ async fn process_one_task(pool: &DbPool) -> Result<bool, ApiError> {
         return Ok(false);
     };
 
-    append_task_event(
-        pool,
-        NewTaskEventRecord {
-            task_id: task.id,
-            event_type: "validating".to_string(),
-            message: "Task claimed for validation".to_string(),
-            data: None,
-        },
-    )
-    .await?;
+    if let Err(err) = process_claimed_task(pool, &task).await {
+        mark_claimed_task_failed(pool, &task, &err).await?;
+    }
 
+    Ok(true)
+}
+
+async fn process_claimed_task(pool: &DbPool, task: &TaskRecord) -> Result<(), ApiError> {
     let submitted_by = UserID(task.submitted_by).user(pool).await?;
 
-    let outcome = match TaskKind::from_db(&task.kind)? {
-        TaskKind::Import => execute_import_task(pool, &task, &submitted_by).await,
+    match TaskKind::from_db(&task.kind)? {
+        TaskKind::Import => execute_import_task(pool, task, &submitted_by).await,
         other => Err(ApiError::BadRequest(format!(
             "Task kind '{}' is not implemented",
             other.as_str()
         ))),
-    };
+    }
+}
 
-    match outcome {
-        Ok(()) => {}
-        Err(err) => {
-            let finished_at = Utc::now().naive_utc();
-            update_task_state(
-                pool,
-                task.id,
-                TaskStateUpdate {
-                    status: TaskStatus::Failed,
-                    summary: Some(err.to_string()),
-                    processed_items: task.total_items,
-                    success_items: 0,
-                    failed_items: task.total_items.max(1),
-                    started_at: task.started_at,
-                    finished_at: Some(finished_at),
-                },
-            )
-            .await?;
-            append_task_event(
-                pool,
-                NewTaskEventRecord {
-                    task_id: task.id,
-                    event_type: "failed".to_string(),
-                    message: "Task failed".to_string(),
-                    data: Some(serde_json::json!({ "error": err.to_string() })),
-                },
-            )
-            .await?;
-            redact_task_payload(pool, task.id).await?;
-        }
+async fn mark_claimed_task_failed(
+    pool: &DbPool,
+    task: &TaskRecord,
+    err: &ApiError,
+) -> Result<(), ApiError> {
+    let summary = err.to_string();
+    let processed_items = task.total_items;
+    let failed_items = task.total_items.max(1);
+    let finished_at = Utc::now().naive_utc();
+
+    update_task_state(
+        pool,
+        task.id,
+        TaskStateUpdate {
+            status: TaskStatus::Failed,
+            summary: Some(summary.clone()),
+            processed_items,
+            success_items: 0,
+            failed_items,
+            started_at: task.started_at,
+            finished_at: Some(finished_at),
+        },
+    )
+    .await?;
+
+    if let Err(event_err) = append_task_event(
+        pool,
+        NewTaskEventRecord {
+            task_id: task.id,
+            event_type: "failed".to_string(),
+            message: "Task failed".to_string(),
+            data: Some(serde_json::json!({ "error": summary })),
+        },
+    )
+    .await
+    {
+        error!(
+            message = "Unable to append failure event for claimed task",
+            task_id = task.id,
+            error = %event_err
+        );
     }
 
-    Ok(true)
+    redact_task_payload(pool, task.id).await?;
+    Ok(())
 }
 
 async fn execute_import_task(
@@ -344,11 +387,12 @@ async fn execute_import_task(
     let planning = plan_import(pool, user, &request).await;
 
     let mut accumulator = ExecutionAccumulator::default();
-    let finished_at = Utc::now().naive_utc();
 
     if !planning.failures.is_empty()
-        && (matches!(mode.atomicity.unwrap_or(ImportAtomicity::Strict), ImportAtomicity::Strict)
-            || planning.aborted)
+        && (matches!(
+            mode.atomicity.unwrap_or(ImportAtomicity::Strict),
+            ImportAtomicity::Strict
+        ) || planning.aborted)
     {
         let results = planning
             .failures
@@ -358,31 +402,19 @@ async fn execute_import_task(
         let failed_count = results.len() as i32;
         insert_import_results(pool, &results).await?;
         let summary = format!("Import validation failed for {failed_count} item(s)");
-        update_task_state(
+        finalize_task(
             pool,
-            task.id,
-            TaskStateUpdate {
+            task,
+            TerminalTaskUpdate {
                 status: TaskStatus::Failed,
-                summary: Some(summary.clone()),
+                summary,
                 processed_items: failed_count,
                 success_items: 0,
                 failed_items: failed_count,
-                started_at: task.started_at,
-                finished_at: Some(finished_at),
+                event_data: None,
             },
         )
         .await?;
-        append_task_event(
-            pool,
-            NewTaskEventRecord {
-                task_id: task.id,
-                event_type: "failed".to_string(),
-                message: summary,
-                data: None,
-            },
-        )
-        .await?;
-        redact_task_payload(pool, task.id).await?;
         return Ok(());
     }
 
@@ -393,116 +425,137 @@ async fn execute_import_task(
     } = planning;
 
     {
-            append_task_event(
-                pool,
-                NewTaskEventRecord {
-                    task_id: task.id,
-                    event_type: "running".to_string(),
-                    message: if request.dry_run() {
-                        "Import dry run planned successfully".to_string()
-                    } else if failures.is_empty() {
-                        "Import execution started".to_string()
-                    } else {
-                        format!(
-                            "Import execution started with {} planned failure(s)",
-                            failures.len()
-                        )
-                    },
-                    data: None,
+        append_task_event(
+            pool,
+            NewTaskEventRecord {
+                task_id: task.id,
+                event_type: "running".to_string(),
+                message: if request.dry_run() {
+                    "Import dry run planned successfully".to_string()
+                } else if failures.is_empty() {
+                    "Import execution started".to_string()
+                } else {
+                    format!(
+                        "Import execution started with {} planned failure(s)",
+                        failures.len()
+                    )
                 },
-            )
-            .await?;
+                data: None,
+            },
+        )
+        .await?;
 
-            update_task_state(
-                pool,
-                task.id,
-                TaskStateUpdate {
-                    status: TaskStatus::Running,
-                    summary: None,
-                    processed_items: 0,
-                    success_items: 0,
-                    failed_items: 0,
-                    started_at: task.started_at,
-                    finished_at: None,
-                },
-            )
-            .await?;
+        update_task_state(
+            pool,
+            task.id,
+            TaskStateUpdate {
+                status: TaskStatus::Running,
+                summary: None,
+                processed_items: 0,
+                success_items: 0,
+                failed_items: 0,
+                started_at: task.started_at,
+                finished_at: None,
+            },
+        )
+        .await?;
 
-            if request.dry_run() {
-                for failure in failures {
-                    accumulator.push_failure(task.id, &failure.item, failure.message, "failed");
+        if request.dry_run() {
+            for failure in failures {
+                accumulator.push_failure(task.id, &failure.item, failure.message, "failed");
+            }
+            for item in &planned_items {
+                accumulator.push_success(task.id, &item.result, "planned");
+            }
+        } else {
+            for failure in failures {
+                accumulator.push_failure(task.id, &failure.item, failure.message, "failed");
+            }
+            match mode.atomicity.unwrap_or(ImportAtomicity::Strict) {
+                ImportAtomicity::Strict => {
+                    execute_import_strict(pool, task.id, &planned_items, &mut accumulator).await?;
                 }
-                for item in &planned_items {
-                    accumulator.push_success(task.id, &item.result, "planned");
-                }
-            } else {
-                for failure in failures {
-                    accumulator.push_failure(task.id, &failure.item, failure.message, "failed");
-                }
-                match mode.atomicity.unwrap_or(ImportAtomicity::Strict) {
-                    ImportAtomicity::Strict => {
-                        execute_import_strict(pool, task.id, &planned_items, &mut accumulator)
-                            .await?;
-                    }
-                    ImportAtomicity::BestEffort => {
-                        execute_import_best_effort(
-                            pool,
-                            task.id,
-                            &planned_items,
-                            &mode,
-                            &mut accumulator,
-                        )
-                        .await?;
-                    }
+                ImportAtomicity::BestEffort => {
+                    execute_import_best_effort(
+                        pool,
+                        task.id,
+                        &planned_items,
+                        &mode,
+                        &mut accumulator,
+                    )
+                    .await?;
                 }
             }
+        }
 
-            insert_import_results(pool, &accumulator.results).await?;
+        insert_import_results(pool, &accumulator.results).await?;
 
-            let status = if accumulator.failed == 0 {
-                TaskStatus::Succeeded
-            } else if accumulator.success == 0 {
-                TaskStatus::Failed
-            } else {
-                TaskStatus::PartiallySucceeded
-            };
+        let status = if accumulator.failed == 0 {
+            TaskStatus::Succeeded
+        } else if accumulator.success == 0 {
+            TaskStatus::Failed
+        } else {
+            TaskStatus::PartiallySucceeded
+        };
 
-            let summary = format!(
-                "Import finished with {} succeeded and {} failed items",
-                accumulator.success, accumulator.failed
-            );
+        let summary = format!(
+            "Import finished with {} succeeded and {} failed items",
+            accumulator.success, accumulator.failed
+        );
 
-            update_task_state(
-                pool,
-                task.id,
-                TaskStateUpdate {
-                    status,
-                    summary: Some(summary.clone()),
-                    processed_items: accumulator.processed,
-                    success_items: accumulator.success,
-                    failed_items: accumulator.failed,
-                    started_at: task.started_at,
-                    finished_at: Some(finished_at),
-                },
-            )
-            .await?;
-            append_task_event(
-                pool,
-                NewTaskEventRecord {
-                    task_id: task.id,
-                    event_type: status.as_str().to_string(),
-                    message: summary,
-                    data: Some(serde_json::json!({
-                        "processed_items": accumulator.processed,
-                        "success_items": accumulator.success,
-                        "failed_items": accumulator.failed
-                    })),
-                },
-            )
-            .await?;
-            redact_task_payload(pool, task.id).await?;
+        finalize_task(
+            pool,
+            task,
+            TerminalTaskUpdate {
+                status,
+                summary,
+                processed_items: accumulator.processed,
+                success_items: accumulator.success,
+                failed_items: accumulator.failed,
+                event_data: Some(serde_json::json!({
+                    "processed_items": accumulator.processed,
+                    "success_items": accumulator.success,
+                    "failed_items": accumulator.failed
+                })),
+            },
+        )
+        .await?;
     }
 
+    Ok(())
+}
+
+async fn finalize_task(
+    pool: &DbPool,
+    task: &TaskRecord,
+    terminal: TerminalTaskUpdate,
+) -> Result<(), ApiError> {
+    let terminal_event = append_task_event(
+        pool,
+        NewTaskEventRecord {
+            task_id: task.id,
+            event_type: terminal.status.as_str().to_string(),
+            message: terminal.summary.clone(),
+            data: terminal.event_data,
+        },
+    )
+    .await?;
+
+    update_task_state(
+        pool,
+        task.id,
+        TaskStateUpdate {
+            status: terminal.status,
+            summary: Some(terminal.summary),
+            processed_items: terminal.processed_items,
+            success_items: terminal.success_items,
+            failed_items: terminal.failed_items,
+            started_at: task.started_at,
+            finished_at: Some(terminal_event.created_at),
+        },
+    )
+    .await?;
+    redact_task_payload(pool, task.id).await?;
     Ok(())
 }
 
@@ -542,7 +595,6 @@ async fn execute_import_strict(
             }
             Ok(())
         }
-        Err(err) if err.to_string() == DRY_RUN_SENTINEL => Ok(()),
         Err(err) => Err(err),
     }
 }
@@ -684,11 +736,7 @@ fn execute_planned_item(
     Ok(())
 }
 
-async fn plan_import(
-    pool: &DbPool,
-    user: &User,
-    request: &ImportRequest,
-) -> PlanningOutcome {
+async fn plan_import(pool: &DbPool, user: &User, request: &ImportRequest) -> PlanningOutcome {
     let mode = request.mode();
     let mut state = PlanningState::new();
     let mut planned_items = Vec::with_capacity(request.total_items() as usize);
@@ -1579,11 +1627,7 @@ async fn resolve_namespace_by_id_planning(
     state: &PlanningState,
     namespace_id: i32,
 ) -> Result<NamespaceResolution, String> {
-    if let Some(namespace) = state
-        .namespaces_by_name
-        .values()
-        .find(|namespace| namespace.id == namespace_id)
-    {
+    if let Some(namespace) = state.namespaces_by_id.get(&namespace_id) {
         return Ok(namespace.clone());
     }
 
@@ -1760,6 +1804,9 @@ fn remember_namespace(
     reference: Option<String>,
     namespace: NamespaceResolution,
 ) {
+    state
+        .namespaces_by_id
+        .insert(namespace.id, namespace.clone());
     state
         .namespaces_by_name
         .insert(namespace.name.clone(), namespace.clone());
@@ -2329,21 +2376,26 @@ fn apply_permission_list_to_update(update: &mut UpdatePermission, permissions: &
 
 #[cfg(test)]
 mod tests {
+    use chrono::NaiveDate;
     use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl};
     use futures::executor::block_on;
 
     use super::{
-        ExecutionAccumulator, PlannedExecution, PlannedItem, execute_import_best_effort,
-        execute_import_strict, planned_result,
+        ExecutionAccumulator, NamespaceResolution, PlannedExecution, PlannedItem, PlanningState,
+        WorkerLoopAction, background_worker_action, execute_import_best_effort,
+        execute_import_strict, kick_worker_action, planned_result, process_one_task,
+        remember_namespace,
     };
+    use crate::db::traits::task::{create_task_record, find_task_record, list_task_events};
+    use crate::db::with_connection;
     use crate::models::{
-        ImportClassInput, ImportCollisionPolicy, ImportMode, ImportNamespaceInput,
-        ImportPermissionPolicy,
+        ImportAtomicity, ImportClassInput, ImportCollisionPolicy, ImportMode, ImportNamespaceInput,
+        ImportPermissionPolicy, NewTaskRecord, TaskKind, TaskStatus,
     };
     use crate::schema::hubuumclass::dsl::{hubuumclass, name as class_name};
     use crate::schema::namespaces::dsl::{name as namespace_name, namespaces};
+    use crate::schema::tasks::dsl::{created_at, id as task_id, tasks};
     use crate::tests::TestContext;
-    use crate::db::with_connection;
 
     #[test]
     fn test_execute_import_strict_rolls_back_on_runtime_failure() {
@@ -2470,7 +2522,7 @@ mod tests {
             1,
             &planned_items,
             &ImportMode {
-                atomicity: Some(crate::models::ImportAtomicity::BestEffort),
+                atomicity: Some(ImportAtomicity::BestEffort),
                 collision_policy: Some(ImportCollisionPolicy::Overwrite),
                 permission_policy: Some(ImportPermissionPolicy::Continue),
             },
@@ -2490,5 +2542,104 @@ mod tests {
         assert_eq!(accumulator.processed, 3);
         assert_eq!(accumulator.success, 2);
         assert_eq!(accumulator.failed, 1);
+    }
+
+    #[test]
+    fn test_process_one_task_marks_claimed_task_failed_when_execution_setup_errors() {
+        let context = block_on(TestContext::new());
+        let task = block_on(create_task_record(
+            &context.pool,
+            NewTaskRecord {
+                kind: TaskKind::Import.as_str().to_string(),
+                status: TaskStatus::Queued.as_str().to_string(),
+                submitted_by: context.admin_user.id,
+                idempotency_key: Some(context.scoped_name("missing-payload-task")),
+                request_hash: None,
+                request_payload: None,
+                summary: None,
+                total_items: 1,
+                processed_items: 0,
+                success_items: 0,
+                failed_items: 0,
+                request_redacted_at: None,
+                started_at: None,
+                finished_at: None,
+            },
+        ))
+        .unwrap();
+
+        let earliest = NaiveDate::from_ymd_opt(2000, 1, 1)
+            .expect("valid date")
+            .and_hms_opt(0, 0, 0)
+            .expect("valid timestamp");
+        with_connection(&context.pool, |conn| {
+            diesel::update(tasks.filter(task_id.eq(task.id)))
+                .set(created_at.eq(earliest))
+                .execute(conn)
+        })
+        .unwrap();
+
+        for _ in 0..20 {
+            let processed = block_on(process_one_task(&context.pool)).unwrap();
+            assert!(processed);
+
+            let stored = block_on(find_task_record(&context.pool, task.id)).unwrap();
+            if stored.status == TaskStatus::Failed.as_str() {
+                assert!(stored.finished_at.is_some());
+                assert!(stored.request_redacted_at.is_some());
+
+                let events = block_on(list_task_events(&context.pool, task.id)).unwrap();
+                let event_types = events
+                    .iter()
+                    .map(|event| event.event_type.as_str())
+                    .collect::<Vec<_>>();
+                assert!(event_types.contains(&"validating"));
+                assert!(event_types.contains(&"failed"));
+                return;
+            }
+        }
+
+        let stored = block_on(find_task_record(&context.pool, task.id)).unwrap();
+        panic!(
+            "Task {} did not reach failed state after repeated processing attempts; current status: {}",
+            task.id, stored.status
+        );
+    }
+
+    #[test]
+    fn test_background_worker_continues_immediately_after_processing_a_task() {
+        let result = Ok(true);
+        assert_eq!(
+            background_worker_action(&result),
+            WorkerLoopAction::Continue
+        );
+    }
+
+    #[test]
+    fn test_kick_worker_stops_when_queue_is_empty() {
+        let result = Ok(false);
+        assert_eq!(kick_worker_action(&result), WorkerLoopAction::Break);
+    }
+
+    #[test]
+    fn test_remember_namespace_populates_namespace_id_index() {
+        let mut state = PlanningState::new();
+        let namespace = NamespaceResolution {
+            id: -42,
+            name: "planned".to_string(),
+            description: "planned namespace".to_string(),
+            exists_in_db: false,
+        };
+
+        remember_namespace(
+            &mut state,
+            Some("ns:planned".to_string()),
+            namespace.clone(),
+        );
+
+        assert_eq!(
+            state.namespaces_by_id.get(&namespace.id).unwrap().name,
+            namespace.name
+        );
     }
 }
