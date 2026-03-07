@@ -33,6 +33,7 @@ use crate::errors::{
     json_error_handler,
 };
 use crate::utilities::is_valid_log_level;
+use crate::utilities::tasks::ensure_task_worker_running;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -76,6 +77,8 @@ async fn main() -> std::io::Result<()> {
         ssl = config.tls_cert_path.is_some() && config.tls_key_path.is_some(),
         log_level = %config.log_level,
         actix_workers = config.actix_workers,
+        task_workers = config.task_workers,
+        task_poll_interval_ms = config.task_poll_interval_ms,
         db_pool_size = config.db_pool_size,
     );
 
@@ -87,6 +90,8 @@ async fn main() -> std::io::Result<()> {
             EXIT_CODE_INIT_ERROR,
         );
     }
+
+    ensure_task_worker_running(pool.clone());
 
     let client_allowlist = config.client_allowlist.clone();
     let trust_ip_headers = config.trust_ip_headers;

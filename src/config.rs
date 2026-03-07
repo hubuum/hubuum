@@ -9,12 +9,28 @@ use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
+use std::num::NonZeroUsize;
 use std::str::FromStr;
 
 use crate::errors::ApiError;
 
 pub const DEFAULT_PAGE_LIMIT: usize = 100;
 pub const MAX_PAGE_LIMIT: usize = 250;
+pub const DEFAULT_TASK_POLL_INTERVAL_MS: u64 = 200;
+
+fn detected_cpu_count() -> usize {
+    std::thread::available_parallelism()
+        .map(NonZeroUsize::get)
+        .unwrap_or(1)
+}
+
+fn default_actix_workers() -> usize {
+    detected_cpu_count()
+}
+
+fn default_task_workers() -> usize {
+    detected_cpu_count().div_ceil(2).max(1)
+}
 
 #[derive(ValueEnum, Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -60,8 +76,28 @@ pub struct AppConfig {
     pub database_url: String,
 
     /// Number of Actix workers
-    #[clap(long, env = "HUBUUM_ACTIX_WORKERS", default_value_t = 4)]
+    #[clap(
+        long,
+        env = "HUBUUM_ACTIX_WORKERS",
+        default_value_t = default_actix_workers()
+    )]
     pub actix_workers: usize,
+
+    /// Number of background task workers
+    #[clap(
+        long,
+        env = "HUBUUM_TASK_WORKERS",
+        default_value_t = default_task_workers()
+    )]
+    pub task_workers: usize,
+
+    /// How long idle task workers sleep between queue polls
+    #[clap(
+        long,
+        env = "HUBUUM_TASK_POLL_INTERVAL_MS",
+        default_value_t = DEFAULT_TASK_POLL_INTERVAL_MS
+    )]
+    pub task_poll_interval_ms: u64,
 
     /// Number of DB connections in the pool
     #[clap(long, env = "HUBUUM_DB_POOL_SIZE", default_value_t = 10)]
@@ -124,6 +160,30 @@ fn parse_client_allowlist(s: &str) -> Result<ClientAllowlist, String> {
 
 impl AppConfig {
     fn validate(self) -> Result<Self, ApiError> {
+        if self.actix_workers == 0 {
+            return Err(ApiError::BadRequest(
+                "actix_workers must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.task_workers == 0 {
+            return Err(ApiError::BadRequest(
+                "task_workers must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.task_poll_interval_ms == 0 {
+            return Err(ApiError::BadRequest(
+                "task_poll_interval_ms must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.db_pool_size == 0 {
+            return Err(ApiError::BadRequest(
+                "db_pool_size must be greater than 0".to_string(),
+            ));
+        }
+
         if self.default_page_limit == 0 {
             return Err(ApiError::BadRequest(
                 "default_page_limit must be greater than 0".to_string(),
@@ -204,9 +264,18 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .unwrap_or(8080),
         log_level: env_or_default("HUBUUM_LOG_LEVEL", "debug"),
         database_url: env_or_default("HUBUUM_DATABASE_URL", "postgres://test"),
-        actix_workers: env_or_default("HUBUUM_ACTIX_WORKERS", "2")
-            .parse()
-            .unwrap_or(2),
+        actix_workers: env::var("HUBUUM_ACTIX_WORKERS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or_else(default_actix_workers),
+        task_workers: env::var("HUBUUM_TASK_WORKERS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or_else(default_task_workers),
+        task_poll_interval_ms: env::var("HUBUUM_TASK_POLL_INTERVAL_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_TASK_POLL_INTERVAL_MS),
         db_pool_size: env_or_default("HUBUUM_DB_POOL_SIZE", "2")
             .parse()
             .unwrap_or(5),
@@ -344,7 +413,8 @@ mod tests {
     use clap::Parser;
 
     use super::{
-        AppConfig, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, TEST_ENV_LOCK, TlsBackend,
+        AppConfig, DEFAULT_PAGE_LIMIT, DEFAULT_TASK_POLL_INTERVAL_MS, MAX_PAGE_LIMIT,
+        TEST_ENV_LOCK, TlsBackend, default_actix_workers, default_task_workers,
         get_config_from_env,
     };
 
@@ -454,5 +524,38 @@ mod tests {
             error.to_string(),
             "default_page_limit (80) must be less than or equal to max_page_limit (40)"
         );
+    }
+
+    #[test]
+    fn task_worker_settings_are_parsed_from_env() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _workers_guard = EnvVarGuard::set("HUBUUM_TASK_WORKERS", Some("3"));
+        let _interval_guard = EnvVarGuard::set("HUBUUM_TASK_POLL_INTERVAL_MS", Some("750"));
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(parsed.task_workers, 3);
+        assert_eq!(parsed.task_poll_interval_ms, 750);
+        assert_eq!(loaded.task_workers, 3);
+        assert_eq!(loaded.task_poll_interval_ms, 750);
+    }
+
+    #[test]
+    fn worker_defaults_scale_from_detected_cpu_count() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _actix_guard = EnvVarGuard::set("HUBUUM_ACTIX_WORKERS", None);
+        let _task_guard = EnvVarGuard::set("HUBUUM_TASK_WORKERS", None);
+        let _interval_guard = EnvVarGuard::set("HUBUUM_TASK_POLL_INTERVAL_MS", None);
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(parsed.actix_workers, default_actix_workers());
+        assert_eq!(parsed.task_workers, default_task_workers());
+        assert_eq!(parsed.task_poll_interval_ms, DEFAULT_TASK_POLL_INTERVAL_MS);
+        assert_eq!(loaded.actix_workers, default_actix_workers());
+        assert_eq!(loaded.task_workers, default_task_workers());
+        assert_eq!(loaded.task_poll_interval_ms, DEFAULT_TASK_POLL_INTERVAL_MS);
     }
 }
