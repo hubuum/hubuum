@@ -574,6 +574,16 @@ pub async fn get_pool_and_config() -> (DbPool, AppConfig) {
     (pool, config.clone())
 }
 
+pub async fn setup_pool_and_tokens() -> (DbPool, String, String) {
+    let pool = POOL.clone();
+    let admin_user = ensure_admin_user(&pool).await;
+    let admin_token = admin_user.create_token(&pool).await.unwrap().get_token();
+    let normal_user = ensure_normal_user(&pool).await;
+    let normal_token = normal_user.create_token(&pool).await.unwrap().get_token();
+
+    (pool, admin_token, normal_token)
+}
+
 pub fn get_test_pool() -> web::Data<DbPool> {
     web::Data::new(POOL.clone())
 }

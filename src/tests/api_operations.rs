@@ -49,11 +49,12 @@ pub async fn get_request(
     get_request_with_correlation(pool, token, endpoint, None).await
 }
 
-pub async fn post_request<T>(
+pub async fn post_request_with_headers<T>(
     pool: &DbPool,
     token: &str,
     endpoint: &str,
     content: T,
+    headers: Vec<(http::header::HeaderName, String)>,
 ) -> actix_web::dev::ServiceResponse
 where
     T: Serialize,
@@ -66,12 +67,27 @@ where
     )
     .await;
 
-    test::TestRequest::post()
+    let mut req = test::TestRequest::post()
         .insert_header(create_token_header(token))
-        .uri(endpoint)
-        .set_json(&content) // Make sure to reference content
-        .send_request(&app)
-        .await
+        .uri(endpoint);
+
+    for (name, value) in headers {
+        req = req.insert_header((name, value));
+    }
+
+    req.set_json(&content).send_request(&app).await
+}
+
+pub async fn post_request<T>(
+    pool: &DbPool,
+    token: &str,
+    endpoint: &str,
+    content: T,
+) -> actix_web::dev::ServiceResponse
+where
+    T: Serialize,
+{
+    post_request_with_headers(pool, token, endpoint, content, vec![]).await
 }
 
 pub async fn delete_request(

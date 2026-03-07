@@ -69,6 +69,10 @@
         has_read_object_relation BOOLEAN NOT NULL,
         has_update_object_relation BOOLEAN NOT NULL,
         has_delete_object_relation BOOLEAN NOT NULL,
+        has_read_template BOOLEAN NOT NULL DEFAULT FALSE,
+        has_create_template BOOLEAN NOT NULL DEFAULT FALSE,
+        has_update_template BOOLEAN NOT NULL DEFAULT FALSE,
+        has_delete_template BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMP NOT NULL DEFAULT now(),
         updated_at TIMESTAMP NOT NULL DEFAULT now(),
         UNIQUE (namespace_id, group_id)
@@ -149,6 +153,21 @@
         PRIMARY KEY (ancestor_object_id, descendant_object_id, path)
     );
 
+    -- Table to store report templates
+    DROP TABLE IF EXISTS report_templates CASCADE;
+    CREATE TABLE report_templates (
+        id SERIAL PRIMARY KEY,
+        namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
+        name VARCHAR NOT NULL,
+        description VARCHAR NOT NULL,
+        content_type VARCHAR NOT NULL,
+        template TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now(),
+        UNIQUE (namespace_id, name),
+        CHECK (content_type IN ('text/plain', 'text/html', 'text/csv'))
+    );
+
     ----------------------
     ---- Indexes
     ----------------------
@@ -188,6 +207,9 @@
     CREATE INDEX idx_hubuumobject_closure_descendant ON hubuumobject_closure(descendant_object_id);
     CREATE INDEX idx_hubuumobject_closure_ancestor_descendant ON hubuumobject_closure (ancestor_object_id, descendant_object_id);
     CREATE INDEX idx_hubuumobject_closure_path ON hubuumobject_closure USING GIN (path);
+
+    ---- Report templates
+    CREATE INDEX idx_report_templates_namespace_id ON report_templates(namespace_id);
 
     ----------------------
     ---- Functions
@@ -553,3 +575,9 @@
     CREATE TRIGGER cleanup_object_relations
     AFTER DELETE ON hubuumclass_relation
     FOR EACH STATEMENT EXECUTE FUNCTION cleanup_invalid_object_relations();
+
+    -- Trigger to update report_templates updated_at column
+    DROP TRIGGER IF EXISTS update_report_templates_updated_at ON report_templates;
+    CREATE TRIGGER update_report_templates_updated_at
+    BEFORE UPDATE ON report_templates
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();

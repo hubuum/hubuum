@@ -1,12 +1,15 @@
 use crate::api::handlers::{auth, meta};
-use crate::api::v1::handlers::{classes, groups, namespaces, relations, users};
+use crate::api::v1::handlers::{classes, groups, namespaces, relations, reports, templates, users};
 use crate::models::{
     Group, GroupPermission, HubuumClass, HubuumClassExpanded, HubuumClassRelation,
     HubuumClassRelationTransitive, HubuumObject, HubuumObjectRelation, HubuumObjectWithPath,
     LoginUser, Namespace, NewGroup, NewHubuumClass, NewHubuumClassRelation,
     NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation,
-    NewNamespaceWithAssignee, NewUser, ObjectsByClass, Permission, Permissions, UpdateGroup,
-    UpdateHubuumClass, UpdateHubuumObject, UpdateNamespace, UpdateUser, User, UserToken,
+    NewNamespaceWithAssignee, NewReportTemplate, NewUser, ObjectsByClass, Permission, Permissions,
+    ReportContentType, ReportJsonResponse, ReportLimits, ReportMeta, ReportMissingDataPolicy,
+    ReportOutputRequest, ReportRequest, ReportScope, ReportScopeKind, ReportTemplate,
+    ReportTemplateID, ReportWarning, UpdateGroup, UpdateHubuumClass, UpdateHubuumObject,
+    UpdateNamespace, UpdateReportTemplate, UpdateUser, User, UserToken,
 };
 use crate::pagination::{NEXT_CURSOR_HEADER, page_limits_or_defaults};
 use actix_web::{HttpResponse, Responder};
@@ -73,6 +76,12 @@ use utoipa::{Modify, OpenApi, ToSchema};
         relations::get_object_relation,
         relations::create_object_relation,
         relations::delete_object_relation,
+        reports::run_report,
+        templates::get_templates,
+        templates::create_template,
+        templates::get_template,
+        templates::patch_template,
+        templates::delete_template,
         classes::get_classes,
         classes::create_class,
         classes::get_class,
@@ -130,6 +139,21 @@ use utoipa::{Modify, OpenApi, ToSchema};
             HubuumObjectWithPath,
             HubuumObjectRelation,
             NewHubuumObjectRelation
+            ,
+            ReportScopeKind,
+            ReportScope,
+            ReportContentType,
+            ReportOutputRequest,
+            ReportMissingDataPolicy,
+            ReportLimits,
+            ReportRequest,
+            ReportWarning,
+            ReportMeta,
+            ReportJsonResponse,
+            ReportTemplateID,
+            ReportTemplate,
+            NewReportTemplate,
+            UpdateReportTemplate
         )
     ),
     modifiers(&SecurityAddon, &OperationDefaults),
@@ -140,7 +164,9 @@ use utoipa::{Modify, OpenApi, ToSchema};
         (name = "groups", description = "Group management endpoints"),
         (name = "namespaces", description = "Namespace and permission endpoints"),
         (name = "relations", description = "Class and object relation endpoints"),
-        (name = "classes", description = "Class and object-in-class endpoints")
+        (name = "classes", description = "Class and object-in-class endpoints"),
+        (name = "reports", description = "Server-side report execution endpoints"),
+        (name = "templates", description = "Stored report template management endpoints")
     )
 )]
 pub struct ApiDoc;
@@ -276,6 +302,7 @@ fn is_cursor_paginated_get(path: &str, method: &str) -> bool {
                 | "/api/v1/namespaces/{namespace_id}/permissions"
                 | "/api/v1/namespaces/{namespace_id}/permissions/user/{user_id}"
                 | "/api/v1/namespaces/{namespace_id}/has_permissions/{permission}"
+                | "/api/v1/templates"
                 | "/api/v1/relations/classes"
                 | "/api/v1/relations/objects"
                 | "/api/v1/classes"
@@ -566,6 +593,9 @@ mod tests {
             "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}/{permission}",
             "/api/v1/namespaces/{namespace_id}/permissions/user/{user_id}",
             "/api/v1/namespaces/{namespace_id}/has_permissions/{permission}",
+            "/api/v1/reports",
+            "/api/v1/templates",
+            "/api/v1/templates/{template_id}",
             "/api/v1/relations/classes",
             "/api/v1/relations/classes/{relation_id}",
             "/api/v1/relations/objects",
@@ -595,6 +625,8 @@ mod tests {
 
         assert!(json.pointer("/paths/~1api~1v1~1iam~1users/get").is_some());
         assert!(json.pointer("/paths/~1api~1v1~1iam~1users/post").is_some());
+        assert!(json.pointer("/paths/~1api~1v1~1reports/post").is_some());
+        assert!(json.pointer("/paths/~1api~1v1~1templates/get").is_some());
         assert!(
             json.pointer("/paths/~1api~1v1~1relations~1objects/post")
                 .is_some()

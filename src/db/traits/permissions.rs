@@ -86,6 +86,10 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                             has_read_object_relation: Some(false),
                             has_update_object_relation: Some(false),
                             has_delete_object_relation: Some(false),
+                            has_read_template: Some(false),
+                            has_create_template: Some(false),
+                            has_update_template: Some(false),
+                            has_delete_template: Some(false),
                         }
                     } else {
                         UpdatePermission::default()
@@ -153,6 +157,18 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                             Permissions::DeleteObjectRelation => {
                                 update_perm.has_delete_object_relation = Some(true);
                             }
+                            Permissions::ReadTemplate => {
+                                update_perm.has_read_template = Some(true);
+                            }
+                            Permissions::CreateTemplate => {
+                                update_perm.has_create_template = Some(true);
+                            }
+                            Permissions::UpdateTemplate => {
+                                update_perm.has_update_template = Some(true);
+                            }
+                            Permissions::DeleteTemplate => {
+                                update_perm.has_delete_template = Some(true);
+                            }
                         }
                     }
 
@@ -197,6 +213,10 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                             .contains(&Permissions::UpdateObjectRelation),
                         has_delete_object_relation: permission_list
                             .contains(&Permissions::DeleteObjectRelation),
+                        has_read_template: permission_list.contains(&Permissions::ReadTemplate),
+                        has_create_template: permission_list.contains(&Permissions::CreateTemplate),
+                        has_update_template: permission_list.contains(&Permissions::UpdateTemplate),
+                        has_delete_template: permission_list.contains(&Permissions::DeleteTemplate),
                     };
 
                     Ok(diesel::insert_into(permissions)
@@ -285,6 +305,18 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                     }
                     Permissions::DeleteObjectRelation => {
                         update_perm.has_delete_object_relation = Some(false);
+                    }
+                    Permissions::ReadTemplate => {
+                        update_perm.has_read_template = Some(false);
+                    }
+                    Permissions::CreateTemplate => {
+                        update_perm.has_create_template = Some(false);
+                    }
+                    Permissions::UpdateTemplate => {
+                        update_perm.has_update_template = Some(false);
+                    }
+                    Permissions::DeleteTemplate => {
+                        update_perm.has_delete_template = Some(false);
                     }
                 }
             }

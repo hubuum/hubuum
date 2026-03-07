@@ -50,6 +50,8 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/iam/users
 - The `openapi.info.version` value is tied to `Cargo.toml` package version (`CARGO_PKG_VERSION`).
 - `docs/openapi.json` is the canonical committed spec for the current code.
 - CI generates the spec and fails if it drifts from `docs/openapi.json`.
+- The report endpoint is documented in [docs/report_api.md](docs/report_api.md).
+- Stored template examples are documented in [docs/template_guide.md](docs/template_guide.md).
 
 ### Production Behavior
 

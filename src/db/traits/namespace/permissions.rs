@@ -59,6 +59,14 @@ fn permission_filter_sql(permission: Permissions, target: bool) -> &'static str 
         (Permissions::DeleteObjectRelation, false) => {
             "permissions.has_delete_object_relation = FALSE"
         }
+        (Permissions::ReadTemplate, true) => "permissions.has_read_template = TRUE",
+        (Permissions::ReadTemplate, false) => "permissions.has_read_template = FALSE",
+        (Permissions::CreateTemplate, true) => "permissions.has_create_template = TRUE",
+        (Permissions::CreateTemplate, false) => "permissions.has_create_template = FALSE",
+        (Permissions::UpdateTemplate, true) => "permissions.has_update_template = TRUE",
+        (Permissions::UpdateTemplate, false) => "permissions.has_update_template = FALSE",
+        (Permissions::DeleteTemplate, true) => "permissions.has_delete_template = TRUE",
+        (Permissions::DeleteTemplate, false) => "permissions.has_delete_template = FALSE",
     }
 }
 
@@ -156,9 +164,13 @@ pub async fn user_can_on_any_from_backend<U: SelfAccessors<User> + GroupAccessor
 ) -> Result<Vec<Namespace>, ApiError> {
     use crate::schema::permissions::dsl::*;
 
-    let base_query = if user_id.instance(pool).await?.is_admin(pool).await? {
-        permissions.into_boxed()
-    } else {
+    if user_id.instance(pool).await?.is_admin(pool).await? {
+        return with_connection(pool, |conn| {
+            crate::schema::namespaces::table.load::<Namespace>(conn)
+        });
+    }
+
+    let base_query = {
         let group_ids_subquery = user_id.group_ids_subquery_from_backend();
 
         permissions

@@ -207,6 +207,10 @@ mod tests {
         assert!(np.has_read_object);
         assert!(np.has_update_object);
         assert!(np.has_delete_object);
+        assert!(np.has_read_template);
+        assert!(np.has_create_template);
+        assert!(np.has_update_template);
+        assert!(np.has_delete_template);
         assert_eq!(permissions[0].group, admin_group);
 
         // Revoke create object permission
@@ -241,6 +245,10 @@ mod tests {
         assert!(np.has_read_object);
         assert!(np.has_update_object);
         assert!(np.has_delete_object);
+        assert!(np.has_read_template);
+        assert!(np.has_create_template);
+        assert!(np.has_update_template);
+        assert!(np.has_delete_template);
         assert_eq!(permissions[0].group, admin_group);
 
         created_ns.delete(&context.pool).await.unwrap();
@@ -308,6 +316,10 @@ mod tests {
         assert!(!np.has_read_object);
         assert!(!np.has_update_object);
         assert!(!np.has_delete_object);
+        assert!(!np.has_read_template);
+        assert!(!np.has_create_template);
+        assert!(!np.has_update_template);
+        assert!(!np.has_delete_template);
 
         // Delete all permissions for normal group
         let resp = delete_request(
