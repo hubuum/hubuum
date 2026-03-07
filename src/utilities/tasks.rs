@@ -228,10 +228,30 @@ impl PlanningFailure {
 }
 
 pub fn request_hash(payload: &serde_json::Value) -> Result<String, ApiError> {
-    let bytes = serde_json::to_vec(payload)?;
+    let bytes = serde_json::to_vec(&canonicalize_json(payload))?;
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn canonicalize_json(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.iter().map(canonicalize_json).collect())
+        }
+        serde_json::Value::Object(map) => {
+            let mut keys = map.keys().cloned().collect::<Vec<_>>();
+            keys.sort();
+
+            let mut canonical = serde_json::Map::with_capacity(map.len());
+            for key in keys {
+                canonical.insert(key.clone(), canonicalize_json(&map[&key]));
+            }
+
+            serde_json::Value::Object(canonical)
+        }
+        _ => value.clone(),
+    }
 }
 
 fn configured_task_worker_count() -> usize {
@@ -333,7 +353,7 @@ async fn mark_claimed_task_failed(
 ) -> Result<(), ApiError> {
     let summary = err.to_string();
     let processed_items = task.total_items;
-    let failed_items = task.total_items.max(1);
+    let failed_items = processed_items;
     let finished_at = Utc::now().naive_utc();
 
     update_task_state(
@@ -650,7 +670,10 @@ fn execute_planned_item(
             namespace_id,
             input,
         } => {
-            update_namespace_db(conn, *namespace_id, input)?;
+            let updated = update_namespace_db(conn, *namespace_id, input)?;
+            if let Some(reference) = &input.ref_ {
+                runtime.namespaces_by_ref.insert(reference.clone(), updated);
+            }
         }
         PlannedExecution::CreateClass(input) => {
             let namespace = resolve_namespace_runtime(
@@ -665,7 +688,10 @@ fn execute_planned_item(
             }
         }
         PlannedExecution::UpdateClass { class_id, input } => {
-            update_class_db(conn, *class_id, input)?;
+            let updated = update_class_db(conn, *class_id, input)?;
+            if let Some(reference) = &input.ref_ {
+                runtime.classes_by_ref.insert(reference.clone(), updated);
+            }
         }
         PlannedExecution::CreateObject(input) => {
             let class = resolve_class_runtime(
@@ -680,7 +706,10 @@ fn execute_planned_item(
             }
         }
         PlannedExecution::UpdateObject { object_id, input } => {
-            update_object_db(conn, *object_id, input)?;
+            let updated = update_object_db(conn, *object_id, input)?;
+            if let Some(reference) = &input.ref_ {
+                runtime.objects_by_ref.insert(reference.clone(), updated);
+            }
         }
         PlannedExecution::CreateClassRelation(input) => {
             let from_class = resolve_class_runtime(
@@ -2382,15 +2411,18 @@ mod tests {
 
     use super::{
         ExecutionAccumulator, NamespaceResolution, PlannedExecution, PlannedItem, PlanningState,
-        WorkerLoopAction, background_worker_action, execute_import_best_effort,
-        execute_import_strict, kick_worker_action, planned_result, process_one_task,
-        remember_namespace,
+        RuntimeState, WorkerLoopAction, background_worker_action, create_class_db,
+        create_object_db, execute_import_best_effort, execute_import_strict,
+        execute_planned_item, kick_worker_action, planned_result, process_one_task,
+        remember_namespace, request_hash, resolve_object_runtime,
     };
     use crate::db::traits::task::{create_task_record, find_task_record, list_task_events};
     use crate::db::with_connection;
+    use crate::errors::ApiError;
     use crate::models::{
-        ImportAtomicity, ImportClassInput, ImportCollisionPolicy, ImportMode, ImportNamespaceInput,
-        ImportPermissionPolicy, NewTaskRecord, TaskKind, TaskStatus,
+        ClassKey, ImportAtomicity, ImportClassInput, ImportCollisionPolicy, ImportMode,
+        ImportNamespaceInput, ImportObjectInput, ImportPermissionPolicy, NamespaceKey,
+        NewTaskRecord, ObjectKey, TaskKind, TaskStatus,
     };
     use crate::schema::hubuumclass::dsl::{hubuumclass, name as class_name};
     use crate::schema::namespaces::dsl::{name as namespace_name, namespaces};
@@ -2640,6 +2672,280 @@ mod tests {
         assert_eq!(
             state.namespaces_by_id.get(&namespace.id).unwrap().name,
             namespace.name
+        );
+    }
+
+    #[test]
+    fn test_update_namespace_refreshes_runtime_ref_for_following_items() {
+        let context = block_on(TestContext::new());
+        let fixture = block_on(context.namespace_fixture("update_namespace_ref"));
+        let updated_description = context.scoped_name("updated_namespace_description");
+        let execution = PlannedExecution::UpdateNamespace {
+            namespace_id: fixture.namespace.id,
+            input: ImportNamespaceInput {
+                ref_: Some("ns:existing".to_string()),
+                name: fixture.namespace.name.clone(),
+                description: updated_description.clone(),
+            },
+        };
+
+        let class_input = ImportClassInput {
+            ref_: Some("class:child".to_string()),
+            name: context.scoped_name("class_after_namespace_update"),
+            description: "child".to_string(),
+            json_schema: None,
+            validate_schema: Some(false),
+            namespace_ref: Some("ns:existing".to_string()),
+            namespace_key: None,
+        };
+
+        let result = with_connection(&context.pool, |conn| {
+            let mut runtime = RuntimeState::default();
+            execute_planned_item(conn, &mut runtime, &execution)?;
+            execute_planned_item(
+                conn,
+                &mut runtime,
+                &PlannedExecution::CreateClass(class_input.clone()),
+            )?;
+            Ok::<_, ApiError>(runtime.namespaces_by_ref.get("ns:existing").cloned())
+        })
+        .unwrap();
+
+        let namespace = result.expect("namespace ref should be available after update");
+        assert_eq!(namespace.id, fixture.namespace.id);
+        assert_eq!(namespace.description, updated_description);
+    }
+
+    #[test]
+    fn test_update_class_refreshes_runtime_ref_for_following_items() {
+        let context = block_on(TestContext::new());
+        let fixture = block_on(context.namespace_fixture("update_class_ref"));
+        let class_name_value = context.scoped_name("existing_class_for_update");
+        let class = with_connection(&context.pool, |conn| {
+            create_class_db(
+                conn,
+                &ImportClassInput {
+                    ref_: None,
+                    name: class_name_value.clone(),
+                    description: "existing class".to_string(),
+                    json_schema: None,
+                    validate_schema: Some(false),
+                    namespace_ref: None,
+                    namespace_key: Some(NamespaceKey {
+                        name: fixture.namespace.name.clone(),
+                    }),
+                },
+                fixture.namespace.id,
+            )
+        })
+        .unwrap();
+
+        let execution = PlannedExecution::UpdateClass {
+            class_id: class.id,
+            input: ImportClassInput {
+                ref_: Some("class:existing".to_string()),
+                name: class.name.clone(),
+                description: "updated class".to_string(),
+                json_schema: None,
+                validate_schema: Some(false),
+                namespace_ref: None,
+                namespace_key: Some(NamespaceKey {
+                    name: fixture.namespace.name.clone(),
+                }),
+            },
+        };
+
+        let object_input = ImportObjectInput {
+            ref_: Some("object:child".to_string()),
+            name: context.scoped_name("object_after_class_update"),
+            description: "child".to_string(),
+            data: serde_json::json!({"hostname":"child"}),
+            class_ref: Some("class:existing".to_string()),
+            class_key: None,
+        };
+
+        let result = with_connection(&context.pool, |conn| {
+            let mut runtime = RuntimeState::default();
+            execute_planned_item(conn, &mut runtime, &execution)?;
+            execute_planned_item(
+                conn,
+                &mut runtime,
+                &PlannedExecution::CreateObject(object_input.clone()),
+            )?;
+            Ok::<_, ApiError>(runtime.classes_by_ref.get("class:existing").cloned())
+        })
+        .unwrap();
+
+        let updated = result.expect("class ref should be available after update");
+        assert_eq!(updated.id, class.id);
+        assert_eq!(updated.name, class.name);
+    }
+
+    #[test]
+    fn test_update_object_refreshes_runtime_ref_for_following_items() {
+        let context = block_on(TestContext::new());
+        let fixture = block_on(context.namespace_fixture("update_object_ref"));
+        let class_name_value = context.scoped_name("existing_class_for_object_update");
+        let class = with_connection(&context.pool, |conn| {
+            create_class_db(
+                conn,
+                &ImportClassInput {
+                    ref_: None,
+                    name: class_name_value.clone(),
+                    description: "existing class".to_string(),
+                    json_schema: None,
+                    validate_schema: Some(false),
+                    namespace_ref: None,
+                    namespace_key: Some(NamespaceKey {
+                        name: fixture.namespace.name.clone(),
+                    }),
+                },
+                fixture.namespace.id,
+            )
+        })
+        .unwrap();
+
+        let object_name_value = context.scoped_name("existing_object_for_update");
+        let object = with_connection(&context.pool, |conn| {
+            create_object_db(
+                conn,
+                &ImportObjectInput {
+                    ref_: None,
+                    name: object_name_value.clone(),
+                    description: "existing object".to_string(),
+                    data: serde_json::json!({"hostname":"existing"}),
+                    class_ref: None,
+                    class_key: Some(ClassKey {
+                        name: class.name.clone(),
+                        namespace_ref: None,
+                        namespace_key: Some(NamespaceKey {
+                            name: fixture.namespace.name.clone(),
+                        }),
+                    }),
+                },
+                &class,
+            )
+        })
+        .unwrap();
+
+        let execution = PlannedExecution::UpdateObject {
+            object_id: object.id,
+            input: ImportObjectInput {
+                ref_: Some("object:existing".to_string()),
+                name: object.name.clone(),
+                description: "updated object".to_string(),
+                data: serde_json::json!({"hostname":"updated"}),
+                class_ref: None,
+                class_key: Some(ClassKey {
+                    name: class.name.clone(),
+                    namespace_ref: None,
+                    namespace_key: Some(NamespaceKey {
+                        name: fixture.namespace.name.clone(),
+                    }),
+                }),
+            },
+        };
+
+        let resolved = with_connection(&context.pool, |conn| {
+            let mut runtime = RuntimeState::default();
+            execute_planned_item(conn, &mut runtime, &execution)?;
+            resolve_object_runtime(
+                conn,
+                &runtime,
+                Some("object:existing"),
+                None::<&ObjectKey>,
+            )
+        })
+        .unwrap();
+
+        assert_eq!(resolved.id, object.id);
+        assert_eq!(resolved.description, "updated object");
+    }
+
+    #[test]
+    fn test_request_hash_is_stable_for_reordered_json_objects() {
+        let first = serde_json::json!({
+            "version": 1,
+            "dry_run": true,
+            "graph": {
+                "objects": [{
+                    "ref": "object:one",
+                    "name": "server-1",
+                    "description": "server",
+                    "data": {"a": 1, "b": {"x": 1, "y": 2}},
+                    "class_ref": "class:one"
+                }]
+            }
+        });
+        let second = serde_json::json!({
+            "graph": {
+                "objects": [{
+                    "class_ref": "class:one",
+                    "description": "server",
+                    "name": "server-1",
+                    "ref": "object:one",
+                    "data": {"b": {"y": 2, "x": 1}, "a": 1}
+                }]
+            },
+            "dry_run": true,
+            "version": 1
+        });
+
+        assert_eq!(request_hash(&first).unwrap(), request_hash(&second).unwrap());
+    }
+
+    #[test]
+    fn test_process_one_task_zero_item_failure_keeps_counters_consistent() {
+        let context = block_on(TestContext::new());
+        let task = block_on(create_task_record(
+            &context.pool,
+            NewTaskRecord {
+                kind: TaskKind::Report.as_str().to_string(),
+                status: TaskStatus::Queued.as_str().to_string(),
+                submitted_by: context.admin_user.id,
+                idempotency_key: Some(context.scoped_name("unimplemented-report-task")),
+                request_hash: None,
+                request_payload: Some(serde_json::json!({"report": "demo"})),
+                summary: None,
+                total_items: 0,
+                processed_items: 0,
+                success_items: 0,
+                failed_items: 0,
+                request_redacted_at: None,
+                started_at: None,
+                finished_at: None,
+            },
+        ))
+        .unwrap();
+
+        let earliest = NaiveDate::from_ymd_opt(2000, 1, 1)
+            .expect("valid date")
+            .and_hms_opt(0, 0, 0)
+            .expect("valid timestamp");
+        with_connection(&context.pool, |conn| {
+            diesel::update(tasks.filter(task_id.eq(task.id)))
+                .set(created_at.eq(earliest))
+                .execute(conn)
+        })
+        .unwrap();
+
+        for _ in 0..20 {
+            let processed = block_on(process_one_task(&context.pool)).unwrap();
+            assert!(processed);
+
+            let stored = block_on(find_task_record(&context.pool, task.id)).unwrap();
+            if stored.status == TaskStatus::Failed.as_str() {
+                assert_eq!(stored.total_items, 0);
+                assert_eq!(stored.processed_items, 0);
+                assert_eq!(stored.failed_items, 0);
+                return;
+            }
+        }
+
+        let stored = block_on(find_task_record(&context.pool, task.id)).unwrap();
+        panic!(
+            "Task {} did not reach failed state after repeated processing attempts; current status: {}",
+            task.id, stored.status
         );
     }
 }
