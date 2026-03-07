@@ -102,6 +102,8 @@ JSON output returns a stable envelope:
 
 `text/plain`, `text/html`, and `text/csv` outputs require referencing a stored template via `output.template_id`.
 
+For concrete template examples and example context data, see [template_guide.md](template_guide.md).
+
 Templates use a minimal template language:
 
 - `{{path.to.value}}` to interpolate a value

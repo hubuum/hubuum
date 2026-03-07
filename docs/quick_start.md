@@ -133,3 +133,4 @@ services:
 - [Query Support Matrix](query_support_matrix.md) - Endpoint-by-endpoint filter and sort support
 - [Relationships](relationship_endpoints.md) - Working with object relationships
 - [Report API](report_api.md) - Server-side report execution and templated output
+- [Template Guide](template_guide.md) - Stored template syntax, context, and examples
