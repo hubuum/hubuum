@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::errors::ApiError;
+use crate::models::search::{FilterField, SortParam};
 use crate::schema::{import_task_results, task_events, tasks};
+use crate::traits::{CursorPaginated, CursorValue};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -85,7 +87,7 @@ pub struct TaskRecord {
     pub id: i32,
     pub kind: String,
     pub status: String,
-    pub submitted_by: i32,
+    pub submitted_by: Option<i32>,
     pub idempotency_key: Option<String>,
     pub request_hash: Option<String>,
     pub request_payload: Option<serde_json::Value>,
@@ -97,6 +99,8 @@ pub struct TaskRecord {
     pub request_redacted_at: Option<NaiveDateTime>,
     pub started_at: Option<NaiveDateTime>,
     pub finished_at: Option<NaiveDateTime>,
+    pub deleted_at: Option<NaiveDateTime>,
+    pub deleted_by: Option<i32>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
 }
@@ -106,7 +110,7 @@ pub struct TaskRecord {
 pub struct NewTaskRecord {
     pub kind: String,
     pub status: String,
-    pub submitted_by: i32,
+    pub submitted_by: Option<i32>,
     pub idempotency_key: Option<String>,
     pub request_hash: Option<String>,
     pub request_payload: Option<serde_json::Value>,
@@ -199,7 +203,7 @@ pub struct TaskResponse {
     pub id: i32,
     pub kind: TaskKind,
     pub status: TaskStatus,
-    pub submitted_by: i32,
+    pub submitted_by: Option<i32>,
     pub created_at: NaiveDateTime,
     pub started_at: Option<NaiveDateTime>,
     pub finished_at: Option<NaiveDateTime>,
@@ -299,5 +303,59 @@ impl From<ImportTaskResultRecord> for ImportTaskResultResponse {
             details: value.details,
             created_at: value.created_at,
         }
+    }
+}
+
+impl CursorPaginated for TaskEventResponse {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(field, FilterField::Id)
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        match field {
+            FilterField::Id => Ok(CursorValue::Integer(self.id as i64)),
+            _ => Err(ApiError::BadRequest(format!(
+                "Unsupported sort field '{}' for task events",
+                field
+            ))),
+        }
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        Self::default_sort()
+    }
+}
+
+impl CursorPaginated for ImportTaskResultResponse {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(field, FilterField::Id)
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        match field {
+            FilterField::Id => Ok(CursorValue::Integer(self.id as i64)),
+            _ => Err(ApiError::BadRequest(format!(
+                "Unsupported sort field '{}' for import results",
+                field
+            ))),
+        }
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        Self::default_sort()
     }
 }

@@ -3,10 +3,12 @@ use diesel::prelude::*;
 
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
+use crate::models::search::QueryOptions;
 use crate::models::{
     ImportTaskResultRecord, NewImportTaskResultRecord, NewTaskEventRecord, NewTaskRecord,
     TaskEventRecord, TaskKind, TaskRecord, TaskStatus,
 };
+use crate::pagination::{CursorValue, decode_cursor_values, page_limits_or_defaults};
 
 pub struct TaskStateUpdate {
     pub status: TaskStatus,
@@ -58,7 +60,7 @@ pub async fn find_task_by_idempotency(
 
     with_connection(pool, |conn| {
         tasks
-            .filter(submitted_by.eq(submitter_id))
+            .filter(submitted_by.eq(Some(submitter_id)))
             .filter(idempotency_key.eq(key))
             .first::<TaskRecord>(conn)
             .optional()
@@ -68,32 +70,122 @@ pub async fn find_task_by_idempotency(
 pub async fn list_task_events(
     pool: &DbPool,
     task_id_value: i32,
+    query_options: &QueryOptions,
 ) -> Result<Vec<TaskEventRecord>, ApiError> {
-    use crate::schema::task_events::dsl::{created_at, task_events, task_id};
+    use crate::schema::task_events::dsl::{id, task_events, task_id};
+
+    let limit = query_options
+        .limit
+        .unwrap_or(page_limits_or_defaults().0.saturating_add(1));
+    let descending = query_options
+        .sort
+        .first()
+        .map(|sort| sort.descending)
+        .unwrap_or(false);
+    let cursor_id = decode_history_cursor_id(query_options)?;
 
     with_connection(pool, |conn| {
-        task_events
-            .filter(task_id.eq(task_id_value))
-            .order((created_at.asc(), crate::schema::task_events::dsl::id.asc()))
-            .load::<TaskEventRecord>(conn)
+        let mut query = task_events.filter(task_id.eq(task_id_value)).into_boxed();
+        if let Some(cursor_id) = cursor_id {
+            query = if descending {
+                query.filter(id.lt(cursor_id))
+            } else {
+                query.filter(id.gt(cursor_id))
+            };
+        }
+
+        if descending {
+            query
+                .order(id.desc())
+                .limit(limit as i64)
+                .load::<TaskEventRecord>(conn)
+        } else {
+            query
+                .order(id.asc())
+                .limit(limit as i64)
+                .load::<TaskEventRecord>(conn)
+        }
     })
 }
 
 pub async fn list_import_results(
     pool: &DbPool,
     task_id_value: i32,
+    query_options: &QueryOptions,
 ) -> Result<Vec<ImportTaskResultRecord>, ApiError> {
-    use crate::schema::import_task_results::dsl::{created_at, import_task_results, task_id};
+    use crate::schema::import_task_results::dsl::{id, import_task_results, task_id};
+
+    let limit = query_options
+        .limit
+        .unwrap_or(page_limits_or_defaults().0.saturating_add(1));
+    let descending = query_options
+        .sort
+        .first()
+        .map(|sort| sort.descending)
+        .unwrap_or(false);
+    let cursor_id = decode_history_cursor_id(query_options)?;
 
     with_connection(pool, |conn| {
-        import_task_results
+        let mut query = import_task_results
             .filter(task_id.eq(task_id_value))
-            .order((
-                created_at.asc(),
-                crate::schema::import_task_results::dsl::id.asc(),
-            ))
-            .load::<ImportTaskResultRecord>(conn)
+            .into_boxed();
+        if let Some(cursor_id) = cursor_id {
+            query = if descending {
+                query.filter(id.lt(cursor_id))
+            } else {
+                query.filter(id.gt(cursor_id))
+            };
+        }
+
+        if descending {
+            query
+                .order(id.desc())
+                .limit(limit as i64)
+                .load::<ImportTaskResultRecord>(conn)
+        } else {
+            query
+                .order(id.asc())
+                .limit(limit as i64)
+                .load::<ImportTaskResultRecord>(conn)
+        }
     })
+}
+
+pub async fn count_import_results_summary(
+    pool: &DbPool,
+    task_id_value: i32,
+) -> Result<(i32, i32, i32), ApiError> {
+    use crate::schema::import_task_results::dsl::{import_task_results, outcome, task_id};
+
+    with_connection(pool, |conn| -> Result<(i32, i32, i32), ApiError> {
+        let outcomes = import_task_results
+            .filter(task_id.eq(task_id_value))
+            .select(outcome)
+            .load::<String>(conn)?;
+        let processed = outcomes.len() as i32;
+        let failed = outcomes
+            .iter()
+            .filter(|value| value.as_str() == "failed")
+            .count() as i32;
+        let success = processed - failed;
+        Ok::<(i32, i32, i32), ApiError>((processed, success, failed))
+    })
+}
+
+fn decode_history_cursor_id(query_options: &QueryOptions) -> Result<Option<i32>, ApiError> {
+    let Some(cursor) = &query_options.cursor else {
+        return Ok(None);
+    };
+
+    let values = decode_cursor_values(cursor, &query_options.sort)?;
+    match values.as_slice() {
+        [CursorValue::Integer(value)] => i32::try_from(*value)
+            .map(Some)
+            .map_err(|_| ApiError::BadRequest("cursor id is out of range".to_string())),
+        _ => Err(ApiError::BadRequest(
+            "task history cursor does not match the current sort order".to_string(),
+        )),
+    }
 }
 
 pub async fn append_task_event(
@@ -153,19 +245,35 @@ pub async fn update_task_state(
     })
 }
 
-pub async fn redact_task_payload(
+pub async fn finalize_task_terminal_state(
     pool: &DbPool,
     task_id_value: i32,
+    update: TaskStateUpdate,
+    event: NewTaskEventRecord,
 ) -> Result<TaskRecord, ApiError> {
-    use crate::schema::tasks::dsl::{id, request_payload, request_redacted_at, tasks, updated_at};
+    use crate::schema::task_events::dsl::task_events;
+    use crate::schema::tasks::dsl::{
+        failed_items, finished_at, id, processed_items, request_payload, request_redacted_at,
+        started_at, status, success_items, summary, tasks, updated_at,
+    };
 
-    let now = Utc::now().naive_utc();
-    with_connection(pool, |conn| {
+    with_transaction(pool, |conn| {
+        let event_record = diesel::insert_into(task_events)
+            .values(event)
+            .get_result::<TaskEventRecord>(conn)?;
+
         diesel::update(tasks.filter(id.eq(task_id_value)))
             .set((
+                status.eq(update.status.as_str()),
+                summary.eq(update.summary),
+                processed_items.eq(update.processed_items),
+                success_items.eq(update.success_items),
+                failed_items.eq(update.failed_items),
+                started_at.eq(update.started_at),
+                finished_at.eq(Some(event_record.created_at)),
                 request_payload.eq::<Option<serde_json::Value>>(None),
-                request_redacted_at.eq(now),
-                updated_at.eq(now),
+                request_redacted_at.eq(event_record.created_at),
+                updated_at.eq(event_record.created_at),
             ))
             .get_result::<TaskRecord>(conn)
     })
@@ -222,7 +330,7 @@ pub async fn create_generic_task(
             .values(NewTaskRecord {
                 kind: request.kind.as_str().to_string(),
                 status: TaskStatus::Queued.as_str().to_string(),
-                submitted_by: request.submitted_by,
+                submitted_by: Some(request.submitted_by),
                 idempotency_key: request.idempotency_key,
                 request_hash: request.request_hash,
                 request_payload: Some(request.request_payload),
@@ -257,10 +365,12 @@ mod tests {
     use std::sync::mpsc;
     use std::thread;
 
-    use super::{claim_next_queued_task, create_task_record, list_task_events};
+    use super::{claim_next_queued_task, create_task_record, find_task_record, list_task_events};
+    use crate::db::traits::user::DeleteUserRecord;
     use crate::db::with_transaction;
+    use crate::models::search::QueryOptions;
     use crate::models::{NewTaskRecord, TaskKind, TaskStatus};
-    use crate::tests::TestContext;
+    use crate::tests::{TestContext, create_test_user};
 
     #[test]
     fn test_claim_next_queued_task_is_safe_under_concurrency() {
@@ -274,7 +384,7 @@ mod tests {
                 NewTaskRecord {
                     kind: TaskKind::Import.as_str().to_string(),
                     status: TaskStatus::Queued.as_str().to_string(),
-                    submitted_by: context.admin_user.id,
+                    submitted_by: Some(context.admin_user.id),
                     idempotency_key: Some(format!("{claim_prefix}-{index}")),
                     request_hash: None,
                     request_payload: None,
@@ -325,7 +435,17 @@ mod tests {
         assert_ne!(claimed.unwrap(), locked_id);
         assert!(created_ids.contains(&locked_id));
 
-        let claimed_events = block_on(list_task_events(&context.pool, claimed.unwrap())).unwrap();
+        let claimed_events = block_on(list_task_events(
+            &context.pool,
+            claimed.unwrap(),
+            &QueryOptions {
+                filters: Vec::new(),
+                sort: Vec::new(),
+                limit: None,
+                cursor: None,
+            },
+        ))
+        .unwrap();
         assert_eq!(
             claimed_events
                 .iter()
@@ -333,5 +453,36 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn test_task_history_survives_user_deletion() {
+        let context = block_on(TestContext::new());
+        let task_owner = block_on(create_test_user(&context.pool));
+        let task = block_on(create_task_record(
+            &context.pool,
+            NewTaskRecord {
+                kind: TaskKind::Import.as_str().to_string(),
+                status: TaskStatus::Succeeded.as_str().to_string(),
+                submitted_by: Some(task_owner.id),
+                idempotency_key: Some(context.scoped_name("deleted-owner-task")),
+                request_hash: None,
+                request_payload: None,
+                summary: Some("completed".to_string()),
+                total_items: 0,
+                processed_items: 0,
+                success_items: 0,
+                failed_items: 0,
+                request_redacted_at: None,
+                started_at: None,
+                finished_at: None,
+            },
+        ))
+        .unwrap();
+
+        block_on(task_owner.delete_user_record(&context.pool)).unwrap();
+
+        let stored = block_on(find_task_record(&context.pool, task.id)).unwrap();
+        assert_eq!(stored.submitted_by, None);
     }
 }

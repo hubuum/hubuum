@@ -12,7 +12,7 @@ CREATE TABLE tasks (
             'cancelled'
         )
     ),
-    submitted_by INT REFERENCES users (id) ON DELETE CASCADE NOT NULL,
+    submitted_by INT REFERENCES users (id) ON DELETE SET NULL,
     idempotency_key VARCHAR NULL,
     request_hash VARCHAR NULL,
     request_payload JSONB NULL,
@@ -24,6 +24,8 @@ CREATE TABLE tasks (
     request_redacted_at TIMESTAMP NULL,
     started_at TIMESTAMP NULL,
     finished_at TIMESTAMP NULL,
+    deleted_at TIMESTAMP NULL,
+    deleted_by INT NULL REFERENCES users (id) ON DELETE SET NULL,
     created_at TIMESTAMP NOT NULL DEFAULT now(),
     updated_at TIMESTAMP NOT NULL DEFAULT now(),
     UNIQUE (submitted_by, idempotency_key)
@@ -53,6 +55,8 @@ CREATE TABLE import_task_results (
 
 CREATE INDEX idx_tasks_status_created_at ON tasks (status, created_at);
 CREATE INDEX idx_tasks_submitted_by ON tasks (submitted_by);
+CREATE INDEX idx_tasks_deleted_at ON tasks (deleted_at);
+CREATE INDEX idx_tasks_active_status ON tasks (deleted_at, status);
 CREATE INDEX idx_task_events_task_id_created_at ON task_events (task_id, created_at);
 CREATE INDEX idx_import_task_results_task_id_created_at ON import_task_results (task_id, created_at);
 

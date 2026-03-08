@@ -163,7 +163,7 @@ diesel::table! {
         id -> Int4,
         kind -> Varchar,
         status -> Varchar,
-        submitted_by -> Int4,
+        submitted_by -> Nullable<Int4>,
         idempotency_key -> Nullable<Varchar>,
         request_hash -> Nullable<Varchar>,
         request_payload -> Nullable<Jsonb>,
@@ -175,6 +175,8 @@ diesel::table! {
         request_redacted_at -> Nullable<Timestamp>,
         started_at -> Nullable<Timestamp>,
         finished_at -> Nullable<Timestamp>,
+        deleted_at -> Nullable<Timestamp>,
+        deleted_by -> Nullable<Int4>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
     }
@@ -217,7 +219,6 @@ diesel::joinable!(permissions -> groups (group_id));
 diesel::joinable!(permissions -> namespaces (namespace_id));
 diesel::joinable!(report_templates -> namespaces (namespace_id));
 diesel::joinable!(task_events -> tasks (task_id));
-diesel::joinable!(tasks -> users (submitted_by));
 diesel::joinable!(tokens -> users (user_id));
 diesel::joinable!(user_groups -> groups (group_id));
 diesel::joinable!(user_groups -> users (user_id));

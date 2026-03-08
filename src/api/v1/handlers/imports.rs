@@ -10,11 +10,15 @@ use crate::db::traits::task::{
 };
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
+use crate::models::search::parse_query_parameter;
 use crate::models::{
     ImportRequest, ImportTaskResultResponse, TaskKind, TaskRecord, TaskResponse, User,
 };
+use crate::pagination::prepare_db_pagination;
 use crate::traits::GroupMemberships;
-use crate::utilities::response::{json_response, json_response_with_header};
+use crate::utilities::response::{
+    json_response, json_response_with_header, paginated_json_response,
+};
 use crate::utilities::tasks::{ensure_task_worker_running, kick_task_worker, request_hash};
 
 async fn load_authorized_import_task(
@@ -29,12 +33,11 @@ async fn load_authorized_import_task(
             task_id
         )));
     }
-    if task.submitted_by == requestor.id || requestor.is_admin(pool).await? {
+    if task.submitted_by == Some(requestor.id) || requestor.is_admin(pool).await? {
         Ok(task)
     } else {
-        Err(ApiError::Forbidden(
-            "User is not allowed to view this import".to_string(),
-        ))
+        // Return 404 instead of 403 to hide existence of task from unauthorized users
+        Err(ApiError::NotFound("Import task not found".to_string()))
     }
 }
 
@@ -194,15 +197,18 @@ pub async fn get_import(
 pub async fn get_import_results(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
+    req: HttpRequest,
     task_id: web::Path<i32>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
     let task_id = task_id.into_inner();
     load_authorized_import_task(&pool, &requestor.user, task_id).await?;
-    let results = list_import_results(&pool, task_id)
+    let params = parse_query_parameter(req.query_string())?;
+    let search_params = prepare_db_pagination::<ImportTaskResultResponse>(&params)?;
+    let results = list_import_results(&pool, task_id, &search_params)
         .await?
         .into_iter()
         .map(ImportTaskResultResponse::from)
         .collect::<Vec<_>>();
-    Ok(json_response(results, StatusCode::OK))
+    paginated_json_response(results, StatusCode::OK, &params)
 }

@@ -1,18 +1,20 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::Once;
+use std::sync::{Once, OnceLock};
+use std::thread;
 use std::time::Duration;
 
 use actix_rt::time::sleep;
 use chrono::Utc;
 use diesel::prelude::*;
 use sha2::{Digest, Sha256};
+use tokio::sync::Notify;
 use tracing::error;
 
 use crate::config::{DEFAULT_TASK_POLL_INTERVAL_MS, get_config};
 use crate::db::traits::UserPermissions;
 use crate::db::traits::task::{
-    TaskStateUpdate, append_task_event, claim_next_queued_task, insert_import_results,
-    redact_task_payload, update_task_state,
+    TaskStateUpdate, append_task_event, claim_next_queued_task, count_import_results_summary,
+    finalize_task_terminal_state, insert_import_results, update_task_state,
 };
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
@@ -29,6 +31,11 @@ use crate::models::{
 use crate::traits::GroupMemberships;
 
 static TASK_WORKER: Once = Once::new();
+static TASK_WORKER_NOTIFY: OnceLock<Notify> = OnceLock::new();
+
+fn get_task_worker_notify() -> &'static Notify {
+    TASK_WORKER_NOTIFY.get_or_init(Notify::new)
+}
 
 #[derive(Clone)]
 struct NamespaceResolution {
@@ -104,7 +111,6 @@ struct TerminalTaskUpdate {
 enum WorkerLoopAction {
     Continue,
     Sleep,
-    Break,
 }
 
 #[derive(Clone)]
@@ -254,6 +260,36 @@ fn canonicalize_json(value: &serde_json::Value) -> serde_json::Value {
     }
 }
 
+/// Sanitize error messages before storing in database to prevent information disclosure.
+/// Logs the full error (for debugging) but returns a generic safe message for storage.
+/// This avoids leaking internal database schema, paths, or other sensitive details to import result consumers.
+fn sanitize_error_for_storage(err: &ApiError) -> String {
+    use tracing::debug;
+
+    // Log the full error for internal debugging
+    debug!(message = "Detailed error for import execution", error = %err);
+
+    // Return safe generic message based on error category
+    match err {
+        ApiError::Conflict(msg) => format!("Conflict: {}", msg),
+        ApiError::Forbidden(msg) => format!("Permission denied: {}", msg),
+        ApiError::NotFound(msg) => format!("Not found: {}", msg),
+        ApiError::BadRequest(msg) => format!("Invalid input: {}", msg),
+        ApiError::ValidationError(msg) => format!("Validation failed: {}", msg),
+        // For database/internal errors, return completely generic message
+        ApiError::DatabaseError(_) | ApiError::DbConnectionError(_) => {
+            "Database operation failed".to_string()
+        }
+        ApiError::InternalServerError(_) => "An internal error occurred".to_string(),
+        ApiError::HashError(_) => "Hashing operation failed".to_string(),
+        ApiError::Unauthorized(msg) => format!("Unauthorized: {}", msg),
+        ApiError::NotAcceptable(msg) => format!("Not acceptable: {}", msg),
+        ApiError::PayloadTooLarge(msg) => format!("Payload too large: {}", msg),
+        ApiError::OperatorMismatch(msg) => format!("Invalid operation: {}", msg),
+        ApiError::InvalidIntegerRange(msg) => format!("Invalid value: {}", msg),
+    }
+}
+
 fn configured_task_worker_count() -> usize {
     get_config().map(|config| config.task_workers).unwrap_or(1)
 }
@@ -276,50 +312,45 @@ fn background_worker_action(result: &Result<bool, ApiError>) -> WorkerLoopAction
     }
 }
 
-fn kick_worker_action(result: &Result<bool, ApiError>) -> WorkerLoopAction {
-    match result {
-        Ok(true) => WorkerLoopAction::Continue,
-        Ok(false) => WorkerLoopAction::Break,
-        Err(err) => {
-            error!(message = "Task worker iteration failed", error = %err);
-            WorkerLoopAction::Break
+async fn wait_for_task_worker_wakeup(poll_interval: Duration) {
+    tokio::select! {
+        _ = sleep(poll_interval) => {}
+        _ = get_task_worker_notify().notified() => {}
+    }
+}
+
+async fn task_worker_loop(pool: DbPool, poll_interval: Duration) {
+    loop {
+        let result = process_one_task(&pool).await;
+        match background_worker_action(&result) {
+            WorkerLoopAction::Continue => continue,
+            WorkerLoopAction::Sleep => wait_for_task_worker_wakeup(poll_interval).await,
         }
     }
 }
 
-fn spawn_task_worker_loop(pool: DbPool, poll_interval: Duration) {
-    actix_rt::spawn(async move {
-        loop {
-            let result = process_one_task(&pool).await;
-            match background_worker_action(&result) {
-                WorkerLoopAction::Continue => continue,
-                WorkerLoopAction::Sleep => sleep(poll_interval).await,
-                WorkerLoopAction::Break => break,
-            }
-        }
-    });
+fn spawn_task_worker_loop(pool: DbPool, poll_interval: Duration, worker_index: usize) {
+    thread::Builder::new()
+        .name(format!("task-worker-{worker_index}"))
+        .spawn(move || {
+            let system = actix_rt::System::new();
+            system.block_on(task_worker_loop(pool, poll_interval));
+        })
+        .expect("failed to spawn task worker thread");
 }
 
 pub fn ensure_task_worker_running(pool: DbPool) {
     let worker_count = configured_task_worker_count();
     let poll_interval = configured_task_poll_interval();
     TASK_WORKER.call_once(move || {
-        for _ in 0..worker_count {
-            spawn_task_worker_loop(pool.clone(), poll_interval);
+        for worker_index in 0..worker_count {
+            spawn_task_worker_loop(pool.clone(), poll_interval, worker_index);
         }
     });
 }
 
-pub fn kick_task_worker(pool: DbPool) {
-    actix_rt::spawn(async move {
-        loop {
-            let result = process_one_task(&pool).await;
-            match kick_worker_action(&result) {
-                WorkerLoopAction::Continue => continue,
-                WorkerLoopAction::Sleep | WorkerLoopAction::Break => break,
-            }
-        }
-    });
+pub fn kick_task_worker(_pool: DbPool) {
+    get_task_worker_notify().notify_one();
 }
 
 async fn process_one_task(pool: &DbPool) -> Result<bool, ApiError> {
@@ -335,7 +366,10 @@ async fn process_one_task(pool: &DbPool) -> Result<bool, ApiError> {
 }
 
 async fn process_claimed_task(pool: &DbPool, task: &TaskRecord) -> Result<(), ApiError> {
-    let submitted_by = UserID(task.submitted_by).user(pool).await?;
+    let submitted_by = task.submitted_by.ok_or_else(|| {
+        ApiError::BadRequest("Submitting user is no longer available for this task".to_string())
+    })?;
+    let submitted_by = UserID(submitted_by).user(pool).await?;
 
     match TaskKind::from_db(&task.kind)? {
         TaskKind::Import => execute_import_task(pool, task, &submitted_by).await,
@@ -351,28 +385,23 @@ async fn mark_claimed_task_failed(
     task: &TaskRecord,
     err: &ApiError,
 ) -> Result<(), ApiError> {
-    let summary = err.to_string();
-    let processed_items = task.total_items;
-    let failed_items = processed_items;
-    let finished_at = Utc::now().naive_utc();
-
-    update_task_state(
+    let summary = sanitize_error_for_storage(err);
+    let (processed_items, success_items, failed_items) = match TaskKind::from_db(&task.kind)? {
+        TaskKind::Import => count_import_results_summary(pool, task.id).await?,
+        _ => (0, 0, 0),
+    };
+    finalize_task_terminal_state(
         pool,
         task.id,
         TaskStateUpdate {
             status: TaskStatus::Failed,
             summary: Some(summary.clone()),
             processed_items,
-            success_items: 0,
+            success_items,
             failed_items,
             started_at: task.started_at,
-            finished_at: Some(finished_at),
+            finished_at: None,
         },
-    )
-    .await?;
-
-    if let Err(event_err) = append_task_event(
-        pool,
         NewTaskEventRecord {
             task_id: task.id,
             event_type: "failed".to_string(),
@@ -380,16 +409,7 @@ async fn mark_claimed_task_failed(
             data: Some(serde_json::json!({ "error": summary })),
         },
     )
-    .await
-    {
-        error!(
-            message = "Unable to append failure event for claimed task",
-            task_id = task.id,
-            error = %event_err
-        );
-    }
-
-    redact_task_payload(pool, task.id).await?;
+    .await?;
     Ok(())
 }
 
@@ -550,8 +570,18 @@ async fn finalize_task(
     task: &TaskRecord,
     terminal: TerminalTaskUpdate,
 ) -> Result<(), ApiError> {
-    let terminal_event = append_task_event(
+    finalize_task_terminal_state(
         pool,
+        task.id,
+        TaskStateUpdate {
+            status: terminal.status,
+            summary: Some(terminal.summary.clone()),
+            processed_items: terminal.processed_items,
+            success_items: terminal.success_items,
+            failed_items: terminal.failed_items,
+            started_at: task.started_at,
+            finished_at: None,
+        },
         NewTaskEventRecord {
             task_id: task.id,
             event_type: terminal.status.as_str().to_string(),
@@ -560,22 +590,6 @@ async fn finalize_task(
         },
     )
     .await?;
-
-    update_task_state(
-        pool,
-        task.id,
-        TaskStateUpdate {
-            status: terminal.status,
-            summary: Some(terminal.summary),
-            processed_items: terminal.processed_items,
-            success_items: terminal.success_items,
-            failed_items: terminal.failed_items,
-            started_at: task.started_at,
-            finished_at: Some(terminal_event.created_at),
-        },
-    )
-    .await?;
-    redact_task_payload(pool, task.id).await?;
     Ok(())
 }
 
@@ -641,7 +655,8 @@ async fn execute_import_best_effort(
         match result {
             Ok(()) => accumulator.push_success(task_id, &item.result, "succeeded"),
             Err(err) => {
-                accumulator.push_failure(task_id, &item.result, err.to_string(), "failed");
+                let sanitized_error = sanitize_error_for_storage(&err);
+                accumulator.push_failure(task_id, &item.result, sanitized_error, "failed");
                 if matches!(mode.permission_policy, Some(ImportPermissionPolicy::Abort))
                     || matches!(mode.collision_policy, Some(ImportCollisionPolicy::Abort))
                 {
@@ -1626,7 +1641,7 @@ async fn plan_namespace_permission(
 
 async fn resolve_namespace_planning(
     pool: &DbPool,
-    state: &PlanningState,
+    state: &mut PlanningState,
     reference: Option<&str>,
     key: Option<&NamespaceKey>,
 ) -> Result<NamespaceResolution, String> {
@@ -1641,11 +1656,13 @@ async fn resolve_namespace_planning(
                 return Ok(namespace.clone());
             }
 
-            lookup_namespace_by_name(pool, &key.name)
+            let namespace = lookup_namespace_by_name(pool, &key.name)
                 .await
                 .map_err(|err| err.to_string())?
                 .map(namespace_to_resolution)
-                .ok_or_else(|| format!("Namespace '{}' not found", key.name))
+                .ok_or_else(|| format!("Namespace '{}' not found", key.name))?;
+            remember_namespace(state, None, namespace.clone());
+            Ok(namespace)
         }
         _ => Err("Exactly one of namespace_ref or namespace_key must be provided".to_string()),
     }
@@ -1653,23 +1670,25 @@ async fn resolve_namespace_planning(
 
 async fn resolve_namespace_by_id_planning(
     pool: &DbPool,
-    state: &PlanningState,
+    state: &mut PlanningState,
     namespace_id: i32,
 ) -> Result<NamespaceResolution, String> {
     if let Some(namespace) = state.namespaces_by_id.get(&namespace_id) {
         return Ok(namespace.clone());
     }
 
-    lookup_namespace_by_id(pool, namespace_id)
+    let namespace = lookup_namespace_by_id(pool, namespace_id)
         .await
         .map_err(|err| err.to_string())?
         .map(namespace_to_resolution)
-        .ok_or_else(|| format!("Namespace id '{}' not found", namespace_id))
+        .ok_or_else(|| format!("Namespace id '{}' not found", namespace_id))?;
+    remember_namespace(state, None, namespace.clone());
+    Ok(namespace)
 }
 
 async fn resolve_class_planning(
     pool: &DbPool,
-    state: &PlanningState,
+    state: &mut PlanningState,
     reference: Option<&str>,
     key: Option<&ClassKey>,
 ) -> Result<ClassResolution, String> {
@@ -1691,7 +1710,7 @@ async fn resolve_class_planning(
                 return Ok(class.clone());
             }
 
-            lookup_class_by_namespace_and_name(pool, namespace.id, &key.name)
+            let class = lookup_class_by_namespace_and_name(pool, namespace.id, &key.name)
                 .await
                 .map_err(|err| err.to_string())?
                 .map(class_to_resolution)
@@ -1700,7 +1719,9 @@ async fn resolve_class_planning(
                         "Class '{}' not found in namespace '{}'",
                         key.name, namespace.name
                     )
-                })
+                })?;
+            remember_class(state, None, class.clone());
+            Ok(class)
         }
         _ => Err("Exactly one of class_ref or class_key must be provided".to_string()),
     }
@@ -1708,7 +1729,7 @@ async fn resolve_class_planning(
 
 async fn resolve_object_planning(
     pool: &DbPool,
-    state: &PlanningState,
+    state: &mut PlanningState,
     reference: Option<&str>,
     key: Option<&ObjectKey>,
 ) -> Result<ObjectResolution, String> {
@@ -1730,11 +1751,15 @@ async fn resolve_object_planning(
                 return Ok(object.clone());
             }
 
-            lookup_object_by_class_and_name(pool, class.id, &key.name)
+            let object = lookup_object_by_class_and_name(pool, class.id, &key.name)
                 .await
                 .map_err(|err| err.to_string())?
                 .map(object_to_resolution)
-                .ok_or_else(|| format!("Object '{}' not found in class '{}'", key.name, class.name))
+                .ok_or_else(|| {
+                    format!("Object '{}' not found in class '{}'", key.name, class.name)
+                })?;
+            remember_object(state, None, object.clone());
+            Ok(object)
         }
         _ => Err("Exactly one of object_ref or object_key must be provided".to_string()),
     }
@@ -2412,17 +2437,20 @@ mod tests {
     use super::{
         ExecutionAccumulator, NamespaceResolution, PlannedExecution, PlannedItem, PlanningState,
         RuntimeState, WorkerLoopAction, background_worker_action, create_class_db,
-        create_object_db, execute_import_best_effort, execute_import_strict,
-        execute_planned_item, kick_worker_action, planned_result, process_one_task,
-        remember_namespace, request_hash, resolve_object_runtime,
+        create_object_db, execute_import_best_effort, execute_import_strict, execute_planned_item,
+        planned_result, process_one_task, remember_namespace, request_hash, resolve_class_planning,
+        resolve_namespace_by_id_planning, resolve_namespace_planning, resolve_object_planning,
+        resolve_object_runtime, sanitize_error_for_storage,
     };
-    use crate::db::traits::task::{create_task_record, find_task_record, list_task_events};
+    use crate::db::traits::task::{
+        create_task_record, find_task_record, insert_import_results, list_task_events,
+    };
     use crate::db::with_connection;
     use crate::errors::ApiError;
     use crate::models::{
         ClassKey, ImportAtomicity, ImportClassInput, ImportCollisionPolicy, ImportMode,
         ImportNamespaceInput, ImportObjectInput, ImportPermissionPolicy, NamespaceKey,
-        NewTaskRecord, ObjectKey, TaskKind, TaskStatus,
+        NewImportTaskResultRecord, NewTaskRecord, ObjectKey, TaskKind, TaskStatus,
     };
     use crate::schema::hubuumclass::dsl::{hubuumclass, name as class_name};
     use crate::schema::namespaces::dsl::{name as namespace_name, namespaces};
@@ -2584,7 +2612,7 @@ mod tests {
             NewTaskRecord {
                 kind: TaskKind::Import.as_str().to_string(),
                 status: TaskStatus::Queued.as_str().to_string(),
-                submitted_by: context.admin_user.id,
+                submitted_by: Some(context.admin_user.id),
                 idempotency_key: Some(context.scoped_name("missing-payload-task")),
                 request_hash: None,
                 request_payload: None,
@@ -2620,7 +2648,17 @@ mod tests {
                 assert!(stored.finished_at.is_some());
                 assert!(stored.request_redacted_at.is_some());
 
-                let events = block_on(list_task_events(&context.pool, task.id)).unwrap();
+                let events = block_on(list_task_events(
+                    &context.pool,
+                    task.id,
+                    &crate::models::search::QueryOptions {
+                        filters: Vec::new(),
+                        sort: Vec::new(),
+                        limit: None,
+                        cursor: None,
+                    },
+                ))
+                .unwrap();
                 let event_types = events
                     .iter()
                     .map(|event| event.event_type.as_str())
@@ -2648,12 +2686,6 @@ mod tests {
     }
 
     #[test]
-    fn test_kick_worker_stops_when_queue_is_empty() {
-        let result = Ok(false);
-        assert_eq!(kick_worker_action(&result), WorkerLoopAction::Break);
-    }
-
-    #[test]
     fn test_remember_namespace_populates_namespace_id_index() {
         let mut state = PlanningState::new();
         let namespace = NamespaceResolution {
@@ -2672,6 +2704,199 @@ mod tests {
         assert_eq!(
             state.namespaces_by_id.get(&namespace.id).unwrap().name,
             namespace.name
+        );
+    }
+
+    #[test]
+    fn test_resolve_namespace_planning_backfills_caches_after_db_lookup() {
+        let context = block_on(TestContext::new());
+        let fixture = block_on(context.namespace_fixture("planning_namespace_cache"));
+        let mut state = PlanningState::new();
+
+        let resolved = block_on(resolve_namespace_planning(
+            &context.pool,
+            &mut state,
+            None,
+            Some(&NamespaceKey {
+                name: fixture.namespace.name.clone(),
+            }),
+        ))
+        .unwrap();
+
+        assert_eq!(resolved.id, fixture.namespace.id);
+        assert_eq!(
+            state
+                .namespaces_by_name
+                .get(&fixture.namespace.name)
+                .unwrap()
+                .id,
+            fixture.namespace.id
+        );
+        assert_eq!(
+            state
+                .namespaces_by_id
+                .get(&fixture.namespace.id)
+                .unwrap()
+                .name,
+            fixture.namespace.name
+        );
+    }
+
+    #[test]
+    fn test_resolve_namespace_by_id_planning_backfills_caches_after_db_lookup() {
+        let context = block_on(TestContext::new());
+        let fixture = block_on(context.namespace_fixture("planning_namespace_id_cache"));
+        let mut state = PlanningState::new();
+
+        let resolved = block_on(resolve_namespace_by_id_planning(
+            &context.pool,
+            &mut state,
+            fixture.namespace.id,
+        ))
+        .unwrap();
+
+        assert_eq!(resolved.name, fixture.namespace.name);
+        assert_eq!(
+            state
+                .namespaces_by_name
+                .get(&fixture.namespace.name)
+                .unwrap()
+                .id,
+            fixture.namespace.id
+        );
+        assert_eq!(
+            state
+                .namespaces_by_id
+                .get(&fixture.namespace.id)
+                .unwrap()
+                .name,
+            fixture.namespace.name
+        );
+    }
+
+    #[test]
+    fn test_resolve_class_planning_backfills_cache_after_db_lookup() {
+        let context = block_on(TestContext::new());
+        let fixture = block_on(context.namespace_fixture("planning_class_cache"));
+        let class_name_value = context.scoped_name("planning_class_cache_value");
+        let class = with_connection(&context.pool, |conn| {
+            create_class_db(
+                conn,
+                &ImportClassInput {
+                    ref_: None,
+                    name: class_name_value.clone(),
+                    description: "cached class".to_string(),
+                    json_schema: None,
+                    validate_schema: Some(false),
+                    namespace_ref: None,
+                    namespace_key: Some(NamespaceKey {
+                        name: fixture.namespace.name.clone(),
+                    }),
+                },
+                fixture.namespace.id,
+            )
+        })
+        .unwrap();
+        let mut state = PlanningState::new();
+
+        let resolved = block_on(resolve_class_planning(
+            &context.pool,
+            &mut state,
+            None,
+            Some(&ClassKey {
+                name: class.name.clone(),
+                namespace_ref: None,
+                namespace_key: Some(NamespaceKey {
+                    name: fixture.namespace.name.clone(),
+                }),
+            }),
+        ))
+        .unwrap();
+
+        assert_eq!(resolved.id, class.id);
+        assert_eq!(
+            state
+                .classes_by_key
+                .get(&(fixture.namespace.id, class.name.clone()))
+                .unwrap()
+                .id,
+            class.id
+        );
+    }
+
+    #[test]
+    fn test_resolve_object_planning_backfills_cache_after_db_lookup() {
+        let context = block_on(TestContext::new());
+        let fixture = block_on(context.namespace_fixture("planning_object_cache"));
+        let class_name_value = context.scoped_name("planning_object_cache_class");
+        let class = with_connection(&context.pool, |conn| {
+            create_class_db(
+                conn,
+                &ImportClassInput {
+                    ref_: None,
+                    name: class_name_value.clone(),
+                    description: "cached class".to_string(),
+                    json_schema: None,
+                    validate_schema: Some(false),
+                    namespace_ref: None,
+                    namespace_key: Some(NamespaceKey {
+                        name: fixture.namespace.name.clone(),
+                    }),
+                },
+                fixture.namespace.id,
+            )
+        })
+        .unwrap();
+        let object_name_value = context.scoped_name("planning_object_cache_value");
+        let object = with_connection(&context.pool, |conn| {
+            create_object_db(
+                conn,
+                &ImportObjectInput {
+                    ref_: None,
+                    name: object_name_value.clone(),
+                    description: "cached object".to_string(),
+                    data: serde_json::json!({"hostname":"cached"}),
+                    class_ref: None,
+                    class_key: Some(ClassKey {
+                        name: class.name.clone(),
+                        namespace_ref: None,
+                        namespace_key: Some(NamespaceKey {
+                            name: fixture.namespace.name.clone(),
+                        }),
+                    }),
+                },
+                &class,
+            )
+        })
+        .unwrap();
+        let mut state = PlanningState::new();
+
+        let resolved = block_on(resolve_object_planning(
+            &context.pool,
+            &mut state,
+            None,
+            Some(&ObjectKey {
+                name: object.name.clone(),
+                class_ref: None,
+                class_key: Some(ClassKey {
+                    name: class.name.clone(),
+                    namespace_ref: None,
+                    namespace_key: Some(NamespaceKey {
+                        name: fixture.namespace.name.clone(),
+                    }),
+                }),
+            }),
+        ))
+        .unwrap();
+
+        assert_eq!(resolved.id, object.id);
+        assert_eq!(
+            state
+                .objects_by_key
+                .get(&(class.id, object.name.clone()))
+                .unwrap()
+                .id,
+            object.id
         );
     }
 
@@ -2849,12 +3074,7 @@ mod tests {
         let resolved = with_connection(&context.pool, |conn| {
             let mut runtime = RuntimeState::default();
             execute_planned_item(conn, &mut runtime, &execution)?;
-            resolve_object_runtime(
-                conn,
-                &runtime,
-                Some("object:existing"),
-                None::<&ObjectKey>,
-            )
+            resolve_object_runtime(conn, &runtime, Some("object:existing"), None::<&ObjectKey>)
         })
         .unwrap();
 
@@ -2891,7 +3111,18 @@ mod tests {
             "version": 1
         });
 
-        assert_eq!(request_hash(&first).unwrap(), request_hash(&second).unwrap());
+        assert_eq!(
+            request_hash(&first).unwrap(),
+            request_hash(&second).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_sanitize_error_for_storage_masks_database_details() {
+        let sanitized = sanitize_error_for_storage(&ApiError::DatabaseError(
+            "relation users does not exist".to_string(),
+        ));
+        assert_eq!(sanitized, "Database operation failed");
     }
 
     #[test]
@@ -2902,7 +3133,7 @@ mod tests {
             NewTaskRecord {
                 kind: TaskKind::Report.as_str().to_string(),
                 status: TaskStatus::Queued.as_str().to_string(),
-                submitted_by: context.admin_user.id,
+                submitted_by: Some(context.admin_user.id),
                 idempotency_key: Some(context.scoped_name("unimplemented-report-task")),
                 request_hash: None,
                 request_payload: Some(serde_json::json!({"report": "demo"})),
@@ -2930,9 +3161,7 @@ mod tests {
         .unwrap();
 
         for _ in 0..20 {
-            let processed = block_on(process_one_task(&context.pool)).unwrap();
-            assert!(processed);
-
+            let _ = block_on(process_one_task(&context.pool)).unwrap();
             let stored = block_on(find_task_record(&context.pool, task.id)).unwrap();
             if stored.status == TaskStatus::Failed.as_str() {
                 assert_eq!(stored.total_items, 0);
@@ -2947,5 +3176,69 @@ mod tests {
             "Task {} did not reach failed state after repeated processing attempts; current status: {}",
             task.id, stored.status
         );
+    }
+
+    #[test]
+    fn test_mark_claimed_task_failed_uses_recorded_result_counts() {
+        let context = block_on(TestContext::new());
+        let task = block_on(create_task_record(
+            &context.pool,
+            NewTaskRecord {
+                kind: TaskKind::Import.as_str().to_string(),
+                status: TaskStatus::Queued.as_str().to_string(),
+                submitted_by: Some(context.admin_user.id),
+                idempotency_key: Some(context.scoped_name("fallback-count-task")),
+                request_hash: None,
+                request_payload: Some(serde_json::json!({"version": 1})),
+                summary: None,
+                total_items: 3,
+                processed_items: 0,
+                success_items: 0,
+                failed_items: 0,
+                request_redacted_at: None,
+                started_at: None,
+                finished_at: None,
+            },
+        ))
+        .unwrap();
+
+        block_on(insert_import_results(
+            &context.pool,
+            &[
+                NewImportTaskResultRecord {
+                    task_id: task.id,
+                    item_ref: Some("a".to_string()),
+                    entity_kind: "namespace".to_string(),
+                    action: "create".to_string(),
+                    identifier: Some("a".to_string()),
+                    outcome: "succeeded".to_string(),
+                    error: None,
+                    details: None,
+                },
+                NewImportTaskResultRecord {
+                    task_id: task.id,
+                    item_ref: Some("b".to_string()),
+                    entity_kind: "class".to_string(),
+                    action: "create".to_string(),
+                    identifier: Some("b".to_string()),
+                    outcome: "failed".to_string(),
+                    error: Some("failed".to_string()),
+                    details: None,
+                },
+            ],
+        ))
+        .unwrap();
+
+        block_on(super::mark_claimed_task_failed(
+            &context.pool,
+            &task,
+            &ApiError::InternalServerError("boom".to_string()),
+        ))
+        .unwrap();
+
+        let stored = block_on(find_task_record(&context.pool, task.id)).unwrap();
+        assert_eq!(stored.processed_items, 2);
+        assert_eq!(stored.success_items, 1);
+        assert_eq!(stored.failed_items, 1);
     }
 }

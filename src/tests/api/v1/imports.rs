@@ -16,6 +16,7 @@ mod tests {
         ImportPermissionPolicy, ImportRequest, ImportTaskResultResponse, NamespaceKey,
         NewTaskRecord, Permissions, TaskEventResponse, TaskKind, TaskResponse, TaskStatus,
     };
+    use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::schema::hubuumclass::dsl::{hubuumclass, name as class_name_col, namespace_id};
     use crate::schema::namespaces::dsl::{
         description as namespace_description, id as namespace_id_field, namespaces,
@@ -238,7 +239,7 @@ mod tests {
             NewTaskRecord {
                 kind: TaskKind::Report.as_str().to_string(),
                 status: TaskStatus::Succeeded.as_str().to_string(),
-                submitted_by: context.admin_user.id,
+                submitted_by: Some(context.admin_user.id),
                 idempotency_key: None,
                 request_hash: None,
                 request_payload: None,
@@ -388,7 +389,7 @@ mod tests {
             NewTaskRecord {
                 kind: TaskKind::Report.as_str().to_string(),
                 status: TaskStatus::Queued.as_str().to_string(),
-                submitted_by: context.admin_user.id,
+                submitted_by: Some(context.admin_user.id),
                 idempotency_key: Some(report_key.clone()),
                 request_hash: Some(context.scoped_name("report-task-hash")),
                 request_payload: None,
@@ -491,6 +492,125 @@ mod tests {
 
         let completed = wait_for_task(&context, first_task.id, &[TaskStatus::Succeeded]).await;
         assert_eq!(completed.status, TaskStatus::Succeeded);
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_task_events_and_import_results_cursor_pagination(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let delegate_group = create_test_group(&context.pool).await;
+        let body = ImportRequest {
+            version: 1,
+            dry_run: Some(false),
+            mode: Some(ImportMode {
+                atomicity: Some(ImportAtomicity::Strict),
+                collision_policy: None,
+                permission_policy: None,
+            }),
+            graph: ImportGraph {
+                namespaces: vec![ImportNamespaceInput {
+                    ref_: Some("ns:page".to_string()),
+                    name: context.scoped_name("paged_import_ns"),
+                    description: "Imported namespace".to_string(),
+                }],
+                classes: vec![ImportClassInput {
+                    ref_: Some("class:page".to_string()),
+                    name: context.scoped_name("paged_import_class"),
+                    description: "Imported class".to_string(),
+                    json_schema: None,
+                    validate_schema: Some(false),
+                    namespace_ref: Some("ns:page".to_string()),
+                    namespace_key: None,
+                }],
+                objects: vec![ImportObjectInput {
+                    ref_: Some("object:page".to_string()),
+                    name: context.scoped_name("paged_import_object"),
+                    description: "Imported object".to_string(),
+                    data: serde_json::json!({"hostname": "paged"}),
+                    class_ref: Some("class:page".to_string()),
+                    class_key: None,
+                }],
+                namespace_permissions: vec![ImportNamespacePermissionInput {
+                    ref_: Some("acl:page".to_string()),
+                    namespace_ref: Some("ns:page".to_string()),
+                    namespace_key: None,
+                    group_key: GroupKey {
+                        groupname: delegate_group.groupname.clone(),
+                    },
+                    permissions: vec![Permissions::ReadCollection],
+                    replace_existing: Some(false),
+                }],
+                ..ImportGraph::default()
+            },
+        };
+
+        let resp = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            IMPORTS_ENDPOINT,
+            &body,
+            vec![],
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(resp).await;
+        let _ = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/tasks/{}/events?limit=2&sort=id", task.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        let first_events: Vec<TaskEventResponse> = test::read_body_json(resp).await;
+        assert_eq!(first_events.len(), 2);
+        assert!(next_cursor.is_some());
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "/api/v1/tasks/{}/events?limit=2&sort=id&cursor={}",
+                task.id,
+                next_cursor.clone().unwrap()
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let second_events: Vec<TaskEventResponse> = test::read_body_json(resp).await;
+        assert!(!second_events.is_empty());
+        assert!(second_events[0].id > first_events.last().unwrap().id);
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/imports/{}/results?limit=2&sort=id", task.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        let first_results: Vec<ImportTaskResultResponse> = test::read_body_json(resp).await;
+        assert_eq!(first_results.len(), 2);
+        assert!(next_cursor.is_some());
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "/api/v1/imports/{}/results?limit=2&sort=id&cursor={}",
+                task.id,
+                next_cursor.unwrap()
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let second_results: Vec<ImportTaskResultResponse> = test::read_body_json(resp).await;
+        assert!(!second_results.is_empty());
+        assert!(second_results[0].id > first_results.last().unwrap().id);
     }
 
     #[rstest]
@@ -819,7 +939,7 @@ mod tests {
             format!("/api/v1/imports/{}/results", task.id),
         ] {
             let resp = get_request(&context.pool, &context.normal_token, &endpoint).await;
-            assert_response_status(resp, StatusCode::FORBIDDEN).await;
+            assert_response_status(resp, StatusCode::NOT_FOUND).await;
         }
     }
 }
