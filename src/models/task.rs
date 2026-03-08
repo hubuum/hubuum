@@ -81,6 +81,40 @@ impl TaskStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskResultCounts {
+    pub processed: i32,
+    pub success: i32,
+    pub failed: i32,
+}
+
+impl TaskResultCounts {
+    pub fn new<T, U, V>(processed: T, success: U, failed: V) -> Result<Self, ApiError>
+    where
+        T: TryInto<i32>,
+        U: TryInto<i32>,
+        V: TryInto<i32>,
+    {
+        Ok(Self {
+            processed: processed.try_into().map_err(|_| {
+                ApiError::InternalServerError("processed count is out of range".to_string())
+            })?,
+            success: success.try_into().map_err(|_| {
+                ApiError::InternalServerError("success count is out of range".to_string())
+            })?,
+            failed: failed.try_into().map_err(|_| {
+                ApiError::InternalServerError("failed count is out of range".to_string())
+            })?,
+        })
+    }
+}
+
+impl From<TaskResultCounts> for (i32, i32, i32) {
+    fn from(value: TaskResultCounts) -> Self {
+        (value.processed, value.success, value.failed)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable)]
 #[diesel(table_name = tasks)]
 pub struct TaskRecord {

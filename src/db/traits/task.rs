@@ -6,7 +6,7 @@ use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
 use crate::models::{
     ImportTaskResultRecord, NewImportTaskResultRecord, NewTaskEventRecord, NewTaskRecord,
-    TaskEventRecord, TaskKind, TaskRecord, TaskStatus,
+    TaskEventRecord, TaskKind, TaskRecord, TaskResultCounts, TaskStatus,
 };
 use crate::pagination::{CursorValue, decode_cursor_values, page_limits_or_defaults};
 
@@ -154,21 +154,21 @@ pub async fn list_import_results(
 pub async fn count_import_results_summary(
     pool: &DbPool,
     task_id_value: i32,
-) -> Result<(i32, i32, i32), ApiError> {
+) -> Result<TaskResultCounts, ApiError> {
     use crate::schema::import_task_results::dsl::{import_task_results, outcome, task_id};
 
-    with_connection(pool, |conn| -> Result<(i32, i32, i32), ApiError> {
-        let outcomes = import_task_results
+    with_connection(pool, |conn| -> Result<TaskResultCounts, ApiError> {
+        let processed = import_task_results
             .filter(task_id.eq(task_id_value))
-            .select(outcome)
-            .load::<String>(conn)?;
-        let processed = outcomes.len() as i32;
-        let failed = outcomes
-            .iter()
-            .filter(|value| value.as_str() == "failed")
-            .count() as i32;
+            .count()
+            .get_result::<i64>(conn)?;
+        let failed = import_task_results
+            .filter(task_id.eq(task_id_value))
+            .filter(outcome.eq("failed"))
+            .count()
+            .get_result::<i64>(conn)?;
         let success = processed - failed;
-        Ok::<(i32, i32, i32), ApiError>((processed, success, failed))
+        TaskResultCounts::new(processed, success, failed)
     })
 }
 
@@ -204,17 +204,17 @@ pub async fn append_task_event(
 pub async fn insert_import_results(
     pool: &DbPool,
     entries: &[NewImportTaskResultRecord],
-) -> Result<Vec<ImportTaskResultRecord>, ApiError> {
+) -> Result<usize, ApiError> {
     use crate::schema::import_task_results::dsl::import_task_results;
 
     if entries.is_empty() {
-        return Ok(Vec::new());
+        return Ok(0);
     }
 
     with_connection(pool, |conn| {
         diesel::insert_into(import_task_results)
             .values(entries)
-            .get_results::<ImportTaskResultRecord>(conn)
+            .execute(conn)
     })
 }
 

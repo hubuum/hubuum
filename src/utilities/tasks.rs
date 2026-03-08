@@ -25,8 +25,8 @@ use crate::models::{
     ImportObjectRelationInput, ImportPermissionPolicy, ImportRequest, Namespace, NamespaceID,
     NamespaceKey, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
     NewImportTaskResultRecord, NewPermission, NewTaskEventRecord, ObjectKey, Permission,
-    Permissions, PermissionsList, TaskKind, TaskRecord, TaskStatus, UpdateHubuumClass,
-    UpdateHubuumObject, UpdateNamespace, UpdatePermission, User, UserID,
+    Permissions, PermissionsList, TaskKind, TaskRecord, TaskResultCounts, TaskStatus,
+    UpdateHubuumClass, UpdateHubuumObject, UpdateNamespace, UpdatePermission, User, UserID,
 };
 use crate::traits::GroupMemberships;
 
@@ -52,6 +52,7 @@ struct ClassResolution {
     namespace_id: i32,
     json_schema: Option<serde_json::Value>,
     validate_schema: bool,
+    exists_in_db: bool,
 }
 
 #[derive(Clone)]
@@ -60,11 +61,15 @@ struct ObjectResolution {
     name: String,
     namespace_id: i32,
     class_id: i32,
+    exists_in_db: bool,
 }
 
 #[derive(Default)]
 struct PlanningState {
     next_temp_id: i32,
+    planned_namespace_names: HashSet<String>,
+    planned_class_keys: HashSet<(i32, String)>,
+    planned_object_keys: HashSet<(i32, String)>,
     namespaces_by_ref: HashMap<String, NamespaceResolution>,
     namespaces_by_name: HashMap<String, NamespaceResolution>,
     namespaces_by_id: HashMap<i32, NamespaceResolution>,
@@ -113,7 +118,7 @@ enum WorkerLoopAction {
     Sleep,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum PlannedExecution {
     CreateNamespace(ImportNamespaceInput),
     UpdateNamespace {
@@ -135,7 +140,7 @@ enum PlannedExecution {
     ApplyNamespacePermissions(ImportNamespacePermissionInput),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct PlannedTaskResult {
     item_ref: Option<String>,
     entity_kind: String,
@@ -144,7 +149,7 @@ struct PlannedTaskResult {
     details: Option<serde_json::Value>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct PlannedItem {
     result: PlannedTaskResult,
     execution: Option<PlannedExecution>,
@@ -157,6 +162,8 @@ struct ExecutionAccumulator {
     success: i32,
     failed: i32,
 }
+
+const IMPORT_RESULTS_BATCH_SIZE: usize = 1000;
 
 impl ExecutionAccumulator {
     fn push_success(&mut self, task_id: i32, planned: &PlannedTaskResult, outcome: &str) {
@@ -196,7 +203,7 @@ impl ExecutionAccumulator {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum FailureKind {
     Permission,
     Collision,
@@ -205,6 +212,7 @@ enum FailureKind {
     Runtime,
 }
 
+#[derive(Debug)]
 struct PlanningFailure {
     kind: FailureKind,
     item: PlannedTaskResult,
@@ -349,7 +357,8 @@ pub fn ensure_task_worker_running(pool: DbPool) {
     });
 }
 
-pub fn kick_task_worker(_pool: DbPool) {
+pub fn kick_task_worker(pool: DbPool) {
+    ensure_task_worker_running(pool);
     get_task_worker_notify().notify_one();
 }
 
@@ -386,9 +395,9 @@ async fn mark_claimed_task_failed(
     err: &ApiError,
 ) -> Result<(), ApiError> {
     let summary = sanitize_error_for_storage(err);
-    let (processed_items, success_items, failed_items) = match TaskKind::from_db(&task.kind)? {
+    let counts = match TaskKind::from_db(&task.kind)? {
         TaskKind::Import => count_import_results_summary(pool, task.id).await?,
-        _ => (0, 0, 0),
+        _ => TaskResultCounts::default(),
     };
     finalize_task_terminal_state(
         pool,
@@ -396,9 +405,9 @@ async fn mark_claimed_task_failed(
         TaskStateUpdate {
             status: TaskStatus::Failed,
             summary: Some(summary.clone()),
-            processed_items,
-            success_items,
-            failed_items,
+            processed_items: counts.processed,
+            success_items: counts.success,
+            failed_items: counts.failed,
             started_at: task.started_at,
             finished_at: None,
         },
@@ -503,13 +512,16 @@ async fn execute_import_task(
         if request.dry_run() {
             for failure in failures {
                 accumulator.push_failure(task.id, &failure.item, failure.message, "failed");
+                flush_import_result_batches(pool, &mut accumulator, false).await?;
             }
             for item in &planned_items {
                 accumulator.push_success(task.id, &item.result, "planned");
+                flush_import_result_batches(pool, &mut accumulator, false).await?;
             }
         } else {
             for failure in failures {
                 accumulator.push_failure(task.id, &failure.item, failure.message, "failed");
+                flush_import_result_batches(pool, &mut accumulator, false).await?;
             }
             match mode.atomicity.unwrap_or(ImportAtomicity::Strict) {
                 ImportAtomicity::Strict => {
@@ -528,7 +540,7 @@ async fn execute_import_task(
             }
         }
 
-        insert_import_results(pool, &accumulator.results).await?;
+        flush_import_result_batches(pool, &mut accumulator, true).await?;
 
         let status = if accumulator.failed == 0 {
             TaskStatus::Succeeded
@@ -605,16 +617,19 @@ async fn execute_import_strict(
 
         for item in planned_items {
             if let Some(execution) = &item.execution {
-                execute_planned_item(conn, &mut runtime, execution).map_err(|err| {
-                    ApiError::BadRequest(format!(
-                        "Import execution failed for {}: {}",
-                        item.result
-                            .identifier
-                            .clone()
-                            .unwrap_or_else(|| item.result.entity_kind.clone()),
-                        err
-                    ))
-                })?;
+                let identifier = item
+                    .result
+                    .identifier
+                    .clone()
+                    .unwrap_or_else(|| item.result.entity_kind.clone());
+                if let Err(err) = execute_planned_item(conn, &mut runtime, execution) {
+                    error!(
+                        message = "Import execution failed during strict transaction",
+                        identifier = %identifier,
+                        error = %err
+                    );
+                    return Err(err);
+                }
             }
             completed.push(item.result.clone());
         }
@@ -626,6 +641,7 @@ async fn execute_import_strict(
         Ok(completed) => {
             for result in &completed {
                 accumulator.push_success(task_id, result, "succeeded");
+                flush_import_result_batches(pool, accumulator, false).await?;
             }
             Ok(())
         }
@@ -653,10 +669,14 @@ async fn execute_import_best_effort(
         };
 
         match result {
-            Ok(()) => accumulator.push_success(task_id, &item.result, "succeeded"),
+            Ok(()) => {
+                accumulator.push_success(task_id, &item.result, "succeeded");
+                flush_import_result_batches(pool, accumulator, false).await?;
+            }
             Err(err) => {
                 let sanitized_error = sanitize_error_for_storage(&err);
                 accumulator.push_failure(task_id, &item.result, sanitized_error, "failed");
+                flush_import_result_batches(pool, accumulator, false).await?;
                 if matches!(mode.permission_policy, Some(ImportPermissionPolicy::Abort))
                     || matches!(mode.collision_policy, Some(ImportCollisionPolicy::Abort))
                 {
@@ -914,10 +934,27 @@ async fn plan_namespace(
         });
     }
 
+    if !state.planned_namespace_names.insert(input.name.clone()) {
+        return Err(PlanningFailure {
+            kind: FailureKind::Validation,
+            item: planned_result(
+                "namespace",
+                "create",
+                input.ref_.clone(),
+                Some(input.name.clone()),
+            ),
+            message: format!(
+                "Duplicate namespace name '{}' within import request",
+                input.name
+            ),
+        });
+    }
+
     let existing = state
         .namespaces_by_name
         .get(&input.name)
         .cloned()
+        .filter(|namespace| namespace.exists_in_db)
         .map(|ns| Namespace {
             id: ns.id,
             name: ns.name,
@@ -1063,10 +1100,28 @@ async fn plan_class(
         message,
     })?;
 
+    let class_key = (namespace.id, input.name.clone());
+    if !state.planned_class_keys.insert(class_key.clone()) {
+        return Err(PlanningFailure {
+            kind: FailureKind::Validation,
+            item: planned_result(
+                "class",
+                "create",
+                input.ref_.clone(),
+                Some(format!("{}::{}", namespace.name, input.name)),
+            ),
+            message: format!(
+                "Duplicate class name '{}' within namespace '{}'",
+                input.name, namespace.name
+            ),
+        });
+    }
+
     let existing = state
         .classes_by_key
-        .get(&(namespace.id, input.name.clone()))
+        .get(&class_key)
         .cloned()
+        .filter(|class| class.exists_in_db)
         .or(
             lookup_class_by_namespace_and_name(pool, namespace.id, &input.name)
                 .await
@@ -1116,6 +1171,7 @@ async fn plan_class(
             namespace_id: namespace.id,
             json_schema: input.json_schema.clone(),
             validate_schema: input.validate_schema.unwrap_or(false),
+            exists_in_db: true,
         };
         remember_class(state, input.ref_.clone(), updated.clone());
 
@@ -1151,6 +1207,7 @@ async fn plan_class(
             namespace_id: namespace.id,
             json_schema: input.json_schema.clone(),
             validate_schema: input.validate_schema.unwrap_or(false),
+            exists_in_db: false,
         };
         remember_class(state, input.ref_.clone(), created.clone());
 
@@ -1201,10 +1258,28 @@ async fn plan_object(
         })?;
     }
 
+    let object_key = (class.id, input.name.clone());
+    if !state.planned_object_keys.insert(object_key.clone()) {
+        return Err(PlanningFailure {
+            kind: FailureKind::Validation,
+            item: planned_result(
+                "object",
+                "create",
+                input.ref_.clone(),
+                Some(format!("{}::{}", class.name, input.name)),
+            ),
+            message: format!(
+                "Duplicate object name '{}' within class '{}'",
+                input.name, class.name
+            ),
+        });
+    }
+
     let existing = state
         .objects_by_key
-        .get(&(class.id, input.name.clone()))
+        .get(&object_key)
         .cloned()
+        .filter(|object| object.exists_in_db)
         .or(lookup_object_by_class_and_name(pool, class.id, &input.name)
             .await
             .map_err(|err| PlanningFailure {
@@ -1263,6 +1338,7 @@ async fn plan_object(
             name: input.name.clone(),
             namespace_id: namespace.id,
             class_id: class.id,
+            exists_in_db: true,
         };
         remember_object(state, input.ref_.clone(), updated.clone());
 
@@ -1297,6 +1373,7 @@ async fn plan_object(
             name: input.name.clone(),
             namespace_id: namespace.id,
             class_id: class.id,
+            exists_in_db: false,
         };
         remember_object(state, input.ref_.clone(), created.clone());
 
@@ -1922,6 +1999,7 @@ fn class_to_resolution(class: HubuumClass) -> ClassResolution {
         namespace_id: class.namespace_id,
         json_schema: class.json_schema,
         validate_schema: class.validate_schema,
+        exists_in_db: true,
     }
 }
 
@@ -1931,7 +2009,29 @@ fn object_to_resolution(object: HubuumObject) -> ObjectResolution {
         name: object.name,
         namespace_id: object.namespace_id,
         class_id: object.hubuum_class_id,
+        exists_in_db: true,
     }
+}
+
+async fn flush_import_result_batches(
+    pool: &DbPool,
+    accumulator: &mut ExecutionAccumulator,
+    force: bool,
+) -> Result<(), ApiError> {
+    while accumulator.results.len() >= IMPORT_RESULTS_BATCH_SIZE {
+        let batch = accumulator
+            .results
+            .drain(..IMPORT_RESULTS_BATCH_SIZE)
+            .collect::<Vec<_>>();
+        insert_import_results(pool, &batch).await?;
+    }
+
+    if force && !accumulator.results.is_empty() {
+        let batch = accumulator.results.drain(..).collect::<Vec<_>>();
+        insert_import_results(pool, &batch).await?;
+    }
+
+    Ok(())
 }
 
 fn normalize_pair(left: i32, right: i32) -> (i32, i32) {
@@ -2435,12 +2535,13 @@ mod tests {
     use futures::executor::block_on;
 
     use super::{
-        ExecutionAccumulator, NamespaceResolution, PlannedExecution, PlannedItem, PlanningState,
-        RuntimeState, WorkerLoopAction, background_worker_action, create_class_db,
-        create_object_db, execute_import_best_effort, execute_import_strict, execute_planned_item,
-        planned_result, process_one_task, remember_namespace, request_hash, resolve_class_planning,
-        resolve_namespace_by_id_planning, resolve_namespace_planning, resolve_object_planning,
-        resolve_object_runtime, sanitize_error_for_storage,
+        ExecutionAccumulator, FailureKind, NamespaceResolution, PlannedExecution, PlannedItem,
+        PlanningState, RuntimeState, WorkerLoopAction, background_worker_action,
+        class_to_resolution, create_class_db, create_object_db, execute_import_best_effort,
+        execute_import_strict, execute_planned_item, plan_class, plan_namespace, plan_object,
+        planned_result, process_one_task, remember_class, remember_namespace, request_hash,
+        resolve_class_planning, resolve_namespace_by_id_planning, resolve_namespace_planning,
+        resolve_object_planning, resolve_object_runtime, sanitize_error_for_storage,
     };
     use crate::db::traits::task::{
         create_task_record, find_task_record, insert_import_results, list_task_events,
@@ -2605,6 +2706,37 @@ mod tests {
     }
 
     #[test]
+    fn test_execute_import_strict_preserves_underlying_error_variant() {
+        let context = block_on(TestContext::new());
+        let planned_items = vec![PlannedItem {
+            result: planned_result(
+                "namespace",
+                "update",
+                Some("ns:missing".to_string()),
+                Some("missing".to_string()),
+            ),
+            execution: Some(PlannedExecution::UpdateNamespace {
+                namespace_id: -999,
+                input: ImportNamespaceInput {
+                    ref_: Some("ns:missing".to_string()),
+                    name: "missing".to_string(),
+                    description: "missing".to_string(),
+                },
+            }),
+        }];
+
+        let mut accumulator = ExecutionAccumulator::default();
+        let result = block_on(execute_import_strict(
+            &context.pool,
+            1,
+            &planned_items,
+            &mut accumulator,
+        ));
+
+        assert!(matches!(result, Err(ApiError::NotFound(_))));
+    }
+
+    #[test]
     fn test_process_one_task_marks_claimed_task_failed_when_execution_setup_errors() {
         let context = block_on(TestContext::new());
         let task = block_on(create_task_record(
@@ -2705,6 +2837,173 @@ mod tests {
             state.namespaces_by_id.get(&namespace.id).unwrap().name,
             namespace.name
         );
+    }
+
+    #[test]
+    fn test_plan_namespace_rejects_duplicate_name_within_request() {
+        let context = block_on(TestContext::new());
+        let mut state = PlanningState::new();
+        let mode = ImportMode {
+            atomicity: Some(ImportAtomicity::BestEffort),
+            collision_policy: Some(ImportCollisionPolicy::Overwrite),
+            permission_policy: Some(ImportPermissionPolicy::Continue),
+        };
+        let input = ImportNamespaceInput {
+            ref_: Some("ns:one".to_string()),
+            name: context.scoped_name("duplicate_namespace"),
+            description: "first".to_string(),
+        };
+
+        block_on(plan_namespace(
+            &context.pool,
+            &context.admin_user,
+            &mode,
+            &mut state,
+            &input,
+        ))
+        .unwrap();
+
+        let duplicate = ImportNamespaceInput {
+            ref_: Some("ns:two".to_string()),
+            ..input
+        };
+        let err = block_on(plan_namespace(
+            &context.pool,
+            &context.admin_user,
+            &mode,
+            &mut state,
+            &duplicate,
+        ))
+        .unwrap_err();
+
+        assert!(matches!(err.kind, FailureKind::Validation));
+        assert!(err.message.contains("Duplicate namespace name"));
+    }
+
+    #[test]
+    fn test_plan_class_rejects_duplicate_name_against_virtual_planned_class() {
+        let context = block_on(TestContext::new());
+        let fixture = block_on(context.namespace_fixture("duplicate_virtual_class"));
+        let mut state = PlanningState::new();
+        remember_namespace(
+            &mut state,
+            Some("ns:existing".to_string()),
+            NamespaceResolution {
+                id: fixture.namespace.id,
+                name: fixture.namespace.name.clone(),
+                description: fixture.namespace.description.clone(),
+                exists_in_db: true,
+            },
+        );
+
+        let mode = ImportMode {
+            atomicity: Some(ImportAtomicity::BestEffort),
+            collision_policy: Some(ImportCollisionPolicy::Overwrite),
+            permission_policy: Some(ImportPermissionPolicy::Continue),
+        };
+        let input = ImportClassInput {
+            ref_: Some("class:one".to_string()),
+            name: context.scoped_name("duplicate_class"),
+            description: "first".to_string(),
+            json_schema: None,
+            validate_schema: Some(false),
+            namespace_ref: Some("ns:existing".to_string()),
+            namespace_key: None,
+        };
+
+        block_on(plan_class(
+            &context.pool,
+            &context.admin_user,
+            &mode,
+            &mut state,
+            &input,
+        ))
+        .unwrap();
+
+        let duplicate = ImportClassInput {
+            ref_: Some("class:two".to_string()),
+            ..input
+        };
+        let err = block_on(plan_class(
+            &context.pool,
+            &context.admin_user,
+            &mode,
+            &mut state,
+            &duplicate,
+        ))
+        .unwrap_err();
+
+        assert!(matches!(err.kind, FailureKind::Validation));
+        assert!(err.message.contains("Duplicate class name"));
+    }
+
+    #[test]
+    fn test_plan_object_rejects_duplicate_name_against_virtual_planned_object() {
+        let context = block_on(TestContext::new());
+        let fixture = block_on(context.namespace_fixture("duplicate_virtual_object"));
+        let class = with_connection(&context.pool, |conn| {
+            create_class_db(
+                conn,
+                &ImportClassInput {
+                    ref_: None,
+                    name: context.scoped_name("duplicate_virtual_object_class"),
+                    description: "existing class".to_string(),
+                    json_schema: None,
+                    validate_schema: Some(false),
+                    namespace_ref: None,
+                    namespace_key: Some(NamespaceKey {
+                        name: fixture.namespace.name.clone(),
+                    }),
+                },
+                fixture.namespace.id,
+            )
+        })
+        .unwrap();
+        let mut state = PlanningState::new();
+        remember_class(
+            &mut state,
+            Some("class:existing".to_string()),
+            class_to_resolution(class.clone()),
+        );
+
+        let mode = ImportMode {
+            atomicity: Some(ImportAtomicity::BestEffort),
+            collision_policy: Some(ImportCollisionPolicy::Overwrite),
+            permission_policy: Some(ImportPermissionPolicy::Continue),
+        };
+        let input = ImportObjectInput {
+            ref_: Some("object:one".to_string()),
+            name: context.scoped_name("duplicate_object"),
+            description: "first".to_string(),
+            data: serde_json::json!({"hostname":"first"}),
+            class_ref: Some("class:existing".to_string()),
+            class_key: None,
+        };
+
+        block_on(plan_object(
+            &context.pool,
+            &context.admin_user,
+            &mode,
+            &mut state,
+            &input,
+        ))
+        .unwrap();
+
+        let duplicate = ImportObjectInput {
+            ref_: Some("object:two".to_string()),
+            ..input
+        };
+        let err = block_on(plan_object(
+            &context.pool,
+            &context.admin_user,
+            &mode,
+            &mut state,
+            &duplicate,
+        ))
+        .unwrap_err();
+
+        assert!(matches!(err.kind, FailureKind::Validation));
+        assert!(err.message.contains("Duplicate object name"));
     }
 
     #[test]
