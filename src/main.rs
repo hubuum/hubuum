@@ -9,6 +9,7 @@ mod middlewares;
 mod models;
 mod pagination;
 mod schema;
+mod tasks;
 mod tests;
 mod tls;
 mod traits;
@@ -32,8 +33,8 @@ use crate::errors::{
     EXIT_CODE_CONFIG_ERROR, EXIT_CODE_INIT_ERROR, EXIT_CODE_TLS_ERROR, fatal_error,
     json_error_handler,
 };
+use crate::tasks::ensure_task_worker_running;
 use crate::utilities::is_valid_log_level;
-use crate::utilities::tasks::ensure_task_worker_running;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {

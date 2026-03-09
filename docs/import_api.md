@@ -27,6 +27,15 @@ Imports use client-local refs for items created in the same request and natural-
 
 Do not send database IDs such as `namespace_id`, `hubuum_class_id`, or `group_id` to wire the graph together.
 
+Top-level fields:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `version` | integer | yes | Current version is `1`. |
+| `dry_run` | boolean | no | Defaults to `false`. |
+| `mode` | object | no | Defaults to `{"atomicity":"strict","collision_policy":"abort","permission_policy":"abort"}`. |
+| `graph` | object | yes | Holds the import sections described below. Omitted sections default to empty arrays. |
+
 Example:
 
 ```json
@@ -98,6 +107,17 @@ Examples:
 - object uses `class_ref`
 - permission assignment uses `namespace_ref`
 
+Each individual selector pair is exclusive:
+
+- `namespace_ref` or `namespace_key`
+- `class_ref` or `class_key`
+- `from_class_ref` or `from_class_key`
+- `to_class_ref` or `to_class_key`
+- `from_object_ref` or `from_object_key`
+- `to_object_ref` or `to_object_key`
+
+Send exactly one selector for each target you need to resolve.
+
 ### Natural-key selectors
 
 Use `*_key` when the target already exists.
@@ -123,6 +143,41 @@ Examples:
 }
 ```
 
+Selector shapes:
+
+- `NamespaceKey`
+
+```json
+{
+  "name": "infra"
+}
+```
+
+- `ClassKey`
+
+```json
+{
+  "name": "server",
+  "namespace_key": {
+    "name": "infra"
+  }
+}
+```
+
+- `ObjectKey`
+
+```json
+{
+  "name": "web-01",
+  "class_key": {
+    "name": "server",
+    "namespace_key": {
+      "name": "infra"
+    }
+  }
+}
+```
+
 ## Supported graph sections
 
 - `namespaces`
@@ -132,10 +187,153 @@ Examples:
 - `object_relations`
 - `namespace_permissions`
 
+Section shapes:
+
+### `namespaces`
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `ref` | string | no | Client-local reference for later items in the same request. |
+| `name` | string | yes | Natural key for namespace lookup. |
+| `description` | string | yes | Namespace description. |
+
+### `classes`
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `ref` | string | no | Client-local reference for later items in the same request. |
+| `name` | string | yes | Class name within the selected namespace. |
+| `description` | string | yes | Class description. |
+| `json_schema` | JSON value | no | Optional JSON Schema for object validation. |
+| `validate_schema` | boolean | no | Defaults to `false` when creating a new class. When overwriting an existing class, omitting it preserves the current value. |
+| `namespace_ref` | string | conditional | Use when the namespace is created in the same request. |
+| `namespace_key` | object | conditional | Use when the namespace already exists. |
+
+Exactly one of `namespace_ref` or `namespace_key` must be set.
+
+### `objects`
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `ref` | string | no | Client-local reference for later items in the same request. |
+| `name` | string | yes | Object name within the selected class. |
+| `description` | string | yes | Object description. |
+| `data` | JSON value | yes | Object payload. Validated against the class schema when enabled. |
+| `class_ref` | string | conditional | Use when the class is created in the same request. |
+| `class_key` | object | conditional | Use when the class already exists. |
+
+Exactly one of `class_ref` or `class_key` must be set.
+
+### `class_relations`
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `ref` | string | no | Client-local reference. |
+| `from_class_ref` | string | conditional | Use when the source class is created in the same request. |
+| `from_class_key` | object | conditional | Use when the source class already exists. |
+| `to_class_ref` | string | conditional | Use when the target class is created in the same request. |
+| `to_class_key` | object | conditional | Use when the target class already exists. |
+
+Exactly one of `from_class_ref` or `from_class_key` must be set, and exactly one of `to_class_ref` or `to_class_key` must be set.
+
+Example:
+
+```json
+{
+  "class_relations": [
+    {
+      "ref": "rel:server-runs-on-rack",
+      "from_class_ref": "class:server",
+      "to_class_key": {
+        "name": "rack",
+        "namespace_key": {
+          "name": "infra"
+        }
+      }
+    }
+  ]
+}
+```
+
+### `object_relations`
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `ref` | string | no | Client-local reference. |
+| `from_object_ref` | string | conditional | Use when the source object is created in the same request. |
+| `from_object_key` | object | conditional | Use when the source object already exists. |
+| `to_object_ref` | string | conditional | Use when the target object is created in the same request. |
+| `to_object_key` | object | conditional | Use when the target object already exists. |
+
+Exactly one of `from_object_ref` or `from_object_key` must be set, and exactly one of `to_object_ref` or `to_object_key` must be set.
+
+Example:
+
+```json
+{
+  "object_relations": [
+    {
+      "ref": "rel:web-01-rack-a3",
+      "from_object_ref": "object:web-01",
+      "to_object_key": {
+        "name": "rack-a3",
+        "class_key": {
+          "name": "rack",
+          "namespace_key": {
+            "name": "infra"
+          }
+        }
+      }
+    }
+  ]
+}
+```
+
+### `namespace_permissions`
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `ref` | string | no | Client-local reference. |
+| `namespace_ref` | string | conditional | Use when the namespace is created in the same request. |
+| `namespace_key` | object | conditional | Use when the namespace already exists. |
+| `group_key` | object | yes | Existing group selector. |
+| `permissions` | array of strings | yes | Permission names listed below. |
+| `replace_existing` | boolean | no | Defaults to `false`. `false` adds the requested permissions to any existing grant. `true` replaces the existing grant for that namespace/group pair. |
+
+Exactly one of `namespace_ref` or `namespace_key` must be set.
+
+Allowed permission values:
+
+- `ReadCollection`
+- `UpdateCollection`
+- `DeleteCollection`
+- `DelegateCollection`
+- `CreateClass`
+- `ReadClass`
+- `UpdateClass`
+- `DeleteClass`
+- `CreateObject`
+- `ReadObject`
+- `UpdateObject`
+- `DeleteObject`
+- `CreateClassRelation`
+- `ReadClassRelation`
+- `UpdateClassRelation`
+- `DeleteClassRelation`
+- `CreateObjectRelation`
+- `ReadObjectRelation`
+- `UpdateObjectRelation`
+- `DeleteObjectRelation`
+- `ReadTemplate`
+- `CreateTemplate`
+- `UpdateTemplate`
+- `DeleteTemplate`
+
 ## Execution options
 
 ### `dry_run`
 
+- default: `false`
 - `true`
   - validates and plans the import
   - creates task state and result rows
@@ -145,6 +343,7 @@ Examples:
 
 ### `mode.atomicity`
 
+- default: `strict`
 - `strict`
   - all imported mutations succeed or the import fails
 - `best_effort`
@@ -152,13 +351,17 @@ Examples:
 
 ### `mode.collision_policy`
 
+- default: `abort`
 - `abort`
   - existing matching records fail the import or the individual item
 - `overwrite`
   - matching records are updated instead of rejected
+  - for classes, omitted optional schema settings keep their existing values
+  - for objects, the supplied `name`, `description`, and `data` replace the existing values
 
 ### `mode.permission_policy`
 
+- default: `abort`
 - `abort`
   - permission failures stop strict imports and stop best-effort imports once encountered
 - `continue`

@@ -167,8 +167,7 @@ pub async fn count_import_results_summary(
             .filter(outcome.eq("failed"))
             .count()
             .get_result::<i64>(conn)?;
-        let success = processed - failed;
-        TaskResultCounts::new(processed, success, failed)
+        TaskResultCounts::new(processed, processed - failed, failed)
     })
 }
 

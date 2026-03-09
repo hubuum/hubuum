@@ -8,9 +8,9 @@ use crate::extractors::UserAccess;
 use crate::models::search::parse_query_parameter;
 use crate::models::{TaskEventResponse, TaskRecord, TaskResponse, User};
 use crate::pagination::prepare_db_pagination;
+use crate::tasks::ensure_task_worker_running;
 use crate::traits::GroupMemberships;
 use crate::utilities::response::{json_response, paginated_json_response};
-use crate::utilities::tasks::ensure_task_worker_running;
 
 async fn load_authorized_task(
     pool: &DbPool,

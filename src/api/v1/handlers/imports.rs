@@ -15,11 +15,11 @@ use crate::models::{
     ImportRequest, ImportTaskResultResponse, TaskKind, TaskRecord, TaskResponse, User,
 };
 use crate::pagination::prepare_db_pagination;
+use crate::tasks::{ensure_task_worker_running, kick_task_worker, request_hash};
 use crate::traits::GroupMemberships;
 use crate::utilities::response::{
     json_response, json_response_with_header, paginated_json_response,
 };
-use crate::utilities::tasks::{ensure_task_worker_running, kick_task_worker, request_hash};
 
 async fn load_authorized_import_task(
     pool: &DbPool,
