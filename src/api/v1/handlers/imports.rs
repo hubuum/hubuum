@@ -12,7 +12,8 @@ use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    ImportRequest, ImportTaskResultResponse, TaskKind, TaskRecord, TaskResponse, User,
+    CURRENT_IMPORT_VERSION, ImportRequest, ImportTaskResultResponse, TaskKind, TaskRecord,
+    TaskResponse, User,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::tasks::{ensure_task_worker_running, kick_task_worker, request_hash};
@@ -122,6 +123,12 @@ pub async fn create_import(
     ensure_task_worker_running(pool.get_ref().clone());
 
     let import_request = import_request.into_inner();
+    if import_request.version != CURRENT_IMPORT_VERSION {
+        return Err(ApiError::BadRequest(format!(
+            "Unsupported import version '{}'; expected {}",
+            import_request.version, CURRENT_IMPORT_VERSION
+        )));
+    }
     let payload = serde_json::to_value(&import_request)?;
     let hash = request_hash(&payload)?;
     let idempotency_key = req

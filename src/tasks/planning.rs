@@ -290,6 +290,21 @@ pub(super) async fn plan_class(
     state: &mut PlanningState,
     input: &ImportClassInput,
 ) -> Result<PlannedItem, PlanningFailure> {
+    if let Some(reference) = &input.ref_
+        && state.classes_by_ref.contains_key(reference)
+    {
+        return Err(PlanningFailure {
+            kind: FailureKind::Validation,
+            item: planned_result(
+                "class",
+                "create",
+                input.ref_.clone(),
+                Some(input.name.clone()),
+            ),
+            message: format!("Duplicate class ref '{reference}'"),
+        });
+    }
+
     let namespace = resolve_namespace_planning(
         pool,
         state,
@@ -448,6 +463,21 @@ pub(super) async fn plan_object(
     state: &mut PlanningState,
     input: &ImportObjectInput,
 ) -> Result<PlannedItem, PlanningFailure> {
+    if let Some(reference) = &input.ref_
+        && state.objects_by_ref.contains_key(reference)
+    {
+        return Err(PlanningFailure {
+            kind: FailureKind::Validation,
+            item: planned_result(
+                "object",
+                "create",
+                input.ref_.clone(),
+                Some(input.name.clone()),
+            ),
+            message: format!("Duplicate object ref '{reference}'"),
+        });
+    }
+
     let class = resolve_class_planning(
         pool,
         state,

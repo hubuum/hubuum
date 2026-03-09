@@ -496,6 +496,42 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
+    async fn test_import_rejects_unsupported_version(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let body = ImportRequest {
+            version: 2,
+            dry_run: Some(true),
+            mode: None,
+            graph: ImportGraph {
+                namespaces: vec![ImportNamespaceInput {
+                    ref_: Some("ns:unsupported".to_string()),
+                    name: context.scoped_name("unsupported_import_version"),
+                    description: "unsupported".to_string(),
+                }],
+                ..ImportGraph::default()
+            },
+        };
+
+        let resp = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            IMPORTS_ENDPOINT,
+            &body,
+            vec![],
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+        let error: serde_json::Value = test::read_body_json(resp).await;
+        assert!(
+            error["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Unsupported import version")
+        );
+    }
+
+    #[rstest]
+    #[actix_web::test]
     async fn test_task_events_and_import_results_cursor_pagination(
         #[future(awt)] test_context: TestContext,
     ) {

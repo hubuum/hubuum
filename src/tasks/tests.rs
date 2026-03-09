@@ -562,6 +562,168 @@ fn test_plan_object_rejects_duplicate_name_against_virtual_planned_object() {
 }
 
 #[test]
+fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
+    let context = block_on(TestContext::new());
+    let fixture_one = block_on(context.namespace_fixture("duplicate_class_ref_one"));
+    let fixture_two = block_on(context.namespace_fixture("duplicate_class_ref_two"));
+    let mut state = PlanningState::new();
+    remember_namespace(
+        &mut state,
+        Some("ns:one".to_string()),
+        NamespaceResolution {
+            id: fixture_one.namespace.id,
+            name: fixture_one.namespace.name.clone(),
+            description: fixture_one.namespace.description.clone(),
+            exists_in_db: true,
+        },
+    );
+    remember_namespace(
+        &mut state,
+        Some("ns:two".to_string()),
+        NamespaceResolution {
+            id: fixture_two.namespace.id,
+            name: fixture_two.namespace.name.clone(),
+            description: fixture_two.namespace.description.clone(),
+            exists_in_db: true,
+        },
+    );
+
+    let mode = ImportMode {
+        atomicity: Some(ImportAtomicity::BestEffort),
+        collision_policy: Some(ImportCollisionPolicy::Overwrite),
+        permission_policy: Some(ImportPermissionPolicy::Continue),
+    };
+    let input = ImportClassInput {
+        ref_: Some("class:shared".to_string()),
+        name: context.scoped_name("duplicate_class_ref_one"),
+        description: "first".to_string(),
+        json_schema: None,
+        validate_schema: Some(false),
+        namespace_ref: Some("ns:one".to_string()),
+        namespace_key: None,
+    };
+
+    block_on(plan_class(
+        &context.pool,
+        &context.admin_user,
+        &mode,
+        &mut state,
+        &input,
+    ))
+    .unwrap();
+
+    let duplicate = ImportClassInput {
+        name: context.scoped_name("duplicate_class_ref_two"),
+        namespace_ref: Some("ns:two".to_string()),
+        ..input
+    };
+    let err = block_on(plan_class(
+        &context.pool,
+        &context.admin_user,
+        &mode,
+        &mut state,
+        &duplicate,
+    ))
+    .unwrap_err();
+
+    assert!(matches!(err.kind, FailureKind::Validation));
+    assert!(err.message.contains("Duplicate class ref"));
+}
+
+#[test]
+fn test_plan_object_rejects_duplicate_ref_against_virtual_planned_object() {
+    let context = block_on(TestContext::new());
+    let fixture = block_on(context.namespace_fixture("duplicate_object_ref"));
+    let class_one = with_connection(&context.pool, |conn| {
+        create_class_db(
+            conn,
+            &ImportClassInput {
+                ref_: None,
+                name: context.scoped_name("duplicate_object_ref_class_one"),
+                description: "first class".to_string(),
+                json_schema: None,
+                validate_schema: Some(false),
+                namespace_ref: None,
+                namespace_key: Some(NamespaceKey {
+                    name: fixture.namespace.name.clone(),
+                }),
+            },
+            fixture.namespace.id,
+        )
+    })
+    .unwrap();
+    let class_two = with_connection(&context.pool, |conn| {
+        create_class_db(
+            conn,
+            &ImportClassInput {
+                ref_: None,
+                name: context.scoped_name("duplicate_object_ref_class_two"),
+                description: "second class".to_string(),
+                json_schema: None,
+                validate_schema: Some(false),
+                namespace_ref: None,
+                namespace_key: Some(NamespaceKey {
+                    name: fixture.namespace.name.clone(),
+                }),
+            },
+            fixture.namespace.id,
+        )
+    })
+    .unwrap();
+    let mut state = PlanningState::new();
+    remember_class(
+        &mut state,
+        Some("class:one".to_string()),
+        class_to_resolution(class_one.clone()),
+    );
+    remember_class(
+        &mut state,
+        Some("class:two".to_string()),
+        class_to_resolution(class_two.clone()),
+    );
+
+    let mode = ImportMode {
+        atomicity: Some(ImportAtomicity::BestEffort),
+        collision_policy: Some(ImportCollisionPolicy::Overwrite),
+        permission_policy: Some(ImportPermissionPolicy::Continue),
+    };
+    let input = ImportObjectInput {
+        ref_: Some("object:shared".to_string()),
+        name: context.scoped_name("duplicate_object_ref_one"),
+        description: "first".to_string(),
+        data: serde_json::json!({"hostname":"first"}),
+        class_ref: Some("class:one".to_string()),
+        class_key: None,
+    };
+
+    block_on(plan_object(
+        &context.pool,
+        &context.admin_user,
+        &mode,
+        &mut state,
+        &input,
+    ))
+    .unwrap();
+
+    let duplicate = ImportObjectInput {
+        name: context.scoped_name("duplicate_object_ref_two"),
+        class_ref: Some("class:two".to_string()),
+        ..input
+    };
+    let err = block_on(plan_object(
+        &context.pool,
+        &context.admin_user,
+        &mode,
+        &mut state,
+        &duplicate,
+    ))
+    .unwrap_err();
+
+    assert!(matches!(err.kind, FailureKind::Validation));
+    assert!(err.message.contains("Duplicate object ref"));
+}
+
+#[test]
 fn test_resolve_namespace_planning_backfills_caches_after_db_lookup() {
     let context = block_on(TestContext::new());
     let fixture = block_on(context.namespace_fixture("planning_namespace_cache"));

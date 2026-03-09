@@ -3,6 +3,8 @@ use utoipa::ToSchema;
 
 use crate::models::Permissions;
 
+pub const CURRENT_IMPORT_VERSION: i32 = 1;
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ImportAtomicity {
