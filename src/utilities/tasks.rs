@@ -227,7 +227,15 @@ struct PlanningOutcome {
 }
 
 impl PlanningFailure {
+    fn message_for_storage(&self) -> String {
+        match self.kind {
+            FailureKind::Runtime => "An internal error occurred".to_string(),
+            _ => self.message.clone(),
+        }
+    }
+
     fn into_result(self, task_id: i32) -> NewImportTaskResultRecord {
+        let error = self.message_for_storage();
         NewImportTaskResultRecord {
             task_id,
             item_ref: self.item.item_ref,
@@ -235,7 +243,7 @@ impl PlanningFailure {
             action: self.item.action,
             identifier: self.item.identifier,
             outcome: "failed".to_string(),
-            error: Some(self.message),
+            error: Some(error),
             details: self.item.details,
         }
     }
@@ -317,6 +325,22 @@ fn background_worker_action(result: &Result<bool, ApiError>) -> WorkerLoopAction
             error!(message = "Task worker iteration failed", error = %err);
             WorkerLoopAction::Sleep
         }
+    }
+}
+
+fn should_abort_best_effort_execution(err: &ApiError, mode: &ImportMode) -> bool {
+    match err {
+        ApiError::Conflict(_) => matches!(
+            mode.collision_policy
+                .unwrap_or(ImportCollisionPolicy::Abort),
+            ImportCollisionPolicy::Abort
+        ),
+        ApiError::Forbidden(_) | ApiError::Unauthorized(_) => matches!(
+            mode.permission_policy
+                .unwrap_or(ImportPermissionPolicy::Abort),
+            ImportPermissionPolicy::Abort
+        ),
+        _ => false,
     }
 }
 
@@ -511,7 +535,12 @@ async fn execute_import_task(
 
         if request.dry_run() {
             for failure in failures {
-                accumulator.push_failure(task.id, &failure.item, failure.message, "failed");
+                accumulator.push_failure(
+                    task.id,
+                    &failure.item,
+                    failure.message_for_storage(),
+                    "failed",
+                );
                 flush_import_result_batches(pool, &mut accumulator, false).await?;
             }
             for item in &planned_items {
@@ -520,7 +549,12 @@ async fn execute_import_task(
             }
         } else {
             for failure in failures {
-                accumulator.push_failure(task.id, &failure.item, failure.message, "failed");
+                accumulator.push_failure(
+                    task.id,
+                    &failure.item,
+                    failure.message_for_storage(),
+                    "failed",
+                );
                 flush_import_result_batches(pool, &mut accumulator, false).await?;
             }
             match mode.atomicity.unwrap_or(ImportAtomicity::Strict) {
@@ -677,9 +711,7 @@ async fn execute_import_best_effort(
                 let sanitized_error = sanitize_error_for_storage(&err);
                 accumulator.push_failure(task_id, &item.result, sanitized_error, "failed");
                 flush_import_result_batches(pool, accumulator, false).await?;
-                if matches!(mode.permission_policy, Some(ImportPermissionPolicy::Abort))
-                    || matches!(mode.collision_policy, Some(ImportCollisionPolicy::Abort))
-                {
+                if should_abort_best_effort_execution(&err, mode) {
                     break;
                 }
             }
@@ -972,7 +1004,7 @@ async fn plan_namespace(
                     input.ref_.clone(),
                     Some(input.name.clone()),
                 ),
-                message: message.to_string(),
+                message: sanitize_error_for_storage(&message),
             })?);
 
     if let Some(namespace) = existing {
@@ -1133,7 +1165,7 @@ async fn plan_class(
                         input.ref_.clone(),
                         Some(input.name.clone()),
                     ),
-                    message: err.to_string(),
+                    message: sanitize_error_for_storage(&err),
                 })?
                 .map(class_to_resolution),
         );
@@ -1169,8 +1201,11 @@ async fn plan_class(
             id: class.id,
             name: input.name.clone(),
             namespace_id: namespace.id,
-            json_schema: input.json_schema.clone(),
-            validate_schema: input.validate_schema.unwrap_or(false),
+            json_schema: input
+                .json_schema
+                .clone()
+                .or_else(|| class.json_schema.clone()),
+            validate_schema: input.validate_schema.unwrap_or(class.validate_schema),
             exists_in_db: true,
         };
         remember_class(state, input.ref_.clone(), updated.clone());
@@ -1290,7 +1325,7 @@ async fn plan_object(
                     input.ref_.clone(),
                     Some(input.name.clone()),
                 ),
-                message: err.to_string(),
+                message: sanitize_error_for_storage(&err),
             })?
             .map(object_to_resolution));
 
@@ -1484,7 +1519,7 @@ async fn plan_class_relation(
                     input.ref_.clone(),
                     identifier.clone(),
                 ),
-                message: err.to_string(),
+                message: sanitize_error_for_storage(&err),
             })?
             .is_some()
     {
@@ -1590,7 +1625,7 @@ async fn plan_object_relation(
             .map_err(|err| PlanningFailure {
                 kind: FailureKind::Runtime,
                 item: planned_result("object_relation", "lookup", input.ref_.clone(), None),
-                message: err.to_string(),
+                message: sanitize_error_for_storage(&err),
             })?
             .is_some();
 
@@ -1609,7 +1644,7 @@ async fn plan_object_relation(
             .map_err(|err| PlanningFailure {
                 kind: FailureKind::Runtime,
                 item: planned_result("object_relation", "lookup", input.ref_.clone(), None),
-                message: err.to_string(),
+                message: sanitize_error_for_storage(&err),
             })?
             .is_some()
     {
@@ -1688,7 +1723,7 @@ async fn plan_namespace_permission(
                 input.ref_.clone(),
                 Some(input.group_key.groupname.clone()),
             ),
-            message: err.to_string(),
+            message: sanitize_error_for_storage(&err),
         })?
         .ok_or_else(|| PlanningFailure {
             kind: FailureKind::Resolution,
@@ -2536,12 +2571,13 @@ mod tests {
 
     use super::{
         ExecutionAccumulator, FailureKind, NamespaceResolution, PlannedExecution, PlannedItem,
-        PlanningState, RuntimeState, WorkerLoopAction, background_worker_action,
+        PlanningFailure, PlanningState, RuntimeState, WorkerLoopAction, background_worker_action,
         class_to_resolution, create_class_db, create_object_db, execute_import_best_effort,
         execute_import_strict, execute_planned_item, plan_class, plan_namespace, plan_object,
         planned_result, process_one_task, remember_class, remember_namespace, request_hash,
         resolve_class_planning, resolve_namespace_by_id_planning, resolve_namespace_planning,
         resolve_object_planning, resolve_object_runtime, sanitize_error_for_storage,
+        should_abort_best_effort_execution,
     };
     use crate::db::traits::task::{
         create_task_record, find_task_record, insert_import_results, list_task_events,
@@ -2686,6 +2722,85 @@ mod tests {
                 atomicity: Some(ImportAtomicity::BestEffort),
                 collision_policy: Some(ImportCollisionPolicy::Overwrite),
                 permission_policy: Some(ImportPermissionPolicy::Continue),
+            },
+            &mut accumulator,
+        ))
+        .unwrap();
+
+        let namespace_count = with_connection(&context.pool, |conn| {
+            namespaces
+                .filter(namespace_name.eq_any([namespace_one.clone(), namespace_two.clone()]))
+                .count()
+                .get_result::<i64>(conn)
+        })
+        .unwrap();
+
+        assert_eq!(namespace_count, 2);
+        assert_eq!(accumulator.processed, 3);
+        assert_eq!(accumulator.success, 2);
+        assert_eq!(accumulator.failed, 1);
+    }
+
+    #[test]
+    fn test_execute_import_best_effort_continues_after_non_policy_runtime_error() {
+        let context = block_on(TestContext::new());
+        let namespace_one = context.scoped_name("best_effort_runtime_ns_one");
+        let namespace_two = context.scoped_name("best_effort_runtime_ns_two");
+        let planned_items = vec![
+            PlannedItem {
+                result: planned_result(
+                    "namespace",
+                    "create",
+                    Some("ns:one".to_string()),
+                    Some(namespace_one.clone()),
+                ),
+                execution: Some(PlannedExecution::CreateNamespace(ImportNamespaceInput {
+                    ref_: Some("ns:one".to_string()),
+                    name: namespace_one.clone(),
+                    description: "Best effort namespace one".to_string(),
+                })),
+            },
+            PlannedItem {
+                result: planned_result(
+                    "class",
+                    "create",
+                    Some("class:bad".to_string()),
+                    Some("bad".to_string()),
+                ),
+                execution: Some(PlannedExecution::CreateClass(ImportClassInput {
+                    ref_: Some("class:bad".to_string()),
+                    name: "bad".to_string(),
+                    description: "Fails at runtime".to_string(),
+                    json_schema: None,
+                    validate_schema: Some(false),
+                    namespace_ref: Some("ns:missing".to_string()),
+                    namespace_key: None,
+                })),
+            },
+            PlannedItem {
+                result: planned_result(
+                    "namespace",
+                    "create",
+                    Some("ns:two".to_string()),
+                    Some(namespace_two.clone()),
+                ),
+                execution: Some(PlannedExecution::CreateNamespace(ImportNamespaceInput {
+                    ref_: Some("ns:two".to_string()),
+                    name: namespace_two.clone(),
+                    description: "Best effort namespace two".to_string(),
+                })),
+            },
+        ];
+
+        let mut accumulator = ExecutionAccumulator::default();
+        block_on(execute_import_best_effort(
+            &context.pool,
+            1,
+            &planned_items,
+            &ImportMode {
+                atomicity: Some(ImportAtomicity::BestEffort),
+                collision_policy: Some(ImportCollisionPolicy::Abort),
+                permission_policy: Some(ImportPermissionPolicy::Abort),
             },
             &mut accumulator,
         ))
@@ -3306,6 +3421,91 @@ mod tests {
     }
 
     #[test]
+    fn test_plan_class_update_preserves_existing_schema_for_following_objects() {
+        let context = block_on(TestContext::new());
+        let fixture = block_on(context.namespace_fixture("update_class_schema_ref"));
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["hostname"],
+            "properties": {
+                "hostname": {"type": "string"}
+            }
+        });
+        let class_name_value = context.scoped_name("existing_class_with_schema");
+        let class = with_connection(&context.pool, |conn| {
+            create_class_db(
+                conn,
+                &ImportClassInput {
+                    ref_: None,
+                    name: class_name_value.clone(),
+                    description: "existing class".to_string(),
+                    json_schema: Some(schema.clone()),
+                    validate_schema: Some(true),
+                    namespace_ref: None,
+                    namespace_key: Some(NamespaceKey {
+                        name: fixture.namespace.name.clone(),
+                    }),
+                },
+                fixture.namespace.id,
+            )
+        })
+        .unwrap();
+
+        let mut state = PlanningState::new();
+        remember_namespace(
+            &mut state,
+            Some("ns:existing".to_string()),
+            NamespaceResolution {
+                id: fixture.namespace.id,
+                name: fixture.namespace.name.clone(),
+                description: fixture.namespace.description.clone(),
+                exists_in_db: true,
+            },
+        );
+
+        let mode = ImportMode {
+            atomicity: Some(ImportAtomicity::BestEffort),
+            collision_policy: Some(ImportCollisionPolicy::Overwrite),
+            permission_policy: Some(ImportPermissionPolicy::Continue),
+        };
+
+        block_on(plan_class(
+            &context.pool,
+            &context.admin_user,
+            &mode,
+            &mut state,
+            &ImportClassInput {
+                ref_: Some("class:existing".to_string()),
+                name: class.name.clone(),
+                description: "updated description".to_string(),
+                json_schema: None,
+                validate_schema: None,
+                namespace_ref: Some("ns:existing".to_string()),
+                namespace_key: None,
+            },
+        ))
+        .unwrap();
+
+        let err = block_on(plan_object(
+            &context.pool,
+            &context.admin_user,
+            &mode,
+            &mut state,
+            &ImportObjectInput {
+                ref_: Some("object:invalid".to_string()),
+                name: context.scoped_name("invalid_object_after_class_update"),
+                description: "invalid".to_string(),
+                data: serde_json::json!({"hostname": 42}),
+                class_ref: Some("class:existing".to_string()),
+                class_key: None,
+            },
+        ))
+        .unwrap_err();
+
+        assert!(matches!(err.kind, FailureKind::Validation));
+    }
+
+    #[test]
     fn test_update_object_refreshes_runtime_ref_for_following_items() {
         let context = block_on(TestContext::new());
         let fixture = block_on(context.namespace_fixture("update_object_ref"));
@@ -3422,6 +3622,46 @@ mod tests {
             "relation users does not exist".to_string(),
         ));
         assert_eq!(sanitized, "Database operation failed");
+    }
+
+    #[test]
+    fn test_runtime_planning_failures_are_sanitized_for_storage() {
+        let failure = PlanningFailure {
+            kind: FailureKind::Runtime,
+            item: planned_result("namespace", "lookup", Some("ns:one".to_string()), None),
+            message: "relation users does not exist".to_string(),
+        };
+
+        assert_eq!(failure.message_for_storage(), "An internal error occurred");
+
+        let stored = failure.into_result(1);
+        assert_eq!(stored.error.as_deref(), Some("An internal error occurred"));
+    }
+
+    #[test]
+    fn test_best_effort_execution_only_aborts_for_matching_policy_failures() {
+        let mode = ImportMode {
+            atomicity: Some(ImportAtomicity::BestEffort),
+            collision_policy: Some(ImportCollisionPolicy::Abort),
+            permission_policy: Some(ImportPermissionPolicy::Abort),
+        };
+
+        assert!(should_abort_best_effort_execution(
+            &ApiError::Conflict("collision".to_string()),
+            &mode,
+        ));
+        assert!(should_abort_best_effort_execution(
+            &ApiError::Forbidden("permission".to_string()),
+            &mode,
+        ));
+        assert!(!should_abort_best_effort_execution(
+            &ApiError::NotFound("missing runtime ref".to_string()),
+            &mode,
+        ));
+        assert!(!should_abort_best_effort_execution(
+            &ApiError::DatabaseError("db error".to_string()),
+            &mode,
+        ));
     }
 
     #[test]
