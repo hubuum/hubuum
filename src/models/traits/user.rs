@@ -9,7 +9,7 @@ use crate::models::{
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{
     BackendContext, ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping,
-    CursorSqlType, CursorValue, SelfAccessors,
+    CursorSqlType, CursorValue, GroupMemberships, SelfAccessors,
 };
 
 use crate::db::DbPool;
@@ -23,7 +23,9 @@ use crate::errors::ApiError;
 ///
 /// The methods on this trait delegate into backend search implementations while keeping the
 /// model-facing API expressed in terms of `User` / `UserID` style accessors.
-pub trait Search: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors {
+pub trait Search:
+    SelfAccessors<User> + GroupAccessors + GroupMemberships + UserNamespaceAccessors
+{
     async fn search_namespaces<C>(
         &self,
         backend: &C,
@@ -153,7 +155,7 @@ pub trait GroupAccessors: SelfAccessors<User> {
 }
 
 /// Access namespaces that are visible to a user through direct or group-derived permissions.
-pub trait UserNamespaceAccessors: SelfAccessors<User> + GroupAccessors {
+pub trait UserNamespaceAccessors: SelfAccessors<User> + GroupAccessors + GroupMemberships {
     /// Return all namespaces that the user has NamespacePermissions::ReadCollection on.
     #[allow(dead_code)] // Lazy-used in tests.
     async fn namespaces_read<C>(&self, backend: &C) -> Result<Vec<Namespace>, ApiError>

@@ -117,6 +117,62 @@ pub mod tests {
 
     #[rstest]
     #[actix_web::test]
+    async fn test_admin_can_list_classes_without_direct_owner_group_membership(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let namespace = context
+            .scope
+            .namespace_fixture("admin_lists_hidden_classes")
+            .await;
+        let classes = create_class_fixture(
+            &context.pool,
+            namespace,
+            vec![
+                NewHubuumClass {
+                    name: "hidden class a".to_string(),
+                    description: "hidden class a".to_string(),
+                    namespace_id: 0,
+                    json_schema: None,
+                    validate_schema: Some(false),
+                },
+                NewHubuumClass {
+                    name: "hidden class b".to_string(),
+                    description: "hidden class b".to_string(),
+                    namespace_id: 0,
+                    json_schema: None,
+                    validate_schema: Some(false),
+                },
+            ],
+        )
+        .await
+        .unwrap();
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{CLASSES_ENDPOINT}?namespaces={}&sort=id",
+                classes.namespace.namespace.id
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let classes_from_api: Vec<HubuumClassExpanded> = test::read_body_json(resp).await;
+
+        assert_eq!(
+            classes_from_api
+                .iter()
+                .map(|class| class.id)
+                .collect::<Vec<_>>(),
+            classes.iter().map(|class| class.id).collect::<Vec<_>>()
+        );
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
     async fn test_api_classes_get_filtered_name_equals(#[future(awt)] test_context: TestContext) {
         let context = test_context;
         let created_classes = create_test_classes(&context, "get_filtered_name_equals").await;

@@ -69,6 +69,34 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
+    async fn test_admin_can_list_namespaces_without_direct_owner_group_membership(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let detached_namespace = context
+            .scope
+            .namespace_fixture("admin_lists_hidden_namespace")
+            .await;
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{NAMESPACE_ENDPOINT}?id={}",
+                detached_namespace.namespace.id
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, http::StatusCode::OK).await;
+        let namespaces: Vec<Namespace> = test::read_body_json(resp).await;
+
+        assert_eq!(namespaces, vec![detached_namespace.namespace.clone()]);
+
+        detached_namespace.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
     async fn test_create_patch_delete_namespace(#[future(awt)] test_context: TestContext) {
         let context = test_context;
         let admin_group = ensure_admin_group(&context.pool).await;

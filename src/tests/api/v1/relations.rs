@@ -5,8 +5,9 @@ mod tests {
 
     use crate::models::{
         HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, HubuumObject,
-        HubuumObjectRelation, HubuumObjectWithPath, NamespaceID, NewHubuumClassRelation,
-        NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation, Permissions,
+        HubuumObjectRelation, HubuumObjectWithPath, NamespaceID, NewHubuumClass,
+        NewHubuumClassRelation, NewHubuumClassRelationFromClass, NewHubuumObject,
+        NewHubuumObjectRelation, Permissions,
     };
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::traits::{CanSave, PermissionController, SelfAccessors};
@@ -14,7 +15,9 @@ mod tests {
 
     use crate::tests::api_operations::{delete_request, get_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
-    use crate::tests::{TestContext, create_test_group, ensure_normal_user, test_context};
+    use crate::tests::{
+        TestContext, create_class_fixture, create_test_group, ensure_normal_user, test_context,
+    };
     // use crate::{assert_contains_all, assert_contains_same_ids};
 
     use crate::tests::api::v1::classes::tests::{cleanup, create_test_classes};
@@ -69,6 +72,37 @@ mod tests {
         ];
 
         (classes, relations)
+    }
+
+    async fn create_hidden_classes(
+        context: &TestContext,
+        prefix: &str,
+    ) -> crate::tests::ClassFixture {
+        create_class_fixture(
+            &context.pool,
+            context
+                .scope
+                .namespace_fixture(&format!("{prefix}_hidden_namespace"))
+                .await,
+            vec![
+                NewHubuumClass {
+                    namespace_id: 0,
+                    name: format!("{prefix}_class_1"),
+                    description: format!("{prefix}_class_1"),
+                    json_schema: None,
+                    validate_schema: Some(false),
+                },
+                NewHubuumClass {
+                    namespace_id: 0,
+                    name: format!("{prefix}_class_2"),
+                    description: format!("{prefix}_class_2"),
+                    json_schema: None,
+                    validate_schema: Some(false),
+                },
+            ],
+        )
+        .await
+        .unwrap()
     }
 
     async fn create_objects_in_classes(
@@ -159,6 +193,33 @@ mod tests {
 
         assert_contains_same_ids!(&relations, &relations_in_namespace);
         assert_contains_all!(&relations, &relations_in_namespace);
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_admin_can_list_class_relations_without_direct_owner_group_membership(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let classes = create_hidden_classes(&context, "admin_lists_hidden_class_relations").await;
+        let relation = create_relation(&context.pool, &classes[0], &classes[1]).await;
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{CLASS_RELATIONS_ENDPOINT}?from_classes={}&to_classes={}",
+                classes[0].id, classes[1].id
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let relations: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
+
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0].id, relation.id);
 
         cleanup(&classes).await;
     }
@@ -467,6 +528,58 @@ mod tests {
 
         let relation_response: HubuumClassRelation = test::read_body_json(resp).await;
         assert_eq!(relation_response.id, relation.id);
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_admin_can_list_object_relations_without_direct_owner_group_membership(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let classes = create_hidden_classes(&context, "admin_lists_hidden_object_relations").await;
+        let class_relation = create_relation(&context.pool, &classes[0], &classes[1]).await;
+
+        let from_object = NewHubuumObject {
+            hubuum_class_id: classes[0].id,
+            namespace_id: classes[0].namespace_id,
+            name: "hidden relation source".to_string(),
+            description: "hidden relation source".to_string(),
+            data: serde_json::json!({"role": "source"}),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let to_object = NewHubuumObject {
+            hubuum_class_id: classes[1].id,
+            namespace_id: classes[1].namespace_id,
+            name: "hidden relation target".to_string(),
+            description: "hidden relation target".to_string(),
+            data: serde_json::json!({"role": "target"}),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let relation =
+            create_object_relation(&context.pool, &from_object, &to_object, &class_relation).await;
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{OBJECT_RELATIONS_ENDPOINT}?from_objects={}&to_objects={}",
+                from_object.id, to_object.id
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let relations: Vec<HubuumObjectRelation> = test::read_body_json(resp).await;
+
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0].id, relation.id);
 
         cleanup(&classes).await;
     }

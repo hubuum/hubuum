@@ -1,5 +1,7 @@
 use super::*;
-pub trait UserSearchBackend: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors {
+pub trait UserSearchBackend:
+    SelfAccessors<User> + GroupAccessors + GroupMemberships + UserNamespaceAccessors
+{
     async fn search_namespaces_from_backend(
         &self,
         pool: &DbPool,
@@ -9,7 +11,6 @@ pub trait UserSearchBackend: SelfAccessors<User> + GroupAccessors + UserNamespac
         use crate::schema::permissions::dsl::{
             group_id, namespace_id as permissions_nid, permissions,
         };
-
         let query_params = query_options.filters.clone();
 
         debug!(
@@ -22,17 +23,21 @@ pub trait UserSearchBackend: SelfAccessors<User> + GroupAccessors + UserNamespac
         let mut permissions_list = query_params.permissions()?;
         permissions_list.ensure_contains(&[Permissions::ReadCollection]);
 
-        let group_id_subquery = self.group_ids_subquery_from_backend();
+        let mut base_query = if self.is_admin(pool).await? {
+            namespaces.into_boxed()
+        } else {
+            let group_id_subquery = self.group_ids_subquery_from_backend();
 
-        let mut base_query = namespaces
-            .filter(
-                namespace_id.eq_any(
-                    permissions
-                        .filter(group_id.eq_any(group_id_subquery))
-                        .select(permissions_nid),
-                ),
-            )
-            .into_boxed();
+            namespaces
+                .filter(
+                    namespace_id.eq_any(
+                        permissions
+                            .filter(group_id.eq_any(group_id_subquery))
+                            .select(permissions_nid),
+                    ),
+                )
+                .into_boxed()
+        };
 
         for param in query_params {
             use crate::{date_search, numeric_search, string_search};
@@ -925,7 +930,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + GroupAccessors + UserNamespac
 }
 
 impl<T: ?Sized> UserSearchBackend for T where
-    T: SelfAccessors<User> + GroupAccessors + UserNamespaceAccessors
+    T: SelfAccessors<User> + GroupAccessors + GroupMemberships + UserNamespaceAccessors
 {
 }
 

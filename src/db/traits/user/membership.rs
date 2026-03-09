@@ -232,7 +232,7 @@ pub trait LoadPermittedNamespaces: SelfAccessors<User> + GroupAccessors {
 
 impl<T: ?Sized> LoadPermittedNamespaces for T
 where
-    T: SelfAccessors<User> + GroupAccessors,
+    T: SelfAccessors<User> + GroupAccessors + GroupMemberships,
 {
     async fn load_namespaces_with_permissions<'a, I>(
         &self,
@@ -245,6 +245,13 @@ where
         use crate::models::PermissionFilter;
         use crate::schema::namespaces::dsl::{id as namespaces_table_id, namespaces};
         use crate::schema::permissions::dsl::{group_id, namespace_id, permissions};
+        if self.is_admin(pool).await? {
+            return with_connection(pool, |conn| {
+                namespaces
+                    .select(namespaces::all_columns())
+                    .load::<Namespace>(conn)
+            });
+        }
 
         let groups_id_subquery = self.group_ids_subquery_from_backend();
 
