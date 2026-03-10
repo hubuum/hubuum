@@ -23,9 +23,7 @@ use crate::errors::ApiError;
 ///
 /// The methods on this trait delegate into backend search implementations while keeping the
 /// model-facing API expressed in terms of `User` / `UserID` style accessors.
-pub trait Search:
-    SelfAccessors<User> + GroupAccessors + GroupMemberships + UserNamespaceAccessors
-{
+pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
     async fn search_namespaces<C>(
         &self,
         backend: &C,
