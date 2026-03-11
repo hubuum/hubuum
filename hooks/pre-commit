@@ -1,17 +1,38 @@
 #!/bin/bash
-# Pre-commit hook to enforce clippy checks
-# This prevents commits if clippy finds any warnings
+# Pre-commit hook to enforce generated docs and clippy checks.
 
-set -e
+set -euo pipefail
 
 echo "Running clippy checks before commit..."
 
 if ! cargo clippy --all-targets -- -D warnings; then
     echo ""
-    echo "❌ Clippy found warnings or errors. Please fix them before committing."
+    echo "Clippy found warnings or errors. Please fix them before committing."
     echo "You can run 'cargo clippy --all-targets -- -D warnings' to see all issues."
     exit 1
 fi
 
-echo "✅ Clippy checks passed!"
-exit 0
+echo "Rebuilding docs/openapi.json before commit..."
+
+tmp_openapi="$(mktemp)"
+cleanup() {
+    rm -f "$tmp_openapi"
+}
+trap cleanup EXIT
+
+if ! cargo run --quiet --bin hubuum-openapi >"$tmp_openapi"; then
+    echo ""
+    echo "Failed to rebuild docs/openapi.json."
+    echo "You can run 'cargo run --quiet --bin hubuum-openapi > docs/openapi.json' to inspect the error."
+    exit 1
+fi
+
+if ! cmp -s "$tmp_openapi" docs/openapi.json; then
+    mv "$tmp_openapi" docs/openapi.json
+    git add docs/openapi.json
+    echo "Updated docs/openapi.json and staged it."
+else
+    echo "docs/openapi.json is already up to date."
+fi
+
+echo "Pre-commit checks passed."
