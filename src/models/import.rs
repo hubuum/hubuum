@@ -168,6 +168,43 @@ impl ImportRequest {
     }
 
     pub fn mode(&self) -> ImportMode {
-        self.mode.clone().unwrap_or_default()
+        match &self.mode {
+            None => ImportMode::default(),
+            Some(provided) => {
+                let default = ImportMode::default();
+                ImportMode {
+                    atomicity: provided.atomicity.or(default.atomicity),
+                    collision_policy: provided.collision_policy.or(default.collision_policy),
+                    permission_policy: provided.permission_policy.or(default.permission_policy),
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ImportAtomicity, ImportCollisionPolicy, ImportGraph, ImportMode, ImportPermissionPolicy,
+        ImportRequest,
+    };
+
+    #[test]
+    fn test_import_request_mode_fills_missing_fields_with_defaults() {
+        let request = ImportRequest {
+            version: 1,
+            dry_run: Some(false),
+            mode: Some(ImportMode {
+                atomicity: Some(ImportAtomicity::BestEffort),
+                collision_policy: None,
+                permission_policy: None,
+            }),
+            graph: ImportGraph::default(),
+        };
+
+        let mode = request.mode();
+        assert_eq!(mode.atomicity, Some(ImportAtomicity::BestEffort));
+        assert_eq!(mode.collision_policy, Some(ImportCollisionPolicy::Abort));
+        assert_eq!(mode.permission_policy, Some(ImportPermissionPolicy::Abort));
     }
 }

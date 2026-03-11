@@ -154,7 +154,10 @@ When a task is created:
 
 The worker implementation lives in:
 
-- [src/utilities/tasks.rs](../src/utilities/tasks.rs)
+- [src/tasks/worker.rs](../src/tasks/worker.rs)
+- [src/tasks/planning.rs](../src/tasks/planning.rs)
+- [src/tasks/execution.rs](../src/tasks/execution.rs)
+- [src/tasks/resolution.rs](../src/tasks/resolution.rs)
 
 There are two entry points:
 
@@ -229,7 +232,7 @@ Current dispatch:
 
 This logic is in:
 
-- [process_one_task](../src/utilities/tasks.rs)
+- [process_one_task](../src/tasks/worker.rs)
 
 The task framework is generic even though only imports execute today.
 
@@ -252,7 +255,7 @@ If the payload is missing or invalid, the task is marked failed.
 
 Planning is implemented in:
 
-- [plan_import](../src/utilities/tasks.rs)
+- [plan_import](../src/tasks/planning.rs)
 
 Planning walks the import graph in dependency order:
 
@@ -289,7 +292,7 @@ Execution mode depends on `mode.atomicity`.
 
 Implemented in:
 
-- [execute_import_strict](../src/utilities/tasks.rs)
+- [execute_import_strict](../src/tasks/execution.rs)
 
 Behavior:
 
@@ -308,7 +311,7 @@ So strict mode means “domain writes are all-or-nothing”, not “all task met
 
 Implemented in:
 
-- [execute_import_best_effort](../src/utilities/tasks.rs)
+- [execute_import_best_effort](../src/tasks/execution.rs)
 
 Behavior:
 
@@ -331,7 +334,7 @@ After execution:
 
 Redaction is implemented in:
 
-- [redact_task_payload](../src/db/traits/task.rs)
+- [finalize_task_terminal_state](../src/db/traits/task.rs)
 
 Redaction means:
 
@@ -494,7 +497,7 @@ The task system now has coverage in three areas:
 See:
 
 - [src/db/traits/task.rs](../src/db/traits/task.rs)
-- [src/utilities/tasks.rs](../src/utilities/tasks.rs)
+- [src/tasks/tests.rs](../src/tasks/tests.rs)
 - [src/tests/api/v1/imports.rs](../src/tests/api/v1/imports.rs)
 - [src/tests/api/meta.rs](../src/tests/api/meta.rs)
 
