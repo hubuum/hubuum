@@ -220,20 +220,7 @@ where
     }
 }
 
-pub trait LoadPermittedNamespaces: SelfAccessors<User> + GroupAccessors {
-    async fn load_namespaces_with_permissions<'a, I>(
-        &self,
-        pool: &DbPool,
-        permissions_list: &'a I,
-    ) -> Result<Vec<Namespace>, ApiError>
-    where
-        &'a I: IntoIterator<Item = &'a Permissions>;
-}
-
-impl<T: ?Sized> LoadPermittedNamespaces for T
-where
-    T: SelfAccessors<User> + GroupAccessors,
-{
+pub trait LoadPermittedNamespaces: SelfAccessors<User> + GroupAccessors + GroupMemberships {
     async fn load_namespaces_with_permissions<'a, I>(
         &self,
         pool: &DbPool,
@@ -242,9 +229,44 @@ where
     where
         &'a I: IntoIterator<Item = &'a Permissions>,
     {
+        let is_admin = self.is_admin(pool).await?;
+        self.load_namespaces_with_permissions_with_admin_status(pool, permissions_list, is_admin)
+            .await
+    }
+
+    async fn load_namespaces_with_permissions_with_admin_status<'a, I>(
+        &self,
+        pool: &DbPool,
+        permissions_list: &'a I,
+        is_admin: bool,
+    ) -> Result<Vec<Namespace>, ApiError>
+    where
+        &'a I: IntoIterator<Item = &'a Permissions>;
+}
+
+impl<T: ?Sized> LoadPermittedNamespaces for T
+where
+    T: SelfAccessors<User> + GroupAccessors + GroupMemberships,
+{
+    async fn load_namespaces_with_permissions_with_admin_status<'a, I>(
+        &self,
+        pool: &DbPool,
+        permissions_list: &'a I,
+        is_admin: bool,
+    ) -> Result<Vec<Namespace>, ApiError>
+    where
+        &'a I: IntoIterator<Item = &'a Permissions>,
+    {
         use crate::models::PermissionFilter;
         use crate::schema::namespaces::dsl::{id as namespaces_table_id, namespaces};
         use crate::schema::permissions::dsl::{group_id, namespace_id, permissions};
+        if is_admin {
+            return with_connection(pool, |conn| {
+                namespaces
+                    .select(namespaces::all_columns())
+                    .load::<Namespace>(conn)
+            });
+        }
 
         let groups_id_subquery = self.group_ids_subquery_from_backend();
 

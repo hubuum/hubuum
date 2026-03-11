@@ -240,6 +240,71 @@ mod tests {
         cleanup(&classes).await;
     }
 
+    #[rstest]
+    #[actix_rt::test]
+    async fn admin_can_list_objects_without_direct_owner_group_membership(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let hidden_fixture = create_object_fixture(
+            &context.pool,
+            context
+                .scope
+                .namespace_fixture("admin_lists_hidden_objects")
+                .await,
+            NewHubuumClass {
+                namespace_id: 0,
+                name: "hidden object class".to_string(),
+                description: "hidden object class".to_string(),
+                json_schema: None,
+                validate_schema: Some(false),
+            },
+            vec![
+                NewHubuumObject {
+                    namespace_id: 0,
+                    hubuum_class_id: 0,
+                    data: serde_json::json!({"name": "hidden-object-1"}),
+                    name: "hidden object 1".to_string(),
+                    description: "hidden object 1".to_string(),
+                },
+                NewHubuumObject {
+                    namespace_id: 0,
+                    hubuum_class_id: 0,
+                    data: serde_json::json!({"name": "hidden-object-2"}),
+                    name: "hidden object 2".to_string(),
+                    description: "hidden object 2".to_string(),
+                },
+            ],
+        )
+        .await
+        .unwrap();
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{OBJECT_ENDPOINT}/{}/?namespaces={}&sort=id",
+                hidden_fixture.class.id, hidden_fixture.namespace.namespace.id
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let objects_from_api: Vec<HubuumObject> = test::read_body_json(resp).await;
+
+        assert_eq!(
+            objects_from_api
+                .iter()
+                .map(|object| object.id)
+                .collect::<Vec<_>>(),
+            hidden_fixture
+                .iter()
+                .map(|object| object.id)
+                .collect::<Vec<_>>()
+        );
+
+        hidden_fixture.cleanup().await.unwrap();
+    }
+
     // Covers docs/querying.md "JSON filtering" object `json_data` examples.
     #[rstest]
     #[case::filter_status_equals(
