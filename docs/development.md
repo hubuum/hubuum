@@ -16,12 +16,14 @@ That's it! Git will automatically run hooks from the `hooks/` directory from now
 
 ## Pre-commit Hook
 
-The `hooks/pre-commit` hook automatically runs `cargo clippy` before each commit. If clippy finds any warnings or errors, the commit will be prevented until they are fixed.
+The `hooks/pre-commit` hook automatically runs `cargo clippy` and rebuilds `docs/openapi.json` before each commit. If clippy fails or the OpenAPI document cannot be regenerated, the commit is prevented.
 
 ### Features
 
 - ✅ Runs clippy with `-D warnings` to treat all warnings as errors
+- ✅ Rebuilds and stages `docs/openapi.json` from the current code
 - ✅ Prevents commits that fail clippy checks
+- ✅ Prevents commits if OpenAPI generation fails
 - ✅ Clear error messages guide developers on how to fix issues
 - ✅ Stored in version control and shared with the team
 - ✅ No installation script needed - git handles it automatically via `core.hooksPath`
@@ -36,6 +38,9 @@ cargo clippy --all-targets
 
 # Fix clippy issues with automatic suggestions
 cargo clippy --all-targets --fix
+
+# Rebuild the committed OpenAPI spec
+cargo run --quiet --bin hubuum-openapi > docs/openapi.json
 ```
 
 ## Architecture Overview
