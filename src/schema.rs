@@ -76,6 +76,21 @@ diesel::table! {
 }
 
 diesel::table! {
+    import_task_results (id) {
+        id -> Int4,
+        task_id -> Int4,
+        item_ref -> Nullable<Varchar>,
+        entity_kind -> Varchar,
+        action -> Varchar,
+        identifier -> Nullable<Text>,
+        outcome -> Varchar,
+        error -> Nullable<Text>,
+        details -> Nullable<Jsonb>,
+        created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     namespaces (id) {
         id -> Int4,
         name -> Varchar,
@@ -133,6 +148,41 @@ diesel::table! {
 }
 
 diesel::table! {
+    task_events (id) {
+        id -> Int4,
+        task_id -> Int4,
+        event_type -> Varchar,
+        message -> Text,
+        data -> Nullable<Jsonb>,
+        created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    tasks (id) {
+        id -> Int4,
+        kind -> Varchar,
+        status -> Varchar,
+        submitted_by -> Nullable<Int4>,
+        idempotency_key -> Nullable<Varchar>,
+        request_hash -> Nullable<Varchar>,
+        request_payload -> Nullable<Jsonb>,
+        summary -> Nullable<Text>,
+        total_items -> Int4,
+        processed_items -> Int4,
+        success_items -> Int4,
+        failed_items -> Int4,
+        request_redacted_at -> Nullable<Timestamp>,
+        started_at -> Nullable<Timestamp>,
+        finished_at -> Nullable<Timestamp>,
+        deleted_at -> Nullable<Timestamp>,
+        deleted_by -> Nullable<Int4>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     tokens (token) {
         token -> Varchar,
         user_id -> Int4,
@@ -164,9 +214,11 @@ diesel::joinable!(hubuumclass -> namespaces (namespace_id));
 diesel::joinable!(hubuumobject -> hubuumclass (hubuum_class_id));
 diesel::joinable!(hubuumobject -> namespaces (namespace_id));
 diesel::joinable!(hubuumobject_relation -> hubuumclass_relation (class_relation_id));
+diesel::joinable!(import_task_results -> tasks (task_id));
 diesel::joinable!(permissions -> groups (group_id));
 diesel::joinable!(permissions -> namespaces (namespace_id));
 diesel::joinable!(report_templates -> namespaces (namespace_id));
+diesel::joinable!(task_events -> tasks (task_id));
 diesel::joinable!(tokens -> users (user_id));
 diesel::joinable!(user_groups -> groups (group_id));
 diesel::joinable!(user_groups -> users (user_id));
@@ -179,9 +231,12 @@ diesel::allow_tables_to_appear_in_same_query!(
     hubuumobject,
     hubuumobject_closure,
     hubuumobject_relation,
+    import_task_results,
     namespaces,
     permissions,
     report_templates,
+    task_events,
+    tasks,
     tokens,
     user_groups,
     users,

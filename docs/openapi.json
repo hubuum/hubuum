@@ -409,6 +409,53 @@
         ]
       }
     },
+    "/api/v0/meta/tasks": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "Get Api V0 Meta Tasks",
+        "description": "Auto-generated documentation for GET /api/v0/meta/tasks.",
+        "operationId": "getApiV0MetaTasks",
+        "responses": {
+          "200": {
+            "description": "Task queue and worker state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskQueueStateResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/classes": {
       "get": {
         "tags": [
@@ -3176,6 +3223,214 @@
         ]
       }
     },
+    "/api/v1/imports": {
+      "post": {
+        "tags": [
+          "imports"
+        ],
+        "summary": "Post Api V1 Imports",
+        "description": "Auto-generated documentation for POST /api/v1/imports.",
+        "operationId": "postApiV1Imports",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Import task accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/imports/{task_id}": {
+      "get": {
+        "tags": [
+          "imports"
+        ],
+        "summary": "Get Api V1 Imports By Task Id",
+        "description": "Auto-generated documentation for GET /api/v1/imports/{task_id}.",
+        "operationId": "getApiV1ImportsByTaskId",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Import task ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Import task projection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Import task not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/imports/{task_id}/results": {
+      "get": {
+        "tags": [
+          "imports"
+        ],
+        "summary": "Get Api V1 Imports By Task Id Results",
+        "description": "Auto-generated documentation for GET /api/v1/imports/{task_id}/results.",
+        "operationId": "getApiV1ImportsByTaskIdResults",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Import task ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Import item results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ImportTaskResultResponse"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Import task not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/namespaces": {
       "get": {
         "tags": [
@@ -4932,6 +5187,147 @@
         ]
       }
     },
+    "/api/v1/tasks/{task_id}": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Get Api V1 Tasks By Task Id",
+        "description": "Auto-generated documentation for GET /api/v1/tasks/{task_id}.",
+        "operationId": "getApiV1TasksByTaskId",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Task ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Task state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Task not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/tasks/{task_id}/events": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Get Api V1 Tasks By Task Id Events",
+        "description": "Auto-generated documentation for GET /api/v1/tasks/{task_id}/events.",
+        "operationId": "getApiV1TasksByTaskIdEvents",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Task ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Task event history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TaskEventResponse"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Task not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/templates": {
       "get": {
         "tags": [
@@ -5342,6 +5738,33 @@
           "message": "Authentication failure"
         }
       },
+      "ClassKey": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "namespace_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NamespaceKey"
+              }
+            ]
+          },
+          "namespace_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "CountsResponse": {
         "type": "object",
         "required": [
@@ -5444,6 +5867,17 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "GroupKey": {
+        "type": "object",
+        "required": [
+          "groupname"
+        ],
+        "properties": {
+          "groupname": {
+            "type": "string"
           }
         }
       },
@@ -5735,6 +6169,435 @@
           }
         }
       },
+      "ImportAtomicity": {
+        "type": "string",
+        "enum": [
+          "strict",
+          "best_effort"
+        ]
+      },
+      "ImportClassInput": {
+        "type": "object",
+        "required": [
+          "name",
+          "description"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "json_schema": {},
+          "name": {
+            "type": "string"
+          },
+          "namespace_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NamespaceKey"
+              }
+            ]
+          },
+          "namespace_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "validate_schema": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      },
+      "ImportClassRelationInput": {
+        "type": "object",
+        "properties": {
+          "from_class_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ClassKey"
+              }
+            ]
+          },
+          "from_class_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to_class_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ClassKey"
+              }
+            ]
+          },
+          "to_class_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ImportCollisionPolicy": {
+        "type": "string",
+        "enum": [
+          "abort",
+          "overwrite"
+        ]
+      },
+      "ImportGraph": {
+        "type": "object",
+        "properties": {
+          "class_relations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportClassRelationInput"
+            }
+          },
+          "classes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportClassInput"
+            }
+          },
+          "namespace_permissions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportNamespacePermissionInput"
+            }
+          },
+          "namespaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportNamespaceInput"
+            }
+          },
+          "object_relations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportObjectRelationInput"
+            }
+          },
+          "objects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportObjectInput"
+            }
+          }
+        }
+      },
+      "ImportMode": {
+        "type": "object",
+        "properties": {
+          "atomicity": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportAtomicity"
+              }
+            ]
+          },
+          "collision_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportCollisionPolicy"
+              }
+            ]
+          },
+          "permission_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportPermissionPolicy"
+              }
+            ]
+          }
+        }
+      },
+      "ImportNamespaceInput": {
+        "type": "object",
+        "required": [
+          "name",
+          "description"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ImportNamespacePermissionInput": {
+        "type": "object",
+        "required": [
+          "group_key",
+          "permissions"
+        ],
+        "properties": {
+          "group_key": {
+            "$ref": "#/components/schemas/GroupKey"
+          },
+          "namespace_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NamespaceKey"
+              }
+            ]
+          },
+          "namespace_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Permissions"
+            }
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "replace_existing": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      },
+      "ImportObjectInput": {
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "data"
+        ],
+        "properties": {
+          "class_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ClassKey"
+              }
+            ]
+          },
+          "class_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "data": {},
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ImportObjectRelationInput": {
+        "type": "object",
+        "properties": {
+          "from_object_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ObjectKey"
+              }
+            ]
+          },
+          "from_object_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to_object_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ObjectKey"
+              }
+            ]
+          },
+          "to_object_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ImportPermissionPolicy": {
+        "type": "string",
+        "enum": [
+          "abort",
+          "continue"
+        ]
+      },
+      "ImportRequest": {
+        "type": "object",
+        "required": [
+          "version",
+          "graph"
+        ],
+        "properties": {
+          "dry_run": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "graph": {
+            "$ref": "#/components/schemas/ImportGraph"
+          },
+          "mode": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportMode"
+              }
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "ImportTaskDetails": {
+        "type": "object",
+        "required": [
+          "results_url"
+        ],
+        "properties": {
+          "results_url": {
+            "type": "string"
+          }
+        }
+      },
+      "ImportTaskResultResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "task_id",
+          "entity_kind",
+          "action",
+          "outcome",
+          "created_at"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "details": {},
+          "entity_kind": {
+            "type": "string"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "identifier": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "item_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "LoginResponse": {
         "type": "object",
         "required": [
@@ -5810,6 +6673,17 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "NamespaceKey": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
           }
         }
       },
@@ -6055,6 +6929,33 @@
           "email": "alice@example.com",
           "password": "correct-horse-battery-staple",
           "username": "alice"
+        }
+      },
+      "ObjectKey": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "class_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ClassKey"
+              }
+            ]
+          },
+          "class_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
         }
       },
       "ObjectsByClass": {
@@ -6554,6 +7455,314 @@
           "path": "this.data.owner"
         }
       },
+      "TaskDetails": {
+        "type": "object",
+        "properties": {
+          "import": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportTaskDetails"
+              }
+            ]
+          }
+        }
+      },
+      "TaskEventResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "task_id",
+          "event_type",
+          "message",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "data": {},
+          "event_type": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "message": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "TaskKind": {
+        "type": "string",
+        "enum": [
+          "import",
+          "report",
+          "export",
+          "reindex"
+        ]
+      },
+      "TaskLinks": {
+        "type": "object",
+        "required": [
+          "task",
+          "events"
+        ],
+        "properties": {
+          "events": {
+            "type": "string"
+          },
+          "import": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "import_results": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "task": {
+            "type": "string"
+          }
+        }
+      },
+      "TaskProgress": {
+        "type": "object",
+        "required": [
+          "total_items",
+          "processed_items",
+          "success_items",
+          "failed_items"
+        ],
+        "properties": {
+          "failed_items": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "processed_items": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "success_items": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "total_items": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "TaskQueueStateResponse": {
+        "type": "object",
+        "required": [
+          "actix_workers",
+          "configured_task_workers",
+          "task_poll_interval_ms",
+          "total_tasks",
+          "queued_tasks",
+          "validating_tasks",
+          "running_tasks",
+          "active_tasks",
+          "succeeded_tasks",
+          "failed_tasks",
+          "partially_succeeded_tasks",
+          "cancelled_tasks",
+          "import_tasks",
+          "report_tasks",
+          "export_tasks",
+          "reindex_tasks",
+          "total_task_events",
+          "total_import_result_rows"
+        ],
+        "properties": {
+          "active_tasks": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "actix_workers": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cancelled_tasks": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "configured_task_workers": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "export_tasks": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "failed_tasks": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "import_tasks": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "oldest_active_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "oldest_queued_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "partially_succeeded_tasks": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "queued_tasks": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reindex_tasks": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "report_tasks": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "running_tasks": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "succeeded_tasks": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "task_poll_interval_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_import_result_rows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total_task_events": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total_tasks": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "validating_tasks": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "TaskResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "created_at",
+          "progress",
+          "links"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "details": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TaskDetails"
+              }
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/TaskKind"
+          },
+          "links": {
+            "$ref": "#/components/schemas/TaskLinks"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/TaskProgress"
+          },
+          "request_redacted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus"
+          },
+          "submitted_by": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "TaskStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "validating",
+          "running",
+          "succeeded",
+          "failed",
+          "partially_succeeded",
+          "cancelled"
+        ]
+      },
       "UpdateGroup": {
         "type": "object",
         "properties": {
@@ -6827,6 +8036,14 @@
     {
       "name": "classes",
       "description": "Class and object-in-class endpoints"
+    },
+    {
+      "name": "tasks",
+      "description": "Generic long-running task endpoints"
+    },
+    {
+      "name": "imports",
+      "description": "Import submission and import-specific result endpoints"
     },
     {
       "name": "reports",

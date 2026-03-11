@@ -11,6 +11,7 @@ pub mod middlewares;
 pub mod models;
 pub mod pagination;
 pub mod schema;
+pub mod tasks;
 pub mod tests;
 pub mod traits;
 pub mod utilities;

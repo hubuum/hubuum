@@ -1,8 +1,10 @@
 #!/bin/bash
 
+set -euo pipefail
+
 # Fetching database details from environment variables with HUBUUM_TEST_ prefix
 DB_USER="${HUBUUM_TEST_DB_USER:-postgres}"  # Default to 'postgres' if not set
-DB_PASSWORD="${HUBUUM_TEST_DB_PASSWORD}"    # No default for password
+DB_PASSWORD="${HUBUUM_TEST_DB_PASSWORD:-}"  # No default for password
 DB_HOST="${HUBUUM_TEST_DB_HOST:-localhost}" # Default to 'localhost' if not set
 DB_PORT="${HUBUUM_TEST_DB_PORT:-5432}"      # Default to '5432' if not set
 TEST_DB_PREFIX="hubuum_test_db_"
@@ -25,18 +27,27 @@ if [[ "$DB_HOST" == *aivencloud.com ]]; then
     export PGSSLROOTCERT=$CA_CERT
 fi
 
-# Generate a unique database name
-UNIQUE_SUFFIX=$(date +%s)                  # Using current timestamp
+# Generate a collision-resistant database name. Keep it identifier-safe.
+UNIQUE_SUFFIX="$(date +%s)_$$_${RANDOM}${RANDOM}"
 TEST_DB_NAME="${TEST_DB_PREFIX}${UNIQUE_SUFFIX}"
 
-# Create a new database
-PGPASSWORD=$DB_PASSWORD psql $ROOT_URL -c "CREATE DATABASE $TEST_DB_NAME;" > /dev/null
+cleanup() {
+    if [ -n "${TEST_DB_NAME:-}" ]; then
+        PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" \
+            -v ON_ERROR_STOP=1 \
+            -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$TEST_DB_NAME' AND pid <> pg_backend_pid();" \
+            > /dev/null 2>&1 || true
+        PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" \
+            -v ON_ERROR_STOP=1 \
+            -c "DROP DATABASE IF EXISTS $TEST_DB_NAME;" \
+            > /dev/null 2>&1 || true
+    fi
+}
 
-# Check if database creation was successful
-if [ $? -ne 0 ]; then
-    echo "Failed to create test database"
-    exit 1
-fi
+trap cleanup EXIT
+
+# Create a new database
+PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE $TEST_DB_NAME;" > /dev/null
 
 echo "Created test database: $TEST_DB_NAME"
 
@@ -46,12 +57,11 @@ export HUBUUM_DATABASE_URL="postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$
 
 # Run migrations, lock the schema as we define views in the sql and those go bye-bye with print-schema.
 # See https://github.com/diesel-rs/diesel/issues/1482.
-diesel migration run --migration-dir $MIGRATIONS_DIR --database-url $HUBUUM_DATABASE_URL --locked-schema
+diesel migration run --migration-dir "$MIGRATIONS_DIR" --database-url "$HUBUUM_DATABASE_URL" --locked-schema
 
 # Run the tests
-cargo test $@
-
-# Optional: Drop the test database after tests are complete
-PGPASSWORD=$DB_PASSWORD psql $ROOT_URL -c "DROP DATABASE $TEST_DB_NAME;" > /dev/null
-
-echo "Test database dropped: $TEST_DB_NAME"
+if cargo test "$@"; then
+    echo "Test database dropped: $TEST_DB_NAME"
+else
+    exit 1
+fi

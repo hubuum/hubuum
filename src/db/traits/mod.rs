@@ -6,6 +6,8 @@ pub mod namespace;
 pub mod object;
 pub mod permissions;
 pub mod relations;
+pub mod task;
+pub mod task_import;
 pub mod user;
 
 #[allow(unused_imports)]
