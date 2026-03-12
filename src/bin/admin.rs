@@ -13,7 +13,12 @@ use hubuum::utilities::auth::generate_random_password;
 use hubuum::utilities::is_valid_log_level;
 
 #[derive(Parser)]
-#[command(author = "Terje Kvernes <terje@kvernes.no>", version = "0.0.1", about = "Admin CLI for Hubuum", long_about = None)]
+#[command(
+    author = "Terje Kvernes <terje@kvernes.no>",
+    version = env!("CARGO_PKG_VERSION"),
+    about = "Admin CLI for Hubuum",
+    long_about = None
+)]
 struct AdminCli {
     /// Reset the password for the specified username
     #[arg(long)]

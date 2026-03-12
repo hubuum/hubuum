@@ -1,0 +1,267 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validate-tag-release:
+    name: Validate tagged release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo & target directories
+        uses: Swatinem/rust-cache@v2
+      - name: Make release scripts executable
+        run: chmod +x scripts/*.sh
+      - name: Check release metadata
+        run: ./scripts/check-release-readiness.sh "${GITHUB_REF_NAME}"
+
+  build-tag-artifacts:
+    name: Build release artifacts (${{ matrix.platform.name }})
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: validate-tag-release
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: Linux-x86_64
+            target: x86_64-unknown-linux-gnu
+            os_name: linux-x86_64
+          - name: Linux-aarch64
+            target: aarch64-unknown-linux-gnu
+            os_name: linux-aarch64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo & target directories
+        uses: Swatinem/rust-cache@v2
+      - name: Install database libraries on Linux
+        run: |
+          sudo apt-get update --yes
+          sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev libssl-dev
+      - name: Build release binaries
+        uses: houseabsolute/actions-rust-cross@v0
+        with:
+          command: build
+          target: ${{ matrix.platform.target }}
+          toolchain: stable
+          args: "-F tls-rustls --locked --release"
+          strip: true
+      - name: Package release archive
+        shell: bash
+        run: |
+          mkdir -p dist
+          archive_name="hubuum-${{ matrix.platform.os_name }}-tls-rustls-${GITHUB_REF_NAME}.tar.gz"
+          tar czvf "dist/${archive_name}" -C "target/${{ matrix.platform.target }}/release" hubuum-server hubuum-admin
+          shasum -a 256 "dist/${archive_name}" > "dist/${archive_name}.sha256"
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform.os_name }}
+          path: dist/*
+
+  publish-github-release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-tag-artifacts
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: Make release scripts executable
+        run: chmod +x scripts/*.sh
+      - name: Build release notes
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          ./scripts/extract-changelog-section.sh "$version" > /tmp/release-notes.md
+          test -s /tmp/release-notes.md
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Hubuum ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          body_path: /tmp/release-notes.md
+          files: dist/*
+
+  build-main-artifacts:
+    name: Build main artifacts (${{ matrix.platform.os_name }}, ${{ matrix.feature.ext }})
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - target: x86_64-unknown-linux-gnu
+            os_name: linux-x86_64
+          - target: aarch64-unknown-linux-gnu
+            os_name: linux-aarch64
+        feature:
+          - extra_args: "--no-default-features"
+            ext: no-tls
+          - extra_args: "-F tls-openssl"
+            ext: tls-openssl
+          - extra_args: "-F tls-rustls"
+            ext: tls-rustls
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo & target directories
+        uses: Swatinem/rust-cache@v2
+      - name: Install database libraries on Linux
+        run: |
+          sudo apt-get update --yes
+          sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev libssl-dev
+      - name: Build main binaries
+        uses: houseabsolute/actions-rust-cross@v0
+        with:
+          command: build
+          target: ${{ matrix.platform.target }}
+          toolchain: stable
+          args: "${{ matrix.feature.extra_args }} --locked --release"
+          strip: true
+      - name: Package main archive
+        shell: bash
+        run: |
+          mkdir -p dist
+          archive_name="hubuum-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}-main.tar.gz"
+          tar czvf "dist/${archive_name}" -C "target/${{ matrix.platform.target }}/release" hubuum-server hubuum-admin
+      - name: Upload main artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}
+          path: dist/*
+
+  publish-main-release:
+    name: Publish main-latest artifacts
+    if: github.ref == 'refs/heads/main'
+    needs: build-main-artifacts
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download main artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: main-*
+          merge-multiple: true
+          path: dist
+      - name: Publish main-latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: main-latest
+          name: Main build
+          body: Automatically published build for the `main` branch.
+          draft: false
+          prerelease: false
+          files: dist/*
+
+  publish-containers:
+    name: Publish containers (${{ matrix.variant.name }})
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - name: full
+            build_args: "-F tls-rustls -F tls-openssl"
+          - name: rustls-only
+            build_args: "-F tls-rustls"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Make release scripts executable
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: chmod +x scripts/*.sh
+      - name: Check tagged release metadata
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: ./scripts/check-release-readiness.sh "${GITHUB_REF_NAME}"
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compute image tags
+        id: tags
+        shell: bash
+        run: |
+          owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          image="ghcr.io/${owner}/hubuum-server"
+          variant="${{ matrix.variant.name }}"
+          tags=()
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version_tag="${GITHUB_REF_NAME}"
+            version="${version_tag#v}"
+            if [[ "$variant" == "full" ]]; then
+              tags+=("${image}:${version_tag}")
+              tags+=("${image}:${version}")
+              tags+=("${image}:${version_tag}-full")
+              tags+=("${image}:${version}-full")
+            else
+              tags+=("${image}:${version_tag}-${variant}")
+              tags+=("${image}:${version}-${variant}")
+            fi
+          else
+            if [[ "$variant" == "full" ]]; then
+              tags+=("${image}:main")
+              tags+=("${image}:main-full")
+            else
+              tags+=("${image}:main-${variant}")
+            fi
+          fi
+
+          {
+            echo "tags<<EOF"
+            printf '%s\n' "${tags[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+          build-args: |
+            CARGO_BUILD_FLAGS=${{ matrix.variant.build_args }} --locked --release

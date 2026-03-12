@@ -1,4 +1,4 @@
-name: Tests and release
+name: CI
 
 # Copied from https://github.com/houseabsolute/precious/blob/master/.github/workflows/ci.yml
 
@@ -8,6 +8,7 @@ on:
       - "**"
     tags-ignore:
       - "hubuum-*"
+      - "main-latest"
   pull_request:
 
 env:
@@ -34,6 +35,22 @@ jobs:
         with:
           config: '.markdownlint.json'
           globs: '**/*.md'
+
+  release-metadata:
+    name: Release metadata
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Make release scripts executable
+        run: chmod +x scripts/*.sh
+      - name: Check version bump hygiene
+        run: ./scripts/check-version-bump.sh
+      - name: Check tagged release metadata
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: ./scripts/check-release-readiness.sh "${GITHUB_REF_NAME}"
 
   openapi-contract:
     name: OpenAPI contract
@@ -373,163 +390,3 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
           args: "--locked --release"
         if: ${{ !matrix.platform.skip_tests }}
-      - name: Package as archive
-        shell: bash
-        run: |
-          cd target/${{ matrix.platform.target }}/release
-          if [[ "${{ matrix.platform.os }}" == "windows-latest" ]]; then
-            7z a ../../../${{ matrix.platform.name }} ${{ matrix.platform.bin }}
-          else
-            tar czvf ../../../${{ matrix.platform.name }} ${{ matrix.platform.bin }}
-          fi
-          cd -
-        if: |
-          matrix.toolchain == 'stable' &&
-          ( startsWith( github.ref, 'refs/tags/v' ) ||
-            github.ref == 'refs/tags/test-release' )
-      - name: Publish release artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: hubuum-${{ matrix.platform.os_name }}
-          path: "hubuum-*"
-        if: matrix.toolchain == 'stable' && github.ref == 'refs/tags/test-release'
-      - name: Generate SHA-256
-        run: shasum -a 256 ${{ matrix.platform.name }}
-        if: |
-          matrix.toolchain == 'stable' &&
-          ( startsWith( github.ref, 'refs/tags/v' ) ||
-            github.ref == 'refs/tags/test-release' )
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@v1
-        with:
-          draft: true
-          files: "hubuum-*"
-          body_path: Changes.md
-        if: matrix.toolchain == 'stable' && startsWith( github.ref, 'refs/tags/v' )
-
-  release-main:
-    name: Publish “main” binaries
-    if: github.ref == 'refs/heads/main'
-    needs:
-      - test
-      - openapi-contract
-      - feature-permutations
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-      packages: write
-
-    strategy:
-      matrix:
-        platform:
-          - name: Linux-x86_64
-            target: x86_64-unknown-linux-gnu
-            os_name: linux-x86_64
-            bin: hubuum-server
-            admin: hubuum-admin
-          - name: Linux-aarch64
-            target: aarch64-unknown-linux-gnu
-            os_name: linux-aarch64
-            bin: hubuum-server
-            admin: hubuum-admin
-        feature:
-          - name: no-tls
-            extra_args: "--no-default-features"
-            ext: no-tls
-          - name: openssl
-            extra_args: "-F tls-openssl"
-            ext: tls-openssl
-          - name: rustls
-            extra_args: "-F tls-rustls"
-            ext: tls-rustls
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v3
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update --yes
-          sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev musl-tools
-
-      - name: Build ${{ matrix.platform.name }} [$${{ matrix.feature.name }}]
-        uses: houseabsolute/actions-rust-cross@v0
-        with:
-          command: build
-          target: ${{ matrix.platform.target }}
-          toolchain: stable
-          args: "${{ matrix.feature.extra_args }} --locked --release"
-          strip: true
-
-      - name: Package artifact
-        shell: bash
-        run: |
-          mkdir -p artifacts
-
-          # verify that the binary really is there
-          ls -l target/${{ matrix.platform.target }}/release/
-
-          FILENAME=hubuum-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}-main.tar.gz
-          tar czvf artifacts/$FILENAME -C target/${{ matrix.platform.target }}/release/ hubuum-server hubuum-admin
-
-      - name: Create or update “main-latest” release
-        id: create_release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: main-latest
-          name: Main build
-          body: Automatically published build for `main` branch
-          draft: false
-          prerelease: false
-          files: artifacts/*.tar.gz
- 
-      - name: Upload “main” artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}-main
-          path: artifacts/*.tar.gz
-
-  publish-containers:
-    name: Build & Push Containers
-    if: github.ref == 'refs/heads/main'
-    needs: release-main
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-
-    strategy:
-      matrix:
-        variant:
-          - name: no-tls
-            build_args: "--no-default-features"
-          - name: openssl
-            build_args: "-F tls-openssl"
-          - name: rustls
-            build_args: "-F tls-rustls"
-
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v3
-
-      - name: Set up QEMU & Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build & push ${{ matrix.variant.name }} image
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          file: Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/hubuum-server:${{ matrix.variant.name }}-main
-          build-args: |
-            CARGO_BUILD_FLAGS=${{ matrix.variant.build_args }} --locked --release

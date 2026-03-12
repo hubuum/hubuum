@@ -1,5 +1,7 @@
 FROM rust:bookworm AS builder
 
+ARG CARGO_BUILD_FLAGS="--locked --release"
+
 WORKDIR /usr/src/hubuum
 
 # Install diesel CLI
@@ -9,7 +11,7 @@ RUN cargo install diesel_cli --no-default-features --features postgres
 COPY . .
 
 # Build the application
-RUN cargo build --release
+RUN cargo build ${CARGO_BUILD_FLAGS} --bin hubuum-server --bin hubuum-admin
 
 FROM debian:bookworm-slim
 

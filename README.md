@@ -66,5 +66,11 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/iam/users
 - For local/dev container setups, `HUBUUM_CLIENT_ALLOWLIST=*` is common.
 - For production, prefer explicit CIDRs/IPs instead of `*`.
 
+### Container Image Variants
+
+- The default container tags include both TLS backends and allow runtime selection with `HUBUUM_TLS_BACKEND`.
+- The default image can also run without TLS if no certificate and key are configured.
+- Slim container tags ending in `-rustls-only` include only the `rustls` backend.
+
 [^1]: Hubuum is probably a loanword from Akkadian.
 [^2]: [JSON schema](https://json-schema.org) is a powerful tool for validating the structure of JSON data. It allows you to define the expected format of your data, including required fields, data types, and constraints on values.
