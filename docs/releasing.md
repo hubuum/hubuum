@@ -1,7 +1,7 @@
 # Releasing Hubuum
 
-This repository uses a dedicated GitHub Actions release workflow in
-[`.github/workflows/release.yml`](../.github/workflows/release.yml).
+This repository uses the CI workflow in
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) for both validation and publishing.
 
 ## What the workflows enforce
 
@@ -29,15 +29,15 @@ The helper script:
 - regenerates `docs/openapi.json`
 - runs the existing release validation scripts before you commit or tag
 
-Once the tag is pushed, the release workflow will:
+Once the tag is pushed, the CI workflow will:
 
-- wait for the `CI` workflow to succeed for the exact tagged commit
+- verify the tagged commit already passed CI on `main`
 - publish GitHub release archives for Linux x86_64 and aarch64
 - publish multi-arch GHCR images for the release tag
 
 ## Container images
 
-The release workflow publishes two container image variants:
+The CI workflow publishes two container image variants:
 
 - Default tags like `ghcr.io/hubuum/hubuum-server:v0.0.1` and `:main` are the full image.
   This image includes both `rustls` and `openssl`, and it can also run plain HTTP when no TLS
@@ -46,4 +46,4 @@ The release workflow publishes two container image variants:
 
 The full image also gets explicit aliases ending in `-full`.
 
-Publishing from `main` is also gated on a successful `CI` run for the same commit.
+Publishing from `main` happens in the same workflow run and depends directly on the CI jobs passing.
