@@ -31,6 +31,7 @@ The helper script:
 
 Once the tag is pushed, the release workflow will:
 
+- wait for the `CI` workflow to succeed for the exact tagged commit
 - publish GitHub release archives for Linux x86_64 and aarch64
 - publish multi-arch GHCR images for the release tag
 
@@ -44,3 +45,5 @@ The release workflow publishes two container image variants:
 - Tags ending in `-rustls-only` are the slimmer image that only includes the `rustls` backend.
 
 The full image also gets explicit aliases ending in `-full`.
+
+Publishing from `main` is also gated on a successful `CI` run for the same commit.

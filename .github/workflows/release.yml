@@ -11,9 +11,68 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  require-ci-success:
+    name: Wait for CI success
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    timeout-minutes: 90
+    steps:
+      - name: Wait for CI workflow on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          deadline=$((SECONDS + 5400))
+          api="https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/ci.yml/runs?event=push&head_sha=${SHA}&per_page=100"
+
+          while (( SECONDS < deadline )); do
+            response="$(
+              curl --silent --show-error --fail \
+                --header "Authorization: Bearer ${GH_TOKEN}" \
+                --header "Accept: application/vnd.github+json" \
+                "$api"
+            )"
+
+            if [[ "$(jq '.workflow_runs | length' <<<"$response")" -eq 0 ]]; then
+              echo "No CI run found yet for ${SHA}; waiting for the workflow to start."
+              sleep 15
+              continue
+            fi
+
+            status="$(jq -r '.workflow_runs[0].status' <<<"$response")"
+            conclusion="$(jq -r '.workflow_runs[0].conclusion // empty' <<<"$response")"
+            html_url="$(jq -r '.workflow_runs[0].html_url' <<<"$response")"
+
+            echo "CI run status: ${status} (${html_url})"
+
+            if [[ "$status" != "completed" ]]; then
+              sleep 15
+              continue
+            fi
+
+            if [[ "$conclusion" != "success" ]]; then
+              echo "CI did not succeed for ${SHA}; conclusion=${conclusion}" >&2
+              exit 1
+            fi
+
+            echo "CI succeeded for ${SHA}"
+            exit 0
+          done
+
+          echo "Timed out while waiting for CI to complete for ${SHA}" >&2
+          exit 1
+
   validate-tag-release:
     name: Validate tagged release
     if: startsWith(github.ref, 'refs/tags/v')
+    needs: require-ci-success
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
@@ -111,6 +170,7 @@ jobs:
   build-main-artifacts:
     name: Build main artifacts (${{ matrix.platform.os_name }}, ${{ matrix.feature.ext }})
     if: github.ref == 'refs/heads/main'
+    needs: require-ci-success
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -185,6 +245,7 @@ jobs:
   publish-containers:
     name: Publish containers (${{ matrix.variant.name }})
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    needs: require-ci-success
     runs-on: ubuntu-24.04
     permissions:
       contents: read
