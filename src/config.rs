@@ -54,6 +54,7 @@ impl TlsBackend {
 }
 
 #[derive(Parser, Debug, Deserialize, Serialize, Clone)]
+#[command(version = env!("CARGO_PKG_VERSION"), about = "Hubuum server", long_about = None)]
 pub struct AppConfig {
     /// IP address to bind to
     #[clap(long, env = "HUBUUM_BIND_IP", default_value = "127.0.0.1")]
@@ -209,9 +210,17 @@ impl AppConfig {
 
 #[cfg(not(test))]
 fn load_config() -> Result<AppConfig, ApiError> {
-    AppConfig::try_parse()
-        .map_err(|e| ApiError::BadRequest(format!("Invalid configuration: {e}")))?
-        .validate()
+    match AppConfig::try_parse() {
+        Ok(config) => config.validate(),
+        Err(error) => match error.kind() {
+            clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
+                error.exit()
+            }
+            _ => Err(ApiError::BadRequest(format!(
+                "Invalid configuration: {error}"
+            ))),
+        },
+    }
 }
 
 #[cfg(not(test))]
