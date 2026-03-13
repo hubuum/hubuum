@@ -4,9 +4,10 @@
     "title": "Hubuum REST API",
     "description": "OpenAPI documentation for the Hubuum REST service.",
     "license": {
-      "name": ""
+      "name": "MIT",
+      "identifier": "MIT"
     },
-    "version": "0.1.0"
+    "version": "0.0.1"
   },
   "servers": [
     {

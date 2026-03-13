@@ -1,5 +1,7 @@
 FROM rust:bookworm AS builder
 
+ARG CARGO_BUILD_FLAGS="--locked --release"
+
 WORKDIR /usr/src/hubuum
 
 # Install diesel CLI
@@ -9,11 +11,11 @@ RUN cargo install diesel_cli --no-default-features --features postgres
 COPY . .
 
 # Build the application
-RUN cargo build --release
+RUN cargo build ${CARGO_BUILD_FLAGS} --bin hubuum-server --bin hubuum-admin
 
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y libpq5 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y libpq5 libssl3 && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/src/hubuum/target/release/hubuum-server /usr/local/bin/hubuum-server
 COPY --from=builder /usr/src/hubuum/target/release/hubuum-admin /usr/local/bin/hubuum-admin
