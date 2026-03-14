@@ -742,10 +742,18 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         let sorts = normalized_sorts::<ClassClosureRow>(&query_options.sort)?;
         let mut bind_variables = Vec::<SQLValue>::new();
         bind_variables.push(SQLValue::Integer(class.id()));
-        let mut raw_sql = format!(
-            "SELECT * FROM get_bidirectionally_related_classes(?, {}) AS related_classes",
-            sql_integer_array(&namespace_ids, &mut bind_variables),
-        );
+        let related_depth_upper_bound = related_depth_upper_bound(&query_params)?;
+        let namespace_array_sql = sql_integer_array(&namespace_ids, &mut bind_variables);
+        let mut raw_sql = if let Some(max_depth) = related_depth_upper_bound {
+            bind_variables.push(SQLValue::Integer(max_depth));
+            format!(
+                "SELECT * FROM get_bidirectionally_related_classes(?, {namespace_array_sql}, ?) AS related_classes"
+            )
+        } else {
+            format!(
+                "SELECT * FROM get_bidirectionally_related_classes(?, {namespace_array_sql}, NULL) AS related_classes"
+            )
+        };
 
         let mut where_clauses = Vec::new();
 
@@ -1185,10 +1193,18 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         let sorts = normalized_sorts::<RelatedObjectClosureRow>(&query_options.sort)?;
         let mut bind_variables = Vec::<SQLValue>::new();
         bind_variables.push(SQLValue::Integer(object.id()));
-        let mut raw_sql = format!(
-            "SELECT * FROM get_bidirectionally_related_objects(?, {}) AS related_objects",
-            sql_integer_array(&namespace_ids, &mut bind_variables),
-        );
+        let related_depth_upper_bound = related_depth_upper_bound(&query_params)?;
+        let namespace_array_sql = sql_integer_array(&namespace_ids, &mut bind_variables);
+        let mut raw_sql = if let Some(max_depth) = related_depth_upper_bound {
+            bind_variables.push(SQLValue::Integer(max_depth));
+            format!(
+                "SELECT * FROM get_bidirectionally_related_objects(?, {namespace_array_sql}, ?) AS related_objects"
+            )
+        } else {
+            format!(
+                "SELECT * FROM get_bidirectionally_related_objects(?, {namespace_array_sql}, NULL) AS related_objects"
+            )
+        };
 
         let mut where_clauses = Vec::new();
 
@@ -1258,6 +1274,51 @@ fn sql_integer_array(values: &[i32], bind_variables: &mut Vec<SQLValue>) -> Stri
         .collect::<Vec<_>>()
         .join(", ");
     format!("ARRAY[{placeholders}]::integer[]")
+}
+
+fn related_depth_upper_bound(
+    filters: &[crate::models::search::ParsedQueryParam],
+) -> Result<Option<i32>, ApiError> {
+    use crate::models::search::SearchOperator;
+
+    let mut upper_bound: Option<i32> = None;
+
+    for filter in filters {
+        if filter.field != FilterField::Depth {
+            continue;
+        }
+
+        let values = filter.value_as_integer()?;
+        if values.is_empty() {
+            continue;
+        }
+
+        let min = *values
+            .iter()
+            .min()
+            .ok_or_else(|| ApiError::BadRequest("Depth filter requires a value".to_string()))?;
+        let max = *values
+            .iter()
+            .max()
+            .ok_or_else(|| ApiError::BadRequest("Depth filter requires a value".to_string()))?;
+
+        let candidate = match &filter.operator {
+            SearchOperator::Equals { is_negated: false } => Some(max),
+            SearchOperator::Lt { is_negated: false } => Some(min.saturating_sub(1)),
+            SearchOperator::Lte { is_negated: false } => Some(min),
+            SearchOperator::Between { is_negated: false } => Some(max),
+            _ => None,
+        };
+
+        if let Some(candidate) = candidate {
+            upper_bound = Some(match upper_bound {
+                Some(current) => current.min(candidate),
+                None => candidate,
+            });
+        }
+    }
+
+    Ok(upper_bound)
 }
 
 fn sql_date_array(values: &[chrono::NaiveDateTime], bind_variables: &mut Vec<SQLValue>) -> String {

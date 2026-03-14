@@ -567,7 +567,8 @@
 
     CREATE OR REPLACE FUNCTION get_bidirectionally_related_objects(
         start_object_id INT,
-        valid_namespace_ids INT[]
+        valid_namespace_ids INT[],
+        max_depth INT
     )
     RETURNS TABLE (
         ancestor_object_id INT,
@@ -611,6 +612,7 @@
                     ELSE rel.from_hubuum_object_id
                 END
             WHERE (rel.from_hubuum_object_id = start_object_id OR rel.to_hubuum_object_id = start_object_id)
+              AND (max_depth IS NULL OR max_depth >= 1)
               AND target_object.namespace_id = ANY(valid_namespace_ids)
 
             UNION ALL
@@ -641,6 +643,7 @@
                     ELSE rel.from_hubuum_object_id
                 END = ANY(graph_walk.path)
             )
+              AND (max_depth IS NULL OR graph_walk.depth < max_depth)
               AND target_object.namespace_id = ANY(valid_namespace_ids)
         ),
         deduped_walk AS (
@@ -680,7 +683,8 @@
 
     CREATE OR REPLACE FUNCTION get_bidirectionally_related_classes(
         start_class_id INT,
-        valid_namespace_ids INT[]
+        valid_namespace_ids INT[],
+        max_depth INT
     )
     RETURNS TABLE (
         ancestor_class_id INT,
@@ -724,6 +728,7 @@
                     ELSE rel.from_hubuum_class_id
                 END
             WHERE (rel.from_hubuum_class_id = start_class_id OR rel.to_hubuum_class_id = start_class_id)
+              AND (max_depth IS NULL OR max_depth >= 1)
               AND target_class.namespace_id = ANY(valid_namespace_ids)
 
             UNION ALL
@@ -754,6 +759,7 @@
                     ELSE rel.from_hubuum_class_id
                 END = ANY(graph_walk.path)
             )
+              AND (max_depth IS NULL OR graph_walk.depth < max_depth)
               AND target_class.namespace_id = ANY(valid_namespace_ids)
         ),
         deduped_walk AS (

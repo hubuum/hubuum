@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crate::models::{
     HubuumClass, HubuumObject, ImportClassInput, ImportClassRelationInput, ImportNamespaceInput,
     ImportNamespacePermissionInput, ImportObjectInput, ImportObjectRelationInput, Namespace,
-    NewImportTaskResultRecord, TaskStatus,
+    NewImportTaskResultRecord, Permissions, TaskStatus,
 };
 
 #[derive(Clone)]
@@ -36,9 +36,13 @@ pub(super) struct ObjectResolution {
 #[derive(Default)]
 pub(super) struct PlanningState {
     pub(super) next_temp_id: i32,
+    pub(super) is_admin: Option<bool>,
     pub(super) planned_namespace_names: HashSet<String>,
     pub(super) planned_class_keys: HashSet<(i32, String)>,
     pub(super) planned_object_keys: HashSet<(i32, String)>,
+    pub(super) missing_namespace_names: HashSet<String>,
+    pub(super) missing_class_keys: HashSet<(i32, String)>,
+    pub(super) missing_object_keys: HashSet<(i32, String)>,
     pub(super) namespaces_by_ref: HashMap<String, NamespaceResolution>,
     pub(super) namespaces_by_name: HashMap<String, NamespaceResolution>,
     pub(super) namespaces_by_id: HashMap<i32, NamespaceResolution>,
@@ -48,6 +52,9 @@ pub(super) struct PlanningState {
     pub(super) objects_by_key: HashMap<(i32, String), ObjectResolution>,
     pub(super) class_relations: HashSet<(i32, i32)>,
     pub(super) object_relations: HashSet<(i32, i32)>,
+    pub(super) class_relation_exists_cache: HashMap<(i32, i32), bool>,
+    pub(super) object_relation_exists_cache: HashMap<(i32, i32), bool>,
+    pub(super) namespace_permission_cache: HashMap<(i32, Permissions), Result<(), String>>,
 }
 
 impl PlanningState {

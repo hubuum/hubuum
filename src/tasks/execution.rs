@@ -1,4 +1,6 @@
-use tracing::{error, info, warn};
+use std::time::Instant;
+
+use tracing::{Instrument, error, info, info_span, warn};
 
 use crate::db::traits::task::{
     TaskStateUpdate, append_task_event, finalize_task_terminal_state, update_task_state,
@@ -36,169 +38,226 @@ pub(super) async fn execute_import_task(
         .ok_or_else(|| ApiError::BadRequest("Import task payload is missing".to_string()))?;
     let request: ImportRequest = serde_json::from_value(payload)?;
     let mode = request.mode();
-    let planning = plan_import(pool, user, &request).await;
+    let atomicity = mode.atomicity.unwrap_or(ImportAtomicity::Strict);
+    let collision_policy = mode
+        .collision_policy
+        .unwrap_or(ImportCollisionPolicy::Abort);
+    let permission_policy = mode
+        .permission_policy
+        .unwrap_or(ImportPermissionPolicy::Abort);
+    let import_span = info_span!(
+        "import_task",
+        task_id = task.id,
+        task_kind = %task.kind,
+        submitted_by = user.id,
+        total_items = task.total_items,
+        dry_run = request.dry_run(),
+        atomicity = ?atomicity,
+        collision_policy = ?collision_policy,
+        permission_policy = ?permission_policy
+    );
 
-    let mut accumulator = ExecutionAccumulator::default();
+    async {
+        let total_start = Instant::now();
+        let planning_start = Instant::now();
+        let planning = plan_import(pool, user, &request)
+            .instrument(info_span!("import_planning"))
+            .await;
+        let planning_time = planning_start.elapsed();
 
-    if !planning.failures.is_empty()
-        && (matches!(
-            mode.atomicity.unwrap_or(ImportAtomicity::Strict),
-            ImportAtomicity::Strict
-        ) || planning.aborted)
-    {
-        let results = planning
-            .failures
-            .into_iter()
-            .map(|failure| failure.into_result(task.id))
-            .collect::<Vec<_>>();
-        let failed_count = results.len() as i32;
         info!(
-            message = "Import validation failed before execution",
+            message = "Import planning finished",
+            task_id = task.id,
+            planned_items = planning.planned_items.len(),
+            validation_failures = planning.failures.len(),
+            aborted = planning.aborted,
+            planning_time = ?planning_time
+        );
+
+        let mut accumulator = ExecutionAccumulator::default();
+
+        if !planning.failures.is_empty()
+            && (matches!(atomicity, ImportAtomicity::Strict) || planning.aborted)
+        {
+            let results = planning
+                .failures
+                .into_iter()
+                .map(|failure| failure.into_result(task.id))
+                .collect::<Vec<_>>();
+            let failed_count = results.len() as i32;
+            info!(
+                message = "Import validation failed before execution",
+                task_id = task.id,
+                dry_run = request.dry_run(),
+                planned_items = 0,
+                validation_failures = failed_count,
+                atomicity = ?atomicity,
+                planning_time = ?planning_time,
+                total_time = ?total_start.elapsed()
+            );
+            crate::db::traits::task::insert_import_results(pool, &results).await?;
+            let summary = format!("Import validation failed for {failed_count} item(s)");
+            finalize_task(
+                pool,
+                task,
+                TerminalTaskUpdate {
+                    status: TaskStatus::Failed,
+                    summary,
+                    processed_items: failed_count,
+                    success_items: 0,
+                    failed_items: failed_count,
+                    event_data: None,
+                },
+            )
+            .await?;
+            return Ok(());
+        }
+
+        let super::types::PlanningOutcome {
+            planned_items,
+            failures,
+            aborted: _,
+        } = planning;
+
+        info!(
+            message = "Import execution starting",
             task_id = task.id,
             dry_run = request.dry_run(),
-            planned_items = 0,
-            validation_failures = failed_count,
-            atomicity = ?mode.atomicity.unwrap_or(ImportAtomicity::Strict)
+            planned_items = planned_items.len(),
+            validation_failures = failures.len(),
+            atomicity = ?atomicity,
+            collision_policy = ?collision_policy,
+            permission_policy = ?permission_policy,
+            planning_time = ?planning_time
         );
-        crate::db::traits::task::insert_import_results(pool, &results).await?;
-        let summary = format!("Import validation failed for {failed_count} item(s)");
+
+        append_task_event(
+            pool,
+            NewTaskEventRecord {
+                task_id: task.id,
+                event_type: "running".to_string(),
+                message: if request.dry_run() {
+                    "Import dry run planned successfully".to_string()
+                } else if failures.is_empty() {
+                    "Import execution started".to_string()
+                } else {
+                    format!(
+                        "Import execution started with {} planned failure(s)",
+                        failures.len()
+                    )
+                },
+                data: None,
+            },
+        )
+        .await?;
+
+        update_task_state(
+            pool,
+            task.id,
+            TaskStateUpdate {
+                status: TaskStatus::Running,
+                summary: None,
+                processed_items: 0,
+                success_items: 0,
+                failed_items: 0,
+                started_at: task.started_at,
+                finished_at: None,
+            },
+        )
+        .await?;
+
+        let execution_start = Instant::now();
+        if request.dry_run() {
+            for failure in failures {
+                accumulator.push_failure(
+                    task.id,
+                    &failure.item,
+                    failure.message_for_storage(),
+                    "failed",
+                );
+                flush_import_result_batches(pool, &mut accumulator, false).await?;
+            }
+            for item in &planned_items {
+                accumulator.push_success(task.id, &item.result, "planned");
+                flush_import_result_batches(pool, &mut accumulator, false).await?;
+            }
+        } else {
+            for failure in failures {
+                accumulator.push_failure(
+                    task.id,
+                    &failure.item,
+                    failure.message_for_storage(),
+                    "failed",
+                );
+                flush_import_result_batches(pool, &mut accumulator, false).await?;
+            }
+            match atomicity {
+                ImportAtomicity::Strict => {
+                    execute_import_strict(pool, task.id, &planned_items, &mut accumulator)
+                        .instrument(info_span!("import_apply", mode = "strict"))
+                        .await?;
+                }
+                ImportAtomicity::BestEffort => {
+                    execute_import_best_effort(
+                        pool,
+                        task.id,
+                        &planned_items,
+                        &mode,
+                        &mut accumulator,
+                    )
+                    .instrument(info_span!("import_apply", mode = "best_effort"))
+                    .await?;
+                }
+            }
+        }
+
+        flush_import_result_batches(pool, &mut accumulator, true).await?;
+
+        let status = if accumulator.failed == 0 {
+            TaskStatus::Succeeded
+        } else if accumulator.success == 0 {
+            TaskStatus::Failed
+        } else {
+            TaskStatus::PartiallySucceeded
+        };
+
+        let summary = format!(
+            "Import finished with {} succeeded and {} failed items",
+            accumulator.success, accumulator.failed
+        );
+
+        info!(
+            message = "Import execution finished",
+            task_id = task.id,
+            processed_items = accumulator.processed,
+            success_items = accumulator.success,
+            failed_items = accumulator.failed,
+            execution_time = ?execution_start.elapsed(),
+            total_time = ?total_start.elapsed()
+        );
+
         finalize_task(
             pool,
             task,
             TerminalTaskUpdate {
-                status: TaskStatus::Failed,
+                status,
                 summary,
-                processed_items: failed_count,
-                success_items: 0,
-                failed_items: failed_count,
-                event_data: None,
+                processed_items: accumulator.processed,
+                success_items: accumulator.success,
+                failed_items: accumulator.failed,
+                event_data: Some(serde_json::json!({
+                    "processed_items": accumulator.processed,
+                    "success_items": accumulator.success,
+                    "failed_items": accumulator.failed
+                })),
             },
         )
         .await?;
-        return Ok(());
+
+        Ok(())
     }
-
-    let super::types::PlanningOutcome {
-        planned_items,
-        failures,
-        aborted: _,
-    } = planning;
-
-    info!(
-        message = "Import execution starting",
-        task_id = task.id,
-        dry_run = request.dry_run(),
-        planned_items = planned_items.len(),
-        validation_failures = failures.len(),
-        atomicity = ?mode.atomicity.unwrap_or(ImportAtomicity::Strict),
-        collision_policy = ?mode.collision_policy.unwrap_or(ImportCollisionPolicy::Abort),
-        permission_policy = ?mode.permission_policy.unwrap_or(ImportPermissionPolicy::Abort)
-    );
-
-    append_task_event(
-        pool,
-        NewTaskEventRecord {
-            task_id: task.id,
-            event_type: "running".to_string(),
-            message: if request.dry_run() {
-                "Import dry run planned successfully".to_string()
-            } else if failures.is_empty() {
-                "Import execution started".to_string()
-            } else {
-                format!(
-                    "Import execution started with {} planned failure(s)",
-                    failures.len()
-                )
-            },
-            data: None,
-        },
-    )
-    .await?;
-
-    update_task_state(
-        pool,
-        task.id,
-        TaskStateUpdate {
-            status: TaskStatus::Running,
-            summary: None,
-            processed_items: 0,
-            success_items: 0,
-            failed_items: 0,
-            started_at: task.started_at,
-            finished_at: None,
-        },
-    )
-    .await?;
-
-    if request.dry_run() {
-        for failure in failures {
-            accumulator.push_failure(
-                task.id,
-                &failure.item,
-                failure.message_for_storage(),
-                "failed",
-            );
-            flush_import_result_batches(pool, &mut accumulator, false).await?;
-        }
-        for item in &planned_items {
-            accumulator.push_success(task.id, &item.result, "planned");
-            flush_import_result_batches(pool, &mut accumulator, false).await?;
-        }
-    } else {
-        for failure in failures {
-            accumulator.push_failure(
-                task.id,
-                &failure.item,
-                failure.message_for_storage(),
-                "failed",
-            );
-            flush_import_result_batches(pool, &mut accumulator, false).await?;
-        }
-        match mode.atomicity.unwrap_or(ImportAtomicity::Strict) {
-            ImportAtomicity::Strict => {
-                execute_import_strict(pool, task.id, &planned_items, &mut accumulator).await?;
-            }
-            ImportAtomicity::BestEffort => {
-                execute_import_best_effort(pool, task.id, &planned_items, &mode, &mut accumulator)
-                    .await?;
-            }
-        }
-    }
-
-    flush_import_result_batches(pool, &mut accumulator, true).await?;
-
-    let status = if accumulator.failed == 0 {
-        TaskStatus::Succeeded
-    } else if accumulator.success == 0 {
-        TaskStatus::Failed
-    } else {
-        TaskStatus::PartiallySucceeded
-    };
-
-    let summary = format!(
-        "Import finished with {} succeeded and {} failed items",
-        accumulator.success, accumulator.failed
-    );
-
-    finalize_task(
-        pool,
-        task,
-        TerminalTaskUpdate {
-            status,
-            summary,
-            processed_items: accumulator.processed,
-            success_items: accumulator.success,
-            failed_items: accumulator.failed,
-            event_data: Some(serde_json::json!({
-                "processed_items": accumulator.processed,
-                "success_items": accumulator.success,
-                "failed_items": accumulator.failed
-            })),
-        },
-    )
-    .await?;
-
-    Ok(())
+    .instrument(import_span)
+    .await
 }
 
 async fn finalize_task(
