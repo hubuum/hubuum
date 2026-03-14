@@ -8,8 +8,7 @@ use crate::errors::ApiError;
 use crate::models::traits::ExpandNamespaceFromMap;
 use crate::models::traits::user::UserNamespaceAccessors;
 use crate::models::{
-    HubuumClass, HubuumClassExpanded, HubuumObject, Namespace, Permissions, UnifiedSearchSpec,
-    User,
+    HubuumClass, HubuumClassExpanded, HubuumObject, Namespace, Permissions, UnifiedSearchSpec, User,
 };
 use crate::traits::SelfAccessors;
 

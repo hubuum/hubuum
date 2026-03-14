@@ -108,6 +108,7 @@ where
         other: &C2,
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError>;
 
+    #[allow(dead_code)]
     async fn relations_to_paginated(
         &self,
         pool: &DbPool,
@@ -136,6 +137,7 @@ where
         self.transitive_relations_from_backend(pool).await
     }
 
+    #[allow(dead_code)]
     async fn transitive_relations_paginated(
         &self,
         pool: &DbPool,
@@ -190,6 +192,7 @@ where
         self.relations_from_backend(pool).await
     }
 
+    #[allow(dead_code)]
     async fn search_relations(
         &self,
         pool: &DbPool,

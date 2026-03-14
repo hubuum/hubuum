@@ -567,7 +567,8 @@
 
     CREATE OR REPLACE FUNCTION get_bidirectionally_related_objects(
         start_object_id INT,
-        valid_namespace_ids INT[]
+        valid_namespace_ids INT[],
+        max_depth INT
     )
     RETURNS TABLE (
         ancestor_object_id INT,
@@ -611,6 +612,7 @@
                     ELSE rel.from_hubuum_object_id
                 END
             WHERE (rel.from_hubuum_object_id = start_object_id OR rel.to_hubuum_object_id = start_object_id)
+              AND (max_depth IS NULL OR max_depth >= 1)
               AND target_object.namespace_id = ANY(valid_namespace_ids)
 
             UNION ALL
@@ -641,6 +643,7 @@
                     ELSE rel.from_hubuum_object_id
                 END = ANY(graph_walk.path)
             )
+              AND (max_depth IS NULL OR graph_walk.depth < max_depth)
               AND target_object.namespace_id = ANY(valid_namespace_ids)
         ),
         deduped_walk AS (
@@ -676,6 +679,122 @@
         JOIN hubuumobject target_object ON target_object.id = deduped_walk.descendant_object_id
         WHERE source_object.namespace_id = ANY(valid_namespace_ids)
           AND target_object.namespace_id = ANY(valid_namespace_ids);
+    $$ LANGUAGE sql STABLE;
+
+    CREATE OR REPLACE FUNCTION get_bidirectionally_related_classes(
+        start_class_id INT,
+        valid_namespace_ids INT[],
+        max_depth INT
+    )
+    RETURNS TABLE (
+        ancestor_class_id INT,
+        descendant_class_id INT,
+        depth INT,
+        path INT[],
+        ancestor_name VARCHAR,
+        descendant_name VARCHAR,
+        ancestor_namespace_id INT,
+        descendant_namespace_id INT,
+        ancestor_json_schema JSONB,
+        descendant_json_schema JSONB,
+        ancestor_validate_schema BOOLEAN,
+        descendant_validate_schema BOOLEAN,
+        ancestor_description VARCHAR,
+        descendant_description VARCHAR,
+        ancestor_created_at TIMESTAMP,
+        descendant_created_at TIMESTAMP,
+        ancestor_updated_at TIMESTAMP,
+        descendant_updated_at TIMESTAMP
+    ) AS $$
+        WITH RECURSIVE graph_walk AS (
+            SELECT
+                start_class_id AS ancestor_class_id,
+                CASE
+                    WHEN rel.from_hubuum_class_id = start_class_id THEN rel.to_hubuum_class_id
+                    ELSE rel.from_hubuum_class_id
+                END AS descendant_class_id,
+                1 AS depth,
+                ARRAY[
+                    start_class_id,
+                    CASE
+                        WHEN rel.from_hubuum_class_id = start_class_id THEN rel.to_hubuum_class_id
+                        ELSE rel.from_hubuum_class_id
+                    END
+                ] AS path
+            FROM hubuumclass_relation rel
+            JOIN hubuumclass target_class
+              ON target_class.id = CASE
+                    WHEN rel.from_hubuum_class_id = start_class_id THEN rel.to_hubuum_class_id
+                    ELSE rel.from_hubuum_class_id
+                END
+            WHERE (rel.from_hubuum_class_id = start_class_id OR rel.to_hubuum_class_id = start_class_id)
+              AND (max_depth IS NULL OR max_depth >= 1)
+              AND target_class.namespace_id = ANY(valid_namespace_ids)
+
+            UNION ALL
+
+            SELECT
+                graph_walk.ancestor_class_id,
+                CASE
+                    WHEN rel.from_hubuum_class_id = graph_walk.descendant_class_id THEN rel.to_hubuum_class_id
+                    ELSE rel.from_hubuum_class_id
+                END AS descendant_class_id,
+                graph_walk.depth + 1,
+                graph_walk.path || CASE
+                    WHEN rel.from_hubuum_class_id = graph_walk.descendant_class_id THEN rel.to_hubuum_class_id
+                    ELSE rel.from_hubuum_class_id
+                END
+            FROM graph_walk
+            JOIN hubuumclass_relation rel
+              ON rel.from_hubuum_class_id = graph_walk.descendant_class_id
+              OR rel.to_hubuum_class_id = graph_walk.descendant_class_id
+            JOIN hubuumclass target_class
+              ON target_class.id = CASE
+                    WHEN rel.from_hubuum_class_id = graph_walk.descendant_class_id THEN rel.to_hubuum_class_id
+                    ELSE rel.from_hubuum_class_id
+                END
+            WHERE NOT (
+                CASE
+                    WHEN rel.from_hubuum_class_id = graph_walk.descendant_class_id THEN rel.to_hubuum_class_id
+                    ELSE rel.from_hubuum_class_id
+                END = ANY(graph_walk.path)
+            )
+              AND (max_depth IS NULL OR graph_walk.depth < max_depth)
+              AND target_class.namespace_id = ANY(valid_namespace_ids)
+        ),
+        deduped_walk AS (
+            SELECT DISTINCT ON (descendant_class_id)
+                ancestor_class_id,
+                descendant_class_id,
+                depth,
+                path
+            FROM graph_walk
+            ORDER BY descendant_class_id ASC, depth ASC, path ASC
+        )
+        SELECT
+            source_class.id AS ancestor_class_id,
+            target_class.id AS descendant_class_id,
+            deduped_walk.depth,
+            deduped_walk.path,
+            source_class.name AS ancestor_name,
+            target_class.name AS descendant_name,
+            source_class.namespace_id AS ancestor_namespace_id,
+            target_class.namespace_id AS descendant_namespace_id,
+            source_class.json_schema AS ancestor_json_schema,
+            target_class.json_schema AS descendant_json_schema,
+            source_class.validate_schema AS ancestor_validate_schema,
+            target_class.validate_schema AS descendant_validate_schema,
+            source_class.description AS ancestor_description,
+            target_class.description AS descendant_description,
+            source_class.created_at AS ancestor_created_at,
+            target_class.created_at AS descendant_created_at,
+            source_class.updated_at AS ancestor_updated_at,
+            target_class.updated_at AS descendant_updated_at
+        FROM deduped_walk
+        JOIN hubuumclass source_class ON source_class.id = deduped_walk.ancestor_class_id
+        JOIN hubuumclass target_class ON target_class.id = deduped_walk.descendant_class_id
+        WHERE source_class.namespace_id = ANY(valid_namespace_ids)
+          AND target_class.namespace_id = ANY(valid_namespace_ids);
     $$ LANGUAGE sql STABLE;
 
     CREATE UNIQUE INDEX idx_hubuumclass_closure_unique_path_hash

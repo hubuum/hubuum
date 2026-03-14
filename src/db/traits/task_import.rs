@@ -1,38 +1,13 @@
 use diesel::prelude::*;
 
-use crate::db::traits::UserPermissions;
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::{
     Group, HubuumClass, HubuumClassRelation, HubuumObject, HubuumObjectRelation, ImportClassInput,
-    ImportNamespaceInput, ImportObjectInput, Namespace, NamespaceID, NewHubuumClass,
-    NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewPermission, Permission,
-    Permissions, PermissionsList, UpdateHubuumClass, UpdateHubuumObject, UpdateNamespace,
-    UpdatePermission, User,
+    ImportNamespaceInput, ImportObjectInput, Namespace, NewHubuumClass, NewHubuumClassRelation,
+    NewHubuumObject, NewHubuumObjectRelation, NewPermission, Permission, Permissions,
+    PermissionsList, UpdateHubuumClass, UpdateHubuumObject, UpdateNamespace, UpdatePermission,
 };
-use crate::traits::GroupMemberships;
-
-pub async fn ensure_namespace_permission(
-    pool: &DbPool,
-    user: &User,
-    namespace_id: i32,
-    namespace_exists_in_db: bool,
-    permission: Permissions,
-) -> Result<(), String> {
-    if !namespace_exists_in_db {
-        let is_admin = user.is_admin(pool).await.map_err(|err| err.to_string())?;
-        if is_admin {
-            return Ok(());
-        }
-        return Err(
-            "Only admins may operate on newly created namespaces within an import".to_string(),
-        );
-    }
-
-    user.can(pool, vec![permission], vec![NamespaceID(namespace_id)])
-        .await
-        .map_err(|err| err.to_string())
-}
 
 pub async fn lookup_namespace_by_name(
     pool: &DbPool,
@@ -46,6 +21,19 @@ pub async fn lookup_namespace_by_name(
             .first::<Namespace>(conn)
             .optional()
     })
+}
+
+pub async fn lookup_namespaces_by_names(
+    pool: &DbPool,
+    values: &[String],
+) -> Result<Vec<Namespace>, ApiError> {
+    use crate::schema::namespaces::dsl::{name, namespaces};
+
+    if values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    with_connection(pool, |conn| namespaces.filter(name.eq_any(values)).load::<Namespace>(conn))
 }
 
 pub async fn lookup_namespace_by_id(
@@ -78,6 +66,25 @@ pub async fn lookup_class_by_namespace_and_name(
     })
 }
 
+pub async fn lookup_classes_by_namespace_and_names(
+    pool: &DbPool,
+    namespace_id_value: i32,
+    class_names: &[String],
+) -> Result<Vec<HubuumClass>, ApiError> {
+    use crate::schema::hubuumclass::dsl::{hubuumclass, name, namespace_id};
+
+    if class_names.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    with_connection(pool, |conn| {
+        hubuumclass
+            .filter(namespace_id.eq(namespace_id_value))
+            .filter(name.eq_any(class_names))
+            .load::<HubuumClass>(conn)
+    })
+}
+
 pub async fn lookup_object_by_class_and_name(
     pool: &DbPool,
     class_id_value: i32,
@@ -91,6 +98,25 @@ pub async fn lookup_object_by_class_and_name(
             .filter(name.eq(object_name))
             .first::<HubuumObject>(conn)
             .optional()
+    })
+}
+
+pub async fn lookup_objects_by_class_and_names(
+    pool: &DbPool,
+    class_id_value: i32,
+    object_names: &[String],
+) -> Result<Vec<HubuumObject>, ApiError> {
+    use crate::schema::hubuumobject::dsl::{hubuum_class_id, hubuumobject, name};
+
+    if object_names.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    with_connection(pool, |conn| {
+        hubuumobject
+            .filter(hubuum_class_id.eq(class_id_value))
+            .filter(name.eq_any(object_names))
+            .load::<HubuumObject>(conn)
     })
 }
 

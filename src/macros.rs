@@ -28,6 +28,17 @@ macro_rules! debug_query {
     }};
 }
 
+diesel::infix_operator!(RegexMatch, " ~ ", backend: diesel::pg::Pg);
+
+pub fn regex_match<T, U, ST>(left: T, right: U) -> RegexMatch<T, U::Expression>
+where
+    T: diesel::expression::Expression<SqlType = ST>,
+    U: diesel::expression::AsExpression<ST>,
+    ST: diesel::sql_types::SqlType + diesel::expression::TypedExpressionType,
+{
+    RegexMatch::new(left, right.as_expression())
+}
+
 #[macro_export]
 /// ## Check if a user has a set of permissions in a set of namespaces.
 ///
@@ -422,6 +433,12 @@ macro_rules! string_search {
             (Operator::Equals, true) => {
                 $base_query = $base_query.filter(not($diesel_field.eq(value)))
             }
+            (Operator::IEquals, false) => {
+                $base_query = $base_query.filter($diesel_field.ilike(value))
+            }
+            (Operator::IEquals, true) => {
+                $base_query = $base_query.filter(not($diesel_field.ilike(value)))
+            }
             (Operator::Contains, false) => {
                 $base_query = $base_query.filter($diesel_field.like(format!("%{}%", value)))
             }
@@ -434,6 +451,12 @@ macro_rules! string_search {
             (Operator::StartsWith, true) => {
                 $base_query = $base_query.filter(not($diesel_field.like(format!("{}%", value))))
             }
+            (Operator::IStartsWith, false) => {
+                $base_query = $base_query.filter($diesel_field.ilike(format!("{}%", value)))
+            }
+            (Operator::IStartsWith, true) => {
+                $base_query = $base_query.filter(not($diesel_field.ilike(format!("{}%", value))))
+            }
             (Operator::EndsWith, false) => {
                 $base_query = $base_query.filter($diesel_field.like(format!("%{}", value)))
             }
@@ -445,6 +468,23 @@ macro_rules! string_search {
             }
             (Operator::IContains, true) => {
                 $base_query = $base_query.filter(not($diesel_field.ilike(format!("%{}%", value))))
+            }
+            (Operator::IEndsWith, false) => {
+                $base_query = $base_query.filter($diesel_field.ilike(format!("%{}", value)))
+            }
+            (Operator::IEndsWith, true) => {
+                $base_query = $base_query.filter(not($diesel_field.ilike(format!("%{}", value))))
+            }
+            (Operator::Like, false) => $base_query = $base_query.filter($diesel_field.like(value)),
+            (Operator::Like, true) => {
+                $base_query = $base_query.filter(not($diesel_field.like(value)))
+            }
+            (Operator::Regex, false) => {
+                $base_query = $base_query.filter($crate::macros::regex_match($diesel_field, value))
+            }
+            (Operator::Regex, true) => {
+                $base_query =
+                    $base_query.filter(not($crate::macros::regex_match($diesel_field, value)))
             }
             _ => {
                 return Err(ApiError::OperatorMismatch(format!(

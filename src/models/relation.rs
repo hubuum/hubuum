@@ -1,9 +1,10 @@
 use diesel::prelude::*;
-use diesel::sql_types::{Array, Integer, Jsonb, Nullable, Text, Timestamp};
+use diesel::sql_types::{Array, Bool, Integer, Jsonb, Nullable, Text, Timestamp};
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::models::{HubuumClassWithPath, HubuumObjectWithPath};
 use crate::{
     schema::hubuumclass_closure, schema::hubuumclass_relation, schema::hubuumobject_relation,
 };
@@ -101,25 +102,43 @@ pub struct HubuumObjectTransitiveLink {
     path: Vec<i32>,
 }
 
-#[derive(Debug, Queryable, Serialize, Deserialize)]
+#[derive(Debug, Queryable, QueryableByName, Serialize, Deserialize, Clone)]
 pub struct ClassClosureRow {
+    #[diesel(sql_type = Integer)]
     pub ancestor_class_id: i32,
+    #[diesel(sql_type = Integer)]
     pub descendant_class_id: i32,
+    #[diesel(sql_type = Integer)]
     pub depth: i32,
+    #[diesel(sql_type = Array<Integer>)]
     pub path: Vec<i32>,
+    #[diesel(sql_type = Text)]
     pub ancestor_name: String,
+    #[diesel(sql_type = Text)]
     pub descendant_name: String,
+    #[diesel(sql_type = Integer)]
     pub ancestor_namespace_id: i32,
+    #[diesel(sql_type = Integer)]
     pub descendant_namespace_id: i32,
+    #[diesel(sql_type = Nullable<Jsonb>)]
     pub ancestor_json_schema: Option<serde_json::Value>,
+    #[diesel(sql_type = Nullable<Jsonb>)]
     pub descendant_json_schema: Option<serde_json::Value>,
+    #[diesel(sql_type = Bool)]
     pub ancestor_validate_schema: bool,
+    #[diesel(sql_type = Bool)]
     pub descendant_validate_schema: bool,
+    #[diesel(sql_type = Text)]
     pub ancestor_description: String,
+    #[diesel(sql_type = Text)]
     pub descendant_description: String,
+    #[diesel(sql_type = Timestamp)]
     pub ancestor_created_at: chrono::NaiveDateTime,
+    #[diesel(sql_type = Timestamp)]
     pub descendant_created_at: chrono::NaiveDateTime,
+    #[diesel(sql_type = Timestamp)]
     pub ancestor_updated_at: chrono::NaiveDateTime,
+    #[diesel(sql_type = Timestamp)]
     pub descendant_updated_at: chrono::NaiveDateTime,
 }
 
@@ -183,6 +202,18 @@ pub struct RelatedObjectClosureRow {
     pub ancestor_updated_at: chrono::NaiveDateTime,
     #[diesel(sql_type = Timestamp)]
     pub descendant_updated_at: chrono::NaiveDateTime,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
+pub struct RelatedObjectGraph {
+    pub objects: Vec<HubuumObjectWithPath>,
+    pub relations: Vec<HubuumObjectRelation>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
+pub struct RelatedClassGraph {
+    pub classes: Vec<HubuumClassWithPath>,
+    pub relations: Vec<HubuumClassRelation>,
 }
 
 #[allow(dead_code)]
@@ -408,6 +439,52 @@ pub mod tests {
 
         assert_eq!(object_rel.from_hubuum_object_id, object1.id);
         assert_eq!(object_rel.to_hubuum_object_id, object2.id);
+
+        let fetched_relation = HubuumObjectRelationID(object_rel.id)
+            .instance(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(fetched_relation, object_rel);
+        namespace.cleanup().await.unwrap();
+    }
+
+    #[actix_rt::test]
+    async fn test_creating_object_relation_reverse_duplicate_conflicts() {
+        let pool = TestScope::new().pool;
+
+        let (namespace, class1, class2) =
+            create_namespace_and_classes("create_object_reverse").await;
+
+        let nid = namespace.namespace.id;
+        let json = serde_json::json!({"test": "data"});
+        let object1 = create_object(
+            &pool,
+            class1.id,
+            nid,
+            "o1_create reverse relation",
+            json.clone(),
+        )
+        .await
+        .unwrap();
+        let object2 = create_object(&pool, class2.id, nid, "o2_create reverse relation", json)
+            .await
+            .unwrap();
+
+        let class_rel = create_class_relation(&pool, &class1, &class2).await;
+        let object_rel = create_object_relation(&pool, &class_rel, &object1, &object2).await;
+
+        let reverse_relation = NewHubuumObjectRelation {
+            from_hubuum_object_id: object2.id,
+            to_hubuum_object_id: object1.id,
+            class_relation_id: class_rel.id,
+        };
+
+        match reverse_relation.save(&pool).await {
+            Err(ApiError::Conflict(_)) => {}
+            Err(e) => panic!("Unexpected error: {e:?}"),
+            Ok(_) => panic!("Should not be able to create an inverse duplicate object relation"),
+        }
 
         let fetched_relation = HubuumObjectRelationID(object_rel.id)
             .instance(&pool)

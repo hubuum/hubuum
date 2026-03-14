@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use actix_rt::time::sleep;
 use tokio::sync::Notify;
-use tracing::error;
+use tracing::{error, info, warn};
 
 use crate::config::{DEFAULT_TASK_POLL_INTERVAL_MS, get_config};
 use crate::db::DbPool;
@@ -71,6 +71,11 @@ fn spawn_task_worker_loop(pool: DbPool, poll_interval: Duration, worker_index: u
     thread::Builder::new()
         .name(format!("task-worker-{worker_index}"))
         .spawn(move || {
+            info!(
+                message = "Starting task worker loop",
+                worker_index = worker_index,
+                poll_interval = ?poll_interval
+            );
             let system = actix_rt::System::new();
             system.block_on(task_worker_loop(pool, poll_interval));
         })
@@ -81,6 +86,11 @@ pub fn ensure_task_worker_running(pool: DbPool) {
     let worker_count = configured_task_worker_count();
     let poll_interval = configured_task_poll_interval();
     TASK_WORKER.call_once(move || {
+        info!(
+            message = "Initializing task workers",
+            worker_count = worker_count,
+            poll_interval = ?poll_interval
+        );
         for worker_index in 0..worker_count {
             spawn_task_worker_loop(pool.clone(), poll_interval, worker_index);
         }
@@ -97,6 +107,14 @@ pub(super) async fn process_one_task(pool: &DbPool) -> Result<bool, ApiError> {
         return Ok(false);
     };
 
+    info!(
+        message = "Task picked up by worker",
+        task_id = task.id,
+        task_kind = task.kind.as_str(),
+        status = task.status.as_str(),
+        worker = std::thread::current().name().unwrap_or("task-worker")
+    );
+
     if let Err(err) = process_claimed_task(pool, &task).await {
         mark_claimed_task_failed(pool, &task, &err).await?;
     }
@@ -109,6 +127,14 @@ async fn process_claimed_task(pool: &DbPool, task: &TaskRecord) -> Result<(), Ap
         ApiError::BadRequest("Submitting user is no longer available for this task".to_string())
     })?;
     let submitted_by = UserID(submitted_by).user(pool).await?;
+
+    info!(
+        message = "Dispatching task execution",
+        task_id = task.id,
+        task_kind = task.kind.as_str(),
+        status = task.status.as_str(),
+        submitted_by = submitted_by.id
+    );
 
     match TaskKind::from_db(&task.kind)? {
         TaskKind::Import => execute_import_task(pool, task, &submitted_by).await,
@@ -129,6 +155,18 @@ pub(super) async fn mark_claimed_task_failed(
         TaskKind::Import => count_import_results_summary(pool, task.id).await?,
         _ => TaskResultCounts::default(),
     };
+
+    warn!(
+        message = "Claimed task failed",
+        task_id = task.id,
+        task_kind = task.kind.as_str(),
+        status = task.status.as_str(),
+        processed_items = counts.processed,
+        success_items = counts.success,
+        failed_items = counts.failed,
+        error = %err
+    );
+
     finalize_task_terminal_state(
         pool,
         task.id,

@@ -27,6 +27,9 @@ pub(super) async fn resolve_namespace_planning(
             if let Some(namespace) = state.namespaces_by_name.get(&key.name) {
                 return Ok(namespace.clone());
             }
+            if state.missing_namespace_names.contains(&key.name) {
+                return Err(format!("Namespace '{}' not found", key.name));
+            }
 
             let namespace = lookup_namespace_by_name(pool, &key.name)
                 .await
@@ -81,6 +84,15 @@ pub(super) async fn resolve_class_planning(
             if let Some(class) = state.classes_by_key.get(&(namespace.id, key.name.clone())) {
                 return Ok(class.clone());
             }
+            if state
+                .missing_class_keys
+                .contains(&(namespace.id, key.name.clone()))
+            {
+                return Err(format!(
+                    "Class '{}' not found in namespace '{}'",
+                    key.name, namespace.name
+                ));
+            }
 
             let class = lookup_class_by_namespace_and_name(pool, namespace.id, &key.name)
                 .await
@@ -121,6 +133,12 @@ pub(super) async fn resolve_object_planning(
             .await?;
             if let Some(object) = state.objects_by_key.get(&(class.id, key.name.clone())) {
                 return Ok(object.clone());
+            }
+            if state
+                .missing_object_keys
+                .contains(&(class.id, key.name.clone()))
+            {
+                return Err(format!("Object '{}' not found in class '{}'", key.name, class.name));
             }
 
             let object = lookup_object_by_class_and_name(pool, class.id, &key.name)
