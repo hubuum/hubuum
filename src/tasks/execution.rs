@@ -1,4 +1,4 @@
-use tracing::error;
+use tracing::{error, info, warn};
 
 use crate::db::traits::task::{
     TaskStateUpdate, append_task_event, finalize_task_terminal_state, update_task_state,
@@ -6,7 +6,8 @@ use crate::db::traits::task::{
 use crate::db::{DbPool, with_transaction};
 use crate::errors::ApiError;
 use crate::models::{
-    ImportAtomicity, ImportMode, ImportRequest, NewTaskEventRecord, TaskRecord, TaskStatus, User,
+    ImportAtomicity, ImportCollisionPolicy, ImportMode, ImportPermissionPolicy, ImportRequest,
+    NewTaskEventRecord, TaskRecord, TaskStatus, User,
 };
 
 use super::helpers::{
@@ -51,6 +52,14 @@ pub(super) async fn execute_import_task(
             .map(|failure| failure.into_result(task.id))
             .collect::<Vec<_>>();
         let failed_count = results.len() as i32;
+        info!(
+            message = "Import validation failed before execution",
+            task_id = task.id,
+            dry_run = request.dry_run(),
+            planned_items = 0,
+            validation_failures = failed_count,
+            atomicity = ?mode.atomicity.unwrap_or(ImportAtomicity::Strict)
+        );
         crate::db::traits::task::insert_import_results(pool, &results).await?;
         let summary = format!("Import validation failed for {failed_count} item(s)");
         finalize_task(
@@ -74,6 +83,17 @@ pub(super) async fn execute_import_task(
         failures,
         aborted: _,
     } = planning;
+
+    info!(
+        message = "Import execution starting",
+        task_id = task.id,
+        dry_run = request.dry_run(),
+        planned_items = planned_items.len(),
+        validation_failures = failures.len(),
+        atomicity = ?mode.atomicity.unwrap_or(ImportAtomicity::Strict),
+        collision_policy = ?mode.collision_policy.unwrap_or(ImportCollisionPolicy::Abort),
+        permission_policy = ?mode.permission_policy.unwrap_or(ImportPermissionPolicy::Abort)
+    );
 
     append_task_event(
         pool,
@@ -282,6 +302,14 @@ pub(super) async fn execute_import_best_effort(
                 accumulator.push_failure(task_id, &item.result, sanitized_error, "failed");
                 flush_import_result_batches(pool, accumulator, false).await?;
                 if should_abort_best_effort_execution(&err, mode) {
+                    warn!(
+                        message = "Import best-effort execution aborted early",
+                        task_id = task_id,
+                        processed_items = accumulator.processed,
+                        success_items = accumulator.success,
+                        failed_items = accumulator.failed,
+                        error = %err
+                    );
                     break;
                 }
             }

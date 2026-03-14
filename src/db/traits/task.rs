@@ -1,5 +1,6 @@
 use chrono::Utc;
 use diesel::prelude::*;
+use tracing::info;
 
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
@@ -228,7 +229,7 @@ pub async fn update_task_state(
     };
 
     let now = Utc::now().naive_utc();
-    with_connection(pool, |conn| {
+    let record = with_connection(pool, |conn| {
         diesel::update(tasks.filter(id.eq(task_id_value)))
             .set((
                 status.eq(update.status.as_str()),
@@ -241,7 +242,19 @@ pub async fn update_task_state(
                 updated_at.eq(now),
             ))
             .get_result::<TaskRecord>(conn)
-    })
+    })?;
+
+    info!(
+        message = "Task state updated",
+        task_id = record.id,
+        task_kind = record.kind.as_str(),
+        status = record.status.as_str(),
+        processed_items = record.processed_items,
+        success_items = record.success_items,
+        failed_items = record.failed_items
+    );
+
+    Ok(record)
 }
 
 pub async fn finalize_task_terminal_state(
@@ -256,7 +269,7 @@ pub async fn finalize_task_terminal_state(
         started_at, status, success_items, summary, tasks, updated_at,
     };
 
-    with_transaction(pool, |conn| {
+    let record = with_transaction(pool, |conn| {
         let event_record = diesel::insert_into(task_events)
             .values(event)
             .get_result::<TaskEventRecord>(conn)?;
@@ -275,14 +288,27 @@ pub async fn finalize_task_terminal_state(
                 updated_at.eq(event_record.created_at),
             ))
             .get_result::<TaskRecord>(conn)
-    })
+    })?;
+
+    info!(
+        message = "Task reached terminal state",
+        task_id = record.id,
+        task_kind = record.kind.as_str(),
+        status = record.status.as_str(),
+        processed_items = record.processed_items,
+        success_items = record.success_items,
+        failed_items = record.failed_items,
+        summary = record.summary.as_deref()
+    );
+
+    Ok(record)
 }
 
 pub async fn claim_next_queued_task(pool: &DbPool) -> Result<Option<TaskRecord>, ApiError> {
     use crate::schema::task_events::dsl::task_events;
     use crate::schema::tasks::dsl::{created_at, id, started_at, status, tasks, updated_at};
 
-    with_transaction(pool, |conn| -> Result<Option<TaskRecord>, ApiError> {
+    let record = with_transaction(pool, |conn| -> Result<Option<TaskRecord>, ApiError> {
         let Some(task_id_value) = tasks
             .filter(status.eq(TaskStatus::Queued.as_str()))
             .order(created_at.asc())
@@ -314,7 +340,21 @@ pub async fn claim_next_queued_task(pool: &DbPool) -> Result<Option<TaskRecord>,
             .execute(conn)?;
 
         Ok(Some(record))
-    })
+    })?;
+
+    if let Some(record) = &record {
+        info!(
+            message = "Task claimed for validation",
+            task_id = record.id,
+            task_kind = record.kind.as_str(),
+            previous_status = TaskStatus::Queued.as_str(),
+            status = record.status.as_str(),
+            submitted_by = ?record.submitted_by,
+            total_items = record.total_items
+        );
+    }
+
+    Ok(record)
 }
 
 pub async fn create_generic_task(
@@ -324,7 +364,7 @@ pub async fn create_generic_task(
     use crate::schema::task_events::dsl::task_events;
     use crate::schema::tasks::dsl::tasks;
 
-    with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
+    let task = with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
         let task = diesel::insert_into(tasks)
             .values(NewTaskRecord {
                 kind: request.kind.as_str().to_string(),
@@ -354,7 +394,19 @@ pub async fn create_generic_task(
             .execute(conn)?;
 
         Ok::<TaskRecord, ApiError>(task)
-    })
+    })?;
+
+    info!(
+        message = "Task queued",
+        task_id = task.id,
+        task_kind = task.kind.as_str(),
+        status = task.status.as_str(),
+        submitted_by = ?task.submitted_by,
+        total_items = task.total_items,
+        idempotency_key_present = task.idempotency_key.is_some()
+    );
+
+    Ok(task)
 }
 
 #[cfg(test)]
