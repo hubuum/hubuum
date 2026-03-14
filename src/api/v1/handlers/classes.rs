@@ -1195,7 +1195,8 @@ async fn delete_object_relation(
         (status = 201, description = "Object relation created", body = HubuumObjectRelation),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 404, description = "Class or object not found", body = ApiErrorResponse)
+        (status = 404, description = "Class or object not found", body = ApiErrorResponse),
+        (status = 409, description = "Conflict", body = ApiErrorResponse)
     )
 )]
 #[post("/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}")]

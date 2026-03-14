@@ -555,6 +555,57 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
+    async fn test_creating_class_relation_from_class_reverse_duplicate_conflicts(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let classes =
+            create_test_classes(&context, "creating_class_relation_from_class_reverse").await;
+
+        let forward_content = NewHubuumClassRelationFromClass {
+            to_hubuum_class_id: classes[1].id,
+        };
+        let reverse_content = NewHubuumClassRelationFromClass {
+            to_hubuum_class_id: classes[0].id,
+        };
+
+        let forward_endpoint = format!("/api/v1/classes/{}/relations/", classes[0].id);
+        let reverse_endpoint = format!("/api/v1/classes/{}/relations/", classes[1].id);
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &forward_endpoint,
+            &forward_content,
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let relation_response: HubuumClassRelation = test::read_body_json(resp).await;
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &reverse_endpoint,
+            &reverse_content,
+        )
+        .await;
+        let _ = assert_response_status(resp, StatusCode::CONFLICT).await;
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &relation_endpoint(relation_response.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let relation_response_from_global: HubuumClassRelation = test::read_body_json(resp).await;
+        assert_eq!(relation_response, relation_response_from_global);
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
     async fn test_get_class_relation_with_permissions(#[future(awt)] test_context: TestContext) {
         let context = test_context;
         let user = ensure_normal_user(&context.pool).await;
@@ -788,6 +839,48 @@ mod tests {
         )
         .await;
         let _ = assert_response_status(resp, StatusCode::OK).await;
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_create_object_relation_from_class_endpoint_reverse_duplicate_conflicts(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let (classes, relations) =
+            create_classes_and_relations(&context, "create_object_relation_reverse_duplicate")
+                .await;
+        let objects = create_objects_in_classes(&context.pool, &classes).await;
+
+        let forward_endpoint = format!(
+            "/api/v1/classes/{}/{}/relations/{}/{}",
+            classes[0].id, objects[0].id, classes[1].id, objects[1].id
+        );
+        let reverse_endpoint = format!(
+            "/api/v1/classes/{}/{}/relations/{}/{}",
+            classes[1].id, objects[1].id, classes[0].id, objects[0].id
+        );
+
+        let resp = post_request(&context.pool, &context.admin_token, &forward_endpoint, &()).await;
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let relation_response: HubuumObjectRelation = test::read_body_json(resp).await;
+
+        assert_eq!(relation_response.class_relation_id, relations[0].id);
+
+        let resp = post_request(&context.pool, &context.admin_token, &reverse_endpoint, &()).await;
+        let _ = assert_response_status(resp, StatusCode::CONFLICT).await;
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{OBJECT_RELATIONS_ENDPOINT}/{}", relation_response.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let relation_response_from_global: HubuumObjectRelation = test::read_body_json(resp).await;
+        assert_eq!(relation_response, relation_response_from_global);
 
         cleanup(&classes).await;
     }

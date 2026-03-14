@@ -450,6 +450,52 @@ pub mod tests {
     }
 
     #[actix_rt::test]
+    async fn test_creating_object_relation_reverse_duplicate_conflicts() {
+        let pool = TestScope::new().pool;
+
+        let (namespace, class1, class2) =
+            create_namespace_and_classes("create_object_reverse").await;
+
+        let nid = namespace.namespace.id;
+        let json = serde_json::json!({"test": "data"});
+        let object1 = create_object(
+            &pool,
+            class1.id,
+            nid,
+            "o1_create reverse relation",
+            json.clone(),
+        )
+        .await
+        .unwrap();
+        let object2 = create_object(&pool, class2.id, nid, "o2_create reverse relation", json)
+            .await
+            .unwrap();
+
+        let class_rel = create_class_relation(&pool, &class1, &class2).await;
+        let object_rel = create_object_relation(&pool, &class_rel, &object1, &object2).await;
+
+        let reverse_relation = NewHubuumObjectRelation {
+            from_hubuum_object_id: object2.id,
+            to_hubuum_object_id: object1.id,
+            class_relation_id: class_rel.id,
+        };
+
+        match reverse_relation.save(&pool).await {
+            Err(ApiError::Conflict(_)) => {}
+            Err(e) => panic!("Unexpected error: {e:?}"),
+            Ok(_) => panic!("Should not be able to create an inverse duplicate object relation"),
+        }
+
+        let fetched_relation = HubuumObjectRelationID(object_rel.id)
+            .instance(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(fetched_relation, object_rel);
+        namespace.cleanup().await.unwrap();
+    }
+
+    #[actix_rt::test]
     async fn test_creating_object_relation_failure_class_mismatch() {
         use crate::db::traits::ClassRelation;
         let pool = TestScope::new().pool;
