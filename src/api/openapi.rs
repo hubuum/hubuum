@@ -12,13 +12,13 @@ use crate::models::{
     Namespace, NamespaceKey, NewGroup, NewHubuumClass, NewHubuumClassRelation,
     NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation,
     NewNamespaceWithAssignee, NewReportTemplate, NewUser, ObjectKey, ObjectsByClass, Permission,
-    Permissions, ReportContentType, ReportJsonResponse, ReportLimits, ReportMeta,
-    ReportMissingDataPolicy, ReportOutputRequest, ReportRequest, ReportScope, ReportScopeKind,
-    ReportTemplate, ReportTemplateID, ReportWarning, TaskDetails, TaskEventResponse, TaskKind,
-    TaskLinks, TaskProgress, TaskResponse, TaskStatus, UnifiedSearchBatchResponse,
-    UnifiedSearchDoneEvent, UnifiedSearchErrorEvent, UnifiedSearchKind, UnifiedSearchResponse,
-    UnifiedSearchStartedEvent, UpdateGroup, UpdateHubuumClass, UpdateHubuumObject, UpdateNamespace,
-    UpdateReportTemplate, UpdateUser, User, UserToken,
+    Permissions, RelatedObjectGraph, ReportContentType, ReportJsonResponse, ReportLimits,
+    ReportMeta, ReportMissingDataPolicy, ReportOutputRequest, ReportRequest, ReportScope,
+    ReportScopeKind, ReportTemplate, ReportTemplateID, ReportWarning, TaskDetails,
+    TaskEventResponse, TaskKind, TaskLinks, TaskProgress, TaskResponse, TaskStatus,
+    UnifiedSearchBatchResponse, UnifiedSearchDoneEvent, UnifiedSearchErrorEvent, UnifiedSearchKind,
+    UnifiedSearchResponse, UnifiedSearchStartedEvent, UpdateGroup, UpdateHubuumClass,
+    UpdateHubuumObject, UpdateNamespace, UpdateReportTemplate, UpdateUser, User, UserToken,
 };
 use crate::pagination::{NEXT_CURSOR_HEADER, page_limits_or_defaults};
 use actix_web::{HttpResponse, Responder};
@@ -115,7 +115,9 @@ use utoipa::{Modify, OpenApi, ToSchema};
         classes::get_object_in_class,
         classes::patch_object_in_class,
         classes::delete_object_in_class,
-        classes::list_related_objects,
+        classes::get_related_objects,
+        classes::get_related_object_relations,
+        classes::get_related_object_graph,
         classes::get_object_relation_from_class_and_objects,
         classes::delete_object_relation,
         classes::create_object_relation
@@ -156,6 +158,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             UpdateHubuumObject,
             HubuumObjectWithPath,
             HubuumObjectRelation,
+            RelatedObjectGraph,
             NewHubuumObjectRelation,
             TaskKind,
             TaskStatus,
@@ -362,7 +365,8 @@ fn is_cursor_paginated_get(path: &str, method: &str) -> bool {
                 | "/api/v1/classes/{class_id}/relations/transitive/"
                 | "/api/v1/classes/{class_id}/relations/transitive/class/{class_id_to}"
                 | "/api/v1/classes/{class_id}/"
-                | "/api/v1/classes/{class_id}/{from_object_id}/relations"
+                | "/api/v1/classes/{class_id}/objects/{object_id}/related/objects"
+                | "/api/v1/classes/{class_id}/objects/{object_id}/related/relations"
         )
 }
 
@@ -668,7 +672,9 @@ mod tests {
             "/api/v1/classes/{class_id}/relations/transitive/class/{class_id_to}",
             "/api/v1/classes/{class_id}/",
             "/api/v1/classes/{class_id}/{object_id}",
-            "/api/v1/classes/{class_id}/{from_object_id}/relations",
+            "/api/v1/classes/{class_id}/objects/{object_id}/related/objects",
+            "/api/v1/classes/{class_id}/objects/{object_id}/related/relations",
+            "/api/v1/classes/{class_id}/objects/{object_id}/related/graph",
             "/api/v1/classes/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}",
         ]
         .into_iter()

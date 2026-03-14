@@ -18,25 +18,26 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let namespace = context.namespace_fixture("unified_search_server").await;
+        let needle = context.scoped_name("unifiedsearchserver").replace('_', "");
+        let namespace = context.namespace_fixture(&needle).await;
 
         let class = NewHubuumClass {
-            name: "server".to_string(),
+            name: needle.clone(),
             namespace_id: namespace.namespace.id,
             json_schema: None,
             validate_schema: Some(false),
-            description: "server inventory".to_string(),
+            description: format!("{needle} inventory"),
         }
         .save(&context.pool)
         .await
         .unwrap();
 
         NewHubuumObject {
-            name: "server-object".to_string(),
+            name: format!("{needle}-object"),
             namespace_id: namespace.namespace.id,
             hubuum_class_id: class.id,
-            data: serde_json::json!({"hostname": "server-object"}),
-            description: "server object description".to_string(),
+            data: serde_json::json!({"hostname": format!("{needle}-object")}),
+            description: format!("{needle} object description"),
         }
         .save(&context.pool)
         .await
@@ -45,7 +46,7 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{SEARCH_ENDPOINT}?q=server&kinds=namespace,class,object"),
+            &format!("{SEARCH_ENDPOINT}?q={needle}&kinds=namespace,class,object"),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
@@ -58,7 +59,7 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{SEARCH_ENDPOINT}?q=server&kinds=class"),
+            &format!("{SEARCH_ENDPOINT}?q={needle}&kinds=class"),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;

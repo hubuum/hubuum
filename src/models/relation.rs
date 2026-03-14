@@ -4,6 +4,7 @@ use diesel::sql_types::{Array, Integer, Jsonb, Nullable, Text, Timestamp};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::models::HubuumObjectWithPath;
 use crate::{
     schema::hubuumclass_closure, schema::hubuumclass_relation, schema::hubuumobject_relation,
 };
@@ -183,6 +184,12 @@ pub struct RelatedObjectClosureRow {
     pub ancestor_updated_at: chrono::NaiveDateTime,
     #[diesel(sql_type = Timestamp)]
     pub descendant_updated_at: chrono::NaiveDateTime,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
+pub struct RelatedObjectGraph {
+    pub objects: Vec<HubuumObjectWithPath>,
+    pub relations: Vec<HubuumObjectRelation>,
 }
 
 #[allow(dead_code)]

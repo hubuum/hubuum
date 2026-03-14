@@ -6,17 +6,17 @@ use crate::models::{
     Permissions, RelatedObjectClosureRow, UnifiedSearchSpec, User, UserID,
 };
 
-use crate::traits::accessors::{IdAccessor, InstanceAdapter};
-use crate::traits::{
-    BackendContext, ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping,
-    CursorSqlType, CursorValue, GroupMemberships, SelfAccessors,
-};
 use crate::db::DbPool;
 use crate::db::traits::user::{
     LoadPermittedNamespaces, LoadUserGroups, LoadUserGroupsPaginated, LoadUserRecord,
     QueryJsonDataIds, QueryJsonSchemaIds, UnifiedSearchBackend, UserSearchBackend,
 };
 use crate::errors::ApiError;
+use crate::traits::accessors::{IdAccessor, InstanceAdapter};
+use crate::traits::{
+    BackendContext, ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping,
+    CursorSqlType, CursorValue, GroupMemberships, SelfAccessors,
+};
 
 /// Search resources that are visible to a user.
 ///
@@ -94,6 +94,32 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
         self.search_objects_related_to_from_backend(backend.db_pool(), object, query_options)
+            .await
+    }
+
+    async fn search_object_relations_touching<C, O>(
+        &self,
+        backend: &C,
+        object: O,
+        query_options: QueryOptions,
+    ) -> Result<Vec<HubuumObjectRelation>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+        O: SelfAccessors<HubuumObject>,
+    {
+        self.search_object_relations_touching_from_backend(backend.db_pool(), object, query_options)
+            .await
+    }
+
+    async fn search_object_relations_between_ids<C>(
+        &self,
+        backend: &C,
+        object_ids: &[i32],
+    ) -> Result<Vec<HubuumObjectRelation>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.search_object_relations_between_ids_from_backend(backend.db_pool(), object_ids)
             .await
     }
 

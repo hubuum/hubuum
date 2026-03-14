@@ -18,13 +18,27 @@ use crate::models::{
     GroupPermission, HubuumClassExpanded, HubuumClassID, HubuumClassRelation,
     HubuumClassRelationID, HubuumClassRelationTransitive, HubuumObject, HubuumObjectID,
     HubuumObjectRelation, HubuumObjectWithPath, NamespaceID, NewHubuumClass,
-    NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation,
-    Permissions, RelatedObjectClosureRow, UpdateHubuumClass, UpdateHubuumObject,
+    NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation, Permissions,
+    RelatedObjectClosureRow, RelatedObjectGraph, UpdateHubuumClass, UpdateHubuumObject,
 };
 use crate::traits::{CanDelete, CanSave, CanUpdate, NamespaceAccessors, Search, SelfAccessors};
 
 use super::check_if_object_in_class;
 use crate::models::search::{FilterField, parse_query_parameter};
+
+fn object_with_root_path(object: &HubuumObject) -> HubuumObjectWithPath {
+    HubuumObjectWithPath {
+        id: object.id,
+        name: object.name.clone(),
+        namespace_id: object.namespace_id,
+        hubuum_class_id: object.hubuum_class_id,
+        data: object.data.clone(),
+        description: object.description.clone(),
+        created_at: object.created_at,
+        updated_at: object.updated_at,
+        path: vec![object.id],
+    }
+}
 
 // GET /api/v1/classes, list all classes the user may see.
 #[utoipa::path(
@@ -763,31 +777,31 @@ async fn delete_object_in_class(
 
 #[utoipa::path(
     get,
-    path = "/api/v1/classes/{class_id}/{from_object_id}/relations",
+    path = "/api/v1/classes/{class_id}/objects/{object_id}/related/objects",
     tag = "classes",
     security(("bearer_auth" = [])),
     params(
         ("class_id" = i32, Path, description = "Class ID"),
-        ("from_object_id" = i32, Path, description = "Source object ID")
+        ("object_id" = i32, Path, description = "Object ID")
     ),
     responses(
-        (status = 200, description = "Objects related to source object", body = [HubuumObjectWithPath]),
+        (status = 200, description = "Objects connected to the object", body = [HubuumObjectWithPath]),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Class or object not found", body = ApiErrorResponse)
     )
 )]
 #[routes]
-#[get("/{class_id}/{from_object_id}/relations")]
-#[get("/{class_id}/{from_object_id}/relations/")]
-async fn list_related_objects(
+#[get("/{class_id}/objects/{object_id}/related/objects")]
+#[get("/{class_id}/objects/{object_id}/related/objects/")]
+async fn get_related_objects(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
     paths: web::Path<(HubuumClassID, HubuumObjectID)>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = requestor.user;
-    let (from_class, from_object) = paths.into_inner();
+    let (class_id, object_id) = paths.into_inner();
     let query_string = req.query_string();
 
     let params = match parse_query_parameter(query_string) {
@@ -795,24 +809,141 @@ async fn list_related_objects(
         Err(e) => return Err(e),
     };
 
-    check_if_object_in_class(&pool, &from_class, &from_object).await?;
+    check_if_object_in_class(&pool, &class_id, &object_id).await?;
+    let object = object_id.instance(&pool).await?;
+    can!(&pool, user, [Permissions::ReadObject], object);
 
     debug!(
-        message = "Getting objects related from class and object",
+        message = "Getting objects connected to object",
         user_id = user.id(),
-        class_id = from_class.id(),
-        object_id = from_object.id(),
+        class_id = class_id.id(),
+        object_id = object.id(),
         query = query_string,
     );
 
     let search_params = prepare_db_pagination::<RelatedObjectClosureRow>(&params)?;
     let hits = user
-        .search_objects_related_to(&pool, from_object, search_params)
+        .search_objects_related_to(&pool, object, search_params)
         .await?;
 
     paginated_json_mapped_response(hits, StatusCode::OK, &params, |page| {
         page.to_descendant_objects_with_path()
     })
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/classes/{class_id}/objects/{object_id}/related/relations",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Class ID"),
+        ("object_id" = i32, Path, description = "Object ID")
+    ),
+    responses(
+        (status = 200, description = "Direct relations touching the object", body = [HubuumObjectRelation]),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Class or object not found", body = ApiErrorResponse)
+    )
+)]
+#[routes]
+#[get("/{class_id}/objects/{object_id}/related/relations")]
+#[get("/{class_id}/objects/{object_id}/related/relations/")]
+async fn get_related_object_relations(
+    pool: web::Data<DbPool>,
+    requestor: UserAccess,
+    paths: web::Path<(HubuumClassID, HubuumObjectID)>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    let user = requestor.user;
+    let (class_id, object_id) = paths.into_inner();
+    let params = parse_query_parameter(req.query_string())?;
+
+    check_if_object_in_class(&pool, &class_id, &object_id).await?;
+    let object = object_id.instance(&pool).await?;
+    can!(&pool, user, [Permissions::ReadObject], object);
+
+    debug!(
+        message = "Getting direct relations touching object",
+        user_id = user.id(),
+        class_id = class_id.id(),
+        object_id = object.id(),
+        query = req.query_string(),
+    );
+
+    let search_params = prepare_db_pagination::<HubuumObjectRelation>(&params)?;
+    let relations = user
+        .search_object_relations_touching(&pool, object, search_params)
+        .await?;
+
+    paginated_json_response(relations, StatusCode::OK, &params)
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/classes/{class_id}/objects/{object_id}/related/graph",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Class ID"),
+        ("object_id" = i32, Path, description = "Object ID")
+    ),
+    responses(
+        (status = 200, description = "Neighborhood graph for the object", body = RelatedObjectGraph),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Class or object not found", body = ApiErrorResponse)
+    )
+)]
+#[routes]
+#[get("/{class_id}/objects/{object_id}/related/graph")]
+#[get("/{class_id}/objects/{object_id}/related/graph/")]
+async fn get_related_object_graph(
+    pool: web::Data<DbPool>,
+    requestor: UserAccess,
+    paths: web::Path<(HubuumClassID, HubuumObjectID)>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    let user = requestor.user;
+    let (class_id, object_id) = paths.into_inner();
+    let params = parse_query_parameter(req.query_string())?;
+
+    if params.limit.is_some() || params.cursor.is_some() {
+        return Err(ApiError::BadRequest(
+            "Graph endpoint does not support limit or cursor".to_string(),
+        ));
+    }
+
+    check_if_object_in_class(&pool, &class_id, &object_id).await?;
+    let object = object_id.instance(&pool).await?;
+    can!(&pool, user, [Permissions::ReadObject], object);
+
+    debug!(
+        message = "Getting related object graph",
+        user_id = user.id(),
+        class_id = class_id.id(),
+        object_id = object.id(),
+        query = req.query_string(),
+    );
+
+    let root_object = object_with_root_path(&object);
+    let connected_objects = user
+        .search_objects_related_to(&pool, object, params)
+        .await?;
+    let mut objects = Vec::with_capacity(connected_objects.len() + 1);
+    objects.push(root_object);
+    objects.extend(connected_objects.to_descendant_objects_with_path());
+
+    let object_ids = objects.iter().map(|item| item.id).collect::<Vec<_>>();
+    let relations = user
+        .search_object_relations_between_ids(&pool, &object_ids)
+        .await?;
+
+    Ok(json_response(
+        RelatedObjectGraph { objects, relations },
+        StatusCode::OK,
+    ))
 }
 
 #[utoipa::path(
@@ -924,7 +1055,9 @@ async fn delete_object_relation(
         to_object
     );
 
-    let relation = from_object.object_relation(&pool, &from_class, &to_object).await;
+    let relation = from_object
+        .object_relation(&pool, &from_class, &to_object)
+        .await;
 
     if relation.is_err() {
         debug!(

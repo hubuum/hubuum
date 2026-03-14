@@ -1,4 +1,6 @@
 use super::*;
+use crate::models::search::SQLValue;
+
 pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
     async fn search_namespaces_from_backend(
         &self,
@@ -16,7 +18,11 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         query_options: QueryOptions,
         is_admin: bool,
     ) -> Result<Vec<Namespace>, ApiError> {
-        use crate::schema::namespaces::dsl::{id as namespace_id, namespaces};
+        use crate::schema::namespaces::dsl::{
+            created_at as namespace_created_at, description as namespace_description,
+            id as namespace_id, name as namespace_name, namespaces,
+            updated_at as namespace_updated_at,
+        };
         use crate::schema::permissions::dsl::{
             group_id, namespace_id as permissions_nid, permissions,
         };
@@ -52,36 +58,19 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             use crate::{date_search, numeric_search, string_search};
             let operator = param.operator.clone();
             match param.field {
-                FilterField::Id => numeric_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::namespaces::dsl::id
-                ),
-                FilterField::CreatedAt => date_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::namespaces::dsl::created_at
-                ),
-                FilterField::UpdatedAt => date_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::namespaces::dsl::updated_at
-                ),
-                FilterField::Name => string_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::namespaces::dsl::name
-                ),
-                FilterField::Description => string_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::namespaces::dsl::description
-                ),
+                FilterField::Id => numeric_search!(base_query, param, operator, namespace_id),
+                FilterField::CreatedAt => {
+                    date_search!(base_query, param, operator, namespace_created_at)
+                }
+                FilterField::UpdatedAt => {
+                    date_search!(base_query, param, operator, namespace_updated_at)
+                }
+                FilterField::Name => {
+                    string_search!(base_query, param, operator, namespace_name)
+                }
+                FilterField::Description => {
+                    string_search!(base_query, param, operator, namespace_description)
+                }
                 FilterField::Permissions => {}
                 _ => {
                     return Err(ApiError::BadRequest(format!(
@@ -118,7 +107,9 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         is_admin: bool,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         use crate::schema::hubuumclass::dsl::{
-            hubuumclass, id as hubuum_class_id, namespace_id as hubuum_classes_nid,
+            created_at as class_created_at, description as class_description, hubuumclass,
+            id as class_id, name as class_name, namespace_id as class_namespace_id,
+            updated_at as class_updated_at, validate_schema as class_validate_schema,
         };
 
         let query_params = query_options.filters.clone();
@@ -146,7 +137,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         );
 
         let mut base_query = hubuumclass
-            .filter(hubuum_classes_nid.eq_any(namespace_ids))
+            .filter(class_namespace_id.eq_any(namespace_ids))
             .into_boxed();
 
         let json_schema_queries = query_params.json_schemas()?;
@@ -178,55 +169,30 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
                 class_ids = ?json_schema_integers
             );
 
-            base_query = base_query.filter(hubuum_class_id.eq_any(json_schema_integers));
+            base_query = base_query.filter(class_id.eq_any(json_schema_integers));
         }
 
         for param in query_params {
             use crate::{boolean_search, date_search, numeric_search, string_search};
             let operator = param.operator.clone();
             match param.field {
-                FilterField::Id => numeric_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumclass::dsl::id
-                ),
-                FilterField::Namespaces => numeric_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumclass::dsl::namespace_id
-                ),
-                FilterField::CreatedAt => date_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumclass::dsl::created_at
-                ),
-                FilterField::UpdatedAt => date_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumclass::dsl::updated_at
-                ),
-                FilterField::Name => string_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumclass::dsl::name
-                ),
-                FilterField::Description => string_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumclass::dsl::description
-                ),
-                FilterField::ValidateSchema => boolean_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumclass::dsl::validate_schema
-                ),
+                FilterField::Id => numeric_search!(base_query, param, operator, class_id),
+                FilterField::Namespaces => {
+                    numeric_search!(base_query, param, operator, class_namespace_id)
+                }
+                FilterField::CreatedAt => {
+                    date_search!(base_query, param, operator, class_created_at)
+                }
+                FilterField::UpdatedAt => {
+                    date_search!(base_query, param, operator, class_updated_at)
+                }
+                FilterField::Name => string_search!(base_query, param, operator, class_name),
+                FilterField::Description => {
+                    string_search!(base_query, param, operator, class_description)
+                }
+                FilterField::ValidateSchema => {
+                    boolean_search!(base_query, param, operator, class_validate_schema)
+                }
                 FilterField::JsonSchema => {}
                 FilterField::Permissions => {}
                 _ => {
@@ -272,7 +238,9 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         is_admin: bool,
     ) -> Result<Vec<HubuumObject>, ApiError> {
         use crate::schema::hubuumobject::dsl::{
-            hubuumobject, id as hubuum_object_id, namespace_id as hubuum_object_nid,
+            created_at as object_created_at, description as object_description, hubuum_class_id,
+            hubuumobject, id as object_id, name as object_name,
+            namespace_id as object_namespace_id, updated_at as object_updated_at,
         };
 
         let query_params = query_options.filters.clone();
@@ -302,7 +270,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         );
 
         let mut base_query = hubuumobject
-            .filter(hubuum_object_nid.eq_any(namespace_ids))
+            .filter(object_namespace_id.eq_any(namespace_ids))
             .into_boxed();
 
         let json_data_queries = query_params.json_datas(FilterField::JsonData)?;
@@ -333,61 +301,33 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
                 class_ids = ?json_data_integers
             );
 
-            base_query = base_query.filter(hubuum_object_id.eq_any(json_data_integers));
+            base_query = base_query.filter(object_id.eq_any(json_data_integers));
         }
 
         for param in query_params {
             use crate::{date_search, numeric_search, string_search};
             let operator = param.operator.clone();
             match param.field {
-                FilterField::Id => numeric_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumobject::dsl::id
-                ),
-                FilterField::Namespaces => numeric_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumobject::dsl::namespace_id
-                ),
-                FilterField::CreatedAt => date_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumobject::dsl::created_at
-                ),
-                FilterField::UpdatedAt => date_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumobject::dsl::updated_at
-                ),
-                FilterField::Name => string_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumobject::dsl::name
-                ),
-                FilterField::Description => string_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumobject::dsl::description
-                ),
-                FilterField::Classes => numeric_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumobject::dsl::hubuum_class_id
-                ),
-                FilterField::ClassId => numeric_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumobject::dsl::hubuum_class_id
-                ),
+                FilterField::Id => numeric_search!(base_query, param, operator, object_id),
+                FilterField::Namespaces => {
+                    numeric_search!(base_query, param, operator, object_namespace_id)
+                }
+                FilterField::CreatedAt => {
+                    date_search!(base_query, param, operator, object_created_at)
+                }
+                FilterField::UpdatedAt => {
+                    date_search!(base_query, param, operator, object_updated_at)
+                }
+                FilterField::Name => string_search!(base_query, param, operator, object_name),
+                FilterField::Description => {
+                    string_search!(base_query, param, operator, object_description)
+                }
+                FilterField::Classes => {
+                    numeric_search!(base_query, param, operator, hubuum_class_id)
+                }
+                FilterField::ClassId => {
+                    numeric_search!(base_query, param, operator, hubuum_class_id)
+                }
                 FilterField::JsonData => {}
                 FilterField::Permissions => {}
                 _ => {
@@ -427,8 +367,12 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         query_options: QueryOptions,
         is_admin: bool,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
+        use crate::schema::hubuumclass::dsl::{
+            hubuumclass, id as class_id, namespace_id as class_namespace_id,
+        };
         use crate::schema::hubuumclass_relation::dsl::{
-            from_hubuum_class_id, hubuumclass_relation, to_hubuum_class_id,
+            created_at as class_relation_created_at, from_hubuum_class_id, hubuumclass_relation,
+            id as class_relation_id, to_hubuum_class_id, updated_at as class_relation_updated_at,
         };
 
         let query_params = query_options.filters.clone();
@@ -517,16 +461,16 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         base_query = base_query
             .filter(
                 from_hubuum_class_id.eq_any(
-                    crate::schema::hubuumclass::dsl::hubuumclass
-                        .select(crate::schema::hubuumclass::id)
-                        .filter(crate::schema::hubuumclass::namespace_id.eq_any(&namespace_ids)),
+                    hubuumclass
+                        .select(class_id)
+                        .filter(class_namespace_id.eq_any(&namespace_ids)),
                 ),
             )
             .filter(
                 to_hubuum_class_id.eq_any(
-                    crate::schema::hubuumclass::dsl::hubuumclass
-                        .select(crate::schema::hubuumclass::id)
-                        .filter(crate::schema::hubuumclass::namespace_id.eq_any(&namespace_ids)),
+                    hubuumclass
+                        .select(class_id)
+                        .filter(class_namespace_id.eq_any(&namespace_ids)),
                 ),
             );
 
@@ -534,36 +478,19 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             use crate::{date_search, numeric_search};
             let operator = param.operator.clone();
             match param.field {
-                FilterField::Id => numeric_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumclass_relation::dsl::id
-                ),
-                FilterField::ClassFrom => numeric_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumclass_relation::dsl::from_hubuum_class_id
-                ),
-                FilterField::ClassTo => numeric_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumclass_relation::dsl::to_hubuum_class_id
-                ),
-                FilterField::CreatedAt => date_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumclass_relation::dsl::created_at
-                ),
-                FilterField::UpdatedAt => date_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumclass_relation::dsl::updated_at
-                ),
+                FilterField::Id => numeric_search!(base_query, param, operator, class_relation_id),
+                FilterField::ClassFrom => {
+                    numeric_search!(base_query, param, operator, from_hubuum_class_id)
+                }
+                FilterField::ClassTo => {
+                    numeric_search!(base_query, param, operator, to_hubuum_class_id)
+                }
+                FilterField::CreatedAt => {
+                    date_search!(base_query, param, operator, class_relation_created_at)
+                }
+                FilterField::UpdatedAt => {
+                    date_search!(base_query, param, operator, class_relation_updated_at)
+                }
                 FilterField::ClassFromName => {}
                 FilterField::ClassToName => {}
                 _ => {
@@ -603,8 +530,13 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         query_options: QueryOptions,
         is_admin: bool,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
+        use crate::schema::hubuumobject::dsl::{
+            hubuumobject, id as object_id, namespace_id as object_namespace_id,
+        };
         use crate::schema::hubuumobject_relation::dsl::{
-            from_hubuum_object_id, hubuumobject_relation, to_hubuum_object_id,
+            class_relation_id, created_at as relation_created_at, from_hubuum_object_id,
+            hubuumobject_relation, id as relation_id, to_hubuum_object_id,
+            updated_at as relation_updated_at,
         };
 
         let query_params = query_options.filters.clone();
@@ -638,16 +570,16 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         base_query = base_query
             .filter(
                 from_hubuum_object_id.eq_any(
-                    crate::schema::hubuumobject::dsl::hubuumobject
-                        .select(crate::schema::hubuumobject::id)
-                        .filter(crate::schema::hubuumobject::namespace_id.eq_any(&namespace_ids)),
+                    hubuumobject
+                        .select(object_id)
+                        .filter(object_namespace_id.eq_any(&namespace_ids)),
                 ),
             )
             .filter(
                 to_hubuum_object_id.eq_any(
-                    crate::schema::hubuumobject::dsl::hubuumobject
-                        .select(crate::schema::hubuumobject::id)
-                        .filter(crate::schema::hubuumobject::namespace_id.eq_any(&namespace_ids)),
+                    hubuumobject
+                        .select(object_id)
+                        .filter(object_namespace_id.eq_any(&namespace_ids)),
                 ),
             );
 
@@ -655,42 +587,22 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             use crate::{date_search, numeric_search};
             let operator = param.operator.clone();
             match param.field {
-                FilterField::Id => numeric_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumobject_relation::dsl::id
-                ),
-                FilterField::ClassRelation => numeric_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumobject_relation::dsl::class_relation_id
-                ),
-                FilterField::ObjectFrom => numeric_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumobject_relation::dsl::from_hubuum_object_id
-                ),
-                FilterField::ObjectTo => numeric_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumobject_relation::dsl::to_hubuum_object_id
-                ),
-                FilterField::CreatedAt => date_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumobject_relation::dsl::created_at
-                ),
-                FilterField::UpdatedAt => date_search!(
-                    base_query,
-                    param,
-                    operator,
-                    crate::schema::hubuumobject_relation::dsl::updated_at
-                ),
+                FilterField::Id => numeric_search!(base_query, param, operator, relation_id),
+                FilterField::ClassRelation => {
+                    numeric_search!(base_query, param, operator, class_relation_id)
+                }
+                FilterField::ObjectFrom => {
+                    numeric_search!(base_query, param, operator, from_hubuum_object_id)
+                }
+                FilterField::ObjectTo => {
+                    numeric_search!(base_query, param, operator, to_hubuum_object_id)
+                }
+                FilterField::CreatedAt => {
+                    date_search!(base_query, param, operator, relation_created_at)
+                }
+                FilterField::UpdatedAt => {
+                    date_search!(base_query, param, operator, relation_updated_at)
+                }
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for object relations",
@@ -710,6 +622,209 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
                 .distinct()
                 .load::<HubuumObjectRelation>(conn)
         })
+    }
+
+    async fn search_object_relations_touching_from_backend<O>(
+        &self,
+        pool: &DbPool,
+        object: O,
+        query_options: QueryOptions,
+    ) -> Result<Vec<HubuumObjectRelation>, ApiError>
+    where
+        O: SelfAccessors<HubuumObject>,
+    {
+        let is_admin = self.is_admin(pool).await?;
+        self.search_object_relations_touching_from_backend_with_admin_status(
+            pool,
+            object,
+            query_options,
+            is_admin,
+        )
+        .await
+    }
+
+    async fn search_object_relations_touching_from_backend_with_admin_status<O>(
+        &self,
+        pool: &DbPool,
+        object: O,
+        query_options: QueryOptions,
+        is_admin: bool,
+    ) -> Result<Vec<HubuumObjectRelation>, ApiError>
+    where
+        O: SelfAccessors<HubuumObject>,
+    {
+        use crate::schema::hubuumobject::dsl::{
+            hubuumobject, id as object_id_column, namespace_id as object_namespace_id,
+        };
+        use crate::schema::hubuumobject_relation::dsl::{
+            class_relation_id, created_at as relation_created_at, from_hubuum_object_id,
+            hubuumobject_relation, id as relation_id, to_hubuum_object_id,
+            updated_at as relation_updated_at,
+        };
+        use diesel::BoolExpressionMethods;
+
+        let query_params = query_options.filters.clone();
+
+        debug!(
+            message = "Searching direct object relations touching object",
+            stage = "Starting",
+            user_id = self.id(),
+            object_id = object.id(),
+            query_params = ?query_params
+        );
+
+        let mut permissions_list = query_params.permissions()?;
+        permissions_list.ensure_contains(&[Permissions::ReadObjectRelation]);
+
+        let namespace_ids: Vec<i32> = self
+            .load_namespaces_with_permissions_with_admin_status(pool, &permissions_list, is_admin)
+            .await?
+            .into_iter()
+            .map(|n| n.id)
+            .collect();
+
+        debug!(
+            message = "Searching direct object relations touching object",
+            stage = "Namespace IDs",
+            user_id = self.id(),
+            object_id = object.id(),
+            namespace_ids = ?namespace_ids
+        );
+
+        let mut base_query = hubuumobject_relation
+            .filter(
+                from_hubuum_object_id
+                    .eq(object.id())
+                    .or(to_hubuum_object_id.eq(object.id())),
+            )
+            .into_boxed();
+
+        base_query = base_query
+            .filter(
+                from_hubuum_object_id.eq_any(
+                    hubuumobject
+                        .select(object_id_column)
+                        .filter(object_namespace_id.eq_any(&namespace_ids)),
+                ),
+            )
+            .filter(
+                to_hubuum_object_id.eq_any(
+                    hubuumobject
+                        .select(object_id_column)
+                        .filter(object_namespace_id.eq_any(&namespace_ids)),
+                ),
+            );
+
+        for param in query_params {
+            use crate::{date_search, numeric_search};
+            let operator = param.operator.clone();
+            match param.field {
+                FilterField::Id => numeric_search!(base_query, param, operator, relation_id),
+                FilterField::ClassRelation => {
+                    numeric_search!(base_query, param, operator, class_relation_id)
+                }
+                FilterField::ObjectFrom => {
+                    numeric_search!(base_query, param, operator, from_hubuum_object_id)
+                }
+                FilterField::ObjectTo => {
+                    numeric_search!(base_query, param, operator, to_hubuum_object_id)
+                }
+                FilterField::CreatedAt => {
+                    date_search!(base_query, param, operator, relation_created_at)
+                }
+                FilterField::UpdatedAt => {
+                    date_search!(base_query, param, operator, relation_updated_at)
+                }
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for object relations",
+                        param.field
+                    )));
+                }
+            }
+        }
+
+        crate::apply_query_options!(base_query, query_options, HubuumObjectRelation);
+
+        trace_query!(
+            base_query,
+            "Searching direct object relations touching object"
+        );
+
+        with_connection(pool, |conn| {
+            base_query
+                .select(hubuumobject_relation::all_columns())
+                .distinct()
+                .load::<HubuumObjectRelation>(conn)
+        })
+    }
+
+    async fn search_object_relations_between_ids_from_backend(
+        &self,
+        pool: &DbPool,
+        object_ids: &[i32],
+    ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
+        let is_admin = self.is_admin(pool).await?;
+        self.search_object_relations_between_ids_from_backend_with_admin_status(
+            pool, object_ids, is_admin,
+        )
+        .await
+    }
+
+    async fn search_object_relations_between_ids_from_backend_with_admin_status(
+        &self,
+        pool: &DbPool,
+        object_ids: &[i32],
+        is_admin: bool,
+    ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
+        use crate::schema::hubuumobject::dsl::{
+            hubuumobject, id as object_id_column, namespace_id as object_namespace_id,
+        };
+        use crate::schema::hubuumobject_relation::dsl::{
+            from_hubuum_object_id, hubuumobject_relation, id, to_hubuum_object_id,
+        };
+
+        if object_ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let permission_list = [Permissions::ReadObjectRelation];
+        let namespace_ids: Vec<i32> = self
+            .load_namespaces_with_permissions_with_admin_status(pool, &permission_list, is_admin)
+            .await?
+            .into_iter()
+            .map(|n| n.id)
+            .collect();
+
+        debug!(
+            message = "Searching object relations between visible object IDs",
+            user_id = self.id(),
+            object_ids = ?object_ids,
+            namespace_ids = ?namespace_ids
+        );
+
+        let base_query = hubuumobject_relation
+            .filter(from_hubuum_object_id.eq_any(object_ids))
+            .filter(to_hubuum_object_id.eq_any(object_ids))
+            .filter(
+                from_hubuum_object_id.eq_any(
+                    hubuumobject
+                        .select(object_id_column)
+                        .filter(object_namespace_id.eq_any(&namespace_ids)),
+                ),
+            )
+            .filter(
+                to_hubuum_object_id.eq_any(
+                    hubuumobject
+                        .select(object_id_column)
+                        .filter(object_namespace_id.eq_any(&namespace_ids)),
+                ),
+            )
+            .order(id.asc());
+
+        trace_query!(base_query, "Searching object relations among object IDs");
+
+        with_connection(pool, |conn| base_query.load::<HubuumObjectRelation>(conn))
     }
 
     async fn search_objects_related_to_from_backend<O>(
@@ -845,15 +960,17 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
 
         trace_query!(query, "Searching source-relative related objects");
 
-        with_connection(pool, |conn| query.get_results::<RelatedObjectClosureRow>(conn))
+        with_connection(pool, |conn| {
+            query.get_results::<RelatedObjectClosureRow>(conn)
+        })
     }
 }
 
-fn sql_integer_array(values: &[i32], bind_variables: &mut Vec<crate::models::search::SQLValue>) -> String {
+fn sql_integer_array(values: &[i32], bind_variables: &mut Vec<SQLValue>) -> String {
     let placeholders = values
         .iter()
         .map(|value| {
-            bind_variables.push(crate::models::search::SQLValue::Integer(*value));
+            bind_variables.push(SQLValue::Integer(*value));
             "?"
         })
         .collect::<Vec<_>>()
@@ -861,14 +978,11 @@ fn sql_integer_array(values: &[i32], bind_variables: &mut Vec<crate::models::sea
     format!("ARRAY[{placeholders}]::integer[]")
 }
 
-fn sql_date_array(
-    values: &[chrono::NaiveDateTime],
-    bind_variables: &mut Vec<crate::models::search::SQLValue>,
-) -> String {
+fn sql_date_array(values: &[chrono::NaiveDateTime], bind_variables: &mut Vec<SQLValue>) -> String {
     let placeholders = values
         .iter()
         .map(|value| {
-            bind_variables.push(crate::models::search::SQLValue::Date(*value));
+            bind_variables.push(SQLValue::Date(*value));
             "?"
         })
         .collect::<Vec<_>>()
@@ -912,9 +1026,9 @@ fn build_related_objects_clause<U: QueryJsonDataIds + ?Sized>(
     user: &U,
     pool: &DbPool,
     param: &ParsedQueryParam,
-    bind_variables: &mut Vec<crate::models::search::SQLValue>,
+    bind_variables: &mut Vec<SQLValue>,
 ) -> Result<Option<String>, ApiError> {
-    use crate::models::search::{DataType, Operator, SQLValue};
+    use crate::models::search::{DataType, Operator};
 
     if param.field == FilterField::Permissions {
         return Ok(None);
@@ -945,11 +1059,7 @@ fn build_related_objects_clause<U: QueryJsonDataIds + ?Sized>(
 
     let (op, negated) = param.operator.op_and_neg();
     let wrap = |sql: String| {
-        if negated {
-            format!("NOT ({sql})")
-        } else {
-            sql
-        }
+        if negated { format!("NOT ({sql})") } else { sql }
     };
 
     let clause = match param.field {

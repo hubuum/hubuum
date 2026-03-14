@@ -1,6 +1,6 @@
 # Relationship endpoints
 
-This document summarizes the current class-relation, object-relation, and related-object endpoints.
+This document summarizes the current class-relation, object-relation, and related-resource endpoints.
 
 For filtering, sorting, and cursor pagination support, see:
 
@@ -39,20 +39,22 @@ These endpoints are scoped by the class in the path.
 | List transitive relations | `GET` | `/api/v1/classes/{class_id}/relations/transitive/` | List transitive class relations involving the class |
 | List transitive relations to class | `GET` | `/api/v1/classes/{class_id}/relations/transitive/class/{class_id_to}` | List transitive relations between two classes |
 
-## Contextual object relation endpoints
+## Contextual related-object endpoints
 
-These endpoints are scoped by the source class and source object in the path.
+These endpoints are scoped by the class and object in the path.
 
 | Operation | Method | Path | Description |
 |-----------|--------|------|-------------|
-| List related objects | `GET` | `/api/v1/classes/{class_id}/{from_object_id}/relations` | List objects related to the source object |
+| List connected objects | `GET` | `/api/v1/classes/{class_id}/objects/{object_id}/related/objects` | List objects connected to the object |
+| List direct relations | `GET` | `/api/v1/classes/{class_id}/objects/{object_id}/related/relations` | List direct relations touching the object |
+| Get neighborhood graph | `GET` | `/api/v1/classes/{class_id}/objects/{object_id}/related/graph` | Return the connected-object neighborhood graph |
 | Get relation | `GET` | `/api/v1/classes/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}` | Fetch the relation between the source and target objects |
 | Create relation | `POST` | `/api/v1/classes/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}` | Create a relation between the source and target objects |
 | Delete relation | `DELETE` | `/api/v1/classes/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}` | Delete the relation between the source and target objects |
 
 ## Query behavior
 
-All list endpoints above use the shared query interface:
+All paginated list endpoints above use the shared query interface:
 
 - filters are parsed from query parameters
 - sorting is done in SQL
@@ -66,6 +68,8 @@ The relation endpoints do not all support the same fields:
 
 - global relation endpoints support relation-centric fields such as `id`, `from_*`, `to_*`, `class_relation`, `created_at`, and `updated_at`
 - transitive endpoints support graph-centric fields such as `depth` and `path`
-- related-object listings support both descendant object aliases like `id`, `name`, `class_id`, `namespace_id` and explicit closure/object-join fields like `from_name`, `to_name`, `from_json_data`, `to_json_data`, `depth`, and `path`
+- connected-object listings support both descendant object aliases like `id`, `name`, `class_id`, `namespace_id` and explicit closure/object-join fields like `from_name`, `to_name`, `from_json_data`, `to_json_data`, `depth`, and `path`
+- direct relation listings support relation-centric fields such as `id`, `from_*`, `to_*`, `class_relation`, `created_at`, and `updated_at`
+- graph responses return objects plus direct relations for the included neighborhood and do not use cursor pagination
 
 Use [query_support_matrix.md](query_support_matrix.md) for the endpoint-by-endpoint field list.

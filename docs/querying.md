@@ -183,7 +183,8 @@ Examples:
 
 - `/api/v1/classes/{class_id}/relations` always constrains the result to the class in the path
 - `/api/v1/classes/{class_id}/` always constrains the result to objects in that class
-- `/api/v1/classes/{class_id}/{from_object_id}/relations` always constrains the result to objects related to the source object in the path
+- `/api/v1/classes/{class_id}/objects/{object_id}/related/objects` always constrains the result to objects connected to the object in the path
+- `/api/v1/classes/{class_id}/objects/{object_id}/related/relations` always constrains the result to direct relations touching the object in the path
 
 Permission checks are also applied before returning results, so the effective result set is always the intersection of:
 
@@ -200,6 +201,7 @@ The shared query interface is currently used by:
 - namespace lists and namespace permission listings
 - class lists, class permissions, class relations, transitive relations, and objects in class
 - global class relation and object relation lists
-- related-object listings
+- connected-object listings
+- direct related-relation listings
 
 For the exact filter and sort fields per endpoint, see [query_support_matrix.md](query_support_matrix.md).

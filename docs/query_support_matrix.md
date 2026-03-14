@@ -46,11 +46,14 @@ Notes:
 | `/api/v1/classes/{class_id}/relations/transitive/class/{class_id_to}` | `from_classes`, `to_classes`, `depth`, `path` | `from_classes`, `to_classes`, `depth`, `path` | `depth.asc`, `path.asc` | path constrains both endpoints of the transitive lookup |
 | `/api/v1/relations/objects` | `id`, `class_relation`, `from_objects`, `to_objects`, `created_at`, `updated_at`, `permissions` | `id`, `class_relation`, `from_objects`, `to_objects`, `created_at`, `updated_at` | `id.asc` | permission filters narrow the namespaces used to scope object relations |
 
-## Related objects
+## Related resources
 
 | Endpoints | Filter fields | Sort fields | Default sort | Notes |
 |-----------|---------------|-------------|--------------|-------|
-| `/api/v1/classes/{class_id}/{from_object_id}/relations` | `id`, `name`, `description`, `namespace_id`, `namespaces`, `class_id`, `classes`, `created_at`, `updated_at`, `from_objects`, `to_objects`, `from_classes`, `to_classes`, `from_namespaces`, `to_namespaces`, `from_name`, `to_name`, `from_description`, `to_description`, `from_created_at`, `to_created_at`, `from_updated_at`, `to_updated_at`, `from_json_data`, `to_json_data`, `depth`, `path` | `id`, `name`, `description`, `namespace_id`, `namespaces`, `class_id`, `classes`, `created_at`, `updated_at`, `from_objects`, `to_objects`, `from_classes`, `to_classes`, `from_namespaces`, `to_namespaces`, `from_name`, `to_name`, `from_description`, `to_description`, `from_created_at`, `to_created_at`, `from_updated_at`, `to_updated_at`, `depth`, `path` | `path.asc`, `id.asc` | returns descendant objects with a `path`; sorting and cursor pagination are done against closure-table/object-join columns in SQL; JSON fields are filter-only |
+| `/api/v1/classes/{class_id}/objects/{object_id}/related/objects` | `id`, `name`, `description`, `namespace_id`, `namespaces`, `class_id`, `classes`, `created_at`, `updated_at`, `from_objects`, `to_objects`, `from_classes`, `to_classes`, `from_namespaces`, `to_namespaces`, `from_name`, `to_name`, `from_description`, `to_description`, `from_created_at`, `to_created_at`, `from_updated_at`, `to_updated_at`, `from_json_data`, `to_json_data`, `depth`, `path` | `id`, `name`, `description`, `namespace_id`, `namespaces`, `class_id`, `classes`, `created_at`, `updated_at`, `from_objects`, `to_objects`, `from_classes`, `to_classes`, `from_namespaces`, `to_namespaces`, `from_name`, `to_name`, `from_description`, `to_description`, `from_created_at`, `to_created_at`, `from_updated_at`, `to_updated_at`, `depth`, `path` | `path.asc`, `id.asc` | returns connected objects with a `path`; sorting and cursor pagination are done against closure-table/object-join columns in SQL; JSON fields are filter-only |
+| `/api/v1/classes/{class_id}/objects/{object_id}/related/relations` | `id`, `class_relation`, `from_objects`, `to_objects`, `created_at`, `updated_at`, `permissions` | `id`, `class_relation`, `from_objects`, `to_objects`, `created_at`, `updated_at` | `id.asc` | path constrains the result to direct relations touching the object in the URL |
+
+`/api/v1/classes/{class_id}/objects/{object_id}/related/graph` is not a paginated list endpoint. It accepts connected-object filters such as `depth` to define the included neighborhood and returns a graph object containing `objects` and `relations`.
 
 ## Query aliases
 
