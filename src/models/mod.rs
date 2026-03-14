@@ -12,6 +12,7 @@ pub mod report_template;
 pub mod search;
 pub mod task;
 pub mod token;
+pub mod unified_search;
 pub mod user;
 pub mod user_group;
 
@@ -29,5 +30,6 @@ pub use crate::models::report::*;
 pub use crate::models::report_template::*;
 pub use crate::models::task::*;
 pub use crate::models::token::*;
+pub use crate::models::unified_search::*;
 pub use crate::models::user::*;
 pub use crate::models::user_group::*;

@@ -132,11 +132,11 @@
     -- triggers.
     DROP TABLE IF EXISTS hubuumclass_closure CASCADE;
     CREATE TABLE hubuumclass_closure (
-        ancestor_class_id INT REFERENCES hubuumclass(id) ON DELETE CASCADE,
-        descendant_class_id INT REFERENCES hubuumclass(id) ON DELETE CASCADE,
+        id BIGSERIAL PRIMARY KEY,
+        ancestor_class_id INT REFERENCES hubuumclass(id) ON DELETE CASCADE NOT NULL,
+        descendant_class_id INT REFERENCES hubuumclass(id) ON DELETE CASCADE NOT NULL,
         depth INT NOT NULL,
         path INT[] NOT NULL,
-        PRIMARY KEY (ancestor_class_id, descendant_class_id, path),
         CHECK (ancestor_class_id < descendant_class_id)
     );
 
@@ -146,11 +146,11 @@
     -- triggers.
     DROP TABLE IF EXISTS hubuumobject_closure CASCADE;
     CREATE TABLE hubuumobject_closure (
-        ancestor_object_id INT REFERENCES hubuumobject(id) ON DELETE CASCADE,
-        descendant_object_id INT REFERENCES hubuumobject(id) ON DELETE CASCADE,
+        id BIGSERIAL PRIMARY KEY,
+        ancestor_object_id INT REFERENCES hubuumobject(id) ON DELETE CASCADE NOT NULL,
+        descendant_object_id INT REFERENCES hubuumobject(id) ON DELETE CASCADE NOT NULL,
         depth INT NOT NULL,
-        path INT[] NOT NULL,
-        PRIMARY KEY (ancestor_object_id, descendant_object_id, path)
+        path INT[] NOT NULL
     );
 
     -- Table to store report templates
@@ -166,6 +166,64 @@
         updated_at TIMESTAMP NOT NULL DEFAULT now(),
         UNIQUE (namespace_id, name),
         CHECK (content_type IN ('text/plain', 'text/html', 'text/csv'))
+    );
+
+    DROP TABLE IF EXISTS tasks CASCADE;
+    CREATE TABLE tasks (
+        id SERIAL PRIMARY KEY,
+        kind VARCHAR NOT NULL CHECK (kind IN ('import', 'report', 'export', 'reindex')),
+        status VARCHAR NOT NULL CHECK (
+            status IN (
+                'queued',
+                'validating',
+                'running',
+                'succeeded',
+                'failed',
+                'partially_succeeded',
+                'cancelled'
+            )
+        ),
+        submitted_by INT REFERENCES users (id) ON DELETE SET NULL,
+        idempotency_key VARCHAR NULL,
+        request_hash VARCHAR NULL,
+        request_payload JSONB NULL,
+        summary TEXT NULL,
+        total_items INT NOT NULL DEFAULT 0,
+        processed_items INT NOT NULL DEFAULT 0,
+        success_items INT NOT NULL DEFAULT 0,
+        failed_items INT NOT NULL DEFAULT 0,
+        request_redacted_at TIMESTAMP NULL,
+        started_at TIMESTAMP NULL,
+        finished_at TIMESTAMP NULL,
+        deleted_at TIMESTAMP NULL,
+        deleted_by INT NULL REFERENCES users (id) ON DELETE SET NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now(),
+        UNIQUE (submitted_by, idempotency_key)
+    );
+
+    DROP TABLE IF EXISTS task_events CASCADE;
+    CREATE TABLE task_events (
+        id SERIAL PRIMARY KEY,
+        task_id INT REFERENCES tasks (id) ON DELETE CASCADE NOT NULL,
+        event_type VARCHAR NOT NULL,
+        message TEXT NOT NULL,
+        data JSONB NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT now()
+    );
+
+    DROP TABLE IF EXISTS import_task_results CASCADE;
+    CREATE TABLE import_task_results (
+        id SERIAL PRIMARY KEY,
+        task_id INT REFERENCES tasks (id) ON DELETE CASCADE NOT NULL,
+        item_ref VARCHAR NULL,
+        entity_kind VARCHAR NOT NULL,
+        action VARCHAR NOT NULL,
+        identifier TEXT NULL,
+        outcome VARCHAR NOT NULL,
+        error TEXT NULL,
+        details JSONB NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT now()
     );
 
     ----------------------
@@ -194,6 +252,7 @@
     ---- Relations
     CREATE INDEX idx_hubuumclass_relation_on_from_to ON hubuumclass_relation (from_hubuum_class_id, to_hubuum_class_id);
     CREATE INDEX idx_hubuumobject_relation_on_from_to ON hubuumobject_relation (from_hubuum_object_id, to_hubuum_object_id);
+    CREATE INDEX idx_hubuumobject_relation_on_to ON hubuumobject_relation (to_hubuum_object_id);
     CREATE INDEX idx_hubuumobject_relation_class_relation_id ON hubuumobject_relation (class_relation_id);
 
     ---- Class closure table
@@ -211,9 +270,27 @@
     ---- Report templates
     CREATE INDEX idx_report_templates_namespace_id ON report_templates(namespace_id);
 
+    ---- Search
+    CREATE INDEX idx_hubuumobject_data_search
+        ON hubuumobject
+        USING GIN (jsonb_to_tsvector('simple', data, '["string"]'));
+
+    ---- Tasks and imports
+    CREATE INDEX idx_tasks_status_created_at ON tasks (status, created_at);
+    CREATE INDEX idx_tasks_submitted_by ON tasks (submitted_by);
+    CREATE INDEX idx_tasks_deleted_at ON tasks (deleted_at);
+    CREATE INDEX idx_tasks_active_status ON tasks (deleted_at, status);
+    CREATE INDEX idx_task_events_task_id_created_at ON task_events (task_id, created_at);
+    CREATE INDEX idx_import_task_results_task_id_created_at ON import_task_results (task_id, created_at);
+
     ----------------------
     ---- Functions
     ----------------------
+
+    CREATE OR REPLACE FUNCTION closure_path_hash(path_input INT[])
+    RETURNS TEXT AS $$
+        SELECT md5(array_to_string(path_input, ','));
+    $$ LANGUAGE sql IMMUTABLE;
 
     -- Update the updated_at column whenever a row is updated
     CREATE OR REPLACE FUNCTION update_modified_column()
@@ -488,6 +565,125 @@
     END;
     $$ LANGUAGE plpgsql;
 
+    CREATE OR REPLACE FUNCTION get_bidirectionally_related_objects(
+        start_object_id INT,
+        valid_namespace_ids INT[]
+    )
+    RETURNS TABLE (
+        ancestor_object_id INT,
+        descendant_object_id INT,
+        depth INT,
+        path INT[],
+        ancestor_name VARCHAR,
+        descendant_name VARCHAR,
+        ancestor_namespace_id INT,
+        descendant_namespace_id INT,
+        ancestor_class_id INT,
+        descendant_class_id INT,
+        ancestor_description VARCHAR,
+        descendant_description VARCHAR,
+        ancestor_data JSONB,
+        descendant_data JSONB,
+        ancestor_created_at TIMESTAMP,
+        descendant_created_at TIMESTAMP,
+        ancestor_updated_at TIMESTAMP,
+        descendant_updated_at TIMESTAMP
+    ) AS $$
+        WITH RECURSIVE graph_walk AS (
+            SELECT
+                start_object_id AS ancestor_object_id,
+                CASE
+                    WHEN rel.from_hubuum_object_id = start_object_id THEN rel.to_hubuum_object_id
+                    ELSE rel.from_hubuum_object_id
+                END AS descendant_object_id,
+                1 AS depth,
+                ARRAY[
+                    start_object_id,
+                    CASE
+                        WHEN rel.from_hubuum_object_id = start_object_id THEN rel.to_hubuum_object_id
+                        ELSE rel.from_hubuum_object_id
+                    END
+                ] AS path
+            FROM hubuumobject_relation rel
+            JOIN hubuumobject target_object
+              ON target_object.id = CASE
+                    WHEN rel.from_hubuum_object_id = start_object_id THEN rel.to_hubuum_object_id
+                    ELSE rel.from_hubuum_object_id
+                END
+            WHERE (rel.from_hubuum_object_id = start_object_id OR rel.to_hubuum_object_id = start_object_id)
+              AND target_object.namespace_id = ANY(valid_namespace_ids)
+
+            UNION ALL
+
+            SELECT
+                graph_walk.ancestor_object_id,
+                CASE
+                    WHEN rel.from_hubuum_object_id = graph_walk.descendant_object_id THEN rel.to_hubuum_object_id
+                    ELSE rel.from_hubuum_object_id
+                END AS descendant_object_id,
+                graph_walk.depth + 1,
+                graph_walk.path || CASE
+                    WHEN rel.from_hubuum_object_id = graph_walk.descendant_object_id THEN rel.to_hubuum_object_id
+                    ELSE rel.from_hubuum_object_id
+                END
+            FROM graph_walk
+            JOIN hubuumobject_relation rel
+              ON rel.from_hubuum_object_id = graph_walk.descendant_object_id
+              OR rel.to_hubuum_object_id = graph_walk.descendant_object_id
+            JOIN hubuumobject target_object
+              ON target_object.id = CASE
+                    WHEN rel.from_hubuum_object_id = graph_walk.descendant_object_id THEN rel.to_hubuum_object_id
+                    ELSE rel.from_hubuum_object_id
+                END
+            WHERE NOT (
+                CASE
+                    WHEN rel.from_hubuum_object_id = graph_walk.descendant_object_id THEN rel.to_hubuum_object_id
+                    ELSE rel.from_hubuum_object_id
+                END = ANY(graph_walk.path)
+            )
+              AND target_object.namespace_id = ANY(valid_namespace_ids)
+        ),
+        deduped_walk AS (
+            SELECT DISTINCT ON (descendant_object_id)
+                ancestor_object_id,
+                descendant_object_id,
+                depth,
+                path
+            FROM graph_walk
+            ORDER BY descendant_object_id ASC, depth ASC, path ASC
+        )
+        SELECT
+            source_object.id AS ancestor_object_id,
+            target_object.id AS descendant_object_id,
+            deduped_walk.depth,
+            deduped_walk.path,
+            source_object.name AS ancestor_name,
+            target_object.name AS descendant_name,
+            source_object.namespace_id AS ancestor_namespace_id,
+            target_object.namespace_id AS descendant_namespace_id,
+            source_object.hubuum_class_id AS ancestor_class_id,
+            target_object.hubuum_class_id AS descendant_class_id,
+            source_object.description AS ancestor_description,
+            target_object.description AS descendant_description,
+            source_object.data AS ancestor_data,
+            target_object.data AS descendant_data,
+            source_object.created_at AS ancestor_created_at,
+            target_object.created_at AS descendant_created_at,
+            source_object.updated_at AS ancestor_updated_at,
+            target_object.updated_at AS descendant_updated_at
+        FROM deduped_walk
+        JOIN hubuumobject source_object ON source_object.id = deduped_walk.ancestor_object_id
+        JOIN hubuumobject target_object ON target_object.id = deduped_walk.descendant_object_id
+        WHERE source_object.namespace_id = ANY(valid_namespace_ids)
+          AND target_object.namespace_id = ANY(valid_namespace_ids);
+    $$ LANGUAGE sql STABLE;
+
+    CREATE UNIQUE INDEX idx_hubuumclass_closure_unique_path_hash
+        ON hubuumclass_closure (ancestor_class_id, descendant_class_id, closure_path_hash(path));
+
+    CREATE UNIQUE INDEX idx_hubuumobject_closure_unique_path_hash
+        ON hubuumobject_closure (ancestor_object_id, descendant_object_id, closure_path_hash(path));
+
     ----------------------
     ---- Triggers
     ----------------------
@@ -580,4 +776,9 @@
     DROP TRIGGER IF EXISTS update_report_templates_updated_at ON report_templates;
     CREATE TRIGGER update_report_templates_updated_at
     BEFORE UPDATE ON report_templates
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+    DROP TRIGGER IF EXISTS update_tasks_updated_at ON tasks;
+    CREATE TRIGGER update_tasks_updated_at
+    BEFORE UPDATE ON tasks
     FOR EACH ROW EXECUTE FUNCTION update_modified_column();

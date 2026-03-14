@@ -671,6 +671,55 @@ mod tests {
     }
 
     #[rstest]
+    #[case::forward_order(false)]
+    #[case::reverse_order(true)]
+    #[actix_web::test]
+    async fn test_delete_object_relation_from_class_endpoint(
+        #[case] reverse_order: bool,
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let unique = format!("delete_object_relation_from_class_endpoint_{reverse_order}");
+        let context = test_context;
+        let (classes, relations) = create_classes_and_relations(&context, &unique).await;
+        let objects = create_objects_in_classes(&context.pool, &classes).await;
+
+        let object_relation =
+            create_object_relation(&context.pool, &objects[0], &objects[1], &relations[0]).await;
+
+        let (from_class, from_object, to_class, to_object) = if reverse_order {
+            (&classes[1], &objects[1], &classes[0], &objects[0])
+        } else {
+            (&classes[0], &objects[0], &classes[1], &objects[1])
+        };
+
+        let endpoint = format!(
+            "/api/v1/classes/{}/{}/relations/{}/{}",
+            from_class.id, from_object.id, to_class.id, to_object.id
+        );
+
+        let resp = delete_request(&context.pool, &context.admin_token, &endpoint).await;
+        let _ = assert_response_status(resp, StatusCode::NO_CONTENT).await;
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{OBJECT_RELATIONS_ENDPOINT}/{}", object_relation.id),
+        )
+        .await;
+        let _ = assert_response_status(resp, StatusCode::NOT_FOUND).await;
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &relation_endpoint(relations[0].id),
+        )
+        .await;
+        let _ = assert_response_status(resp, StatusCode::OK).await;
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
     #[actix_web::test]
     async fn test_get_object_relations_sorted_and_limited(
         #[future(awt)] test_context: TestContext,
@@ -740,7 +789,8 @@ mod tests {
     #[case::rel_0_0_path_equals_0_1(0, 0, StatusCode::OK, "?path=<0>,<1>", vec![1])]
     #[case::rel_0_0_path_equals_0_2(0, 0, StatusCode::OK, "?path=<0>,<1>,<2>", vec![2])]
     #[case::rel_0_0_path_contains(0, 0, StatusCode::OK, "?path__contains=<1>", vec![1, 2])]
-    #[case::rel_1_2_empty(1, 1, StatusCode::OK, "", vec![2])]
+    #[case::rel_1_1_empty(1, 1, StatusCode::OK, "", vec![0, 4, 2])]
+    #[case::rel_4_4_empty(4, 4, StatusCode::OK, "", vec![0, 1, 2])]
     #[case::rel_0_0_invalid_key(0, 0, StatusCode::BAD_REQUEST, "?nosuchkey=foo", vec![])]
     #[case::rel_0_0_invalid_op(0, 0, StatusCode::BAD_REQUEST, "?from_name__foo=bar", vec![])]
     #[case::rel_0_1_wrong_class(0, 1, StatusCode::NOT_FOUND, "", vec![])]

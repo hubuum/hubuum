@@ -24,7 +24,8 @@ diesel::table! {
 }
 
 diesel::table! {
-    hubuumclass_closure (ancestor_class_id, descendant_class_id, path) {
+    hubuumclass_closure (id) {
+        id -> Int8,
         ancestor_class_id -> Int4,
         descendant_class_id -> Int4,
         depth -> Int4,
@@ -56,7 +57,8 @@ diesel::table! {
 }
 
 diesel::table! {
-    hubuumobject_closure (ancestor_object_id, descendant_object_id, path) {
+    hubuumobject_closure (id) {
+        id -> Int8,
         ancestor_object_id -> Int4,
         descendant_object_id -> Int4,
         depth -> Int4,

@@ -10,8 +10,8 @@ use crate::models::traits::ExpandNamespaceFromMap;
 use crate::models::traits::user::UserNamespaceAccessors;
 use crate::models::{
     Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
-    HubuumObjectRelation, Namespace, NewUser, ObjectClosureRow, Permissions, Token, UpdateUser,
-    User, UserID, UserToken,
+    HubuumObjectRelation, Namespace, NewUser, Permissions, RelatedObjectClosureRow, Token,
+    UpdateUser, User, UserID, UserToken,
 };
 use crate::traits::{ClassAccessors, GroupAccessors, NamespaceAccessors, SelfAccessors};
 use crate::utilities::auth::hash_password;
@@ -26,11 +26,13 @@ mod auth;
 mod membership;
 mod permissions;
 mod search;
+mod unified_search;
 
 pub use auth::*;
 pub use membership::*;
 pub use permissions::*;
 pub use search::*;
+pub use unified_search::*;
 
 #[cfg(test)]
 mod tests {
