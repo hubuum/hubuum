@@ -18,8 +18,8 @@ use crate::models::{
     GroupPermission, HubuumClassExpanded, HubuumClassID, HubuumClassRelation,
     HubuumClassRelationID, HubuumClassRelationTransitive, HubuumObject, HubuumObjectID,
     HubuumObjectRelation, HubuumObjectWithPath, NamespaceID, NewHubuumClass,
-    NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation, ObjectClosureRow,
-    Permissions, UpdateHubuumClass, UpdateHubuumObject,
+    NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation,
+    Permissions, RelatedObjectClosureRow, UpdateHubuumClass, UpdateHubuumObject,
 };
 use crate::traits::{CanDelete, CanSave, CanUpdate, NamespaceAccessors, Search, SelfAccessors};
 
@@ -805,7 +805,7 @@ async fn list_related_objects(
         query = query_string,
     );
 
-    let search_params = prepare_db_pagination::<ObjectClosureRow>(&params)?;
+    let search_params = prepare_db_pagination::<RelatedObjectClosureRow>(&params)?;
     let hits = user
         .search_objects_related_to(&pool, from_object, search_params)
         .await?;
@@ -924,9 +924,9 @@ async fn delete_object_relation(
         to_object
     );
 
-    let relation = from_class.direct_relation_to(&pool, &to_class).await?;
+    let relation = from_object.object_relation(&pool, &from_class, &to_object).await;
 
-    if relation.is_none() {
+    if relation.is_err() {
         debug!(
             message = "Relation does not exist",
             user_id = user.id(),
@@ -942,7 +942,7 @@ async fn delete_object_relation(
         )));
     }
 
-    let relation = relation.expect("Relation should exist after is_none check");
+    let relation = relation.expect("Relation should exist after is_err check");
 
     debug!(
         message = "Relation ID found",

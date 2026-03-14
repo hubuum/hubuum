@@ -717,7 +717,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         object: O,
         query_options: QueryOptions,
-    ) -> Result<Vec<ObjectClosureRow>, ApiError>
+    ) -> Result<Vec<RelatedObjectClosureRow>, ApiError>
     where
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
@@ -737,13 +737,14 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         object: O,
         query_options: QueryOptions,
         is_admin: bool,
-    ) -> Result<Vec<ObjectClosureRow>, ApiError>
+    ) -> Result<Vec<RelatedObjectClosureRow>, ApiError>
     where
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
-        use crate::schema::hubuumobject;
-        use crate::schema::hubuumobject_closure::dsl as obj_closure;
-        use diesel::alias;
+        use crate::models::search::SQLValue;
+        use crate::pagination::{cursor_filter_sql, normalized_sorts, order_sql_clause};
+        use crate::utilities::extensions::CustomStringExtensions;
+        use diesel::sql_query;
 
         let query_params = query_options.filters.clone();
 
@@ -752,22 +753,6 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             stage = "Starting",
             user_id = self.id(),
             object_id = object.id(),
-            query_params = ?query_params
-        );
-
-        let object_param = ParsedQueryParam::new(
-            &FilterField::ObjectFrom.to_string(),
-            Some(SearchOperator::Equals { is_negated: false }),
-            &object.id().to_string(),
-        )?;
-
-        let mut query_params = query_params;
-        query_params.push(object_param);
-
-        debug!(
-            message = "Searching object relations related to object",
-            stage = "Starting",
-            user_id = self.id(),
             query_params = ?query_params
         );
 
@@ -800,208 +785,420 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             namespace_ids = ?namespace_ids
         );
 
-        let (ancestor_object, descendant_object) = alias!(
-            crate::schema::hubuumobject as ancestor_object,
-            crate::schema::hubuumobject as descendant_object,
+        let sorts = normalized_sorts::<RelatedObjectClosureRow>(&query_options.sort)?;
+        let mut bind_variables = Vec::<SQLValue>::new();
+        bind_variables.push(SQLValue::Integer(object.id()));
+        let mut raw_sql = format!(
+            "SELECT * FROM get_bidirectionally_related_objects(?, {}) AS related_objects",
+            sql_integer_array(&namespace_ids, &mut bind_variables),
         );
 
-        let mut base_query =
-            obj_closure::hubuumobject_closure
-                .inner_join(ancestor_object.on(
-                    obj_closure::ancestor_object_id.eq(ancestor_object.field(hubuumobject::id)),
-                ))
-                .inner_join(descendant_object.on(
-                    obj_closure::descendant_object_id.eq(descendant_object.field(hubuumobject::id)),
-                ))
-                .into_boxed();
-        base_query = base_query
-            .filter(
-                ancestor_object
-                    .field(hubuumobject::namespace_id)
-                    .eq_any(&namespace_ids),
-            )
-            .filter(
-                descendant_object
-                    .field(hubuumobject::namespace_id)
-                    .eq_any(&namespace_ids),
-            );
+        let mut where_clauses = Vec::new();
 
         for param in &query_params {
-            use crate::{array_search, date_search, json_search, numeric_search, string_search};
-            let operator = param.operator.clone();
-            match &param.field {
-                FilterField::ObjectFrom => {
-                    numeric_search!(base_query, param, operator, obj_closure::ancestor_object_id)
+            let clause = build_related_objects_clause(self, pool, param, &mut bind_variables)?;
+            if let Some(clause) = clause {
+                where_clauses.push(clause);
+            }
+        }
+
+        if let Some(cursor_sql) =
+            cursor_filter_sql::<RelatedObjectClosureRow>(&sorts, query_options.cursor.as_deref())?
+        {
+            where_clauses.push(cursor_sql);
+        }
+
+        if !where_clauses.is_empty() {
+            raw_sql.push_str("\nWHERE ");
+            raw_sql.push_str(&where_clauses.join("\n  AND "));
+        }
+
+        let order_by = sorts
+            .iter()
+            .map(order_sql_clause::<RelatedObjectClosureRow>)
+            .collect::<Result<Vec<_>, _>>()?
+            .join(", ");
+        raw_sql.push_str(&format!("\nORDER BY {order_by}"));
+
+        if let Some(limit) = query_options.limit {
+            raw_sql.push_str(&format!("\nLIMIT {limit}"));
+        }
+
+        raw_sql = raw_sql.replace_question_mark_with_indexed_n();
+
+        debug!(
+            message = "Searching source-relative related objects",
+            raw_sql = %raw_sql,
+            bind_variables = ?bind_variables
+        );
+
+        let mut query = sql_query(raw_sql).into_boxed();
+        for bind_var in bind_variables {
+            query = match bind_var {
+                SQLValue::Integer(i) => query.bind::<diesel::sql_types::Integer, _>(i),
+                SQLValue::String(s) => query.bind::<diesel::sql_types::Text, _>(s),
+                SQLValue::Boolean(b) => query.bind::<diesel::sql_types::Bool, _>(b),
+                SQLValue::Float(f) => query.bind::<diesel::sql_types::Float8, _>(f),
+                SQLValue::Date(d) => query.bind::<diesel::sql_types::Timestamp, _>(d),
+            };
+        }
+
+        trace_query!(query, "Searching source-relative related objects");
+
+        with_connection(pool, |conn| query.get_results::<RelatedObjectClosureRow>(conn))
+    }
+}
+
+fn sql_integer_array(values: &[i32], bind_variables: &mut Vec<crate::models::search::SQLValue>) -> String {
+    let placeholders = values
+        .iter()
+        .map(|value| {
+            bind_variables.push(crate::models::search::SQLValue::Integer(*value));
+            "?"
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("ARRAY[{placeholders}]::integer[]")
+}
+
+fn sql_date_array(
+    values: &[chrono::NaiveDateTime],
+    bind_variables: &mut Vec<crate::models::search::SQLValue>,
+) -> String {
+    let placeholders = values
+        .iter()
+        .map(|value| {
+            bind_variables.push(crate::models::search::SQLValue::Date(*value));
+            "?"
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("ARRAY[{placeholders}]::timestamp[]")
+}
+
+fn related_objects_column(field: &FilterField) -> Option<&'static str> {
+    match field {
+        FilterField::ObjectFrom => Some("related_objects.ancestor_object_id"),
+        FilterField::Id | FilterField::ObjectTo => Some("related_objects.descendant_object_id"),
+        FilterField::ClassFrom => Some("related_objects.ancestor_class_id"),
+        FilterField::ClassId | FilterField::Classes | FilterField::ClassTo => {
+            Some("related_objects.descendant_class_id")
+        }
+        FilterField::NamespacesFrom => Some("related_objects.ancestor_namespace_id"),
+        FilterField::Namespaces | FilterField::NamespaceId | FilterField::NamespacesTo => {
+            Some("related_objects.descendant_namespace_id")
+        }
+        FilterField::NameFrom => Some("related_objects.ancestor_name"),
+        FilterField::Name | FilterField::NameTo => Some("related_objects.descendant_name"),
+        FilterField::DescriptionFrom => Some("related_objects.ancestor_description"),
+        FilterField::Description | FilterField::DescriptionTo => {
+            Some("related_objects.descendant_description")
+        }
+        FilterField::CreatedAtFrom => Some("related_objects.ancestor_created_at"),
+        FilterField::CreatedAt | FilterField::CreatedAtTo => {
+            Some("related_objects.descendant_created_at")
+        }
+        FilterField::UpdatedAtFrom => Some("related_objects.ancestor_updated_at"),
+        FilterField::UpdatedAt | FilterField::UpdatedAtTo => {
+            Some("related_objects.descendant_updated_at")
+        }
+        FilterField::Depth => Some("related_objects.depth"),
+        FilterField::Path => Some("related_objects.path"),
+        _ => None,
+    }
+}
+
+fn build_related_objects_clause<U: QueryJsonDataIds + ?Sized>(
+    user: &U,
+    pool: &DbPool,
+    param: &ParsedQueryParam,
+    bind_variables: &mut Vec<crate::models::search::SQLValue>,
+) -> Result<Option<String>, ApiError> {
+    use crate::models::search::{DataType, Operator, SQLValue};
+
+    if param.field == FilterField::Permissions {
+        return Ok(None);
+    }
+
+    if param.field == FilterField::JsonDataFrom || param.field == FilterField::JsonDataTo {
+        let object_ids = user.query_object_ids_for_json_data(pool, vec![param])?;
+        if object_ids.is_empty() {
+            return Ok(Some("FALSE".to_string()));
+        }
+
+        let column = if param.field == FilterField::JsonDataFrom {
+            "related_objects.ancestor_object_id"
+        } else {
+            "related_objects.descendant_object_id"
+        };
+
+        let array_sql = sql_integer_array(&object_ids, bind_variables);
+        return Ok(Some(format!("{column} = ANY({array_sql})")));
+    }
+
+    let column = related_objects_column(&param.field).ok_or_else(|| {
+        ApiError::BadRequest(format!(
+            "Field '{}' isn't searchable (or does not exist) for object relations",
+            param.field
+        ))
+    })?;
+
+    let (op, negated) = param.operator.op_and_neg();
+    let wrap = |sql: String| {
+        if negated {
+            format!("NOT ({sql})")
+        } else {
+            sql
+        }
+    };
+
+    let clause = match param.field {
+        FilterField::ObjectFrom
+        | FilterField::Id
+        | FilterField::ObjectTo
+        | FilterField::ClassFrom
+        | FilterField::ClassId
+        | FilterField::Classes
+        | FilterField::ClassTo
+        | FilterField::Namespaces
+        | FilterField::NamespaceId
+        | FilterField::NamespacesFrom
+        | FilterField::NamespacesTo
+        | FilterField::Depth => {
+            if !param.operator.is_applicable_to(DataType::NumericOrDate) {
+                return Err(ApiError::OperatorMismatch(format!(
+                    "Operator '{:?}' is not applicable to field '{}'",
+                    param.operator, param.field
+                )));
+            }
+
+            let values = param.value_as_integer()?;
+            if values.is_empty() {
+                return Err(ApiError::BadRequest(format!(
+                    "Searching on field '{}' requires a value",
+                    param.field
+                )));
+            }
+
+            let max = *values.iter().max().unwrap();
+            let min = *values.iter().min().unwrap();
+
+            match op {
+                Operator::Equals => {
+                    if values.len() > 50 {
+                        return Err(ApiError::OperatorMismatch(format!(
+                            "Operator 'equals' is limited to 50 values, got {} (use between?)",
+                            values.len()
+                        )));
+                    }
+                    let array_sql = sql_integer_array(&values, bind_variables);
+                    wrap(format!("{column} = ANY({array_sql})"))
                 }
-                FilterField::Id | FilterField::ObjectTo => {
-                    numeric_search!(
-                        base_query,
-                        param,
-                        operator,
-                        obj_closure::descendant_object_id
-                    )
+                Operator::Gt => {
+                    bind_variables.push(SQLValue::Integer(max));
+                    wrap(format!("{column} > ?"))
                 }
-                FilterField::ClassFrom => {
-                    numeric_search!(
-                        base_query,
-                        param,
-                        operator,
-                        ancestor_object.field(hubuumobject::hubuum_class_id)
-                    )
+                Operator::Gte => {
+                    bind_variables.push(SQLValue::Integer(max));
+                    wrap(format!("{column} >= ?"))
                 }
-                FilterField::ClassId | FilterField::Classes | FilterField::ClassTo => {
-                    numeric_search!(
-                        base_query,
-                        param,
-                        operator,
-                        descendant_object.field(hubuumobject::hubuum_class_id)
-                    )
+                Operator::Lt => {
+                    bind_variables.push(SQLValue::Integer(min));
+                    wrap(format!("{column} < ?"))
                 }
-                FilterField::Namespaces | FilterField::NamespaceId | FilterField::NamespacesTo => {
-                    numeric_search!(
-                        base_query,
-                        param,
-                        operator,
-                        descendant_object.field(hubuumobject::namespace_id)
-                    )
+                Operator::Lte => {
+                    bind_variables.push(SQLValue::Integer(min));
+                    wrap(format!("{column} <= ?"))
                 }
-                FilterField::NamespacesFrom => {
-                    numeric_search!(
-                        base_query,
-                        param,
-                        operator,
-                        ancestor_object.field(hubuumobject::namespace_id)
-                    )
+                Operator::Between => {
+                    if values.len() != 2 {
+                        return Err(ApiError::OperatorMismatch(format!(
+                            "Operator 'between' requires 2 values (min,max) for field '{}'",
+                            param.field
+                        )));
+                    }
+                    bind_variables.push(SQLValue::Integer(values[0]));
+                    bind_variables.push(SQLValue::Integer(values[1]));
+                    wrap(format!("{column} BETWEEN ? AND ?"))
                 }
-                FilterField::Name | FilterField::NameTo => {
-                    string_search!(
-                        base_query,
-                        param,
-                        operator,
-                        descendant_object.field(hubuumobject::name)
-                    )
-                }
-                FilterField::NameFrom => {
-                    string_search!(
-                        base_query,
-                        param,
-                        operator,
-                        ancestor_object.field(hubuumobject::name)
-                    )
-                }
-                FilterField::Description | FilterField::DescriptionTo => {
-                    string_search!(
-                        base_query,
-                        param,
-                        operator,
-                        descendant_object.field(hubuumobject::description)
-                    )
-                }
-                FilterField::DescriptionFrom => {
-                    string_search!(
-                        base_query,
-                        param,
-                        operator,
-                        ancestor_object.field(hubuumobject::description)
-                    )
-                }
-                FilterField::CreatedAt | FilterField::CreatedAtTo => {
-                    date_search!(
-                        base_query,
-                        param,
-                        operator,
-                        descendant_object.field(hubuumobject::created_at)
-                    )
-                }
-                FilterField::CreatedAtFrom => {
-                    date_search!(
-                        base_query,
-                        param,
-                        operator,
-                        ancestor_object.field(hubuumobject::created_at)
-                    )
-                }
-                FilterField::UpdatedAt | FilterField::UpdatedAtTo => {
-                    date_search!(
-                        base_query,
-                        param,
-                        operator,
-                        descendant_object.field(hubuumobject::updated_at)
-                    )
-                }
-                FilterField::UpdatedAtFrom => {
-                    date_search!(
-                        base_query,
-                        param,
-                        operator,
-                        ancestor_object.field(hubuumobject::updated_at)
-                    )
-                }
-                FilterField::JsonDataFrom => {
-                    json_search!(
-                        base_query,
-                        query_params,
-                        FilterField::JsonDataFrom,
-                        obj_closure::ancestor_object_id,
-                        self,
-                        pool
-                    )
-                }
-                FilterField::JsonDataTo => {
-                    json_search!(
-                        base_query,
-                        query_params,
-                        FilterField::JsonDataTo,
-                        obj_closure::descendant_object_id,
-                        self,
-                        pool
-                    )
-                }
-                FilterField::Depth => {
-                    numeric_search!(base_query, param, operator, obj_closure::depth)
-                }
-                FilterField::Path => array_search!(base_query, param, operator, obj_closure::path),
                 _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't searchable (or does not exist) for object relations",
-                        param.field
+                    return Err(ApiError::OperatorMismatch(format!(
+                        "Operator '{:?}' not implemented for field '{}' (type: numeric)",
+                        param.operator, param.field
                     )));
                 }
             }
         }
+        FilterField::Name
+        | FilterField::NameFrom
+        | FilterField::NameTo
+        | FilterField::Description
+        | FilterField::DescriptionFrom
+        | FilterField::DescriptionTo => {
+            if !param.operator.is_applicable_to(DataType::String) {
+                return Err(ApiError::OperatorMismatch(format!(
+                    "Operator '{:?}' is not applicable to field '{}'",
+                    param.operator, param.field
+                )));
+            }
 
-        crate::apply_query_options!(base_query, query_options, ObjectClosureRow);
+            let value = param.value.clone();
+            if value.is_empty() {
+                return Err(ApiError::BadRequest(format!(
+                    "Searching on field '{}' requires a value",
+                    param.field
+                )));
+            }
 
-        trace_query!(base_query, "Searching object relations");
+            match op {
+                Operator::Equals => {
+                    bind_variables.push(SQLValue::String(value));
+                    wrap(format!("{column} = ?"))
+                }
+                Operator::IEquals => {
+                    bind_variables.push(SQLValue::String(value));
+                    wrap(format!("{column} ILIKE ?"))
+                }
+                Operator::Contains => {
+                    bind_variables.push(SQLValue::String(format!("%{value}%")));
+                    wrap(format!("{column} LIKE ?"))
+                }
+                Operator::IContains => {
+                    bind_variables.push(SQLValue::String(format!("%{value}%")));
+                    wrap(format!("{column} ILIKE ?"))
+                }
+                Operator::StartsWith => {
+                    bind_variables.push(SQLValue::String(format!("{value}%")));
+                    wrap(format!("{column} LIKE ?"))
+                }
+                Operator::IStartsWith => {
+                    bind_variables.push(SQLValue::String(format!("{value}%")));
+                    wrap(format!("{column} ILIKE ?"))
+                }
+                Operator::EndsWith => {
+                    bind_variables.push(SQLValue::String(format!("%{value}")));
+                    wrap(format!("{column} LIKE ?"))
+                }
+                Operator::IEndsWith => {
+                    bind_variables.push(SQLValue::String(format!("%{value}")));
+                    wrap(format!("{column} ILIKE ?"))
+                }
+                Operator::Like => {
+                    bind_variables.push(SQLValue::String(value));
+                    wrap(format!("{column} LIKE ?"))
+                }
+                Operator::Regex => {
+                    bind_variables.push(SQLValue::String(value));
+                    wrap(format!("{column} ~ ?"))
+                }
+                _ => {
+                    return Err(ApiError::OperatorMismatch(format!(
+                        "Operator '{:?}' not implemented for field '{}' (type: string)",
+                        param.operator, param.field
+                    )));
+                }
+            }
+        }
+        FilterField::CreatedAt
+        | FilterField::CreatedAtFrom
+        | FilterField::CreatedAtTo
+        | FilterField::UpdatedAt
+        | FilterField::UpdatedAtFrom
+        | FilterField::UpdatedAtTo => {
+            if !param.operator.is_applicable_to(DataType::NumericOrDate) {
+                return Err(ApiError::OperatorMismatch(format!(
+                    "Operator '{:?}' is not applicable to field '{}'",
+                    param.operator, param.field
+                )));
+            }
 
-        with_connection(pool, |conn| {
-            base_query
-                .select((
-                    obj_closure::ancestor_object_id,
-                    obj_closure::descendant_object_id,
-                    obj_closure::depth,
-                    diesel::dsl::sql::<diesel::sql_types::Array<diesel::sql_types::Integer>>(
-                        "hubuumobject_closure.path",
-                    ),
-                    ancestor_object.field(hubuumobject::name),
-                    descendant_object.field(hubuumobject::name),
-                    ancestor_object.field(hubuumobject::namespace_id),
-                    descendant_object.field(hubuumobject::namespace_id),
-                    ancestor_object.field(hubuumobject::hubuum_class_id),
-                    descendant_object.field(hubuumobject::hubuum_class_id),
-                    ancestor_object.field(hubuumobject::description),
-                    descendant_object.field(hubuumobject::description),
-                    ancestor_object.field(hubuumobject::data),
-                    descendant_object.field(hubuumobject::data),
-                    ancestor_object.field(hubuumobject::created_at),
-                    descendant_object.field(hubuumobject::created_at),
-                    ancestor_object.field(hubuumobject::updated_at),
-                    descendant_object.field(hubuumobject::updated_at),
-                ))
-                .distinct()
-                .load::<ObjectClosureRow>(conn)
-        })
-    }
+            let values = param.value_as_date()?;
+            if values.is_empty() {
+                return Err(ApiError::BadRequest(format!(
+                    "Searching on field '{}' requires a value",
+                    param.field
+                )));
+            }
+
+            let max = *values.iter().max().unwrap();
+            let min = *values.iter().min().unwrap();
+
+            match op {
+                Operator::Equals => {
+                    let array_sql = sql_date_array(&values, bind_variables);
+                    wrap(format!("{column} = ANY({array_sql})"))
+                }
+                Operator::Gt => {
+                    bind_variables.push(SQLValue::Date(max));
+                    wrap(format!("{column} > ?"))
+                }
+                Operator::Gte => {
+                    bind_variables.push(SQLValue::Date(max));
+                    wrap(format!("{column} >= ?"))
+                }
+                Operator::Lt => {
+                    bind_variables.push(SQLValue::Date(min));
+                    wrap(format!("{column} < ?"))
+                }
+                Operator::Lte => {
+                    bind_variables.push(SQLValue::Date(min));
+                    wrap(format!("{column} <= ?"))
+                }
+                Operator::Between => {
+                    if values.len() != 2 {
+                        return Err(ApiError::OperatorMismatch(format!(
+                            "Operator 'between' requires 2 values (min,max) for field '{}'",
+                            param.field
+                        )));
+                    }
+                    bind_variables.push(SQLValue::Date(values[0]));
+                    bind_variables.push(SQLValue::Date(values[1]));
+                    wrap(format!("{column} BETWEEN ? AND ?"))
+                }
+                _ => {
+                    return Err(ApiError::OperatorMismatch(format!(
+                        "Operator '{:?}' not implemented for field '{}' (type: date)",
+                        param.operator, param.field
+                    )));
+                }
+            }
+        }
+        FilterField::Path => {
+            if !param.operator.is_applicable_to(DataType::Array) {
+                return Err(ApiError::OperatorMismatch(format!(
+                    "Operator '{:?}' is not applicable to field '{}'",
+                    param.operator, param.field
+                )));
+            }
+
+            let values = param.value_as_integer()?;
+            if values.is_empty() {
+                return Err(ApiError::BadRequest(format!(
+                    "Searching on field '{}' requires a value",
+                    param.field
+                )));
+            }
+            let array_sql = sql_integer_array(&values, bind_variables);
+            match op {
+                Operator::Contains => wrap(format!("{column} @> {array_sql}")),
+                Operator::Equals => wrap(format!("{column} = {array_sql}")),
+                _ => {
+                    return Err(ApiError::OperatorMismatch(format!(
+                        "Operator '{:?}' not implemented for field '{}' (type: array)",
+                        param.operator, param.field
+                    )));
+                }
+            }
+        }
+        _ => {
+            return Err(ApiError::BadRequest(format!(
+                "Field '{}' isn't searchable (or does not exist) for object relations",
+                param.field
+            )));
+        }
+    };
+
+    Ok(Some(clause))
 }
 
 impl<T: ?Sized> UserSearchBackend for T where T: SelfAccessors<User> + UserNamespaceAccessors {}

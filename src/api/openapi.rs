@@ -1,6 +1,6 @@
 use crate::api::handlers::{auth, meta};
 use crate::api::v1::handlers::{
-    classes, groups, imports, namespaces, relations, reports, tasks, templates, users,
+    classes, groups, imports, namespaces, relations, reports, search, tasks, templates, users,
 };
 use crate::models::{
     ClassKey, Group, GroupKey, GroupPermission, HubuumClass, HubuumClassExpanded,
@@ -15,8 +15,10 @@ use crate::models::{
     Permissions, ReportContentType, ReportJsonResponse, ReportLimits, ReportMeta,
     ReportMissingDataPolicy, ReportOutputRequest, ReportRequest, ReportScope, ReportScopeKind,
     ReportTemplate, ReportTemplateID, ReportWarning, TaskDetails, TaskEventResponse, TaskKind,
-    TaskLinks, TaskProgress, TaskResponse, TaskStatus, UpdateGroup, UpdateHubuumClass,
-    UpdateHubuumObject, UpdateNamespace, UpdateReportTemplate, UpdateUser, User, UserToken,
+    TaskLinks, TaskProgress, TaskResponse, TaskStatus, UnifiedSearchBatchResponse,
+    UnifiedSearchDoneEvent, UnifiedSearchErrorEvent, UnifiedSearchKind, UnifiedSearchResponse,
+    UnifiedSearchStartedEvent, UpdateGroup, UpdateHubuumClass, UpdateHubuumObject, UpdateNamespace,
+    UpdateReportTemplate, UpdateUser, User, UserToken,
 };
 use crate::pagination::{NEXT_CURSOR_HEADER, page_limits_or_defaults};
 use actix_web::{HttpResponse, Responder};
@@ -84,6 +86,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
         relations::get_object_relation,
         relations::create_object_relation,
         relations::delete_object_relation,
+        search::get_search,
+        search::stream_search,
         reports::run_report,
         tasks::get_task,
         tasks::get_task_events,
@@ -188,6 +192,12 @@ use utoipa::{Modify, OpenApi, ToSchema};
             ReportWarning,
             ReportMeta,
             ReportJsonResponse,
+            UnifiedSearchKind,
+            UnifiedSearchResponse,
+            UnifiedSearchBatchResponse,
+            UnifiedSearchStartedEvent,
+            UnifiedSearchDoneEvent,
+            UnifiedSearchErrorEvent,
             ReportTemplateID,
             ReportTemplate,
             NewReportTemplate,
@@ -202,6 +212,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         (name = "groups", description = "Group management endpoints"),
         (name = "namespaces", description = "Namespace and permission endpoints"),
         (name = "relations", description = "Class and object relation endpoints"),
+        (name = "search", description = "Unified search endpoints"),
         (name = "classes", description = "Class and object-in-class endpoints"),
         (name = "tasks", description = "Generic long-running task endpoints"),
         (name = "imports", description = "Import submission and import-specific result endpoints"),
@@ -638,6 +649,8 @@ mod tests {
             "/api/v1/imports/{task_id}",
             "/api/v1/imports/{task_id}/results",
             "/api/v1/reports",
+            "/api/v1/search",
+            "/api/v1/search/stream",
             "/api/v1/tasks/{task_id}",
             "/api/v1/tasks/{task_id}/events",
             "/api/v1/templates",

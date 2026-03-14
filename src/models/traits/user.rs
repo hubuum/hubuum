@@ -3,7 +3,7 @@ use std::iter::IntoIterator;
 use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, SortParam};
 use crate::models::{
     Group, HubuumClassExpanded, HubuumClassRelation, HubuumObject, HubuumObjectRelation, Namespace,
-    ObjectClosureRow, Permissions, User, UserID,
+    Permissions, RelatedObjectClosureRow, UnifiedSearchSpec, User, UserID,
 };
 
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
@@ -11,11 +11,10 @@ use crate::traits::{
     BackendContext, ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping,
     CursorSqlType, CursorValue, GroupMemberships, SelfAccessors,
 };
-
 use crate::db::DbPool;
 use crate::db::traits::user::{
     LoadPermittedNamespaces, LoadUserGroups, LoadUserGroupsPaginated, LoadUserRecord,
-    QueryJsonDataIds, QueryJsonSchemaIds, UserSearchBackend,
+    QueryJsonDataIds, QueryJsonSchemaIds, UnifiedSearchBackend, UserSearchBackend,
 };
 use crate::errors::ApiError;
 
@@ -89,12 +88,48 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         backend: &C,
         object: O,
         query_options: QueryOptions,
-    ) -> Result<Vec<ObjectClosureRow>, ApiError>
+    ) -> Result<Vec<RelatedObjectClosureRow>, ApiError>
     where
         C: BackendContext + ?Sized,
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
         self.search_objects_related_to_from_backend(backend.db_pool(), object, query_options)
+            .await
+    }
+
+    async fn search_unified_namespaces<C>(
+        &self,
+        backend: &C,
+        query: &UnifiedSearchSpec,
+    ) -> Result<Vec<Namespace>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.search_unified_namespaces_from_backend(backend.db_pool(), query)
+            .await
+    }
+
+    async fn search_unified_classes<C>(
+        &self,
+        backend: &C,
+        query: &UnifiedSearchSpec,
+    ) -> Result<Vec<HubuumClassExpanded>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.search_unified_classes_from_backend(backend.db_pool(), query)
+            .await
+    }
+
+    async fn search_unified_objects<C>(
+        &self,
+        backend: &C,
+        query: &UnifiedSearchSpec,
+    ) -> Result<Vec<HubuumObject>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.search_unified_objects_from_backend(backend.db_pool(), query)
             .await
     }
 }

@@ -4,6 +4,7 @@ pub mod imports;
 pub mod namespaces;
 pub mod relations;
 pub mod reports;
+pub mod search;
 pub mod tasks;
 pub mod templates;
 pub mod users;

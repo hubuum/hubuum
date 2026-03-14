@@ -53,6 +53,12 @@ where
                 .or_filter(descendant_class_id.eq(self.id()))
                 .then_order_by(depth.asc())
                 .then_order_by(descendant_class_id.asc())
+                .select((
+                    ancestor_class_id.assume_not_null(),
+                    descendant_class_id.assume_not_null(),
+                    depth,
+                    path,
+                ))
                 .load::<HubuumClassRelationTransitive>(conn)
         })
     }
@@ -229,6 +235,12 @@ where
         hubuumclass_closure
             .filter(ancestor_class_id.eq(from))
             .filter(descendant_class_id.eq(to))
+            .select((
+                ancestor_class_id.assume_not_null(),
+                descendant_class_id.assume_not_null(),
+                depth,
+                path,
+            ))
             .load::<HubuumClassRelationTransitive>(conn)
     })
 }
@@ -278,7 +290,14 @@ where
     crate::apply_query_options!(base_query, query_options, HubuumClassRelationTransitive);
 
     with_connection(pool, |conn| {
-        base_query.load::<HubuumClassRelationTransitive>(conn)
+        base_query
+            .select((
+                ancestor_class_id.assume_not_null(),
+                descendant_class_id.assume_not_null(),
+                depth,
+                path,
+            ))
+            .load::<HubuumClassRelationTransitive>(conn)
     })
 }
 

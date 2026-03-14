@@ -173,7 +173,14 @@ where
         crate::apply_query_options!(base_query, query_options, HubuumClassRelationTransitive);
 
         with_connection(pool, |conn| {
-            base_query.load::<HubuumClassRelationTransitive>(conn)
+            base_query
+                .select((
+                    ancestor_class_id.assume_not_null(),
+                    descendant_class_id.assume_not_null(),
+                    depth,
+                    path,
+                ))
+                .load::<HubuumClassRelationTransitive>(conn)
         })
     }
 

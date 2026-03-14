@@ -5188,6 +5188,243 @@
         ]
       }
     },
+    "/api/v1/search": {
+      "get": {
+        "tags": [
+          "search"
+        ],
+        "summary": "Get Api V1 Search",
+        "description": "Auto-generated documentation for GET /api/v1/search.",
+        "operationId": "getApiV1Search",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Plain-text query string",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kinds",
+            "in": "query",
+            "description": "Comma-separated kinds: namespace,class,object",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit_per_kind",
+            "in": "query",
+            "description": "Maximum results per kind",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor_namespaces",
+            "in": "query",
+            "description": "Opaque cursor for namespace results",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor_classes",
+            "in": "query",
+            "description": "Opaque cursor for class results",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor_objects",
+            "in": "query",
+            "description": "Opaque cursor for object results",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "search_class_schema",
+            "in": "query",
+            "description": "Include class schema text in class matching",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "search_object_data",
+            "in": "query",
+            "description": "Include object JSON string values in object matching",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Grouped unified search results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnifiedSearchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/search/stream": {
+      "get": {
+        "tags": [
+          "search"
+        ],
+        "summary": "Get Api V1 Search Stream",
+        "description": "Auto-generated documentation for GET /api/v1/search/stream.",
+        "operationId": "getApiV1SearchStream",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Plain-text query string",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kinds",
+            "in": "query",
+            "description": "Comma-separated kinds: namespace,class,object",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit_per_kind",
+            "in": "query",
+            "description": "Maximum results per kind",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor_namespaces",
+            "in": "query",
+            "description": "Opaque cursor for namespace results",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor_classes",
+            "in": "query",
+            "description": "Opaque cursor for class results",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor_objects",
+            "in": "query",
+            "description": "Opaque cursor for object results",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "search_class_schema",
+            "in": "query",
+            "description": "Include class schema text in class matching",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "search_object_data",
+            "in": "query",
+            "description": "Include object JSON string values in object matching",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Server-sent event stream for unified search"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/tasks/{task_id}": {
       "get": {
         "tags": [
@@ -7764,6 +8001,155 @@
           "cancelled"
         ]
       },
+      "UnifiedSearchBatchResponse": {
+        "type": "object",
+        "required": [
+          "kind",
+          "namespaces",
+          "classes",
+          "objects"
+        ],
+        "properties": {
+          "classes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HubuumClassExpanded"
+            }
+          },
+          "kind": {
+            "type": "string"
+          },
+          "namespaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Namespace"
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "objects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HubuumObject"
+            }
+          }
+        }
+      },
+      "UnifiedSearchDoneEvent": {
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": {
+            "type": "string"
+          }
+        }
+      },
+      "UnifiedSearchErrorEvent": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "UnifiedSearchKind": {
+        "type": "string",
+        "enum": [
+          "namespace",
+          "class",
+          "object"
+        ]
+      },
+      "UnifiedSearchNext": {
+        "type": "object",
+        "properties": {
+          "classes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "namespaces": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "objects": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "UnifiedSearchResponse": {
+        "type": "object",
+        "required": [
+          "query",
+          "results",
+          "next"
+        ],
+        "properties": {
+          "next": {
+            "$ref": "#/components/schemas/UnifiedSearchNext"
+          },
+          "query": {
+            "type": "string"
+          },
+          "results": {
+            "$ref": "#/components/schemas/UnifiedSearchResults"
+          }
+        }
+      },
+      "UnifiedSearchResults": {
+        "type": "object",
+        "required": [
+          "namespaces",
+          "classes",
+          "objects"
+        ],
+        "properties": {
+          "classes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HubuumClassExpanded"
+            }
+          },
+          "namespaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Namespace"
+            }
+          },
+          "objects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HubuumObject"
+            }
+          }
+        }
+      },
+      "UnifiedSearchStartedEvent": {
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": {
+            "type": "string"
+          }
+        }
+      },
       "UpdateGroup": {
         "type": "object",
         "properties": {
@@ -8033,6 +8419,10 @@
     {
       "name": "relations",
       "description": "Class and object relation endpoints"
+    },
+    {
+      "name": "search",
+      "description": "Unified search endpoints"
     },
     {
       "name": "classes",

@@ -130,6 +130,7 @@ services:
 - [Development Setup](development.md) - Git hooks, testing, and development workflow
 - [Permissions](permissions.md) - Access control and authorization system
 - [Querying](querying.md) - API query syntax and filtering
+- [Unified search](search_api.md) - grouped search across namespaces, classes, and objects
 - [Query Support Matrix](query_support_matrix.md) - Endpoint-by-endpoint filter and sort support
 - [Relationships](relationship_endpoints.md) - Working with object relationships
 - [Report API](report_api.md) - Server-side report execution and templated output

@@ -9,7 +9,7 @@ use crate::models::{
     ClassClosureRow, HubuumClass, HubuumClassRelation, HubuumClassRelationID,
     HubuumClassRelationTransitive, HubuumClassWithPath, HubuumObject, HubuumObjectRelation,
     HubuumObjectRelationID, Namespace, NewHubuumClassRelation, NewHubuumObjectRelation,
-    ObjectClosureRow,
+    ObjectClosureRow, RelatedObjectClosureRow,
 };
 use crate::traits::accessors::{
     ClassAdapter, IdAccessor, InstanceAdapter, NamespaceAdapter, ObjectAdapter,
@@ -707,6 +707,192 @@ impl CursorSqlMapping for ObjectClosureRow {
             },
             FilterField::Path => CursorSqlField {
                 column: "hubuumobject_closure.path",
+                sql_type: CursorSqlType::IntegerArray,
+                nullable: false,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for related objects",
+                    field
+                )));
+            }
+        })
+    }
+}
+
+impl CursorPaginated for RelatedObjectClosureRow {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(
+            field,
+            FilterField::Id
+                | FilterField::Name
+                | FilterField::Description
+                | FilterField::Namespaces
+                | FilterField::NamespaceId
+                | FilterField::ClassId
+                | FilterField::Classes
+                | FilterField::CreatedAt
+                | FilterField::UpdatedAt
+                | FilterField::ObjectFrom
+                | FilterField::ObjectTo
+                | FilterField::ClassFrom
+                | FilterField::ClassTo
+                | FilterField::NamespacesFrom
+                | FilterField::NamespacesTo
+                | FilterField::NameFrom
+                | FilterField::NameTo
+                | FilterField::DescriptionFrom
+                | FilterField::DescriptionTo
+                | FilterField::CreatedAtFrom
+                | FilterField::CreatedAtTo
+                | FilterField::UpdatedAtFrom
+                | FilterField::UpdatedAtTo
+                | FilterField::Depth
+                | FilterField::Path
+        )
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        Ok(match field {
+            FilterField::Id | FilterField::ObjectTo => {
+                CursorValue::Integer(self.descendant_object_id as i64)
+            }
+            FilterField::ObjectFrom => CursorValue::Integer(self.ancestor_object_id as i64),
+            FilterField::Name | FilterField::NameTo => {
+                CursorValue::String(self.descendant_name.clone())
+            }
+            FilterField::NameFrom => CursorValue::String(self.ancestor_name.clone()),
+            FilterField::Description | FilterField::DescriptionTo => {
+                CursorValue::String(self.descendant_description.clone())
+            }
+            FilterField::DescriptionFrom => CursorValue::String(self.ancestor_description.clone()),
+            FilterField::Namespaces | FilterField::NamespaceId | FilterField::NamespacesTo => {
+                CursorValue::Integer(self.descendant_namespace_id as i64)
+            }
+            FilterField::NamespacesFrom => CursorValue::Integer(self.ancestor_namespace_id as i64),
+            FilterField::ClassId | FilterField::Classes | FilterField::ClassTo => {
+                CursorValue::Integer(self.descendant_class_id as i64)
+            }
+            FilterField::ClassFrom => CursorValue::Integer(self.ancestor_class_id as i64),
+            FilterField::CreatedAt | FilterField::CreatedAtTo => {
+                CursorValue::DateTime(self.descendant_created_at)
+            }
+            FilterField::CreatedAtFrom => CursorValue::DateTime(self.ancestor_created_at),
+            FilterField::UpdatedAt | FilterField::UpdatedAtTo => {
+                CursorValue::DateTime(self.descendant_updated_at)
+            }
+            FilterField::UpdatedAtFrom => CursorValue::DateTime(self.ancestor_updated_at),
+            FilterField::Depth => CursorValue::Integer(self.depth as i64),
+            FilterField::Path => CursorValue::IntegerArray(self.path.clone()),
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for related objects",
+                    field
+                )));
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![
+            SortParam {
+                field: FilterField::Path,
+                descending: false,
+            },
+            SortParam {
+                field: FilterField::Id,
+                descending: false,
+            },
+        ]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        Self::default_sort()
+    }
+}
+
+impl CursorSqlMapping for RelatedObjectClosureRow {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
+        Ok(match field {
+            FilterField::Id | FilterField::ObjectTo => CursorSqlField {
+                column: "related_objects.descendant_object_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::ObjectFrom => CursorSqlField {
+                column: "related_objects.ancestor_object_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Name | FilterField::NameTo => CursorSqlField {
+                column: "related_objects.descendant_name",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::NameFrom => CursorSqlField {
+                column: "related_objects.ancestor_name",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::Description | FilterField::DescriptionTo => CursorSqlField {
+                column: "related_objects.descendant_description",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::DescriptionFrom => CursorSqlField {
+                column: "related_objects.ancestor_description",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::Namespaces | FilterField::NamespaceId | FilterField::NamespacesTo => {
+                CursorSqlField {
+                    column: "related_objects.descendant_namespace_id",
+                    sql_type: CursorSqlType::Integer,
+                    nullable: false,
+                }
+            }
+            FilterField::NamespacesFrom => CursorSqlField {
+                column: "related_objects.ancestor_namespace_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::ClassId | FilterField::Classes | FilterField::ClassTo => CursorSqlField {
+                column: "related_objects.descendant_class_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::ClassFrom => CursorSqlField {
+                column: "related_objects.ancestor_class_id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::CreatedAt | FilterField::CreatedAtTo => CursorSqlField {
+                column: "related_objects.descendant_created_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::CreatedAtFrom => CursorSqlField {
+                column: "related_objects.ancestor_created_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::UpdatedAt | FilterField::UpdatedAtTo => CursorSqlField {
+                column: "related_objects.descendant_updated_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::UpdatedAtFrom => CursorSqlField {
+                column: "related_objects.ancestor_updated_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Depth => CursorSqlField {
+                column: "related_objects.depth",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Path => CursorSqlField {
+                column: "related_objects.path",
                 sql_type: CursorSqlType::IntegerArray,
                 nullable: false,
             },
