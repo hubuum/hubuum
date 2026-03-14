@@ -2,8 +2,9 @@ use std::iter::IntoIterator;
 
 use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, SortParam};
 use crate::models::{
-    Group, HubuumClassExpanded, HubuumClassRelation, HubuumObject, HubuumObjectRelation, Namespace,
-    Permissions, RelatedObjectClosureRow, UnifiedSearchSpec, User, UserID,
+    ClassClosureRow, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
+    HubuumObjectRelation, Namespace, Permissions, RelatedObjectClosureRow, UnifiedSearchSpec, User,
+    UserID,
 };
 
 use crate::db::DbPool;
@@ -68,6 +69,46 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         C: BackendContext + ?Sized,
     {
         self.search_class_relations_from_backend(backend.db_pool(), query_options)
+            .await
+    }
+
+    async fn search_classes_related_to<C, K>(
+        &self,
+        backend: &C,
+        class: K,
+        query_options: QueryOptions,
+    ) -> Result<Vec<ClassClosureRow>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+        K: SelfAccessors<HubuumClass>,
+    {
+        self.search_classes_related_to_from_backend(backend.db_pool(), class, query_options)
+            .await
+    }
+
+    async fn search_class_relations_touching<C, K>(
+        &self,
+        backend: &C,
+        class: K,
+        query_options: QueryOptions,
+    ) -> Result<Vec<HubuumClassRelation>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+        K: SelfAccessors<HubuumClass>,
+    {
+        self.search_class_relations_touching_from_backend(backend.db_pool(), class, query_options)
+            .await
+    }
+
+    async fn search_class_relations_between_ids<C>(
+        &self,
+        backend: &C,
+        class_ids: &[i32],
+    ) -> Result<Vec<HubuumClassRelation>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.search_class_relations_between_ids_from_backend(backend.db_pool(), class_ids)
             .await
     }
 

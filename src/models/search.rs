@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use chrono::NaiveDateTime;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::str::FromStr;
 use tracing::debug;
@@ -21,39 +22,40 @@ use super::HubuumClassID;
 /// ## Returns
 ///
 pub fn parse_query_parameter(qs: &str) -> Result<QueryOptions, ApiError> {
+    let (query_options, _) = parse_query_parameter_with_passthrough(qs, &[])?;
+    Ok(query_options)
+}
+
+pub fn parse_query_parameter_with_passthrough(
+    qs: &str,
+    passthrough_keys: &[&str],
+) -> Result<(QueryOptions, HashMap<String, Vec<String>>), ApiError> {
     let mut filters = Vec::new();
     let mut sort = Vec::new();
     let mut limit = None;
     let mut cursor = None;
+    let mut passthrough = HashMap::<String, Vec<String>>::new();
+    let passthrough_keys = passthrough_keys.iter().copied().collect::<HashSet<_>>();
 
     if qs.is_empty() {
-        return Ok(QueryOptions {
-            filters,
-            sort,
-            limit,
-            cursor,
-        });
+        return Ok((
+            QueryOptions {
+                filters,
+                sort,
+                limit,
+                cursor,
+            },
+            passthrough,
+        ));
     }
 
-    for chunk in qs.split('&') {
-        let parts: Vec<_> = chunk.splitn(2, '=').collect();
-        if parts.len() != 2 {
-            return Err(ApiError::BadRequest(format!(
-                "Invalid query parameter: '{chunk}'"
-            )));
+    for (key, value) in decode_query_parameter_pairs(qs)? {
+        if passthrough_keys.contains(key.as_str()) {
+            passthrough.entry(key).or_default().push(value);
+            continue;
         }
 
-        let key = parts[0];
-        let value = match percent_encoding::percent_decode(parts[1].as_bytes()).decode_utf8() {
-            Ok(value) => value.to_string(),
-            Err(e) => {
-                return Err(ApiError::BadRequest(format!(
-                    "Invalid query parameter: '{chunk}', invalid value: {e}",
-                )));
-            }
-        };
-
-        match key {
+        match key.as_str() {
             // LIMIT: e.g. limit=10, for limiting the number of results
             "limit" => {
                 if limit.is_some() {
@@ -87,18 +89,48 @@ pub fn parse_query_parameter(qs: &str) -> Result<QueryOptions, ApiError> {
 
             // FILTER: e.g. field__op=value
             _ => {
-                let param = parse_single_filter(key, &value)?;
+                let param = parse_single_filter(&key, &value)?;
                 filters.push(param);
             }
         }
     }
 
-    Ok(QueryOptions {
-        filters,
-        sort,
-        limit,
-        cursor,
-    })
+    Ok((
+        QueryOptions {
+            filters,
+            sort,
+            limit,
+            cursor,
+        },
+        passthrough,
+    ))
+}
+
+fn decode_query_parameter_pairs(qs: &str) -> Result<Vec<(String, String)>, ApiError> {
+    let mut pairs = Vec::new();
+
+    for chunk in qs.split('&') {
+        let parts: Vec<_> = chunk.splitn(2, '=').collect();
+        if parts.len() != 2 {
+            return Err(ApiError::BadRequest(format!(
+                "Invalid query parameter: '{chunk}'"
+            )));
+        }
+
+        let key = parts[0].to_string();
+        let value = match percent_encoding::percent_decode(parts[1].as_bytes()).decode_utf8() {
+            Ok(value) => value.to_string(),
+            Err(e) => {
+                return Err(ApiError::BadRequest(format!(
+                    "Invalid query parameter: '{chunk}', invalid value: {e}",
+                )));
+            }
+        };
+
+        pairs.push((key, value));
+    }
+
+    Ok(pairs)
 }
 
 fn parse_single_filter(key: &str, value: &str) -> Result<ParsedQueryParam, ApiError> {
@@ -1885,6 +1917,46 @@ mod test {
         assert_eq!(query_options.sort[0].field, FilterField::Id);
         assert!(query_options.sort[0].descending);
         assert_eq!(query_options.cursor, Some("test-cursor".to_string()));
+    }
+
+    #[test]
+    fn test_parse_query_parameter_with_passthrough_extracts_endpoint_local_values() {
+        let (query_options, passthrough) = parse_query_parameter_with_passthrough(
+            "name__contains=alpha&ignore_classes=1,2&ignore_self_class=false&sort=id.asc",
+            &["ignore_classes", "ignore_self_class"],
+        )
+        .unwrap();
+
+        assert_eq!(query_options.filters.len(), 1);
+        assert_eq!(query_options.filters[0].field, FilterField::Name);
+        assert_eq!(
+            query_options.filters[0].operator,
+            SearchOperator::Contains { is_negated: false }
+        );
+        assert_eq!(query_options.filters[0].value, "alpha");
+        assert_eq!(query_options.sort.len(), 1);
+        assert_eq!(
+            passthrough.get("ignore_classes"),
+            Some(&vec!["1,2".to_string()])
+        );
+        assert_eq!(
+            passthrough.get("ignore_self_class"),
+            Some(&vec!["false".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_parse_query_parameter_with_passthrough_preserves_repeated_local_keys() {
+        let (_, passthrough) = parse_query_parameter_with_passthrough(
+            "ignore_self_class=true&ignore_self_class=false",
+            &["ignore_self_class"],
+        )
+        .unwrap();
+
+        assert_eq!(
+            passthrough.get("ignore_self_class"),
+            Some(&vec!["true".to_string(), "false".to_string()])
+        );
     }
 
     #[test]

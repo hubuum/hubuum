@@ -1088,6 +1088,24 @@
             }
           },
           {
+            "name": "ignore_classes",
+            "in": "query",
+            "description": "Comma-separated class IDs to exclude from the returned connected objects",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ignore_self_class",
+            "in": "query",
+            "description": "Exclude connected objects in the same class as the root object. Defaults to true",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
@@ -1389,14 +1407,14 @@
         ]
       }
     },
-    "/api/v1/classes/{class_id}/relations": {
+    "/api/v1/classes/{class_id}/related/classes": {
       "get": {
         "tags": [
           "classes"
         ],
-        "summary": "Get Api V1 Classes By Class Id Relations",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/relations. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
-        "operationId": "getApiV1ClassesByClassIdRelations",
+        "summary": "Get Api V1 Classes By Class Id Related Classes",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/related/classes. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1ClassesByClassIdRelatedClasses",
         "parameters": [
           {
             "name": "class_id",
@@ -1438,7 +1456,183 @@
         ],
         "responses": {
           "200": {
-            "description": "Direct class relations from class The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Classes connected to the class The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HubuumClassWithPath"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/related/graph": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Related Graph",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/related/graph.",
+        "operationId": "getApiV1ClassesByClassIdRelatedGraph",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Neighborhood graph for the class",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelatedClassGraph"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/related/relations": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Related Relations",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/related/relations. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1ClassesByClassIdRelatedRelations",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Direct relations touching the class The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
@@ -1494,7 +1688,9 @@
             "bearer_auth": []
           }
         ]
-      },
+      }
+    },
+    "/api/v1/classes/{class_id}/relations": {
       "post": {
         "tags": [
           "classes"
@@ -1557,210 +1753,6 @@
           },
           "409": {
             "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/classes/{class_id}/relations/transitive/": {
-      "get": {
-        "tags": [
-          "classes"
-        ],
-        "summary": "Get Api V1 Classes By Class Id Relations Transitive Trailing",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/relations/transitive/. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
-        "operationId": "getApiV1ClassesByClassIdRelationsTransitiveTrailing",
-        "parameters": [
-          {
-            "name": "class_id",
-            "in": "path",
-            "description": "Class ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "name": "sort",
-            "in": "query",
-            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Transitive class relations The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
-            "headers": {
-              "X-Next-Cursor": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/HubuumClassRelationTransitive"
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Class not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/classes/{class_id}/relations/transitive/class/{class_id_to}": {
-      "get": {
-        "tags": [
-          "classes"
-        ],
-        "summary": "Get Api V1 Classes By Class Id Relations Transitive Class By Class Id To",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/relations/transitive/class/{class_id_to}. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
-        "operationId": "getApiV1ClassesByClassIdRelationsTransitiveClassByClassIdTo",
-        "parameters": [
-          {
-            "name": "class_id",
-            "in": "path",
-            "description": "From class ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "class_id_to",
-            "in": "path",
-            "description": "To class ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "name": "sort",
-            "in": "query",
-            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Transitive relations between classes The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
-            "headers": {
-              "X-Next-Cursor": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/HubuumClassRelationTransitive"
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Class not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -6441,36 +6433,51 @@
           }
         }
       },
-      "HubuumClassRelationTransitive": {
+      "HubuumClassWithPath": {
         "type": "object",
         "required": [
-          "ancestor_class_id",
-          "descendant_class_id",
-          "depth",
+          "id",
+          "name",
+          "namespace_id",
+          "validate_schema",
+          "description",
+          "created_at",
+          "updated_at",
           "path"
         ],
         "properties": {
-          "ancestor_class_id": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
             "type": "integer",
             "format": "int32"
           },
-          "depth": {
-            "type": "integer",
-            "format": "int32"
+          "json_schema": {},
+          "name": {
+            "type": "string"
           },
-          "descendant_class_id": {
+          "namespace_id": {
             "type": "integer",
             "format": "int32"
           },
           "path": {
             "type": "array",
             "items": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int32"
             }
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "validate_schema": {
+            "type": "boolean"
           }
         }
       },
@@ -7565,6 +7572,27 @@
           "UpdateTemplate",
           "DeleteTemplate"
         ]
+      },
+      "RelatedClassGraph": {
+        "type": "object",
+        "required": [
+          "classes",
+          "relations"
+        ],
+        "properties": {
+          "classes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HubuumClassWithPath"
+            }
+          },
+          "relations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HubuumClassRelation"
+            }
+          }
+        }
       },
       "RelatedObjectGraph": {
         "type": "object",

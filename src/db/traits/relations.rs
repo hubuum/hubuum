@@ -30,6 +30,7 @@ pub trait SelfRelationsBackend {
         pool: &DbPool,
     ) -> Result<Vec<HubuumClassRelation>, ApiError>;
 
+    #[allow(dead_code)]
     async fn search_relations_from_backend(
         &self,
         pool: &DbPool,
@@ -245,6 +246,7 @@ where
     })
 }
 
+#[allow(dead_code)]
 async fn fetch_relations_paginated<C1, C2>(
     pool: &DbPool,
     from: &C1,

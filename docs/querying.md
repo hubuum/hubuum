@@ -181,10 +181,16 @@ Some list endpoints derive part of the query from the path.
 
 Examples:
 
-- `/api/v1/classes/{class_id}/relations` always constrains the result to the class in the path
+- `/api/v1/classes/{class_id}/related/classes` always constrains the result to classes connected to the class in the path
+- `/api/v1/classes/{class_id}/related/relations` always constrains the result to direct relations touching the class in the path
 - `/api/v1/classes/{class_id}/` always constrains the result to objects in that class
 - `/api/v1/classes/{class_id}/objects/{object_id}/related/objects` always constrains the result to objects connected to the object in the path
 - `/api/v1/classes/{class_id}/objects/{object_id}/related/relations` always constrains the result to direct relations touching the object in the path
+
+Some contextual endpoints also accept endpoint-specific query options in addition to the shared filter grammar:
+
+- `/api/v1/classes/{class_id}/objects/{object_id}/related/objects` supports `ignore_classes` with a comma-separated class ID list
+- `/api/v1/classes/{class_id}/objects/{object_id}/related/objects` supports `ignore_self_class=true|false` and defaults it to `true`
 
 Permission checks are also applied before returning results, so the effective result set is always the intersection of:
 
@@ -199,7 +205,7 @@ The shared query interface is currently used by:
 - user lists, user tokens, and user groups
 - group lists and group members
 - namespace lists and namespace permission listings
-- class lists, class permissions, class relations, transitive relations, and objects in class
+- class lists, class permissions, connected-class listings, direct class-relation listings, and objects in class
 - global class relation and object relation lists
 - connected-object listings
 - direct related-relation listings

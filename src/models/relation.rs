@@ -1,10 +1,10 @@
 use diesel::prelude::*;
-use diesel::sql_types::{Array, Integer, Jsonb, Nullable, Text, Timestamp};
+use diesel::sql_types::{Array, Bool, Integer, Jsonb, Nullable, Text, Timestamp};
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::models::HubuumObjectWithPath;
+use crate::models::{HubuumClassWithPath, HubuumObjectWithPath};
 use crate::{
     schema::hubuumclass_closure, schema::hubuumclass_relation, schema::hubuumobject_relation,
 };
@@ -102,25 +102,43 @@ pub struct HubuumObjectTransitiveLink {
     path: Vec<i32>,
 }
 
-#[derive(Debug, Queryable, Serialize, Deserialize)]
+#[derive(Debug, Queryable, QueryableByName, Serialize, Deserialize, Clone)]
 pub struct ClassClosureRow {
+    #[diesel(sql_type = Integer)]
     pub ancestor_class_id: i32,
+    #[diesel(sql_type = Integer)]
     pub descendant_class_id: i32,
+    #[diesel(sql_type = Integer)]
     pub depth: i32,
+    #[diesel(sql_type = Array<Integer>)]
     pub path: Vec<i32>,
+    #[diesel(sql_type = Text)]
     pub ancestor_name: String,
+    #[diesel(sql_type = Text)]
     pub descendant_name: String,
+    #[diesel(sql_type = Integer)]
     pub ancestor_namespace_id: i32,
+    #[diesel(sql_type = Integer)]
     pub descendant_namespace_id: i32,
+    #[diesel(sql_type = Nullable<Jsonb>)]
     pub ancestor_json_schema: Option<serde_json::Value>,
+    #[diesel(sql_type = Nullable<Jsonb>)]
     pub descendant_json_schema: Option<serde_json::Value>,
+    #[diesel(sql_type = Bool)]
     pub ancestor_validate_schema: bool,
+    #[diesel(sql_type = Bool)]
     pub descendant_validate_schema: bool,
+    #[diesel(sql_type = Text)]
     pub ancestor_description: String,
+    #[diesel(sql_type = Text)]
     pub descendant_description: String,
+    #[diesel(sql_type = Timestamp)]
     pub ancestor_created_at: chrono::NaiveDateTime,
+    #[diesel(sql_type = Timestamp)]
     pub descendant_created_at: chrono::NaiveDateTime,
+    #[diesel(sql_type = Timestamp)]
     pub ancestor_updated_at: chrono::NaiveDateTime,
+    #[diesel(sql_type = Timestamp)]
     pub descendant_updated_at: chrono::NaiveDateTime,
 }
 
@@ -190,6 +208,12 @@ pub struct RelatedObjectClosureRow {
 pub struct RelatedObjectGraph {
     pub objects: Vec<HubuumObjectWithPath>,
     pub relations: Vec<HubuumObjectRelation>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
+pub struct RelatedClassGraph {
+    pub classes: Vec<HubuumClassWithPath>,
+    pub relations: Vec<HubuumClassRelation>,
 }
 
 #[allow(dead_code)]

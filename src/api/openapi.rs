@@ -4,7 +4,7 @@ use crate::api::v1::handlers::{
 };
 use crate::models::{
     ClassKey, Group, GroupKey, GroupPermission, HubuumClass, HubuumClassExpanded,
-    HubuumClassRelation, HubuumClassRelationTransitive, HubuumObject, HubuumObjectRelation,
+    HubuumClassRelation, HubuumClassWithPath, HubuumObject, HubuumObjectRelation,
     HubuumObjectWithPath, ImportAtomicity, ImportClassInput, ImportClassRelationInput,
     ImportCollisionPolicy, ImportGraph, ImportMode, ImportNamespaceInput,
     ImportNamespacePermissionInput, ImportObjectInput, ImportObjectRelationInput,
@@ -12,9 +12,9 @@ use crate::models::{
     Namespace, NamespaceKey, NewGroup, NewHubuumClass, NewHubuumClassRelation,
     NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation,
     NewNamespaceWithAssignee, NewReportTemplate, NewUser, ObjectKey, ObjectsByClass, Permission,
-    Permissions, RelatedObjectGraph, ReportContentType, ReportJsonResponse, ReportLimits,
-    ReportMeta, ReportMissingDataPolicy, ReportOutputRequest, ReportRequest, ReportScope,
-    ReportScopeKind, ReportTemplate, ReportTemplateID, ReportWarning, TaskDetails,
+    Permissions, RelatedClassGraph, RelatedObjectGraph, ReportContentType, ReportJsonResponse,
+    ReportLimits, ReportMeta, ReportMissingDataPolicy, ReportOutputRequest, ReportRequest,
+    ReportScope, ReportScopeKind, ReportTemplate, ReportTemplateID, ReportWarning, TaskDetails,
     TaskEventResponse, TaskKind, TaskLinks, TaskProgress, TaskResponse, TaskStatus,
     UnifiedSearchBatchResponse, UnifiedSearchDoneEvent, UnifiedSearchErrorEvent, UnifiedSearchKind,
     UnifiedSearchResponse, UnifiedSearchStartedEvent, UpdateGroup, UpdateHubuumClass,
@@ -105,11 +105,11 @@ use utoipa::{Modify, OpenApi, ToSchema};
         classes::update_class,
         classes::delete_class,
         classes::get_class_permissions,
-        classes::get_class_relations,
+        classes::get_related_classes,
         classes::create_class_relation,
         classes::delete_class_relation,
-        classes::get_class_relations_transitive,
-        classes::get_class_relations_transitive_to_class,
+        classes::get_related_class_relations,
+        classes::get_related_class_graph,
         classes::get_objects_in_class,
         classes::create_object_in_class,
         classes::get_object_in_class,
@@ -147,10 +147,10 @@ use utoipa::{Modify, OpenApi, ToSchema};
             GroupPermission,
             HubuumClass,
             HubuumClassExpanded,
+            HubuumClassWithPath,
             NewHubuumClass,
             UpdateHubuumClass,
             HubuumClassRelation,
-            HubuumClassRelationTransitive,
             NewHubuumClassRelation,
             NewHubuumClassRelationFromClass,
             HubuumObject,
@@ -158,6 +158,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             UpdateHubuumObject,
             HubuumObjectWithPath,
             HubuumObjectRelation,
+            RelatedClassGraph,
             RelatedObjectGraph,
             NewHubuumObjectRelation,
             TaskKind,
@@ -361,9 +362,8 @@ fn is_cursor_paginated_get(path: &str, method: &str) -> bool {
                 | "/api/v1/relations/objects"
                 | "/api/v1/classes"
                 | "/api/v1/classes/{class_id}/permissions"
-                | "/api/v1/classes/{class_id}/relations"
-                | "/api/v1/classes/{class_id}/relations/transitive/"
-                | "/api/v1/classes/{class_id}/relations/transitive/class/{class_id_to}"
+                | "/api/v1/classes/{class_id}/related/classes"
+                | "/api/v1/classes/{class_id}/related/relations"
                 | "/api/v1/classes/{class_id}/"
                 | "/api/v1/classes/{class_id}/objects/{object_id}/related/objects"
                 | "/api/v1/classes/{class_id}/objects/{object_id}/related/relations"
@@ -666,10 +666,11 @@ mod tests {
             "/api/v1/classes",
             "/api/v1/classes/{class_id}",
             "/api/v1/classes/{class_id}/permissions",
+            "/api/v1/classes/{class_id}/related/classes",
+            "/api/v1/classes/{class_id}/related/relations",
+            "/api/v1/classes/{class_id}/related/graph",
             "/api/v1/classes/{class_id}/relations",
             "/api/v1/classes/{class_id}/relations/{relation_id}",
-            "/api/v1/classes/{class_id}/relations/transitive/",
-            "/api/v1/classes/{class_id}/relations/transitive/class/{class_id_to}",
             "/api/v1/classes/{class_id}/",
             "/api/v1/classes/{class_id}/{object_id}",
             "/api/v1/classes/{class_id}/objects/{object_id}/related/objects",
