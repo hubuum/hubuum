@@ -6,7 +6,7 @@ use utoipa::ToSchema;
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::schema::{import_task_results, task_events, tasks};
-use crate::traits::{CursorPaginated, CursorValue};
+use crate::traits::{CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -337,6 +337,105 @@ impl From<ImportTaskResultRecord> for ImportTaskResultResponse {
             details: value.details,
             created_at: value.created_at,
         }
+    }
+}
+
+impl CursorPaginated for TaskResponse {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(
+            field,
+            FilterField::Id
+                | FilterField::Kind
+                | FilterField::Status
+                | FilterField::SubmittedBy
+                | FilterField::CreatedAt
+                | FilterField::StartedAt
+                | FilterField::FinishedAt
+        )
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        match field {
+            FilterField::Id => Ok(CursorValue::Integer(self.id as i64)),
+            FilterField::Kind => Ok(CursorValue::String(self.kind.as_str().to_string())),
+            FilterField::Status => Ok(CursorValue::String(self.status.as_str().to_string())),
+            FilterField::SubmittedBy => Ok(match self.submitted_by {
+                Some(value) => CursorValue::Integer(value as i64),
+                None => CursorValue::Null,
+            }),
+            FilterField::CreatedAt => Ok(CursorValue::DateTime(self.created_at)),
+            FilterField::StartedAt => Ok(match self.started_at {
+                Some(value) => CursorValue::DateTime(value),
+                None => CursorValue::Null,
+            }),
+            FilterField::FinishedAt => Ok(match self.finished_at {
+                Some(value) => CursorValue::DateTime(value),
+                None => CursorValue::Null,
+            }),
+            _ => Err(ApiError::BadRequest(format!(
+                "Unsupported sort field '{}' for tasks",
+                field
+            ))),
+        }
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        Self::default_sort()
+    }
+}
+
+impl CursorSqlMapping for TaskResponse {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorSqlField {
+                column: "tasks.id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Kind => CursorSqlField {
+                column: "tasks.kind",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::Status => CursorSqlField {
+                column: "tasks.status",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::SubmittedBy => CursorSqlField {
+                column: "tasks.submitted_by",
+                sql_type: CursorSqlType::Integer,
+                nullable: true,
+            },
+            FilterField::CreatedAt => CursorSqlField {
+                column: "tasks.created_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::StartedAt => CursorSqlField {
+                column: "tasks.started_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: true,
+            },
+            FilterField::FinishedAt => CursorSqlField {
+                column: "tasks.finished_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: true,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for tasks",
+                    field
+                )));
+            }
+        })
     }
 }
 

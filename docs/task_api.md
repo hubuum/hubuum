@@ -11,6 +11,7 @@ The current architecture is:
 
 Endpoints:
 
+- `GET /api/v1/tasks`
 - `GET /api/v1/tasks/{task_id}`
 - `GET /api/v1/tasks/{task_id}/events`
 
@@ -138,6 +139,74 @@ Example for an import:
 
 For a non-import task kind, the import-specific links may be `null`.
 
+## List tasks
+
+`GET /api/v1/tasks`
+
+This returns a paginated list of tasks visible to the caller.
+
+Visibility rules:
+
+- admins see all tasks
+- non-admin users automatically see only their own tasks; no `submitted_by` parameter is needed or effective
+
+Example response:
+
+```json
+[
+  {
+    "id": 13,
+    "kind": "import",
+    "status": "queued",
+    "submitted_by": 7,
+    "created_at": "2026-03-07T10:20:00",
+    "started_at": null,
+    "finished_at": null,
+    "progress": {
+      "total_items": 3,
+      "processed_items": 0,
+      "success_items": 0,
+      "failed_items": 0
+    },
+    "summary": null,
+    "request_redacted_at": null,
+    "links": {
+      "task": "/api/v1/tasks/13",
+      "events": "/api/v1/tasks/13/events",
+      "import": "/api/v1/imports/13",
+      "import_results": "/api/v1/imports/13/results"
+    },
+    "details": {
+      "import": {
+        "results_url": "/api/v1/imports/13/results"
+      }
+    }
+  }
+]
+```
+
+Pagination:
+
+- supports cursor-based pagination using `limit`, `sort`, and `cursor`; when following `X-Next-Cursor`, keep the same `sort` and filters
+- response may include `X-Next-Cursor` when more results are available
+
+Sorting:
+
+- supported sort fields: `id`, `kind`, `status`, `submitted_by`, `created_at`, `started_at`, `finished_at`
+- multiple sort fields are supported with comma-separated order, for example `sort=kind.asc,id.desc`
+
+Filters:
+
+- `kind` (optional): `import`, `report`, `export`, `reindex`
+- `status` (optional): `queued`, `validating`, `running`, `succeeded`, `failed`, `partially_succeeded`, `cancelled`
+- `submitted_by` (optional): admin-only filter by user ID; non-admin callers are always restricted to their own tasks regardless of this parameter
+
+Example:
+
+```text
+GET /api/v1/tasks?kind=import&status=running&submitted_by=7&sort=id.desc&limit=25
+```
+
 ### Details
 
 `details` is reserved for typed task-kind-specific data.
@@ -155,6 +224,8 @@ Current example:
 ## Task events
 
 `GET /api/v1/tasks/{task_id}/events`
+
+- supports cursor pagination via `limit`, `sort`, and `cursor`
 
 This returns append-only lifecycle and progress history for the task.
 

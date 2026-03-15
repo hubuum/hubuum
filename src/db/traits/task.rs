@@ -2,12 +2,13 @@ use chrono::Utc;
 use diesel::prelude::*;
 use tracing::info;
 
+use crate::apply_query_options;
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
 use crate::models::{
     ImportTaskResultRecord, NewImportTaskResultRecord, NewTaskEventRecord, NewTaskRecord,
-    TaskEventRecord, TaskKind, TaskRecord, TaskResultCounts, TaskStatus,
+    TaskEventRecord, TaskKind, TaskRecord, TaskResponse, TaskResultCounts, TaskStatus,
 };
 use crate::pagination::{CursorValue, decode_cursor_values, page_limits_or_defaults};
 
@@ -65,6 +66,36 @@ pub async fn find_task_by_idempotency(
             .filter(idempotency_key.eq(key))
             .first::<TaskRecord>(conn)
             .optional()
+    })
+}
+
+pub async fn list_tasks(
+    pool: &DbPool,
+    submitted_by_filter: Option<i32>,
+    kind_filter: Option<&str>,
+    status_filter: Option<&str>,
+    query_options: &QueryOptions,
+) -> Result<Vec<TaskRecord>, ApiError> {
+    use crate::schema::tasks::dsl::{kind, status, submitted_by, tasks};
+
+    with_connection(pool, |conn| -> Result<Vec<TaskRecord>, ApiError> {
+        let mut query = tasks.into_boxed();
+
+        if let Some(submitter_id) = submitted_by_filter {
+            query = query.filter(submitted_by.eq(Some(submitter_id)));
+        }
+
+        if let Some(task_kind) = kind_filter {
+            query = query.filter(kind.eq(task_kind));
+        }
+
+        if let Some(task_status) = status_filter {
+            query = query.filter(status.eq(task_status));
+        }
+
+        apply_query_options!(query, query_options, TaskResponse);
+
+        Ok(query.load::<TaskRecord>(conn)?)
     })
 }
 

@@ -10,8 +10,11 @@ Endpoints:
 
 Related generic task endpoints:
 
+- `GET /api/v1/tasks`
 - `GET /api/v1/tasks/{task_id}`
 - `GET /api/v1/tasks/{task_id}/events`
+
+`GET /api/v1/tasks` can be used to list import and other task records visible to the caller. Non-admin users only see their own tasks; admins can list all tasks and filter by `kind`, `status`, and `submitted_by`.
 
 Import results are intentionally not exposed through a generic shared task-result endpoint. They live behind the import-specific typed result endpoint:
 

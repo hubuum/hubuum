@@ -89,6 +89,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         search::get_search,
         search::stream_search,
         reports::run_report,
+        tasks::get_tasks,
         tasks::get_task,
         tasks::get_task_events,
         imports::create_import,
@@ -357,6 +358,7 @@ fn is_cursor_paginated_get(path: &str, method: &str) -> bool {
                 | "/api/v1/namespaces/{namespace_id}/permissions"
                 | "/api/v1/namespaces/{namespace_id}/permissions/user/{user_id}"
                 | "/api/v1/namespaces/{namespace_id}/has_permissions/{permission}"
+                | "/api/v1/tasks"
                 | "/api/v1/templates"
                 | "/api/v1/relations/classes"
                 | "/api/v1/relations/objects"
@@ -655,6 +657,7 @@ mod tests {
             "/api/v1/reports",
             "/api/v1/search",
             "/api/v1/search/stream",
+            "/api/v1/tasks",
             "/api/v1/tasks/{task_id}",
             "/api/v1/tasks/{task_id}/events",
             "/api/v1/templates",
