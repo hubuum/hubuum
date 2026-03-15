@@ -3374,7 +3374,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Active tokens for user The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Active token metadata for user (token values are obfuscated previews) The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {

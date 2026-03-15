@@ -17,6 +17,7 @@ use crate::errors::ApiError;
 pub const DEFAULT_PAGE_LIMIT: usize = 100;
 pub const MAX_PAGE_LIMIT: usize = 250;
 pub const DEFAULT_TASK_POLL_INTERVAL_MS: u64 = 200;
+pub const DEFAULT_TOKEN_LIFETIME_HOURS: i64 = 24;
 
 fn detected_cpu_count() -> usize {
     std::thread::available_parallelism()
@@ -104,6 +105,14 @@ pub struct AppConfig {
     #[clap(long, env = "HUBUUM_DB_POOL_SIZE", default_value_t = 10)]
     pub db_pool_size: u32,
 
+    /// Token lifetime in hours
+    #[clap(
+        long,
+        env = "HUBUUM_TOKEN_LIFETIME_HOURS",
+        default_value_t = DEFAULT_TOKEN_LIFETIME_HOURS
+    )]
+    pub token_lifetime_hours: i64,
+
     /// Default number of items returned by cursor-paginated list endpoints
     #[clap(
         long,
@@ -147,7 +156,7 @@ pub struct AppConfig {
     pub tls_backend: Option<TlsBackend>,
 
     /// Trust proxy IP headers (X-Forwarded-For/Forwarded). If false, use peer address only.
-    #[clap(long, default_value = "true", env = "HUBUUM_TRUST_IP_HEADERS")]
+    #[clap(long, default_value = "false", env = "HUBUUM_TRUST_IP_HEADERS")]
     pub trust_ip_headers: bool,
 
     /// Whitelist of client IPs or CIDRs ("*" allows all)
@@ -182,6 +191,12 @@ impl AppConfig {
         if self.db_pool_size == 0 {
             return Err(ApiError::BadRequest(
                 "db_pool_size must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.token_lifetime_hours == 0 {
+            return Err(ApiError::BadRequest(
+                "token_lifetime_hours must be greater than 0".to_string(),
             ));
         }
 
@@ -288,6 +303,9 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         db_pool_size: env_or_default("HUBUUM_DB_POOL_SIZE", "2")
             .parse()
             .unwrap_or(5),
+        token_lifetime_hours: env_or_default("HUBUUM_TOKEN_LIFETIME_HOURS", "24")
+            .parse()
+            .unwrap_or(DEFAULT_TOKEN_LIFETIME_HOURS),
         default_page_limit: env_or_default("HUBUUM_DEFAULT_PAGE_LIMIT", "100")
             .parse()
             .unwrap_or(DEFAULT_PAGE_LIMIT),
@@ -299,9 +317,9 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         tls_key_path: env_or_default_opt("HUBUUM_TLS_KEY_PATH", None),
         tls_key_passphrase: env_or_default_opt("HUBUUM_TLS_KEY_PASSPHRASE", None),
         tls_backend: env_or_default_tls_backend("HUBUUM_TLS_BACKEND"),
-        trust_ip_headers: env_or_default("HUBUUM_TRUST_IP_HEADERS", "true")
+        trust_ip_headers: env_or_default("HUBUUM_TRUST_IP_HEADERS", "false")
             .parse()
-            .unwrap_or(true),
+            .unwrap_or(false),
         client_allowlist: env_or_default_client_allowlist(
             "HUBUUM_CLIENT_ALLOWLIST",
             "127.0.0.1,::1",
@@ -422,8 +440,8 @@ mod tests {
     use clap::Parser;
 
     use super::{
-        AppConfig, DEFAULT_PAGE_LIMIT, DEFAULT_TASK_POLL_INTERVAL_MS, MAX_PAGE_LIMIT,
-        TEST_ENV_LOCK, TlsBackend, default_actix_workers, default_task_workers,
+        AppConfig, DEFAULT_PAGE_LIMIT, DEFAULT_TASK_POLL_INTERVAL_MS, DEFAULT_TOKEN_LIFETIME_HOURS,
+        MAX_PAGE_LIMIT, TEST_ENV_LOCK, TlsBackend, default_actix_workers, default_task_workers,
         get_config_from_env,
     };
 
@@ -566,5 +584,42 @@ mod tests {
         assert_eq!(loaded.actix_workers, default_actix_workers());
         assert_eq!(loaded.task_workers, default_task_workers());
         assert_eq!(loaded.task_poll_interval_ms, DEFAULT_TASK_POLL_INTERVAL_MS);
+    }
+
+    #[test]
+    fn token_lifetime_hours_are_parsed_from_env() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_TOKEN_LIFETIME_HOURS", Some("48"));
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(parsed.token_lifetime_hours, 48);
+        assert_eq!(loaded.token_lifetime_hours, 48);
+    }
+
+    #[test]
+    fn token_lifetime_hours_defaults_when_env_var_is_unset() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_TOKEN_LIFETIME_HOURS", None);
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(parsed.token_lifetime_hours, DEFAULT_TOKEN_LIFETIME_HOURS);
+        assert_eq!(loaded.token_lifetime_hours, DEFAULT_TOKEN_LIFETIME_HOURS);
+    }
+
+    #[test]
+    fn token_lifetime_hours_are_validated() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_TOKEN_LIFETIME_HOURS", Some("0"));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "token_lifetime_hours must be greater than 0"
+        );
     }
 }

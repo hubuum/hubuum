@@ -90,7 +90,7 @@ pub async fn create_user(
         ("user_id" = i32, Path, description = "User ID")
     ),
     responses(
-        (status = 200, description = "Active tokens for user", body = [UserToken]),
+        (status = 200, description = "Active token metadata for user (token values are obfuscated previews)", body = [UserToken]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "User not found", body = ApiErrorResponse)
     )
@@ -114,7 +114,11 @@ pub async fn get_user_tokens(
 
     let search_params = prepare_db_pagination::<UserToken>(&params)?;
     let valid_tokens = user.tokens_paginated(&pool, &search_params).await?;
-    paginated_json_response(valid_tokens, StatusCode::OK, &params)
+    let safe_tokens = valid_tokens
+        .into_iter()
+        .map(UserToken::obfuscated)
+        .collect::<Vec<_>>();
+    paginated_json_response(safe_tokens, StatusCode::OK, &params)
 }
 
 #[utoipa::path(

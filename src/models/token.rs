@@ -3,6 +3,7 @@ use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use diesel::sql_types::{Integer, Text, Timestamp};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use utoipa::ToSchema;
 
 use crate::db::traits::user::DeleteTokenRecord;
@@ -24,6 +25,15 @@ pub struct UserToken {
     pub user_id: i32,
     #[diesel(sql_type = Timestamp)]
     pub issued: NaiveDateTime,
+}
+
+impl UserToken {
+    pub fn obfuscated(self) -> Self {
+        Self {
+            token: Token(self.token).obfuscate(),
+            ..self
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -52,6 +62,17 @@ impl Token {
         C: BackendContext + ?Sized,
     {
         self.delete_token_record(backend.db_pool()).await
+    }
+
+    pub fn storage_hash(&self) -> String {
+        Self::storage_hash_from_raw(&self.0)
+    }
+
+    pub fn storage_hash_from_raw(raw_token: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(raw_token.as_bytes());
+        let digest = hasher.finalize();
+        format!("{digest:x}")
     }
 }
 

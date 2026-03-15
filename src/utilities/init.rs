@@ -90,9 +90,9 @@ pub async fn init(pool: DbPool) -> InitResult {
     }
 
     warn!(
-        message = "Created admin user",
+        message = "Created default admin user; reset password with hubuum-admin",
         username = adm_user.username,
-        password = default_password
+        reset_command = "hubuum-admin --reset-password admin"
     );
     Ok(())
 }

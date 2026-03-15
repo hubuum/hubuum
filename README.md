@@ -63,8 +63,13 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/iam/users
 
 - The default client allowlist is loopback-only (`127.0.0.1,::1`).
 - In containers, inbound clients usually do not appear as loopback, so requests may be rejected unless you set `HUBUUM_CLIENT_ALLOWLIST`.
+- `HUBUUM_TRUST_IP_HEADERS` defaults to `false`; only enable it behind trusted reverse proxies.
 - For local/dev container setups, `HUBUUM_CLIENT_ALLOWLIST=*` is common.
 - For production, prefer explicit CIDRs/IPs instead of `*`.
+
+### Token Lifetime
+
+- `HUBUUM_TOKEN_LIFETIME_HOURS` controls bearer token lifetime and defaults to `24`.
 
 ### Container Image Variants
 

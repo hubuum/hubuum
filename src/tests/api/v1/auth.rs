@@ -98,12 +98,13 @@ mod tests {
             .unwrap()
             .to_string();
 
-        // Verify token in database and that it belongs to the user
-        use crate::models::token::UserToken;
+        // Verify the token hash in database and that it belongs to the user
+        use crate::models::token::{Token, UserToken};
         use crate::schema::tokens::dsl::*;
+        let token_hash = Token::storage_hash_from_raw(&token_value);
         let token_exists = with_connection(&pool, |conn| {
             tokens
-                .filter(token.eq(&token_value))
+                .filter(token.eq(&token_hash))
                 .filter(user_id.eq(new_user.id))
                 .first::<UserToken>(conn)
         })
@@ -362,6 +363,8 @@ mod tests {
 
     #[actix_web::test]
     async fn test_logout_specific_token() {
+        use crate::models::token::Token;
+
         let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
@@ -372,16 +375,18 @@ mod tests {
             Err(e) => panic!("Failed to add token to admin: {e:?}"),
         };
 
+        let mut issued_tokens = Vec::new();
         for _ in 0..3 {
-            let _ = match new_user.create_token(&pool).await {
+            let issued = match new_user.create_token(&pool).await {
                 Ok(ret_token) => ret_token.get_token(),
                 Err(e) => panic!("Failed to add token to user: {e:?}"),
             };
+            issued_tokens.push(issued);
         }
 
         // Verify that we have three tokens for the user
         let user_tokens = new_user.tokens(&pool).await.unwrap();
-        let token = user_tokens[0].token.clone();
+        let token = issued_tokens[0].clone();
         assert_eq!(user_tokens.len(), 3, "User has wrong number of tokens");
 
         let app = test::init_service(
@@ -427,7 +432,8 @@ mod tests {
         let user_tokens = new_user.tokens(&pool).await.unwrap();
         assert_eq!(user_tokens.len(), 2, "User has wrong number of tokens");
         let user_token_strings: Vec<String> = user_tokens.iter().map(|t| t.token.clone()).collect();
-        assert_not_contains!(&user_token_strings, &token);
+        let deleted_token_hash = Token::storage_hash_from_raw(&token);
+        assert_not_contains!(&user_token_strings, &deleted_token_hash);
         new_user.delete(&pool).await.unwrap();
         admin_user.delete(&pool).await.unwrap();
     }

@@ -25,10 +25,10 @@ use crate::db::traits::task_import::{
     lookup_objects_by_class_and_names,
 };
 use crate::models::{
-    ClassKey, ImportAtomicity, ImportClassInput, ImportClassRelationInput,
-    ImportCollisionPolicy, ImportMode, ImportNamespaceInput, ImportNamespacePermissionInput,
-    ImportObjectInput, ImportObjectRelationInput, ImportPermissionPolicy, ImportRequest, Namespace,
-    NamespaceID, NamespaceKey, ObjectKey, Permissions, User,
+    ClassKey, ImportAtomicity, ImportClassInput, ImportClassRelationInput, ImportCollisionPolicy,
+    ImportMode, ImportNamespaceInput, ImportNamespacePermissionInput, ImportObjectInput,
+    ImportObjectRelationInput, ImportPermissionPolicy, ImportRequest, Namespace, NamespaceID,
+    NamespaceKey, ObjectKey, Permissions, User,
 };
 use crate::traits::GroupMemberships;
 
@@ -140,9 +140,14 @@ async fn preload_namespaces_for_class_keys(
 ) -> Result<(), String> {
     let names = class_keys
         .iter()
-        .filter_map(|key| key.namespace_key.as_ref().map(|namespace| namespace.name.clone()))
+        .filter_map(|key| {
+            key.namespace_key
+                .as_ref()
+                .map(|namespace| namespace.name.clone())
+        })
         .filter(|name| {
-            !state.namespaces_by_name.contains_key(name) && !state.missing_namespace_names.contains(name)
+            !state.namespaces_by_name.contains_key(name)
+                && !state.missing_namespace_names.contains(name)
         })
         .collect::<HashSet<_>>()
         .into_iter()
@@ -181,10 +186,14 @@ async fn preload_existing_classes(
             continue;
         };
         if !namespace.exists_in_db {
-            state.missing_class_keys.insert((namespace.id, key.name.clone()));
+            state
+                .missing_class_keys
+                .insert((namespace.id, key.name.clone()));
             continue;
         }
-        if state.classes_by_key.contains_key(&(namespace.id, key.name.clone()))
+        if state
+            .classes_by_key
+            .contains_key(&(namespace.id, key.name.clone()))
             || state
                 .missing_class_keys
                 .contains(&(namespace.id, key.name.clone()))
@@ -270,10 +279,14 @@ async fn preload_existing_objects(
         };
 
         if !class.exists_in_db {
-            state.missing_object_keys.insert((class.id, key.name.clone()));
+            state
+                .missing_object_keys
+                .insert((class.id, key.name.clone()));
             continue;
         }
-        if state.objects_by_key.contains_key(&(class.id, key.name.clone()))
+        if state
+            .objects_by_key
+            .contains_key(&(class.id, key.name.clone()))
             || state
                 .missing_object_keys
                 .contains(&(class.id, key.name.clone()))
@@ -714,13 +727,13 @@ pub(super) async fn plan_namespace(
         if !is_import_admin(pool, user, state)
             .await
             .map_err(|err| PlanningFailure {
-            kind: FailureKind::Permission,
-            item: planned_result(
-                "namespace",
-                "create",
-                input.ref_.clone(),
-                Some(input.name.clone()),
-            ),
+                kind: FailureKind::Permission,
+                item: planned_result(
+                    "namespace",
+                    "create",
+                    input.ref_.clone(),
+                    Some(input.name.clone()),
+                ),
                 message: err,
             })?
         {
@@ -1352,13 +1365,14 @@ pub(super) async fn plan_object_relation(
     })?;
 
     let class_pair = normalize_pair(from_object.class_id, to_object.class_id);
-    let class_relation_exists = class_relation_exists_cached(pool, state, class_pair.0, class_pair.1)
-        .await
-        .map_err(|message| PlanningFailure {
-            kind: FailureKind::Runtime,
-            item: planned_result("object_relation", "lookup", input.ref_.clone(), None),
-            message,
-        })?;
+    let class_relation_exists =
+        class_relation_exists_cached(pool, state, class_pair.0, class_pair.1)
+            .await
+            .map_err(|message| PlanningFailure {
+                kind: FailureKind::Runtime,
+                item: planned_result("object_relation", "lookup", input.ref_.clone(), None),
+                message,
+            })?;
 
     if !class_relation_exists {
         return Err(PlanningFailure {

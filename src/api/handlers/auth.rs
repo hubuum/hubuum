@@ -175,7 +175,7 @@ pub async fn logout_token(
             warn!(
                 message = "Logout of token failed",
                 token_used = token.obfuscate(),
-                token_target = user_access.token.get_token(),
+                token_target = user_access.token.obfuscate(),
                 user_id = user_access.user.id,
                 error = e.to_string()
             );

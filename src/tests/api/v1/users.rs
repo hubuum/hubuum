@@ -333,6 +333,7 @@ mod tests {
         let tokens: Vec<crate::models::UserToken> = test::read_body_json(resp).await;
 
         assert_eq!(tokens.len(), 1);
+        assert!(tokens[0].token.contains("..."));
         assert!(next_cursor.is_some());
 
         let resp = get_request(
@@ -349,6 +350,7 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let tokens: Vec<crate::models::UserToken> = test::read_body_json(resp).await;
         assert_eq!(tokens.len(), 1);
+        assert!(tokens[0].token.contains("..."));
     }
 
     #[rstest]
@@ -419,6 +421,7 @@ mod tests {
         let tokens: Vec<crate::models::UserToken> = test::read_body_json(resp).await;
 
         assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].token, matching_token);
+        assert_ne!(tokens[0].token, matching_token);
+        assert!(tokens[0].token.contains("..."));
     }
 }
