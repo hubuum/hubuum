@@ -3374,7 +3374,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Active token metadata for user (token values are obfuscated previews) The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Active token metadata for user The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
@@ -3388,7 +3388,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/UserToken"
+                    "$ref": "#/components/schemas/UserTokenMetadata"
                   }
                 }
               }
@@ -8751,6 +8751,23 @@
           },
           "token": {
             "type": "string"
+          },
+          "user_id": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "UserTokenMetadata": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "issued"
+        ],
+        "properties": {
+          "issued": {
+            "type": "string",
+            "format": "date-time"
           },
           "user_id": {
             "type": "integer",

@@ -1,5 +1,6 @@
+use std::sync::LazyLock;
 #[cfg(test)]
-use std::sync::{LazyLock, Mutex};
+use std::sync::Mutex;
 #[cfg(not(test))]
 use std::sync::{RwLock, RwLockReadGuard};
 
@@ -11,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::num::NonZeroUsize;
 use std::str::FromStr;
+use uuid::Uuid;
 
 use crate::errors::ApiError;
 
@@ -18,6 +20,29 @@ pub const DEFAULT_PAGE_LIMIT: usize = 100;
 pub const MAX_PAGE_LIMIT: usize = 250;
 pub const DEFAULT_TASK_POLL_INTERVAL_MS: u64 = 200;
 pub const DEFAULT_TOKEN_LIFETIME_HOURS: i64 = 24;
+
+struct TokenHashKeyConfig {
+    key: Vec<u8>,
+    is_ephemeral: bool,
+}
+
+static TOKEN_HASH_KEY_CONFIG: LazyLock<TokenHashKeyConfig> = LazyLock::new(|| {
+    if let Ok(env_key) = std::env::var("HUBUUM_TOKEN_HASH_KEY") {
+        let trimmed = env_key.trim();
+        if !trimmed.is_empty() {
+            return TokenHashKeyConfig {
+                key: trimmed.as_bytes().to_vec(),
+                is_ephemeral: false,
+            };
+        }
+    }
+
+    let generated = format!("{}{}", Uuid::new_v4(), Uuid::new_v4());
+    TokenHashKeyConfig {
+        key: generated.into_bytes(),
+        is_ephemeral: true,
+    }
+});
 
 fn detected_cpu_count() -> usize {
     std::thread::available_parallelism()
@@ -194,7 +219,7 @@ impl AppConfig {
             ));
         }
 
-        if self.token_lifetime_hours == 0 {
+        if self.token_lifetime_hours <= 0 {
             return Err(ApiError::BadRequest(
                 "token_lifetime_hours must be greater than 0".to_string(),
             ));
@@ -221,6 +246,21 @@ impl AppConfig {
 
         Ok(self)
     }
+}
+
+pub fn token_lifetime_hours_i32() -> i32 {
+    get_config()
+        .map(|config| config.token_lifetime_hours)
+        .unwrap_or(DEFAULT_TOKEN_LIFETIME_HOURS)
+        .clamp(1, i32::MAX as i64) as i32
+}
+
+pub fn token_hash_key_bytes() -> &'static [u8] {
+    &TOKEN_HASH_KEY_CONFIG.key
+}
+
+pub fn token_hash_key_is_ephemeral() -> bool {
+    TOKEN_HASH_KEY_CONFIG.is_ephemeral
 }
 
 #[cfg(not(test))]
@@ -442,7 +482,7 @@ mod tests {
     use super::{
         AppConfig, DEFAULT_PAGE_LIMIT, DEFAULT_TASK_POLL_INTERVAL_MS, DEFAULT_TOKEN_LIFETIME_HOURS,
         MAX_PAGE_LIMIT, TEST_ENV_LOCK, TlsBackend, default_actix_workers, default_task_workers,
-        get_config_from_env,
+        get_config_from_env, token_hash_key_bytes, token_hash_key_is_ephemeral,
     };
 
     struct EnvVarGuard {
@@ -621,5 +661,25 @@ mod tests {
             error.to_string(),
             "token_lifetime_hours must be greater than 0"
         );
+    }
+
+    #[test]
+    fn negative_token_lifetime_hours_are_rejected() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_TOKEN_LIFETIME_HOURS", Some("-1"));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "token_lifetime_hours must be greater than 0"
+        );
+    }
+
+    #[test]
+    fn token_hash_key_is_initialized_once() {
+        let key = token_hash_key_bytes();
+        assert!(!key.is_empty());
+        let _ = token_hash_key_is_ephemeral();
     }
 }

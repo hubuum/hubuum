@@ -42,6 +42,9 @@ Hubuum can be configured using environment variables or command-line arguments. 
 | -------- | ------- | ----------- |
 | `HUBUUM_ADMIN_GROUPNAME` | `admin` | Name of the admin group |
 | `HUBUUM_TOKEN_LIFETIME_HOURS` | `24` | Token lifetime in hours |
+| `HUBUUM_TOKEN_HASH_KEY` | _(generated per startup if unset)_ | Key used for deterministic token hashing at rest |
+
+**Token hash key note**: If `HUBUUM_TOKEN_HASH_KEY` is not set, Hubuum generates an ephemeral key on startup and logs a warning. Tokens issued before restart will be invalid after restart.
 
 ### TLS Configuration
 

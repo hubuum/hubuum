@@ -4,9 +4,11 @@ use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, AdminOrSelfAccess, UserAccess};
 use crate::models::search::parse_query_parameter;
 use crate::models::user::{NewUser, UpdateUser, UserID};
-use crate::models::{Group, User, UserToken};
+use crate::models::{Group, User, UserToken, UserTokenMetadata};
 use crate::pagination::prepare_db_pagination;
-use crate::utilities::response::{json_response, json_response_created, paginated_json_response};
+use crate::utilities::response::{
+    json_response, json_response_created, paginated_json_mapped_response, paginated_json_response,
+};
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, routes, web};
 use serde_json::json;
 use tracing::debug;
@@ -90,7 +92,7 @@ pub async fn create_user(
         ("user_id" = i32, Path, description = "User ID")
     ),
     responses(
-        (status = 200, description = "Active token metadata for user (token values are obfuscated previews)", body = [UserToken]),
+        (status = 200, description = "Active token metadata for user", body = [UserTokenMetadata]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "User not found", body = ApiErrorResponse)
     )
@@ -114,11 +116,9 @@ pub async fn get_user_tokens(
 
     let search_params = prepare_db_pagination::<UserToken>(&params)?;
     let valid_tokens = user.tokens_paginated(&pool, &search_params).await?;
-    let safe_tokens = valid_tokens
-        .into_iter()
-        .map(UserToken::obfuscated)
-        .collect::<Vec<_>>();
-    paginated_json_response(safe_tokens, StatusCode::OK, &params)
+    paginated_json_mapped_response(valid_tokens, StatusCode::OK, &params, |tokens| {
+        tokens.into_iter().map(UserTokenMetadata::from).collect()
+    })
 }
 
 #[utoipa::path(

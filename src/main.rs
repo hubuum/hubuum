@@ -22,13 +22,13 @@ use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::SwaggerUi;
 
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use tracing_subscriber::{
     filter::EnvFilter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
 };
 
 use crate::api::openapi::openapi_json as openapi_json_handler;
-use crate::config::get_config;
+use crate::config::{get_config, token_hash_key_is_ephemeral};
 use crate::errors::{
     EXIT_CODE_CONFIG_ERROR, EXIT_CODE_INIT_ERROR, EXIT_CODE_TLS_ERROR, fatal_error,
     json_error_handler,
@@ -70,6 +70,13 @@ async fn main() -> std::io::Result<()> {
                 .event_format(logger::HubuumLoggingFormat),
         )
         .init();
+
+    if token_hash_key_is_ephemeral() {
+        warn!(
+            message = "HUBUUM_TOKEN_HASH_KEY is not set; using ephemeral in-memory key. Existing tokens will be invalid after restart.",
+            recommendation = "Set HUBUUM_TOKEN_HASH_KEY to a stable secret to preserve token validity across restarts"
+        );
+    }
 
     debug!(
         message = "Starting server",

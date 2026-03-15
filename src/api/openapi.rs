@@ -19,6 +19,7 @@ use crate::models::{
     UnifiedSearchBatchResponse, UnifiedSearchDoneEvent, UnifiedSearchErrorEvent, UnifiedSearchKind,
     UnifiedSearchResponse, UnifiedSearchStartedEvent, UpdateGroup, UpdateHubuumClass,
     UpdateHubuumObject, UpdateNamespace, UpdateReportTemplate, UpdateUser, User, UserToken,
+    UserTokenMetadata,
 };
 use crate::pagination::{NEXT_CURSOR_HEADER, page_limits_or_defaults};
 use actix_web::{HttpResponse, Responder};
@@ -137,6 +138,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             UpdateUser,
             LoginUser,
             UserToken,
+            UserTokenMetadata,
             Group,
             NewGroup,
             UpdateGroup,

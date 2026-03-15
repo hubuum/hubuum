@@ -1,4 +1,4 @@
-use crate::config::{DEFAULT_TOKEN_LIFETIME_HOURS, get_config};
+use crate::config::token_lifetime_hours_i32;
 use crate::db::traits::ActiveTokens;
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
@@ -7,13 +7,6 @@ use crate::models::{Token, User, UserToken};
 use crate::traits::SelfAccessors;
 use diesel::prelude::*;
 use diesel::sql_types::Integer;
-
-fn configured_token_lifetime_hours() -> i64 {
-    let hours = get_config()
-        .map(|config| config.token_lifetime_hours)
-        .unwrap_or(DEFAULT_TOKEN_LIFETIME_HOURS);
-    hours.clamp(1, i32::MAX as i64)
-}
 
 fn hash_token_name_filters(query_options: &QueryOptions) -> QueryOptions {
     let mut prepared = query_options.clone();
@@ -44,12 +37,12 @@ where
 
 #[allow(dead_code)]
 async fn active_tokens_by_user_id(user_id: i32, pool: &DbPool) -> Result<Vec<UserToken>, ApiError> {
-    let hours = configured_token_lifetime_hours();
+    let hours = token_lifetime_hours_i32();
 
     with_connection(pool, |conn| {
         diesel::sql_query("SELECT * FROM tokens WHERE user_id = $1 AND issued > (CURRENT_TIMESTAMP - ($2 || ' hours')::INTERVAL)")
             .bind::<Integer, _>(user_id)
-            .bind::<Integer, _>(hours as i32)
+                .bind::<Integer, _>(hours)
             .load::<UserToken>(conn)
             .map_err(|e| ApiError::DatabaseError(e.to_string()))
     })
@@ -64,7 +57,7 @@ async fn active_tokens_by_user_id_paginated(
     use crate::{date_search, string_search};
 
     let query_options = hash_token_name_filters(query_options);
-    let hours = configured_token_lifetime_hours();
+    let hours = token_lifetime_hours_i32() as i64;
     let mut base_query = tokens
         .into_boxed()
         .filter(token_user_id.eq(user_id))

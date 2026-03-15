@@ -1,4 +1,4 @@
-use crate::config::{DEFAULT_TOKEN_LIFETIME_HOURS, get_config};
+use crate::config::token_lifetime_hours_i32;
 use diesel::prelude::*;
 use diesel::sql_types::{Integer, Text};
 use tracing::warn;
@@ -9,18 +9,11 @@ use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::{Token, UserToken};
 
-fn configured_token_lifetime_hours() -> i32 {
-    let hours = get_config()
-        .map(|config| config.token_lifetime_hours)
-        .unwrap_or(DEFAULT_TOKEN_LIFETIME_HOURS);
-    hours.clamp(1, i32::MAX as i64) as i32
-}
-
 impl Status<UserToken> for Token {
     async fn is_valid(&self, pool: &DbPool) -> Result<UserToken, ApiError> {
         let token = self.storage_hash();
         let token_preview = self.obfuscate();
-        let hours = configured_token_lifetime_hours();
+        let hours = token_lifetime_hours_i32();
 
         let token_result = with_connection(pool, |conn| {
             diesel::sql_query("SELECT * FROM tokens WHERE token = $1 AND issued > (CURRENT_TIMESTAMP - ($2 || ' hours')::INTERVAL)")

@@ -71,6 +71,12 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/iam/users
 
 - `HUBUUM_TOKEN_LIFETIME_HOURS` controls bearer token lifetime and defaults to `24`.
 
+### Token Hash Key
+
+- `HUBUUM_TOKEN_HASH_KEY` sets the server-side key used for deterministic token hashing at rest.
+- If unset, Hubuum generates an ephemeral in-memory key at startup and logs a warning.
+- With an ephemeral key, all existing bearer tokens become invalid after each restart.
+
 ### Container Image Variants
 
 - The default container tags include both TLS backends and allow runtime selection with `HUBUUM_TLS_BACKEND`.
