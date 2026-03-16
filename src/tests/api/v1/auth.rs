@@ -14,11 +14,12 @@ mod tests {
     const LOGOUT_ENDPOINT: &str = "/api/v0/auth/logout";
     const LOGOUT_ALL_ENDPOINT: &str = "/api/v0/auth/logout_all";
     const LOGOUT_ALL_FOR_OTHER_USER_ENDPOINT: &str = "/api/v0/auth/logout/uid/";
-    const LOGOUT_SPECIFIC_TOKEN: &str = "/api/v0/auth/logout/token/";
+    const LOGOUT_SPECIFIC_TOKEN: &str = "/api/v0/auth/logout/token";
     const VALIDATE_TOKEN_ENDPOINT: &str = "/api/v0/auth/validate";
 
     #[actix_web::test]
     async fn test_valid_login() {
+        crate::api::handlers::auth::reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
@@ -129,6 +130,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_invalid_login_credentials() {
+        crate::api::handlers::auth::reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
@@ -160,6 +162,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_invalid_login_parameters() {
+        crate::api::handlers::auth::reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
@@ -218,6 +221,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_logout_single_token() {
+        crate::api::handlers::auth::reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
@@ -238,7 +242,7 @@ mod tests {
         let user_tokens = new_user.tokens(&pool).await.unwrap();
         assert_eq!(user_tokens.len(), 1, "Token count mismatch");
 
-        let resp_without_token = test::TestRequest::get()
+        let resp_without_token = test::TestRequest::post()
             .uri(LOGOUT_ENDPOINT)
             .send_request(&app)
             .await;
@@ -250,7 +254,7 @@ mod tests {
             test::read_body(resp_without_token).await
         );
 
-        let resp_with_broken_token = test::TestRequest::get()
+        let resp_with_broken_token = test::TestRequest::post()
             .insert_header((header::AUTHORIZATION, "nope".to_string()))
             .uri(LOGOUT_ENDPOINT)
             .send_request(&app)
@@ -263,7 +267,7 @@ mod tests {
             test::read_body(resp_with_broken_token).await
         );
 
-        let resp = test::TestRequest::get()
+        let resp = test::TestRequest::post()
             .insert_header((header::AUTHORIZATION, format!("Bearer {token_string}")))
             .uri(LOGOUT_ENDPOINT)
             .send_request(&app)
@@ -283,6 +287,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_logout_all_tokens_from_user() {
+        crate::api::handlers::auth::reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
@@ -314,7 +319,7 @@ mod tests {
         let uri = &format!("{}{}", LOGOUT_ALL_FOR_OTHER_USER_ENDPOINT, new_user.id);
 
         // Try removing tokens without authorization
-        let resp_without_token = test::TestRequest::get().uri(uri).send_request(&app).await;
+        let resp_without_token = test::TestRequest::post().uri(uri).send_request(&app).await;
 
         assert_eq!(
             resp_without_token.status(),
@@ -326,7 +331,7 @@ mod tests {
         assert_eq!(user_tokens.len(), 3, "User has wrong number of tokens");
 
         // Try removing tokens with broken authorization
-        let resp_with_broken_token = test::TestRequest::get()
+        let resp_with_broken_token = test::TestRequest::post()
             .insert_header((header::AUTHORIZATION, "nope".to_string()))
             .uri(uri)
             .send_request(&app)
@@ -342,7 +347,7 @@ mod tests {
         assert_eq!(user_tokens.len(), 3, "User has wrong number of tokens");
 
         // Remove tokens with valid authorization
-        let resp = test::TestRequest::get()
+        let resp = test::TestRequest::post()
             .insert_header((header::AUTHORIZATION, format!("Bearer {admin_token}")))
             .uri(uri)
             .send_request(&app)
@@ -365,6 +370,7 @@ mod tests {
     async fn test_logout_specific_token() {
         use crate::models::token::Token;
 
+        crate::api::handlers::auth::reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
@@ -396,12 +402,13 @@ mod tests {
         )
         .await;
 
-        let uri = &format!("{LOGOUT_SPECIFIC_TOKEN}{token}");
+        let uri = LOGOUT_SPECIFIC_TOKEN;
 
         // Try to remove the token as a user
-        let resp = test::TestRequest::get()
+        let resp = test::TestRequest::post()
             .insert_header((header::AUTHORIZATION, format!("Bearer {token}")))
             .uri(uri)
+            .set_json(serde_json::json!({"token": token.clone()}))
             .send_request(&app)
             .await;
 
@@ -413,12 +420,13 @@ mod tests {
         );
 
         // Actually remove the token as admin
-        let resp = test::TestRequest::get()
+        let resp = test::TestRequest::post()
             .insert_header((
                 header::AUTHORIZATION,
                 format!("Bearer {}", admin_token.clone()),
             ))
             .uri(uri)
+            .set_json(serde_json::json!({"token": token.clone()}))
             .send_request(&app)
             .await;
 
@@ -436,5 +444,46 @@ mod tests {
         assert_not_contains!(&user_token_strings, &deleted_token_hash);
         new_user.delete(&pool).await.unwrap();
         admin_user.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_login_is_rate_limited_after_repeated_failures() {
+        crate::api::handlers::auth::reset_login_rate_limit_for_tests();
+        let config = get_config().unwrap();
+        let pool = init_pool(&config.database_url, config.db_pool_size);
+        let app = test::init_service(
+            App::new()
+                .app_data(Data::new(pool.clone()))
+                .configure(api::config),
+        )
+        .await;
+
+        for _ in 0..5 {
+            let login_info = web::Form(LoginUser {
+                username: "throttle-user".to_string(),
+                password: "wrongpassword".to_string(),
+            });
+
+            let resp = test::TestRequest::post()
+                .uri(LOGIN_ENDPOINT)
+                .set_json(&login_info)
+                .send_request(&app)
+                .await;
+
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        let login_info = web::Form(LoginUser {
+            username: "throttle-user".to_string(),
+            password: "wrongpassword".to_string(),
+        });
+
+        let resp = test::TestRequest::post()
+            .uri(LOGIN_ENDPOINT)
+            .set_json(&login_info)
+            .send_request(&app)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 }

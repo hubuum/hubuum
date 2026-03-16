@@ -137,6 +137,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             NewUser,
             UpdateUser,
             LoginUser,
+            auth::LogoutTokenRequest,
             UserToken,
             UserTokenMetadata,
             Group,

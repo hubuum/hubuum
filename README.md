@@ -71,6 +71,11 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/iam/users
 
 - `HUBUUM_TOKEN_LIFETIME_HOURS` controls bearer token lifetime and defaults to `24`.
 
+### Login Rate Limiting
+
+- `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS` controls max failed login attempts per window and defaults to `5`.
+- `HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS` controls the login rate-limit window in seconds and defaults to `300`.
+
 ### Token Hash Key
 
 - `HUBUUM_TOKEN_HASH_KEY` sets the server-side key used for deterministic token hashing at rest.

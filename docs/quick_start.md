@@ -42,6 +42,8 @@ Hubuum can be configured using environment variables or command-line arguments. 
 | -------- | ------- | ----------- |
 | `HUBUUM_ADMIN_GROUPNAME` | `admin` | Name of the admin group |
 | `HUBUUM_TOKEN_LIFETIME_HOURS` | `24` | Token lifetime in hours |
+| `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS` | `5` | Max failed login attempts per rate-limit window |
+| `HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS` | `300` | Login rate-limit window in seconds |
 | `HUBUUM_TOKEN_HASH_KEY` | _(generated per startup if unset)_ | Key used for deterministic token hashing at rest |
 
 **Token hash key note**: If `HUBUUM_TOKEN_HASH_KEY` is not set, Hubuum generates an ephemeral key on startup and logs a warning. Tokens issued before restart will be invalid after restart.

@@ -69,13 +69,13 @@
       }
     },
     "/api/v0/auth/logout": {
-      "get": {
+      "post": {
         "tags": [
           "auth"
         ],
-        "summary": "Get Api V0 Auth Logout",
-        "description": "Auto-generated documentation for GET /api/v0/auth/logout.",
-        "operationId": "getApiV0AuthLogout",
+        "summary": "Post Api V0 Auth Logout",
+        "description": "Auto-generated documentation for POST /api/v0/auth/logout.",
+        "operationId": "postApiV0AuthLogout",
         "responses": {
           "200": {
             "description": "Token revoked",
@@ -115,25 +115,24 @@
         ]
       }
     },
-    "/api/v0/auth/logout/token/{token}": {
-      "get": {
+    "/api/v0/auth/logout/token": {
+      "post": {
         "tags": [
           "auth"
         ],
-        "summary": "Get Api V0 Auth Logout Token By Token",
-        "description": "Auto-generated documentation for GET /api/v0/auth/logout/token/{token}.",
-        "operationId": "getApiV0AuthLogoutTokenByToken",
-        "parameters": [
-          {
-            "name": "token",
-            "in": "path",
-            "description": "Token string to revoke",
-            "required": true,
-            "schema": {
-              "type": "string"
+        "summary": "Post Api V0 Auth Logout Token",
+        "description": "Auto-generated documentation for POST /api/v0/auth/logout/token.",
+        "operationId": "postApiV0AuthLogoutToken",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LogoutTokenRequest"
+              }
             }
-          }
-        ],
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Token revoked",
@@ -174,13 +173,13 @@
       }
     },
     "/api/v0/auth/logout/uid/{user_id}": {
-      "get": {
+      "post": {
         "tags": [
           "auth"
         ],
-        "summary": "Get Api V0 Auth Logout Uid By User Id",
-        "description": "Auto-generated documentation for GET /api/v0/auth/logout/uid/{user_id}.",
-        "operationId": "getApiV0AuthLogoutUidByUserId",
+        "summary": "Post Api V0 Auth Logout Uid By User Id",
+        "description": "Auto-generated documentation for POST /api/v0/auth/logout/uid/{user_id}.",
+        "operationId": "postApiV0AuthLogoutUidByUserId",
         "parameters": [
           {
             "name": "user_id",
@@ -233,13 +232,13 @@
       }
     },
     "/api/v0/auth/logout_all": {
-      "get": {
+      "post": {
         "tags": [
           "auth"
         ],
-        "summary": "Get Api V0 Auth Logout All",
-        "description": "Auto-generated documentation for GET /api/v0/auth/logout_all.",
-        "operationId": "getApiV0AuthLogoutAll",
+        "summary": "Post Api V0 Auth Logout All",
+        "description": "Auto-generated documentation for POST /api/v0/auth/logout_all.",
+        "operationId": "postApiV0AuthLogoutAll",
         "responses": {
           "200": {
             "description": "All tokens revoked for current user",
@@ -7197,6 +7196,17 @@
         "example": {
           "password": "correct-horse-battery-staple",
           "username": "alice"
+        }
+      },
+      "LogoutTokenRequest": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          }
         }
       },
       "MessageResponse": {
