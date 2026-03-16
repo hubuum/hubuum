@@ -697,6 +697,10 @@ mod tests {
 
         assert!(json.pointer("/paths/~1api~1v1~1iam~1users/get").is_some());
         assert!(json.pointer("/paths/~1api~1v1~1iam~1users/post").is_some());
+        assert!(
+            json.pointer("/paths/~1api~1v0~1auth~1login/post/responses/429")
+                .is_some()
+        );
         assert!(json.pointer("/paths/~1api~1v1~1reports/post").is_some());
         assert!(json.pointer("/paths/~1api~1v1~1templates/get").is_some());
         assert!(

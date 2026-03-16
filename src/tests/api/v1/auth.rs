@@ -447,6 +447,52 @@ mod tests {
     }
 
     #[actix_web::test]
+    async fn test_login_rate_limit_uses_trusted_forwarded_ip_when_enabled() {
+        crate::api::handlers::auth::reset_login_rate_limit_for_tests();
+        let mut config = get_config().unwrap();
+        config.trust_ip_headers = true;
+        let max_attempts = config.login_rate_limit_max_attempts;
+        let pool = init_pool(&config.database_url, config.db_pool_size);
+        let app = test::init_service(
+            App::new()
+                .app_data(Data::new(config.clone()))
+                .app_data(Data::new(pool.clone()))
+                .configure(api::config),
+        )
+        .await;
+
+        for _ in 0..max_attempts {
+            let login_info = web::Form(LoginUser {
+                username: "forwarded-ip-user".to_string(),
+                password: "wrongpassword".to_string(),
+            });
+
+            let resp = test::TestRequest::post()
+                .insert_header(("X-Forwarded-For", "198.51.100.10"))
+                .uri(LOGIN_ENDPOINT)
+                .set_json(&login_info)
+                .send_request(&app)
+                .await;
+
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        let other_client_login = web::Form(LoginUser {
+            username: "forwarded-ip-user".to_string(),
+            password: "wrongpassword".to_string(),
+        });
+
+        let resp = test::TestRequest::post()
+            .insert_header(("X-Forwarded-For", "198.51.100.11"))
+            .uri(LOGIN_ENDPOINT)
+            .set_json(&other_client_login)
+            .send_request(&app)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[actix_web::test]
     async fn test_login_is_rate_limited_after_repeated_failures() {
         crate::api::handlers::auth::reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();

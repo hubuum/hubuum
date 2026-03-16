@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod tests {
+    use crate::db::traits::ActiveTokens;
+    use crate::models::Token;
     use crate::models::group::NewGroup;
     use crate::models::user::{NewUser, UpdateUser, User};
     use crate::pagination::NEXT_CURSOR_HEADER;
@@ -419,8 +421,17 @@ mod tests {
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let tokens: Vec<crate::models::UserTokenMetadata> = test::read_body_json(resp).await;
+        let expected_issued = user
+            .tokens(&context.pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|token| token.token == Token::storage_hash_from_raw(&matching_token))
+            .map(|token| token.issued)
+            .expect("matching token should exist in the database");
 
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].user_id, user.id);
+        assert_eq!(tokens[0].issued, expected_issued);
     }
 }

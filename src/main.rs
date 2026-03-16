@@ -103,6 +103,7 @@ async fn main() -> std::io::Result<()> {
 
     let client_allowlist = config.client_allowlist.clone();
     let trust_ip_headers = config.trust_ip_headers;
+    let app_config = config.clone();
 
     let server = HttpServer::new(move || {
         let app = App::new()
@@ -114,6 +115,7 @@ async fn main() -> std::io::Result<()> {
                 trust_ip_headers,
             ))
             .wrap(Logger::default())
+            .app_data(Data::new(app_config.clone()))
             .app_data(Data::new(pool.clone()))
             .app_data(JsonConfig::default().error_handler(json_error_handler))
             .route("/api-doc/openapi.json", web::get().to(openapi_json_handler));

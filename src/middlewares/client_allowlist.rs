@@ -1,5 +1,7 @@
 use actix_service::{Service, Transform};
-use actix_web::{Error, dev::ServiceRequest, dev::ServiceResponse, error::ErrorForbidden};
+use actix_web::{
+    Error, HttpRequest, dev::ServiceRequest, dev::ServiceResponse, error::ErrorForbidden,
+};
 use futures_util::future::{self, LocalBoxFuture, Ready};
 use std::net::{IpAddr, SocketAddr};
 use std::task::{Context, Poll};
@@ -95,9 +97,31 @@ where
 
 /// Extract the client IP from the request
 pub fn extract_client_ip(req: &ServiceRequest, trust_headers: bool) -> Option<IpAddr> {
+    extract_client_ip_parts(
+        req.peer_addr(),
+        req.connection_info().realip_remote_addr(),
+        trust_headers,
+    )
+}
+
+pub fn extract_client_ip_from_http_request(
+    req: &HttpRequest,
+    trust_headers: bool,
+) -> Option<IpAddr> {
+    extract_client_ip_parts(
+        req.peer_addr(),
+        req.connection_info().realip_remote_addr(),
+        trust_headers,
+    )
+}
+
+fn extract_client_ip_parts(
+    peer_addr: Option<SocketAddr>,
+    real_ip_remote_addr: Option<&str>,
+    trust_headers: bool,
+) -> Option<IpAddr> {
     let header_ip = if trust_headers {
-        req.connection_info()
-            .realip_remote_addr()
+        real_ip_remote_addr
             .and_then(|raw| raw.split(',').next())
             .and_then(|raw| {
                 raw.trim()
@@ -109,7 +133,7 @@ pub fn extract_client_ip(req: &ServiceRequest, trust_headers: bool) -> Option<Ip
         None
     };
 
-    header_ip.or_else(|| req.peer_addr().map(|addr| addr.ip()))
+    header_ip.or_else(|| peer_addr.map(|addr| addr.ip()))
 }
 
 /// Parse a socket address or IPv6 address with brackets
