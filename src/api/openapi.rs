@@ -19,6 +19,7 @@ use crate::models::{
     UnifiedSearchBatchResponse, UnifiedSearchDoneEvent, UnifiedSearchErrorEvent, UnifiedSearchKind,
     UnifiedSearchResponse, UnifiedSearchStartedEvent, UpdateGroup, UpdateHubuumClass,
     UpdateHubuumObject, UpdateNamespace, UpdateReportTemplate, UpdateUser, User, UserToken,
+    UserTokenMetadata,
 };
 use crate::pagination::{NEXT_CURSOR_HEADER, page_limits_or_defaults};
 use actix_web::{HttpResponse, Responder};
@@ -136,7 +137,9 @@ use utoipa::{Modify, OpenApi, ToSchema};
             NewUser,
             UpdateUser,
             LoginUser,
+            auth::LogoutTokenRequest,
             UserToken,
+            UserTokenMetadata,
             Group,
             NewGroup,
             UpdateGroup,
@@ -630,7 +633,7 @@ mod tests {
             "/api/v0/auth/login",
             "/api/v0/auth/logout",
             "/api/v0/auth/logout_all",
-            "/api/v0/auth/logout/token/{token}",
+            "/api/v0/auth/logout/token",
             "/api/v0/auth/logout/uid/{user_id}",
             "/api/v0/auth/validate",
             "/api/v0/meta/db",

@@ -1,12 +1,81 @@
 use crate::api::openapi::{ApiErrorResponse, LoginResponse, MessageResponse};
+use crate::config::{login_rate_limit_max_attempts, login_rate_limit_window_seconds};
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, UserAccess};
 use crate::models::{LoginUser, Token, UserID};
 use crate::utilities::response::json_response;
-use actix_web::{Responder, get, http::StatusCode, post, web};
+use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, web};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 use tracing::{debug, warn};
+use utoipa::ToSchema;
+
+static LOGIN_ATTEMPTS: LazyLock<Mutex<HashMap<String, VecDeque<Instant>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn login_rate_limit_key(username: &str, client_ip: &str) -> String {
+    format!("{}|{}", username.trim().to_ascii_lowercase(), client_ip)
+}
+
+fn current_login_window() -> Duration {
+    Duration::from_secs(login_rate_limit_window_seconds())
+}
+
+fn prune_attempts(attempts: &mut VecDeque<Instant>, now: Instant) {
+    let window = current_login_window();
+    while let Some(first) = attempts.front() {
+        if now.duration_since(*first) > window {
+            attempts.pop_front();
+        } else {
+            break;
+        }
+    }
+}
+
+fn login_is_rate_limited(username: &str, client_ip: &str) -> bool {
+    let key = login_rate_limit_key(username, client_ip);
+    let now = Instant::now();
+    let mut guard = LOGIN_ATTEMPTS.lock().expect("login limiter mutex poisoned");
+
+    if let Some(attempts) = guard.get_mut(&key) {
+        prune_attempts(attempts, now);
+        attempts.len() >= login_rate_limit_max_attempts()
+    } else {
+        false
+    }
+}
+
+fn record_login_failure(username: &str, client_ip: &str) {
+    let key = login_rate_limit_key(username, client_ip);
+    let now = Instant::now();
+    let mut guard = LOGIN_ATTEMPTS.lock().expect("login limiter mutex poisoned");
+    let attempts = guard.entry(key).or_default();
+    prune_attempts(attempts, now);
+    attempts.push_back(now);
+}
+
+fn clear_login_failures(username: &str, client_ip: &str) {
+    let key = login_rate_limit_key(username, client_ip);
+    let mut guard = LOGIN_ATTEMPTS.lock().expect("login limiter mutex poisoned");
+    guard.remove(&key);
+}
+
+#[cfg(test)]
+pub fn reset_login_rate_limit_for_tests() {
+    LOGIN_ATTEMPTS
+        .lock()
+        .expect("login limiter mutex poisoned")
+        .clear();
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct LogoutTokenRequest {
+    pub token: String,
+}
 
 // During auth, no matter what the error is, we return a 401 Unauthorized
 // with a generic message. This is to prevent leaking information about
@@ -26,10 +95,40 @@ use tracing::{debug, warn};
 #[post("/login")]
 pub async fn login(
     pool: web::Data<DbPool>,
+    req: HttpRequest,
     req_input: web::Json<LoginUser>,
 ) -> Result<impl Responder, ApiError> {
-    debug!(message = "Login started", user = req_input.username);
-    let user = req_input.into_inner().login(&pool).await?;
+    let login = req_input.into_inner();
+    let username = login.username.clone();
+    let client_ip = req
+        .peer_addr()
+        .map(|sa| sa.ip().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    if login_is_rate_limited(&username, &client_ip) {
+        warn!(
+            message = "Login throttled",
+            user = username,
+            client_ip = client_ip
+        );
+        return Ok(json_response(
+            json!({ "error": "Too Many Requests", "message": "Too many login attempts. Please try again later." }),
+            StatusCode::TOO_MANY_REQUESTS,
+        ));
+    }
+
+    debug!(message = "Login started", user = username);
+    let user = match login.login(&pool).await {
+        Ok(user) => user,
+        Err(e) => {
+            if let ApiError::Unauthorized(_) = &e {
+                record_login_failure(&username, &client_ip);
+            }
+            return Err(e);
+        }
+    };
+
+    clear_login_failures(&username, &client_ip);
 
     let token_generation_result = user.create_token(&pool).await;
 
@@ -61,7 +160,7 @@ pub async fn login(
 }
 
 #[utoipa::path(
-    get,
+    post,
     path = "/api/v0/auth/logout",
     tag = "auth",
     security(("bearer_auth" = [])),
@@ -71,7 +170,7 @@ pub async fn login(
         (status = 500, description = "Internal server error", body = ApiErrorResponse)
     )
 )]
-#[get("/logout")]
+#[post("/logout")]
 pub async fn logout(
     pool: web::Data<DbPool>,
     user_access: UserAccess,
@@ -101,7 +200,7 @@ pub async fn logout(
 }
 
 #[utoipa::path(
-    get,
+    post,
     path = "/api/v0/auth/logout_all",
     tag = "auth",
     security(("bearer_auth" = [])),
@@ -111,7 +210,7 @@ pub async fn logout(
         (status = 500, description = "Internal server error", body = ApiErrorResponse)
     )
 )]
-#[get("/logout_all")]
+#[post("/logout_all")]
 pub async fn logout_all(
     pool: web::Data<DbPool>,
     user_access: UserAccess,
@@ -143,25 +242,24 @@ pub async fn logout_all(
 }
 
 #[utoipa::path(
-    get,
-    path = "/api/v0/auth/logout/token/{token}",
+    post,
+    path = "/api/v0/auth/logout/token",
     tag = "auth",
     security(("bearer_auth" = [])),
-    params(
-        ("token" = String, Path, description = "Token string to revoke")
-    ),
+    request_body = LogoutTokenRequest,
     responses(
         (status = 200, description = "Token revoked", body = MessageResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 500, description = "Internal server error", body = ApiErrorResponse)
     )
 )]
-#[get("/logout/token/{token}")]
+#[post("/logout/token")]
 pub async fn logout_token(
     pool: web::Data<DbPool>,
     user_access: AdminAccess,
-    token: web::Path<Token>,
+    token: web::Json<LogoutTokenRequest>,
 ) -> Result<impl Responder, ApiError> {
+    let token = Token(token.into_inner().token);
     debug!(message = "Logging out token {}.", token = token.obfuscate());
 
     let result = token.delete(&pool).await;
@@ -175,7 +273,7 @@ pub async fn logout_token(
             warn!(
                 message = "Logout of token failed",
                 token_used = token.obfuscate(),
-                token_target = user_access.token.get_token(),
+                token_target = user_access.token.obfuscate(),
                 user_id = user_access.user.id,
                 error = e.to_string()
             );
@@ -187,7 +285,7 @@ pub async fn logout_token(
 }
 
 #[utoipa::path(
-    get,
+    post,
     path = "/api/v0/auth/logout/uid/{user_id}",
     tag = "auth",
     security(("bearer_auth" = [])),
@@ -200,7 +298,7 @@ pub async fn logout_token(
         (status = 500, description = "Internal server error", body = ApiErrorResponse)
     )
 )]
-#[get("/logout/uid/{user_id}")]
+#[post("/logout/uid/{user_id}")]
 pub async fn logout_other(
     pool: web::Data<DbPool>,
     admin_access: AdminAccess,

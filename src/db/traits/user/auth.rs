@@ -47,10 +47,11 @@ impl StoreUserTokenRecord for User {
         token_value: &Token,
     ) -> Result<(), ApiError> {
         use crate::schema::tokens::dsl::{token, user_id};
+        let token_hash = token_value.storage_hash();
 
         with_connection(pool, |conn| {
             diesel::insert_into(crate::schema::tokens::table)
-                .values((user_id.eq(self.id), token.eq(token_value.get_token())))
+                .values((user_id.eq(self.id), token.eq(token_hash)))
                 .execute(conn)
         })?;
         Ok(())
@@ -80,11 +81,12 @@ impl OwnedUserTokenRecord for User {
         pool: &DbPool,
     ) -> Result<UserToken, ApiError> {
         use crate::schema::tokens::dsl::{token, tokens, user_id};
+        let token_hash = token_value.storage_hash();
 
         with_connection(pool, |conn| {
             tokens
                 .filter(user_id.eq(self.id))
-                .filter(token.eq(token_value.get_token()))
+                .filter(token.eq(token_hash))
                 .first::<UserToken>(conn)
         })
     }
@@ -95,10 +97,11 @@ impl OwnedUserTokenRecord for User {
         pool: &DbPool,
     ) -> Result<usize, ApiError> {
         use crate::schema::tokens::dsl::{token, tokens, user_id};
+        let token_hash = token_value.storage_hash();
 
         with_connection(pool, |conn| {
             diesel::delete(tokens.filter(user_id.eq(self.id)))
-                .filter(token.eq(token_value.get_token()))
+                .filter(token.eq(token_hash))
                 .execute(conn)
         })
     }
@@ -175,9 +178,10 @@ pub trait DeleteTokenRecord {
 impl DeleteTokenRecord for Token {
     async fn delete_token_record(&self, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::tokens::dsl::{token, tokens};
+        let token_hash = self.storage_hash();
 
         with_connection(pool, |conn| {
-            diesel::delete(tokens.filter(token.eq(&self.0))).execute(conn)
+            diesel::delete(tokens.filter(token.eq(token_hash))).execute(conn)
         })?;
         Ok(())
     }

@@ -33,7 +33,11 @@ pub async fn lookup_namespaces_by_names(
         return Ok(Vec::new());
     }
 
-    with_connection(pool, |conn| namespaces.filter(name.eq_any(values)).load::<Namespace>(conn))
+    with_connection(pool, |conn| {
+        namespaces
+            .filter(name.eq_any(values))
+            .load::<Namespace>(conn)
+    })
 }
 
 pub async fn lookup_namespace_by_id(

@@ -187,7 +187,8 @@ Example response:
 
 Pagination:
 
-- supports cursor-based pagination using `limit`, `sort`, and `cursor`; when following `X-Next-Cursor`, keep the same `sort` and filters
+- supports cursor-based pagination using `limit`, `sort`, and `cursor`
+- when following `X-Next-Cursor`, keep the same `sort` and filters
 - response may include `X-Next-Cursor` when more results are available
 
 Sorting:

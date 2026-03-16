@@ -50,7 +50,7 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool, argon2::Error
     let parsed_hash = match parsed_hash_result {
         Ok(parsed_hash) => parsed_hash,
         Err(_) => {
-            debug!(message = "Error parsing password hash.", hash = hash);
+            debug!(message = "Error parsing password hash.");
             return Ok(false);
         }
     };

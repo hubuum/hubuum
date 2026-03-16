@@ -6,7 +6,9 @@ use utoipa::ToSchema;
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::schema::{import_task_results, task_events, tasks};
-use crate::traits::{CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue};
+use crate::traits::{
+    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]

@@ -330,9 +330,10 @@ mod tests {
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
-        let tokens: Vec<crate::models::UserToken> = test::read_body_json(resp).await;
+        let tokens: Vec<crate::models::UserTokenMetadata> = test::read_body_json(resp).await;
 
         assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].user_id, test_user.id);
         assert!(next_cursor.is_some());
 
         let resp = get_request(
@@ -347,8 +348,9 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let tokens: Vec<crate::models::UserToken> = test::read_body_json(resp).await;
+        let tokens: Vec<crate::models::UserTokenMetadata> = test::read_body_json(resp).await;
         assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].user_id, test_user.id);
     }
 
     #[rstest]
@@ -416,9 +418,9 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let tokens: Vec<crate::models::UserToken> = test::read_body_json(resp).await;
+        let tokens: Vec<crate::models::UserTokenMetadata> = test::read_body_json(resp).await;
 
         assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].token, matching_token);
+        assert_eq!(tokens[0].user_id, user.id);
     }
 }

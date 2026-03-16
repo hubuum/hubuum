@@ -2,9 +2,12 @@ use chrono::NaiveDateTime;
 
 use diesel::prelude::*;
 use diesel::sql_types::{Integer, Text, Timestamp};
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use utoipa::ToSchema;
 
+use crate::config::token_hash_key_bytes;
 use crate::db::traits::user::DeleteTokenRecord;
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
@@ -24,6 +27,21 @@ pub struct UserToken {
     pub user_id: i32,
     #[diesel(sql_type = Timestamp)]
     pub issued: NaiveDateTime,
+}
+
+#[derive(Serialize, Deserialize, Clone, ToSchema)]
+pub struct UserTokenMetadata {
+    pub user_id: i32,
+    pub issued: NaiveDateTime,
+}
+
+impl From<UserToken> for UserTokenMetadata {
+    fn from(value: UserToken) -> Self {
+        Self {
+            user_id: value.user_id,
+            issued: value.issued,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -52,6 +70,20 @@ impl Token {
         C: BackendContext + ?Sized,
     {
         self.delete_token_record(backend.db_pool()).await
+    }
+
+    pub fn storage_hash(&self) -> String {
+        Self::storage_hash_from_raw(&self.0)
+    }
+
+    pub fn storage_hash_from_raw(raw_token: &str) -> String {
+        type HmacSha256 = Hmac<Sha256>;
+
+        let mut mac =
+            HmacSha256::new_from_slice(token_hash_key_bytes()).expect("invalid HMAC key length");
+        mac.update(raw_token.as_bytes());
+        let digest = mac.finalize().into_bytes();
+        digest.iter().map(|b| format!("{b:02x}")).collect()
     }
 }
 
