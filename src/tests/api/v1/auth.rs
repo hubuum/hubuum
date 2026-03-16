@@ -450,6 +450,7 @@ mod tests {
     async fn test_login_is_rate_limited_after_repeated_failures() {
         crate::api::handlers::auth::reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();
+        let max_attempts = config.login_rate_limit_max_attempts;
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
             App::new()
@@ -458,7 +459,7 @@ mod tests {
         )
         .await;
 
-        for _ in 0..5 {
+        for _ in 0..max_attempts {
             let login_info = web::Form(LoginUser {
                 username: "throttle-user".to_string(),
                 password: "wrongpassword".to_string(),
