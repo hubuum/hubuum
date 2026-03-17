@@ -217,10 +217,20 @@ jobs:
           curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
           # Use binstall to get prebuilt diesel_cli binary (includes postgres support)
           cargo binstall --no-confirm diesel_cli
+          CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
+          export PATH="$CARGO_BIN:$PATH"
+          DIESEL_BIN="$(command -v diesel || true)"
+          if [[ -z "$DIESEL_BIN" ]]; then
+            DIESEL_BIN="$CARGO_BIN/diesel"
+          fi
+          if [[ ! -x "$DIESEL_BIN" ]]; then
+            echo "diesel binary not found; expected at $DIESEL_BIN" >&2
+            exit 1
+          fi
           echo "Creating database"
           PGPASSWORD=postgres createdb -U postgres -h localhost -p 5432 hubuum_rust_test
           echo "Running database setup and migrations"
-          diesel migration run --database-url ${{ env.DATABASE_URL }}
+          "$DIESEL_BIN" migration run --database-url ${{ env.DATABASE_URL }}
           echo "Checking database setup"
           PGPASSWORD=postgres psql -U postgres -h localhost -p 5432 -d hubuum_rust_test -c "select * from users;"
       - name: Build (${{ matrix.feature.name }})
@@ -322,10 +332,20 @@ jobs:
           curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
           # Use binstall to get prebuilt diesel_cli binary (includes postgres support)
           cargo binstall --no-confirm diesel_cli
+          CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
+          export PATH="$CARGO_BIN:$PATH"
+          DIESEL_BIN="$(command -v diesel || true)"
+          if [[ -z "$DIESEL_BIN" ]]; then
+            DIESEL_BIN="$CARGO_BIN/diesel"
+          fi
+          if [[ ! -x "$DIESEL_BIN" ]]; then
+            echo "diesel binary not found; expected at $DIESEL_BIN" >&2
+            exit 1
+          fi
           echo "Creating database"
           PGPASSWORD=postgres createdb -U postgres -h localhost -p 5432 hubuum_rust_test
           echo "Running database setup and migrations"
-          diesel migration run --database-url ${{ env.DATABASE_URL }}
+          "$DIESEL_BIN" migration run --database-url ${{ env.DATABASE_URL }}
           echo "Checking database setup"
           PGPASSWORD=postgres psql -U postgres -h localhost -p 5432 -d hubuum_rust_test -c "select * from users;"
       
