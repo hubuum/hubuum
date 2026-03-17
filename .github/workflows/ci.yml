@@ -229,7 +229,7 @@ jobs:
         run: cargo test ${{ matrix.feature.args }} --locked --release
 
   test:
-    name: Cross-platform (${{ matrix.platform.os_name }}, rust ${{ matrix.toolchain }})
+    name: ${{ matrix.platform.os_name }}, rust ${{ matrix.toolchain }}
     if: "!startsWith(github.ref, 'refs/tags/')"
     runs-on: ${{ matrix.platform.os }}
     strategy:
@@ -239,13 +239,13 @@ jobs:
           - os_name: Linux-x86_64
             os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-          - os_name: Linux-ARM64
+          - os_name: Linux-aarch64
             os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
           - os_name: Windows-x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
-          - os_name: macOS-ARM64
+          - os_name: macOS
             os: macos-latest
             target: aarch64-apple-darwin
         toolchain:
@@ -258,9 +258,9 @@ jobs:
             toolchain: beta
           - platform: { os_name: Windows-x86_64, os: windows-latest, target: x86_64-pc-windows-msvc }
             toolchain: nightly
-          - platform: { os_name: macOS-ARM64, os: macos-latest, target: aarch64-apple-darwin }
+          - platform: { os_name: macOS, os: macos-latest, target: aarch64-apple-darwin }
             toolchain: beta
-          - platform: { os_name: macOS-ARM64, os: macos-latest, target: aarch64-apple-darwin }
+          - platform: { os_name: macOS, os: macos-latest, target: aarch64-apple-darwin }
             toolchain: nightly
     steps:
       - name: Check out repository
@@ -287,20 +287,22 @@ jobs:
         if: contains(matrix.platform.os, 'macos')
         run: |
           brew install postgresql@17
-          echo "$(brew --prefix postgresql@17)/bin" >> $GITHUB_PATH
+          PG_BIN="$(brew --prefix postgresql@17)/bin"
+          echo "$PG_BIN" >> "$GITHUB_PATH"
+          export PATH="$PG_BIN:$PATH"
           # Initialize and start postgres (creates user matching system user)
           brew services start postgresql@17
           # Wait for postgres to be ready
           max_attempts=30
           attempt=0
-          until pg_isready -q || [ $attempt -eq $max_attempts ]; do
+          until "$PG_BIN/pg_isready" -q || [ $attempt -eq $max_attempts ]; do
             echo "Waiting for PostgreSQL to be ready... (attempt $((attempt+1))/$max_attempts)"
             sleep 1
             attempt=$((attempt+1))
           done
           # Create postgres superuser with password
-          createuser -s postgres
-          psql -d postgres -c "ALTER USER postgres PASSWORD 'postgres';"
+          "$PG_BIN/createuser" -s postgres
+          "$PG_BIN/psql" -d postgres -c "ALTER USER postgres PASSWORD 'postgres';"
       
       - name: Set up database (Linux/macOS)
         if: "!contains(matrix.platform.os, 'windows')"
@@ -318,7 +320,7 @@ jobs:
       
       - name: Build (non-Windows)
         if: "!contains(matrix.platform.os, 'windows')"
-        run: cargo build -F tls-rustls --locked --release
+        run: cargo build --all-features --locked --release
 
       - name: Build (Windows lib-only)
         if: contains(matrix.platform.os, 'windows')
