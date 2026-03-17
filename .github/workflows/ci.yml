@@ -303,7 +303,18 @@ jobs:
           # Create postgres superuser with password
           "$PG_BIN/createuser" -s postgres
           "$PG_BIN/psql" -d postgres -c "ALTER USER postgres PASSWORD 'postgres';"
-      
+
+      - name: Install Windows PostgreSQL libraries
+        if: contains(matrix.platform.os, 'windows')
+        shell: pwsh
+        run: |
+          choco install postgresql --params '"/Password:postgres"' --no-progress -y
+          $pgRoot = Get-ChildItem 'C:\Program Files\PostgreSQL' -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $pgRoot) { throw 'PostgreSQL installation directory not found' }
+          $libPath = Join-Path $pgRoot.FullName 'lib'
+          if (-not (Test-Path (Join-Path $libPath 'libpq.lib'))) { throw "libpq.lib not found in $libPath" }
+          "LIB=$libPath;$env:LIB" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8          
+
       - name: Set up database (Linux/macOS)
         if: "!contains(matrix.platform.os, 'windows')"
         run: |
