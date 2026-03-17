@@ -1,7 +1,5 @@
 name: CI
 
-# Copied from https://github.com/houseabsolute/precious/blob/master/.github/workflows/ci.yml
-
 on:
   push:
     branches:
@@ -9,6 +7,10 @@ on:
     tags:
       - "v*"
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CRATE_NAME: hubuum
@@ -211,7 +213,10 @@ jobs:
           sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev libssl-dev
       - name: Set up database
         run: |
-          cargo install diesel_cli --no-default-features --features postgres
+          # Install cargo-binstall for faster binary installation
+          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+          # Use binstall to get prebuilt diesel_cli binary
+          cargo binstall --no-confirm diesel_cli --no-default-features --features postgres
           echo "Creating database"
           PGPASSWORD=postgres createdb -U postgres -h localhost -p 5432 hubuum_rust_test
           echo "Running database setup and migrations"
@@ -351,7 +356,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Set up database
         run: |
-          cargo install diesel_cli --no-default-features --features postgres
+          # Install cargo-binstall for faster binary installation
+          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+          # Use binstall to get prebuilt diesel_cli binary
+          cargo binstall --no-confirm diesel_cli --no-default-features --features postgres
           echo "Creating database"
           PGPASSWORD=postgres createdb -U postgres -h localhost -p 5432 hubuum_rust_test
           echo "Running database setup and migrations"
@@ -362,13 +370,14 @@ jobs:
         run: |
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
-      - name: Install musl-tools on Linux
-        run: sudo apt-get update --yes && sudo apt-get install --yes musl-tools
-        if: contains(matrix.platform.name, 'musl')
-      - name: Install database libraries on Linux
+      - name: Install Linux dependencies
         run: |
           sudo apt-get update --yes
-          sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev
+          packages=(libsqlite3-dev libmysqlclient-dev libpq-dev)
+          if [[ "${{ matrix.platform.name }}" == *"musl"* ]]; then
+            packages+=(musl-tools)
+          fi
+          sudo apt-get install --yes "${packages[@]}"
         if: contains(matrix.platform.os, 'ubuntu')
       - name: Build binary with rustls feature enabled
         uses: houseabsolute/actions-rust-cross@v0
