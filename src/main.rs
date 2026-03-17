@@ -22,13 +22,13 @@ use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::SwaggerUi;
 
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use tracing_subscriber::{
     filter::EnvFilter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
 };
 
 use crate::api::openapi::openapi_json as openapi_json_handler;
-use crate::config::get_config;
+use crate::config::{get_config, token_hash_key_is_ephemeral};
 use crate::errors::{
     EXIT_CODE_CONFIG_ERROR, EXIT_CODE_INIT_ERROR, EXIT_CODE_TLS_ERROR, fatal_error,
     json_error_handler,
@@ -71,6 +71,13 @@ async fn main() -> std::io::Result<()> {
         )
         .init();
 
+    if token_hash_key_is_ephemeral() {
+        warn!(
+            message = "HUBUUM_TOKEN_HASH_KEY is not set; using ephemeral in-memory key. Existing tokens will be invalid after restart.",
+            recommendation = "Set HUBUUM_TOKEN_HASH_KEY to a stable secret to preserve token validity across restarts"
+        );
+    }
+
     debug!(
         message = "Starting server",
         bind_ip = %config.bind_ip,
@@ -96,6 +103,7 @@ async fn main() -> std::io::Result<()> {
 
     let client_allowlist = config.client_allowlist.clone();
     let trust_ip_headers = config.trust_ip_headers;
+    let app_config = config.clone();
 
     let server = HttpServer::new(move || {
         let app = App::new()
@@ -107,6 +115,7 @@ async fn main() -> std::io::Result<()> {
                 trust_ip_headers,
             ))
             .wrap(Logger::default())
+            .app_data(Data::new(app_config.clone()))
             .app_data(Data::new(pool.clone()))
             .app_data(JsonConfig::default().error_handler(json_error_handler))
             .route("/api-doc/openapi.json", web::get().to(openapi_json_handler));

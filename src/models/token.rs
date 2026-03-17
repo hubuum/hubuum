@@ -2,9 +2,12 @@ use chrono::NaiveDateTime;
 
 use diesel::prelude::*;
 use diesel::sql_types::{Integer, Text, Timestamp};
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use utoipa::ToSchema;
 
+use crate::config::token_hash_key_bytes;
 use crate::db::traits::user::DeleteTokenRecord;
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
@@ -26,6 +29,21 @@ pub struct UserToken {
     pub issued: NaiveDateTime,
 }
 
+#[derive(Serialize, Deserialize, Clone, ToSchema)]
+pub struct UserTokenMetadata {
+    pub user_id: i32,
+    pub issued: NaiveDateTime,
+}
+
+impl From<UserToken> for UserTokenMetadata {
+    fn from(value: UserToken) -> Self {
+        Self {
+            user_id: value.user_id,
+            issued: value.issued,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Token(pub String);
 
@@ -37,10 +55,10 @@ impl Token {
     /// Return a string where we only expose the first three and last three characters.
     /// The middle part is replaced with "..."
     pub fn obfuscate(&self) -> String {
-        let len = self.0.len();
-        if len > 6 {
-            let start = &self.0[..3];
-            let end = &self.0[len - 3..];
+        let chars: Vec<char> = self.0.chars().collect();
+        if chars.len() > 6 {
+            let start: String = chars[..3].iter().collect();
+            let end: String = chars[chars.len() - 3..].iter().collect();
             format!("{start}...{end}")
         } else {
             "...".to_string()
@@ -52,6 +70,20 @@ impl Token {
         C: BackendContext + ?Sized,
     {
         self.delete_token_record(backend.db_pool()).await
+    }
+
+    pub fn storage_hash(&self) -> String {
+        Self::storage_hash_from_raw(&self.0)
+    }
+
+    pub fn storage_hash_from_raw(raw_token: &str) -> String {
+        type HmacSha256 = Hmac<Sha256>;
+
+        let mut mac =
+            HmacSha256::new_from_slice(token_hash_key_bytes()).expect("invalid HMAC key length");
+        mac.update(raw_token.as_bytes());
+        let digest = mac.finalize().into_bytes();
+        digest.iter().map(|b| format!("{b:02x}")).collect()
     }
 }
 

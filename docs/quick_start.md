@@ -18,7 +18,7 @@ Hubuum can be configured using environment variables or command-line arguments. 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
 | `HUBUUM_CLIENT_ALLOWLIST` | `127.0.0.1,::1` | Comma-separated list of allowed client IPs or CIDRs (e.g., `10.0.0.0/24,2001:db8::/32`) |
-| `HUBUUM_TRUST_IP_HEADERS` | `true` | Whether to trust `X-Forwarded-For` and `Forwarded-For` headers for client IP detection |
+| `HUBUUM_TRUST_IP_HEADERS` | `false` | Whether to trust `X-Forwarded-For` and `Forwarded-For` headers for client IP detection |
 
 **Container note**: The default `HUBUUM_CLIENT_ALLOWLIST=127.0.0.1,::1` is loopback-only. In containerized setups, clients commonly arrive from bridge/network IPs, not loopback. For local/dev containers, set `HUBUUM_CLIENT_ALLOWLIST=*`. For production, prefer explicit CIDRs/IP ranges.
 
@@ -41,6 +41,12 @@ Hubuum can be configured using environment variables or command-line arguments. 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
 | `HUBUUM_ADMIN_GROUPNAME` | `admin` | Name of the admin group |
+| `HUBUUM_TOKEN_LIFETIME_HOURS` | `24` | Token lifetime in hours |
+| `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS` | `5` | Max failed login attempts per rate-limit window |
+| `HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS` | `300` | Login rate-limit window in seconds |
+| `HUBUUM_TOKEN_HASH_KEY` | _(generated per startup if unset)_ | Key used for deterministic token hashing at rest |
+
+**Token hash key note**: If `HUBUUM_TOKEN_HASH_KEY` is not set, Hubuum generates an ephemeral key on startup and logs a warning. Tokens issued before restart will be invalid after restart.
 
 ### TLS Configuration
 
@@ -80,7 +86,11 @@ On first startup with an empty database, Hubuum automatically creates:
 - A default admin group (named as per `HUBUUM_ADMIN_GROUPNAME`, default: `admin`)
 - The admin user is added to the admin group
 
-**Important**: The generated password is logged once at startup (log level: WARN). Change this password immediately after first login.
+**Important**: The generated password is not printed or logged. Reset the password immediately after startup:
+
+```bash
+hubuum-admin --reset-password admin
+```
 
 ## Example Configurations
 

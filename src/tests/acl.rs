@@ -38,10 +38,10 @@ async fn test_endpoint_access() {
     let admin_user_endpoint = &format!("/api/v1/iam/users/{}", admin_user.id);
 
     let endpoints = vec![
-        ("/api/v0/auth/logout", Method::GET, AccessLevel::User, None),
+        ("/api/v0/auth/logout", Method::POST, AccessLevel::User, None),
         (
             "/api/v0/auth/logout_all",
-            Method::GET,
+            Method::POST,
             AccessLevel::User,
             None,
         ),

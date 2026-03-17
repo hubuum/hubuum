@@ -55,6 +55,16 @@
               }
             }
           },
+          "429": {
+            "description": "Too many login attempts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
           "500": {
             "description": "Internal server error",
             "content": {
@@ -69,13 +79,13 @@
       }
     },
     "/api/v0/auth/logout": {
-      "get": {
+      "post": {
         "tags": [
           "auth"
         ],
-        "summary": "Get Api V0 Auth Logout",
-        "description": "Auto-generated documentation for GET /api/v0/auth/logout.",
-        "operationId": "getApiV0AuthLogout",
+        "summary": "Post Api V0 Auth Logout",
+        "description": "Auto-generated documentation for POST /api/v0/auth/logout.",
+        "operationId": "postApiV0AuthLogout",
         "responses": {
           "200": {
             "description": "Token revoked",
@@ -115,25 +125,24 @@
         ]
       }
     },
-    "/api/v0/auth/logout/token/{token}": {
-      "get": {
+    "/api/v0/auth/logout/token": {
+      "post": {
         "tags": [
           "auth"
         ],
-        "summary": "Get Api V0 Auth Logout Token By Token",
-        "description": "Auto-generated documentation for GET /api/v0/auth/logout/token/{token}.",
-        "operationId": "getApiV0AuthLogoutTokenByToken",
-        "parameters": [
-          {
-            "name": "token",
-            "in": "path",
-            "description": "Token string to revoke",
-            "required": true,
-            "schema": {
-              "type": "string"
+        "summary": "Post Api V0 Auth Logout Token",
+        "description": "Auto-generated documentation for POST /api/v0/auth/logout/token.",
+        "operationId": "postApiV0AuthLogoutToken",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LogoutTokenRequest"
+              }
             }
-          }
-        ],
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Token revoked",
@@ -174,13 +183,13 @@
       }
     },
     "/api/v0/auth/logout/uid/{user_id}": {
-      "get": {
+      "post": {
         "tags": [
           "auth"
         ],
-        "summary": "Get Api V0 Auth Logout Uid By User Id",
-        "description": "Auto-generated documentation for GET /api/v0/auth/logout/uid/{user_id}.",
-        "operationId": "getApiV0AuthLogoutUidByUserId",
+        "summary": "Post Api V0 Auth Logout Uid By User Id",
+        "description": "Auto-generated documentation for POST /api/v0/auth/logout/uid/{user_id}.",
+        "operationId": "postApiV0AuthLogoutUidByUserId",
         "parameters": [
           {
             "name": "user_id",
@@ -233,13 +242,13 @@
       }
     },
     "/api/v0/auth/logout_all": {
-      "get": {
+      "post": {
         "tags": [
           "auth"
         ],
-        "summary": "Get Api V0 Auth Logout All",
-        "description": "Auto-generated documentation for GET /api/v0/auth/logout_all.",
-        "operationId": "getApiV0AuthLogoutAll",
+        "summary": "Post Api V0 Auth Logout All",
+        "description": "Auto-generated documentation for POST /api/v0/auth/logout_all.",
+        "operationId": "postApiV0AuthLogoutAll",
         "responses": {
           "200": {
             "description": "All tokens revoked for current user",
@@ -3374,7 +3383,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Active tokens for user The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Active token metadata for user The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
@@ -3388,7 +3397,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/UserToken"
+                    "$ref": "#/components/schemas/UserTokenMetadata"
                   }
                 }
               }
@@ -7199,6 +7208,17 @@
           "username": "alice"
         }
       },
+      "LogoutTokenRequest": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          }
+        }
+      },
       "MessageResponse": {
         "type": "object",
         "required": [
@@ -8751,6 +8771,23 @@
           },
           "token": {
             "type": "string"
+          },
+          "user_id": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "UserTokenMetadata": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "issued"
+        ],
+        "properties": {
+          "issued": {
+            "type": "string",
+            "format": "date-time"
           },
           "user_id": {
             "type": "integer",

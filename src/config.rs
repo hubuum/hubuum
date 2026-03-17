@@ -1,5 +1,6 @@
+use std::sync::LazyLock;
 #[cfg(test)]
-use std::sync::{LazyLock, Mutex};
+use std::sync::Mutex;
 #[cfg(not(test))]
 use std::sync::{RwLock, RwLockReadGuard};
 
@@ -11,12 +12,39 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::num::NonZeroUsize;
 use std::str::FromStr;
+use uuid::Uuid;
 
 use crate::errors::ApiError;
 
 pub const DEFAULT_PAGE_LIMIT: usize = 100;
 pub const MAX_PAGE_LIMIT: usize = 250;
 pub const DEFAULT_TASK_POLL_INTERVAL_MS: u64 = 200;
+pub const DEFAULT_TOKEN_LIFETIME_HOURS: i64 = 24;
+pub const DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS: usize = 5;
+pub const DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS: u64 = 300;
+
+struct TokenHashKeyConfig {
+    key: Vec<u8>,
+    is_ephemeral: bool,
+}
+
+static TOKEN_HASH_KEY_CONFIG: LazyLock<TokenHashKeyConfig> = LazyLock::new(|| {
+    if let Ok(env_key) = std::env::var("HUBUUM_TOKEN_HASH_KEY") {
+        let trimmed = env_key.trim();
+        if !trimmed.is_empty() {
+            return TokenHashKeyConfig {
+                key: trimmed.as_bytes().to_vec(),
+                is_ephemeral: false,
+            };
+        }
+    }
+
+    let generated = format!("{}{}", Uuid::new_v4(), Uuid::new_v4());
+    TokenHashKeyConfig {
+        key: generated.into_bytes(),
+        is_ephemeral: true,
+    }
+});
 
 fn detected_cpu_count() -> usize {
     std::thread::available_parallelism()
@@ -104,6 +132,30 @@ pub struct AppConfig {
     #[clap(long, env = "HUBUUM_DB_POOL_SIZE", default_value_t = 10)]
     pub db_pool_size: u32,
 
+    /// Token lifetime in hours
+    #[clap(
+        long,
+        env = "HUBUUM_TOKEN_LIFETIME_HOURS",
+        default_value_t = DEFAULT_TOKEN_LIFETIME_HOURS
+    )]
+    pub token_lifetime_hours: i64,
+
+    /// Maximum failed login attempts allowed within the configured login rate-limit window.
+    #[clap(
+        long,
+        env = "HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS",
+        default_value_t = DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS
+    )]
+    pub login_rate_limit_max_attempts: usize,
+
+    /// Login rate-limit window in seconds.
+    #[clap(
+        long,
+        env = "HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS",
+        default_value_t = DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS
+    )]
+    pub login_rate_limit_window_seconds: u64,
+
     /// Default number of items returned by cursor-paginated list endpoints
     #[clap(
         long,
@@ -147,7 +199,7 @@ pub struct AppConfig {
     pub tls_backend: Option<TlsBackend>,
 
     /// Trust proxy IP headers (X-Forwarded-For/Forwarded). If false, use peer address only.
-    #[clap(long, default_value = "true", env = "HUBUUM_TRUST_IP_HEADERS")]
+    #[clap(long, default_value = "false", env = "HUBUUM_TRUST_IP_HEADERS")]
     pub trust_ip_headers: bool,
 
     /// Whitelist of client IPs or CIDRs ("*" allows all)
@@ -185,6 +237,24 @@ impl AppConfig {
             ));
         }
 
+        if self.token_lifetime_hours <= 0 {
+            return Err(ApiError::BadRequest(
+                "token_lifetime_hours must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.login_rate_limit_max_attempts == 0 {
+            return Err(ApiError::BadRequest(
+                "login_rate_limit_max_attempts must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.login_rate_limit_window_seconds == 0 {
+            return Err(ApiError::BadRequest(
+                "login_rate_limit_window_seconds must be greater than 0".to_string(),
+            ));
+        }
+
         if self.default_page_limit == 0 {
             return Err(ApiError::BadRequest(
                 "default_page_limit must be greater than 0".to_string(),
@@ -206,6 +276,56 @@ impl AppConfig {
 
         Ok(self)
     }
+}
+
+pub fn token_lifetime_hours_i32() -> i32 {
+    #[cfg(test)]
+    let hours = get_config_from_env()
+        .map(|config| config.token_lifetime_hours)
+        .unwrap_or(DEFAULT_TOKEN_LIFETIME_HOURS);
+
+    #[cfg(not(test))]
+    let hours = get_config()
+        .map(|config| config.token_lifetime_hours)
+        .unwrap_or(DEFAULT_TOKEN_LIFETIME_HOURS);
+
+    hours.clamp(1, i32::MAX as i64) as i32
+}
+
+pub fn token_hash_key_bytes() -> &'static [u8] {
+    &TOKEN_HASH_KEY_CONFIG.key
+}
+
+pub fn token_hash_key_is_ephemeral() -> bool {
+    TOKEN_HASH_KEY_CONFIG.is_ephemeral
+}
+
+pub fn login_rate_limit_max_attempts() -> usize {
+    #[cfg(test)]
+    let attempts = get_config_from_env()
+        .map(|config| config.login_rate_limit_max_attempts)
+        .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS);
+
+    #[cfg(not(test))]
+    let attempts = get_config()
+        .map(|config| config.login_rate_limit_max_attempts)
+        .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS);
+
+    attempts
+}
+
+pub fn login_rate_limit_window_seconds() -> u64 {
+    #[cfg(test)]
+    let seconds = get_config_from_env()
+        .map(|config| config.login_rate_limit_window_seconds)
+        .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS);
+
+    #[cfg(not(test))]
+    let seconds = get_config()
+        .map(|config| config.login_rate_limit_window_seconds)
+        .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS);
+
+    seconds
 }
 
 #[cfg(not(test))]
@@ -288,6 +408,18 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         db_pool_size: env_or_default("HUBUUM_DB_POOL_SIZE", "2")
             .parse()
             .unwrap_or(5),
+        token_lifetime_hours: env_or_default("HUBUUM_TOKEN_LIFETIME_HOURS", "24")
+            .parse()
+            .unwrap_or(DEFAULT_TOKEN_LIFETIME_HOURS),
+        login_rate_limit_max_attempts: env_or_default("HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS", "5")
+            .parse()
+            .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS),
+        login_rate_limit_window_seconds: env_or_default(
+            "HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS",
+            "300",
+        )
+        .parse()
+        .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS),
         default_page_limit: env_or_default("HUBUUM_DEFAULT_PAGE_LIMIT", "100")
             .parse()
             .unwrap_or(DEFAULT_PAGE_LIMIT),
@@ -299,9 +431,9 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         tls_key_path: env_or_default_opt("HUBUUM_TLS_KEY_PATH", None),
         tls_key_passphrase: env_or_default_opt("HUBUUM_TLS_KEY_PASSPHRASE", None),
         tls_backend: env_or_default_tls_backend("HUBUUM_TLS_BACKEND"),
-        trust_ip_headers: env_or_default("HUBUUM_TRUST_IP_HEADERS", "true")
+        trust_ip_headers: env_or_default("HUBUUM_TRUST_IP_HEADERS", "false")
             .parse()
-            .unwrap_or(true),
+            .unwrap_or(false),
         client_allowlist: env_or_default_client_allowlist(
             "HUBUUM_CLIENT_ALLOWLIST",
             "127.0.0.1,::1",
@@ -422,9 +554,11 @@ mod tests {
     use clap::Parser;
 
     use super::{
-        AppConfig, DEFAULT_PAGE_LIMIT, DEFAULT_TASK_POLL_INTERVAL_MS, MAX_PAGE_LIMIT,
-        TEST_ENV_LOCK, TlsBackend, default_actix_workers, default_task_workers,
-        get_config_from_env,
+        AppConfig, DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS, DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+        DEFAULT_PAGE_LIMIT, DEFAULT_TASK_POLL_INTERVAL_MS, DEFAULT_TOKEN_LIFETIME_HOURS,
+        MAX_PAGE_LIMIT, TEST_ENV_LOCK, TlsBackend, default_actix_workers, default_task_workers,
+        get_config_from_env, login_rate_limit_max_attempts, login_rate_limit_window_seconds,
+        token_hash_key_bytes, token_hash_key_is_ephemeral,
     };
 
     struct EnvVarGuard {
@@ -566,5 +700,126 @@ mod tests {
         assert_eq!(loaded.actix_workers, default_actix_workers());
         assert_eq!(loaded.task_workers, default_task_workers());
         assert_eq!(loaded.task_poll_interval_ms, DEFAULT_TASK_POLL_INTERVAL_MS);
+    }
+
+    #[test]
+    fn token_lifetime_hours_are_parsed_from_env() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_TOKEN_LIFETIME_HOURS", Some("48"));
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(parsed.token_lifetime_hours, 48);
+        assert_eq!(loaded.token_lifetime_hours, 48);
+    }
+
+    #[test]
+    fn token_lifetime_hours_defaults_when_env_var_is_unset() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_TOKEN_LIFETIME_HOURS", None);
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(parsed.token_lifetime_hours, DEFAULT_TOKEN_LIFETIME_HOURS);
+        assert_eq!(loaded.token_lifetime_hours, DEFAULT_TOKEN_LIFETIME_HOURS);
+    }
+
+    #[test]
+    fn token_lifetime_hours_are_validated() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_TOKEN_LIFETIME_HOURS", Some("0"));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "token_lifetime_hours must be greater than 0"
+        );
+    }
+
+    #[test]
+    fn negative_token_lifetime_hours_are_rejected() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_TOKEN_LIFETIME_HOURS", Some("-1"));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "token_lifetime_hours must be greater than 0"
+        );
+    }
+
+    #[test]
+    fn token_hash_key_is_initialized_once() {
+        let key = token_hash_key_bytes();
+        assert!(!key.is_empty());
+        let _ = token_hash_key_is_ephemeral();
+    }
+
+    #[test]
+    fn login_rate_limit_settings_are_parsed_from_env() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _attempts_guard = EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS", Some("9"));
+        let _window_guard = EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS", Some("120"));
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(parsed.login_rate_limit_max_attempts, 9);
+        assert_eq!(parsed.login_rate_limit_window_seconds, 120);
+        assert_eq!(loaded.login_rate_limit_max_attempts, 9);
+        assert_eq!(loaded.login_rate_limit_window_seconds, 120);
+    }
+
+    #[test]
+    fn login_rate_limit_settings_default_when_env_vars_are_unset() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _attempts_guard = EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS", None);
+        let _window_guard = EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS", None);
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(
+            parsed.login_rate_limit_max_attempts,
+            DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS
+        );
+        assert_eq!(
+            parsed.login_rate_limit_window_seconds,
+            DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS
+        );
+        assert_eq!(
+            loaded.login_rate_limit_max_attempts,
+            DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS
+        );
+        assert_eq!(
+            loaded.login_rate_limit_window_seconds,
+            DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS
+        );
+        assert_eq!(
+            login_rate_limit_max_attempts(),
+            DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS
+        );
+        assert_eq!(
+            login_rate_limit_window_seconds(),
+            DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS
+        );
+    }
+
+    #[test]
+    fn login_rate_limit_settings_are_validated() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _attempts_guard = EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS", Some("0"));
+        let _window_guard = EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS", Some("0"));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "login_rate_limit_max_attempts must be greater than 0"
+        );
     }
 }

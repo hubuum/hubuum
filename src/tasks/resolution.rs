@@ -138,7 +138,10 @@ pub(super) async fn resolve_object_planning(
                 .missing_object_keys
                 .contains(&(class.id, key.name.clone()))
             {
-                return Err(format!("Object '{}' not found in class '{}'", key.name, class.name));
+                return Err(format!(
+                    "Object '{}' not found in class '{}'",
+                    key.name, class.name
+                ));
             }
 
             let object = lookup_object_by_class_and_name(pool, class.id, &key.name)
