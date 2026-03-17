@@ -297,10 +297,10 @@ jobs:
       - name: Install macOS dependencies
         if: contains(matrix.platform.os, 'macos')
         run: |
-          brew install postgresql@15
-          echo "$(brew --prefix postgresql@15)/bin" >> $GITHUB_PATH
+          brew install postgresql@17
+          echo "$(brew --prefix postgresql@17)/bin" >> $GITHUB_PATH
           # Initialize and start postgres (creates user matching system user)
-          brew services start postgresql@15
+          brew services start postgresql@17
           # Wait for postgres to be ready
           max_attempts=30
           attempt=0
@@ -397,7 +397,7 @@ jobs:
     name: Build release artifacts (${{ matrix.platform.name }})
     if: startsWith(github.ref, 'refs/tags/v')
     needs: validate-tag-release
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.platform.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -405,9 +405,23 @@ jobs:
           - name: Linux-x86_64
             target: x86_64-unknown-linux-gnu
             os_name: linux-x86_64
+            os: ubuntu-24.04
+            use_cross: true
           - name: Linux-aarch64
             target: aarch64-unknown-linux-gnu
             os_name: linux-aarch64
+            os: ubuntu-24.04
+            use_cross: true
+          - name: Windows-x86_64
+            target: x86_64-pc-windows-msvc
+            os_name: windows-x86_64
+            os: windows-latest
+            use_cross: false
+          - name: macOS-ARM64
+            target: aarch64-apple-darwin
+            os_name: macos-aarch64
+            os: macos-latest
+            use_cross: false
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -415,11 +429,20 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
-      - name: Install database libraries on Linux
+      
+      - name: Install Linux dependencies
+        if: contains(matrix.platform.os, 'ubuntu')
         run: |
           sudo apt-get update --yes
           sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev libssl-dev
-      - name: Build release binaries
+      
+      - name: Install macOS dependencies
+        if: contains(matrix.platform.os, 'macos')
+        run: |
+          brew install postgresql@17 mysql-client
+      
+      - name: Build release binaries (cross-compilation)
+        if: matrix.platform.use_cross
         uses: houseabsolute/actions-rust-cross@v0
         with:
           command: build
@@ -427,13 +450,30 @@ jobs:
           toolchain: stable
           args: "-F tls-rustls --locked --release"
           strip: true
-      - name: Package release archive
+      
+      - name: Build release binaries (native)
+        if: "!matrix.platform.use_cross"
+        run: cargo build -F tls-rustls --locked --release --target ${{ matrix.platform.target }}
+      
+      - name: Package release archive (Unix)
+        if: "!contains(matrix.platform.os, 'windows')"
         shell: bash
         run: |
           mkdir -p dist
           archive_name="hubuum-${{ matrix.platform.os_name }}-tls-rustls-${GITHUB_REF_NAME}.tar.gz"
           tar czvf "dist/${archive_name}" -C "target/${{ matrix.platform.target }}/release" hubuum-server hubuum-admin
           shasum -a 256 "dist/${archive_name}" > "dist/${archive_name}.sha256"
+      
+      - name: Package release archive (Windows)
+        if: contains(matrix.platform.os, 'windows')
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          $archive_name = "hubuum-${{ matrix.platform.os_name }}-tls-rustls-${env:GITHUB_REF_NAME}.zip"
+          Compress-Archive -Path "target/${{ matrix.platform.target }}/release/hubuum-server.exe", "target/${{ matrix.platform.target }}/release/hubuum-admin.exe" -DestinationPath "dist/$archive_name"
+          $hash = (Get-FileHash "dist/$archive_name" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $archive_name" | Out-File -FilePath "dist/$archive_name.sha256" -Encoding ascii
+      
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
