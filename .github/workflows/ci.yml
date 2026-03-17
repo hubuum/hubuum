@@ -607,8 +607,8 @@ jobs:
           prerelease: false
           files: dist/*
 
-  publish-main-containers:
-    name: Publish main containers (${{ matrix.variant.name }})
+  publish-main-container-images:
+    name: Build main container (${{ matrix.variant.name }}, ${{ matrix.platform.arch }})
     if: github.ref == 'refs/heads/main'
     needs:
       - lint
@@ -616,7 +616,7 @@ jobs:
       - openapi-contract
       - feature-permutations
       - test
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.platform.runner }}
     permissions:
       contents: read
       packages: write
@@ -628,11 +628,14 @@ jobs:
             build_args: "-F tls-rustls -F tls-openssl"
           - name: rustls-only
             build_args: "-F tls-rustls"
+        platform:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
       - name: Log in to GitHub Container Registry
@@ -641,47 +644,70 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Compute image tags
-        id: tags
-        shell: bash
-        run: |
-          owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
-          image="ghcr.io/${owner}/hubuum-server"
-          variant="${{ matrix.variant.name }}"
-          tags=()
-
-          if [[ "$variant" == "full" ]]; then
-            tags+=("${image}:main")
-            tags+=("${image}:main-full")
-          else
-            tags+=("${image}:main-${variant}")
-          fi
-
-          {
-            echo "tags<<EOF"
-            printf '%s\n' "${tags[@]}"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-      - name: Build and push image
+      - name: Build and push platform-specific image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/${{ matrix.platform.arch }}
           push: true
-          tags: ${{ steps.tags.outputs.tags }}
+          tags: ghcr.io/${{ github.repository_owner }}/hubuum-server:main-${{ matrix.variant.name }}-${{ matrix.platform.arch }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ github.ref_name }}
           build-args: |
             CARGO_BUILD_FLAGS=${{ matrix.variant.build_args }} --locked --release
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-  publish-tag-containers:
-    name: Publish release containers (${{ matrix.variant.name }})
+  publish-main-container-manifests:
+    name: Create main multi-arch manifest (${{ matrix.variant.name }})
+    if: github.ref == 'refs/heads/main'
+    needs: publish-main-container-images
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - name: full
+          - name: rustls-only
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create and push multi-arch manifest
+        shell: bash
+        run: |
+          owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          image="ghcr.io/${owner}/hubuum-server"
+          variant="${{ matrix.variant.name }}"
+          
+          # Determine final tags
+          if [[ "$variant" == "full" ]]; then
+            final_tags=("${image}:main" "${image}:main-full")
+          else
+            final_tags=("${image}:main-${variant}")
+          fi
+          
+          # Create and push manifest for each tag
+          for tag in "${final_tags[@]}"; do
+            docker buildx imagetools create -t "$tag" \
+              "${image}:main-${variant}-amd64" \
+              "${image}:main-${variant}-arm64"
+          done
+
+  publish-tag-container-images:
+    name: Build release container (${{ matrix.variant.name }}, ${{ matrix.platform.arch }})
     if: startsWith(github.ref, 'refs/tags/v')
     needs: validate-tag-release
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.platform.runner }}
     permissions:
       contents: read
       packages: write
@@ -693,6 +719,11 @@ jobs:
             build_args: "-F tls-rustls -F tls-openssl"
           - name: rustls-only
             build_args: "-F tls-rustls"
+        platform:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -700,8 +731,6 @@ jobs:
         run: chmod +x scripts/*.sh
       - name: Check tagged release metadata
         run: ./scripts/check-release-readiness.sh "${GITHUB_REF_NAME}"
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
       - name: Log in to GitHub Container Registry
@@ -710,8 +739,45 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Compute image tags
-        id: tags
+      - name: Build and push platform-specific image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/${{ matrix.platform.arch }}
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/hubuum-server:${{ github.ref_name }}-${{ matrix.variant.name }}-${{ matrix.platform.arch }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+          build-args: |
+            CARGO_BUILD_FLAGS=${{ matrix.variant.build_args }} --locked --release
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  publish-tag-container-manifests:
+    name: Create release multi-arch manifest (${{ matrix.variant.name }})
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: publish-tag-container-images
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - name: full
+          - name: rustls-only
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create and push multi-arch manifest
         shell: bash
         run: |
           owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
@@ -719,34 +785,27 @@ jobs:
           version_tag="${GITHUB_REF_NAME}"
           version="${version_tag#v}"
           variant="${{ matrix.variant.name }}"
-          tags=()
-
+          
+          # Determine final tags
           if [[ "$variant" == "full" ]]; then
-            tags+=("${image}:${version_tag}")
-            tags+=("${image}:${version}")
-            tags+=("${image}:${version_tag}-full")
-            tags+=("${image}:${version}-full")
+            final_tags=(
+              "${image}:${version_tag}"
+              "${image}:${version}"
+              "${image}:${version_tag}-full"
+              "${image}:${version}-full"
+            )
           else
-            tags+=("${image}:${version_tag}-${variant}")
-            tags+=("${image}:${version}-${variant}")
+            final_tags=(
+              "${image}:${version_tag}-${variant}"
+              "${image}:${version}-${variant}"
+            )
           fi
-
-          {
-            echo "tags<<EOF"
-            printf '%s\n' "${tags[@]}"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-      - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.tags.outputs.tags }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ github.ref_name }}
+          
+          # Create and push manifest for each tag
+          for tag in "${final_tags[@]}"; do
+            docker buildx imagetools create -t "$tag" \
+              "${image}:${version_tag}-${variant}-amd64" \
+              "${image}:${version_tag}-${variant}-arm64"
+          done
           build-args: |
             CARGO_BUILD_FLAGS=${{ matrix.variant.build_args }} --locked --release
