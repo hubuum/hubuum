@@ -16,7 +16,7 @@ env:
   RUST_BACKTRACE: 1
   DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_rust_test
   HUBUUM_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_rust_test
-  HUBUU_DB_TEST_PASSWORD: postgres
+  HUBUUM_DB_TEST_PASSWORD: postgres
 
 jobs:
   lint:
@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Install clippy
         run: rustup component add clippy
       - name: Run clippy
@@ -56,7 +56,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
       - name: Generate OpenAPI JSON
@@ -114,7 +114,7 @@ jobs:
       matrix: ${{ steps.detect.outputs.matrix }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
       - name: Install feature build dependencies
@@ -202,7 +202,7 @@ jobs:
           --health-retries 5
     steps:
       - name: Check out repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
       - name: Install database libraries on Linux
@@ -211,7 +211,7 @@ jobs:
           sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev libssl-dev
       - name: Set up database
         run: |
-          cargo install diesel_cli --no-default-features --features postgres --force
+          cargo install diesel_cli --no-default-features --features postgres
           echo "Creating database"
           PGPASSWORD=postgres createdb -U postgres -h localhost -p 5432 hubuum_rust_test
           echo "Running database setup and migrations"
@@ -345,17 +345,13 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - name: Docker debugging
-        run: |
-          docker ps -a
-          docker container ls
       - name: Check out repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
       - name: Set up database
         run: |
-          cargo install diesel_cli --no-default-features --features postgres --force
+          cargo install diesel_cli --no-default-features --features postgres
           echo "Creating database"
           PGPASSWORD=postgres createdb -U postgres -h localhost -p 5432 hubuum_rust_test
           echo "Running database setup and migrations"
@@ -364,8 +360,8 @@ jobs:
           PGPASSWORD=postgres psql -U postgres -h localhost -p 5432 -d hubuum_rust_test -c "select * from users;"
       - name: Configure Git
         run: |
-          git config --global user.email "terje@kvernes.no"
-          git config --global user.name "Terje Kvernes"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
       - name: Install musl-tools on Linux
         run: sudo apt-get update --yes && sudo apt-get install --yes musl-tools
         if: contains(matrix.platform.name, 'musl')
