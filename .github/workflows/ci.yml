@@ -224,20 +224,9 @@ jobs:
           echo "Checking database setup"
           PGPASSWORD=postgres psql -U postgres -h localhost -p 5432 -d hubuum_rust_test -c "select * from users;"
       - name: Build (${{ matrix.feature.name }})
-        uses: houseabsolute/actions-rust-cross@v0
-        with:
-          command: "build"
-          target: x86_64-unknown-linux-gnu
-          toolchain: stable
-          args: "${{ matrix.feature.args }} --locked --release"
-          strip: true
+        run: cargo build ${{ matrix.feature.args }} --locked --release
       - name: Test (${{ matrix.feature.name }})
-        uses: houseabsolute/actions-rust-cross@v0
-        with:
-          command: "test -- --database-url ${{ env.DATABASE_URL }}"
-          target: x86_64-unknown-linux-gnu
-          toolchain: stable
-          args: "${{ matrix.feature.args }} --locked --release"
+        run: cargo test ${{ matrix.feature.args }} --locked --release
 
   test:
     name: Cross-platform (${{ matrix.platform.os_name }}, rust ${{ matrix.toolchain }})
@@ -327,12 +316,17 @@ jobs:
           echo "Checking database setup"
           PGPASSWORD=postgres psql -U postgres -h localhost -p 5432 -d hubuum_rust_test -c "select * from users;"
       
-      - name: Build
+      - name: Build (non-Windows)
+        if: "!contains(matrix.platform.os, 'windows')"
         run: cargo build -F tls-rustls --locked --release
+
+      - name: Build (Windows lib-only)
+        if: contains(matrix.platform.os, 'windows')
+        run: cargo test -F tls-rustls --locked --release --lib --no-run
       
       - name: Run tests (Linux/macOS)
         if: "!contains(matrix.platform.os, 'windows')"
-        run: cargo test --locked --release -- --database-url ${{ env.DATABASE_URL }}
+        run: cargo test --locked --release
       
       - name: Run tests (Windows - no database)
         if: contains(matrix.platform.os, 'windows')
@@ -406,27 +400,28 @@ jobs:
             target: x86_64-unknown-linux-gnu
             os_name: linux-x86_64
             os: ubuntu-24.04
-            use_cross: true
           - name: Linux-aarch64
             target: aarch64-unknown-linux-gnu
             os_name: linux-aarch64
-            os: ubuntu-24.04
-            use_cross: true
+            os: ubuntu-24.04-arm
           - name: Windows-x86_64
             target: x86_64-pc-windows-msvc
             os_name: windows-x86_64
             os: windows-latest
-            use_cross: false
           - name: macOS-ARM64
             target: aarch64-apple-darwin
             os_name: macos-aarch64
             os: macos-latest
-            use_cross: false
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Ensure Rust target is installed
+        run: rustup target add ${{ matrix.platform.target }}
+
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
       
@@ -440,19 +435,19 @@ jobs:
         if: contains(matrix.platform.os, 'macos')
         run: |
           brew install postgresql@17 mysql-client
-      
-      - name: Build release binaries (cross-compilation)
-        if: matrix.platform.use_cross
-        uses: houseabsolute/actions-rust-cross@v0
-        with:
-          command: build
-          target: ${{ matrix.platform.target }}
-          toolchain: stable
-          args: "-F tls-rustls --locked --release"
-          strip: true
+
+      - name: Install Windows PostgreSQL libraries
+        if: contains(matrix.platform.os, 'windows')
+        shell: pwsh
+        run: |
+          choco install postgresql --params '"/Password:postgres"' --no-progress -y
+          $pgRoot = Get-ChildItem 'C:\Program Files\PostgreSQL' -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $pgRoot) { throw 'PostgreSQL installation directory not found' }
+          $libPath = Join-Path $pgRoot.FullName 'lib'
+          if (-not (Test-Path (Join-Path $libPath 'libpq.lib'))) { throw "libpq.lib not found in $libPath" }
+          "LIB=$libPath;$env:LIB" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       
       - name: Build release binaries (native)
-        if: "!matrix.platform.use_cross"
         run: cargo build -F tls-rustls --locked --release --target ${{ matrix.platform.target }}
       
       - name: Package release archive (Unix)
@@ -523,15 +518,17 @@ jobs:
       - openapi-contract
       - feature-permutations
       - test
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
       matrix:
         platform:
           - target: x86_64-unknown-linux-gnu
             os_name: linux-x86_64
+            runner: ubuntu-24.04
           - target: aarch64-unknown-linux-gnu
             os_name: linux-aarch64
+            runner: ubuntu-24.04-arm
         feature:
           - extra_args: "--no-default-features"
             ext: no-tls
@@ -544,6 +541,8 @@ jobs:
         uses: actions/checkout@v4
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
+      - name: Ensure Rust target is installed
+        run: rustup target add ${{ matrix.platform.target }}
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
       - name: Install database libraries on Linux
@@ -551,13 +550,7 @@ jobs:
           sudo apt-get update --yes
           sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev libssl-dev
       - name: Build main binaries
-        uses: houseabsolute/actions-rust-cross@v0
-        with:
-          command: build
-          target: ${{ matrix.platform.target }}
-          toolchain: stable
-          args: "${{ matrix.feature.extra_args }} --locked --release"
-          strip: true
+        run: cargo build ${{ matrix.feature.extra_args }} --locked --release --target ${{ matrix.platform.target }}
       - name: Package main archive
         shell: bash
         run: |
