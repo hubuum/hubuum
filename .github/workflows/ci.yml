@@ -612,10 +612,20 @@ jobs:
         platform:
           - target: x86_64-unknown-linux-gnu
             os_name: linux-x86_64
+            os: ubuntu-24.04
             runner: ubuntu-24.04
           - target: aarch64-unknown-linux-gnu
             os_name: linux-aarch64
+            os: ubuntu-24.04-arm
             runner: ubuntu-24.04-arm
+          - target: x86_64-pc-windows-msvc
+            os_name: windows-x86_64
+            os: windows-latest
+            runner: windows-latest
+          - target: aarch64-apple-darwin
+            os_name: macos-aarch64
+            os: macos-latest
+            runner: macos-latest
         feature:
           - extra_args: "--no-default-features"
             ext: no-tls
@@ -623,6 +633,10 @@ jobs:
             ext: tls-openssl
           - extra_args: "-F tls-rustls"
             ext: tls-rustls
+        exclude:
+          # tls-openssl requires libssl which is not straightforward on Windows
+          - platform: { os_name: windows-x86_64 }
+            feature: { ext: tls-openssl }
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -632,18 +646,43 @@ jobs:
         run: rustup target add ${{ matrix.platform.target }}
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
-      - name: Install database libraries on Linux
+      - name: Install Linux dependencies
+        if: contains(matrix.platform.os, 'ubuntu')
         run: |
           sudo apt-get update --yes
           sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev libssl-dev
+      - name: Install macOS dependencies
+        if: contains(matrix.platform.os, 'macos')
+        run: brew install postgresql@17 openssl@3
+      - name: Install Windows PostgreSQL libraries
+        if: contains(matrix.platform.os, 'windows')
+        shell: pwsh
+        run: |
+          choco install postgresql --params '"/Password:postgres"' --no-progress -y
+          $pgRoot = Get-ChildItem 'C:\Program Files\PostgreSQL' -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $pgRoot) { throw 'PostgreSQL installation directory not found' }
+          $libPath = Join-Path $pgRoot.FullName 'lib'
+          if (-not (Test-Path (Join-Path $libPath 'libpq.lib'))) { throw "libpq.lib not found in $libPath" }
+          "LIB=$libPath;$env:LIB" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Build main binaries
         run: cargo build ${{ matrix.feature.extra_args }} --locked --release --target ${{ matrix.platform.target }}
-      - name: Package main archive
+      - name: Package main archive (Unix)
+        if: "!contains(matrix.platform.os, 'windows')"
         shell: bash
         run: |
           mkdir -p dist
           archive_name="hubuum-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}-main.tar.gz"
           tar czvf "dist/${archive_name}" -C "target/${{ matrix.platform.target }}/release" hubuum-server hubuum-admin
+          shasum -a 256 "dist/${archive_name}" > "dist/${archive_name}.sha256"
+      - name: Package main archive (Windows)
+        if: contains(matrix.platform.os, 'windows')
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          $archive_name = "hubuum-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}-main.zip"
+          Compress-Archive -Path "target/${{ matrix.platform.target }}/release/hubuum-server.exe", "target/${{ matrix.platform.target }}/release/hubuum-admin.exe" -DestinationPath "dist/$archive_name"
+          $hash = (Get-FileHash "dist/$archive_name" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $archive_name" | Out-File -FilePath "dist/$archive_name.sha256" -Encoding ascii
       - name: Upload main artifact
         uses: actions/upload-artifact@v4
         with:
