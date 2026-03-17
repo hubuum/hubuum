@@ -9,6 +9,8 @@ mod tests {
     use actix_web::http::header;
     use actix_web::{App, http::StatusCode, test, web, web::Data};
     use diesel::prelude::*;
+    use std::sync::LazyLock;
+    use tokio::sync::{Mutex, MutexGuard};
 
     const LOGIN_ENDPOINT: &str = "/api/v0/auth/login";
     const LOGOUT_ENDPOINT: &str = "/api/v0/auth/logout";
@@ -17,8 +19,15 @@ mod tests {
     const LOGOUT_SPECIFIC_TOKEN: &str = "/api/v0/auth/logout/token";
     const VALIDATE_TOKEN_ENDPOINT: &str = "/api/v0/auth/validate";
 
+    static AUTH_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    async fn lock_auth_test_state() -> MutexGuard<'static, ()> {
+        AUTH_TEST_LOCK.lock().await
+    }
+
     #[actix_web::test]
     async fn test_valid_login() {
+        let _guard = lock_auth_test_state().await;
         crate::api::handlers::auth::reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
@@ -130,6 +139,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_invalid_login_credentials() {
+        let _guard = lock_auth_test_state().await;
         crate::api::handlers::auth::reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
@@ -162,6 +172,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_invalid_login_parameters() {
+        let _guard = lock_auth_test_state().await;
         crate::api::handlers::auth::reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
@@ -221,6 +232,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_logout_single_token() {
+        let _guard = lock_auth_test_state().await;
         crate::api::handlers::auth::reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
@@ -287,6 +299,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_logout_all_tokens_from_user() {
+        let _guard = lock_auth_test_state().await;
         crate::api::handlers::auth::reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
@@ -370,6 +383,7 @@ mod tests {
     async fn test_logout_specific_token() {
         use crate::models::token::Token;
 
+        let _guard = lock_auth_test_state().await;
         crate::api::handlers::auth::reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
@@ -448,6 +462,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_login_rate_limit_uses_trusted_forwarded_ip_when_enabled() {
+        let _guard = lock_auth_test_state().await;
         crate::api::handlers::auth::reset_login_rate_limit_for_tests();
         let mut config = get_config().unwrap();
         config.trust_ip_headers = true;
@@ -494,6 +509,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_login_is_rate_limited_after_repeated_failures() {
+        let _guard = lock_auth_test_state().await;
         crate::api::handlers::auth::reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();
         let max_attempts = config.login_rate_limit_max_attempts;
