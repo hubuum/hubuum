@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use crate::api::handlers::auth::reset_login_rate_limit_for_tests;
     use crate::config::get_config;
     use crate::db::traits::ActiveTokens;
     use crate::db::{init_pool, with_connection};
@@ -28,7 +29,7 @@ mod tests {
     #[actix_web::test]
     async fn test_valid_login() {
         let _guard = lock_auth_test_state().await;
-        crate::api::handlers::auth::reset_login_rate_limit_for_tests();
+        reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
@@ -140,7 +141,7 @@ mod tests {
     #[actix_web::test]
     async fn test_invalid_login_credentials() {
         let _guard = lock_auth_test_state().await;
-        crate::api::handlers::auth::reset_login_rate_limit_for_tests();
+        reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
@@ -173,7 +174,7 @@ mod tests {
     #[actix_web::test]
     async fn test_invalid_login_parameters() {
         let _guard = lock_auth_test_state().await;
-        crate::api::handlers::auth::reset_login_rate_limit_for_tests();
+        reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
@@ -233,7 +234,7 @@ mod tests {
     #[actix_web::test]
     async fn test_logout_single_token() {
         let _guard = lock_auth_test_state().await;
-        crate::api::handlers::auth::reset_login_rate_limit_for_tests();
+        reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
@@ -300,7 +301,7 @@ mod tests {
     #[actix_web::test]
     async fn test_logout_all_tokens_from_user() {
         let _guard = lock_auth_test_state().await;
-        crate::api::handlers::auth::reset_login_rate_limit_for_tests();
+        reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
@@ -384,7 +385,7 @@ mod tests {
         use crate::models::token::Token;
 
         let _guard = lock_auth_test_state().await;
-        crate::api::handlers::auth::reset_login_rate_limit_for_tests();
+        reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
@@ -463,7 +464,7 @@ mod tests {
     #[actix_web::test]
     async fn test_login_rate_limit_uses_trusted_forwarded_ip_when_enabled() {
         let _guard = lock_auth_test_state().await;
-        crate::api::handlers::auth::reset_login_rate_limit_for_tests();
+        reset_login_rate_limit_for_tests();
         let mut config = get_config().unwrap();
         config.trust_ip_headers = true;
         let max_attempts = config.login_rate_limit_max_attempts;
@@ -510,7 +511,7 @@ mod tests {
     #[actix_web::test]
     async fn test_login_is_rate_limited_after_repeated_failures() {
         let _guard = lock_auth_test_state().await;
-        crate::api::handlers::auth::reset_login_rate_limit_for_tests();
+        reset_login_rate_limit_for_tests();
         let config = get_config().unwrap();
         let max_attempts = config.login_rate_limit_max_attempts;
         let pool = init_pool(&config.database_url, config.db_pool_size);
