@@ -2,20 +2,29 @@ use crate::config::token_lifetime_hours_i32;
 use crate::db::traits::ActiveTokens;
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
-use crate::models::search::{FilterField, QueryOptions};
+use crate::models::search::{FilterField, QueryOptions, SearchOperator};
 use crate::models::{Token, User, UserToken};
 use crate::traits::SelfAccessors;
 use diesel::prelude::*;
 use diesel::sql_types::Integer;
 
-fn hash_token_name_filters(query_options: &QueryOptions) -> QueryOptions {
+fn hash_token_name_filters(query_options: &QueryOptions) -> Result<QueryOptions, ApiError> {
     let mut prepared = query_options.clone();
     for filter in &mut prepared.filters {
         if filter.field == FilterField::Name {
-            filter.value = Token::storage_hash_from_raw(&filter.value);
+            match &filter.operator {
+                SearchOperator::Equals { .. } => {
+                    filter.value = Token::storage_hash_from_raw(&filter.value);
+                }
+                op => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Token name only supports equality operators, got '{op}'"
+                    )));
+                }
+            }
         }
     }
-    prepared
+    Ok(prepared)
 }
 
 impl<S> ActiveTokens for S
@@ -56,7 +65,7 @@ async fn active_tokens_by_user_id_paginated(
     use crate::schema::tokens::dsl::{issued, token, tokens, user_id as token_user_id};
     use crate::{date_search, string_search};
 
-    let query_options = hash_token_name_filters(query_options);
+    let query_options = hash_token_name_filters(query_options)?;
     let hours = token_lifetime_hours_i32() as i64;
     let mut base_query = tokens
         .into_boxed()

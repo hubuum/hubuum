@@ -55,10 +55,10 @@ impl Token {
     /// Return a string where we only expose the first three and last three characters.
     /// The middle part is replaced with "..."
     pub fn obfuscate(&self) -> String {
-        let len = self.0.len();
-        if len > 6 {
-            let start = &self.0[..3];
-            let end = &self.0[len - 3..];
+        let chars: Vec<char> = self.0.chars().collect();
+        if chars.len() > 6 {
+            let start: String = chars[..3].iter().collect();
+            let end: String = chars[chars.len() - 3..].iter().collect();
             format!("{start}...{end}")
         } else {
             "...".to_string()

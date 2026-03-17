@@ -10,8 +10,9 @@ use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, web};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{HashMap, VecDeque};
-use std::sync::{LazyLock, Mutex, MutexGuard};
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
 use tracing::{debug, warn};
 use utoipa::ToSchema;
 
@@ -26,18 +27,6 @@ fn login_rate_limit_key(username: &str, client_ip: &str) -> String {
 
 fn current_login_window() -> Duration {
     Duration::from_secs(login_rate_limit_window_seconds())
-}
-
-fn login_attempts_guard() -> MutexGuard<'static, HashMap<String, VecDeque<Instant>>> {
-    match LOGIN_ATTEMPTS.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => {
-            let mut guard = poisoned.into_inner();
-            warn!(message = "Recovering poisoned login limiter state; clearing recorded attempts");
-            guard.clear();
-            guard
-        }
-    }
 }
 
 fn prune_attempts(attempts: &mut VecDeque<Instant>, now: Instant) {
@@ -61,26 +50,7 @@ fn prune_login_attempts_map(
     });
 }
 
-fn evict_expired_or_stalest_login_attempt_key(
-    attempts_by_key: &mut HashMap<String, VecDeque<Instant>>,
-) {
-    // First, try to evict any key whose VecDeque is empty (expired window)
-    if let Some(empty_key) = attempts_by_key.iter().find_map(|(key, attempts)| {
-        if attempts.is_empty() {
-            Some(key.clone())
-        } else {
-            None
-        }
-    }) {
-        attempts_by_key.remove(&empty_key);
-        warn!(
-            message = "Evicted expired login limiter entry to enforce key cap",
-            max_tracked_keys = MAX_LOGIN_ATTEMPT_KEYS
-        );
-        return;
-    }
-
-    // If no empty keys, evict the stalest (oldest last attempt) key
+fn evict_stalest_login_attempt_key(attempts_by_key: &mut HashMap<String, VecDeque<Instant>>) {
     let stalest_key = attempts_by_key
         .iter()
         .filter_map(|(key, attempts)| {
@@ -112,43 +82,50 @@ fn client_ip_for_request(req: &HttpRequest) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-fn login_is_rate_limited(username: &str, client_ip: &str) -> bool {
+async fn login_is_rate_limited(username: &str, client_ip: &str) -> bool {
     let key = login_rate_limit_key(username, client_ip);
     let now = Instant::now();
-    let mut guard = login_attempts_guard();
-    prune_login_attempts_map(&mut guard, now);
+    let mut guard = LOGIN_ATTEMPTS.lock().await;
 
+    // Only prune the current key's window on the hot path, not the entire map
     if let Some(attempts) = guard.get_mut(&key) {
+        prune_attempts(attempts, now);
         attempts.len() >= login_rate_limit_max_attempts()
     } else {
         false
     }
 }
 
-fn record_login_failure(username: &str, client_ip: &str) {
+async fn record_login_failure(username: &str, client_ip: &str) {
     let key = login_rate_limit_key(username, client_ip);
     let now = Instant::now();
-    let mut guard = login_attempts_guard();
-    prune_login_attempts_map(&mut guard, now);
+    let mut guard = LOGIN_ATTEMPTS.lock().await;
 
+    // Prune only the current key on the hot path
+    if let Some(attempts) = guard.get_mut(&key) {
+        prune_attempts(attempts, now);
+    }
+
+    // Only perform full-map eviction work when we're at capacity for a new key
     if !guard.contains_key(&key) && guard.len() >= MAX_LOGIN_ATTEMPT_KEYS {
-        // After pruning, only evict if still over capacity
-        evict_expired_or_stalest_login_attempt_key(&mut guard);
+        prune_login_attempts_map(&mut guard, now);
+        if guard.len() >= MAX_LOGIN_ATTEMPT_KEYS {
+            evict_stalest_login_attempt_key(&mut guard);
+        }
     }
 
     let attempts = guard.entry(key).or_default();
     attempts.push_back(now);
 }
 
-fn clear_login_failures(username: &str, client_ip: &str) {
+async fn clear_login_failures(username: &str, client_ip: &str) {
     let key = login_rate_limit_key(username, client_ip);
-    let mut guard = login_attempts_guard();
-    guard.remove(&key);
+    LOGIN_ATTEMPTS.lock().await.remove(&key);
 }
 
 #[cfg(test)]
-pub fn reset_login_rate_limit_for_tests() {
-    login_attempts_guard().clear();
+pub async fn reset_login_rate_limit_for_tests() {
+    LOGIN_ATTEMPTS.lock().await.clear();
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -182,7 +159,7 @@ pub async fn login(
     let username = login.username.clone();
     let client_ip = client_ip_for_request(&req);
 
-    if login_is_rate_limited(&username, &client_ip) {
+    if login_is_rate_limited(&username, &client_ip).await {
         warn!(
             message = "Login throttled",
             user = username,
@@ -199,13 +176,13 @@ pub async fn login(
         Ok(user) => user,
         Err(e) => {
             if let ApiError::Unauthorized(_) = &e {
-                record_login_failure(&username, &client_ip);
+                record_login_failure(&username, &client_ip).await;
             }
             return Err(e);
         }
     };
 
-    clear_login_failures(&username, &client_ip);
+    clear_login_failures(&username, &client_ip).await;
 
     let token_generation_result = user.create_token(&pool).await;
 
