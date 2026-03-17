@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Install clippy
         run: rustup component add clippy
       - name: Run clippy
@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Make release scripts executable
@@ -58,7 +58,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
       - name: Generate OpenAPI JSON
@@ -116,7 +116,7 @@ jobs:
       matrix: ${{ steps.detect.outputs.matrix }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
       - name: Install feature build dependencies
@@ -204,7 +204,7 @@ jobs:
           --health-retries 5
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
       - name: Install database libraries on Linux
@@ -217,30 +217,34 @@ jobs:
           curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
           # Use binstall to get prebuilt diesel_cli binary (includes postgres support)
           cargo binstall --no-confirm diesel_cli
+          CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
+          export PATH="$CARGO_BIN:$PATH"
+          DIESEL_BIN="$(command -v diesel || true)"
+          if [[ -z "$DIESEL_BIN" ]]; then
+            DIESEL_BIN="$CARGO_BIN/diesel"
+          fi
+          if [[ ! -x "$DIESEL_BIN" ]]; then
+              echo "diesel binary missing after binstall; falling back to cargo install"
+              cargo install --locked diesel_cli --no-default-features --features postgres
+              DIESEL_BIN="$CARGO_BIN/diesel"
+            fi
+            if [[ ! -x "$DIESEL_BIN" ]]; then
+              echo "diesel binary not found after fallback install; expected at $DIESEL_BIN" >&2
+              exit 1
+          fi
           echo "Creating database"
           PGPASSWORD=postgres createdb -U postgres -h localhost -p 5432 hubuum_rust_test
           echo "Running database setup and migrations"
-          diesel migration run --database-url ${{ env.DATABASE_URL }} --locked-schema
+          "$DIESEL_BIN" migration run --database-url ${{ env.DATABASE_URL }}
           echo "Checking database setup"
           PGPASSWORD=postgres psql -U postgres -h localhost -p 5432 -d hubuum_rust_test -c "select * from users;"
       - name: Build (${{ matrix.feature.name }})
-        uses: houseabsolute/actions-rust-cross@v0
-        with:
-          command: "build"
-          target: x86_64-unknown-linux-gnu
-          toolchain: stable
-          args: "${{ matrix.feature.args }} --locked --release"
-          strip: true
+        run: cargo build ${{ matrix.feature.args }} --locked --release
       - name: Test (${{ matrix.feature.name }})
-        uses: houseabsolute/actions-rust-cross@v0
-        with:
-          command: "test -- --database-url ${{ env.DATABASE_URL }}"
-          target: x86_64-unknown-linux-gnu
-          toolchain: stable
-          args: "${{ matrix.feature.args }} --locked --release"
+        run: cargo test ${{ matrix.feature.args }} --locked --release
 
   test:
-    name: Cross-platform (${{ matrix.platform.os_name }}, rust ${{ matrix.toolchain }})
+    name: ${{ matrix.platform.os_name }}, rust ${{ matrix.toolchain }}
     if: "!startsWith(github.ref, 'refs/tags/')"
     runs-on: ${{ matrix.platform.os }}
     strategy:
@@ -250,151 +254,170 @@ jobs:
           - os_name: Linux-x86_64
             os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-            bin: hubuum
-            name: hubuum-Linux-x86_64-gnu.tar.gz
           - os_name: Linux-aarch64
-            os: ubuntu-24.04
+            os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            bin: hubuum
-            name: hubuum-Linux-aarch64-gnu.tar.gz
-            skip_tests: true
-          #- os_name: Linux-arm
-          #  os: ubuntu-22.04
-          #  target: arm-unknown-linux-gnueabi
-          #  bin: hubuum
-          #  name: hubuum-Linux-arm-gnu.tar.gz
-          #  skip_tests: true
-#          - os_name: Linux-i686
-#            os: ubuntu-24.04
-#            target: i686-unknown-linux-gnu
-#            bin: hubuum
-#            name: hubuum-Linux-i686-gnu.tar.gz
-#            skip_tests: true
-#          - os_name: Linux-powerpc
-#            os: ubuntu-20.04
-#            target: powerpc-unknown-linux-gnu
-#            bin: hubuum
-#            name: hubuum-Linux-powerpc-gnu.tar.gz
-#            skip_tests: true
-#          - os_name: Linux-powerpc64
-#            os: ubuntu-20.04
-#            target: powerpc64-unknown-linux-gnu
-#            bin: hubuum
-#            name: hubuum-Linux-powerpc64-gnu.tar.gz
-#            skip_tests: true
-#          - os_name: Linux-powerpc64le
-#            os: ubuntu-24.04
-#            target: powerpc64le-unknown-linux-gnu
-#            bin: hubuum
-#            name: hubuum-Linux-powerpc64le.tar.gz
-#            skip_tests: true
-#          - os_name: Linux-riscv64
-#            os: ubuntu-20.04
-#            target: riscv64gc-unknown-linux-gnu
-#            bin: hubuum
-#            name: hubuum-Linux-riscv64gc-gnu.tar.gz
-#          - os_name: Linux-s390x
-#            os: ubuntu-24.04
-#            target: s390x-unknown-linux-gnu
-#            bin: hubuum
-#            name: hubuum-Linux-s390x-gnu.tar.gz
-#            skip_tests: true
-#          - os_name: NetBSD-x86_64
-#            os: ubuntu-20.04
-#            target: x86_64-unknown-netbsd
-#            bin: hubuum
-#            name: hubuum-NetBSD-x86_64.tar.gz
-#            skip_tests: true
-          # - os_name: Windows-aarch64
-          #   os: windows-latest
-          #   target: aarch64-pc-windows-msvc
-          #   bin: hubuum.exe
-          #   name: hubuum-Windows-aarch64.zip
-          #   skip_tests: true
-          # - os_name: Windows-i686
-          #   os: windows-latest
-          #   target: i686-pc-windows-msvc
-          #   bin: hubuum.exe
-          #   name: hubuum-Windows-i686.zip
-          #   skip_tests: true
-          # - os_name: Windows-x86_64
-          #   os: windows-latest
-          #   target: x86_64-pc-windows-msvc
-          #   bin: hubuum.exe
-          #   name: hubuum-Windows-x86_64.zip
-          # - os_name: macOS-x86_64
-          #   os: macOS-latest
-          #   target: x86_64-apple-darwin
-          #   bin: hubuum
-          #   name: hubuum-Darwin-x86_64.tar.gz
-          # - os_name: macOS-aarch64
-          #   os: macOS-latest
-          #   target: aarch64-apple-darwin
-          #   bin: hubuum
-          #   name: hubuum-Darwin-aarch64.tar.gz
-          #   skip_tests: true
+          - os_name: Windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os_name: macOS
+            os: macos-latest
+            target: aarch64-apple-darwin
         toolchain:
           - stable
           - beta
           - nightly
-    services:
-      postgres:
-        image: postgres
-        ports:
-          - 5432:5432
-        env:
-          POSTGRES_PASSWORD: postgres
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+        exclude:
+          # Only test stable on Windows and macOS to reduce runner costs
+          - platform: { os_name: Windows-x86_64, os: windows-latest, target: x86_64-pc-windows-msvc }
+            toolchain: beta
+          - platform: { os_name: Windows-x86_64, os: windows-latest, target: x86_64-pc-windows-msvc }
+            toolchain: nightly
+          - platform: { os_name: macOS, os: macos-latest, target: aarch64-apple-darwin }
+            toolchain: beta
+          - platform: { os_name: macOS, os: macos-latest, target: aarch64-apple-darwin }
+            toolchain: nightly
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
-      - name: Set up database
+      
+      - name: Install Linux dependencies
+        if: contains(matrix.platform.os, 'ubuntu')
+        run: |
+          sudo apt-get update --yes
+          sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev libssl-dev postgresql postgresql-client
+          # Start postgres
+          sudo systemctl start postgresql
+          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
+      
+      - name: Install macOS dependencies
+        if: contains(matrix.platform.os, 'macos')
+        run: |
+          brew install postgresql@17
+          PG_BIN="$(brew --prefix postgresql@17)/bin"
+          echo "$PG_BIN" >> "$GITHUB_PATH"
+          export PATH="$PG_BIN:$PATH"
+          # Initialize and start postgres (creates user matching system user)
+          brew services start postgresql@17
+          # Wait for postgres to be ready
+          max_attempts=30
+          attempt=0
+          until "$PG_BIN/pg_isready" -q || [ $attempt -eq $max_attempts ]; do
+            echo "Waiting for PostgreSQL to be ready... (attempt $((attempt+1))/$max_attempts)"
+            sleep 1
+            attempt=$((attempt+1))
+          done
+          # Create postgres superuser with password
+          "$PG_BIN/createuser" -s postgres
+          "$PG_BIN/psql" -d postgres -c "ALTER USER postgres PASSWORD 'postgres';"
+
+      - name: Install Windows PostgreSQL libraries
+        if: contains(matrix.platform.os, 'windows')
+        shell: pwsh
+        run: |
+          choco install postgresql --params '"/Password:postgres"' --no-progress -y
+          $pgRoot = Get-ChildItem 'C:\Program Files\PostgreSQL' -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $pgRoot) { throw 'PostgreSQL installation directory not found' }
+          $binPath = Join-Path $pgRoot.FullName 'bin'
+          $libPath = Join-Path $pgRoot.FullName 'lib'
+          if (-not (Test-Path (Join-Path $binPath 'pg_isready.exe'))) { throw "PostgreSQL client tools not found in $binPath" }
+          if (-not (Test-Path (Join-Path $libPath 'libpq.lib'))) { throw "libpq.lib not found in $libPath" }
+          "$binPath" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "PG_BIN=$binPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "LIB=$libPath;$env:LIB" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8          
+
+      - name: Set up database (Linux/macOS)
+        if: "!contains(matrix.platform.os, 'windows')"
         run: |
           # Install cargo-binstall for faster binary installation
           curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
           # Use binstall to get prebuilt diesel_cli binary (includes postgres support)
-          cargo binstall --no-confirm diesel_cli
+          cargo binstall --no-confirm diesel_cli --force
+          CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
+          export PATH="$CARGO_BIN:$PATH"
+          DIESEL_BIN="$(command -v diesel || true)"
+          if [[ -z "$DIESEL_BIN" ]]; then
+            DIESEL_BIN="$CARGO_BIN/diesel"
+          fi
+          if [[ ! -x "$DIESEL_BIN" ]]; then
+              echo "diesel binary missing after binstall; falling back to cargo install"
+              cargo install --locked diesel_cli --no-default-features --features postgres
+              DIESEL_BIN="$CARGO_BIN/diesel"
+            fi
+            if [[ ! -x "$DIESEL_BIN" ]]; then
+              echo "diesel binary not found after fallback install; expected at $DIESEL_BIN" >&2
+              exit 1
+          fi
           echo "Creating database"
           PGPASSWORD=postgres createdb -U postgres -h localhost -p 5432 hubuum_rust_test
           echo "Running database setup and migrations"
-          diesel migration run --database-url ${{ env.DATABASE_URL }} --locked-schema
+          "$DIESEL_BIN" migration run --database-url ${{ env.DATABASE_URL }}
           echo "Checking database setup"
           PGPASSWORD=postgres psql -U postgres -h localhost -p 5432 -d hubuum_rust_test -c "select * from users;"
-      - name: Configure Git
+
+      - name: Set up database (Windows)
+        if: contains(matrix.platform.os, 'windows')
+        shell: pwsh
         run: |
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git config --global user.name "github-actions[bot]"
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update --yes
-          packages=(libsqlite3-dev libmysqlclient-dev libpq-dev)
-          if [[ "${{ matrix.platform.name }}" == *"musl"* ]]; then
-            packages+=(musl-tools)
-          fi
-          sudo apt-get install --yes "${packages[@]}"
-        if: contains(matrix.platform.os, 'ubuntu')
-      - name: Build binary with rustls feature enabled
-        uses: houseabsolute/actions-rust-cross@v0
-        with:
-          command: "build"
-          target: ${{ matrix.platform.target }}
-          toolchain: ${{ matrix.toolchain }}
-          args: "-F tls-rustls --locked --release"
-          strip: true
-      - name: Run tests      
-        uses: houseabsolute/actions-rust-cross@v0
-        with:
-          command: "test -- --database-url ${{ env.DATABASE_URL }}"
-          target: ${{ matrix.platform.target }}
-          toolchain: ${{ matrix.toolchain }}
-          args: "--locked --release"
-        if: ${{ !matrix.platform.skip_tests }}
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:PG_BIN) { throw 'PG_BIN is not set' }
+
+          # Use an isolated cluster to avoid runner service credentials/state drift.
+          $pgData = Join-Path $env:RUNNER_TEMP 'postgres-data'
+          $pgLog = Join-Path $env:RUNNER_TEMP 'postgres.log'
+          $pgPort = 55432
+
+          if (Test-Path $pgData) {
+            Remove-Item -Recurse -Force $pgData
+          }
+
+          & "$env:PG_BIN\initdb.exe" -D $pgData -U postgres -A trust --encoding=UTF8
+          & "$env:PG_BIN\pg_ctl.exe" -D $pgData -l $pgLog -o "-p $pgPort" -w -t 60 start
+
+          $isReady = $false
+          $maxAttempts = 30
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            & "$env:PG_BIN\pg_isready.exe" -q -h 127.0.0.1 -p $pgPort
+            if ($LASTEXITCODE -eq 0) {
+              $isReady = $true
+              break
+            }
+            Write-Host "Waiting for PostgreSQL to be ready... (attempt $attempt/$maxAttempts)"
+            Start-Sleep -Seconds 1
+          }
+          if (-not $isReady) { throw 'PostgreSQL did not become ready in time' }
+
+          $dbUrl = "postgres://postgres@127.0.0.1:$pgPort/hubuum_rust_test"
+          "DATABASE_URL=$dbUrl" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "HUBUUM_DATABASE_URL=$dbUrl" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          # Install Diesel CLI via official installer script.
+          irm https://github.com/diesel-rs/diesel/releases/latest/download/diesel_cli-installer.ps1 | iex
+          $dieselBin = Join-Path $env:USERPROFILE '.cargo\bin\diesel.exe'
+          if (-not (Test-Path $dieselBin)) { throw "Diesel CLI not found at $dieselBin" }
+
+          & "$env:PG_BIN\createdb.exe" -U postgres -h 127.0.0.1 -p $pgPort hubuum_rust_test
+          & $dieselBin migration run --database-url "$dbUrl"
+          & "$env:PG_BIN\psql.exe" -U postgres -h 127.0.0.1 -p $pgPort -d hubuum_rust_test -c "select * from users;"
+      
+      - name: Build (non-Windows)
+        if: "!contains(matrix.platform.os, 'windows')"
+        run: cargo build --all-features --locked --release
+
+      - name: Build (Windows)
+        if: contains(matrix.platform.os, 'windows')
+        run: cargo build -F tls-rustls --locked --release
+      
+      - name: Run tests
+        run: cargo test --locked --release
 
   verify-tag-main-ci-success:
     name: Verify tagged commit already passed CI on main
@@ -441,7 +464,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo & target directories
@@ -455,7 +478,7 @@ jobs:
     name: Build release artifacts (${{ matrix.platform.name }})
     if: startsWith(github.ref, 'refs/tags/v')
     needs: validate-tag-release
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.platform.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -463,35 +486,76 @@ jobs:
           - name: Linux-x86_64
             target: x86_64-unknown-linux-gnu
             os_name: linux-x86_64
+            os: ubuntu-24.04
           - name: Linux-aarch64
             target: aarch64-unknown-linux-gnu
             os_name: linux-aarch64
+            os: ubuntu-24.04-arm
+          - name: Windows-x86_64
+            target: x86_64-pc-windows-msvc
+            os_name: windows-x86_64
+            os: windows-latest
+          - name: macOS-ARM64
+            target: aarch64-apple-darwin
+            os_name: macos-aarch64
+            os: macos-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Ensure Rust target is installed
+        run: rustup target add ${{ matrix.platform.target }}
+
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
-      - name: Install database libraries on Linux
+      
+      - name: Install Linux dependencies
+        if: contains(matrix.platform.os, 'ubuntu')
         run: |
           sudo apt-get update --yes
           sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev libssl-dev
-      - name: Build release binaries
-        uses: houseabsolute/actions-rust-cross@v0
-        with:
-          command: build
-          target: ${{ matrix.platform.target }}
-          toolchain: stable
-          args: "-F tls-rustls --locked --release"
-          strip: true
-      - name: Package release archive
+      
+      - name: Install macOS dependencies
+        if: contains(matrix.platform.os, 'macos')
+        run: |
+          brew install postgresql@17 mysql-client
+
+      - name: Install Windows PostgreSQL libraries
+        if: contains(matrix.platform.os, 'windows')
+        shell: pwsh
+        run: |
+          choco install postgresql --params '"/Password:postgres"' --no-progress -y
+          $pgRoot = Get-ChildItem 'C:\Program Files\PostgreSQL' -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $pgRoot) { throw 'PostgreSQL installation directory not found' }
+          $libPath = Join-Path $pgRoot.FullName 'lib'
+          if (-not (Test-Path (Join-Path $libPath 'libpq.lib'))) { throw "libpq.lib not found in $libPath" }
+          "LIB=$libPath;$env:LIB" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      
+      - name: Build release binaries (native)
+        run: cargo build -F tls-rustls --locked --release --target ${{ matrix.platform.target }}
+      
+      - name: Package release archive (Unix)
+        if: "!contains(matrix.platform.os, 'windows')"
         shell: bash
         run: |
           mkdir -p dist
           archive_name="hubuum-${{ matrix.platform.os_name }}-tls-rustls-${GITHUB_REF_NAME}.tar.gz"
           tar czvf "dist/${archive_name}" -C "target/${{ matrix.platform.target }}/release" hubuum-server hubuum-admin
           shasum -a 256 "dist/${archive_name}" > "dist/${archive_name}.sha256"
+      
+      - name: Package release archive (Windows)
+        if: contains(matrix.platform.os, 'windows')
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          $archive_name = "hubuum-${{ matrix.platform.os_name }}-tls-rustls-${env:GITHUB_REF_NAME}.zip"
+          Compress-Archive -Path "target/${{ matrix.platform.target }}/release/hubuum-server.exe", "target/${{ matrix.platform.target }}/release/hubuum-admin.exe" -DestinationPath "dist/$archive_name"
+          $hash = (Get-FileHash "dist/$archive_name" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $archive_name" | Out-File -FilePath "dist/$archive_name.sha256" -Encoding ascii
+      
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
@@ -507,7 +571,7 @@ jobs:
       contents: write
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
@@ -541,15 +605,27 @@ jobs:
       - openapi-contract
       - feature-permutations
       - test
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
       matrix:
         platform:
           - target: x86_64-unknown-linux-gnu
             os_name: linux-x86_64
+            os: ubuntu-24.04
+            runner: ubuntu-24.04
           - target: aarch64-unknown-linux-gnu
             os_name: linux-aarch64
+            os: ubuntu-24.04-arm
+            runner: ubuntu-24.04-arm
+          - target: x86_64-pc-windows-msvc
+            os_name: windows-x86_64
+            os: windows-latest
+            runner: windows-latest
+          - target: aarch64-apple-darwin
+            os_name: macos-aarch64
+            os: macos-latest
+            runner: macos-latest
         feature:
           - extra_args: "--no-default-features"
             ext: no-tls
@@ -557,31 +633,56 @@ jobs:
             ext: tls-openssl
           - extra_args: "-F tls-rustls"
             ext: tls-rustls
+        exclude:
+          # tls-openssl requires libssl which is not straightforward on Windows
+          - platform: { os_name: windows-x86_64 }
+            feature: { ext: tls-openssl }
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
+      - name: Ensure Rust target is installed
+        run: rustup target add ${{ matrix.platform.target }}
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
-      - name: Install database libraries on Linux
+      - name: Install Linux dependencies
+        if: contains(matrix.platform.os, 'ubuntu')
         run: |
           sudo apt-get update --yes
           sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev libssl-dev
+      - name: Install macOS dependencies
+        if: contains(matrix.platform.os, 'macos')
+        run: brew install postgresql@17 openssl@3
+      - name: Install Windows PostgreSQL libraries
+        if: contains(matrix.platform.os, 'windows')
+        shell: pwsh
+        run: |
+          choco install postgresql --params '"/Password:postgres"' --no-progress -y
+          $pgRoot = Get-ChildItem 'C:\Program Files\PostgreSQL' -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $pgRoot) { throw 'PostgreSQL installation directory not found' }
+          $libPath = Join-Path $pgRoot.FullName 'lib'
+          if (-not (Test-Path (Join-Path $libPath 'libpq.lib'))) { throw "libpq.lib not found in $libPath" }
+          "LIB=$libPath;$env:LIB" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Build main binaries
-        uses: houseabsolute/actions-rust-cross@v0
-        with:
-          command: build
-          target: ${{ matrix.platform.target }}
-          toolchain: stable
-          args: "${{ matrix.feature.extra_args }} --locked --release"
-          strip: true
-      - name: Package main archive
+        run: cargo build ${{ matrix.feature.extra_args }} --locked --release --target ${{ matrix.platform.target }}
+      - name: Package main archive (Unix)
+        if: "!contains(matrix.platform.os, 'windows')"
         shell: bash
         run: |
           mkdir -p dist
           archive_name="hubuum-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}-main.tar.gz"
           tar czvf "dist/${archive_name}" -C "target/${{ matrix.platform.target }}/release" hubuum-server hubuum-admin
+          shasum -a 256 "dist/${archive_name}" > "dist/${archive_name}.sha256"
+      - name: Package main archive (Windows)
+        if: contains(matrix.platform.os, 'windows')
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          $archive_name = "hubuum-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}-main.zip"
+          Compress-Archive -Path "target/${{ matrix.platform.target }}/release/hubuum-server.exe", "target/${{ matrix.platform.target }}/release/hubuum-admin.exe" -DestinationPath "dist/$archive_name"
+          $hash = (Get-FileHash "dist/$archive_name" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $archive_name" | Out-File -FilePath "dist/$archive_name.sha256" -Encoding ascii
       - name: Upload main artifact
         uses: actions/upload-artifact@v4
         with:
@@ -640,7 +741,7 @@ jobs:
             runner: ubuntu-24.04-arm
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
       - name: Log in to GitHub Container Registry
@@ -731,7 +832,7 @@ jobs:
             runner: ubuntu-24.04-arm
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Make release scripts executable
         run: chmod +x scripts/*.sh
       - name: Check tagged release metadata
