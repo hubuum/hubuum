@@ -215,8 +215,8 @@ jobs:
         run: |
           # Install cargo-binstall for faster binary installation
           curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-          # Use binstall to get prebuilt diesel_cli binary
-          cargo binstall --no-confirm diesel_cli -- --no-default-features --features postgres
+          # Use binstall to get prebuilt diesel_cli binary (includes postgres support)
+          cargo binstall --no-confirm diesel_cli
           echo "Creating database"
           PGPASSWORD=postgres createdb -U postgres -h localhost -p 5432 hubuum_rust_test
           echo "Running database setup and migrations"
@@ -358,8 +358,8 @@ jobs:
         run: |
           # Install cargo-binstall for faster binary installation
           curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-          # Use binstall to get prebuilt diesel_cli binary
-          cargo binstall --no-confirm diesel_cli -- --no-default-features --features postgres
+          # Use binstall to get prebuilt diesel_cli binary (includes postgres support)
+          cargo binstall --no-confirm diesel_cli
           echo "Creating database"
           PGPASSWORD=postgres createdb -U postgres -h localhost -p 5432 hubuum_rust_test
           echo "Running database setup and migrations"
