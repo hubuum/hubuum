@@ -370,21 +370,49 @@ jobs:
           $ErrorActionPreference = 'Stop'
           if (-not $env:PG_BIN) { throw 'PG_BIN is not set' }
 
-          # Ensure postgres service is started.
-          $pgService = Get-Service | Where-Object { $_.Name -like 'postgresql*' } | Select-Object -First 1
-          if (-not $pgService) { throw 'PostgreSQL service not found' }
-          if ($pgService.Status -ne 'Running') {
-            Start-Service -Name $pgService.Name
+          $pgRoot = Split-Path $env:PG_BIN -Parent
+          $pgVersion = Split-Path $pgRoot -Leaf
+          $serviceName = "postgresql-x64-$pgVersion"
+          $pgService = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+          if ($pgService -and $pgService.Status -ne 'Running') {
+            try {
+              Start-Service -Name $pgService.Name
+            }
+            catch {
+              Write-Warning "Failed to start service $($pgService.Name): $($_.Exception.Message). Will try pg_ctl fallback."
+            }
           }
 
-          $maxAttempts = 30
+          $isReady = $false
+          $maxAttempts = 20
           for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             & "$env:PG_BIN\pg_isready.exe" -q -h localhost -p 5432
-            if ($LASTEXITCODE -eq 0) { break }
-            Write-Host "Waiting for PostgreSQL to be ready... (attempt $attempt/$maxAttempts)"
+            if ($LASTEXITCODE -eq 0) {
+              $isReady = $true
+              break
+            }
             Start-Sleep -Seconds 1
-            if ($attempt -eq $maxAttempts) { throw 'PostgreSQL did not become ready in time' }
           }
+
+          if (-not $isReady) {
+            $dataPath = Join-Path $pgRoot 'data'
+            if (-not (Test-Path $dataPath)) {
+              throw "PostgreSQL data directory not found at $dataPath"
+            }
+            & "$env:PG_BIN\pg_ctl.exe" -D $dataPath -l "$env:RUNNER_TEMP\postgres.log" -w -t 60 start
+
+            for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+              & "$env:PG_BIN\pg_isready.exe" -q -h localhost -p 5432
+              if ($LASTEXITCODE -eq 0) {
+                $isReady = $true
+                break
+              }
+              Write-Host "Waiting for PostgreSQL to be ready... (attempt $attempt/$maxAttempts)"
+              Start-Sleep -Seconds 1
+            }
+          }
+
+          if (-not $isReady) { throw 'PostgreSQL did not become ready in time' }
 
           # Install Diesel CLI via official installer script.
           irm https://github.com/diesel-rs/diesel/releases/latest/download/diesel_cli-installer.ps1 | iex
