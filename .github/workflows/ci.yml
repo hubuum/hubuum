@@ -263,18 +263,6 @@ jobs:
           - stable
           - beta
           - nightly
-    services:
-      postgres:
-        image: postgres
-        ports:
-          - 5432:5432
-        env:
-          POSTGRES_PASSWORD: postgres
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -291,13 +279,22 @@ jobs:
         if: contains(matrix.platform.os, 'ubuntu')
         run: |
           sudo apt-get update --yes
-          sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev libssl-dev postgresql-client
+          sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev libssl-dev postgresql postgresql-client
+          # Start postgres
+          sudo systemctl start postgresql
+          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
       
       - name: Install macOS dependencies
         if: contains(matrix.platform.os, 'macos')
         run: |
           brew install postgresql@15
+          brew services start postgresql@15
           echo "$(brew --prefix postgresql@15)/bin" >> $GITHUB_PATH
+          # Wait for postgres to start
+          sleep 5
+          # Create postgres user and set password (macOS postgres uses system user by default)
+          createuser -s postgres || true
+          psql postgres -c "ALTER USER postgres PASSWORD 'postgres';" || true
       
       - name: Set up database (Linux/macOS)
         if: "!contains(matrix.platform.os, 'windows')"
