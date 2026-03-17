@@ -224,8 +224,13 @@ jobs:
             DIESEL_BIN="$CARGO_BIN/diesel"
           fi
           if [[ ! -x "$DIESEL_BIN" ]]; then
-            echo "diesel binary not found; expected at $DIESEL_BIN" >&2
-            exit 1
+              echo "diesel binary missing after binstall; falling back to cargo install"
+              cargo install --locked diesel_cli --no-default-features --features postgres
+              DIESEL_BIN="$CARGO_BIN/diesel"
+            fi
+            if [[ ! -x "$DIESEL_BIN" ]]; then
+              echo "diesel binary not found after fallback install; expected at $DIESEL_BIN" >&2
+              exit 1
           fi
           echo "Creating database"
           PGPASSWORD=postgres createdb -U postgres -h localhost -p 5432 hubuum_rust_test
@@ -331,7 +336,7 @@ jobs:
           # Install cargo-binstall for faster binary installation
           curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
           # Use binstall to get prebuilt diesel_cli binary (includes postgres support)
-          cargo binstall --no-confirm diesel_cli
+          cargo binstall --no-confirm diesel_cli --force
           CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
           export PATH="$CARGO_BIN:$PATH"
           DIESEL_BIN="$(command -v diesel || true)"
@@ -339,8 +344,13 @@ jobs:
             DIESEL_BIN="$CARGO_BIN/diesel"
           fi
           if [[ ! -x "$DIESEL_BIN" ]]; then
-            echo "diesel binary not found; expected at $DIESEL_BIN" >&2
-            exit 1
+              echo "diesel binary missing after binstall; falling back to cargo install"
+              cargo install --locked diesel_cli --no-default-features --features postgres
+              DIESEL_BIN="$CARGO_BIN/diesel"
+            fi
+            if [[ ! -x "$DIESEL_BIN" ]]; then
+              echo "diesel binary not found after fallback install; expected at $DIESEL_BIN" >&2
+              exit 1
           fi
           echo "Creating database"
           PGPASSWORD=postgres createdb -U postgres -h localhost -p 5432 hubuum_rust_test
