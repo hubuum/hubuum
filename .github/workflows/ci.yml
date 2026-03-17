@@ -263,6 +263,16 @@ jobs:
           - stable
           - beta
           - nightly
+        exclude:
+          # Only test stable on Windows and macOS to reduce runner costs
+          - platform: { os_name: Windows-x86_64, os: windows-latest, target: x86_64-pc-windows-msvc }
+            toolchain: beta
+          - platform: { os_name: Windows-x86_64, os: windows-latest, target: x86_64-pc-windows-msvc }
+            toolchain: nightly
+          - platform: { os_name: macOS-ARM64, os: macos-latest, target: aarch64-apple-darwin }
+            toolchain: beta
+          - platform: { os_name: macOS-ARM64, os: macos-latest, target: aarch64-apple-darwin }
+            toolchain: nightly
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -288,13 +298,20 @@ jobs:
         if: contains(matrix.platform.os, 'macos')
         run: |
           brew install postgresql@15
-          brew services start postgresql@15
           echo "$(brew --prefix postgresql@15)/bin" >> $GITHUB_PATH
-          # Wait for postgres to start
-          sleep 5
-          # Create postgres user and set password (macOS postgres uses system user by default)
-          createuser -s postgres || true
-          psql postgres -c "ALTER USER postgres PASSWORD 'postgres';" || true
+          # Initialize and start postgres (creates user matching system user)
+          brew services start postgresql@15
+          # Wait for postgres to be ready
+          max_attempts=30
+          attempt=0
+          until pg_isready -q || [ $attempt -eq $max_attempts ]; do
+            echo "Waiting for PostgreSQL to be ready... (attempt $((attempt+1))/$max_attempts)"
+            sleep 1
+            attempt=$((attempt+1))
+          done
+          # Create postgres superuser with password
+          createuser -s postgres
+          psql -d postgres -c "ALTER USER postgres PASSWORD 'postgres';"
       
       - name: Set up database (Linux/macOS)
         if: "!contains(matrix.platform.os, 'windows')"
