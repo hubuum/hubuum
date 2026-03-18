@@ -563,7 +563,13 @@
     CREATE OR REPLACE FUNCTION get_bidirectionally_related_classes(
         start_class_id INT,
         valid_namespace_ids INT[],
-        max_depth INT
+        max_depth INT,
+        filter_depth_op TEXT DEFAULT NULL,
+        filter_depth_values INT[] DEFAULT NULL,
+        filter_depth_negated BOOLEAN DEFAULT FALSE,
+        filter_path_op TEXT DEFAULT NULL,
+        filter_path_values INT[] DEFAULT NULL,
+        filter_path_negated BOOLEAN DEFAULT FALSE
     )
     RETURNS TABLE (
         ancestor_class_id INT,
@@ -685,7 +691,79 @@
                     AND (
                                 COALESCE(cardinality(valid_namespace_ids), 0) = 0
                                 OR target_class.namespace_id = ANY(valid_namespace_ids)
-                            );
+              )
+          AND (
+                filter_depth_op IS NULL
+                OR (
+                    CASE
+                        WHEN filter_depth_negated THEN NOT (
+                            CASE filter_depth_op
+                                WHEN 'equals' THEN deduped_walk.depth = ANY(filter_depth_values)
+                                WHEN 'gt' THEN deduped_walk.depth > (
+                                    SELECT MAX(v) FROM unnest(filter_depth_values) AS v
+                                )
+                                WHEN 'gte' THEN deduped_walk.depth >= (
+                                    SELECT MAX(v) FROM unnest(filter_depth_values) AS v
+                                )
+                                WHEN 'lt' THEN deduped_walk.depth < (
+                                    SELECT MIN(v) FROM unnest(filter_depth_values) AS v
+                                )
+                                WHEN 'lte' THEN deduped_walk.depth <= (
+                                    SELECT MIN(v) FROM unnest(filter_depth_values) AS v
+                                )
+                                WHEN 'between' THEN (
+                                    cardinality(filter_depth_values) >= 2
+                                    AND deduped_walk.depth BETWEEN filter_depth_values[1] AND filter_depth_values[2]
+                                )
+                                ELSE FALSE
+                            END
+                        )
+                        ELSE (
+                            CASE filter_depth_op
+                                WHEN 'equals' THEN deduped_walk.depth = ANY(filter_depth_values)
+                                WHEN 'gt' THEN deduped_walk.depth > (
+                                    SELECT MAX(v) FROM unnest(filter_depth_values) AS v
+                                )
+                                WHEN 'gte' THEN deduped_walk.depth >= (
+                                    SELECT MAX(v) FROM unnest(filter_depth_values) AS v
+                                )
+                                WHEN 'lt' THEN deduped_walk.depth < (
+                                    SELECT MIN(v) FROM unnest(filter_depth_values) AS v
+                                )
+                                WHEN 'lte' THEN deduped_walk.depth <= (
+                                    SELECT MIN(v) FROM unnest(filter_depth_values) AS v
+                                )
+                                WHEN 'between' THEN (
+                                    cardinality(filter_depth_values) >= 2
+                                    AND deduped_walk.depth BETWEEN filter_depth_values[1] AND filter_depth_values[2]
+                                )
+                                ELSE FALSE
+                            END
+                        )
+                    END
+                )
+              )
+          AND (
+                filter_path_op IS NULL
+                OR (
+                    CASE
+                        WHEN filter_path_negated THEN NOT (
+                            CASE filter_path_op
+                                WHEN 'contains' THEN deduped_walk.path @> filter_path_values
+                                WHEN 'equals' THEN deduped_walk.path = filter_path_values
+                                ELSE FALSE
+                            END
+                        )
+                        ELSE (
+                            CASE filter_path_op
+                                WHEN 'contains' THEN deduped_walk.path @> filter_path_values
+                                WHEN 'equals' THEN deduped_walk.path = filter_path_values
+                                ELSE FALSE
+                            END
+                        )
+                    END
+                )
+              );
     $$ LANGUAGE sql STABLE;
 
 

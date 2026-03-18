@@ -14,15 +14,17 @@ pub mod user;
 pub use user::UserPermissions;
 
 use super::{DbPool, with_connection};
-use crate::db::traits::relations::{ObjectRelationMembershipsBackend, SelfRelationsBackend};
+use crate::bind_transitive_filter_params;
+use crate::db::traits::relations::{
+    ObjectRelationMembershipsBackend, SelfRelationsBackend, parse_transitive_filter_params,
+};
 use crate::errors::ApiError;
-use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions};
+use crate::models::search::{ParsedQueryParam, QueryOptions};
 use crate::models::{
     HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, HubuumObject, HubuumObjectID,
     HubuumObjectRelation, HubuumObjectTransitiveLink, Namespace, User, UserToken,
 };
 use crate::traits::{GroupAccessors, SelfAccessors};
-use crate::numeric_where;
 
 /// Trait for checking if a structure is valid/active/etc in the database.
 ///
@@ -130,6 +132,22 @@ where
     C1: SelfAccessors<HubuumClass> + Clone + Send + Sync,
     Self: SelfAccessors<HubuumClass> + Clone + Send + Sync,
 {
+    const TRANSITIVE_SELF_RELATIONS_PAGINATED_SQL: &'static str =
+        "SELECT ancestor_class_id, descendant_class_id, depth, path
+                      FROM get_bidirectionally_related_classes(
+                          $1,
+                          ARRAY[]::INT[],
+                          $2,
+                          $3,
+                          $4,
+                          $5,
+                          $6,
+                          $7,
+                          $8
+                      )
+                      WHERE ancestor_class_id = $1 OR descendant_class_id = $1
+                      ORDER BY depth ASC, descendant_class_id ASC";
+
     #[allow(dead_code)]
     async fn transitive_relations(
         &self,
@@ -150,52 +168,17 @@ where
 
         const MAX_DEPTH: i32 = 100;
 
-        // Build base WHERE clause
-        let mut where_clauses = vec![
-            "(ancestor_class_id = $1 OR descendant_class_id = $1)".to_string(),
-        ];
-
-        // Process filters to add depth filtering to WHERE clause
-        for param in &query_options.filters {
-            match param.field {
-                FilterField::Depth => {
-                    let depth_clause = numeric_where!("depth", param);
-                    if !depth_clause.is_empty() {
-                        where_clauses.push(depth_clause);
-                    }
-                }
-                FilterField::ClassFrom | FilterField::ClassTo => {
-                    // These are already filtered in the base WHERE clause
-                }
-                FilterField::Path => {
-                    return Err(ApiError::BadRequest(
-                        "Path filtering requires post-processing and is not yet supported in paginated queries"
-                            .to_string(),
-                    ));
-                }
-                _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't searchable (or does not exist) for transitive class relations",
-                        param.field
-                    )));
-                }
-            }
-        }
-
-        let where_clause = where_clauses.join(" AND ");
-        let query_str = format!(
-            "SELECT ancestor_class_id, descendant_class_id, depth, path
-             FROM get_bidirectionally_related_classes($1, ARRAY[]::INT[], $2)
-             WHERE {}
-             ORDER BY depth ASC, descendant_class_id ASC",
-            where_clause
-        );
+        let filter = parse_transitive_filter_params(query_options)?;
 
         with_connection(pool, |conn| {
-            sql_query(&query_str)
-                .bind::<Integer, _>(self.id())
-                .bind::<Integer, _>(MAX_DEPTH)
-                .load::<HubuumClassRelationTransitive>(conn)
+            let query = bind_transitive_filter_params!(
+                sql_query(Self::TRANSITIVE_SELF_RELATIONS_PAGINATED_SQL)
+                    .bind::<Integer, _>(self.id())
+                    .bind::<Integer, _>(MAX_DEPTH),
+                filter
+            );
+
+            query.load::<HubuumClassRelationTransitive>(conn)
         })
     }
 

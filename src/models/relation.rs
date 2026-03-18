@@ -5,9 +5,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::models::{HubuumClassWithPath, HubuumObjectWithPath};
-use crate::{
-    schema::hubuumclass_relation, schema::hubuumobject_relation,
-};
+use crate::{schema::hubuumclass_relation, schema::hubuumobject_relation};
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct HubuumClassRelationID(pub i32);
@@ -70,16 +68,7 @@ pub struct NewHubuumObjectRelationFromClassAndObject {
     pub to_hubuum_object_id: i32,
 }
 
-#[derive(
-    Debug,
-    Serialize,
-    Deserialize,
-    QueryableByName,
-    Clone,
-    PartialEq,
-    Eq,
-    ToSchema,
-)]
+#[derive(Debug, Serialize, Deserialize, QueryableByName, Clone, PartialEq, Eq, ToSchema)]
 pub struct HubuumClassRelationTransitive {
     #[diesel(sql_type = Integer)]
     pub ancestor_class_id: i32,

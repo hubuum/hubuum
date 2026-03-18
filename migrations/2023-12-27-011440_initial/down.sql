@@ -17,6 +17,7 @@ DROP TRIGGER IF EXISTS before_insert_or_update_class_relation ON hubuumclass_rel
 
 -- Drop functions
 DROP FUNCTION IF EXISTS get_bidirectionally_related_objects(INT, INT[], INT);
+DROP FUNCTION IF EXISTS get_bidirectionally_related_classes(INT, INT[], INT, TEXT, INT[], BOOLEAN, TEXT, INT[], BOOLEAN);
 DROP FUNCTION IF EXISTS get_bidirectionally_related_classes(INT, INT[], INT);
 DROP FUNCTION IF EXISTS get_transitively_linked_objects(INT, INT, INT[]);
 DROP FUNCTION IF EXISTS cleanup_invalid_object_relations();

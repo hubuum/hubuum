@@ -10,7 +10,9 @@ use crate::models::{
     HubuumObjectTransitiveLink, NewHubuumClassRelation, NewHubuumObjectRelation, User,
     user_can_on_any,
 };
-use crate::{date_search, numeric_search, numeric_where, string_search, trace_query};
+use crate::{
+    bind_transitive_filter_params, date_search, numeric_search, string_search, trace_query,
+};
 
 use crate::traits::{GroupAccessors, SelfAccessors};
 
@@ -18,6 +20,141 @@ use super::{ObjectRelationsFromUser, Relations, SelfRelations};
 
 impl<C1> SelfRelations<HubuumClass> for C1 where C1: SelfAccessors<HubuumClass> + Clone + Send + Sync
 {}
+
+#[derive(Debug, Clone, Default)]
+pub struct TransitiveFilterParams {
+    pub depth_op: Option<String>,
+    pub depth_values: Option<Vec<i32>>,
+    pub depth_negated: bool,
+    pub path_op: Option<String>,
+    pub path_values: Option<Vec<i32>>,
+    pub path_negated: bool,
+}
+
+fn parse_depth_filter(param: &ParsedQueryParam) -> Result<(String, Vec<i32>, bool), ApiError> {
+    use crate::models::search::{DataType, Operator};
+
+    if !param.operator.is_applicable_to(DataType::NumericOrDate) {
+        return Err(ApiError::OperatorMismatch(format!(
+            "Operator '{:?}' is not applicable to field '{}'",
+            param.operator, param.field
+        )));
+    }
+
+    let values = param.value_as_integer()?;
+    if values.is_empty() {
+        return Err(ApiError::BadRequest(format!(
+            "Searching on field '{}' requires a value",
+            param.field
+        )));
+    }
+
+    let (op, negated) = param.operator.op_and_neg();
+    let op_name = match op {
+        Operator::Equals => "equals",
+        Operator::Gt => "gt",
+        Operator::Gte => "gte",
+        Operator::Lt => "lt",
+        Operator::Lte => "lte",
+        Operator::Between => {
+            if values.len() != 2 {
+                return Err(ApiError::OperatorMismatch(format!(
+                    "Operator 'between' requires 2 values (min,max) for field '{}'",
+                    param.field
+                )));
+            }
+            "between"
+        }
+        _ => {
+            return Err(ApiError::OperatorMismatch(format!(
+                "Operator '{:?}' not implemented for field '{}' (type: numeric)",
+                param.operator, param.field
+            )));
+        }
+    };
+
+    Ok((op_name.to_string(), values, negated))
+}
+
+fn parse_path_filter(param: &ParsedQueryParam) -> Result<(String, Vec<i32>, bool), ApiError> {
+    use crate::models::search::{DataType, Operator};
+
+    if !param.operator.is_applicable_to(DataType::Array) {
+        return Err(ApiError::OperatorMismatch(format!(
+            "Operator '{:?}' is not applicable to field '{}'",
+            param.operator, param.field
+        )));
+    }
+
+    let values = param.value_as_integer()?;
+    if values.is_empty() {
+        return Err(ApiError::BadRequest(format!(
+            "Searching on field '{}' requires a value",
+            param.field
+        )));
+    }
+
+    let (op, negated) = param.operator.op_and_neg();
+    let op_name = match op {
+        Operator::Contains => "contains",
+        Operator::Equals => "equals",
+        _ => {
+            return Err(ApiError::OperatorMismatch(format!(
+                "Operator '{:?}' not implemented for field '{}' (type: array)",
+                param.operator, param.field
+            )));
+        }
+    };
+
+    Ok((op_name.to_string(), values, negated))
+}
+
+pub fn parse_transitive_filter_params(
+    query_options: &QueryOptions,
+) -> Result<TransitiveFilterParams, ApiError> {
+    let mut params = TransitiveFilterParams::default();
+
+    for param in &query_options.filters {
+        match param.field {
+            FilterField::Depth => {
+                if params.depth_op.is_some() {
+                    return Err(ApiError::BadRequest(
+                        "Multiple depth filters are not supported for transitive class relations"
+                            .to_string(),
+                    ));
+                }
+                let (op_name, values, negated) = parse_depth_filter(param)?;
+                params.depth_op = Some(op_name);
+                params.depth_values = Some(values);
+                params.depth_negated = negated;
+            }
+            FilterField::Path => {
+                if params.path_op.is_some() {
+                    return Err(ApiError::BadRequest(
+                        "Multiple path filters are not supported for transitive class relations"
+                            .to_string(),
+                    ));
+                }
+
+                let (op_name, values, negated) = parse_path_filter(param)?;
+                params.path_op = Some(op_name);
+                params.path_values = Some(values);
+                params.path_negated = negated;
+            }
+            FilterField::ClassFrom | FilterField::ClassTo => {
+                // These are constrained by the caller in this trait module.
+            }
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' isn't searchable (or does not exist) for transitive class relations",
+                    param.field
+                )));
+            }
+        }
+    }
+
+    Ok(params)
+}
 
 pub trait SelfRelationsBackend {
     async fn transitive_relations_from_backend(
@@ -57,7 +194,7 @@ where
                 "SELECT ancestor_class_id, descendant_class_id, depth, path
                  FROM get_bidirectionally_related_classes($1, ARRAY[]::INT[], $2)
                  WHERE ancestor_class_id = $1 OR descendant_class_id = $1
-                 ORDER BY depth ASC, descendant_class_id ASC"
+                 ORDER BY depth ASC, descendant_class_id ASC",
             )
             .bind::<Integer, _>(self.id())
             .bind::<Integer, _>(MAX_DEPTH)
@@ -190,6 +327,22 @@ where
     }
 }
 
+const TRANSITIVE_RELATIONS_PAGINATED_SQL: &str =
+    "SELECT ancestor_class_id, descendant_class_id, depth, path
+                 FROM get_bidirectionally_related_classes(
+                     $1,
+                     ARRAY[]::INT[],
+                     $2,
+                     $3,
+                     $4,
+                     $5,
+                     $6,
+                     $7,
+                     $8
+                 )
+                 WHERE ancestor_class_id = $9 AND descendant_class_id = $10
+                 ORDER BY depth ASC, descendant_class_id ASC";
+
 async fn fetch_relations_direct<C1, C2>(
     pool: &DbPool,
     from: &C1,
@@ -236,7 +389,7 @@ where
             "SELECT ancestor_class_id, descendant_class_id, depth, path
              FROM get_bidirectionally_related_classes($1, ARRAY[]::INT[], $2)
              WHERE ancestor_class_id = $3 AND descendant_class_id = $4
-             ORDER BY depth ASC, descendant_class_id ASC"
+             ORDER BY depth ASC, descendant_class_id ASC",
         )
         .bind::<Integer, _>(from)
         .bind::<Integer, _>(MAX_DEPTH)
@@ -265,53 +418,17 @@ where
     let (from, to) = if from > to { (to, from) } else { (from, to) };
     const MAX_DEPTH: i32 = 100;
 
-    // Build base WHERE clause
-    let mut where_clauses = vec![
-        "ancestor_class_id = $3".to_string(),
-        "descendant_class_id = $4".to_string(),
-    ];
-
-    // Process filters to add depth filtering to WHERE clause
-    for param in &query_options.filters {
-        match param.field {
-            FilterField::Depth => {
-                let depth_clause = numeric_where!("depth", param);
-                if !depth_clause.is_empty() {
-                    where_clauses.push(depth_clause);
-                }
-            }
-            FilterField::ClassFrom | FilterField::ClassTo => {
-                // These are already filtered in the base query
-            }
-            FilterField::Path => {
-                // Path filtering with array operators - for now, post-process
-                return Err(ApiError::BadRequest(
-                    "Path filtering requires post-processing and is not yet supported in paginated queries"
-                        .to_string(),
-                ));
-            }
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' isn't searchable (or does not exist) for transitive class relations",
-                    param.field
-                )));
-            }
-        }
-    }
-
-    let where_clause = where_clauses.join(" AND ");
-    let query_str = format!(
-        "SELECT ancestor_class_id, descendant_class_id, depth, path
-         FROM get_bidirectionally_related_classes($1, ARRAY[]::INT[], $2)
-         WHERE {}
-         ORDER BY depth ASC, descendant_class_id ASC",
-        where_clause
-    );
+    let filter = parse_transitive_filter_params(query_options)?;
 
     with_connection(pool, |conn| {
-        sql_query(&query_str)
-            .bind::<Integer, _>(from)
-            .bind::<Integer, _>(MAX_DEPTH)
+        let query = bind_transitive_filter_params!(
+            sql_query(TRANSITIVE_RELATIONS_PAGINATED_SQL)
+                .bind::<Integer, _>(from)
+                .bind::<Integer, _>(MAX_DEPTH),
+            filter
+        );
+
+        query
             .bind::<Integer, _>(from)
             .bind::<Integer, _>(to)
             .load::<HubuumClassRelationTransitive>(conn)
