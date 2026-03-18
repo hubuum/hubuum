@@ -701,7 +701,11 @@ pub mod tests {
             .get_related_objects(pool, &obj_a, &class_c)
             .await
             .unwrap();
-        assert_eq!(forward.len(), 1, "Forward traversal A→C should find 1 object");
+        assert_eq!(
+            forward.len(),
+            1,
+            "Forward traversal A→C should find 1 object"
+        );
         assert_eq!(forward[0].target_object_id, obj_c.id);
 
         // Backward: from oC, find objects of classA — this is the key bidirectional test
@@ -764,6 +768,144 @@ pub mod tests {
         ns.cleanup().await.unwrap();
     }
 
+    #[actix_rt::test]
+    async fn test_class_reachability_rebuild_switches_to_remaining_shortest_path() {
+        use crate::db::traits::ClassRelation;
+
+        let pool = TestScope::new().pool;
+        let scope = TestScope::new();
+        let ns = scope.namespace_fixture("reachability_rebuild").await;
+
+        let class_a = create_class(&pool, &ns.namespace, "reachability_a").await;
+        let class_b = create_class(&pool, &ns.namespace, "reachability_b").await;
+        let class_c = create_class(&pool, &ns.namespace, "reachability_c").await;
+        let class_d = create_class(&pool, &ns.namespace, "reachability_d").await;
+
+        let rel_ab = create_class_relation(&pool, &class_a, &class_b).await;
+        create_class_relation(&pool, &class_b, &class_c).await;
+        create_class_relation(&pool, &class_a, &class_d).await;
+        create_class_relation(&pool, &class_c, &class_d).await;
+
+        let before_delete = class_a.relations_to(&pool, &class_c).await.unwrap();
+        assert_eq!(before_delete.len(), 1);
+        assert_eq!(
+            before_delete[0].path,
+            vec![Some(class_a.id), Some(class_b.id), Some(class_c.id)]
+        );
+
+        rel_ab.delete(&pool).await.unwrap();
+
+        let after_delete = class_a.relations_to(&pool, &class_c).await.unwrap();
+        assert_eq!(after_delete.len(), 1);
+        assert_eq!(
+            after_delete[0].path,
+            vec![Some(class_a.id), Some(class_d.id), Some(class_c.id)]
+        );
+
+        ns.cleanup().await.unwrap();
+    }
+
+    #[actix_rt::test]
+    async fn test_transitive_class_relations_paginated_cursor_path_sort() {
+        use crate::db::traits::SelfRelations;
+        use crate::models::search::parse_query_parameter;
+        use crate::pagination::{finalize_page, prepare_db_pagination};
+
+        let pool = TestScope::new().pool;
+        let scope = TestScope::new();
+        let ns = scope.namespace_fixture("transitive_cursor_path").await;
+
+        let class_a = create_class(&pool, &ns.namespace, "transitive_cursor_a").await;
+        let class_b = create_class(&pool, &ns.namespace, "transitive_cursor_b").await;
+        let class_c = create_class(&pool, &ns.namespace, "transitive_cursor_c").await;
+        let class_d = create_class(&pool, &ns.namespace, "transitive_cursor_d").await;
+
+        create_class_relation(&pool, &class_a, &class_b).await;
+        create_class_relation(&pool, &class_b, &class_c).await;
+        create_class_relation(&pool, &class_c, &class_d).await;
+
+        let first_request = parse_query_parameter("limit=1&sort=path").unwrap();
+        let first_query =
+            prepare_db_pagination::<HubuumClassRelationTransitive>(&first_request).unwrap();
+        let first_hits = class_a
+            .transitive_relations_paginated(&pool, &first_query)
+            .await
+            .unwrap();
+        let first_page = finalize_page(first_hits, &first_request).unwrap();
+
+        assert_eq!(first_page.items.len(), 1);
+        assert_eq!(
+            first_page.items[0].path,
+            vec![Some(class_a.id), Some(class_b.id)]
+        );
+        assert!(first_page.next_cursor.is_some());
+
+        let next_cursor = first_page.next_cursor.clone().unwrap();
+        let second_request =
+            parse_query_parameter(&format!("limit=1&sort=path&cursor={next_cursor}")).unwrap();
+        let second_query =
+            prepare_db_pagination::<HubuumClassRelationTransitive>(&second_request).unwrap();
+        let second_hits = class_a
+            .transitive_relations_paginated(&pool, &second_query)
+            .await
+            .unwrap();
+        let second_page = finalize_page(second_hits, &second_request).unwrap();
+
+        assert_eq!(second_page.items.len(), 1);
+        assert_eq!(
+            second_page.items[0].path,
+            vec![Some(class_a.id), Some(class_b.id), Some(class_c.id)]
+        );
+
+        ns.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_rt::test]
+    async fn test_transitive_object_traversal_supports_same_class_target(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        use crate::db::traits::ObjectRelationsFromUser;
+
+        let context = test_context;
+        let pool = &context.pool;
+
+        let scope = TestScope::new();
+        let ns = scope.namespace_fixture("same_class_target").await;
+        let nid = ns.namespace.id;
+
+        let class_a = create_class(pool, &ns.namespace, "same_target_class_a").await;
+        let class_b = create_class(pool, &ns.namespace, "same_target_class_b").await;
+
+        let rel_ab = create_class_relation(pool, &class_a, &class_b).await;
+
+        let json = serde_json::json!({});
+        let obj_a1 = create_object(pool, class_a.id, nid, "same_target_a1", json.clone())
+            .await
+            .unwrap();
+        let obj_b1 = create_object(pool, class_b.id, nid, "same_target_b1", json.clone())
+            .await
+            .unwrap();
+        let obj_a2 = create_object(pool, class_a.id, nid, "same_target_a2", json.clone())
+            .await
+            .unwrap();
+
+        create_object_relation(pool, &rel_ab, &obj_a1, &obj_b1).await;
+        create_object_relation(pool, &rel_ab, &obj_a2, &obj_b1).await;
+
+        let related = context
+            .admin_user
+            .get_related_objects(pool, &obj_a1, &class_a)
+            .await
+            .unwrap();
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].target_object_id, obj_a2.id);
+        assert_eq!(related[0].path, vec![obj_a1.id, obj_b1.id, obj_a2.id]);
+
+        ns.cleanup().await.unwrap();
+    }
+
     /// Deleting one class relation in a chain should only clean up object relations
     /// that depended on it, leaving other object relations intact.
     /// Chain: A ↔ B ↔ C, with oA-oB and oB-oC.
@@ -804,9 +946,7 @@ pub mod tests {
         verify_no_such_object_relation(&pool, obj_rel_bc.id).await;
 
         // oA-oB should survive — its class relation (A↔B) still exists
-        let surviving = HubuumObjectRelationID(obj_rel_ab.id)
-            .instance(&pool)
-            .await;
+        let surviving = HubuumObjectRelationID(obj_rel_ab.id).instance(&pool).await;
         assert!(
             surviving.is_ok(),
             "Object relation A-B should survive when only B-C class relation is deleted"
@@ -857,13 +997,8 @@ pub mod tests {
         rel_bc.delete(&pool).await.unwrap();
 
         // oA-oB should survive — its class relation A↔B still exists
-        let surviving_ab = HubuumObjectRelationID(obj_rel_ab.id)
-            .instance(&pool)
-            .await;
-        assert!(
-            surviving_ab.is_ok(),
-            "Object relation A-B should survive"
-        );
+        let surviving_ab = HubuumObjectRelationID(obj_rel_ab.id).instance(&pool).await;
+        assert!(surviving_ab.is_ok(), "Object relation A-B should survive");
 
         // oB-oC was created under rel_bc which is now deleted — FK CASCADE removes it
         verify_no_such_object_relation(&pool, obj_rel_bc.id).await;

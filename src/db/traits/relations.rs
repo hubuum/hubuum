@@ -189,7 +189,6 @@ where
         use diesel::sql_query;
         use diesel::sql_types::Integer;
 
-
         with_connection(pool, |conn| {
             sql_query(
                 "SELECT ancestor_class_id, descendant_class_id, depth, path
@@ -328,15 +327,6 @@ where
     }
 }
 
-const TRANSITIVE_RELATIONS_PAGINATED_SQL: &str = concat!(
-    "SELECT ancestor_class_id, descendant_class_id, depth, path",
-    " FROM get_bidirectionally_related_classes(",
-    "     $1, ARRAY[]::INT[], $2, $3, $4, $5, $6, $7, $8",
-    " )",
-    " WHERE ancestor_class_id = $9 AND descendant_class_id = $10",
-    " ORDER BY depth ASC, descendant_class_id ASC"
-);
-
 async fn fetch_relations_direct<C1, C2>(
     pool: &DbPool,
     from: &C1,
@@ -403,6 +393,7 @@ where
     C1: SelfAccessors<HubuumClass> + Clone + Send + Sync,
     C2: SelfAccessors<HubuumClass> + Clone + Send + Sync,
 {
+    use crate::pagination::{cursor_filter_sql, normalized_sorts, order_sql_clause};
     use diesel::prelude::*;
     use diesel::sql_query;
     use diesel::sql_types::Integer;
@@ -411,10 +402,36 @@ where
     let (from, to) = if from > to { (to, from) } else { (from, to) };
 
     let filter = parse_transitive_filter_params(query_options)?;
+    let sorts = normalized_sorts::<HubuumClassRelationTransitive>(&query_options.sort)?;
+    let mut raw_sql = String::from(
+        "SELECT ancestor_class_id, descendant_class_id, depth, path
+         FROM get_bidirectionally_related_classes(
+             $1, ARRAY[]::INT[], $2, $3, $4, $5, $6, $7, $8
+         )
+         WHERE ancestor_class_id = $9 AND descendant_class_id = $10",
+    );
+
+    if let Some(cursor_sql) =
+        cursor_filter_sql::<HubuumClassRelationTransitive>(&sorts, query_options.cursor.as_deref())?
+    {
+        raw_sql.push_str("\n  AND ");
+        raw_sql.push_str(&cursor_sql);
+    }
+
+    let order_by = sorts
+        .iter()
+        .map(order_sql_clause::<HubuumClassRelationTransitive>)
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
+    raw_sql.push_str(&format!("\nORDER BY {order_by}"));
+
+    if let Some(limit) = query_options.limit {
+        raw_sql.push_str(&format!("\nLIMIT {limit}"));
+    }
 
     with_connection(pool, |conn| {
         let query = bind_transitive_filter_params!(
-            sql_query(TRANSITIVE_RELATIONS_PAGINATED_SQL)
+            sql_query(raw_sql.clone())
                 .bind::<Integer, _>(from)
                 .bind::<Integer, _>(max_transitive_depth_from_config()),
             filter
@@ -594,11 +611,9 @@ where
         with_connection(pool, |conn| {
             base_query
                 .inner_join(
-                    obj_rel::hubuumobject_relation.on(
-                        obj::id
-                            .eq(obj_rel::from_hubuum_object_id)
-                            .or(obj::id.eq(obj_rel::to_hubuum_object_id)),
-                    ),
+                    obj_rel::hubuumobject_relation.on(obj::id
+                        .eq(obj_rel::from_hubuum_object_id)
+                        .or(obj::id.eq(obj_rel::to_hubuum_object_id))),
                 )
                 .inner_join(
                     class_rel::hubuumclass_relation

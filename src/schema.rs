@@ -24,6 +24,16 @@ diesel::table! {
 }
 
 diesel::table! {
+    hubuumclass_reachability (id) {
+        id -> Int8,
+        ancestor_class_id -> Int4,
+        descendant_class_id -> Int4,
+        depth -> Int4,
+        path -> Array<Nullable<Int4>>,
+    }
+}
+
+diesel::table! {
     hubuumclass_relation (id) {
         id -> Int4,
         from_hubuum_class_id -> Int4,
@@ -208,6 +218,7 @@ diesel::joinable!(user_groups -> users (user_id));
 diesel::allow_tables_to_appear_in_same_query!(
     groups,
     hubuumclass,
+    hubuumclass_reachability,
     hubuumclass_relation,
     hubuumobject,
     hubuumobject_relation,

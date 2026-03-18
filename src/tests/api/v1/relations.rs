@@ -472,6 +472,60 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
+    async fn test_related_classes_cursor_pagination_with_path_sort(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "related_classes_cursor_path").await;
+        let _ = create_relation(&context.pool, &classes[0], &classes[1]).await;
+        let _ = create_relation(&context.pool, &classes[1], &classes[2]).await;
+        let _ = create_relation(&context.pool, &classes[2], &classes[3]).await;
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{}?limit=2&sort=path",
+                related_classes_endpoint(classes[0].id)
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        let first_page: Vec<HubuumClassWithPath> = test::read_body_json(resp).await;
+
+        assert_eq!(first_page.len(), 2);
+        assert_eq!(first_page[0].path, vec![classes[0].id, classes[1].id]);
+        assert_eq!(
+            first_page[1].path,
+            vec![classes[0].id, classes[1].id, classes[2].id]
+        );
+        assert!(next_cursor.is_some());
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{}?limit=2&sort=path&cursor={}",
+                related_classes_endpoint(classes[0].id),
+                next_cursor.unwrap()
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let second_page: Vec<HubuumClassWithPath> = test::read_body_json(resp).await;
+
+        assert_eq!(second_page.len(), 1);
+        assert_eq!(
+            second_page[0].path,
+            vec![classes[0].id, classes[1].id, classes[2].id, classes[3].id]
+        );
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
     async fn test_old_directional_class_routes_removed(#[future(awt)] test_context: TestContext) {
         let context = test_context;
         let classes = create_test_classes(&context, "old_directional_class_routes_removed").await;
@@ -1134,6 +1188,80 @@ mod tests {
                 objects
             );
         }
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_related_objects_cursor_pagination_with_path_sort(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let (classes, relations) =
+            create_classes_and_relations(&context, "related_objects_cursor_path").await;
+        let objects = create_objects_in_classes(&context.pool, &classes).await;
+
+        let _ =
+            create_object_relation(&context.pool, &objects[0], &objects[1], &relations[0]).await;
+        let _ =
+            create_object_relation(&context.pool, &objects[1], &objects[2], &relations[1]).await;
+        let _ =
+            create_object_relation(&context.pool, &objects[2], &objects[3], &relations[2]).await;
+        let _ =
+            create_object_relation(&context.pool, &objects[3], &objects[4], &relations[3]).await;
+        let _ =
+            create_object_relation(&context.pool, &objects[4], &objects[5], &relations[4]).await;
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{}?ignore_self_class=false&limit=2&sort=path",
+                related_objects_endpoint(classes[0].id, objects[0].id)
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        let first_page: Vec<HubuumObjectWithPath> = test::read_body_json(resp).await;
+
+        assert_eq!(first_page.len(), 2);
+        assert_eq!(first_page[0].path, vec![objects[0].id, objects[1].id]);
+        assert_eq!(
+            first_page[1].path,
+            vec![objects[0].id, objects[1].id, objects[2].id]
+        );
+        assert!(next_cursor.is_some());
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{}?ignore_self_class=false&limit=2&sort=path&cursor={}",
+                related_objects_endpoint(classes[0].id, objects[0].id),
+                next_cursor.unwrap()
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let second_page: Vec<HubuumObjectWithPath> = test::read_body_json(resp).await;
+
+        assert_eq!(second_page.len(), 2);
+        assert_eq!(
+            second_page[0].path,
+            vec![objects[0].id, objects[1].id, objects[2].id, objects[3].id]
+        );
+        assert_eq!(
+            second_page[1].path,
+            vec![
+                objects[0].id,
+                objects[1].id,
+                objects[2].id,
+                objects[3].id,
+                objects[4].id
+            ]
+        );
 
         cleanup(&classes).await;
     }

@@ -87,7 +87,7 @@ impl RelatedObjectGraphRow {
     }
 }
 
-// Trait for converting closure rows to API-ready object payloads.
+// Trait for converting graph rows to API-ready object payloads.
 pub trait ToHubuumObjects {
     fn to_descendant_objects_with_path(self) -> Vec<HubuumObjectWithPath>;
 }

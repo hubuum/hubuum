@@ -505,22 +505,22 @@ impl CursorSqlMapping for HubuumClassRelationTransitive {
     fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
         Ok(match field {
             FilterField::ClassFrom => CursorSqlField {
-                column: "hubuumclass_closure.ancestor_class_id",
+                column: "ancestor_class_id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
             FilterField::ClassTo => CursorSqlField {
-                column: "hubuumclass_closure.descendant_class_id",
+                column: "descendant_class_id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
             FilterField::Depth => CursorSqlField {
-                column: "hubuumclass_closure.depth",
+                column: "depth",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
             FilterField::Path => CursorSqlField {
-                column: "hubuumclass_closure.path",
+                column: "path",
                 sql_type: CursorSqlType::IntegerArray,
                 nullable: true,
             },
@@ -803,84 +803,84 @@ impl CursorSqlMapping for ObjectGraphRow {
     fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
         Ok(match field {
             FilterField::Id | FilterField::ObjectTo => CursorSqlField {
-                column: "hubuumobject_closure.descendant_object_id",
+                column: "descendant_object_id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
             FilterField::ObjectFrom => CursorSqlField {
-                column: "hubuumobject_closure.ancestor_object_id",
+                column: "ancestor_object_id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
             FilterField::Name | FilterField::NameTo => CursorSqlField {
-                column: "descendant_object.name",
+                column: "descendant_name",
                 sql_type: CursorSqlType::String,
                 nullable: false,
             },
             FilterField::NameFrom => CursorSqlField {
-                column: "ancestor_object.name",
+                column: "ancestor_name",
                 sql_type: CursorSqlType::String,
                 nullable: false,
             },
             FilterField::Description | FilterField::DescriptionTo => CursorSqlField {
-                column: "descendant_object.description",
+                column: "descendant_description",
                 sql_type: CursorSqlType::String,
                 nullable: false,
             },
             FilterField::DescriptionFrom => CursorSqlField {
-                column: "ancestor_object.description",
+                column: "ancestor_description",
                 sql_type: CursorSqlType::String,
                 nullable: false,
             },
             FilterField::Namespaces | FilterField::NamespaceId | FilterField::NamespacesTo => {
                 CursorSqlField {
-                    column: "descendant_object.namespace_id",
+                    column: "descendant_namespace_id",
                     sql_type: CursorSqlType::Integer,
                     nullable: false,
                 }
             }
             FilterField::NamespacesFrom => CursorSqlField {
-                column: "ancestor_object.namespace_id",
+                column: "ancestor_namespace_id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
             FilterField::ClassId | FilterField::Classes | FilterField::ClassTo => CursorSqlField {
-                column: "descendant_object.hubuum_class_id",
+                column: "descendant_class_id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
             FilterField::ClassFrom => CursorSqlField {
-                column: "ancestor_object.hubuum_class_id",
+                column: "ancestor_class_id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
             FilterField::CreatedAt | FilterField::CreatedAtTo => CursorSqlField {
-                column: "descendant_object.created_at",
+                column: "descendant_created_at",
                 sql_type: CursorSqlType::DateTime,
                 nullable: false,
             },
             FilterField::CreatedAtFrom => CursorSqlField {
-                column: "ancestor_object.created_at",
+                column: "ancestor_created_at",
                 sql_type: CursorSqlType::DateTime,
                 nullable: false,
             },
             FilterField::UpdatedAt | FilterField::UpdatedAtTo => CursorSqlField {
-                column: "descendant_object.updated_at",
+                column: "descendant_updated_at",
                 sql_type: CursorSqlType::DateTime,
                 nullable: false,
             },
             FilterField::UpdatedAtFrom => CursorSqlField {
-                column: "ancestor_object.updated_at",
+                column: "ancestor_updated_at",
                 sql_type: CursorSqlType::DateTime,
                 nullable: false,
             },
             FilterField::Depth => CursorSqlField {
-                column: "hubuumobject_closure.depth",
+                column: "depth",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
             FilterField::Path => CursorSqlField {
-                column: "hubuumobject_closure.path",
+                column: "path",
                 sql_type: CursorSqlType::IntegerArray,
                 nullable: false,
             },

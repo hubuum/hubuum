@@ -348,37 +348,37 @@ impl CursorSqlMapping for HubuumObjectWithPath {
     fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
         Ok(match field {
             FilterField::Id => CursorSqlField {
-                column: "hubuumobject_closure.descendant_object_id",
+                column: "descendant_object_id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
             FilterField::Name => CursorSqlField {
-                column: "descendant_object.name",
+                column: "descendant_name",
                 sql_type: CursorSqlType::String,
                 nullable: false,
             },
             FilterField::Namespaces | FilterField::NamespaceId => CursorSqlField {
-                column: "descendant_object.namespace_id",
+                column: "descendant_namespace_id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
             FilterField::ClassId | FilterField::Classes => CursorSqlField {
-                column: "descendant_object.hubuum_class_id",
+                column: "descendant_class_id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
             FilterField::CreatedAt => CursorSqlField {
-                column: "descendant_object.created_at",
+                column: "descendant_created_at",
                 sql_type: CursorSqlType::DateTime,
                 nullable: false,
             },
             FilterField::UpdatedAt => CursorSqlField {
-                column: "descendant_object.updated_at",
+                column: "descendant_updated_at",
                 sql_type: CursorSqlType::DateTime,
                 nullable: false,
             },
             FilterField::Path => CursorSqlField {
-                column: "hubuumobject_closure.path",
+                column: "path",
                 sql_type: CursorSqlType::IntegerArray,
                 nullable: false,
             },

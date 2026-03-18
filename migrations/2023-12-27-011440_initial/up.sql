@@ -114,6 +114,18 @@
         UNIQUE (from_hubuum_class_id, to_hubuum_class_id)
     );
 
+    -- Canonical shortest-path reachability cache for class relations.
+    DROP TABLE IF EXISTS hubuumclass_reachability CASCADE;
+    CREATE TABLE hubuumclass_reachability (
+        id BIGSERIAL PRIMARY KEY,
+        ancestor_class_id INT NOT NULL,
+        descendant_class_id INT NOT NULL,
+        depth INT NOT NULL,
+        path INT[] NOT NULL,
+        CHECK (ancestor_class_id < descendant_class_id),
+        UNIQUE (ancestor_class_id, descendant_class_id)
+    );
+
     -- A bidirectional relation between objects
     DROP TABLE IF EXISTS hubuumobject_relation CASCADE;
     CREATE TABLE hubuumobject_relation (
@@ -227,6 +239,10 @@
     ---- Relations
     CREATE INDEX idx_hubuumclass_relation_on_from_to ON hubuumclass_relation (from_hubuum_class_id, to_hubuum_class_id);
     CREATE INDEX idx_hubuumclass_relation_on_to ON hubuumclass_relation (to_hubuum_class_id);
+    CREATE INDEX idx_hubuumclass_reachability_ancestor ON hubuumclass_reachability (ancestor_class_id);
+    CREATE INDEX idx_hubuumclass_reachability_descendant ON hubuumclass_reachability (descendant_class_id);
+    CREATE INDEX idx_hubuumclass_reachability_ancestor_descendant ON hubuumclass_reachability (ancestor_class_id, descendant_class_id);
+    CREATE INDEX idx_hubuumclass_reachability_path ON hubuumclass_reachability USING GIN (path);
     CREATE INDEX idx_hubuumobject_relation_on_from_to ON hubuumobject_relation (from_hubuum_object_id, to_hubuum_object_id);
     CREATE INDEX idx_hubuumobject_relation_on_to ON hubuumobject_relation (to_hubuum_object_id);
     CREATE INDEX idx_hubuumobject_relation_class_relation_id ON hubuumobject_relation (class_relation_id);
@@ -329,59 +345,124 @@
     END;
     $$ LANGUAGE plpgsql;
 
-    -- Function to get objects that use a class relation. 
-    CREATE OR REPLACE FUNCTION get_affected_objects(class1_id INT, class2_id INT)
-    RETURNS TABLE (from_object_id INT, to_object_id INT) AS $$
+    CREATE OR REPLACE FUNCTION reverse_integer_array(path_input INT[])
+    RETURNS INT[] AS $$
+        SELECT COALESCE(
+            ARRAY(
+                SELECT element
+                FROM unnest(path_input) WITH ORDINALITY AS values_with_ord(element, ord)
+                ORDER BY ord DESC
+            ),
+            ARRAY[]::INT[]
+        );
+    $$ LANGUAGE sql IMMUTABLE;
+
+    CREATE OR REPLACE FUNCTION rebuild_class_reachability_cache()
+    RETURNS VOID AS $$
     BEGIN
-        RETURN QUERY
-        SELECT r.id, r.from_hubuum_object_id, r.to_hubuum_object_id, r.created_at, r.updated_at
-        FROM hubuumobject_relation r
-        JOIN hubuumobject o1 ON r.from_hubuum_object_id = o1.id
-        JOIN hubuumobject o2 ON r.to_hubuum_object_id = o2.id
-        WHERE (o1.hubuum_class_id = class1_id AND o2.hubuum_class_id = class2_id)
-        OR (o1.hubuum_class_id = class2_id AND o2.hubuum_class_id = class1_id);
+        -- Class-relation writes are rare, so serialize cache rebuilds to avoid
+        -- deadlocks under parallel test execution while keeping reads lock-free.
+        PERFORM pg_advisory_xact_lock(214748301);
+
+        DELETE FROM hubuumclass_reachability;
+
+        INSERT INTO hubuumclass_reachability (
+            ancestor_class_id,
+            descendant_class_id,
+            depth,
+            path
+        )
+        WITH RECURSIVE class_edges AS (
+            SELECT from_hubuum_class_id AS source_class_id, to_hubuum_class_id AS target_class_id
+            FROM hubuumclass_relation
+
+            UNION ALL
+
+            SELECT to_hubuum_class_id AS source_class_id, from_hubuum_class_id AS target_class_id
+            FROM hubuumclass_relation
+        ),
+        graph_walk AS (
+            SELECT
+                source_class_id AS start_class_id,
+                target_class_id AS end_class_id,
+                1 AS depth,
+                ARRAY[source_class_id, target_class_id] AS path
+            FROM class_edges
+
+            UNION ALL
+
+            SELECT
+                graph_walk.start_class_id,
+                class_edges.target_class_id AS end_class_id,
+                graph_walk.depth + 1,
+                graph_walk.path || class_edges.target_class_id
+            FROM graph_walk
+            JOIN class_edges
+              ON class_edges.source_class_id = graph_walk.end_class_id
+            WHERE NOT (class_edges.target_class_id = ANY(graph_walk.path))
+        ),
+        canonical_walk AS (
+            SELECT
+                LEAST(start_class_id, end_class_id) AS ancestor_class_id,
+                GREATEST(start_class_id, end_class_id) AS descendant_class_id,
+                depth,
+                CASE
+                    WHEN start_class_id < end_class_id THEN path
+                    ELSE reverse_integer_array(path)
+                END AS path
+            FROM graph_walk
+        ),
+        deduped_walk AS (
+            SELECT DISTINCT ON (ancestor_class_id, descendant_class_id)
+                ancestor_class_id,
+                descendant_class_id,
+                depth,
+                path
+            FROM canonical_walk
+            ORDER BY ancestor_class_id ASC, descendant_class_id ASC, depth ASC, path ASC
+        )
+        SELECT
+            ancestor_class_id,
+            descendant_class_id,
+            depth,
+            path
+        FROM deduped_walk;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    CREATE OR REPLACE FUNCTION refresh_class_reachability_cache()
+    RETURNS TRIGGER AS $$
+    BEGIN
+        PERFORM rebuild_class_reachability_cache();
+        RETURN NULL;
     END;
     $$ LANGUAGE plpgsql;
 
     -- Function to cleanup invalid object relations from the hubuumobject_relation table
-    -- after a class relation has been deleted. This function is called by a FOR EACH ROW
-    -- trigger and uses OLD to scope cleanup to only the affected classes.
+    -- after a class relation has been deleted. This rebuilds the reachability cache once
+    -- per statement and scopes cleanup to the deleted class pairs.
     CREATE OR REPLACE FUNCTION cleanup_invalid_object_relations()
     RETURNS TRIGGER AS $$
     BEGIN
-        -- Only delete object relations whose classes were connected through the
-        -- deleted class relation. We check whether the two object classes are
-        -- still reachable via remaining class relations; if not, the object
-        -- relation is invalid.
+        PERFORM rebuild_class_reachability_cache();
+
         DELETE FROM hubuumobject_relation oor
         USING hubuumobject o1, hubuumobject o2
         WHERE o1.id = oor.from_hubuum_object_id
           AND o2.id = oor.to_hubuum_object_id
-          -- Scope: only object relations involving the deleted class pair
-          AND (
-              (LEAST(o1.hubuum_class_id, o2.hubuum_class_id) = OLD.from_hubuum_class_id
-               AND GREATEST(o1.hubuum_class_id, o2.hubuum_class_id) = OLD.to_hubuum_class_id)
-          )
-          -- Keep only if the classes are still reachable
-          AND NOT EXISTS (
-              WITH RECURSIVE class_reachability AS (
-                  SELECT from_hubuum_class_id, to_hubuum_class_id, 1 AS depth
-                  FROM hubuumclass_relation
-
-                  UNION ALL
-
-                  SELECT cr.from_hubuum_class_id, cr2.to_hubuum_class_id, cr.depth + 1
-                  FROM class_reachability cr
-                  JOIN hubuumclass_relation cr2
-                    ON cr.to_hubuum_class_id = cr2.from_hubuum_class_id
-                  WHERE cr.depth < 100
-              )
+          AND EXISTS (
               SELECT 1
-              FROM class_reachability
-              WHERE from_hubuum_class_id = LEAST(o1.hubuum_class_id, o2.hubuum_class_id)
-                AND to_hubuum_class_id = GREATEST(o1.hubuum_class_id, o2.hubuum_class_id)
+              FROM deleted_relations
+              WHERE deleted_relations.from_hubuum_class_id = LEAST(o1.hubuum_class_id, o2.hubuum_class_id)
+                AND deleted_relations.to_hubuum_class_id = GREATEST(o1.hubuum_class_id, o2.hubuum_class_id)
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM hubuumclass_reachability
+              WHERE ancestor_class_id = LEAST(o1.hubuum_class_id, o2.hubuum_class_id)
+                AND descendant_class_id = GREATEST(o1.hubuum_class_id, o2.hubuum_class_id)
           );
-        RETURN OLD;
+        RETURN NULL;
     END;
     $$ LANGUAGE plpgsql;
 
@@ -403,81 +484,97 @@
         FROM hubuumobject 
         WHERE id = start_object_id;
 
+        IF start_class_id IS NULL THEN
+            RETURN;
+        END IF;
+
+        IF start_class_id <> target_class_id
+           AND NOT EXISTS (
+               SELECT 1
+               FROM hubuumclass_reachability
+               WHERE ancestor_class_id = LEAST(start_class_id, target_class_id)
+                 AND descendant_class_id = GREATEST(start_class_id, target_class_id)
+           ) THEN
+            RETURN;
+        END IF;
+
         RETURN QUERY
-        WITH RECURSIVE class_reachability AS (
-            -- Direct class relation
-            SELECT from_hubuum_class_id, to_hubuum_class_id, 1 as depth
-            FROM hubuumclass_relation
-            
+        WITH RECURSIVE object_edges AS (
+            SELECT from_hubuum_object_id AS source_object_id, to_hubuum_object_id AS target_object_id
+            FROM hubuumobject_relation
+
             UNION ALL
-            
-            -- Transitive class relation
-            SELECT cr.from_hubuum_class_id, cr2.to_hubuum_class_id, cr.depth + 1
-            FROM class_reachability cr
-            JOIN hubuumclass_relation cr2 ON cr.to_hubuum_class_id = cr2.from_hubuum_class_id
-            WHERE cr.depth < max_depth
+
+            SELECT to_hubuum_object_id AS source_object_id, from_hubuum_object_id AS target_object_id
+            FROM hubuumobject_relation
         ),
-        transitive_relations AS (
-            -- Base case: direct relations (walk both directions since from < to is enforced)
+        graph_walk AS (
             SELECT
-                CASE
-                    WHEN rel.from_hubuum_object_id = start_object_id THEN rel.to_hubuum_object_id
-                    ELSE rel.from_hubuum_object_id
-                END AS object_id,
-                ARRAY[start_object_id,
-                    CASE
-                        WHEN rel.from_hubuum_object_id = start_object_id THEN rel.to_hubuum_object_id
-                        ELSE rel.from_hubuum_object_id
-                    END
-                ] AS path
-            FROM hubuumobject_relation rel
-            JOIN hubuumobject o ON o.id = CASE
-                    WHEN rel.from_hubuum_object_id = start_object_id THEN rel.to_hubuum_object_id
-                    ELSE rel.from_hubuum_object_id
-                END
-            WHERE (rel.from_hubuum_object_id = start_object_id OR rel.to_hubuum_object_id = start_object_id)
-            AND o.namespace_id = ANY(valid_namespace_ids)
+                start_object_id AS ancestor_object_id,
+                object_edges.target_object_id AS descendant_object_id,
+                1 AS depth,
+                ARRAY[start_object_id, object_edges.target_object_id] AS traversal_path
+            FROM object_edges
+            JOIN hubuumobject target_object
+              ON target_object.id = object_edges.target_object_id
+            WHERE object_edges.source_object_id = start_object_id
+              AND (max_depth IS NULL OR max_depth >= 1)
+              AND (
+                  COALESCE(cardinality(valid_namespace_ids), 0) = 0
+                  OR target_object.namespace_id = ANY(valid_namespace_ids)
+              )
+              AND (
+                  target_object.hubuum_class_id = target_class_id
+                  OR EXISTS (
+                      SELECT 1
+                      FROM hubuumclass_reachability
+                      WHERE ancestor_class_id = LEAST(target_object.hubuum_class_id, target_class_id)
+                        AND descendant_class_id = GREATEST(target_object.hubuum_class_id, target_class_id)
+                  )
+              )
 
             UNION ALL
 
-            -- Recursive case: walk both directions, avoid cycles via path check
             SELECT
-                CASE
-                    WHEN rel2.from_hubuum_object_id = tr.object_id THEN rel2.to_hubuum_object_id
-                    ELSE rel2.from_hubuum_object_id
-                END,
-                tr.path || CASE
-                    WHEN rel2.from_hubuum_object_id = tr.object_id THEN rel2.to_hubuum_object_id
-                    ELSE rel2.from_hubuum_object_id
-                END
-            FROM transitive_relations tr
-            JOIN hubuumobject_relation rel2
-              ON rel2.from_hubuum_object_id = tr.object_id
-              OR rel2.to_hubuum_object_id = tr.object_id
-            JOIN hubuumobject o ON o.id = CASE
-                    WHEN rel2.from_hubuum_object_id = tr.object_id THEN rel2.to_hubuum_object_id
-                    ELSE rel2.from_hubuum_object_id
-                END
-            WHERE NOT (
-                CASE
-                    WHEN rel2.from_hubuum_object_id = tr.object_id THEN rel2.to_hubuum_object_id
-                    ELSE rel2.from_hubuum_object_id
-                END = ANY(tr.path)
-            )
-            AND o.namespace_id = ANY(valid_namespace_ids)
+                graph_walk.ancestor_object_id,
+                object_edges.target_object_id AS descendant_object_id,
+                graph_walk.depth + 1,
+                graph_walk.traversal_path || object_edges.target_object_id
+            FROM graph_walk
+            JOIN object_edges
+              ON object_edges.source_object_id = graph_walk.descendant_object_id
+            JOIN hubuumobject target_object
+              ON target_object.id = object_edges.target_object_id
+            WHERE NOT (object_edges.target_object_id = ANY(graph_walk.traversal_path))
+              AND (max_depth IS NULL OR graph_walk.depth < max_depth)
+              AND (
+                  COALESCE(cardinality(valid_namespace_ids), 0) = 0
+                  OR target_object.namespace_id = ANY(valid_namespace_ids)
+              )
+              AND (
+                  target_object.hubuum_class_id = target_class_id
+                  OR EXISTS (
+                      SELECT 1
+                      FROM hubuumclass_reachability
+                      WHERE ancestor_class_id = LEAST(target_object.hubuum_class_id, target_class_id)
+                        AND descendant_class_id = GREATEST(target_object.hubuum_class_id, target_class_id)
+                  )
+              )
+        ),
+        deduped_walk AS (
+            SELECT DISTINCT ON (descendant_object_id)
+                descendant_object_id,
+                depth,
+                traversal_path
+            FROM graph_walk
+            ORDER BY descendant_object_id ASC, depth ASC, traversal_path ASC
         )
-        SELECT DISTINCT ON (tr.object_id)
-            tr.object_id as target_object_id,
-            tr.path
-        FROM transitive_relations tr
-        JOIN hubuumobject o ON o.id = tr.object_id
-        -- Verify target's class is reachable from start's class
-        WHERE o.hubuum_class_id = target_class_id
-        AND EXISTS (
-            SELECT 1 FROM class_reachability
-            WHERE from_hubuum_class_id = LEAST(start_class_id, target_class_id)
-            AND to_hubuum_class_id = GREATEST(start_class_id, target_class_id)
-        );
+        SELECT
+            deduped_walk.descendant_object_id AS target_object_id,
+            deduped_walk.traversal_path AS path
+        FROM deduped_walk
+        JOIN hubuumobject target_object ON target_object.id = deduped_walk.descendant_object_id
+        WHERE target_object.hubuum_class_id = target_class_id;
     END;
     $$ LANGUAGE plpgsql;
 
@@ -506,28 +603,25 @@
         ancestor_updated_at TIMESTAMP,
         descendant_updated_at TIMESTAMP
     ) AS $$
-        WITH RECURSIVE graph_walk AS (
+        WITH RECURSIVE object_edges AS (
+            SELECT from_hubuum_object_id AS source_object_id, to_hubuum_object_id AS target_object_id
+            FROM hubuumobject_relation
+
+            UNION ALL
+
+            SELECT to_hubuum_object_id AS source_object_id, from_hubuum_object_id AS target_object_id
+            FROM hubuumobject_relation
+        ),
+        graph_walk AS (
             SELECT
                 start_object_id AS ancestor_object_id,
-                CASE
-                    WHEN rel.from_hubuum_object_id = start_object_id THEN rel.to_hubuum_object_id
-                    ELSE rel.from_hubuum_object_id
-                END AS descendant_object_id,
+                object_edges.target_object_id AS descendant_object_id,
                 1 AS depth,
-                ARRAY[
-                    start_object_id,
-                    CASE
-                        WHEN rel.from_hubuum_object_id = start_object_id THEN rel.to_hubuum_object_id
-                        ELSE rel.from_hubuum_object_id
-                    END
-                ] AS path
-            FROM hubuumobject_relation rel
+                ARRAY[start_object_id, object_edges.target_object_id] AS path
+            FROM object_edges
             JOIN hubuumobject target_object
-              ON target_object.id = CASE
-                    WHEN rel.from_hubuum_object_id = start_object_id THEN rel.to_hubuum_object_id
-                    ELSE rel.from_hubuum_object_id
-                END
-            WHERE (rel.from_hubuum_object_id = start_object_id OR rel.to_hubuum_object_id = start_object_id)
+              ON target_object.id = object_edges.target_object_id
+            WHERE object_edges.source_object_id = start_object_id
               AND (max_depth IS NULL OR max_depth >= 1)
               AND (
                   COALESCE(cardinality(valid_namespace_ids), 0) = 0
@@ -538,30 +632,15 @@
 
             SELECT
                 graph_walk.ancestor_object_id,
-                CASE
-                    WHEN rel.from_hubuum_object_id = graph_walk.descendant_object_id THEN rel.to_hubuum_object_id
-                    ELSE rel.from_hubuum_object_id
-                END AS descendant_object_id,
+                object_edges.target_object_id AS descendant_object_id,
                 graph_walk.depth + 1,
-                graph_walk.path || CASE
-                    WHEN rel.from_hubuum_object_id = graph_walk.descendant_object_id THEN rel.to_hubuum_object_id
-                    ELSE rel.from_hubuum_object_id
-                END
+                graph_walk.path || object_edges.target_object_id
             FROM graph_walk
-            JOIN hubuumobject_relation rel
-              ON rel.from_hubuum_object_id = graph_walk.descendant_object_id
-              OR rel.to_hubuum_object_id = graph_walk.descendant_object_id
+            JOIN object_edges
+              ON object_edges.source_object_id = graph_walk.descendant_object_id
             JOIN hubuumobject target_object
-              ON target_object.id = CASE
-                    WHEN rel.from_hubuum_object_id = graph_walk.descendant_object_id THEN rel.to_hubuum_object_id
-                    ELSE rel.from_hubuum_object_id
-                END
-            WHERE NOT (
-                CASE
-                    WHEN rel.from_hubuum_object_id = graph_walk.descendant_object_id THEN rel.to_hubuum_object_id
-                    ELSE rel.from_hubuum_object_id
-                END = ANY(graph_walk.path)
-            )
+              ON target_object.id = object_edges.target_object_id
+            WHERE NOT (object_edges.target_object_id = ANY(graph_walk.path))
               AND (max_depth IS NULL OR graph_walk.depth < max_depth)
               AND (
                   COALESCE(cardinality(valid_namespace_ids), 0) = 0
@@ -640,82 +719,33 @@
         ancestor_updated_at TIMESTAMP,
         descendant_updated_at TIMESTAMP
     ) AS $$
-        WITH RECURSIVE graph_walk AS (
+        WITH related_classes AS (
             SELECT
                 start_class_id AS ancestor_class_id,
                 CASE
-                    WHEN rel.from_hubuum_class_id = start_class_id THEN rel.to_hubuum_class_id
-                    ELSE rel.from_hubuum_class_id
+                    WHEN hubuumclass_reachability.ancestor_class_id = start_class_id THEN hubuumclass_reachability.descendant_class_id
+                    ELSE hubuumclass_reachability.ancestor_class_id
                 END AS descendant_class_id,
-                1 AS depth,
-                ARRAY[
-                    start_class_id,
-                    CASE
-                        WHEN rel.from_hubuum_class_id = start_class_id THEN rel.to_hubuum_class_id
-                        ELSE rel.from_hubuum_class_id
-                    END
-                ] AS path
-            FROM hubuumclass_relation rel
-            JOIN hubuumclass target_class
-              ON target_class.id = CASE
-                    WHEN rel.from_hubuum_class_id = start_class_id THEN rel.to_hubuum_class_id
-                    ELSE rel.from_hubuum_class_id
-                END
-                        WHERE (rel.from_hubuum_class_id = start_class_id OR rel.to_hubuum_class_id = start_class_id)
-                            AND (max_depth IS NULL OR max_depth >= 1)
-                            AND (
-                                        COALESCE(cardinality(valid_namespace_ids), 0) = 0
-                                        OR target_class.namespace_id = ANY(valid_namespace_ids)
-                                    )
-
-            UNION ALL
-
-            SELECT
-                graph_walk.ancestor_class_id,
+                hubuumclass_reachability.depth,
                 CASE
-                    WHEN rel.from_hubuum_class_id = graph_walk.descendant_class_id THEN rel.to_hubuum_class_id
-                    ELSE rel.from_hubuum_class_id
-                END AS descendant_class_id,
-                graph_walk.depth + 1,
-                graph_walk.path || CASE
-                    WHEN rel.from_hubuum_class_id = graph_walk.descendant_class_id THEN rel.to_hubuum_class_id
-                    ELSE rel.from_hubuum_class_id
-                END
-            FROM graph_walk
-            JOIN hubuumclass_relation rel
-              ON rel.from_hubuum_class_id = graph_walk.descendant_class_id
-              OR rel.to_hubuum_class_id = graph_walk.descendant_class_id
-            JOIN hubuumclass target_class
-              ON target_class.id = CASE
-                    WHEN rel.from_hubuum_class_id = graph_walk.descendant_class_id THEN rel.to_hubuum_class_id
-                    ELSE rel.from_hubuum_class_id
-                END
-                        WHERE NOT (
-                CASE
-                    WHEN rel.from_hubuum_class_id = graph_walk.descendant_class_id THEN rel.to_hubuum_class_id
-                    ELSE rel.from_hubuum_class_id
-                END = ANY(graph_walk.path)
-            )
-              AND (max_depth IS NULL OR graph_walk.depth < max_depth)
-                            AND (
-                                        COALESCE(cardinality(valid_namespace_ids), 0) = 0
-                                        OR target_class.namespace_id = ANY(valid_namespace_ids)
-                                    )
-        ),
-        deduped_walk AS (
-            SELECT DISTINCT ON (descendant_class_id)
-                ancestor_class_id,
-                descendant_class_id,
-                depth,
-                path
-            FROM graph_walk
-            ORDER BY descendant_class_id ASC, depth ASC, path ASC
+                    WHEN hubuumclass_reachability.ancestor_class_id = start_class_id THEN hubuumclass_reachability.path
+                    ELSE reverse_integer_array(hubuumclass_reachability.path)
+                END AS path
+            FROM hubuumclass_reachability
+            WHERE (
+                    hubuumclass_reachability.ancestor_class_id = start_class_id
+                    OR hubuumclass_reachability.descendant_class_id = start_class_id
+                  )
+              AND (
+                    max_depth IS NULL
+                    OR hubuumclass_reachability.depth <= max_depth
+                  )
         )
         SELECT
             source_class.id AS ancestor_class_id,
             target_class.id AS descendant_class_id,
-            deduped_walk.depth,
-            deduped_walk.path,
+            related_classes.depth,
+            related_classes.path,
             source_class.name AS ancestor_name,
             target_class.name AS descendant_name,
             source_class.namespace_id AS ancestor_namespace_id,
@@ -730,29 +760,29 @@
             target_class.created_at AS descendant_created_at,
             source_class.updated_at AS ancestor_updated_at,
             target_class.updated_at AS descendant_updated_at
-        FROM deduped_walk
-        JOIN hubuumclass source_class ON source_class.id = deduped_walk.ancestor_class_id
-        JOIN hubuumclass target_class ON target_class.id = deduped_walk.descendant_class_id
-                WHERE (
-                                COALESCE(cardinality(valid_namespace_ids), 0) = 0
-                                OR source_class.namespace_id = ANY(valid_namespace_ids)
-                            )
-                    AND (
-                                COALESCE(cardinality(valid_namespace_ids), 0) = 0
-                                OR target_class.namespace_id = ANY(valid_namespace_ids)
+        FROM related_classes
+        JOIN hubuumclass source_class ON source_class.id = related_classes.ancestor_class_id
+        JOIN hubuumclass target_class ON target_class.id = related_classes.descendant_class_id
+        WHERE (
+                COALESCE(cardinality(valid_namespace_ids), 0) = 0
+                OR source_class.namespace_id = ANY(valid_namespace_ids)
+              )
+          AND (
+                COALESCE(cardinality(valid_namespace_ids), 0) = 0
+                OR target_class.namespace_id = ANY(valid_namespace_ids)
               )
           AND (
                 filter_depth_op IS NULL
                 OR (
                     (CASE filter_depth_op
-                        WHEN 'equals' THEN deduped_walk.depth = ANY(filter_depth_values)
-                        WHEN 'gt' THEN deduped_walk.depth > (SELECT MAX(v) FROM unnest(filter_depth_values) AS v)
-                        WHEN 'gte' THEN deduped_walk.depth >= (SELECT MAX(v) FROM unnest(filter_depth_values) AS v)
-                        WHEN 'lt' THEN deduped_walk.depth < (SELECT MIN(v) FROM unnest(filter_depth_values) AS v)
-                        WHEN 'lte' THEN deduped_walk.depth <= (SELECT MIN(v) FROM unnest(filter_depth_values) AS v)
+                        WHEN 'equals' THEN related_classes.depth = ANY(filter_depth_values)
+                        WHEN 'gt' THEN related_classes.depth > (SELECT MAX(v) FROM unnest(filter_depth_values) AS v)
+                        WHEN 'gte' THEN related_classes.depth >= (SELECT MAX(v) FROM unnest(filter_depth_values) AS v)
+                        WHEN 'lt' THEN related_classes.depth < (SELECT MIN(v) FROM unnest(filter_depth_values) AS v)
+                        WHEN 'lte' THEN related_classes.depth <= (SELECT MIN(v) FROM unnest(filter_depth_values) AS v)
                         WHEN 'between' THEN (
                             cardinality(filter_depth_values) >= 2
-                            AND deduped_walk.depth BETWEEN filter_depth_values[1] AND filter_depth_values[2]
+                            AND related_classes.depth BETWEEN filter_depth_values[1] AND filter_depth_values[2]
                         )
                         ELSE FALSE
                     END) != filter_depth_negated
@@ -762,8 +792,8 @@
                 filter_path_op IS NULL
                 OR (
                     (CASE filter_path_op
-                        WHEN 'contains' THEN deduped_walk.path @> filter_path_values
-                        WHEN 'equals' THEN deduped_walk.path = filter_path_values
+                        WHEN 'contains' THEN related_classes.path @> filter_path_values
+                        WHEN 'equals' THEN related_classes.path = filter_path_values
                         ELSE FALSE
                     END) != filter_path_negated
                 )
@@ -841,11 +871,18 @@
     BEFORE INSERT OR UPDATE ON hubuumobject_relation
     FOR EACH ROW EXECUTE FUNCTION validate_object_relation();
 
-    -- Trigger to cleanup invalid object relations
+    -- Keep the class reachability cache up to date on class relation writes.
+    DROP TRIGGER IF EXISTS refresh_class_reachability_cache ON hubuumclass_relation;
+    CREATE TRIGGER refresh_class_reachability_cache
+    AFTER INSERT OR UPDATE ON hubuumclass_relation
+    FOR EACH STATEMENT EXECUTE FUNCTION refresh_class_reachability_cache();
+
+    -- Trigger to cleanup invalid object relations after class relation deletes.
     DROP TRIGGER IF EXISTS cleanup_object_relations ON hubuumclass_relation;
     CREATE TRIGGER cleanup_object_relations
     AFTER DELETE ON hubuumclass_relation
-    FOR EACH ROW EXECUTE FUNCTION cleanup_invalid_object_relations();
+    REFERENCING OLD TABLE AS deleted_relations
+    FOR EACH STATEMENT EXECUTE FUNCTION cleanup_invalid_object_relations();
 
     -- Trigger to update report_templates updated_at column
     DROP TRIGGER IF EXISTS update_report_templates_updated_at ON report_templates;
