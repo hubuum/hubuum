@@ -16,7 +16,8 @@ pub use user::UserPermissions;
 use super::{DbPool, with_connection};
 use crate::bind_transitive_filter_params;
 use crate::db::traits::relations::{
-    ObjectRelationMembershipsBackend, SelfRelationsBackend, parse_transitive_filter_params,
+    MAX_TRANSITIVE_DEPTH, ObjectRelationMembershipsBackend, SelfRelationsBackend,
+    parse_transitive_filter_params,
 };
 use crate::errors::ApiError;
 use crate::models::search::{ParsedQueryParam, QueryOptions};
@@ -132,21 +133,14 @@ where
     C1: SelfAccessors<HubuumClass> + Clone + Send + Sync,
     Self: SelfAccessors<HubuumClass> + Clone + Send + Sync,
 {
-    const TRANSITIVE_SELF_RELATIONS_PAGINATED_SQL: &'static str =
-        "SELECT ancestor_class_id, descendant_class_id, depth, path
-                      FROM get_bidirectionally_related_classes(
-                          $1,
-                          ARRAY[]::INT[],
-                          $2,
-                          $3,
-                          $4,
-                          $5,
-                          $6,
-                          $7,
-                          $8
-                      )
-                      WHERE ancestor_class_id = $1 OR descendant_class_id = $1
-                      ORDER BY depth ASC, descendant_class_id ASC";
+    const TRANSITIVE_SELF_RELATIONS_PAGINATED_SQL: &'static str = concat!(
+        "SELECT ancestor_class_id, descendant_class_id, depth, path",
+        " FROM get_bidirectionally_related_classes(",
+        "     $1, ARRAY[]::INT[], $2, $3, $4, $5, $6, $7, $8",
+        " )",
+        " WHERE ancestor_class_id = $1 OR descendant_class_id = $1",
+        " ORDER BY depth ASC, descendant_class_id ASC"
+    );
 
     #[allow(dead_code)]
     async fn transitive_relations(
@@ -166,7 +160,6 @@ where
         use diesel::sql_query;
         use diesel::sql_types::Integer;
 
-        const MAX_DEPTH: i32 = 100;
 
         let filter = parse_transitive_filter_params(query_options)?;
 
@@ -174,7 +167,7 @@ where
             let query = bind_transitive_filter_params!(
                 sql_query(Self::TRANSITIVE_SELF_RELATIONS_PAGINATED_SQL)
                     .bind::<Integer, _>(self.id())
-                    .bind::<Integer, _>(MAX_DEPTH),
+                    .bind::<Integer, _>(MAX_TRANSITIVE_DEPTH),
                 filter
             );
 

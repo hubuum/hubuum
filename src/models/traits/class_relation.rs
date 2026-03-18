@@ -6,10 +6,10 @@ use crate::errors::ApiError;
 
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
-    ClassClosureRow, HubuumClass, HubuumClassRelation, HubuumClassRelationID,
+    ClassGraphRow, HubuumClass, HubuumClassRelation, HubuumClassRelationID,
     HubuumClassRelationTransitive, HubuumClassWithPath, HubuumObject, HubuumObjectRelation,
     HubuumObjectRelationID, Namespace, NewHubuumClassRelation, NewHubuumObjectRelation,
-    ObjectClosureRow, RelatedObjectClosureRow,
+    ObjectGraphRow, RelatedObjectGraphRow,
 };
 use crate::traits::accessors::{
     ClassAdapter, IdAccessor, InstanceAdapter, NamespaceAdapter, ObjectAdapter,
@@ -206,7 +206,7 @@ impl ObjectAdapter<(HubuumObject, HubuumObject), (i32, i32)> for HubuumObjectRel
     }
 }
 
-impl ClassClosureRow {
+impl ClassGraphRow {
     #[allow(dead_code)]
     pub fn to_ascendant_class(&self) -> HubuumClass {
         HubuumClass {
@@ -258,7 +258,7 @@ pub trait ToHubuumClasses {
     fn to_ascendant_classes(self) -> Vec<HubuumClass>;
 }
 
-impl ToHubuumClasses for Vec<ClassClosureRow> {
+impl ToHubuumClasses for Vec<ClassGraphRow> {
     fn to_descendant_classes(self) -> Vec<HubuumClass> {
         self.into_iter()
             .map(|ocv| ocv.to_descendant_class())
@@ -534,7 +534,7 @@ impl CursorSqlMapping for HubuumClassRelationTransitive {
     }
 }
 
-impl CursorPaginated for ClassClosureRow {
+impl CursorPaginated for ClassGraphRow {
     fn supports_sort(field: &FilterField) -> bool {
         matches!(
             field,
@@ -620,7 +620,7 @@ impl CursorPaginated for ClassClosureRow {
     }
 }
 
-impl CursorSqlMapping for ClassClosureRow {
+impl CursorSqlMapping for ClassGraphRow {
     fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
         Ok(match field {
             FilterField::Id
@@ -708,7 +708,7 @@ impl CursorSqlMapping for ClassClosureRow {
     }
 }
 
-impl CursorPaginated for ObjectClosureRow {
+impl CursorPaginated for ObjectGraphRow {
     fn supports_sort(field: &FilterField) -> bool {
         matches!(
             field,
@@ -799,7 +799,7 @@ impl CursorPaginated for ObjectClosureRow {
     }
 }
 
-impl CursorSqlMapping for ObjectClosureRow {
+impl CursorSqlMapping for ObjectGraphRow {
     fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
         Ok(match field {
             FilterField::Id | FilterField::ObjectTo => CursorSqlField {
@@ -894,7 +894,7 @@ impl CursorSqlMapping for ObjectClosureRow {
     }
 }
 
-impl CursorPaginated for RelatedObjectClosureRow {
+impl CursorPaginated for RelatedObjectGraphRow {
     fn supports_sort(field: &FilterField) -> bool {
         matches!(
             field,
@@ -985,7 +985,7 @@ impl CursorPaginated for RelatedObjectClosureRow {
     }
 }
 
-impl CursorSqlMapping for RelatedObjectClosureRow {
+impl CursorSqlMapping for RelatedObjectGraphRow {
     fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
         Ok(match field {
             FilterField::Id | FilterField::ObjectTo => CursorSqlField {

@@ -19,7 +19,7 @@ DROP TRIGGER IF EXISTS before_insert_or_update_class_relation ON hubuumclass_rel
 DROP FUNCTION IF EXISTS get_bidirectionally_related_objects(INT, INT[], INT);
 DROP FUNCTION IF EXISTS get_bidirectionally_related_classes(INT, INT[], INT, TEXT, INT[], BOOLEAN, TEXT, INT[], BOOLEAN);
 DROP FUNCTION IF EXISTS get_bidirectionally_related_classes(INT, INT[], INT);
-DROP FUNCTION IF EXISTS get_transitively_linked_objects(INT, INT, INT[]);
+DROP FUNCTION IF EXISTS get_transitively_linked_objects(INT, INT, INT[], INT);
 DROP FUNCTION IF EXISTS cleanup_invalid_object_relations();
 DROP FUNCTION IF EXISTS get_affected_objects(INT, INT);
 DROP FUNCTION IF EXISTS validate_object_relation();
@@ -55,6 +55,7 @@ DROP INDEX IF EXISTS idx_hubuumobject_data_search;
 DROP INDEX IF EXISTS idx_hubuumobject_relation_class_relation_id;
 DROP INDEX IF EXISTS idx_hubuumobject_relation_on_to;
 DROP INDEX IF EXISTS idx_hubuumobject_relation_on_from_to;
+DROP INDEX IF EXISTS idx_hubuumclass_relation_on_to;
 DROP INDEX IF EXISTS idx_hubuumclass_relation_on_from_to;
 DROP INDEX IF EXISTS idx_permissions_group_id;
 DROP INDEX IF EXISTS idx_permissions_namespace_id;

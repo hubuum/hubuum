@@ -1,6 +1,9 @@
 use crate::db::traits::ClassRelation;
 use diesel::prelude::*;
 
+/// Maximum recursion depth for transitive relation graph walks.
+pub const MAX_TRANSITIVE_DEPTH: i32 = 100;
+
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions};
@@ -187,7 +190,6 @@ where
         use diesel::sql_query;
         use diesel::sql_types::Integer;
 
-        const MAX_DEPTH: i32 = 100;
 
         with_connection(pool, |conn| {
             sql_query(
@@ -197,7 +199,7 @@ where
                  ORDER BY depth ASC, descendant_class_id ASC",
             )
             .bind::<Integer, _>(self.id())
-            .bind::<Integer, _>(MAX_DEPTH)
+            .bind::<Integer, _>(MAX_TRANSITIVE_DEPTH)
             .load::<HubuumClassRelationTransitive>(conn)
         })
     }
@@ -327,21 +329,14 @@ where
     }
 }
 
-const TRANSITIVE_RELATIONS_PAGINATED_SQL: &str =
-    "SELECT ancestor_class_id, descendant_class_id, depth, path
-                 FROM get_bidirectionally_related_classes(
-                     $1,
-                     ARRAY[]::INT[],
-                     $2,
-                     $3,
-                     $4,
-                     $5,
-                     $6,
-                     $7,
-                     $8
-                 )
-                 WHERE ancestor_class_id = $9 AND descendant_class_id = $10
-                 ORDER BY depth ASC, descendant_class_id ASC";
+const TRANSITIVE_RELATIONS_PAGINATED_SQL: &str = concat!(
+    "SELECT ancestor_class_id, descendant_class_id, depth, path",
+    " FROM get_bidirectionally_related_classes(",
+    "     $1, ARRAY[]::INT[], $2, $3, $4, $5, $6, $7, $8",
+    " )",
+    " WHERE ancestor_class_id = $9 AND descendant_class_id = $10",
+    " ORDER BY depth ASC, descendant_class_id ASC"
+);
 
 async fn fetch_relations_direct<C1, C2>(
     pool: &DbPool,
@@ -382,7 +377,7 @@ where
 
     let (from, to) = (from.id(), to.id());
     let (from, to) = if from > to { (to, from) } else { (from, to) };
-    const MAX_DEPTH: i32 = 100;
+    const MAX_TRANSITIVE_DEPTH: i32 = 100;
 
     with_connection(pool, |conn| {
         sql_query(
@@ -392,7 +387,7 @@ where
              ORDER BY depth ASC, descendant_class_id ASC",
         )
         .bind::<Integer, _>(from)
-        .bind::<Integer, _>(MAX_DEPTH)
+        .bind::<Integer, _>(MAX_TRANSITIVE_DEPTH)
         .bind::<Integer, _>(from)
         .bind::<Integer, _>(to)
         .load::<HubuumClassRelationTransitive>(conn)
@@ -416,7 +411,7 @@ where
 
     let (from, to) = (from.id(), to.id());
     let (from, to) = if from > to { (to, from) } else { (from, to) };
-    const MAX_DEPTH: i32 = 100;
+    const MAX_TRANSITIVE_DEPTH: i32 = 100;
 
     let filter = parse_transitive_filter_params(query_options)?;
 
@@ -424,7 +419,7 @@ where
         let query = bind_transitive_filter_params!(
             sql_query(TRANSITIVE_RELATIONS_PAGINATED_SQL)
                 .bind::<Integer, _>(from)
-                .bind::<Integer, _>(MAX_DEPTH),
+                .bind::<Integer, _>(MAX_TRANSITIVE_DEPTH),
             filter
         );
 
@@ -457,12 +452,13 @@ where
 
         let namespaces = user_can_on_any(pool, self, Permissions::ReadObject).await?;
         with_connection(pool, |conn| {
-            sql_query("SELECT * FROM get_transitively_linked_objects($1, $2, $3)")
+            sql_query("SELECT * FROM get_transitively_linked_objects($1, $2, $3, $4)")
                 .bind::<Integer, _>(source_object.id())
                 .bind::<Integer, _>(target_class.id())
                 .bind::<Array<Integer>, _>(
                     namespaces.into_iter().map(|n| n.id()).collect::<Vec<_>>(),
                 )
+                .bind::<Integer, _>(MAX_TRANSITIVE_DEPTH)
                 .load::<HubuumObjectTransitiveLink>(conn)
         })
     }
@@ -601,7 +597,11 @@ where
         with_connection(pool, |conn| {
             base_query
                 .inner_join(
-                    obj_rel::hubuumobject_relation.on(obj::id.eq(obj_rel::from_hubuum_object_id)),
+                    obj_rel::hubuumobject_relation.on(
+                        obj::id
+                            .eq(obj_rel::from_hubuum_object_id)
+                            .or(obj::id.eq(obj_rel::to_hubuum_object_id)),
+                    ),
                 )
                 .inner_join(
                     class_rel::hubuumclass_relation
@@ -617,6 +617,8 @@ where
                         .eq(class.id())
                         .or(class_rel::to_hubuum_class_id.eq(class.id())),
                 )
+                // Exclude self from results — we want the *other* objects
+                .filter(obj::id.ne(self.id()))
                 .select(obj::hubuumobject::all_columns())
                 .distinct()
                 .load::<HubuumObject>(conn)

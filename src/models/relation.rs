@@ -89,7 +89,7 @@ pub struct HubuumObjectTransitiveLink {
 }
 
 #[derive(Debug, Queryable, QueryableByName, Serialize, Deserialize, Clone)]
-pub struct ClassClosureRow {
+pub struct ClassGraphRow {
     #[diesel(sql_type = Integer)]
     pub ancestor_class_id: i32,
     #[diesel(sql_type = Integer)]
@@ -129,7 +129,7 @@ pub struct ClassClosureRow {
 }
 
 #[derive(Debug, Queryable, Serialize, Deserialize, Clone)]
-pub struct ObjectClosureRow {
+pub struct ObjectGraphRow {
     pub ancestor_object_id: i32,
     pub descendant_object_id: i32,
     pub depth: i32,
@@ -151,7 +151,7 @@ pub struct ObjectClosureRow {
 }
 
 #[derive(Debug, QueryableByName, Serialize, Deserialize, Clone)]
-pub struct RelatedObjectClosureRow {
+pub struct RelatedObjectGraphRow {
     #[diesel(sql_type = Integer)]
     pub ancestor_object_id: i32,
     #[diesel(sql_type = Integer)]
@@ -655,5 +655,219 @@ pub mod tests {
         verify_no_such_object_relation(pool, object_rel.id).await;
 
         namespace.cleanup().await.unwrap();
+    }
+
+    /// Test that transitive object traversal works bidirectionally.
+    /// Creates a chain: classA ↔ classB ↔ classC with objects oA, oB, oC
+    /// linked oA-oB and oB-oC. Verifies that traversal from oC finds oA
+    /// (i.e. walks "backwards" through the normalized from < to relations).
+    #[rstest]
+    #[actix_rt::test]
+    async fn test_bidirectional_transitive_object_traversal(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        use crate::db::traits::ObjectRelationsFromUser;
+        let context = test_context;
+        let pool = &context.pool;
+
+        let scope = TestScope::new();
+        let ns = scope.namespace_fixture("bidir_obj_traversal").await;
+        let nid = ns.namespace.id;
+
+        let class_a = create_class(pool, &ns.namespace, "bidir_class_a").await;
+        let class_b = create_class(pool, &ns.namespace, "bidir_class_b").await;
+        let class_c = create_class(pool, &ns.namespace, "bidir_class_c").await;
+
+        let rel_ab = create_class_relation(pool, &class_a, &class_b).await;
+        let rel_bc = create_class_relation(pool, &class_b, &class_c).await;
+
+        let json = serde_json::json!({});
+        let obj_a = create_object(pool, class_a.id, nid, "bidir_oA", json.clone())
+            .await
+            .unwrap();
+        let obj_b = create_object(pool, class_b.id, nid, "bidir_oB", json.clone())
+            .await
+            .unwrap();
+        let obj_c = create_object(pool, class_c.id, nid, "bidir_oC", json.clone())
+            .await
+            .unwrap();
+
+        create_object_relation(pool, &rel_ab, &obj_a, &obj_b).await;
+        create_object_relation(pool, &rel_bc, &obj_b, &obj_c).await;
+
+        // Forward: from oA, find objects of classC
+        let forward = context
+            .admin_user
+            .get_related_objects(pool, &obj_a, &class_c)
+            .await
+            .unwrap();
+        assert_eq!(forward.len(), 1, "Forward traversal A→C should find 1 object");
+        assert_eq!(forward[0].target_object_id, obj_c.id);
+
+        // Backward: from oC, find objects of classA — this is the key bidirectional test
+        let backward = context
+            .admin_user
+            .get_related_objects(pool, &obj_c, &class_a)
+            .await
+            .unwrap();
+        assert_eq!(
+            backward.len(),
+            1,
+            "Backward traversal C→A should find 1 object"
+        );
+        assert_eq!(backward[0].target_object_id, obj_a.id);
+
+        ns.cleanup().await.unwrap();
+    }
+
+    /// Test that transitive class relations are found bidirectionally.
+    /// A ↔ B ↔ C: verify C sees a transitive relation to A.
+    #[actix_rt::test]
+    async fn test_bidirectional_transitive_class_relations() {
+        use crate::db::traits::SelfRelations;
+        let pool = TestScope::new().pool;
+
+        let scope = TestScope::new();
+        let ns = scope.namespace_fixture("bidir_class_trans").await;
+
+        let class_a = create_class(&pool, &ns.namespace, "bidir_trans_a").await;
+        let class_b = create_class(&pool, &ns.namespace, "bidir_trans_b").await;
+        let class_c = create_class(&pool, &ns.namespace, "bidir_trans_c").await;
+
+        create_class_relation(&pool, &class_a, &class_b).await;
+        create_class_relation(&pool, &class_b, &class_c).await;
+
+        // From A, should see transitive relations to B (depth 1) and C (depth 2)
+        let from_a = class_a.transitive_relations(&pool).await.unwrap();
+        let from_a_ids: Vec<i32> = from_a.iter().map(|r| r.descendant_class_id).collect();
+        assert!(
+            from_a_ids.contains(&class_b.id),
+            "A should see B transitively"
+        );
+        assert!(
+            from_a_ids.contains(&class_c.id),
+            "A should see C transitively"
+        );
+
+        // From C, should see transitive relations to B (depth 1) and A (depth 2)
+        let from_c = class_c.transitive_relations(&pool).await.unwrap();
+        let from_c_ids: Vec<i32> = from_c.iter().map(|r| r.descendant_class_id).collect();
+        assert!(
+            from_c_ids.contains(&class_b.id),
+            "C should see B transitively"
+        );
+        assert!(
+            from_c_ids.contains(&class_a.id),
+            "C should see A transitively"
+        );
+
+        ns.cleanup().await.unwrap();
+    }
+
+    /// Deleting one class relation in a chain should only clean up object relations
+    /// that depended on it, leaving other object relations intact.
+    /// Chain: A ↔ B ↔ C, with oA-oB and oB-oC.
+    /// Delete B↔C → oB-oC should be removed, oA-oB should survive.
+    #[actix_rt::test]
+    async fn test_cleanup_scoped_to_deleted_class_relation() {
+        let pool = TestScope::new().pool;
+
+        let scope = TestScope::new();
+        let ns = scope.namespace_fixture("cleanup_scoped").await;
+        let nid = ns.namespace.id;
+
+        let class_a = create_class(&pool, &ns.namespace, "cleanup_a").await;
+        let class_b = create_class(&pool, &ns.namespace, "cleanup_b").await;
+        let class_c = create_class(&pool, &ns.namespace, "cleanup_c").await;
+
+        let rel_ab = create_class_relation(&pool, &class_a, &class_b).await;
+        let rel_bc = create_class_relation(&pool, &class_b, &class_c).await;
+
+        let json = serde_json::json!({});
+        let obj_a = create_object(&pool, class_a.id, nid, "cleanup_oA", json.clone())
+            .await
+            .unwrap();
+        let obj_b = create_object(&pool, class_b.id, nid, "cleanup_oB", json.clone())
+            .await
+            .unwrap();
+        let obj_c = create_object(&pool, class_c.id, nid, "cleanup_oC", json.clone())
+            .await
+            .unwrap();
+
+        let obj_rel_ab = create_object_relation(&pool, &rel_ab, &obj_a, &obj_b).await;
+        let obj_rel_bc = create_object_relation(&pool, &rel_bc, &obj_b, &obj_c).await;
+
+        // Delete class relation B↔C
+        rel_bc.delete(&pool).await.unwrap();
+
+        // oB-oC should be cleaned up
+        verify_no_such_object_relation(&pool, obj_rel_bc.id).await;
+
+        // oA-oB should survive — its class relation (A↔B) still exists
+        let surviving = HubuumObjectRelationID(obj_rel_ab.id)
+            .instance(&pool)
+            .await;
+        assert!(
+            surviving.is_ok(),
+            "Object relation A-B should survive when only B-C class relation is deleted"
+        );
+
+        ns.cleanup().await.unwrap();
+    }
+
+    /// When there's an alternative path (triangle: A↔B, A↔C, B↔C),
+    /// deleting one class relation edge should NOT clean up object relations
+    /// if the classes remain reachable via the other path.
+    #[actix_rt::test]
+    async fn test_cleanup_preserves_object_relations_with_alternative_path() {
+        let pool = TestScope::new().pool;
+
+        let scope = TestScope::new();
+        let ns = scope.namespace_fixture("cleanup_alt_path").await;
+        let nid = ns.namespace.id;
+
+        let class_a = create_class(&pool, &ns.namespace, "altpath_a").await;
+        let class_b = create_class(&pool, &ns.namespace, "altpath_b").await;
+        let class_c = create_class(&pool, &ns.namespace, "altpath_c").await;
+
+        // Triangle: A↔B, B↔C, A↔C
+        let rel_ab = create_class_relation(&pool, &class_a, &class_b).await;
+        let rel_bc = create_class_relation(&pool, &class_b, &class_c).await;
+        let _rel_ac = create_class_relation(&pool, &class_a, &class_c).await;
+
+        let json = serde_json::json!({});
+        let obj_a = create_object(&pool, class_a.id, nid, "altpath_oA", json.clone())
+            .await
+            .unwrap();
+        let obj_b = create_object(&pool, class_b.id, nid, "altpath_oB", json.clone())
+            .await
+            .unwrap();
+        let obj_c = create_object(&pool, class_c.id, nid, "altpath_oC", json.clone())
+            .await
+            .unwrap();
+
+        let obj_rel_ab = create_object_relation(&pool, &rel_ab, &obj_a, &obj_b).await;
+        let obj_rel_bc = create_object_relation(&pool, &rel_bc, &obj_b, &obj_c).await;
+
+        // Delete B↔C class relation. But A↔C still exists, so classes B and C
+        // are still transitively reachable (B→A→C). However, the object relation
+        // oB-oC was created under rel_bc which is now deleted — so it should be
+        // cleaned up via CASCADE (class_relation_id FK), regardless of transitive
+        // reachability.
+        rel_bc.delete(&pool).await.unwrap();
+
+        // oA-oB should survive — its class relation A↔B still exists
+        let surviving_ab = HubuumObjectRelationID(obj_rel_ab.id)
+            .instance(&pool)
+            .await;
+        assert!(
+            surviving_ab.is_ok(),
+            "Object relation A-B should survive"
+        );
+
+        // oB-oC was created under rel_bc which is now deleted — FK CASCADE removes it
+        verify_no_such_object_relation(&pool, obj_rel_bc.id).await;
+
+        ns.cleanup().await.unwrap();
     }
 }

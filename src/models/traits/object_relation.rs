@@ -7,7 +7,7 @@ use crate::errors::ApiError;
 
 use crate::models::{
     HubuumObjectRelation, HubuumObjectRelationID, HubuumObjectWithPath, NewHubuumObjectRelation,
-    ObjectClosureRow, RelatedObjectClosureRow,
+    ObjectGraphRow, RelatedObjectGraphRow,
 };
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter};
@@ -55,7 +55,7 @@ impl SaveAdapter for NewHubuumObjectRelation {
     }
 }
 
-impl ObjectClosureRow {
+impl ObjectGraphRow {
     pub fn to_descendant_object_with_path(&self) -> HubuumObjectWithPath {
         HubuumObjectWithPath {
             id: self.descendant_object_id,
@@ -71,7 +71,7 @@ impl ObjectClosureRow {
     }
 }
 
-impl RelatedObjectClosureRow {
+impl RelatedObjectGraphRow {
     pub fn to_descendant_object_with_path(&self) -> HubuumObjectWithPath {
         HubuumObjectWithPath {
             id: self.descendant_object_id,
@@ -92,7 +92,7 @@ pub trait ToHubuumObjects {
     fn to_descendant_objects_with_path(self) -> Vec<HubuumObjectWithPath>;
 }
 
-impl ToHubuumObjects for Vec<ObjectClosureRow> {
+impl ToHubuumObjects for Vec<ObjectGraphRow> {
     fn to_descendant_objects_with_path(self) -> Vec<HubuumObjectWithPath> {
         self.into_iter()
             .map(|ocv| ocv.to_descendant_object_with_path())
@@ -100,7 +100,7 @@ impl ToHubuumObjects for Vec<ObjectClosureRow> {
     }
 }
 
-impl ToHubuumObjects for Vec<RelatedObjectClosureRow> {
+impl ToHubuumObjects for Vec<RelatedObjectGraphRow> {
     fn to_descendant_objects_with_path(self) -> Vec<HubuumObjectWithPath> {
         self.into_iter()
             .map(|ocv| ocv.to_descendant_object_with_path())

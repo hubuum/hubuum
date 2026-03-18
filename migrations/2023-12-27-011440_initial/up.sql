@@ -226,6 +226,7 @@
 
     ---- Relations
     CREATE INDEX idx_hubuumclass_relation_on_from_to ON hubuumclass_relation (from_hubuum_class_id, to_hubuum_class_id);
+    CREATE INDEX idx_hubuumclass_relation_on_to ON hubuumclass_relation (to_hubuum_class_id);
     CREATE INDEX idx_hubuumobject_relation_on_from_to ON hubuumobject_relation (from_hubuum_object_id, to_hubuum_object_id);
     CREATE INDEX idx_hubuumobject_relation_on_to ON hubuumobject_relation (to_hubuum_object_id);
     CREATE INDEX idx_hubuumobject_relation_class_relation_id ON hubuumobject_relation (class_relation_id);
@@ -343,44 +344,52 @@
     $$ LANGUAGE plpgsql;
 
     -- Function to cleanup invalid object relations from the hubuumobject_relation table
-    -- after a class relation has been deleted. This function is called by a trigger.
-    -- Without closure tables, we validate via recursive class traversal.
+    -- after a class relation has been deleted. This function is called by a FOR EACH ROW
+    -- trigger and uses OLD to scope cleanup to only the affected classes.
     CREATE OR REPLACE FUNCTION cleanup_invalid_object_relations()
     RETURNS TRIGGER AS $$
     BEGIN
-        DELETE FROM hubuumobject_relation
-        WHERE NOT EXISTS (
-            WITH RECURSIVE class_reachability AS (
-                -- Direct relation
-                SELECT from_hubuum_class_id, to_hubuum_class_id, 1 as depth
-                FROM hubuumclass_relation
-                
-                UNION ALL
-                
-                -- Transitive
-                SELECT cr.from_hubuum_class_id, cr2.to_hubuum_class_id, cr.depth + 1
-                FROM class_reachability cr
-                JOIN hubuumclass_relation cr2 ON cr.to_hubuum_class_id = cr2.from_hubuum_class_id
-                WHERE cr.depth < 100  -- Reasonable recursion depth limit
-            )
-            SELECT 1
-            FROM hubuumobject o1, hubuumobject o2
-            WHERE o1.id = hubuumobject_relation.from_hubuum_object_id
-            AND o2.id = hubuumobject_relation.to_hubuum_object_id
-            AND EXISTS (
-                SELECT 1 FROM class_reachability
-                WHERE from_hubuum_class_id = LEAST(o1.hubuum_class_id, o2.hubuum_class_id)
+        -- Only delete object relations whose classes were connected through the
+        -- deleted class relation. We check whether the two object classes are
+        -- still reachable via remaining class relations; if not, the object
+        -- relation is invalid.
+        DELETE FROM hubuumobject_relation oor
+        USING hubuumobject o1, hubuumobject o2
+        WHERE o1.id = oor.from_hubuum_object_id
+          AND o2.id = oor.to_hubuum_object_id
+          -- Scope: only object relations involving the deleted class pair
+          AND (
+              (LEAST(o1.hubuum_class_id, o2.hubuum_class_id) = OLD.from_hubuum_class_id
+               AND GREATEST(o1.hubuum_class_id, o2.hubuum_class_id) = OLD.to_hubuum_class_id)
+          )
+          -- Keep only if the classes are still reachable
+          AND NOT EXISTS (
+              WITH RECURSIVE class_reachability AS (
+                  SELECT from_hubuum_class_id, to_hubuum_class_id, 1 AS depth
+                  FROM hubuumclass_relation
+
+                  UNION ALL
+
+                  SELECT cr.from_hubuum_class_id, cr2.to_hubuum_class_id, cr.depth + 1
+                  FROM class_reachability cr
+                  JOIN hubuumclass_relation cr2
+                    ON cr.to_hubuum_class_id = cr2.from_hubuum_class_id
+                  WHERE cr.depth < 100
+              )
+              SELECT 1
+              FROM class_reachability
+              WHERE from_hubuum_class_id = LEAST(o1.hubuum_class_id, o2.hubuum_class_id)
                 AND to_hubuum_class_id = GREATEST(o1.hubuum_class_id, o2.hubuum_class_id)
-            )
-        );
-        RETURN NULL;
+          );
+        RETURN OLD;
     END;
     $$ LANGUAGE plpgsql;
 
     CREATE OR REPLACE FUNCTION get_transitively_linked_objects(
-        start_object_id INT, 
+        start_object_id INT,
         target_class_id INT,
-        valid_namespace_ids INT[]
+        valid_namespace_ids INT[],
+        max_depth INT DEFAULT 100
     )
     RETURNS TABLE (
         target_object_id INT,
@@ -406,28 +415,56 @@
             SELECT cr.from_hubuum_class_id, cr2.to_hubuum_class_id, cr.depth + 1
             FROM class_reachability cr
             JOIN hubuumclass_relation cr2 ON cr.to_hubuum_class_id = cr2.from_hubuum_class_id
-            WHERE cr.depth < 100
+            WHERE cr.depth < max_depth
         ),
         transitive_relations AS (
-            -- Base case: direct relations
-            SELECT 
-                or1.to_hubuum_object_id as object_id,
-                ARRAY[start_object_id, or1.to_hubuum_object_id] as path
-            FROM hubuumobject_relation or1
-            JOIN hubuumobject o ON o.id = or1.to_hubuum_object_id
-            WHERE or1.from_hubuum_object_id = start_object_id
+            -- Base case: direct relations (walk both directions since from < to is enforced)
+            SELECT
+                CASE
+                    WHEN rel.from_hubuum_object_id = start_object_id THEN rel.to_hubuum_object_id
+                    ELSE rel.from_hubuum_object_id
+                END AS object_id,
+                ARRAY[start_object_id,
+                    CASE
+                        WHEN rel.from_hubuum_object_id = start_object_id THEN rel.to_hubuum_object_id
+                        ELSE rel.from_hubuum_object_id
+                    END
+                ] AS path
+            FROM hubuumobject_relation rel
+            JOIN hubuumobject o ON o.id = CASE
+                    WHEN rel.from_hubuum_object_id = start_object_id THEN rel.to_hubuum_object_id
+                    ELSE rel.from_hubuum_object_id
+                END
+            WHERE (rel.from_hubuum_object_id = start_object_id OR rel.to_hubuum_object_id = start_object_id)
             AND o.namespace_id = ANY(valid_namespace_ids)
 
             UNION ALL
 
-            -- Recursive case
-            SELECT 
-                or2.to_hubuum_object_id,
-                tr.path || or2.to_hubuum_object_id
+            -- Recursive case: walk both directions, avoid cycles via path check
+            SELECT
+                CASE
+                    WHEN rel2.from_hubuum_object_id = tr.object_id THEN rel2.to_hubuum_object_id
+                    ELSE rel2.from_hubuum_object_id
+                END,
+                tr.path || CASE
+                    WHEN rel2.from_hubuum_object_id = tr.object_id THEN rel2.to_hubuum_object_id
+                    ELSE rel2.from_hubuum_object_id
+                END
             FROM transitive_relations tr
-            JOIN hubuumobject_relation or2 ON tr.object_id = or2.from_hubuum_object_id
-            JOIN hubuumobject o ON o.id = or2.to_hubuum_object_id
-            WHERE o.namespace_id = ANY(valid_namespace_ids)
+            JOIN hubuumobject_relation rel2
+              ON rel2.from_hubuum_object_id = tr.object_id
+              OR rel2.to_hubuum_object_id = tr.object_id
+            JOIN hubuumobject o ON o.id = CASE
+                    WHEN rel2.from_hubuum_object_id = tr.object_id THEN rel2.to_hubuum_object_id
+                    ELSE rel2.from_hubuum_object_id
+                END
+            WHERE NOT (
+                CASE
+                    WHEN rel2.from_hubuum_object_id = tr.object_id THEN rel2.to_hubuum_object_id
+                    ELSE rel2.from_hubuum_object_id
+                END = ANY(tr.path)
+            )
+            AND o.namespace_id = ANY(valid_namespace_ids)
         )
         SELECT DISTINCT ON (tr.object_id)
             tr.object_id as target_object_id,
@@ -492,7 +529,10 @@
                 END
             WHERE (rel.from_hubuum_object_id = start_object_id OR rel.to_hubuum_object_id = start_object_id)
               AND (max_depth IS NULL OR max_depth >= 1)
-              AND target_object.namespace_id = ANY(valid_namespace_ids)
+              AND (
+                  COALESCE(cardinality(valid_namespace_ids), 0) = 0
+                  OR target_object.namespace_id = ANY(valid_namespace_ids)
+              )
 
             UNION ALL
 
@@ -523,7 +563,10 @@
                 END = ANY(graph_walk.path)
             )
               AND (max_depth IS NULL OR graph_walk.depth < max_depth)
-              AND target_object.namespace_id = ANY(valid_namespace_ids)
+              AND (
+                  COALESCE(cardinality(valid_namespace_ids), 0) = 0
+                  OR target_object.namespace_id = ANY(valid_namespace_ids)
+              )
         ),
         deduped_walk AS (
             SELECT DISTINCT ON (descendant_object_id)
@@ -556,8 +599,14 @@
         FROM deduped_walk
         JOIN hubuumobject source_object ON source_object.id = deduped_walk.ancestor_object_id
         JOIN hubuumobject target_object ON target_object.id = deduped_walk.descendant_object_id
-        WHERE source_object.namespace_id = ANY(valid_namespace_ids)
-          AND target_object.namespace_id = ANY(valid_namespace_ids);
+        WHERE (
+                COALESCE(cardinality(valid_namespace_ids), 0) = 0
+                OR source_object.namespace_id = ANY(valid_namespace_ids)
+              )
+          AND (
+                COALESCE(cardinality(valid_namespace_ids), 0) = 0
+                OR target_object.namespace_id = ANY(valid_namespace_ids)
+              );
     $$ LANGUAGE sql STABLE;
 
     CREATE OR REPLACE FUNCTION get_bidirectionally_related_classes(
@@ -695,73 +744,28 @@
           AND (
                 filter_depth_op IS NULL
                 OR (
-                    CASE
-                        WHEN filter_depth_negated THEN NOT (
-                            CASE filter_depth_op
-                                WHEN 'equals' THEN deduped_walk.depth = ANY(filter_depth_values)
-                                WHEN 'gt' THEN deduped_walk.depth > (
-                                    SELECT MAX(v) FROM unnest(filter_depth_values) AS v
-                                )
-                                WHEN 'gte' THEN deduped_walk.depth >= (
-                                    SELECT MAX(v) FROM unnest(filter_depth_values) AS v
-                                )
-                                WHEN 'lt' THEN deduped_walk.depth < (
-                                    SELECT MIN(v) FROM unnest(filter_depth_values) AS v
-                                )
-                                WHEN 'lte' THEN deduped_walk.depth <= (
-                                    SELECT MIN(v) FROM unnest(filter_depth_values) AS v
-                                )
-                                WHEN 'between' THEN (
-                                    cardinality(filter_depth_values) >= 2
-                                    AND deduped_walk.depth BETWEEN filter_depth_values[1] AND filter_depth_values[2]
-                                )
-                                ELSE FALSE
-                            END
+                    (CASE filter_depth_op
+                        WHEN 'equals' THEN deduped_walk.depth = ANY(filter_depth_values)
+                        WHEN 'gt' THEN deduped_walk.depth > (SELECT MAX(v) FROM unnest(filter_depth_values) AS v)
+                        WHEN 'gte' THEN deduped_walk.depth >= (SELECT MAX(v) FROM unnest(filter_depth_values) AS v)
+                        WHEN 'lt' THEN deduped_walk.depth < (SELECT MIN(v) FROM unnest(filter_depth_values) AS v)
+                        WHEN 'lte' THEN deduped_walk.depth <= (SELECT MIN(v) FROM unnest(filter_depth_values) AS v)
+                        WHEN 'between' THEN (
+                            cardinality(filter_depth_values) >= 2
+                            AND deduped_walk.depth BETWEEN filter_depth_values[1] AND filter_depth_values[2]
                         )
-                        ELSE (
-                            CASE filter_depth_op
-                                WHEN 'equals' THEN deduped_walk.depth = ANY(filter_depth_values)
-                                WHEN 'gt' THEN deduped_walk.depth > (
-                                    SELECT MAX(v) FROM unnest(filter_depth_values) AS v
-                                )
-                                WHEN 'gte' THEN deduped_walk.depth >= (
-                                    SELECT MAX(v) FROM unnest(filter_depth_values) AS v
-                                )
-                                WHEN 'lt' THEN deduped_walk.depth < (
-                                    SELECT MIN(v) FROM unnest(filter_depth_values) AS v
-                                )
-                                WHEN 'lte' THEN deduped_walk.depth <= (
-                                    SELECT MIN(v) FROM unnest(filter_depth_values) AS v
-                                )
-                                WHEN 'between' THEN (
-                                    cardinality(filter_depth_values) >= 2
-                                    AND deduped_walk.depth BETWEEN filter_depth_values[1] AND filter_depth_values[2]
-                                )
-                                ELSE FALSE
-                            END
-                        )
-                    END
+                        ELSE FALSE
+                    END) != filter_depth_negated
                 )
               )
           AND (
                 filter_path_op IS NULL
                 OR (
-                    CASE
-                        WHEN filter_path_negated THEN NOT (
-                            CASE filter_path_op
-                                WHEN 'contains' THEN deduped_walk.path @> filter_path_values
-                                WHEN 'equals' THEN deduped_walk.path = filter_path_values
-                                ELSE FALSE
-                            END
-                        )
-                        ELSE (
-                            CASE filter_path_op
-                                WHEN 'contains' THEN deduped_walk.path @> filter_path_values
-                                WHEN 'equals' THEN deduped_walk.path = filter_path_values
-                                ELSE FALSE
-                            END
-                        )
-                    END
+                    (CASE filter_path_op
+                        WHEN 'contains' THEN deduped_walk.path @> filter_path_values
+                        WHEN 'equals' THEN deduped_walk.path = filter_path_values
+                        ELSE FALSE
+                    END) != filter_path_negated
                 )
               );
     $$ LANGUAGE sql STABLE;
@@ -841,7 +845,7 @@
     DROP TRIGGER IF EXISTS cleanup_object_relations ON hubuumclass_relation;
     CREATE TRIGGER cleanup_object_relations
     AFTER DELETE ON hubuumclass_relation
-    FOR EACH STATEMENT EXECUTE FUNCTION cleanup_invalid_object_relations();
+    FOR EACH ROW EXECUTE FUNCTION cleanup_invalid_object_relations();
 
     -- Trigger to update report_templates updated_at column
     DROP TRIGGER IF EXISTS update_report_templates_updated_at ON report_templates;
