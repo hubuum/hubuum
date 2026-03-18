@@ -6,7 +6,7 @@ use utoipa::ToSchema;
 
 use crate::models::{HubuumClassWithPath, HubuumObjectWithPath};
 use crate::{
-    schema::hubuumclass_closure, schema::hubuumclass_relation, schema::hubuumobject_relation,
+    schema::hubuumclass_relation, schema::hubuumobject_relation,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -74,15 +74,12 @@ pub struct NewHubuumObjectRelationFromClassAndObject {
     Debug,
     Serialize,
     Deserialize,
-    Queryable,
     QueryableByName,
-    Selectable,
     Clone,
     PartialEq,
     Eq,
     ToSchema,
 )]
-#[diesel(table_name = hubuumclass_closure)]
 pub struct HubuumClassRelationTransitive {
     #[diesel(sql_type = Integer)]
     pub ancestor_class_id: i32,

@@ -529,3 +529,66 @@ macro_rules! boolean_search {
         }
     }};
 }
+
+/// Macro to build SQL WHERE clause fragments for numeric fields in raw SQL queries
+/// Returns a String fragment like "depth = 5" or "depth IN (1, 2, 3)"
+/// If filter values are empty, returns an empty string
+/// Supports operators: Equals, Gt, Gte, Lt, Lte, Between
+///
+/// # Example:
+/// ```ignore
+/// let depth_clause = numeric_where!("depth", param)?;
+/// if !depth_clause.is_empty() {
+///     where_clauses.push(depth_clause);
+/// }
+/// ```
+#[macro_export]
+macro_rules! numeric_where {
+    ($field:expr, $param:expr) => {{
+        use $crate::models::search::Operator;
+        use $crate::errors::ApiError;
+
+        let values = $param.value_as_integer()?;
+        if values.is_empty() {
+            String::new()
+        } else {
+            let op = $param.operator.op_and_neg().0;
+            match op {
+                Operator::Equals => {
+                    if values.len() == 1 {
+                        format!("{} = {}", $field, values[0])
+                    } else {
+                        let vals = values
+                            .iter()
+                            .map(|v| v.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        format!("{} IN ({})", $field, vals)
+                    }
+                }
+                Operator::Gt => format!("{} > {}", $field, values.iter().max().unwrap()),
+                Operator::Gte => format!("{} >= {}", $field, values.iter().max().unwrap()),
+                Operator::Lt => format!("{} < {}", $field, values.iter().min().unwrap()),
+                Operator::Lte => format!("{} <= {}", $field, values.iter().min().unwrap()),
+                Operator::Between => {
+                    if values.len() == 2 {
+                        format!(
+                            "{} BETWEEN {} AND {}",
+                            $field, values[0], values[1]
+                        )
+                    } else {
+                        return Err(ApiError::BadRequest(
+                            "BETWEEN operator requires exactly 2 values".to_string(),
+                        ));
+                    }
+                }
+                _ => {
+                    return Err(ApiError::OperatorMismatch(format!(
+                        "Unsupported operator for numeric field filtering: {:?}",
+                        op
+                    )));
+                }
+            }
+        }
+    }};
+}

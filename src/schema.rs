@@ -24,16 +24,6 @@ diesel::table! {
 }
 
 diesel::table! {
-    hubuumclass_closure (id) {
-        id -> Int8,
-        ancestor_class_id -> Int4,
-        descendant_class_id -> Int4,
-        depth -> Int4,
-        path -> Array<Nullable<Int4>>,
-    }
-}
-
-diesel::table! {
     hubuumclass_relation (id) {
         id -> Int4,
         from_hubuum_class_id -> Int4,
@@ -53,16 +43,6 @@ diesel::table! {
         description -> Varchar,
         created_at -> Timestamp,
         updated_at -> Timestamp,
-    }
-}
-
-diesel::table! {
-    hubuumobject_closure (id) {
-        id -> Int8,
-        ancestor_object_id -> Int4,
-        descendant_object_id -> Int4,
-        depth -> Int4,
-        path -> Array<Nullable<Int4>>,
     }
 }
 
@@ -228,10 +208,8 @@ diesel::joinable!(user_groups -> users (user_id));
 diesel::allow_tables_to_appear_in_same_query!(
     groups,
     hubuumclass,
-    hubuumclass_closure,
     hubuumclass_relation,
     hubuumobject,
-    hubuumobject_closure,
     hubuumobject_relation,
     import_task_results,
     namespaces,

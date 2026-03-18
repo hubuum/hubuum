@@ -22,6 +22,7 @@ use crate::models::{
     HubuumObjectRelation, HubuumObjectTransitiveLink, Namespace, User, UserToken,
 };
 use crate::traits::{GroupAccessors, SelfAccessors};
+use crate::numeric_where;
 
 /// Trait for checking if a structure is valid/active/etc in the database.
 ///
@@ -143,26 +144,35 @@ where
         pool: &DbPool,
         query_options: &QueryOptions,
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError> {
-        use crate::schema::hubuumclass_closure::dsl::*;
-        use crate::{array_search, numeric_search};
         use diesel::prelude::*;
+        use diesel::sql_query;
+        use diesel::sql_types::Integer;
 
-        let mut base_query = hubuumclass_closure
-            .or_filter(ancestor_class_id.eq(self.id()))
-            .or_filter(descendant_class_id.eq(self.id()))
-            .into_boxed();
+        const MAX_DEPTH: i32 = 100;
 
+        // Build base WHERE clause
+        let mut where_clauses = vec![
+            "(ancestor_class_id = $1 OR descendant_class_id = $1)".to_string(),
+        ];
+
+        // Process filters to add depth filtering to WHERE clause
         for param in &query_options.filters {
-            let operator = param.operator.clone();
             match param.field {
-                FilterField::ClassFrom => {
-                    numeric_search!(base_query, param, operator, ancestor_class_id)
+                FilterField::Depth => {
+                    let depth_clause = numeric_where!("depth", param);
+                    if !depth_clause.is_empty() {
+                        where_clauses.push(depth_clause);
+                    }
                 }
-                FilterField::ClassTo => {
-                    numeric_search!(base_query, param, operator, descendant_class_id)
+                FilterField::ClassFrom | FilterField::ClassTo => {
+                    // These are already filtered in the base WHERE clause
                 }
-                FilterField::Depth => numeric_search!(base_query, param, operator, depth),
-                FilterField::Path => array_search!(base_query, param, operator, path),
+                FilterField::Path => {
+                    return Err(ApiError::BadRequest(
+                        "Path filtering requires post-processing and is not yet supported in paginated queries"
+                            .to_string(),
+                    ));
+                }
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for transitive class relations",
@@ -172,16 +182,19 @@ where
             }
         }
 
-        crate::apply_query_options!(base_query, query_options, HubuumClassRelationTransitive);
+        let where_clause = where_clauses.join(" AND ");
+        let query_str = format!(
+            "SELECT ancestor_class_id, descendant_class_id, depth, path
+             FROM get_bidirectionally_related_classes($1, ARRAY[]::INT[], $2)
+             WHERE {}
+             ORDER BY depth ASC, descendant_class_id ASC",
+            where_clause
+        );
 
         with_connection(pool, |conn| {
-            base_query
-                .select((
-                    ancestor_class_id.assume_not_null(),
-                    descendant_class_id.assume_not_null(),
-                    depth,
-                    path,
-                ))
+            sql_query(&query_str)
+                .bind::<Integer, _>(self.id())
+                .bind::<Integer, _>(MAX_DEPTH)
                 .load::<HubuumClassRelationTransitive>(conn)
         })
     }

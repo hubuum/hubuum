@@ -126,32 +126,7 @@
         UNIQUE (from_hubuum_object_id, to_hubuum_object_id)
     );
 
-    -- A table to store the transitive closure of class relations. If a relation exists
-    -- between class A and B, and between B and C, then a relation between A and C is implied.
-    -- This table is used to quickly determine if two classes are related and is updated by
-    -- triggers.
-    DROP TABLE IF EXISTS hubuumclass_closure CASCADE;
-    CREATE TABLE hubuumclass_closure (
-        id BIGSERIAL PRIMARY KEY,
-        ancestor_class_id INT REFERENCES hubuumclass(id) ON DELETE CASCADE NOT NULL,
-        descendant_class_id INT REFERENCES hubuumclass(id) ON DELETE CASCADE NOT NULL,
-        depth INT NOT NULL,
-        path INT[] NOT NULL,
-        CHECK (ancestor_class_id < descendant_class_id)
-    );
 
-    -- A table to store the transitive closure of object relations. If a relation exists
-    -- between object a and b, and between b and c, then a relation between a and c is implied.
-    -- This table is used to quickly determine if two objects are related and is updated by
-    -- triggers.
-    DROP TABLE IF EXISTS hubuumobject_closure CASCADE;
-    CREATE TABLE hubuumobject_closure (
-        id BIGSERIAL PRIMARY KEY,
-        ancestor_object_id INT REFERENCES hubuumobject(id) ON DELETE CASCADE NOT NULL,
-        descendant_object_id INT REFERENCES hubuumobject(id) ON DELETE CASCADE NOT NULL,
-        depth INT NOT NULL,
-        path INT[] NOT NULL
-    );
 
     -- Table to store report templates
     DROP TABLE IF EXISTS report_templates CASCADE;
@@ -255,18 +230,6 @@
     CREATE INDEX idx_hubuumobject_relation_on_to ON hubuumobject_relation (to_hubuum_object_id);
     CREATE INDEX idx_hubuumobject_relation_class_relation_id ON hubuumobject_relation (class_relation_id);
 
-    ---- Class closure table
-    CREATE INDEX idx_hubuumclass_closure_ancestor ON hubuumclass_closure(ancestor_class_id);
-    CREATE INDEX idx_hubuumclass_closure_descendant ON hubuumclass_closure(descendant_class_id);
-    CREATE INDEX idx_hubuumclass_closure_ancestor_descendant ON hubuumclass_closure (ancestor_class_id, descendant_class_id);
-    CREATE INDEX idx_hubuumclass_closure_path ON hubuumclass_closure USING GIN (path);
-
-    ---- Object closure table
-    CREATE INDEX idx_hubuumobject_closure_ancestor ON hubuumobject_closure(ancestor_object_id);
-    CREATE INDEX idx_hubuumobject_closure_descendant ON hubuumobject_closure(descendant_object_id);
-    CREATE INDEX idx_hubuumobject_closure_ancestor_descendant ON hubuumobject_closure (ancestor_object_id, descendant_object_id);
-    CREATE INDEX idx_hubuumobject_closure_path ON hubuumobject_closure USING GIN (path);
-
     ---- Report templates
     CREATE INDEX idx_report_templates_namespace_id ON report_templates(namespace_id);
 
@@ -286,11 +249,6 @@
     ----------------------
     ---- Functions
     ----------------------
-
-    CREATE OR REPLACE FUNCTION closure_path_hash(path_input INT[])
-    RETURNS TEXT AS $$
-        SELECT md5(array_to_string(path_input, ','));
-    $$ LANGUAGE sql IMMUTABLE;
 
     -- Update the updated_at column whenever a row is updated
     CREATE OR REPLACE FUNCTION update_modified_column()
@@ -330,119 +288,6 @@
             NEW.to_hubuum_object_id := temp;
         END IF;
         RETURN NEW;
-    END;
-    $$ LANGUAGE plpgsql;
-
-    CREATE OR REPLACE FUNCTION update_class_closure()
-    RETURNS TRIGGER AS $$
-    BEGIN
-        IF TG_OP = 'INSERT' THEN
-            -- Insert the direct relation
-            INSERT INTO hubuumclass_closure (ancestor_class_id, descendant_class_id, depth, path)
-            VALUES (NEW.from_hubuum_class_id, NEW.to_hubuum_class_id, 1, ARRAY[NEW.from_hubuum_class_id, NEW.to_hubuum_class_id])
-            ON CONFLICT DO NOTHING;
-
-            -- Insert new transitive relations where the new class is the descendant
-            INSERT INTO hubuumclass_closure (ancestor_class_id, descendant_class_id, depth, path)
-            SELECT c1.ancestor_class_id, NEW.to_hubuum_class_id, c1.depth + 1, c1.path || NEW.to_hubuum_class_id
-            FROM hubuumclass_closure c1
-            WHERE c1.descendant_class_id = NEW.from_hubuum_class_id
-            ON CONFLICT DO NOTHING;
-
-            -- Insert new transitive relations where the new class is the ancestor
-            INSERT INTO hubuumclass_closure (ancestor_class_id, descendant_class_id, depth, path)
-            SELECT NEW.from_hubuum_class_id, c2.descendant_class_id, 1 + c2.depth, ARRAY[NEW.from_hubuum_class_id] || c2.path
-            FROM hubuumclass_closure c2
-            WHERE c2.ancestor_class_id = NEW.to_hubuum_class_id
-            ON CONFLICT DO NOTHING;
-
-            -- Insert new transitive relations that involve both the new ancestor and descendant
-            INSERT INTO hubuumclass_closure (ancestor_class_id, descendant_class_id, depth, path)
-            SELECT c1.ancestor_class_id, c2.descendant_class_id, c1.depth + 1 + c2.depth, c1.path || NEW.to_hubuum_class_id || c2.path
-            FROM hubuumclass_closure c1
-            JOIN hubuumclass_closure c2 ON c1.descendant_class_id = NEW.from_hubuum_class_id
-                                    AND c2.ancestor_class_id = NEW.to_hubuum_class_id
-            ON CONFLICT DO NOTHING;
-
-        ELSIF TG_OP = 'DELETE' THEN
-            -- Remove the direct relation
-            DELETE FROM hubuumclass_closure
-            WHERE ancestor_class_id = OLD.from_hubuum_class_id
-            AND descendant_class_id = OLD.to_hubuum_class_id
-            AND path = ARRAY[OLD.from_hubuum_class_id, OLD.to_hubuum_class_id];
-
-            -- Remove paths where any class in the path no longer exists in hubuumclass
-            -- This is the case when a class is deleted and we have a cascade delete propagating
-            -- to the closure table.
-            DELETE FROM hubuumclass_closure
-            WHERE NOT EXISTS (
-                SELECT 1 FROM hubuumclass
-                WHERE id = ANY(hubuumclass_closure.path)
-            );
-
-        END IF;
-        RETURN NULL;
-    END;
-    $$ LANGUAGE plpgsql;
-
-    CREATE OR REPLACE FUNCTION update_object_closure()
-    RETURNS TRIGGER AS $$
-    BEGIN
-        IF TG_OP = 'INSERT' THEN
-            -- Insert the direct relation
-            INSERT INTO hubuumobject_closure (ancestor_object_id, descendant_object_id, depth, path)
-            VALUES (NEW.from_hubuum_object_id, NEW.to_hubuum_object_id, 1, ARRAY[NEW.from_hubuum_object_id, NEW.to_hubuum_object_id])
-            ON CONFLICT DO NOTHING;
-
-            -- Insert new transitive relations where the new object is the descendant
-            INSERT INTO hubuumobject_closure (ancestor_object_id, descendant_object_id, depth, path)
-            SELECT c1.ancestor_object_id, NEW.to_hubuum_object_id, c1.depth + 1, c1.path || NEW.to_hubuum_object_id
-            FROM hubuumobject_closure c1
-            WHERE c1.descendant_object_id = NEW.from_hubuum_object_id
-            ON CONFLICT DO NOTHING;
-
-            -- Insert new transitive relations where the new object is the ancestor
-            INSERT INTO hubuumobject_closure (ancestor_object_id, descendant_object_id, depth, path)
-            SELECT NEW.from_hubuum_object_id, c2.descendant_object_id, 1 + c2.depth, ARRAY[NEW.from_hubuum_object_id] || c2.path
-            FROM hubuumobject_closure c2
-            WHERE c2.ancestor_object_id = NEW.to_hubuum_object_id
-            ON CONFLICT DO NOTHING;
-
-            -- Insert new transitive relations that involve both the new ancestor and descendant
-            INSERT INTO hubuumobject_closure (ancestor_object_id, descendant_object_id, depth, path)
-            SELECT c1.ancestor_object_id, c2.descendant_object_id, c1.depth + 1 + c2.depth, c1.path || NEW.to_hubuum_object_id || c2.path
-            FROM hubuumobject_closure c1
-            JOIN hubuumobject_closure c2 ON c1.descendant_object_id = NEW.from_hubuum_object_id
-                                    AND c2.ancestor_object_id = NEW.to_hubuum_object_id
-            ON CONFLICT DO NOTHING;
-
-        ELSIF TG_OP = 'DELETE' THEN
-            -- Remove the direct relation
-            DELETE FROM hubuumobject_closure
-            WHERE ancestor_object_id = OLD.from_hubuum_object_id
-            AND descendant_object_id = OLD.to_hubuum_object_id
-            AND path = ARRAY[OLD.from_hubuum_object_id, OLD.to_hubuum_object_id];
-
-            -- Remove paths where any object in the path no longer exists in hubuumobject
-            DELETE FROM hubuumobject_closure
-            WHERE NOT EXISTS (
-                SELECT 1 FROM hubuumobject
-                WHERE id = ANY(hubuumobject_closure.path)
-            );
-        END IF;
-        RETURN NULL;
-    END;
-    $$ LANGUAGE plpgsql;
-
-    -- Function to check if classes are related
-    CREATE OR REPLACE FUNCTION are_classes_related(class1_id INT, class2_id INT)
-    RETURNS BOOLEAN AS $$
-    BEGIN
-        RETURN EXISTS (
-            SELECT 1 FROM hubuumclass_closure
-            WHERE ancestor_class_id = LEAST(class1_id, class2_id)
-            AND descendant_class_id = GREATEST(class1_id, class2_id)
-        );
     END;
     $$ LANGUAGE plpgsql;
 
@@ -499,17 +344,34 @@
 
     -- Function to cleanup invalid object relations from the hubuumobject_relation table
     -- after a class relation has been deleted. This function is called by a trigger.
+    -- Without closure tables, we validate via recursive class traversal.
     CREATE OR REPLACE FUNCTION cleanup_invalid_object_relations()
     RETURNS TRIGGER AS $$
     BEGIN
         DELETE FROM hubuumobject_relation
         WHERE NOT EXISTS (
+            WITH RECURSIVE class_reachability AS (
+                -- Direct relation
+                SELECT from_hubuum_class_id, to_hubuum_class_id, 1 as depth
+                FROM hubuumclass_relation
+                
+                UNION ALL
+                
+                -- Transitive
+                SELECT cr.from_hubuum_class_id, cr2.to_hubuum_class_id, cr.depth + 1
+                FROM class_reachability cr
+                JOIN hubuumclass_relation cr2 ON cr.to_hubuum_class_id = cr2.from_hubuum_class_id
+                WHERE cr.depth < 100  -- Reasonable recursion depth limit
+            )
             SELECT 1
-            FROM hubuumobject o1, hubuumobject o2, hubuumclass_closure cc
+            FROM hubuumobject o1, hubuumobject o2
             WHERE o1.id = hubuumobject_relation.from_hubuum_object_id
             AND o2.id = hubuumobject_relation.to_hubuum_object_id
-            AND cc.ancestor_class_id = LEAST(o1.hubuum_class_id, o2.hubuum_class_id)
-            AND cc.descendant_class_id = GREATEST(o1.hubuum_class_id, o2.hubuum_class_id)
+            AND EXISTS (
+                SELECT 1 FROM class_reachability
+                WHERE from_hubuum_class_id = LEAST(o1.hubuum_class_id, o2.hubuum_class_id)
+                AND to_hubuum_class_id = GREATEST(o1.hubuum_class_id, o2.hubuum_class_id)
+            )
         );
         RETURN NULL;
     END;
@@ -533,7 +395,20 @@
         WHERE id = start_object_id;
 
         RETURN QUERY
-        WITH RECURSIVE transitive_relations AS (
+        WITH RECURSIVE class_reachability AS (
+            -- Direct class relation
+            SELECT from_hubuum_class_id, to_hubuum_class_id, 1 as depth
+            FROM hubuumclass_relation
+            
+            UNION ALL
+            
+            -- Transitive class relation
+            SELECT cr.from_hubuum_class_id, cr2.to_hubuum_class_id, cr.depth + 1
+            FROM class_reachability cr
+            JOIN hubuumclass_relation cr2 ON cr.to_hubuum_class_id = cr2.from_hubuum_class_id
+            WHERE cr.depth < 100
+        ),
+        transitive_relations AS (
             -- Base case: direct relations
             SELECT 
                 or1.to_hubuum_object_id as object_id,
@@ -559,9 +434,13 @@
             tr.path
         FROM transitive_relations tr
         JOIN hubuumobject o ON o.id = tr.object_id
-        JOIN hubuumclass_closure cc ON cc.ancestor_class_id = start_class_id 
-                                    AND cc.descendant_class_id = target_class_id
-        WHERE o.hubuum_class_id = target_class_id;
+        -- Verify target's class is reachable from start's class
+        WHERE o.hubuum_class_id = target_class_id
+        AND EXISTS (
+            SELECT 1 FROM class_reachability
+            WHERE from_hubuum_class_id = LEAST(start_class_id, target_class_id)
+            AND to_hubuum_class_id = GREATEST(start_class_id, target_class_id)
+        );
     END;
     $$ LANGUAGE plpgsql;
 
@@ -727,9 +606,12 @@
                     WHEN rel.from_hubuum_class_id = start_class_id THEN rel.to_hubuum_class_id
                     ELSE rel.from_hubuum_class_id
                 END
-            WHERE (rel.from_hubuum_class_id = start_class_id OR rel.to_hubuum_class_id = start_class_id)
-              AND (max_depth IS NULL OR max_depth >= 1)
-              AND target_class.namespace_id = ANY(valid_namespace_ids)
+                        WHERE (rel.from_hubuum_class_id = start_class_id OR rel.to_hubuum_class_id = start_class_id)
+                            AND (max_depth IS NULL OR max_depth >= 1)
+                            AND (
+                                        COALESCE(cardinality(valid_namespace_ids), 0) = 0
+                                        OR target_class.namespace_id = ANY(valid_namespace_ids)
+                                    )
 
             UNION ALL
 
@@ -753,14 +635,17 @@
                     WHEN rel.from_hubuum_class_id = graph_walk.descendant_class_id THEN rel.to_hubuum_class_id
                     ELSE rel.from_hubuum_class_id
                 END
-            WHERE NOT (
+                        WHERE NOT (
                 CASE
                     WHEN rel.from_hubuum_class_id = graph_walk.descendant_class_id THEN rel.to_hubuum_class_id
                     ELSE rel.from_hubuum_class_id
                 END = ANY(graph_walk.path)
             )
               AND (max_depth IS NULL OR graph_walk.depth < max_depth)
-              AND target_class.namespace_id = ANY(valid_namespace_ids)
+                            AND (
+                                        COALESCE(cardinality(valid_namespace_ids), 0) = 0
+                                        OR target_class.namespace_id = ANY(valid_namespace_ids)
+                                    )
         ),
         deduped_walk AS (
             SELECT DISTINCT ON (descendant_class_id)
@@ -793,15 +678,16 @@
         FROM deduped_walk
         JOIN hubuumclass source_class ON source_class.id = deduped_walk.ancestor_class_id
         JOIN hubuumclass target_class ON target_class.id = deduped_walk.descendant_class_id
-        WHERE source_class.namespace_id = ANY(valid_namespace_ids)
-          AND target_class.namespace_id = ANY(valid_namespace_ids);
+                WHERE (
+                                COALESCE(cardinality(valid_namespace_ids), 0) = 0
+                                OR source_class.namespace_id = ANY(valid_namespace_ids)
+                            )
+                    AND (
+                                COALESCE(cardinality(valid_namespace_ids), 0) = 0
+                                OR target_class.namespace_id = ANY(valid_namespace_ids)
+                            );
     $$ LANGUAGE sql STABLE;
 
-    CREATE UNIQUE INDEX idx_hubuumclass_closure_unique_path_hash
-        ON hubuumclass_closure (ancestor_class_id, descendant_class_id, closure_path_hash(path));
-
-    CREATE UNIQUE INDEX idx_hubuumobject_closure_unique_path_hash
-        ON hubuumobject_closure (ancestor_object_id, descendant_object_id, closure_path_hash(path));
 
     ----------------------
     ---- Triggers
@@ -866,18 +752,6 @@
     CREATE TRIGGER update_hubuumobject_relation_updated_at
     BEFORE UPDATE ON hubuumobject_relation
     FOR EACH ROW EXECUTE FUNCTION update_modified_column();
-
-    -- Trigger to maintain the class closure table
-    DROP TRIGGER IF EXISTS maintain_class_closure ON hubuumclass_relation;
-    CREATE TRIGGER maintain_class_closure
-    AFTER INSERT OR DELETE ON hubuumclass_relation
-    FOR EACH ROW EXECUTE FUNCTION update_class_closure();
-
-    -- Trigger to maintain the object closure table
-    DROP TRIGGER IF EXISTS maintain_object_closure ON hubuumobject_relation;
-    CREATE TRIGGER maintain_object_closure
-    AFTER INSERT OR DELETE ON hubuumobject_relation
-    FOR EACH ROW EXECUTE FUNCTION update_object_closure();
 
     -- Trigger to enforce valid object relations
     DROP TRIGGER IF EXISTS check_object_relation ON hubuumobject_relation;

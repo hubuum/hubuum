@@ -3,8 +3,6 @@ DROP TRIGGER IF EXISTS update_tasks_updated_at ON tasks;
 DROP TRIGGER IF EXISTS update_report_templates_updated_at ON report_templates;
 DROP TRIGGER IF EXISTS cleanup_object_relations ON hubuumclass_relation;
 DROP TRIGGER IF EXISTS check_object_relation ON hubuumobject_relation;
-DROP TRIGGER IF EXISTS maintain_object_closure ON hubuumobject_relation;
-DROP TRIGGER IF EXISTS maintain_class_closure ON hubuumclass_relation;
 DROP TRIGGER IF EXISTS update_hubuumobject_relation_updated_at ON hubuumobject_relation;
 DROP TRIGGER IF EXISTS update_hubuumclass_relation_updated_at ON hubuumclass_relation;
 DROP TRIGGER IF EXISTS update_hubuumobject_updated_at ON hubuumobject;
@@ -18,26 +16,21 @@ DROP TRIGGER IF EXISTS before_insert_or_update_object_relation ON hubuumobject_r
 DROP TRIGGER IF EXISTS before_insert_or_update_class_relation ON hubuumclass_relation;
 
 -- Drop functions
-DROP FUNCTION IF EXISTS get_bidirectionally_related_objects(INT, INT[]);
-DROP FUNCTION IF EXISTS closure_path_hash(INT[]);
+DROP FUNCTION IF EXISTS get_bidirectionally_related_objects(INT, INT[], INT);
+DROP FUNCTION IF EXISTS get_bidirectionally_related_classes(INT, INT[], INT);
 DROP FUNCTION IF EXISTS get_transitively_linked_objects(INT, INT, INT[]);
 DROP FUNCTION IF EXISTS cleanup_invalid_object_relations();
 DROP FUNCTION IF EXISTS get_affected_objects(INT, INT);
 DROP FUNCTION IF EXISTS validate_object_relation();
-DROP FUNCTION IF EXISTS are_classes_related(INT, INT);
-DROP FUNCTION IF EXISTS update_object_closure();
-DROP FUNCTION IF EXISTS update_class_closure();
+DROP FUNCTION IF EXISTS update_modified_column();
 DROP FUNCTION IF EXISTS enforce_object_relation_order();
 DROP FUNCTION IF EXISTS enforce_class_relation_order();
-DROP FUNCTION IF EXISTS update_modified_column();
 
 -- Drop tables
 DROP TABLE IF EXISTS import_task_results CASCADE;
 DROP TABLE IF EXISTS task_events CASCADE;
 DROP TABLE IF EXISTS tasks CASCADE;
 DROP TABLE IF EXISTS report_templates CASCADE;
-DROP TABLE IF EXISTS hubuumobject_closure CASCADE;
-DROP TABLE IF EXISTS hubuumclass_closure CASCADE;
 DROP TABLE IF EXISTS hubuumobject_relation CASCADE;
 DROP TABLE IF EXISTS hubuumclass_relation CASCADE;
 DROP TABLE IF EXISTS hubuumobject CASCADE;
@@ -58,16 +51,6 @@ DROP INDEX IF EXISTS idx_tasks_submitted_by;
 DROP INDEX IF EXISTS idx_tasks_status_created_at;
 DROP INDEX IF EXISTS idx_report_templates_namespace_id;
 DROP INDEX IF EXISTS idx_hubuumobject_data_search;
-DROP INDEX IF EXISTS idx_hubuumobject_closure_unique_path_hash;
-DROP INDEX IF EXISTS idx_hubuumobject_closure_path;
-DROP INDEX IF EXISTS idx_hubuumobject_closure_ancestor_descendant;
-DROP INDEX IF EXISTS idx_hubuumobject_closure_descendant;
-DROP INDEX IF EXISTS idx_hubuumobject_closure_ancestor;
-DROP INDEX IF EXISTS idx_hubuumclass_closure_path;
-DROP INDEX IF EXISTS idx_hubuumclass_closure_unique_path_hash;
-DROP INDEX IF EXISTS idx_hubuumclass_closure_ancestor_descendant;
-DROP INDEX IF EXISTS idx_hubuumclass_closure_descendant;
-DROP INDEX IF EXISTS idx_hubuumclass_closure_ancestor;
 DROP INDEX IF EXISTS idx_hubuumobject_relation_class_relation_id;
 DROP INDEX IF EXISTS idx_hubuumobject_relation_on_to;
 DROP INDEX IF EXISTS idx_hubuumobject_relation_on_from_to;

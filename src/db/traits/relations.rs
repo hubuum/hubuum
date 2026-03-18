@@ -10,7 +10,7 @@ use crate::models::{
     HubuumObjectTransitiveLink, NewHubuumClassRelation, NewHubuumObjectRelation, User,
     user_can_on_any,
 };
-use crate::{date_search, numeric_search, string_search, trace_query};
+use crate::{date_search, numeric_search, numeric_where, string_search, trace_query};
 
 use crate::traits::{GroupAccessors, SelfAccessors};
 
@@ -46,21 +46,22 @@ where
         &self,
         pool: &DbPool,
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError> {
-        use crate::schema::hubuumclass_closure::dsl::*;
+        use diesel::prelude::*;
+        use diesel::sql_query;
+        use diesel::sql_types::Integer;
+
+        const MAX_DEPTH: i32 = 100;
 
         with_connection(pool, |conn| {
-            hubuumclass_closure
-                .or_filter(ancestor_class_id.eq(self.id()))
-                .or_filter(descendant_class_id.eq(self.id()))
-                .then_order_by(depth.asc())
-                .then_order_by(descendant_class_id.asc())
-                .select((
-                    ancestor_class_id.assume_not_null(),
-                    descendant_class_id.assume_not_null(),
-                    depth,
-                    path,
-                ))
-                .load::<HubuumClassRelationTransitive>(conn)
+            sql_query(
+                "SELECT ancestor_class_id, descendant_class_id, depth, path
+                 FROM get_bidirectionally_related_classes($1, ARRAY[]::INT[], $2)
+                 WHERE ancestor_class_id = $1 OR descendant_class_id = $1
+                 ORDER BY depth ASC, descendant_class_id ASC"
+            )
+            .bind::<Integer, _>(self.id())
+            .bind::<Integer, _>(MAX_DEPTH)
+            .load::<HubuumClassRelationTransitive>(conn)
         })
     }
 
@@ -222,27 +223,26 @@ where
     C1: SelfAccessors<HubuumClass> + Clone + Send + Sync,
     C2: SelfAccessors<HubuumClass> + Clone + Send + Sync,
 {
-    use crate::schema::hubuumclass_closure::dsl::*;
     use diesel::prelude::*;
+    use diesel::sql_query;
+    use diesel::sql_types::Integer;
 
-    // Use the smallest ID as from and the largest as to. Also,
-    // resolve the ID first as from and to may be different types
-    // that implement SelfAccessors<HubuumClass>. This makes a direct
-    // tuple swap problematic.
     let (from, to) = (from.id(), to.id());
     let (from, to) = if from > to { (to, from) } else { (from, to) };
+    const MAX_DEPTH: i32 = 100;
 
     with_connection(pool, |conn| {
-        hubuumclass_closure
-            .filter(ancestor_class_id.eq(from))
-            .filter(descendant_class_id.eq(to))
-            .select((
-                ancestor_class_id.assume_not_null(),
-                descendant_class_id.assume_not_null(),
-                depth,
-                path,
-            ))
-            .load::<HubuumClassRelationTransitive>(conn)
+        sql_query(
+            "SELECT ancestor_class_id, descendant_class_id, depth, path
+             FROM get_bidirectionally_related_classes($1, ARRAY[]::INT[], $2)
+             WHERE ancestor_class_id = $3 AND descendant_class_id = $4
+             ORDER BY depth ASC, descendant_class_id ASC"
+        )
+        .bind::<Integer, _>(from)
+        .bind::<Integer, _>(MAX_DEPTH)
+        .bind::<Integer, _>(from)
+        .bind::<Integer, _>(to)
+        .load::<HubuumClassRelationTransitive>(conn)
     })
 }
 
@@ -257,29 +257,39 @@ where
     C1: SelfAccessors<HubuumClass> + Clone + Send + Sync,
     C2: SelfAccessors<HubuumClass> + Clone + Send + Sync,
 {
-    use crate::schema::hubuumclass_closure::dsl::*;
-    use crate::{array_search, numeric_search};
     use diesel::prelude::*;
+    use diesel::sql_query;
+    use diesel::sql_types::Integer;
 
     let (from, to) = (from.id(), to.id());
     let (from, to) = if from > to { (to, from) } else { (from, to) };
+    const MAX_DEPTH: i32 = 100;
 
-    let mut base_query = hubuumclass_closure
-        .filter(ancestor_class_id.eq(from))
-        .filter(descendant_class_id.eq(to))
-        .into_boxed();
+    // Build base WHERE clause
+    let mut where_clauses = vec![
+        "ancestor_class_id = $3".to_string(),
+        "descendant_class_id = $4".to_string(),
+    ];
 
+    // Process filters to add depth filtering to WHERE clause
     for param in &query_options.filters {
-        let operator = param.operator.clone();
         match param.field {
-            FilterField::ClassFrom => {
-                numeric_search!(base_query, param, operator, ancestor_class_id)
+            FilterField::Depth => {
+                let depth_clause = numeric_where!("depth", param);
+                if !depth_clause.is_empty() {
+                    where_clauses.push(depth_clause);
+                }
             }
-            FilterField::ClassTo => {
-                numeric_search!(base_query, param, operator, descendant_class_id)
+            FilterField::ClassFrom | FilterField::ClassTo => {
+                // These are already filtered in the base query
             }
-            FilterField::Depth => numeric_search!(base_query, param, operator, depth),
-            FilterField::Path => array_search!(base_query, param, operator, path),
+            FilterField::Path => {
+                // Path filtering with array operators - for now, post-process
+                return Err(ApiError::BadRequest(
+                    "Path filtering requires post-processing and is not yet supported in paginated queries"
+                        .to_string(),
+                ));
+            }
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' isn't searchable (or does not exist) for transitive class relations",
@@ -289,16 +299,21 @@ where
         }
     }
 
-    crate::apply_query_options!(base_query, query_options, HubuumClassRelationTransitive);
+    let where_clause = where_clauses.join(" AND ");
+    let query_str = format!(
+        "SELECT ancestor_class_id, descendant_class_id, depth, path
+         FROM get_bidirectionally_related_classes($1, ARRAY[]::INT[], $2)
+         WHERE {}
+         ORDER BY depth ASC, descendant_class_id ASC",
+        where_clause
+    );
 
     with_connection(pool, |conn| {
-        base_query
-            .select((
-                ancestor_class_id.assume_not_null(),
-                descendant_class_id.assume_not_null(),
-                depth,
-                path,
-            ))
+        sql_query(&query_str)
+            .bind::<Integer, _>(from)
+            .bind::<Integer, _>(MAX_DEPTH)
+            .bind::<Integer, _>(from)
+            .bind::<Integer, _>(to)
             .load::<HubuumClassRelationTransitive>(conn)
     })
 }
