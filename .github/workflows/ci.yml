@@ -522,6 +522,9 @@ jobs:
         if: contains(matrix.platform.os, 'macos')
         run: |
           brew install postgresql@17 mysql-client
+          # Configure library paths for linking
+          echo "LIBRARY_PATH=$(brew --prefix postgresql@17)/lib:${LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$(brew --prefix postgresql@17)/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
 
       - name: Install Windows PostgreSQL libraries
         if: contains(matrix.platform.os, 'windows')
@@ -653,7 +656,11 @@ jobs:
           sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev libssl-dev
       - name: Install macOS dependencies
         if: contains(matrix.platform.os, 'macos')
-        run: brew install postgresql@17 openssl@3
+        run: |
+          brew install postgresql@17 openssl@3
+          # Configure library paths for linking
+          echo "LIBRARY_PATH=$(brew --prefix postgresql@17)/lib:$(brew --prefix openssl@3)/lib:${LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$(brew --prefix postgresql@17)/lib/pkgconfig:$(brew --prefix openssl@3)/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
       - name: Install Windows PostgreSQL libraries
         if: contains(matrix.platform.os, 'windows')
         shell: pwsh
