@@ -16,8 +16,8 @@ pub use user::UserPermissions;
 use super::{DbPool, with_connection};
 use crate::bind_transitive_filter_params;
 use crate::db::traits::relations::{
-    MAX_TRANSITIVE_DEPTH, ObjectRelationMembershipsBackend, SelfRelationsBackend,
-    parse_transitive_filter_params,
+    ObjectRelationMembershipsBackend, SelfRelationsBackend,
+    max_transitive_depth_from_config, parse_transitive_filter_params,
 };
 use crate::errors::ApiError;
 use crate::models::search::{ParsedQueryParam, QueryOptions};
@@ -167,7 +167,7 @@ where
             let query = bind_transitive_filter_params!(
                 sql_query(Self::TRANSITIVE_SELF_RELATIONS_PAGINATED_SQL)
                     .bind::<Integer, _>(self.id())
-                    .bind::<Integer, _>(MAX_TRANSITIVE_DEPTH),
+                    .bind::<Integer, _>(max_transitive_depth_from_config()),
                 filter
             );
 

@@ -1,8 +1,7 @@
 use crate::db::traits::ClassRelation;
 use diesel::prelude::*;
 
-/// Maximum recursion depth for transitive relation graph walks.
-pub const MAX_TRANSITIVE_DEPTH: i32 = 100;
+pub use crate::config::max_transitive_depth as max_transitive_depth_from_config;
 
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
@@ -199,7 +198,7 @@ where
                  ORDER BY depth ASC, descendant_class_id ASC",
             )
             .bind::<Integer, _>(self.id())
-            .bind::<Integer, _>(MAX_TRANSITIVE_DEPTH)
+            .bind::<Integer, _>(max_transitive_depth_from_config())
             .load::<HubuumClassRelationTransitive>(conn)
         })
     }
@@ -377,7 +376,6 @@ where
 
     let (from, to) = (from.id(), to.id());
     let (from, to) = if from > to { (to, from) } else { (from, to) };
-    const MAX_TRANSITIVE_DEPTH: i32 = 100;
 
     with_connection(pool, |conn| {
         sql_query(
@@ -387,7 +385,7 @@ where
              ORDER BY depth ASC, descendant_class_id ASC",
         )
         .bind::<Integer, _>(from)
-        .bind::<Integer, _>(MAX_TRANSITIVE_DEPTH)
+        .bind::<Integer, _>(max_transitive_depth_from_config())
         .bind::<Integer, _>(from)
         .bind::<Integer, _>(to)
         .load::<HubuumClassRelationTransitive>(conn)
@@ -411,7 +409,6 @@ where
 
     let (from, to) = (from.id(), to.id());
     let (from, to) = if from > to { (to, from) } else { (from, to) };
-    const MAX_TRANSITIVE_DEPTH: i32 = 100;
 
     let filter = parse_transitive_filter_params(query_options)?;
 
@@ -419,7 +416,7 @@ where
         let query = bind_transitive_filter_params!(
             sql_query(TRANSITIVE_RELATIONS_PAGINATED_SQL)
                 .bind::<Integer, _>(from)
-                .bind::<Integer, _>(MAX_TRANSITIVE_DEPTH),
+                .bind::<Integer, _>(max_transitive_depth_from_config()),
             filter
         );
 
@@ -458,7 +455,7 @@ where
                 .bind::<Array<Integer>, _>(
                     namespaces.into_iter().map(|n| n.id()).collect::<Vec<_>>(),
                 )
-                .bind::<Integer, _>(MAX_TRANSITIVE_DEPTH)
+                .bind::<Integer, _>(max_transitive_depth_from_config())
                 .load::<HubuumObjectTransitiveLink>(conn)
         })
     }
