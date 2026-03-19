@@ -8,8 +8,9 @@ mod tests {
     use crate::db::with_connection;
     use crate::models::search::{DataType, SearchOperator};
     use crate::models::{
-        HubuumClass, HubuumObject, HubuumObjectWithPath, NewHubuumClass, NewHubuumClassRelation,
-        NewHubuumObject, NewHubuumObjectRelation,
+        HubuumClass, HubuumClassExpanded, HubuumObject, HubuumObjectWithPath, Namespace,
+        NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
+        NewNamespaceWithAssignee,
     };
     use crate::schema::hubuumobject::dsl::{
         created_at as object_created_at, hubuumobject, id as hubuumobject_id,
@@ -17,8 +18,8 @@ mod tests {
     };
     use crate::tests::api_operations::get_request;
     use crate::tests::asserts::assert_response_status;
-    use crate::tests::{NamespaceFixture, TestContext, test_context};
-    use crate::traits::CanSave;
+    use crate::tests::{NamespaceFixture, TestContext, ensure_admin_group, test_context};
+    use crate::traits::{CanDelete, CanSave};
 
     const STRING_OPERATORS: &[&str] = &[
         "equals",
@@ -498,5 +499,242 @@ mod tests {
         assert_eq!(class_names, expected_names);
 
         namespace.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_sort_by_description_for_classes_namespaces_and_objects(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let admin_group = ensure_admin_group(&context.pool).await;
+
+        let namespace_z = NewNamespaceWithAssignee {
+            name: "querying_sort_description_ns_z".to_string(),
+            description: "querying-sort-description-z".to_string(),
+            group_id: admin_group.id,
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+        let namespace_a = NewNamespaceWithAssignee {
+            name: "querying_sort_description_ns_a".to_string(),
+            description: "querying-sort-description-a".to_string(),
+            group_id: admin_group.id,
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+        let namespace_m = NewNamespaceWithAssignee {
+            name: "querying_sort_description_ns_m".to_string(),
+            description: "querying-sort-description-m".to_string(),
+            group_id: admin_group.id,
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            "/api/v1/namespaces?name__contains=querying_sort_description_ns_&sort=description.asc",
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let namespaces: Vec<Namespace> = actix_test::read_body_json(resp).await;
+
+        let namespace_descriptions: Vec<&str> = namespaces
+            .iter()
+            .map(|namespace| namespace.description.as_str())
+            .collect();
+        assert_eq!(
+            namespace_descriptions,
+            vec![
+                "querying-sort-description-a",
+                "querying-sort-description-m",
+                "querying-sort-description-z",
+            ]
+        );
+
+        NewHubuumClass {
+            namespace_id: namespace_a.id,
+            name: "querying_sort_description_class_z".to_string(),
+            description: "querying-sort-description-z".to_string(),
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+        NewHubuumClass {
+            namespace_id: namespace_a.id,
+            name: "querying_sort_description_class_a".to_string(),
+            description: "querying-sort-description-a".to_string(),
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+        NewHubuumClass {
+            namespace_id: namespace_a.id,
+            name: "querying_sort_description_class_m".to_string(),
+            description: "querying-sort-description-m".to_string(),
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "/api/v1/classes?namespaces={}&name__contains=querying_sort_description_class_&sort=description.asc",
+                namespace_a.id
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let classes: Vec<HubuumClassExpanded> = actix_test::read_body_json(resp).await;
+
+        let class_descriptions: Vec<&str> = classes
+            .iter()
+            .map(|class| class.description.as_str())
+            .collect();
+        assert_eq!(
+            class_descriptions,
+            vec![
+                "querying-sort-description-a",
+                "querying-sort-description-m",
+                "querying-sort-description-z",
+            ]
+        );
+
+        let object_class = NewHubuumClass {
+            namespace_id: namespace_a.id,
+            name: "querying_sort_description_object_class".to_string(),
+            description: "querying-sort-description-object-class".to_string(),
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        NewHubuumObject {
+            namespace_id: namespace_a.id,
+            hubuum_class_id: object_class.id,
+            data: serde_json::json!({ "i": 1 }),
+            name: "querying_sort_description_object_z".to_string(),
+            description: "querying-sort-description-z".to_string(),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+        NewHubuumObject {
+            namespace_id: namespace_a.id,
+            hubuum_class_id: object_class.id,
+            data: serde_json::json!({ "i": 2 }),
+            name: "querying_sort_description_object_a".to_string(),
+            description: "querying-sort-description-a".to_string(),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+        NewHubuumObject {
+            namespace_id: namespace_a.id,
+            hubuum_class_id: object_class.id,
+            data: serde_json::json!({ "i": 3 }),
+            name: "querying_sort_description_object_m".to_string(),
+            description: "querying-sort-description-m".to_string(),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "/api/v1/classes/{}/?name__contains=querying_sort_description_object_&sort=description.asc",
+                object_class.id
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let objects: Vec<HubuumObject> = actix_test::read_body_json(resp).await;
+
+        let object_descriptions: Vec<&str> = objects
+            .iter()
+            .map(|object| object.description.as_str())
+            .collect();
+        assert_eq!(
+            object_descriptions,
+            vec![
+                "querying-sort-description-a",
+                "querying-sort-description-m",
+                "querying-sort-description-z",
+            ]
+        );
+
+        namespace_a.delete(&context.pool).await.unwrap();
+        namespace_m.delete(&context.pool).await.unwrap();
+        namespace_z.delete(&context.pool).await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_sort_by_description_descending(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let admin_group = ensure_admin_group(&context.pool).await;
+
+        let ns_z = NewNamespaceWithAssignee {
+            name: "descending_sort_z".to_string(),
+            description: "z-description".to_string(),
+            group_id: admin_group.id,
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+        let ns_a = NewNamespaceWithAssignee {
+            name: "descending_sort_a".to_string(),
+            description: "a-description".to_string(),
+            group_id: admin_group.id,
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+        let ns_m = NewNamespaceWithAssignee {
+            name: "descending_sort_m".to_string(),
+            description: "m-description".to_string(),
+            group_id: admin_group.id,
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            "/api/v1/namespaces?name__contains=descending_sort_&sort=description.desc",
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let namespaces: Vec<Namespace> = actix_test::read_body_json(resp).await;
+
+        let namespace_descriptions: Vec<&str> = namespaces
+            .iter()
+            .map(|namespace| namespace.description.as_str())
+            .collect();
+        assert_eq!(
+            namespace_descriptions,
+            vec!["z-description", "m-description", "a-description",]
+        );
+
+        ns_a.delete(&context.pool).await.unwrap();
+        ns_m.delete(&context.pool).await.unwrap();
+        ns_z.delete(&context.pool).await.unwrap();
     }
 }

@@ -203,6 +203,7 @@ impl CursorPaginated for HubuumObject {
             field,
             FilterField::Id
                 | FilterField::Name
+                | FilterField::Description
                 | FilterField::Namespaces
                 | FilterField::NamespaceId
                 | FilterField::ClassId
@@ -216,6 +217,7 @@ impl CursorPaginated for HubuumObject {
         Ok(match field {
             FilterField::Id => CursorValue::Integer(self.id as i64),
             FilterField::Name => CursorValue::String(self.name.clone()),
+            FilterField::Description => CursorValue::String(self.description.clone()),
             FilterField::Namespaces | FilterField::NamespaceId => {
                 CursorValue::Integer(self.namespace_id as i64)
             }
@@ -255,6 +257,11 @@ impl CursorSqlMapping for HubuumObject {
             },
             FilterField::Name => CursorSqlField {
                 column: "hubuumobject.name",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::Description => CursorSqlField {
+                column: "hubuumobject.description",
                 sql_type: CursorSqlType::String,
                 nullable: false,
             },
