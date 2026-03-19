@@ -35,12 +35,12 @@ where
         active_tokens_by_user_id(self.id(), pool).await
     }
 
-    async fn tokens_paginated(
+    async fn tokens_paginated_with_total_count(
         &self,
         pool: &DbPool,
         query_options: &QueryOptions,
-    ) -> Result<Vec<UserToken>, ApiError> {
-        active_tokens_by_user_id_paginated(self.id(), pool, query_options).await
+    ) -> Result<(Vec<UserToken>, i64), ApiError> {
+        active_tokens_by_user_id_paginated_with_total_count(self.id(), pool, query_options).await
     }
 }
 
@@ -57,36 +57,50 @@ async fn active_tokens_by_user_id(user_id: i32, pool: &DbPool) -> Result<Vec<Use
     })
 }
 
-async fn active_tokens_by_user_id_paginated(
+fn active_tokens_cutoff() -> chrono::NaiveDateTime {
+    let hours = token_lifetime_hours_i32() as i64;
+    chrono::Utc::now().naive_utc() - chrono::Duration::hours(hours)
+}
+
+async fn active_tokens_by_user_id_paginated_with_total_count(
     user_id: i32,
     pool: &DbPool,
     query_options: &QueryOptions,
-) -> Result<Vec<UserToken>, ApiError> {
+) -> Result<(Vec<UserToken>, i64), ApiError> {
     use crate::schema::tokens::dsl::{issued, token, tokens, user_id as token_user_id};
     use crate::{date_search, string_search};
 
-    let query_options = hash_token_name_filters(query_options)?;
-    let hours = token_lifetime_hours_i32() as i64;
-    let mut base_query = tokens
-        .into_boxed()
-        .filter(token_user_id.eq(user_id))
-        .filter(issued.gt(chrono::Utc::now().naive_utc() - chrono::Duration::hours(hours)));
+    let prepared_query_options = hash_token_name_filters(query_options)?;
+    let active_after = active_tokens_cutoff();
+    let build_query = || -> Result<_, ApiError> {
+        let mut base_query = tokens
+            .into_boxed()
+            .filter(token_user_id.eq(user_id))
+            .filter(issued.gt(active_after));
 
-    for param in &query_options.filters {
-        let operator = param.operator.clone();
-        match param.field {
-            FilterField::IssuedAt => date_search!(base_query, param, operator, issued),
-            FilterField::Name => string_search!(base_query, param, operator, token),
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' isn't searchable (or does not exist) for user tokens",
-                    param.field
-                )));
+        for param in &prepared_query_options.filters {
+            let operator = param.operator.clone();
+            match param.field {
+                FilterField::IssuedAt => date_search!(base_query, param, operator, issued),
+                FilterField::Name => string_search!(base_query, param, operator, token),
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for user tokens",
+                        param.field
+                    )));
+                }
             }
         }
-    }
 
-    crate::apply_query_options!(base_query, &query_options, UserToken);
+        Ok(base_query)
+    };
 
-    with_connection(pool, |conn| base_query.load::<UserToken>(conn))
+    let base_query = build_query()?;
+    let total_count = with_connection(pool, |conn| base_query.count().get_result::<i64>(conn))?;
+
+    let mut base_query = build_query()?;
+    crate::apply_query_options!(base_query, &prepared_query_options, UserToken);
+    let items = with_connection(pool, |conn| base_query.load::<UserToken>(conn))?;
+
+    Ok((items, total_count))
 }

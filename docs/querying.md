@@ -2,7 +2,7 @@
 
 Hubuum list endpoints share a common query interface for filtering, sorting, and cursor pagination. These query options are applied in the database, not by loading a full result set into memory first.
 
-The response body for list endpoints remains a plain JSON array. Pagination state is returned in the `X-Next-Cursor` response header.
+The response body for list endpoints remains a plain JSON array. Pagination metadata is returned in response headers.
 
 For endpoint-specific field support, see [query_support_matrix.md](query_support_matrix.md).
 
@@ -101,9 +101,11 @@ Limits:
 Behavior:
 
 - the current page is returned as a JSON array
+- every paginated response includes `X-Total-Count` with the exact number of matching results
 - if another page exists, the response includes `X-Next-Cursor`
 - send that cursor back unchanged to fetch the next page
 - if `X-Next-Cursor` is absent, there is no next page
+- total pages can be derived client-side as `ceil(X-Total-Count / limit)`
 
 Example:
 
@@ -114,6 +116,7 @@ GET /api/v1/classes?namespaces=12&limit=2&sort=id.asc
 Example response header:
 
 ```text
+X-Total-Count: 6
 X-Next-Cursor: eyJzb3J0cyI6W3siZmllbGQiOiJpZCIsImRlc2NlbmRpbmciOmZhbHNlfV0sInZhbHVlcyI6W3sidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6Mn1dfQ
 ```
 

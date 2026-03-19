@@ -20,7 +20,7 @@ use super::types::{
 use super::worker::{background_worker_action, mark_claimed_task_failed, process_one_task};
 use crate::db::traits::task::{
     count_import_results_summary, create_task_record, find_task_record, insert_import_results,
-    list_task_events,
+    list_task_events_with_total_count,
 };
 use crate::db::traits::task_import::{create_class_db, create_object_db};
 use crate::db::with_connection;
@@ -335,7 +335,7 @@ fn test_process_one_task_marks_claimed_task_failed_when_execution_setup_errors()
             assert!(stored.finished_at.is_some());
             assert!(stored.request_redacted_at.is_some());
 
-            let events = block_on(list_task_events(
+            let (events, _) = block_on(list_task_events_with_total_count(
                 &context.pool,
                 task.id,
                 &crate::models::search::QueryOptions {

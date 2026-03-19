@@ -21,7 +21,7 @@ use crate::models::{
     UpdateHubuumObject, UpdateNamespace, UpdateReportTemplate, UpdateUser, User, UserToken,
     UserTokenMetadata,
 };
-use crate::pagination::{NEXT_CURSOR_HEADER, page_limits_or_defaults};
+use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER, page_limits_or_defaults};
 use actix_web::{HttpResponse, Responder};
 use serde::Serialize;
 use utoipa::openapi::OpenApi as OpenApiDoc;
@@ -401,7 +401,7 @@ fn add_cursor_pagination_docs(operation: &mut Operation) {
 
     if let Some(description) = operation.description.as_mut() {
         let pagination_text = format!(
-            " Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `{NEXT_CURSOR_HEADER}` response header."
+            " Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `{TOTAL_COUNT_HEADER}` response header, and the next page cursor is returned in the `{NEXT_CURSOR_HEADER}` response header."
         );
         if !description.contains(NEXT_CURSOR_HEADER) {
             description.push_str(&pagination_text);
@@ -409,6 +409,7 @@ fn add_cursor_pagination_docs(operation: &mut Operation) {
     }
 
     if let Some(response) = operation.responses.responses.get_mut("200") {
+        add_total_count_header(response);
         add_next_cursor_header(response);
     }
 }
@@ -455,9 +456,27 @@ fn add_next_cursor_header(response: &mut RefOr<utoipa::openapi::response::Respon
 
     if !response.description.contains(NEXT_CURSOR_HEADER) {
         response.description.push_str(&format!(
-            " The response body contains the current page items as a JSON array. Use the `{NEXT_CURSOR_HEADER}` header, when present, to request the next page."
+            " The response body contains the current page items as a JSON array. Use the `{TOTAL_COUNT_HEADER}` header for the exact number of matching results. Use the `{NEXT_CURSOR_HEADER}` header, when present, to request the next page."
         ));
     }
+}
+
+fn add_total_count_header(response: &mut RefOr<utoipa::openapi::response::Response>) {
+    let RefOr::T(response) = response else {
+        return;
+    };
+
+    response
+        .headers
+        .entry(TOTAL_COUNT_HEADER.to_string())
+        .or_insert_with(|| {
+            let mut header = Header::default();
+            header.description = Some(
+                "Exact total number of results matching the current filter set, independent of cursor pagination."
+                    .to_string(),
+            );
+            header
+        });
 }
 
 fn for_each_operation_mut(
@@ -742,10 +761,19 @@ mod tests {
                 "/paths/~1api~1v1~1classes/get/responses/200/headers/X-Next-Cursor/description",
             )
             .and_then(Value::as_str);
+        let total_count_description = json
+            .pointer(
+                "/paths/~1api~1v1~1classes/get/responses/200/headers/X-Total-Count/description",
+            )
+            .and_then(Value::as_str);
 
         assert!(
             header_description.is_some(),
             "X-Next-Cursor header must be documented for paginated list responses"
+        );
+        assert!(
+            total_count_description.is_some(),
+            "X-Total-Count header must be documented for paginated list responses"
         );
     }
 

@@ -6,7 +6,7 @@ pub mod tests {
 
     use rstest::rstest;
 
-    use crate::pagination::NEXT_CURSOR_HEADER;
+    use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::constants::{SchemaType, get_schema};
@@ -541,11 +541,14 @@ pub mod tests {
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        let total_count =
+            header_value(&resp, TOTAL_COUNT_HEADER).and_then(|value| value.parse::<i64>().ok());
         let classes: Vec<HubuumClassExpanded> = test::read_body_json(resp).await;
 
         assert_eq!(classes.len(), 2);
         assert_eq!(classes[0].id, created_classes[0].id);
         assert_eq!(classes[1].id, created_classes[1].id);
+        assert_eq!(total_count, Some(6));
         assert!(next_cursor.is_some());
 
         let resp = get_request(
@@ -559,11 +562,14 @@ pub mod tests {
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let second_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        let second_total_count =
+            header_value(&resp, TOTAL_COUNT_HEADER).and_then(|value| value.parse::<i64>().ok());
         let classes: Vec<HubuumClassExpanded> = test::read_body_json(resp).await;
 
         assert_eq!(classes.len(), 2);
         assert_eq!(classes[0].id, created_classes[2].id);
         assert_eq!(classes[1].id, created_classes[3].id);
+        assert_eq!(second_total_count, Some(6));
         assert!(second_cursor.is_some());
 
         let resp = get_request(
@@ -577,11 +583,14 @@ pub mod tests {
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let final_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        let final_total_count =
+            header_value(&resp, TOTAL_COUNT_HEADER).and_then(|value| value.parse::<i64>().ok());
         let classes: Vec<HubuumClassExpanded> = test::read_body_json(resp).await;
 
         assert_eq!(classes.len(), 2);
         assert_eq!(classes[0].id, created_classes[4].id);
         assert_eq!(classes[1].id, created_classes[5].id);
+        assert_eq!(final_total_count, Some(6));
         assert!(final_cursor.is_none());
 
         cleanup(&created_classes).await;

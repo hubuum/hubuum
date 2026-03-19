@@ -11,6 +11,7 @@ pub use crate::traits::pagination::{
 };
 
 pub const NEXT_CURSOR_HEADER: &str = "X-Next-Cursor";
+pub const TOTAL_COUNT_HEADER: &str = "X-Total-Count";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CursorPageRequest {
@@ -81,6 +82,14 @@ where
     Ok(prepared)
 }
 
+pub fn count_query_options(query_options: &QueryOptions) -> QueryOptions {
+    let mut prepared = query_options.clone();
+    prepared.sort.clear();
+    prepared.limit = None;
+    prepared.cursor = None;
+    prepared
+}
+
 pub fn finalize_page<T>(
     mut items: Vec<T>,
     query_options: &QueryOptions,
@@ -106,12 +115,16 @@ where
     Ok(Page { items, next_cursor })
 }
 
-pub fn next_cursor_header(next_cursor: &Option<String>) -> Option<HashMap<String, String>> {
-    next_cursor.as_ref().map(|cursor| {
-        let mut headers = HashMap::new();
+pub fn pagination_headers(
+    next_cursor: &Option<String>,
+    total_count: i64,
+) -> HashMap<String, String> {
+    let mut headers = HashMap::new();
+    headers.insert(TOTAL_COUNT_HEADER.to_string(), total_count.to_string());
+    if let Some(cursor) = next_cursor.as_ref() {
         headers.insert(NEXT_CURSOR_HEADER.to_string(), cursor.clone());
-        headers
-    })
+    }
+    headers
 }
 
 pub fn page_request<T>(query_options: &QueryOptions) -> Result<CursorPageRequest, ApiError>

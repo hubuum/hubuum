@@ -43,11 +43,11 @@ pub trait ActiveTokens {
     /// Get all active tokens for a given structure.
     #[allow(dead_code)]
     async fn tokens(&self, pool: &DbPool) -> Result<Vec<UserToken>, ApiError>;
-    async fn tokens_paginated(
+    async fn tokens_paginated_with_total_count(
         &self,
         pool: &DbPool,
         query_options: &QueryOptions,
-    ) -> Result<Vec<UserToken>, ApiError>;
+    ) -> Result<(Vec<UserToken>, i64), ApiError>;
 }
 
 /// Trait for getting the namespace(s) of a structure from the backend database.

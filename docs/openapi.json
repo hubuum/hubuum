@@ -472,7 +472,7 @@
           "classes"
         ],
         "summary": "Get Api V1 Classes",
-        "description": "Auto-generated documentation for GET /api/v1/classes. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/classes. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1Classes",
         "parameters": [
           {
@@ -505,13 +505,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Classes matching optional query filters The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Classes matching optional query filters The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
               }
             },
             "content": {
@@ -810,7 +816,7 @@
           "classes"
         ],
         "summary": "Get Api V1 Classes By Class Id Trailing",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1ClassesByClassIdTrailing",
         "parameters": [
           {
@@ -853,13 +859,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Objects in class The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Objects in class The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
               }
             },
             "content": {
@@ -1073,7 +1085,7 @@
           "classes"
         ],
         "summary": "Get Api V1 Classes By Class Id Objects By Object Id Related Objects",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/objects/{object_id}/related/objects. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/objects/{object_id}/related/objects. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1ClassesByClassIdObjectsByObjectIdRelatedObjects",
         "parameters": [
           {
@@ -1144,13 +1156,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Objects connected to the object The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Objects connected to the object The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
               }
             },
             "content": {
@@ -1208,7 +1226,7 @@
           "classes"
         ],
         "summary": "Get Api V1 Classes By Class Id Objects By Object Id Related Relations",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/objects/{object_id}/related/relations. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/objects/{object_id}/related/relations. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1ClassesByClassIdObjectsByObjectIdRelatedRelations",
         "parameters": [
           {
@@ -1261,13 +1279,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Direct relations touching the object The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Direct relations touching the object The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
               }
             },
             "content": {
@@ -1325,7 +1349,7 @@
           "classes"
         ],
         "summary": "Get Api V1 Classes By Class Id Permissions",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/permissions. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/permissions. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1ClassesByClassIdPermissions",
         "parameters": [
           {
@@ -1368,13 +1392,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Namespace-group permission mappings for class namespace The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Namespace-group permission mappings for class namespace The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
               }
             },
             "content": {
@@ -1422,7 +1452,7 @@
           "classes"
         ],
         "summary": "Get Api V1 Classes By Class Id Related Classes",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/related/classes. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/related/classes. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1ClassesByClassIdRelatedClasses",
         "parameters": [
           {
@@ -1465,13 +1495,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Classes connected to the class The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Classes connected to the class The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
               }
             },
             "content": {
@@ -1598,7 +1634,7 @@
           "classes"
         ],
         "summary": "Get Api V1 Classes By Class Id Related Relations",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/related/relations. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/related/relations. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1ClassesByClassIdRelatedRelations",
         "parameters": [
           {
@@ -1641,13 +1677,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Direct relations touching the class The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Direct relations touching the class The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
               }
             },
             "content": {
@@ -2348,7 +2390,7 @@
           "groups"
         ],
         "summary": "Get Api V1 Iam Groups",
-        "description": "Auto-generated documentation for GET /api/v1/iam/groups. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/iam/groups. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1IamGroups",
         "parameters": [
           {
@@ -2381,13 +2423,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Groups matching optional query filters The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Groups matching optional query filters The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
               }
             },
             "content": {
@@ -2686,7 +2734,7 @@
           "groups"
         ],
         "summary": "Get Api V1 Iam Groups By Group Id Members",
-        "description": "Auto-generated documentation for GET /api/v1/iam/groups/{group_id}/members. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/iam/groups/{group_id}/members. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1IamGroupsByGroupIdMembers",
         "parameters": [
           {
@@ -2729,13 +2777,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Members of group The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Members of group The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
               }
             },
             "content": {
@@ -2905,7 +2959,7 @@
           "users"
         ],
         "summary": "Get Api V1 Iam Users",
-        "description": "Auto-generated documentation for GET /api/v1/iam/users. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/iam/users. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1IamUsers",
         "parameters": [
           {
@@ -2938,13 +2992,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Users matching optional query filters The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Users matching optional query filters The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
               }
             },
             "content": {
@@ -3243,7 +3303,7 @@
           "users"
         ],
         "summary": "Get Api V1 Iam Users By User Id Groups",
-        "description": "Auto-generated documentation for GET /api/v1/iam/users/{user_id}/groups. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/iam/users/{user_id}/groups. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1IamUsersByUserIdGroups",
         "parameters": [
           {
@@ -3286,13 +3346,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Groups of user The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Groups of user The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
               }
             },
             "content": {
@@ -3340,7 +3406,7 @@
           "users"
         ],
         "summary": "Get Api V1 Iam Users By User Id Tokens",
-        "description": "Auto-generated documentation for GET /api/v1/iam/users/{user_id}/tokens. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/iam/users/{user_id}/tokens. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1IamUsersByUserIdTokens",
         "parameters": [
           {
@@ -3383,13 +3449,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Active token metadata for user The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Active token metadata for user The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
               }
             },
             "content": {
@@ -3645,7 +3717,7 @@
           "namespaces"
         ],
         "summary": "Get Api V1 Namespaces",
-        "description": "Auto-generated documentation for GET /api/v1/namespaces. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/namespaces. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1Namespaces",
         "parameters": [
           {
@@ -3678,13 +3750,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Namespaces matching optional query filters The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Namespaces matching optional query filters The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
               }
             },
             "content": {
@@ -3983,7 +4061,7 @@
           "namespaces"
         ],
         "summary": "List all groups that have any permissions on a namespace",
-        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/has_permissions/{permission}. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/has_permissions/{permission}. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1NamespacesByNamespaceIdHasPermissionsByPermission",
         "parameters": [
           {
@@ -4035,13 +4113,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Groups with permission The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Groups with permission The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
               }
             },
             "content": {
@@ -4089,7 +4173,7 @@
           "namespaces"
         ],
         "summary": "List all groups who have permissions for a namespace",
-        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/permissions. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/permissions. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1NamespacesByNamespaceIdPermissions",
         "parameters": [
           {
@@ -4132,13 +4216,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Group permissions on namespace The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Group permissions on namespace The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
               }
             },
             "content": {
@@ -4680,7 +4770,7 @@
           "namespaces"
         ],
         "summary": "List all permissions for a user on a namespace",
-        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/permissions/user/{user_id}. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/permissions/user/{user_id}. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1NamespacesByNamespaceIdPermissionsUserByUserId",
         "parameters": [
           {
@@ -4733,13 +4823,19 @@
         ],
         "responses": {
           "200": {
-            "description": "User permissions via group memberships The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "User permissions via group memberships The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
               }
             },
             "content": {
@@ -4787,7 +4883,7 @@
           "relations"
         ],
         "summary": "Get Api V1 Relations Classes",
-        "description": "Auto-generated documentation for GET /api/v1/relations/classes. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/relations/classes. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1RelationsClasses",
         "parameters": [
           {
@@ -4820,13 +4916,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Class relations matching optional query filters The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Class relations matching optional query filters The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
               }
             },
             "content": {
@@ -5048,7 +5150,7 @@
           "relations"
         ],
         "summary": "Get Api V1 Relations Objects",
-        "description": "Auto-generated documentation for GET /api/v1/relations/objects. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/relations/objects. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1RelationsObjects",
         "parameters": [
           {
@@ -5081,13 +5183,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Object relations matching optional query filters The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Object relations matching optional query filters The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
               }
             },
             "content": {
@@ -5638,7 +5746,7 @@
           "tasks"
         ],
         "summary": "Get Api V1 Tasks",
-        "description": "Auto-generated documentation for GET /api/v1/tasks. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/tasks. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1Tasks",
         "parameters": [
           {
@@ -5700,13 +5808,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Visible tasks The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Visible tasks The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
               }
             },
             "content": {
@@ -5895,7 +6009,7 @@
           "templates"
         ],
         "summary": "Get Api V1 Templates",
-        "description": "Auto-generated documentation for GET /api/v1/templates. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/templates. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1Templates",
         "parameters": [
           {
@@ -5928,13 +6042,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Templates visible to caller The response body contains the current page items as a JSON array. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Templates visible to caller The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
               }
             },
             "content": {

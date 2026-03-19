@@ -1,4 +1,9 @@
 use actix_web::{http, test};
+use serde::de::DeserializeOwned;
+
+use crate::db::DbPool;
+use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
+use crate::tests::api_operations::get_request;
 
 /// ## Asserts that a given item is found within the specified vector.
 ///
@@ -287,4 +292,53 @@ pub fn header_value(resp: &actix_web::dev::ServiceResponse, name: &str) -> Optio
         .get(name)
         .and_then(|value| value.to_str().ok())
         .map(|value| value.to_string())
+}
+
+pub async fn assert_paginated_collection_total_count<T, F>(
+    pool: &DbPool,
+    token: &str,
+    max_pages: usize,
+    mut endpoint_for_cursor: F,
+) -> (Vec<T>, i64)
+where
+    T: DeserializeOwned,
+    F: FnMut(Option<&str>) -> String,
+{
+    let mut cursor = None;
+    let mut expected_total_count = None;
+    let mut collected = Vec::new();
+
+    for _ in 0..max_pages {
+        let endpoint = endpoint_for_cursor(cursor.as_deref());
+        let resp = get_request(pool, token, &endpoint).await;
+        let resp = assert_response_status(resp, http::StatusCode::OK).await;
+
+        let total_count = header_value(&resp, TOTAL_COUNT_HEADER)
+            .and_then(|value| value.parse::<i64>().ok())
+            .expect("paginated responses must include a valid X-Total-Count header");
+        if let Some(expected) = expected_total_count {
+            assert_eq!(
+                total_count, expected,
+                "X-Total-Count must stay constant across paginated responses"
+            );
+        } else {
+            expected_total_count = Some(total_count);
+        }
+
+        cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        let page_items: Vec<T> = test::read_body_json(resp).await;
+        collected.extend(page_items);
+
+        if cursor.is_none() {
+            let expected = expected_total_count.unwrap_or_default();
+            assert_eq!(
+                collected.len() as i64,
+                expected,
+                "X-Total-Count must match the total number of collected items across pages"
+            );
+            return (collected, expected);
+        }
+    }
+
+    panic!("pagination did not terminate within {max_pages} pages");
 }

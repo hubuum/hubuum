@@ -96,6 +96,18 @@ impl Group {
             .await
     }
 
+    pub async fn count_members_paginated<C>(
+        &self,
+        backend: &C,
+        query_options: &QueryOptions,
+    ) -> Result<i64, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.count_group_members_paginated(backend.db_pool(), query_options)
+            .await
+    }
+
     /// Add a member to a group. If the user is already a member, do nothing.
     ///
     /// ## Arguments

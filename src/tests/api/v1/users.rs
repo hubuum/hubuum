@@ -1,15 +1,17 @@
 #[cfg(test)]
 mod tests {
     use crate::db::traits::ActiveTokens;
-    use crate::models::Token;
     use crate::models::group::NewGroup;
     use crate::models::user::{NewUser, UpdateUser, User};
+    use crate::models::{Group, Token, UserTokenMetadata};
     use crate::pagination::NEXT_CURSOR_HEADER;
     use actix_web::{http::StatusCode, test};
     use rstest::rstest;
 
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
-    use crate::tests::asserts::{assert_response_status, header_value};
+    use crate::tests::asserts::{
+        assert_paginated_collection_total_count, assert_response_status, header_value,
+    };
     use crate::tests::{TestContext, create_test_admin, create_test_user, test_context};
 
     const USERS_ENDPOINT: &str = "/api/v1/iam/users";
@@ -357,6 +359,41 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
+    async fn test_user_tokens_total_count_matches_paginated_results(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let test_user = create_test_user(&context.pool).await;
+        let auth_token = test_user
+            .create_token(&context.pool)
+            .await
+            .unwrap()
+            .get_token();
+
+        test_user.create_token(&context.pool).await.unwrap();
+        test_user.create_token(&context.pool).await.unwrap();
+
+        let (tokens, total_count): (Vec<UserTokenMetadata>, i64) =
+            assert_paginated_collection_total_count(&context.pool, &auth_token, 10, |cursor| {
+                match cursor {
+                    Some(cursor) => format!(
+                        "{}/{}/tokens?sort=issued_at.asc,name.asc&limit=1&cursor={cursor}",
+                        USERS_ENDPOINT, test_user.id
+                    ),
+                    None => format!(
+                        "{}/{}/tokens?sort=issued_at.asc,name.asc&limit=1",
+                        USERS_ENDPOINT, test_user.id
+                    ),
+                }
+            })
+            .await;
+
+        assert_eq!(total_count, tokens.len() as i64);
+        assert!(tokens.iter().all(|token| token.user_id == test_user.id));
+    }
+
+    #[rstest]
+    #[actix_web::test]
     async fn test_user_groups_filtering(#[future(awt)] test_context: TestContext) {
         let context = test_context;
         let user = create_test_user(&context.pool).await;
@@ -398,6 +435,73 @@ mod tests {
 
         matching_group.delete(&context.pool).await.unwrap();
         other_group.delete(&context.pool).await.unwrap();
+        user.delete(&context.pool).await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_user_groups_total_count_matches_paginated_results(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let user = create_test_user(&context.pool).await;
+        let expected_groups = vec![
+            NewGroup {
+                groupname: format!("pagination-user-groups-a-{}", user.id),
+                description: Some("first group".to_string()),
+            }
+            .save(&context.pool)
+            .await
+            .unwrap(),
+            NewGroup {
+                groupname: format!("pagination-user-groups-b-{}", user.id),
+                description: Some("second group".to_string()),
+            }
+            .save(&context.pool)
+            .await
+            .unwrap(),
+            NewGroup {
+                groupname: format!("pagination-user-groups-c-{}", user.id),
+                description: Some("third group".to_string()),
+            }
+            .save(&context.pool)
+            .await
+            .unwrap(),
+        ];
+
+        for group in &expected_groups {
+            group.add_member(&context.pool, &user).await.unwrap();
+        }
+
+        let (groups, total_count): (Vec<Group>, i64) = assert_paginated_collection_total_count(
+            &context.pool,
+            &context.admin_token,
+            10,
+            |cursor| match cursor {
+                Some(cursor) => format!(
+                    "{}/{}/groups?groupname__contains=pagination-user-groups&sort=id&limit=2&cursor={cursor}",
+                    USERS_ENDPOINT, user.id
+                ),
+                None => format!(
+                    "{}/{}/groups?groupname__contains=pagination-user-groups&sort=id&limit=2",
+                    USERS_ENDPOINT, user.id
+                ),
+            },
+        )
+        .await;
+
+        assert_eq!(total_count, expected_groups.len() as i64);
+        assert_eq!(
+            groups.iter().map(|group| group.id).collect::<Vec<_>>(),
+            expected_groups
+                .iter()
+                .map(|group| group.id)
+                .collect::<Vec<_>>()
+        );
+
+        for group in expected_groups {
+            group.delete(&context.pool).await.unwrap();
+        }
         user.delete(&context.pool).await.unwrap();
     }
 

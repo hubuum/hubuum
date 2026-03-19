@@ -9,7 +9,7 @@ use crate::db::traits::{ClassRelation, ObjectRelationMemberships, UserPermission
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::traits::{ExpandNamespace, ToHubuumObjects};
-use crate::pagination::prepare_db_pagination;
+use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::utilities::response::{
     json_response, json_response_created, paginated_json_mapped_response, paginated_json_response,
 };
@@ -128,10 +128,13 @@ async fn get_classes(
 
     debug!(message = "Listing classes", user_id = user.id());
 
+    let total_count = user
+        .count_classes(&pool, count_query_options(&params))
+        .await?;
     let search_params = prepare_db_pagination::<HubuumClassExpanded>(&params)?;
     let classes = user.search_classes(&pool, search_params).await?;
 
-    paginated_json_response(classes, StatusCode::OK, &params)
+    paginated_json_response(classes, total_count, StatusCode::OK, &params)
 }
 
 #[utoipa::path(
@@ -333,6 +336,19 @@ async fn get_class_permissions(
     can!(&pool, user, [Permissions::ReadClass], class);
 
     let nid = class.namespace_id(&pool).await?;
+    let count_params = count_query_options(&params);
+    let total_count = crate::models::namespace::count_groups_on_paginated(
+        &pool,
+        NamespaceID(nid),
+        vec![
+            Permissions::CreateClass,
+            Permissions::UpdateClass,
+            Permissions::ReadClass,
+            Permissions::DeleteClass,
+        ],
+        &count_params,
+    )
+    .await?;
     let search_params = prepare_db_pagination::<GroupPermission>(&params)?;
     let permissions = groups_on_paginated(
         &pool,
@@ -347,7 +363,7 @@ async fn get_class_permissions(
     )
     .await?;
 
-    paginated_json_response(permissions, StatusCode::OK, &params)
+    paginated_json_response(permissions, total_count, StatusCode::OK, &params)
 }
 
 #[utoipa::path(
@@ -381,11 +397,11 @@ async fn get_related_classes(
     can!(&pool, user, [Permissions::ReadClass], class);
 
     let search_params = prepare_db_pagination::<ClassClosureRow>(&params)?;
-    let classes = user
-        .search_classes_related_to(&pool, class, search_params)
+    let (classes, total_count) = user
+        .classes_related_to_page(&pool, class, search_params)
         .await?;
 
-    paginated_json_mapped_response(classes, StatusCode::OK, &params, |page| {
+    paginated_json_mapped_response(classes, total_count, StatusCode::OK, &params, |page| {
         page.to_descendant_classes_with_path()
     })
 }
@@ -568,10 +584,10 @@ async fn get_related_class_relations(
     );
 
     let search_params = prepare_db_pagination::<HubuumClassRelation>(&params)?;
-    let relations = user
-        .search_class_relations_touching(&pool, class, search_params)
+    let (relations, total_count) = user
+        .class_relations_touching_page(&pool, class, search_params)
         .await?;
-    paginated_json_response(relations, StatusCode::OK, &params)
+    paginated_json_response(relations, total_count, StatusCode::OK, &params)
 }
 
 #[utoipa::path(
@@ -672,10 +688,13 @@ async fn get_objects_in_class(
         query = query_string
     );
 
+    let total_count = user
+        .count_objects(&pool, count_query_options(&params))
+        .await?;
     let search_params = prepare_db_pagination::<HubuumObject>(&params)?;
     let objects = user.search_objects(&pool, search_params).await?;
 
-    paginated_json_response(objects, StatusCode::OK, &params)
+    paginated_json_response(objects, total_count, StatusCode::OK, &params)
 }
 
 #[utoipa::path(
@@ -912,11 +931,11 @@ async fn get_related_objects(
     );
 
     let search_params = prepare_db_pagination::<RelatedObjectClosureRow>(&params)?;
-    let hits = user
-        .search_objects_related_to(&pool, object, search_params)
+    let (hits, total_count) = user
+        .objects_related_to_page(&pool, object, search_params)
         .await?;
 
-    paginated_json_mapped_response(hits, StatusCode::OK, &params, |page| {
+    paginated_json_mapped_response(hits, total_count, StatusCode::OK, &params, |page| {
         page.to_descendant_objects_with_path()
     })
 }
@@ -963,11 +982,11 @@ async fn get_related_object_relations(
     );
 
     let search_params = prepare_db_pagination::<HubuumObjectRelation>(&params)?;
-    let relations = user
-        .search_object_relations_touching(&pool, object, search_params)
+    let (relations, total_count) = user
+        .object_relations_touching_page(&pool, object, search_params)
         .await?;
 
-    paginated_json_response(relations, StatusCode::OK, &params)
+    paginated_json_response(relations, total_count, StatusCode::OK, &params)
 }
 
 #[utoipa::path(

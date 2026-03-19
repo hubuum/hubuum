@@ -110,17 +110,17 @@ where
     namespace_backend::user_on_from_backend(backend.db_pool(), user_id, namespace_ref).await
 }
 
-pub async fn user_on_paginated<C, T>(
+pub async fn user_on_paginated_with_total_count<C, T>(
     backend: &C,
     user_id: UserID,
     namespace_ref: T,
     query_options: &QueryOptions,
-) -> Result<Vec<GroupPermission>, ApiError>
+) -> Result<(Vec<GroupPermission>, i64), ApiError>
 where
     C: BackendContext + ?Sized,
     T: NamespaceAccessors,
 {
-    namespace_backend::user_on_paginated_from_backend(
+    namespace_backend::user_on_paginated_with_total_count_from_backend(
         backend.db_pool(),
         user_id,
         namespace_ref,
@@ -206,16 +206,16 @@ where
     namespace_backend::groups_can_on_from_backend(backend.db_pool(), nid, permission_type).await
 }
 
-pub async fn groups_can_on_paginated<C>(
+pub async fn groups_can_on_paginated_with_total_count<C>(
     backend: &C,
     nid: i32,
     permission_type: Permissions,
     query_options: &QueryOptions,
-) -> Result<Vec<Group>, ApiError>
+) -> Result<(Vec<Group>, i64), ApiError>
 where
     C: BackendContext + ?Sized,
 {
-    namespace_backend::groups_can_on_paginated_from_backend(
+    namespace_backend::groups_can_on_paginated_with_total_count_from_backend(
         backend.db_pool(),
         nid,
         permission_type,
@@ -264,6 +264,44 @@ where
     T: NamespaceAccessors,
 {
     namespace_backend::groups_on_paginated_from_backend(
+        backend.db_pool(),
+        namespace_ref,
+        permissions_filter,
+        query_options,
+    )
+    .await
+}
+
+pub async fn groups_on_paginated_with_total_count<C, T>(
+    backend: &C,
+    namespace_ref: T,
+    permissions_filter: Vec<Permissions>,
+    query_options: &QueryOptions,
+) -> Result<(Vec<GroupPermission>, i64), ApiError>
+where
+    C: BackendContext + ?Sized,
+    T: NamespaceAccessors,
+{
+    namespace_backend::groups_on_paginated_with_total_count_from_backend(
+        backend.db_pool(),
+        namespace_ref,
+        permissions_filter,
+        query_options,
+    )
+    .await
+}
+
+pub async fn count_groups_on_paginated<C, T>(
+    backend: &C,
+    namespace_ref: T,
+    permissions_filter: Vec<Permissions>,
+    query_options: &QueryOptions,
+) -> Result<i64, ApiError>
+where
+    C: BackendContext + ?Sized,
+    T: NamespaceAccessors,
+{
+    namespace_backend::count_groups_on_paginated_from_backend(
         backend.db_pool(),
         namespace_ref,
         permissions_filter,

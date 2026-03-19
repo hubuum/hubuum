@@ -8,7 +8,9 @@ mod tests {
     use crate::models::{NewTaskRecord, TaskKind, TaskResponse, TaskStatus};
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::tests::api_operations::get_request;
-    use crate::tests::asserts::{assert_response_status, header_value};
+    use crate::tests::asserts::{
+        assert_paginated_collection_total_count, assert_response_status, header_value,
+    };
     use crate::tests::{TestContext, create_test_user, test_context};
 
     const TASKS_ENDPOINT: &str = "/api/v1/tasks";
@@ -279,5 +281,64 @@ mod tests {
         let ids = tasks.iter().map(|task| task.id).collect::<Vec<_>>();
 
         assert_eq!(ids, vec![import_id, report_id_two, report_id_one]);
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_list_tasks_total_count_matches_paginated_results(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let other_user = create_test_user(&context.pool).await;
+
+        let expected_ids = vec![
+            create_synthetic_task(
+                &context,
+                other_user.id,
+                TaskKind::Import,
+                TaskStatus::Succeeded,
+                "tasks_total_count_one",
+            )
+            .await,
+            create_synthetic_task(
+                &context,
+                other_user.id,
+                TaskKind::Import,
+                TaskStatus::Succeeded,
+                "tasks_total_count_two",
+            )
+            .await,
+            create_synthetic_task(
+                &context,
+                other_user.id,
+                TaskKind::Import,
+                TaskStatus::Succeeded,
+                "tasks_total_count_three",
+            )
+            .await,
+        ];
+
+        let (tasks, total_count): (Vec<TaskResponse>, i64) = assert_paginated_collection_total_count(
+            &context.pool,
+            &context.admin_token,
+            10,
+            |cursor| match cursor {
+                Some(cursor) => format!(
+                    "{TASKS_ENDPOINT}?submitted_by={}&kind=import&status=succeeded&sort=id&limit=2&cursor={cursor}",
+                    other_user.id
+                ),
+                None => format!(
+                    "{TASKS_ENDPOINT}?submitted_by={}&kind=import&status=succeeded&sort=id&limit=2",
+                    other_user.id
+                ),
+            },
+        )
+        .await;
+
+        assert_eq!(total_count, expected_ids.len() as i64);
+        assert_eq!(
+            tasks.iter().map(|task| task.id).collect::<Vec<_>>(),
+            expected_ids
+        );
     }
 }

@@ -216,17 +216,18 @@ pub async fn delete_report_template(pool: &DbPool, template_id: i32) -> Result<(
     Ok(())
 }
 
-pub async fn list_report_templates(
-    pool: &DbPool,
-    allowed_namespace_ids: &[i32],
-    query_options: &QueryOptions,
-) -> Result<Vec<ReportTemplate>, ApiError> {
+fn build_report_template_query<'a>(
+    allowed_namespace_ids: &'a [i32],
+    query_options: &'a QueryOptions,
+) -> Result<crate::schema::report_templates::BoxedQuery<'a, diesel::pg::Pg>, ApiError> {
     use crate::schema::report_templates::dsl::{
         created_at, description, id, name, namespace_id, report_templates, updated_at,
     };
 
     if allowed_namespace_ids.is_empty() {
-        return Ok(Vec::new());
+        return Ok(report_templates
+            .into_boxed()
+            .filter(namespace_id.eq_any(allowed_namespace_ids)));
     }
 
     let mut query = report_templates
@@ -253,11 +254,31 @@ pub async fn list_report_templates(
         }
     }
 
-    crate::apply_query_options!(query, query_options, ReportTemplate);
+    Ok(query)
+}
 
+pub async fn list_report_templates_with_total_count(
+    pool: &DbPool,
+    allowed_namespace_ids: &[i32],
+    query_options: &QueryOptions,
+) -> Result<(Vec<ReportTemplate>, i64), ApiError> {
+    if allowed_namespace_ids.is_empty() {
+        return Ok((Vec::new(), 0));
+    }
+
+    let query = build_report_template_query(allowed_namespace_ids, query_options)?;
+    let total_count = with_connection(pool, |conn| query.count().get_result::<i64>(conn))?;
+
+    let mut query = build_report_template_query(allowed_namespace_ids, query_options)?;
+    crate::apply_query_options!(query, query_options, ReportTemplate);
     let rows = with_connection(pool, |conn| query.load::<ReportTemplateRow>(conn))?;
 
-    rows.into_iter().map(TryInto::try_into).collect()
+    let items = rows
+        .into_iter()
+        .map(TryInto::try_into)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok((items, total_count))
 }
 
 impl IdAccessor for ReportTemplate {
