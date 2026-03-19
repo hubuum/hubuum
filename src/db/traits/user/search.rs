@@ -1,5 +1,52 @@
 use super::*;
 use crate::models::search::SQLValue;
+use crate::traits::{CursorPaginated, CursorSqlMapping};
+use crate::utilities::extensions::CustomStringExtensions;
+
+#[derive(diesel::QueryableByName)]
+struct CountRow {
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    count: i64,
+}
+
+#[derive(Debug, Clone)]
+struct RawSqlQuerySpec {
+    sql: String,
+    bind_variables: Vec<SQLValue>,
+}
+
+impl RawSqlQuerySpec {
+    fn into_count_query(self, alias: &str) -> Self {
+        Self {
+            sql: format!("SELECT COUNT(*) AS count FROM ({}) AS {alias}", self.sql),
+            bind_variables: self.bind_variables,
+        }
+    }
+
+    fn into_indexed_sql(self) -> Self {
+        Self {
+            sql: self.sql.replace_question_mark_with_indexed_n(),
+            bind_variables: self.bind_variables,
+        }
+    }
+}
+
+macro_rules! bind_raw_sql_query {
+    ($spec:expr) => {{
+        let spec = $spec.into_indexed_sql();
+        let mut query = diesel::sql_query(spec.sql).into_boxed();
+        for bind_var in spec.bind_variables {
+            query = match bind_var {
+                SQLValue::Integer(i) => query.bind::<diesel::sql_types::Integer, _>(i),
+                SQLValue::String(s) => query.bind::<diesel::sql_types::Text, _>(s),
+                SQLValue::Boolean(b) => query.bind::<diesel::sql_types::Bool, _>(b),
+                SQLValue::Float(f) => query.bind::<diesel::sql_types::Float8, _>(f),
+                SQLValue::Date(d) => query.bind::<diesel::sql_types::Timestamp, _>(d),
+            };
+        }
+        query
+    }};
+}
 
 pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
     async fn search_namespaces_from_backend(
@@ -9,6 +56,16 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
     ) -> Result<Vec<Namespace>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.search_namespaces_from_backend_with_admin_status(pool, query_options, is_admin)
+            .await
+    }
+
+    async fn count_namespaces_from_backend(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+    ) -> Result<i64, ApiError> {
+        let is_admin = self.is_admin(pool).await?;
+        self.count_namespaces_from_backend_with_admin_status(pool, query_options, is_admin)
             .await
     }
 
@@ -90,6 +147,71 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         })
     }
 
+    async fn count_namespaces_from_backend_with_admin_status(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        is_admin: bool,
+    ) -> Result<i64, ApiError> {
+        use crate::schema::namespaces::dsl::{
+            created_at as namespace_created_at, description as namespace_description,
+            id as namespace_id, name as namespace_name, namespaces,
+            updated_at as namespace_updated_at,
+        };
+        use crate::schema::permissions::dsl::{
+            group_id, namespace_id as permissions_nid, permissions,
+        };
+
+        let query_params = query_options.filters.clone();
+        let mut permissions_list = query_params.permissions()?;
+        permissions_list.ensure_contains(&[Permissions::ReadCollection]);
+
+        let mut base_query = if is_admin {
+            namespaces.into_boxed()
+        } else {
+            let group_id_subquery = self.group_ids_subquery_from_backend();
+
+            namespaces
+                .filter(
+                    namespace_id.eq_any(
+                        permissions
+                            .filter(group_id.eq_any(group_id_subquery))
+                            .select(permissions_nid),
+                    ),
+                )
+                .into_boxed()
+        };
+
+        for param in query_params {
+            use crate::{date_search, numeric_search, string_search};
+            let operator = param.operator.clone();
+            match param.field {
+                FilterField::Id => numeric_search!(base_query, param, operator, namespace_id),
+                FilterField::CreatedAt => {
+                    date_search!(base_query, param, operator, namespace_created_at)
+                }
+                FilterField::UpdatedAt => {
+                    date_search!(base_query, param, operator, namespace_updated_at)
+                }
+                FilterField::Name => {
+                    string_search!(base_query, param, operator, namespace_name)
+                }
+                FilterField::Description => {
+                    string_search!(base_query, param, operator, namespace_description)
+                }
+                FilterField::Permissions => {}
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for namespaces",
+                        param.field
+                    )));
+                }
+            }
+        }
+
+        with_connection(pool, |conn| base_query.count().get_result::<i64>(conn))
+    }
+
     async fn search_classes_from_backend(
         &self,
         pool: &DbPool,
@@ -97,6 +219,16 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
     ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.search_classes_from_backend_with_admin_status(pool, query_options, is_admin)
+            .await
+    }
+
+    async fn count_classes_from_backend(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+    ) -> Result<i64, ApiError> {
+        let is_admin = self.is_admin(pool).await?;
+        self.count_classes_from_backend_with_admin_status(pool, query_options, is_admin)
             .await
     }
 
@@ -221,6 +353,82 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         Ok(result.expand_namespace_from_map(&namespace_map))
     }
 
+    async fn count_classes_from_backend_with_admin_status(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        is_admin: bool,
+    ) -> Result<i64, ApiError> {
+        use crate::schema::hubuumclass::dsl::{
+            created_at as class_created_at, description as class_description, hubuumclass,
+            id as class_id, name as class_name, namespace_id as class_namespace_id,
+            updated_at as class_updated_at, validate_schema as class_validate_schema,
+        };
+
+        let query_params = query_options.filters.clone();
+
+        let mut permissions_list = query_params.permissions()?;
+        permissions_list.ensure_contains(&[Permissions::ReadClass, Permissions::ReadCollection]);
+
+        let namespaces = self
+            .load_namespaces_with_permissions_with_admin_status(pool, &permissions_list, is_admin)
+            .await?;
+        let namespace_ids: Vec<i32> = namespaces.iter().map(|n| n.id).collect();
+
+        let mut base_query = hubuumclass
+            .filter(class_namespace_id.eq_any(namespace_ids))
+            .into_boxed();
+
+        let json_schema_queries = query_params.json_schemas()?;
+        if !json_schema_queries.is_empty() {
+            let json_schema_integers = self.json_schema_subquery(pool, json_schema_queries)?;
+            if json_schema_integers.is_empty() {
+                return Ok(0);
+            }
+            base_query = base_query.filter(class_id.eq_any(json_schema_integers));
+        }
+
+        for param in query_params {
+            use crate::{boolean_search, date_search, numeric_search, string_search};
+            let operator = param.operator.clone();
+            match param.field {
+                FilterField::Id => numeric_search!(base_query, param, operator, class_id),
+                FilterField::Namespaces => {
+                    numeric_search!(base_query, param, operator, class_namespace_id)
+                }
+                FilterField::CreatedAt => {
+                    date_search!(base_query, param, operator, class_created_at)
+                }
+                FilterField::UpdatedAt => {
+                    date_search!(base_query, param, operator, class_updated_at)
+                }
+                FilterField::Name => string_search!(base_query, param, operator, class_name),
+                FilterField::Description => {
+                    string_search!(base_query, param, operator, class_description)
+                }
+                FilterField::ValidateSchema => {
+                    boolean_search!(base_query, param, operator, class_validate_schema)
+                }
+                FilterField::JsonSchema => {}
+                FilterField::Permissions => {}
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for classes",
+                        param.field
+                    )));
+                }
+            }
+        }
+
+        with_connection(pool, |conn| {
+            base_query
+                .select(class_id)
+                .distinct()
+                .count()
+                .get_result::<i64>(conn)
+        })
+    }
+
     async fn search_objects_from_backend(
         &self,
         pool: &DbPool,
@@ -228,6 +436,16 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
     ) -> Result<Vec<HubuumObject>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.search_objects_from_backend_with_admin_status(pool, query_options, is_admin)
+            .await
+    }
+
+    async fn count_objects_from_backend(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+    ) -> Result<i64, ApiError> {
+        let is_admin = self.is_admin(pool).await?;
+        self.count_objects_from_backend_with_admin_status(pool, query_options, is_admin)
             .await
     }
 
@@ -351,6 +569,87 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         })
     }
 
+    async fn count_objects_from_backend_with_admin_status(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        is_admin: bool,
+    ) -> Result<i64, ApiError> {
+        use crate::schema::hubuumobject::dsl::{
+            created_at as object_created_at, description as object_description, hubuum_class_id,
+            hubuumobject, id as object_id, name as object_name,
+            namespace_id as object_namespace_id, updated_at as object_updated_at,
+        };
+
+        let query_params = query_options.filters.clone();
+
+        let mut permission_list = query_params.permissions()?;
+        permission_list.ensure_contains(&[Permissions::ReadObject, Permissions::ReadCollection]);
+
+        let namespace_ids: Vec<i32> = self
+            .load_namespaces_with_permissions_with_admin_status(pool, &permission_list, is_admin)
+            .await?
+            .into_iter()
+            .map(|n| n.id)
+            .collect();
+
+        let mut base_query = hubuumobject
+            .filter(object_namespace_id.eq_any(namespace_ids))
+            .into_boxed();
+
+        let json_data_queries = query_params.json_datas(FilterField::JsonData)?;
+        if !json_data_queries.is_empty() {
+            let json_data_integers = self.json_data_subquery(pool, json_data_queries)?;
+            if json_data_integers.is_empty() {
+                return Ok(0);
+            }
+            base_query = base_query.filter(object_id.eq_any(json_data_integers));
+        }
+
+        for param in query_params {
+            use crate::{date_search, numeric_search, string_search};
+            let operator = param.operator.clone();
+            match param.field {
+                FilterField::Id => numeric_search!(base_query, param, operator, object_id),
+                FilterField::Namespaces => {
+                    numeric_search!(base_query, param, operator, object_namespace_id)
+                }
+                FilterField::CreatedAt => {
+                    date_search!(base_query, param, operator, object_created_at)
+                }
+                FilterField::UpdatedAt => {
+                    date_search!(base_query, param, operator, object_updated_at)
+                }
+                FilterField::Name => string_search!(base_query, param, operator, object_name),
+                FilterField::Description => {
+                    string_search!(base_query, param, operator, object_description)
+                }
+                FilterField::Classes => {
+                    numeric_search!(base_query, param, operator, hubuum_class_id)
+                }
+                FilterField::ClassId => {
+                    numeric_search!(base_query, param, operator, hubuum_class_id)
+                }
+                FilterField::JsonData => {}
+                FilterField::Permissions => {}
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for objects",
+                        param.field
+                    )));
+                }
+            }
+        }
+
+        with_connection(pool, |conn| {
+            base_query
+                .select(object_id)
+                .distinct()
+                .count()
+                .get_result::<i64>(conn)
+        })
+    }
+
     async fn search_class_relations_from_backend(
         &self,
         pool: &DbPool,
@@ -361,12 +660,34 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             .await
     }
 
+    async fn class_relations_page_from_backend(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+    ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError> {
+        let is_admin = self.is_admin(pool).await?;
+        self.class_relations_page_from_backend_with_admin_status(pool, query_options, is_admin)
+            .await
+    }
+
     async fn search_class_relations_from_backend_with_admin_status(
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
+        let (items, _) = self
+            .class_relations_page_from_backend_with_admin_status(pool, query_options, is_admin)
+            .await?;
+        Ok(items)
+    }
+
+    async fn class_relations_page_from_backend_with_admin_status(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        is_admin: bool,
+    ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError> {
         use crate::schema::hubuumclass::dsl::{
             hubuumclass, id as class_id, namespace_id as class_namespace_id,
         };
@@ -402,8 +723,6 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             namespace_ids = ?namespace_ids
         );
 
-        let mut base_query = hubuumclass_relation.into_boxed();
-
         for param in &[FilterField::ClassFromName, FilterField::ClassToName] {
             if let Some(class_param) = query_params.iter().find(|p| &p.field == param) {
                 let qparam = ParsedQueryParam {
@@ -429,7 +748,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
                         user_id = self.id(),
                         result = "No class IDs found, returning empty result"
                     );
-                    return Ok(vec![]);
+                    return Ok((vec![], 0));
                 }
 
                 debug!(
@@ -458,73 +777,92 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             }
         }
 
-        base_query = base_query
-            .filter(
-                from_hubuum_class_id.eq_any(
-                    hubuumclass
-                        .select(class_id)
-                        .filter(class_namespace_id.eq_any(&namespace_ids)),
-                ),
-            )
-            .filter(
-                to_hubuum_class_id.eq_any(
-                    hubuumclass
-                        .select(class_id)
-                        .filter(class_namespace_id.eq_any(&namespace_ids)),
-                ),
-            );
+        let build_query = || -> Result<_, ApiError> {
+            let mut base_query = hubuumclass_relation
+                .filter(
+                    from_hubuum_class_id.eq_any(
+                        hubuumclass
+                            .select(class_id)
+                            .filter(class_namespace_id.eq_any(&namespace_ids)),
+                    ),
+                )
+                .filter(
+                    to_hubuum_class_id.eq_any(
+                        hubuumclass
+                            .select(class_id)
+                            .filter(class_namespace_id.eq_any(&namespace_ids)),
+                    ),
+                )
+                .into_boxed();
 
-        for param in query_params {
-            use crate::{date_search, numeric_search};
-            let operator = param.operator.clone();
-            match param.field {
-                FilterField::Id => numeric_search!(base_query, param, operator, class_relation_id),
-                FilterField::ClassFrom => {
-                    numeric_search!(base_query, param, operator, from_hubuum_class_id)
-                }
-                FilterField::ClassTo => {
-                    numeric_search!(base_query, param, operator, to_hubuum_class_id)
-                }
-                FilterField::CreatedAt => {
-                    date_search!(base_query, param, operator, class_relation_created_at)
-                }
-                FilterField::UpdatedAt => {
-                    date_search!(base_query, param, operator, class_relation_updated_at)
-                }
-                FilterField::ClassFromName => {}
-                FilterField::ClassToName => {}
-                _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't searchable (or does not exist) for class relations",
-                        param.field
-                    )));
+            for param in &query_params {
+                use crate::{date_search, numeric_search};
+                let operator = param.operator.clone();
+                match param.field {
+                    FilterField::Id => {
+                        numeric_search!(base_query, param, operator, class_relation_id)
+                    }
+                    FilterField::ClassFrom => {
+                        numeric_search!(base_query, param, operator, from_hubuum_class_id)
+                    }
+                    FilterField::ClassTo => {
+                        numeric_search!(base_query, param, operator, to_hubuum_class_id)
+                    }
+                    FilterField::CreatedAt => {
+                        date_search!(base_query, param, operator, class_relation_created_at)
+                    }
+                    FilterField::UpdatedAt => {
+                        date_search!(base_query, param, operator, class_relation_updated_at)
+                    }
+                    FilterField::ClassFromName => {}
+                    FilterField::ClassToName => {}
+                    _ => {
+                        return Err(ApiError::BadRequest(format!(
+                            "Field '{}' isn't searchable (or does not exist) for class relations",
+                            param.field
+                        )));
+                    }
                 }
             }
-        }
 
+            Ok(base_query)
+        };
+
+        let base_query = build_query()?;
+        let total_count = with_connection(pool, |conn| {
+            base_query
+                .select(class_relation_id)
+                .distinct()
+                .count()
+                .get_result::<i64>(conn)
+        })?;
+
+        let mut base_query = build_query()?;
         crate::apply_query_options!(base_query, query_options, HubuumClassRelation);
 
         trace_query!(base_query, "Searching class relations");
 
-        with_connection(pool, |conn| {
+        let items = with_connection(pool, |conn| {
             base_query
                 .select(hubuumclass_relation::all_columns())
                 .distinct()
                 .load::<HubuumClassRelation>(conn)
-        })
+        })?;
+
+        Ok((items, total_count))
     }
 
-    async fn search_class_relations_touching_from_backend<K>(
+    async fn class_relations_touching_page_from_backend<K>(
         &self,
         pool: &DbPool,
         class: K,
         query_options: QueryOptions,
-    ) -> Result<Vec<HubuumClassRelation>, ApiError>
+    ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError>
     where
         K: SelfAccessors<HubuumClass>,
     {
         let is_admin = self.is_admin(pool).await?;
-        self.search_class_relations_touching_from_backend_with_admin_status(
+        self.class_relations_touching_page_from_backend_with_admin_status(
             pool,
             class,
             query_options,
@@ -533,13 +871,13 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         .await
     }
 
-    async fn search_class_relations_touching_from_backend_with_admin_status<K>(
+    async fn class_relations_touching_page_from_backend_with_admin_status<K>(
         &self,
         pool: &DbPool,
         class: K,
         query_options: QueryOptions,
         is_admin: bool,
-    ) -> Result<Vec<HubuumClassRelation>, ApiError>
+    ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError>
     where
         K: SelfAccessors<HubuumClass>,
     {
@@ -564,56 +902,68 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             .map(|n| n.id)
             .collect();
 
-        let mut base_query = hubuumclass_relation
-            .filter(
-                from_hubuum_class_id
-                    .eq(class.id())
-                    .or(to_hubuum_class_id.eq(class.id())),
-            )
-            .into_boxed();
+        let build_query = || -> Result<_, ApiError> {
+            let mut base_query = hubuumclass_relation
+                .filter(
+                    from_hubuum_class_id
+                        .eq(class.id())
+                        .or(to_hubuum_class_id.eq(class.id())),
+                )
+                .filter(
+                    from_hubuum_class_id.eq_any(
+                        hubuumclass
+                            .select(class_id)
+                            .filter(class_namespace_id.eq_any(&namespace_ids)),
+                    ),
+                )
+                .filter(
+                    to_hubuum_class_id.eq_any(
+                        hubuumclass
+                            .select(class_id)
+                            .filter(class_namespace_id.eq_any(&namespace_ids)),
+                    ),
+                )
+                .into_boxed();
 
-        base_query = base_query
-            .filter(
-                from_hubuum_class_id.eq_any(
-                    hubuumclass
-                        .select(class_id)
-                        .filter(class_namespace_id.eq_any(&namespace_ids)),
-                ),
-            )
-            .filter(
-                to_hubuum_class_id.eq_any(
-                    hubuumclass
-                        .select(class_id)
-                        .filter(class_namespace_id.eq_any(&namespace_ids)),
-                ),
-            );
-
-        for param in query_params {
-            use crate::{date_search, numeric_search};
-            let operator = param.operator.clone();
-            match param.field {
-                FilterField::Id => numeric_search!(base_query, param, operator, relation_id),
-                FilterField::ClassFrom => {
-                    numeric_search!(base_query, param, operator, from_hubuum_class_id)
-                }
-                FilterField::ClassTo => {
-                    numeric_search!(base_query, param, operator, to_hubuum_class_id)
-                }
-                FilterField::CreatedAt => {
-                    date_search!(base_query, param, operator, relation_created_at)
-                }
-                FilterField::UpdatedAt => {
-                    date_search!(base_query, param, operator, relation_updated_at)
-                }
-                _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't searchable (or does not exist) for class relations",
-                        param.field
-                    )));
+            for param in &query_params {
+                use crate::{date_search, numeric_search};
+                let operator = param.operator.clone();
+                match param.field {
+                    FilterField::Id => numeric_search!(base_query, param, operator, relation_id),
+                    FilterField::ClassFrom => {
+                        numeric_search!(base_query, param, operator, from_hubuum_class_id)
+                    }
+                    FilterField::ClassTo => {
+                        numeric_search!(base_query, param, operator, to_hubuum_class_id)
+                    }
+                    FilterField::CreatedAt => {
+                        date_search!(base_query, param, operator, relation_created_at)
+                    }
+                    FilterField::UpdatedAt => {
+                        date_search!(base_query, param, operator, relation_updated_at)
+                    }
+                    _ => {
+                        return Err(ApiError::BadRequest(format!(
+                            "Field '{}' isn't searchable (or does not exist) for class relations",
+                            param.field
+                        )));
+                    }
                 }
             }
-        }
 
+            Ok(base_query)
+        };
+
+        let base_query = build_query()?;
+        let total_count = with_connection(pool, |conn| {
+            base_query
+                .select(relation_id)
+                .distinct()
+                .count()
+                .get_result::<i64>(conn)
+        })?;
+
+        let mut base_query = build_query()?;
         crate::apply_query_options!(base_query, query_options, HubuumClassRelation);
 
         trace_query!(
@@ -621,12 +971,14 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             "Searching direct class relations touching class"
         );
 
-        with_connection(pool, |conn| {
+        let items = with_connection(pool, |conn| {
             base_query
                 .select(hubuumclass_relation::all_columns())
                 .distinct()
                 .load::<HubuumClassRelation>(conn)
-        })
+        })?;
+
+        Ok((items, total_count))
     }
 
     async fn search_class_relations_between_ids_from_backend(
@@ -709,6 +1061,25 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         .await
     }
 
+    async fn classes_related_to_page_from_backend<K>(
+        &self,
+        pool: &DbPool,
+        class: K,
+        query_options: QueryOptions,
+    ) -> Result<(Vec<ClassClosureRow>, i64), ApiError>
+    where
+        K: SelfAccessors<HubuumClass>,
+    {
+        let is_admin = self.is_admin(pool).await?;
+        self.classes_related_to_page_from_backend_with_admin_status(
+            pool,
+            class,
+            query_options,
+            is_admin,
+        )
+        .await
+    }
+
     async fn search_classes_related_to_from_backend_with_admin_status<K>(
         &self,
         pool: &DbPool,
@@ -719,89 +1090,47 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
     where
         K: SelfAccessors<HubuumClass>,
     {
-        use crate::pagination::{cursor_filter_sql, normalized_sorts, order_sql_clause};
-        use crate::utilities::extensions::CustomStringExtensions;
-        use diesel::sql_query;
-
-        let query_params = query_options.filters.clone();
-
-        let mut permissions_list = query_params.permissions()?;
-        permissions_list.ensure_contains(&[Permissions::ReadClass, Permissions::ReadClassRelation]);
-
-        let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(pool, &permissions_list, is_admin)
-            .await?
-            .into_iter()
-            .map(|n| n.id)
-            .collect();
-
-        if namespace_ids.is_empty() {
-            return Ok(vec![]);
-        }
-
-        let sorts = normalized_sorts::<ClassClosureRow>(&query_options.sort)?;
-        let mut bind_variables = Vec::<SQLValue>::new();
-        bind_variables.push(SQLValue::Integer(class.id()));
-        let related_depth_upper_bound = related_depth_upper_bound(&query_params)?;
-        let namespace_array_sql = sql_integer_array(&namespace_ids, &mut bind_variables);
-        let mut raw_sql = if let Some(max_depth) = related_depth_upper_bound {
-            bind_variables.push(SQLValue::Integer(max_depth));
-            format!(
-                "SELECT * FROM get_bidirectionally_related_classes(?, {namespace_array_sql}, ?) AS related_classes"
+        let (items, _) = self
+            .classes_related_to_page_from_backend_with_admin_status(
+                pool,
+                class,
+                query_options,
+                is_admin,
             )
-        } else {
-            format!(
-                "SELECT * FROM get_bidirectionally_related_classes(?, {namespace_array_sql}, NULL) AS related_classes"
-            )
+            .await?;
+        Ok(items)
+    }
+
+    async fn classes_related_to_page_from_backend_with_admin_status<K>(
+        &self,
+        pool: &DbPool,
+        class: K,
+        query_options: QueryOptions,
+        is_admin: bool,
+    ) -> Result<(Vec<ClassClosureRow>, i64), ApiError>
+    where
+        K: SelfAccessors<HubuumClass>,
+    {
+        let Some(base_spec) =
+            build_related_classes_query_spec(self, pool, class, query_options.clone(), is_admin)
+                .await?
+        else {
+            return Ok((vec![], 0));
         };
+        let total_count_spec = base_spec.clone().into_count_query("related_classes_count");
+        let spec = apply_raw_sql_pagination::<ClassClosureRow>(base_spec, &query_options)?;
 
-        let mut where_clauses = Vec::new();
+        let total_count = with_connection(pool, |conn| {
+            bind_raw_sql_query!(total_count_spec)
+                .get_result::<CountRow>(conn)
+                .map(|row| row.count)
+        })?;
 
-        for param in &query_params {
-            let clause = build_related_classes_clause(param, &mut bind_variables)?;
-            if let Some(clause) = clause {
-                where_clauses.push(clause);
-            }
-        }
-
-        if let Some(cursor_sql) =
-            cursor_filter_sql::<ClassClosureRow>(&sorts, query_options.cursor.as_deref())?
-        {
-            where_clauses.push(cursor_sql);
-        }
-
-        if !where_clauses.is_empty() {
-            raw_sql.push_str("\nWHERE ");
-            raw_sql.push_str(&where_clauses.join("\n  AND "));
-        }
-
-        let order_by = sorts
-            .iter()
-            .map(order_sql_clause::<ClassClosureRow>)
-            .collect::<Result<Vec<_>, _>>()?
-            .join(", ");
-        raw_sql.push_str(&format!("\nORDER BY {order_by}"));
-
-        if let Some(limit) = query_options.limit {
-            raw_sql.push_str(&format!("\nLIMIT {limit}"));
-        }
-
-        raw_sql = raw_sql.replace_question_mark_with_indexed_n();
-
-        let mut query = sql_query(raw_sql).into_boxed();
-        for bind_var in bind_variables {
-            query = match bind_var {
-                SQLValue::Integer(i) => query.bind::<diesel::sql_types::Integer, _>(i),
-                SQLValue::String(s) => query.bind::<diesel::sql_types::Text, _>(s),
-                SQLValue::Boolean(b) => query.bind::<diesel::sql_types::Bool, _>(b),
-                SQLValue::Float(f) => query.bind::<diesel::sql_types::Float8, _>(f),
-                SQLValue::Date(d) => query.bind::<diesel::sql_types::Timestamp, _>(d),
-            };
-        }
-
+        let query = bind_raw_sql_query!(spec);
         trace_query!(query, "Searching related classes");
+        let items = with_connection(pool, |conn| query.get_results::<ClassClosureRow>(conn))?;
 
-        with_connection(pool, |conn| query.get_results::<ClassClosureRow>(conn))
+        Ok((items, total_count))
     }
 
     async fn search_object_relations_from_backend(
@@ -814,12 +1143,34 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             .await
     }
 
+    async fn object_relations_page_from_backend(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+    ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError> {
+        let is_admin = self.is_admin(pool).await?;
+        self.object_relations_page_from_backend_with_admin_status(pool, query_options, is_admin)
+            .await
+    }
+
     async fn search_object_relations_from_backend_with_admin_status(
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
+        let (items, _) = self
+            .object_relations_page_from_backend_with_admin_status(pool, query_options, is_admin)
+            .await?;
+        Ok(items)
+    }
+
+    async fn object_relations_page_from_backend_with_admin_status(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        is_admin: bool,
+    ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError> {
         use crate::schema::hubuumobject::dsl::{
             hubuumobject, id as object_id, namespace_id as object_namespace_id,
         };
@@ -855,76 +1206,91 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             namespace_ids = ?namespace_ids
         );
 
-        let mut base_query = hubuumobject_relation.into_boxed();
+        let build_query = || -> Result<_, ApiError> {
+            let mut base_query = hubuumobject_relation
+                .filter(
+                    from_hubuum_object_id.eq_any(
+                        hubuumobject
+                            .select(object_id)
+                            .filter(object_namespace_id.eq_any(&namespace_ids)),
+                    ),
+                )
+                .filter(
+                    to_hubuum_object_id.eq_any(
+                        hubuumobject
+                            .select(object_id)
+                            .filter(object_namespace_id.eq_any(&namespace_ids)),
+                    ),
+                )
+                .into_boxed();
 
-        base_query = base_query
-            .filter(
-                from_hubuum_object_id.eq_any(
-                    hubuumobject
-                        .select(object_id)
-                        .filter(object_namespace_id.eq_any(&namespace_ids)),
-                ),
-            )
-            .filter(
-                to_hubuum_object_id.eq_any(
-                    hubuumobject
-                        .select(object_id)
-                        .filter(object_namespace_id.eq_any(&namespace_ids)),
-                ),
-            );
-
-        for param in query_params {
-            use crate::{date_search, numeric_search};
-            let operator = param.operator.clone();
-            match param.field {
-                FilterField::Id => numeric_search!(base_query, param, operator, relation_id),
-                FilterField::ClassRelation => {
-                    numeric_search!(base_query, param, operator, class_relation_id)
-                }
-                FilterField::ObjectFrom => {
-                    numeric_search!(base_query, param, operator, from_hubuum_object_id)
-                }
-                FilterField::ObjectTo => {
-                    numeric_search!(base_query, param, operator, to_hubuum_object_id)
-                }
-                FilterField::CreatedAt => {
-                    date_search!(base_query, param, operator, relation_created_at)
-                }
-                FilterField::UpdatedAt => {
-                    date_search!(base_query, param, operator, relation_updated_at)
-                }
-                _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't searchable (or does not exist) for object relations",
-                        param.field
-                    )));
+            for param in &query_params {
+                use crate::{date_search, numeric_search};
+                let operator = param.operator.clone();
+                match param.field {
+                    FilterField::Id => numeric_search!(base_query, param, operator, relation_id),
+                    FilterField::ClassRelation => {
+                        numeric_search!(base_query, param, operator, class_relation_id)
+                    }
+                    FilterField::ObjectFrom => {
+                        numeric_search!(base_query, param, operator, from_hubuum_object_id)
+                    }
+                    FilterField::ObjectTo => {
+                        numeric_search!(base_query, param, operator, to_hubuum_object_id)
+                    }
+                    FilterField::CreatedAt => {
+                        date_search!(base_query, param, operator, relation_created_at)
+                    }
+                    FilterField::UpdatedAt => {
+                        date_search!(base_query, param, operator, relation_updated_at)
+                    }
+                    _ => {
+                        return Err(ApiError::BadRequest(format!(
+                            "Field '{}' isn't searchable (or does not exist) for object relations",
+                            param.field
+                        )));
+                    }
                 }
             }
-        }
 
+            Ok(base_query)
+        };
+
+        let base_query = build_query()?;
+        let total_count = with_connection(pool, |conn| {
+            base_query
+                .select(relation_id)
+                .distinct()
+                .count()
+                .get_result::<i64>(conn)
+        })?;
+
+        let mut base_query = build_query()?;
         crate::apply_query_options!(base_query, query_options, HubuumObjectRelation);
 
         trace_query!(base_query, "Searching object relations");
 
-        with_connection(pool, |conn| {
+        let items = with_connection(pool, |conn| {
             base_query
                 .select(hubuumobject_relation::all_columns())
                 .distinct()
                 .load::<HubuumObjectRelation>(conn)
-        })
+        })?;
+
+        Ok((items, total_count))
     }
 
-    async fn search_object_relations_touching_from_backend<O>(
+    async fn object_relations_touching_page_from_backend<O>(
         &self,
         pool: &DbPool,
         object: O,
         query_options: QueryOptions,
-    ) -> Result<Vec<HubuumObjectRelation>, ApiError>
+    ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError>
     where
         O: SelfAccessors<HubuumObject>,
     {
         let is_admin = self.is_admin(pool).await?;
-        self.search_object_relations_touching_from_backend_with_admin_status(
+        self.object_relations_touching_page_from_backend_with_admin_status(
             pool,
             object,
             query_options,
@@ -933,13 +1299,13 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         .await
     }
 
-    async fn search_object_relations_touching_from_backend_with_admin_status<O>(
+    async fn object_relations_touching_page_from_backend_with_admin_status<O>(
         &self,
         pool: &DbPool,
         object: O,
         query_options: QueryOptions,
         is_admin: bool,
-    ) -> Result<Vec<HubuumObjectRelation>, ApiError>
+    ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError>
     where
         O: SelfAccessors<HubuumObject>,
     {
@@ -981,59 +1347,71 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             namespace_ids = ?namespace_ids
         );
 
-        let mut base_query = hubuumobject_relation
-            .filter(
-                from_hubuum_object_id
-                    .eq(object.id())
-                    .or(to_hubuum_object_id.eq(object.id())),
-            )
-            .into_boxed();
+        let build_query = || -> Result<_, ApiError> {
+            let mut base_query = hubuumobject_relation
+                .filter(
+                    from_hubuum_object_id
+                        .eq(object.id())
+                        .or(to_hubuum_object_id.eq(object.id())),
+                )
+                .filter(
+                    from_hubuum_object_id.eq_any(
+                        hubuumobject
+                            .select(object_id_column)
+                            .filter(object_namespace_id.eq_any(&namespace_ids)),
+                    ),
+                )
+                .filter(
+                    to_hubuum_object_id.eq_any(
+                        hubuumobject
+                            .select(object_id_column)
+                            .filter(object_namespace_id.eq_any(&namespace_ids)),
+                    ),
+                )
+                .into_boxed();
 
-        base_query = base_query
-            .filter(
-                from_hubuum_object_id.eq_any(
-                    hubuumobject
-                        .select(object_id_column)
-                        .filter(object_namespace_id.eq_any(&namespace_ids)),
-                ),
-            )
-            .filter(
-                to_hubuum_object_id.eq_any(
-                    hubuumobject
-                        .select(object_id_column)
-                        .filter(object_namespace_id.eq_any(&namespace_ids)),
-                ),
-            );
-
-        for param in query_params {
-            use crate::{date_search, numeric_search};
-            let operator = param.operator.clone();
-            match param.field {
-                FilterField::Id => numeric_search!(base_query, param, operator, relation_id),
-                FilterField::ClassRelation => {
-                    numeric_search!(base_query, param, operator, class_relation_id)
-                }
-                FilterField::ObjectFrom => {
-                    numeric_search!(base_query, param, operator, from_hubuum_object_id)
-                }
-                FilterField::ObjectTo => {
-                    numeric_search!(base_query, param, operator, to_hubuum_object_id)
-                }
-                FilterField::CreatedAt => {
-                    date_search!(base_query, param, operator, relation_created_at)
-                }
-                FilterField::UpdatedAt => {
-                    date_search!(base_query, param, operator, relation_updated_at)
-                }
-                _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't searchable (or does not exist) for object relations",
-                        param.field
-                    )));
+            for param in &query_params {
+                use crate::{date_search, numeric_search};
+                let operator = param.operator.clone();
+                match param.field {
+                    FilterField::Id => numeric_search!(base_query, param, operator, relation_id),
+                    FilterField::ClassRelation => {
+                        numeric_search!(base_query, param, operator, class_relation_id)
+                    }
+                    FilterField::ObjectFrom => {
+                        numeric_search!(base_query, param, operator, from_hubuum_object_id)
+                    }
+                    FilterField::ObjectTo => {
+                        numeric_search!(base_query, param, operator, to_hubuum_object_id)
+                    }
+                    FilterField::CreatedAt => {
+                        date_search!(base_query, param, operator, relation_created_at)
+                    }
+                    FilterField::UpdatedAt => {
+                        date_search!(base_query, param, operator, relation_updated_at)
+                    }
+                    _ => {
+                        return Err(ApiError::BadRequest(format!(
+                            "Field '{}' isn't searchable (or does not exist) for object relations",
+                            param.field
+                        )));
+                    }
                 }
             }
-        }
 
+            Ok(base_query)
+        };
+
+        let base_query = build_query()?;
+        let total_count = with_connection(pool, |conn| {
+            base_query
+                .select(relation_id)
+                .distinct()
+                .count()
+                .get_result::<i64>(conn)
+        })?;
+
+        let mut base_query = build_query()?;
         crate::apply_query_options!(base_query, query_options, HubuumObjectRelation);
 
         trace_query!(
@@ -1041,12 +1419,14 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             "Searching direct object relations touching object"
         );
 
-        with_connection(pool, |conn| {
+        let items = with_connection(pool, |conn| {
             base_query
                 .select(hubuumobject_relation::all_columns())
                 .distinct()
                 .load::<HubuumObjectRelation>(conn)
-        })
+        })?;
+
+        Ok((items, total_count))
     }
 
     async fn search_object_relations_between_ids_from_backend(
@@ -1136,6 +1516,25 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         .await
     }
 
+    async fn objects_related_to_page_from_backend<O>(
+        &self,
+        pool: &DbPool,
+        object: O,
+        query_options: QueryOptions,
+    ) -> Result<(Vec<RelatedObjectClosureRow>, i64), ApiError>
+    where
+        O: SelfAccessors<HubuumObject> + ClassAccessors,
+    {
+        let is_admin = self.is_admin(pool).await?;
+        self.objects_related_to_page_from_backend_with_admin_status(
+            pool,
+            object,
+            query_options,
+            is_admin,
+        )
+        .await
+    }
+
     async fn search_objects_related_to_from_backend_with_admin_status<O>(
         &self,
         pool: &DbPool,
@@ -1146,122 +1545,237 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
     where
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
-        use crate::models::search::SQLValue;
-        use crate::pagination::{cursor_filter_sql, normalized_sorts, order_sql_clause};
-        use crate::utilities::extensions::CustomStringExtensions;
-        use diesel::sql_query;
+        let (items, _) = self
+            .objects_related_to_page_from_backend_with_admin_status(
+                pool,
+                object,
+                query_options,
+                is_admin,
+            )
+            .await?;
+        Ok(items)
+    }
 
-        let query_params = query_options.filters.clone();
+    async fn objects_related_to_page_from_backend_with_admin_status<O>(
+        &self,
+        pool: &DbPool,
+        object: O,
+        query_options: QueryOptions,
+        is_admin: bool,
+    ) -> Result<(Vec<RelatedObjectClosureRow>, i64), ApiError>
+    where
+        O: SelfAccessors<HubuumObject> + ClassAccessors,
+    {
+        let Some(base_spec) =
+            build_related_objects_query_spec(self, pool, object, query_options.clone(), is_admin)
+                .await?
+        else {
+            return Ok((vec![], 0));
+        };
+        let total_count_spec = base_spec.clone().into_count_query("related_objects_count");
+        let spec = apply_raw_sql_pagination::<RelatedObjectClosureRow>(base_spec, &query_options)?;
 
+        let total_count = with_connection(pool, |conn| {
+            bind_raw_sql_query!(total_count_spec)
+                .get_result::<CountRow>(conn)
+                .map(|row| row.count)
+        })?;
+
+        let query = bind_raw_sql_query!(spec.clone());
         debug!(
-            message = "Searching objects related to object",
-            stage = "Starting",
-            user_id = self.id(),
-            object_id = object.id(),
-            query_params = ?query_params
+            message = "Searching source-relative related objects",
+            raw_sql = %spec.sql,
+            bind_variables = ?spec.bind_variables
         );
+        trace_query!(query, "Searching source-relative related objects");
+        let items = with_connection(pool, |conn| {
+            query.get_results::<RelatedObjectClosureRow>(conn)
+        })?;
 
-        let mut permissions_list = query_params.permissions()?;
-        permissions_list
-            .ensure_contains(&[Permissions::ReadObject, Permissions::ReadObjectRelation]);
+        Ok((items, total_count))
+    }
+}
 
-        let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(pool, &permissions_list, is_admin)
-            .await?
-            .into_iter()
-            .map(|n| n.id)
-            .collect();
+fn apply_raw_sql_pagination<T>(
+    mut spec: RawSqlQuerySpec,
+    query_options: &QueryOptions,
+) -> Result<RawSqlQuerySpec, ApiError>
+where
+    T: CursorPaginated + CursorSqlMapping,
+{
+    use crate::pagination::{cursor_filter_sql, normalized_sorts, order_sql_clause};
 
-        if namespace_ids.is_empty() {
-            debug!(
-                message = "Searching object relations related to object",
-                stage = "Namespace IDs",
-                user_id = self.id(),
-                result = "No namespace IDs found, returning empty result"
-            );
-            return Ok(vec![]);
+    let sorts = normalized_sorts::<T>(&query_options.sort)?;
+    let mut where_clauses = Vec::new();
+    if let Some(cursor_sql) = cursor_filter_sql::<T>(&sorts, query_options.cursor.as_deref())? {
+        where_clauses.push(cursor_sql);
+    }
+
+    if !where_clauses.is_empty() {
+        if spec.sql.contains("\nWHERE ") {
+            spec.sql.push_str("\n  AND ");
+        } else {
+            spec.sql.push_str("\nWHERE ");
         }
+        spec.sql.push_str(&where_clauses.join("\n  AND "));
+    }
 
+    let order_by = sorts
+        .iter()
+        .map(order_sql_clause::<T>)
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
+    spec.sql.push_str(&format!("\nORDER BY {order_by}"));
+
+    if let Some(limit) = query_options.limit {
+        spec.sql.push_str(&format!("\nLIMIT {limit}"));
+    }
+
+    Ok(spec)
+}
+
+async fn build_related_classes_query_spec<U, K>(
+    user: &U,
+    pool: &DbPool,
+    class: K,
+    query_options: QueryOptions,
+    is_admin: bool,
+) -> Result<Option<RawSqlQuerySpec>, ApiError>
+where
+    U: SelfAccessors<User> + UserNamespaceAccessors + ?Sized,
+    K: SelfAccessors<HubuumClass>,
+{
+    let query_params = query_options.filters.clone();
+
+    let mut permissions_list = query_params.permissions()?;
+    permissions_list.ensure_contains(&[Permissions::ReadClass, Permissions::ReadClassRelation]);
+
+    let namespace_ids: Vec<i32> = user
+        .load_namespaces_with_permissions_with_admin_status(pool, &permissions_list, is_admin)
+        .await?
+        .into_iter()
+        .map(|n| n.id)
+        .collect();
+
+    if namespace_ids.is_empty() {
+        return Ok(None);
+    }
+
+    let mut bind_variables = Vec::<SQLValue>::new();
+    bind_variables.push(SQLValue::Integer(class.id()));
+    let related_depth_upper_bound = related_depth_upper_bound(&query_params)?;
+    let namespace_array_sql = sql_integer_array(&namespace_ids, &mut bind_variables);
+    let mut raw_sql = if let Some(max_depth) = related_depth_upper_bound {
+        bind_variables.push(SQLValue::Integer(max_depth));
+        format!(
+            "SELECT * FROM get_bidirectionally_related_classes(?, {namespace_array_sql}, ?) AS related_classes"
+        )
+    } else {
+        format!(
+            "SELECT * FROM get_bidirectionally_related_classes(?, {namespace_array_sql}, NULL) AS related_classes"
+        )
+    };
+
+    let mut where_clauses = Vec::new();
+    for param in &query_params {
+        let clause = build_related_classes_clause(param, &mut bind_variables)?;
+        if let Some(clause) = clause {
+            where_clauses.push(clause);
+        }
+    }
+
+    if !where_clauses.is_empty() {
+        raw_sql.push_str("\nWHERE ");
+        raw_sql.push_str(&where_clauses.join("\n  AND "));
+    }
+
+    Ok(Some(RawSqlQuerySpec {
+        sql: raw_sql,
+        bind_variables,
+    }))
+}
+
+async fn build_related_objects_query_spec<U, O>(
+    user: &U,
+    pool: &DbPool,
+    object: O,
+    query_options: QueryOptions,
+    is_admin: bool,
+) -> Result<Option<RawSqlQuerySpec>, ApiError>
+where
+    U: SelfAccessors<User> + UserNamespaceAccessors + ?Sized,
+    O: SelfAccessors<HubuumObject> + ClassAccessors,
+{
+    let query_params = query_options.filters.clone();
+
+    debug!(
+        message = "Searching objects related to object",
+        stage = "Starting",
+        user_id = user.id(),
+        object_id = object.id(),
+        query_params = ?query_params
+    );
+
+    let mut permissions_list = query_params.permissions()?;
+    permissions_list.ensure_contains(&[Permissions::ReadObject, Permissions::ReadObjectRelation]);
+
+    let namespace_ids: Vec<i32> = user
+        .load_namespaces_with_permissions_with_admin_status(pool, &permissions_list, is_admin)
+        .await?
+        .into_iter()
+        .map(|n| n.id)
+        .collect();
+
+    if namespace_ids.is_empty() {
         debug!(
             message = "Searching object relations related to object",
             stage = "Namespace IDs",
-            user_id = self.id(),
-            result = "Found namespace IDs",
-            namespace_ids = ?namespace_ids
+            user_id = user.id(),
+            result = "No namespace IDs found, returning empty result"
         );
-
-        let sorts = normalized_sorts::<RelatedObjectClosureRow>(&query_options.sort)?;
-        let mut bind_variables = Vec::<SQLValue>::new();
-        bind_variables.push(SQLValue::Integer(object.id()));
-        let related_depth_upper_bound = related_depth_upper_bound(&query_params)?;
-        let namespace_array_sql = sql_integer_array(&namespace_ids, &mut bind_variables);
-        let mut raw_sql = if let Some(max_depth) = related_depth_upper_bound {
-            bind_variables.push(SQLValue::Integer(max_depth));
-            format!(
-                "SELECT * FROM get_bidirectionally_related_objects(?, {namespace_array_sql}, ?) AS related_objects"
-            )
-        } else {
-            format!(
-                "SELECT * FROM get_bidirectionally_related_objects(?, {namespace_array_sql}, NULL) AS related_objects"
-            )
-        };
-
-        let mut where_clauses = Vec::new();
-
-        for param in &query_params {
-            let clause = build_related_objects_clause(self, pool, param, &mut bind_variables)?;
-            if let Some(clause) = clause {
-                where_clauses.push(clause);
-            }
-        }
-
-        if let Some(cursor_sql) =
-            cursor_filter_sql::<RelatedObjectClosureRow>(&sorts, query_options.cursor.as_deref())?
-        {
-            where_clauses.push(cursor_sql);
-        }
-
-        if !where_clauses.is_empty() {
-            raw_sql.push_str("\nWHERE ");
-            raw_sql.push_str(&where_clauses.join("\n  AND "));
-        }
-
-        let order_by = sorts
-            .iter()
-            .map(order_sql_clause::<RelatedObjectClosureRow>)
-            .collect::<Result<Vec<_>, _>>()?
-            .join(", ");
-        raw_sql.push_str(&format!("\nORDER BY {order_by}"));
-
-        if let Some(limit) = query_options.limit {
-            raw_sql.push_str(&format!("\nLIMIT {limit}"));
-        }
-
-        raw_sql = raw_sql.replace_question_mark_with_indexed_n();
-
-        debug!(
-            message = "Searching source-relative related objects",
-            raw_sql = %raw_sql,
-            bind_variables = ?bind_variables
-        );
-
-        let mut query = sql_query(raw_sql).into_boxed();
-        for bind_var in bind_variables {
-            query = match bind_var {
-                SQLValue::Integer(i) => query.bind::<diesel::sql_types::Integer, _>(i),
-                SQLValue::String(s) => query.bind::<diesel::sql_types::Text, _>(s),
-                SQLValue::Boolean(b) => query.bind::<diesel::sql_types::Bool, _>(b),
-                SQLValue::Float(f) => query.bind::<diesel::sql_types::Float8, _>(f),
-                SQLValue::Date(d) => query.bind::<diesel::sql_types::Timestamp, _>(d),
-            };
-        }
-
-        trace_query!(query, "Searching source-relative related objects");
-
-        with_connection(pool, |conn| {
-            query.get_results::<RelatedObjectClosureRow>(conn)
-        })
+        return Ok(None);
     }
+
+    debug!(
+        message = "Searching object relations related to object",
+        stage = "Namespace IDs",
+        user_id = user.id(),
+        result = "Found namespace IDs",
+        namespace_ids = ?namespace_ids
+    );
+
+    let mut bind_variables = Vec::<SQLValue>::new();
+    bind_variables.push(SQLValue::Integer(object.id()));
+    let related_depth_upper_bound = related_depth_upper_bound(&query_params)?;
+    let namespace_array_sql = sql_integer_array(&namespace_ids, &mut bind_variables);
+    let mut raw_sql = if let Some(max_depth) = related_depth_upper_bound {
+        bind_variables.push(SQLValue::Integer(max_depth));
+        format!(
+            "SELECT * FROM get_bidirectionally_related_objects(?, {namespace_array_sql}, ?) AS related_objects"
+        )
+    } else {
+        format!(
+            "SELECT * FROM get_bidirectionally_related_objects(?, {namespace_array_sql}, NULL) AS related_objects"
+        )
+    };
+
+    let mut where_clauses = Vec::new();
+    for param in &query_params {
+        let clause = build_related_objects_clause(user, pool, param, &mut bind_variables)?;
+        if let Some(clause) = clause {
+            where_clauses.push(clause);
+        }
+    }
+
+    if !where_clauses.is_empty() {
+        raw_sql.push_str("\nWHERE ");
+        raw_sql.push_str(&where_clauses.join("\n  AND "));
+    }
+
+    Ok(Some(RawSqlQuerySpec {
+        sql: raw_sql,
+        bind_variables,
+    }))
 }
 
 fn sql_integer_array(values: &[i32], bind_variables: &mut Vec<SQLValue>) -> String {
@@ -1987,6 +2501,43 @@ impl User {
         Ok(result)
     }
 
+    pub async fn count_users(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+    ) -> Result<i64, ApiError> {
+        use crate::schema::users::dsl::{created_at, email, id, updated_at, username, users};
+
+        let query_params = query_options.filters.clone();
+        let mut base_query = users.into_boxed();
+
+        for param in query_params {
+            let operator = param.operator.clone();
+            match param.field {
+                FilterField::Id => numeric_search!(base_query, param, operator, id),
+                FilterField::Name => string_search!(base_query, param, operator, username),
+                FilterField::Username => string_search!(base_query, param, operator, username),
+                FilterField::Email => string_search!(base_query, param, operator, email),
+                FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
+                FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for users",
+                        param.field
+                    )));
+                }
+            }
+        }
+
+        with_connection(pool, |conn| {
+            base_query
+                .select(id)
+                .distinct()
+                .count()
+                .get_result::<i64>(conn)
+        })
+    }
+
     pub async fn search_groups(
         &self,
         pool: &DbPool,
@@ -2039,5 +2590,46 @@ impl User {
         })?;
 
         Ok(result)
+    }
+
+    pub async fn count_groups(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+    ) -> Result<i64, ApiError> {
+        use crate::schema::groups::dsl::{
+            created_at, description, groupname, groups, id, updated_at,
+        };
+
+        let query_params = query_options.filters.clone();
+        let mut base_query = groups.into_boxed();
+
+        for param in query_params {
+            let operator = param.operator.clone();
+            match param.field {
+                FilterField::Id => numeric_search!(base_query, param, operator, id),
+                FilterField::Name => string_search!(base_query, param, operator, groupname),
+                FilterField::Groupname => string_search!(base_query, param, operator, groupname),
+                FilterField::Description => {
+                    string_search!(base_query, param, operator, description)
+                }
+                FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
+                FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for groups",
+                        param.field
+                    )));
+                }
+            }
+        }
+
+        with_connection(pool, |conn| {
+            base_query
+                .select(id)
+                .distinct()
+                .count()
+                .get_result::<i64>(conn)
+        })
     }
 }

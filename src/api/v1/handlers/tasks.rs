@@ -2,7 +2,9 @@ use actix_web::{HttpRequest, Responder, get, http::StatusCode, routes, web};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
-use crate::db::traits::task::{find_task_record, list_task_events, list_tasks};
+use crate::db::traits::task::{
+    find_task_record, list_task_events_with_total_count, list_tasks_with_total_count,
+};
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::parse_query_parameter_with_passthrough;
@@ -120,20 +122,20 @@ pub async fn get_tasks(
     } else {
         Some(requestor.user.id)
     };
-
-    let tasks = list_tasks(
+    let (tasks, total_count) = list_tasks_with_total_count(
         &pool,
         submitted_by_filter,
         filters.kind.map(TaskKind::as_str),
         filters.status.map(TaskStatus::as_str),
         &search_params,
     )
-    .await?
-    .into_iter()
-    .map(|task| task.to_response())
-    .collect::<Result<Vec<_>, _>>()?;
+    .await?;
+    let tasks = tasks
+        .into_iter()
+        .map(|task| task.to_response())
+        .collect::<Result<Vec<_>, _>>()?;
 
-    paginated_json_response(tasks, StatusCode::OK, &params)
+    paginated_json_response(tasks, total_count, StatusCode::OK, &params)
 }
 
 #[utoipa::path(
@@ -189,10 +191,11 @@ pub async fn get_task_events(
     load_authorized_task(&pool, &requestor.user, task_id).await?;
     let (params, _) = parse_query_parameter_with_passthrough(req.query_string(), &[])?;
     let search_params = prepare_db_pagination::<TaskEventResponse>(&params)?;
-    let events = list_task_events(&pool, task_id, &search_params)
-        .await?
+    let (events, total_count) =
+        list_task_events_with_total_count(&pool, task_id, &search_params).await?;
+    let events = events
         .into_iter()
         .map(TaskEventResponse::from)
         .collect::<Vec<_>>();
-    paginated_json_response(events, StatusCode::OK, &params)
+    paginated_json_response(events, total_count, StatusCode::OK, &params)
 }

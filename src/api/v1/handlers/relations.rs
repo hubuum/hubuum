@@ -51,9 +51,9 @@ async fn get_class_relations(
     debug!(message = "Listing class relations", user_id = user.id());
 
     let search_params = prepare_db_pagination::<HubuumClassRelation>(&params)?;
-    let classes = user.search_class_relations(&pool, search_params).await?;
+    let (classes, total_count) = user.class_relations_page(&pool, search_params).await?;
 
-    paginated_json_response(classes, StatusCode::OK, &params)
+    paginated_json_response(classes, total_count, StatusCode::OK, &params)
 }
 
 #[utoipa::path(
@@ -217,9 +217,9 @@ async fn get_object_relations(
     debug!(message = "Listing object relations", user_id = user.id());
 
     let search_params = prepare_db_pagination::<HubuumObjectRelation>(&params)?;
-    let object_relations = user.search_object_relations(&pool, search_params).await?;
+    let (object_relations, total_count) = user.object_relations_page(&pool, search_params).await?;
 
-    paginated_json_response(object_relations, StatusCode::OK, &params)
+    paginated_json_response(object_relations, total_count, StatusCode::OK, &params)
 }
 
 #[utoipa::path(

@@ -1,16 +1,17 @@
 #[cfg(test)]
 mod tests {
     use crate::models::{
-        GroupPermission, Namespace, NewGroup, NewNamespaceWithAssignee, Permission, Permissions,
-        UpdateNamespace,
+        Group, GroupPermission, Namespace, NewGroup, NewNamespaceWithAssignee, Permission,
+        Permissions, UpdateNamespace,
     };
 
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::tests::api_operations::{
         delete_request, get_request, patch_request, post_request, put_request,
     };
-    use crate::tests::asserts::assert_response_status;
-    use crate::tests::asserts::header_value;
+    use crate::tests::asserts::{
+        assert_paginated_collection_total_count, assert_response_status, header_value,
+    };
     use crate::tests::{
         NamespaceFixture, TestContext, create_test_group, create_test_user, ensure_admin_group,
         test_context,
@@ -587,6 +588,114 @@ mod tests {
 
         group_one.delete(&context.pool).await.unwrap();
         group_two.delete(&context.pool).await.unwrap();
+        ns.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_namespace_permission_listings_total_count_match_paginated_results(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let ns = context
+            .namespace_fixture("namespace_permissions_total_count")
+            .await;
+        let group_one = NewGroup {
+            groupname: format!("ns-total-count-group-a-{}", ns.namespace.id),
+            description: Some("group a".to_string()),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+        let group_two = NewGroup {
+            groupname: format!("ns-total-count-group-b-{}", ns.namespace.id),
+            description: Some("group b".to_string()),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+        let group_three = NewGroup {
+            groupname: format!("ns-total-count-group-c-{}", ns.namespace.id),
+            description: Some("group c".to_string()),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+        let user = create_test_user(&context.pool).await;
+
+        group_one.add_member(&context.pool, &user).await.unwrap();
+        group_two.add_member(&context.pool, &user).await.unwrap();
+
+        for group in [&group_one, &group_two, &group_three] {
+            ns.namespace
+                .grant_one(&context.pool, group.id, Permissions::ReadCollection)
+                .await
+                .unwrap();
+        }
+
+        let (permissions, permissions_total): (Vec<GroupPermission>, i64) =
+            assert_paginated_collection_total_count(
+            &context.pool,
+            &context.admin_token,
+            10,
+            |cursor| match cursor {
+                Some(cursor) => format!(
+                    "{NAMESPACE_ENDPOINT}/{}/permissions?permissions=ReadCollection&groupname__contains=ns-total-count-group&sort=id&limit=2&cursor={cursor}",
+                    ns.namespace.id
+                ),
+                None => format!(
+                    "{NAMESPACE_ENDPOINT}/{}/permissions?permissions=ReadCollection&groupname__contains=ns-total-count-group&sort=id&limit=2",
+                    ns.namespace.id
+                ),
+            },
+        )
+        .await;
+        assert_eq!(permissions_total, 3);
+        assert_eq!(permissions.len(), 3);
+
+        let (user_permissions, user_permissions_total): (Vec<GroupPermission>, i64) =
+            assert_paginated_collection_total_count(
+            &context.pool,
+            &context.admin_token,
+            10,
+            |cursor| match cursor {
+                Some(cursor) => format!(
+                    "{NAMESPACE_ENDPOINT}/{}/permissions/user/{}?sort=id&limit=1&cursor={cursor}",
+                    ns.namespace.id, user.id
+                ),
+                None => format!(
+                    "{NAMESPACE_ENDPOINT}/{}/permissions/user/{}?sort=id&limit=1",
+                    ns.namespace.id, user.id
+                ),
+            },
+        )
+        .await;
+        assert_eq!(user_permissions_total, 2);
+        assert_eq!(user_permissions.len(), 2);
+
+        let (groups, groups_total): (Vec<Group>, i64) = assert_paginated_collection_total_count(
+            &context.pool,
+            &context.admin_token,
+            10,
+            |cursor| match cursor {
+                Some(cursor) => format!(
+                    "{NAMESPACE_ENDPOINT}/{}/has_permissions/ReadCollection?groupname__contains=ns-total-count-group&sort=id&limit=2&cursor={cursor}",
+                    ns.namespace.id
+                ),
+                None => format!(
+                    "{NAMESPACE_ENDPOINT}/{}/has_permissions/ReadCollection?groupname__contains=ns-total-count-group&sort=id&limit=2",
+                    ns.namespace.id
+                ),
+            },
+        )
+        .await;
+        assert_eq!(groups_total, 3);
+        assert_eq!(groups.len(), 3);
+
+        group_one.delete(&context.pool).await.unwrap();
+        group_two.delete(&context.pool).await.unwrap();
+        group_three.delete(&context.pool).await.unwrap();
+        user.delete(&context.pool).await.unwrap();
         ns.cleanup().await.unwrap();
     }
 

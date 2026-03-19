@@ -22,56 +22,64 @@ where
 }
 
 pub trait LoadUserGroupsPaginated: SelfAccessors<User> {
-    async fn load_user_groups_paginated(
+    async fn load_user_groups_paginated_with_total_count(
         &self,
         pool: &DbPool,
         query_options: &QueryOptions,
-    ) -> Result<Vec<Group>, ApiError>;
+    ) -> Result<(Vec<Group>, i64), ApiError>;
 }
 
 impl<T: ?Sized> LoadUserGroupsPaginated for T
 where
     T: SelfAccessors<User>,
 {
-    async fn load_user_groups_paginated(
+    async fn load_user_groups_paginated_with_total_count(
         &self,
         pool: &DbPool,
         query_options: &QueryOptions,
-    ) -> Result<Vec<Group>, ApiError> {
+    ) -> Result<(Vec<Group>, i64), ApiError> {
         use crate::schema::groups::dsl::*;
         use crate::schema::user_groups::dsl::{group_id, user_groups, user_id};
         use crate::{date_search, numeric_search, string_search};
 
-        let mut base_query = user_groups
-            .inner_join(groups.on(id.eq(group_id)))
-            .filter(user_id.eq(self.id()))
-            .select(groups::all_columns())
-            .into_boxed();
+        let build_query = || -> Result<_, ApiError> {
+            let mut base_query = user_groups
+                .inner_join(groups.on(id.eq(group_id)))
+                .filter(user_id.eq(self.id()))
+                .into_boxed();
 
-        for param in &query_options.filters {
-            let operator = param.operator.clone();
-            match param.field {
-                FilterField::Id => numeric_search!(base_query, param, operator, id),
-                FilterField::Name | FilterField::Groupname => {
-                    string_search!(base_query, param, operator, groupname)
-                }
-                FilterField::Description => {
-                    string_search!(base_query, param, operator, description)
-                }
-                FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
-                FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
-                _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't searchable (or does not exist) for groups",
-                        param.field
-                    )));
+            for param in &query_options.filters {
+                let operator = param.operator.clone();
+                match param.field {
+                    FilterField::Id => numeric_search!(base_query, param, operator, id),
+                    FilterField::Name | FilterField::Groupname => {
+                        string_search!(base_query, param, operator, groupname)
+                    }
+                    FilterField::Description => {
+                        string_search!(base_query, param, operator, description)
+                    }
+                    FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
+                    FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
+                    _ => {
+                        return Err(ApiError::BadRequest(format!(
+                            "Field '{}' isn't searchable (or does not exist) for groups",
+                            param.field
+                        )));
+                    }
                 }
             }
-        }
 
+            Ok(base_query)
+        };
+
+        let base_query = build_query()?;
+        let total_count = with_connection(pool, |conn| base_query.count().get_result::<i64>(conn))?;
+
+        let mut base_query = build_query()?.select(groups::all_columns());
         crate::apply_query_options!(base_query, query_options, Group);
+        let items = with_connection(pool, |conn| base_query.load::<Group>(conn))?;
 
-        with_connection(pool, |conn| base_query.load::<Group>(conn))
+        Ok((items, total_count))
     }
 }
 

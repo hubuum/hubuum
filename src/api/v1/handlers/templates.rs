@@ -98,14 +98,15 @@ pub async fn get_templates(
             .map(|namespace| namespace.id)
             .collect::<Vec<_>>();
 
-    let templates = crate::models::report_template::list_report_templates(
-        &pool,
-        &allowed_namespace_ids,
-        &search_params,
-    )
-    .await?;
+    let (templates, total_count) =
+        crate::models::report_template::list_report_templates_with_total_count(
+            &pool,
+            &allowed_namespace_ids,
+            &search_params,
+        )
+        .await?;
 
-    paginated_json_response(templates, StatusCode::OK, &params)
+    paginated_json_response(templates, total_count, StatusCode::OK, &params)
 }
 
 #[utoipa::path(

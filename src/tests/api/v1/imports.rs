@@ -16,7 +16,7 @@ mod tests {
         ImportPermissionPolicy, ImportRequest, ImportTaskResultResponse, NamespaceKey,
         NewTaskRecord, Permissions, TaskEventResponse, TaskKind, TaskResponse, TaskStatus,
     };
-    use crate::pagination::NEXT_CURSOR_HEADER;
+    use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::schema::hubuumclass::dsl::{hubuumclass, name as class_name_col, namespace_id};
     use crate::schema::namespaces::dsl::{
         description as namespace_description, id as namespace_id_field, namespaces,
@@ -602,8 +602,11 @@ mod tests {
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        let first_event_total =
+            header_value(&resp, TOTAL_COUNT_HEADER).and_then(|value| value.parse::<i64>().ok());
         let first_events: Vec<TaskEventResponse> = test::read_body_json(resp).await;
         assert_eq!(first_events.len(), 2);
+        assert!(first_event_total.unwrap_or_default() >= first_events.len() as i64);
         assert!(next_cursor.is_some());
 
         let resp = get_request(
@@ -617,7 +620,10 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
+        let second_event_total =
+            header_value(&resp, TOTAL_COUNT_HEADER).and_then(|value| value.parse::<i64>().ok());
         let second_events: Vec<TaskEventResponse> = test::read_body_json(resp).await;
+        assert_eq!(second_event_total, first_event_total);
         assert!(!second_events.is_empty());
         assert!(second_events[0].id > first_events.last().unwrap().id);
 
@@ -629,8 +635,11 @@ mod tests {
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        let first_result_total =
+            header_value(&resp, TOTAL_COUNT_HEADER).and_then(|value| value.parse::<i64>().ok());
         let first_results: Vec<ImportTaskResultResponse> = test::read_body_json(resp).await;
         assert_eq!(first_results.len(), 2);
+        assert!(first_result_total.unwrap_or_default() >= first_results.len() as i64);
         assert!(next_cursor.is_some());
 
         let resp = get_request(
@@ -644,7 +653,10 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
+        let second_result_total =
+            header_value(&resp, TOTAL_COUNT_HEADER).and_then(|value| value.parse::<i64>().ok());
         let second_results: Vec<ImportTaskResultResponse> = test::read_body_json(resp).await;
+        assert_eq!(second_result_total, first_result_total);
         assert!(!second_results.is_empty());
         assert!(second_results[0].id > first_results.last().unwrap().id);
     }

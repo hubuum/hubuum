@@ -99,12 +99,12 @@ pub async fn user_on_from_backend<T: NamespaceAccessors>(
     Ok(rows.into_iter().map(GroupPermission::from_tuple).collect())
 }
 
-pub async fn user_on_paginated_from_backend<T: NamespaceAccessors>(
+pub async fn user_on_paginated_with_total_count_from_backend<T: NamespaceAccessors>(
     pool: &DbPool,
     user_id: UserID,
     namespace_ref: T,
     query_options: &QueryOptions,
-) -> Result<Vec<GroupPermission>, ApiError> {
+) -> Result<(Vec<GroupPermission>, i64), ApiError> {
     use crate::models::traits::output::FromTuple;
     use crate::schema::groups::dsl::{groupname, groups, id as group_table_id};
     use crate::schema::permissions::dsl::{
@@ -114,47 +114,57 @@ pub async fn user_on_paginated_from_backend<T: NamespaceAccessors>(
     use crate::{date_search, numeric_search, string_search};
 
     let namespace_target_id = namespace_ref.namespace_id(pool).await?;
-    let group_ids_subquery = user_id.group_ids_subquery_from_backend();
+    let build_query = || -> Result<_, ApiError> {
+        let group_ids_subquery = user_id.group_ids_subquery_from_backend();
+        let mut query = groups
+            .inner_join(permissions.on(group_table_id.eq(group_id)))
+            .filter(namespace_id.eq(namespace_target_id))
+            .filter(group_id.eq_any(group_ids_subquery))
+            .into_boxed();
 
-    let mut query = groups
-        .inner_join(permissions.on(group_table_id.eq(group_id)))
-        .filter(namespace_id.eq(namespace_target_id))
-        .filter(group_id.eq_any(group_ids_subquery))
-        .into_boxed();
+        for perm in query_options.filters.permissions()?.iter().cloned() {
+            query = query.filter(diesel::dsl::sql::<diesel::sql_types::Bool>(
+                permission_filter_sql(perm, true),
+            ));
+        }
 
-    for perm in query_options.filters.permissions()?.iter().cloned() {
-        query = query.filter(diesel::dsl::sql::<diesel::sql_types::Bool>(
-            permission_filter_sql(perm, true),
-        ));
-    }
-
-    for param in &query_options.filters {
-        let operator = param.operator.clone();
-        match param.field {
-            FilterField::Id => numeric_search!(query, param, operator, permission_id),
-            FilterField::Name | FilterField::Groupname => {
-                string_search!(query, param, operator, groupname)
-            }
-            FilterField::CreatedAt => {
-                date_search!(query, param, operator, permission_created_at)
-            }
-            FilterField::UpdatedAt => {
-                date_search!(query, param, operator, permission_updated_at)
-            }
-            FilterField::Permissions => {}
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' isn't searchable (or does not exist) for permissions",
-                    param.field
-                )));
+        for param in &query_options.filters {
+            let operator = param.operator.clone();
+            match param.field {
+                FilterField::Id => numeric_search!(query, param, operator, permission_id),
+                FilterField::Name | FilterField::Groupname => {
+                    string_search!(query, param, operator, groupname)
+                }
+                FilterField::CreatedAt => {
+                    date_search!(query, param, operator, permission_created_at)
+                }
+                FilterField::UpdatedAt => {
+                    date_search!(query, param, operator, permission_updated_at)
+                }
+                FilterField::Permissions => {}
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for permissions",
+                        param.field
+                    )));
+                }
             }
         }
-    }
 
+        Ok(query)
+    };
+
+    let query = build_query()?;
+    let total_count = with_connection(pool, |conn| query.count().get_result::<i64>(conn))?;
+
+    let mut query = build_query()?;
     crate::apply_query_options!(query, query_options, GroupPermission);
-
     let rows = with_connection(pool, |conn| query.load::<(Group, Permission)>(conn))?;
-    Ok(rows.into_iter().map(GroupPermission::from_tuple).collect())
+
+    Ok((
+        rows.into_iter().map(GroupPermission::from_tuple).collect(),
+        total_count,
+    ))
 }
 
 pub async fn user_can_on_any_from_backend<U: SelfAccessors<User> + GroupAccessors>(
@@ -239,47 +249,56 @@ pub async fn groups_can_on_from_backend(
     })
 }
 
-pub async fn groups_can_on_paginated_from_backend(
+pub async fn groups_can_on_paginated_with_total_count_from_backend(
     pool: &DbPool,
     nid: i32,
     permission_type: Permissions,
     query_options: &QueryOptions,
-) -> Result<Vec<Group>, ApiError> {
+) -> Result<(Vec<Group>, i64), ApiError> {
     use crate::schema::groups::dsl::{
         created_at, description, groupname, groups, id as group_table_id, updated_at,
     };
     use crate::schema::permissions::dsl::*;
     use crate::{date_search, numeric_search, string_search};
 
-    let base_query = permissions.into_boxed().filter(namespace_id.eq(nid));
-    let filtered_query = permission_type.create_boxed_filter(base_query, true);
+    let build_query = || -> Result<_, ApiError> {
+        let base_query = permissions.into_boxed().filter(namespace_id.eq(nid));
+        let filtered_query = permission_type.create_boxed_filter(base_query, true);
 
-    let mut query = groups
-        .filter(group_table_id.eq_any(filtered_query.select(group_id).distinct()))
-        .into_boxed();
+        let mut query = groups
+            .filter(group_table_id.eq_any(filtered_query.select(group_id).distinct()))
+            .into_boxed();
 
-    for param in &query_options.filters {
-        let operator = param.operator.clone();
-        match param.field {
-            FilterField::Id => numeric_search!(query, param, operator, group_table_id),
-            FilterField::Name | FilterField::Groupname => {
-                string_search!(query, param, operator, groupname)
-            }
-            FilterField::Description => string_search!(query, param, operator, description),
-            FilterField::CreatedAt => date_search!(query, param, operator, created_at),
-            FilterField::UpdatedAt => date_search!(query, param, operator, updated_at),
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' isn't searchable (or does not exist) for groups",
-                    param.field
-                )));
+        for param in &query_options.filters {
+            let operator = param.operator.clone();
+            match param.field {
+                FilterField::Id => numeric_search!(query, param, operator, group_table_id),
+                FilterField::Name | FilterField::Groupname => {
+                    string_search!(query, param, operator, groupname)
+                }
+                FilterField::Description => string_search!(query, param, operator, description),
+                FilterField::CreatedAt => date_search!(query, param, operator, created_at),
+                FilterField::UpdatedAt => date_search!(query, param, operator, updated_at),
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for groups",
+                        param.field
+                    )));
+                }
             }
         }
-    }
 
+        Ok(query)
+    };
+
+    let query = build_query()?;
+    let total_count = with_connection(pool, |conn| query.count().get_result::<i64>(conn))?;
+
+    let mut query = build_query()?;
     crate::apply_query_options!(query, query_options, Group);
+    let items = with_connection(pool, |conn| query.load::<Group>(conn))?;
 
-    with_connection(pool, |conn| query.load::<Group>(conn))
+    Ok((items, total_count))
 }
 
 pub async fn groups_on_from_backend<T: NamespaceAccessors>(
@@ -375,6 +394,22 @@ pub async fn groups_on_paginated_from_backend<T: NamespaceAccessors>(
     permissions_filter: Vec<Permissions>,
     query_options: &QueryOptions,
 ) -> Result<Vec<GroupPermission>, ApiError> {
+    let (items, _) = groups_on_paginated_with_total_count_from_backend(
+        pool,
+        namespace_ref,
+        permissions_filter,
+        query_options,
+    )
+    .await?;
+    Ok(items)
+}
+
+pub async fn groups_on_paginated_with_total_count_from_backend<T: NamespaceAccessors>(
+    pool: &DbPool,
+    namespace_ref: T,
+    permissions_filter: Vec<Permissions>,
+    query_options: &QueryOptions,
+) -> Result<(Vec<GroupPermission>, i64), ApiError> {
     use crate::models::traits::output::FromTuple;
     use crate::schema::groups::dsl::{groupname, groups, id as group_table_id};
     use crate::schema::permissions::dsl::{
@@ -387,48 +422,75 @@ pub async fn groups_on_paginated_from_backend<T: NamespaceAccessors>(
     let mut permission_filters = query_options.filters.permissions()?;
     permission_filters.ensure_contains(&permissions_filter);
 
-    let mut query = groups
-        .inner_join(permissions.on(group_table_id.eq(group_id)))
-        .filter(namespace_id.eq(namespace_target_id))
-        .into_boxed();
+    let build_query = || -> Result<_, ApiError> {
+        let mut query = groups
+            .inner_join(permissions.on(group_table_id.eq(group_id)))
+            .filter(namespace_id.eq(namespace_target_id))
+            .into_boxed();
 
-    for perm in permission_filters.iter().cloned() {
-        query = query.filter(diesel::dsl::sql::<diesel::sql_types::Bool>(
-            permission_filter_sql(perm, true),
-        ));
-    }
+        for perm in permission_filters.iter().cloned() {
+            query = query.filter(diesel::dsl::sql::<diesel::sql_types::Bool>(
+                permission_filter_sql(perm, true),
+            ));
+        }
 
-    for param in &query_options.filters {
-        let operator = param.operator.clone();
-        match param.field {
-            FilterField::Id => numeric_search!(query, param, operator, permission_id),
-            FilterField::Name | FilterField::Groupname => {
-                string_search!(query, param, operator, groupname)
-            }
-            FilterField::CreatedAt => {
-                date_search!(query, param, operator, permission_created_at)
-            }
-            FilterField::UpdatedAt => {
-                date_search!(query, param, operator, permission_updated_at)
-            }
-            FilterField::Permissions => {}
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' isn't searchable (or does not exist) for permissions",
-                    param.field
-                )));
+        for param in &query_options.filters {
+            let operator = param.operator.clone();
+            match param.field {
+                FilterField::Id => numeric_search!(query, param, operator, permission_id),
+                FilterField::Name | FilterField::Groupname => {
+                    string_search!(query, param, operator, groupname)
+                }
+                FilterField::CreatedAt => {
+                    date_search!(query, param, operator, permission_created_at)
+                }
+                FilterField::UpdatedAt => {
+                    date_search!(query, param, operator, permission_updated_at)
+                }
+                FilterField::Permissions => {}
+                _ => {
+                    return Err(ApiError::BadRequest(format!(
+                        "Field '{}' isn't searchable (or does not exist) for permissions",
+                        param.field
+                    )));
+                }
             }
         }
-    }
 
+        Ok(query)
+    };
+
+    let query = build_query()?;
+    let total_count = with_connection(pool, |conn| query.count().get_result::<i64>(conn))?;
+
+    let mut query = build_query()?;
     crate::apply_query_options!(query, query_options, GroupPermission);
-
     let rows = with_connection(pool, |conn| {
         query
             .select((groups::all_columns(), permissions::all_columns()))
             .load::<(Group, Permission)>(conn)
     })?;
-    Ok(rows.into_iter().map(GroupPermission::from_tuple).collect())
+
+    Ok((
+        rows.into_iter().map(GroupPermission::from_tuple).collect(),
+        total_count,
+    ))
+}
+
+pub async fn count_groups_on_paginated_from_backend<T: NamespaceAccessors>(
+    pool: &DbPool,
+    namespace_ref: T,
+    permissions_filter: Vec<Permissions>,
+    query_options: &QueryOptions,
+) -> Result<i64, ApiError> {
+    let (_, total_count) = groups_on_paginated_with_total_count_from_backend(
+        pool,
+        namespace_ref,
+        permissions_filter,
+        query_options,
+    )
+    .await?;
+    Ok(total_count)
 }
 
 pub async fn group_on_from_backend(

@@ -69,41 +69,57 @@ pub async fn find_task_by_idempotency(
     })
 }
 
-pub async fn list_tasks(
+fn build_task_query<'a>(
+    submitted_by_filter: Option<i32>,
+    kind_filter: Option<&'a str>,
+    status_filter: Option<&'a str>,
+) -> crate::schema::tasks::BoxedQuery<'a, diesel::pg::Pg> {
+    use crate::schema::tasks::dsl::{kind, status, submitted_by, tasks};
+
+    let mut query = tasks.into_boxed();
+
+    if let Some(submitter_id) = submitted_by_filter {
+        query = query.filter(submitted_by.eq(Some(submitter_id)));
+    }
+
+    if let Some(task_kind) = kind_filter {
+        query = query.filter(kind.eq(task_kind));
+    }
+
+    if let Some(task_status) = status_filter {
+        query = query.filter(status.eq(task_status));
+    }
+
+    query
+}
+
+pub async fn list_tasks_with_total_count(
     pool: &DbPool,
     submitted_by_filter: Option<i32>,
     kind_filter: Option<&str>,
     status_filter: Option<&str>,
     query_options: &QueryOptions,
-) -> Result<Vec<TaskRecord>, ApiError> {
-    use crate::schema::tasks::dsl::{kind, status, submitted_by, tasks};
+) -> Result<(Vec<TaskRecord>, i64), ApiError> {
+    let total_count = with_connection(pool, |conn| {
+        build_task_query(submitted_by_filter, kind_filter, status_filter)
+            .count()
+            .get_result::<i64>(conn)
+    })?;
 
-    with_connection(pool, |conn| -> Result<Vec<TaskRecord>, ApiError> {
-        let mut query = tasks.into_boxed();
-
-        if let Some(submitter_id) = submitted_by_filter {
-            query = query.filter(submitted_by.eq(Some(submitter_id)));
-        }
-
-        if let Some(task_kind) = kind_filter {
-            query = query.filter(kind.eq(task_kind));
-        }
-
-        if let Some(task_status) = status_filter {
-            query = query.filter(status.eq(task_status));
-        }
-
+    let items = with_connection(pool, |conn| -> Result<Vec<TaskRecord>, ApiError> {
+        let mut query = build_task_query(submitted_by_filter, kind_filter, status_filter);
         apply_query_options!(query, query_options, TaskResponse);
-
         Ok(query.load::<TaskRecord>(conn)?)
-    })
+    })?;
+
+    Ok((items, total_count))
 }
 
-pub async fn list_task_events(
+pub async fn list_task_events_with_total_count(
     pool: &DbPool,
     task_id_value: i32,
     query_options: &QueryOptions,
-) -> Result<Vec<TaskEventRecord>, ApiError> {
+) -> Result<(Vec<TaskEventRecord>, i64), ApiError> {
     use crate::schema::task_events::dsl::{id, task_events, task_id};
 
     let limit = query_options
@@ -116,7 +132,14 @@ pub async fn list_task_events(
         .unwrap_or(false);
     let cursor_id = decode_history_cursor_id(query_options)?;
 
-    with_connection(pool, |conn| {
+    let total_count = with_connection(pool, |conn| {
+        task_events
+            .filter(task_id.eq(task_id_value))
+            .count()
+            .get_result::<i64>(conn)
+    })?;
+
+    let items = with_connection(pool, |conn| {
         let mut query = task_events.filter(task_id.eq(task_id_value)).into_boxed();
         if let Some(cursor_id) = cursor_id {
             query = if descending {
@@ -137,14 +160,16 @@ pub async fn list_task_events(
                 .limit(limit as i64)
                 .load::<TaskEventRecord>(conn)
         }
-    })
+    })?;
+
+    Ok((items, total_count))
 }
 
-pub async fn list_import_results(
+pub async fn list_import_results_with_total_count(
     pool: &DbPool,
     task_id_value: i32,
     query_options: &QueryOptions,
-) -> Result<Vec<ImportTaskResultRecord>, ApiError> {
+) -> Result<(Vec<ImportTaskResultRecord>, i64), ApiError> {
     use crate::schema::import_task_results::dsl::{id, import_task_results, task_id};
 
     let limit = query_options
@@ -157,7 +182,14 @@ pub async fn list_import_results(
         .unwrap_or(false);
     let cursor_id = decode_history_cursor_id(query_options)?;
 
-    with_connection(pool, |conn| {
+    let total_count = with_connection(pool, |conn| {
+        import_task_results
+            .filter(task_id.eq(task_id_value))
+            .count()
+            .get_result::<i64>(conn)
+    })?;
+
+    let items = with_connection(pool, |conn| {
         let mut query = import_task_results
             .filter(task_id.eq(task_id_value))
             .into_boxed();
@@ -180,7 +212,9 @@ pub async fn list_import_results(
                 .limit(limit as i64)
                 .load::<ImportTaskResultRecord>(conn)
         }
-    })
+    })?;
+
+    Ok((items, total_count))
 }
 
 pub async fn count_import_results_summary(
@@ -447,7 +481,10 @@ mod tests {
     use std::sync::mpsc;
     use std::thread;
 
-    use super::{claim_next_queued_task, create_task_record, find_task_record, list_task_events};
+    use super::{
+        claim_next_queued_task, create_task_record, find_task_record,
+        list_task_events_with_total_count,
+    };
     use crate::db::traits::user::DeleteUserRecord;
     use crate::db::with_transaction;
     use crate::models::search::QueryOptions;
@@ -517,7 +554,7 @@ mod tests {
         assert_ne!(claimed.unwrap(), locked_id);
         assert!(created_ids.contains(&locked_id));
 
-        let claimed_events = block_on(list_task_events(
+        let (claimed_events, _) = block_on(list_task_events_with_total_count(
             &context.pool,
             claimed.unwrap(),
             &QueryOptions {

@@ -36,6 +36,18 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
             .await
     }
 
+    async fn count_namespaces<C>(
+        &self,
+        backend: &C,
+        query_options: QueryOptions,
+    ) -> Result<i64, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.count_namespaces_from_backend(backend.db_pool(), query_options)
+            .await
+    }
+
     async fn search_classes<C>(
         &self,
         backend: &C,
@@ -45,6 +57,18 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         C: BackendContext + ?Sized,
     {
         self.search_classes_from_backend(backend.db_pool(), query_options)
+            .await
+    }
+
+    async fn count_classes<C>(
+        &self,
+        backend: &C,
+        query_options: QueryOptions,
+    ) -> Result<i64, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.count_classes_from_backend(backend.db_pool(), query_options)
             .await
     }
 
@@ -60,6 +84,18 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
             .await
     }
 
+    async fn count_objects<C>(
+        &self,
+        backend: &C,
+        query_options: QueryOptions,
+    ) -> Result<i64, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.count_objects_from_backend(backend.db_pool(), query_options)
+            .await
+    }
+
     async fn search_class_relations<C>(
         &self,
         backend: &C,
@@ -69,6 +105,18 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         C: BackendContext + ?Sized,
     {
         self.search_class_relations_from_backend(backend.db_pool(), query_options)
+            .await
+    }
+
+    async fn class_relations_page<C>(
+        &self,
+        backend: &C,
+        query_options: QueryOptions,
+    ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.class_relations_page_from_backend(backend.db_pool(), query_options)
             .await
     }
 
@@ -86,17 +134,31 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
             .await
     }
 
-    async fn search_class_relations_touching<C, K>(
+    async fn classes_related_to_page<C, K>(
         &self,
         backend: &C,
         class: K,
         query_options: QueryOptions,
-    ) -> Result<Vec<HubuumClassRelation>, ApiError>
+    ) -> Result<(Vec<ClassClosureRow>, i64), ApiError>
     where
         C: BackendContext + ?Sized,
         K: SelfAccessors<HubuumClass>,
     {
-        self.search_class_relations_touching_from_backend(backend.db_pool(), class, query_options)
+        self.classes_related_to_page_from_backend(backend.db_pool(), class, query_options)
+            .await
+    }
+
+    async fn class_relations_touching_page<C, K>(
+        &self,
+        backend: &C,
+        class: K,
+        query_options: QueryOptions,
+    ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError>
+    where
+        C: BackendContext + ?Sized,
+        K: SelfAccessors<HubuumClass>,
+    {
+        self.class_relations_touching_page_from_backend(backend.db_pool(), class, query_options)
             .await
     }
 
@@ -124,6 +186,18 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
             .await
     }
 
+    async fn object_relations_page<C>(
+        &self,
+        backend: &C,
+        query_options: QueryOptions,
+    ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.object_relations_page_from_backend(backend.db_pool(), query_options)
+            .await
+    }
+
     async fn search_objects_related_to<C, O>(
         &self,
         backend: &C,
@@ -138,17 +212,31 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
             .await
     }
 
-    async fn search_object_relations_touching<C, O>(
+    async fn objects_related_to_page<C, O>(
         &self,
         backend: &C,
         object: O,
         query_options: QueryOptions,
-    ) -> Result<Vec<HubuumObjectRelation>, ApiError>
+    ) -> Result<(Vec<RelatedObjectClosureRow>, i64), ApiError>
+    where
+        C: BackendContext + ?Sized,
+        O: SelfAccessors<HubuumObject> + ClassAccessors,
+    {
+        self.objects_related_to_page_from_backend(backend.db_pool(), object, query_options)
+            .await
+    }
+
+    async fn object_relations_touching_page<C, O>(
+        &self,
+        backend: &C,
+        object: O,
+        query_options: QueryOptions,
+    ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError>
     where
         C: BackendContext + ?Sized,
         O: SelfAccessors<HubuumObject>,
     {
-        self.search_object_relations_touching_from_backend(backend.db_pool(), object, query_options)
+        self.object_relations_touching_page_from_backend(backend.db_pool(), object, query_options)
             .await
     }
 
@@ -213,15 +301,15 @@ pub trait GroupAccessors: SelfAccessors<User> {
     }
 
     #[allow(async_fn_in_trait)]
-    async fn groups_paginated<C>(
+    async fn groups_paginated_with_total_count<C>(
         &self,
         backend: &C,
         query_options: &QueryOptions,
-    ) -> Result<Vec<Group>, ApiError>
+    ) -> Result<(Vec<Group>, i64), ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.load_user_groups_paginated(backend.db_pool(), query_options)
+        self.load_user_groups_paginated_with_total_count(backend.db_pool(), query_options)
             .await
     }
 

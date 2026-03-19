@@ -8,7 +8,7 @@ use crate::models::{
 };
 
 use crate::models::search::parse_query_parameter;
-use crate::pagination::prepare_db_pagination;
+use crate::pagination::{count_query_options, prepare_db_pagination};
 
 use crate::utilities::response::{json_response, json_response_created, paginated_json_response};
 use actix_web::{
@@ -56,9 +56,12 @@ pub async fn get_namespaces(
         Err(e) => return Err(e),
     };
 
+    let total_count = user
+        .count_namespaces(&pool, count_query_options(&params))
+        .await?;
     let search_params = prepare_db_pagination::<Namespace>(&params)?;
     let result = user.search_namespaces(&pool, search_params).await?;
-    paginated_json_response(result, StatusCode::OK, &params)
+    paginated_json_response(result, total_count, StatusCode::OK, &params)
 }
 
 #[utoipa::path(
@@ -254,10 +257,15 @@ pub async fn get_namespace_permissions(
     );
 
     let search_params = prepare_db_pagination::<GroupPermission>(&params)?;
-    let permissions =
-        crate::models::namespace::groups_on_paginated(&pool, namespace, vec![], &search_params)
-            .await?;
-    paginated_json_response(permissions, StatusCode::OK, &params)
+    let (permissions, total_count) =
+        crate::models::namespace::groups_on_paginated_with_total_count(
+            &pool,
+            namespace.clone(),
+            vec![],
+            &search_params,
+        )
+        .await?;
+    paginated_json_response(permissions, total_count, StatusCode::OK, &params)
 }
 
 /// List all permissions for a given group on a namespace
@@ -655,15 +663,19 @@ pub async fn get_namespace_user_permissions(
     );
 
     let search_params = prepare_db_pagination::<GroupPermission>(&query_options)?;
-    let permissions: Vec<GroupPermission> =
-        crate::models::namespace::user_on_paginated(&pool, user_id, namespace, &search_params)
-            .await?;
+    let (permissions, total_count) = crate::models::namespace::user_on_paginated_with_total_count(
+        &pool,
+        user_id.clone(),
+        namespace.clone(),
+        &search_params,
+    )
+    .await?;
 
-    if permissions.is_empty() {
+    if total_count == 0 {
         return Ok(json_response((), StatusCode::NOT_FOUND));
     }
 
-    paginated_json_response(permissions, StatusCode::OK, &query_options)
+    paginated_json_response(permissions, total_count, StatusCode::OK, &query_options)
 }
 
 /// List all groups that have any permissions on a namespace
@@ -708,7 +720,7 @@ pub async fn get_namespace_groups_with_permission(
     );
 
     let search_params = prepare_db_pagination::<Group>(&query_options)?;
-    let groups = crate::models::namespace::groups_can_on_paginated(
+    let (groups, total_count) = crate::models::namespace::groups_can_on_paginated_with_total_count(
         &pool,
         namespace.id,
         permission,
@@ -716,5 +728,5 @@ pub async fn get_namespace_groups_with_permission(
     )
     .await?;
 
-    paginated_json_response(groups, StatusCode::OK, &query_options)
+    paginated_json_response(groups, total_count, StatusCode::OK, &query_options)
 }

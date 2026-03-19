@@ -8,7 +8,7 @@ use tracing::debug;
 
 use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
-use crate::pagination::{CursorPaginated, finalize_page, next_cursor_header};
+use crate::pagination::{CursorPaginated, finalize_page, pagination_headers};
 
 static NO_CONTENT_STATUS_CODES: Lazy<HashSet<StatusCode>> = Lazy::new(|| {
     let mut m = HashSet::new();
@@ -60,6 +60,7 @@ pub fn json_response_created<T: Serialize>(object: T, location: &str) -> HttpRes
 
 pub fn paginated_json_response<T>(
     data: Vec<T>,
+    total_count: i64,
     status: StatusCode,
     query_options: &QueryOptions,
 ) -> Result<HttpResponse, ApiError>
@@ -70,12 +71,13 @@ where
     Ok(json_response_with_header(
         page.items,
         status,
-        next_cursor_header(&page.next_cursor),
+        Some(pagination_headers(&page.next_cursor, total_count)),
     ))
 }
 
 pub fn paginated_json_mapped_response<T, U, F>(
     data: Vec<T>,
+    total_count: i64,
     status: StatusCode,
     query_options: &QueryOptions,
     map: F,
@@ -89,6 +91,6 @@ where
     Ok(json_response_with_header(
         map(page.items),
         status,
-        next_cursor_header(&page.next_cursor),
+        Some(pagination_headers(&page.next_cursor, total_count)),
     ))
 }

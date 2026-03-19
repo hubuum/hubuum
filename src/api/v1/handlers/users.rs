@@ -5,7 +5,7 @@ use crate::extractors::{AdminAccess, AdminOrSelfAccess, UserAccess};
 use crate::models::search::parse_query_parameter;
 use crate::models::user::{NewUser, UpdateUser, UserID};
 use crate::models::{Group, User, UserToken, UserTokenMetadata};
-use crate::pagination::prepare_db_pagination;
+use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::utilities::response::{
     json_response, json_response_created, paginated_json_mapped_response, paginated_json_response,
 };
@@ -42,10 +42,13 @@ pub async fn get_users(
 
     debug!(message = "User list requested", requestor = user.username);
 
+    let total_count = user
+        .count_users(&pool, count_query_options(&params))
+        .await?;
     let search_params = prepare_db_pagination::<User>(&params)?;
     let result = user.search_users(&pool, search_params).await?;
 
-    paginated_json_response(result, StatusCode::OK, &params)
+    paginated_json_response(result, total_count, StatusCode::OK, &params)
 }
 
 #[utoipa::path(
@@ -115,10 +118,16 @@ pub async fn get_user_tokens(
     );
 
     let search_params = prepare_db_pagination::<UserToken>(&params)?;
-    let valid_tokens = user.tokens_paginated(&pool, &search_params).await?;
-    paginated_json_mapped_response(valid_tokens, StatusCode::OK, &params, |tokens| {
-        tokens.into_iter().map(UserTokenMetadata::from).collect()
-    })
+    let (valid_tokens, total_count) = user
+        .tokens_paginated_with_total_count(&pool, &search_params)
+        .await?;
+    paginated_json_mapped_response(
+        valid_tokens,
+        total_count,
+        StatusCode::OK,
+        &params,
+        |tokens| tokens.into_iter().map(UserTokenMetadata::from).collect(),
+    )
 }
 
 #[utoipa::path(
@@ -183,8 +192,10 @@ pub async fn get_user_groups(
     );
 
     let search_params = prepare_db_pagination::<Group>(&params)?;
-    let groups = user.groups_paginated(&pool, &search_params).await?;
-    paginated_json_response(groups, StatusCode::OK, &params)
+    let (groups, total_count) = user
+        .groups_paginated_with_total_count(&pool, &search_params)
+        .await?;
+    paginated_json_response(groups, total_count, StatusCode::OK, &params)
 }
 
 #[utoipa::path(

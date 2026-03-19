@@ -6,7 +6,7 @@ use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
 use crate::db::traits::task::{
     TaskCreateRequest, create_generic_task, find_task_by_idempotency, find_task_record,
-    list_import_results,
+    list_import_results_with_total_count,
 };
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
@@ -212,10 +212,11 @@ pub async fn get_import_results(
     load_authorized_import_task(&pool, &requestor.user, task_id).await?;
     let params = parse_query_parameter(req.query_string())?;
     let search_params = prepare_db_pagination::<ImportTaskResultResponse>(&params)?;
-    let results = list_import_results(&pool, task_id, &search_params)
-        .await?
+    let (results, total_count) =
+        list_import_results_with_total_count(&pool, task_id, &search_params).await?;
+    let results = results
         .into_iter()
         .map(ImportTaskResultResponse::from)
         .collect::<Vec<_>>();
-    paginated_json_response(results, StatusCode::OK, &params)
+    paginated_json_response(results, total_count, StatusCode::OK, &params)
 }

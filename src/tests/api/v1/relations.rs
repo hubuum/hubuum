@@ -15,7 +15,9 @@ mod tests {
     use crate::{assert_contains_all, assert_contains_same_ids};
 
     use crate::tests::api_operations::{delete_request, get_request, post_request};
-    use crate::tests::asserts::{assert_response_status, header_value};
+    use crate::tests::asserts::{
+        assert_paginated_collection_total_count, assert_response_status, header_value,
+    };
     use crate::tests::{
         ClassFixture, TestContext, create_class_fixture, create_test_group, ensure_normal_user,
         test_context,
@@ -321,6 +323,72 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let relations: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
         assert!(!relations.is_empty());
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_related_classes_total_count_stays_constant_across_pages(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let (classes, _relations) =
+            create_classes_and_relations(&context, "related_classes_total_count").await;
+        let (related_classes, total_count): (Vec<HubuumClassWithPath>, i64) =
+            assert_paginated_collection_total_count(
+                &context.pool,
+                &context.admin_token,
+                10,
+                |cursor| match cursor {
+                    Some(cursor) => format!(
+                        "{}?sort=class_id&limit=2&cursor={cursor}",
+                        related_classes_endpoint(classes[0].id)
+                    ),
+                    None => format!(
+                        "{}?sort=class_id&limit=2",
+                        related_classes_endpoint(classes[0].id)
+                    ),
+                },
+            )
+            .await;
+
+        assert_eq!(total_count, 5);
+        assert_eq!(related_classes.len(), 5);
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_class_relations_total_count_matches_paginated_results(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let (classes, _relations) =
+            create_classes_and_relations(&context, "class_relations_total_count").await;
+        let class_ids = classes
+            .iter()
+            .map(|class| class.id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let (relations, total_count): (Vec<HubuumClassRelation>, i64) =
+            assert_paginated_collection_total_count(
+            &context.pool,
+            &context.admin_token,
+            10,
+            |cursor| match cursor {
+                Some(cursor) => format!(
+                    "{CLASS_RELATIONS_ENDPOINT}?from_classes={class_ids}&sort=id&limit=2&cursor={cursor}"
+                ),
+                None => format!("{CLASS_RELATIONS_ENDPOINT}?from_classes={class_ids}&sort=id&limit=2"),
+            },
+        )
+        .await;
+
+        assert_eq!(total_count, 5);
+        assert_eq!(relations.len(), 5);
 
         cleanup(&classes).await;
     }
@@ -935,6 +1003,48 @@ mod tests {
         cleanup(&classes).await;
     }
 
+    #[rstest]
+    #[actix_web::test]
+    async fn test_object_relations_total_count_matches_paginated_results(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let (classes, class_relations) =
+            create_classes_and_relations(&context, "object_relations_total_count").await;
+        let objects = create_objects_in_classes(&context.pool, &classes).await;
+
+        create_object_relation(&context.pool, &objects[0], &objects[1], &class_relations[0]).await;
+        create_object_relation(&context.pool, &objects[1], &objects[2], &class_relations[1]).await;
+        create_object_relation(&context.pool, &objects[2], &objects[3], &class_relations[2]).await;
+
+        let class_relation_ids = class_relations[0..3]
+            .iter()
+            .map(|relation| relation.id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let (relations, total_count): (Vec<HubuumObjectRelation>, i64) =
+            assert_paginated_collection_total_count(
+            &context.pool,
+            &context.admin_token,
+            10,
+            |cursor| match cursor {
+                Some(cursor) => format!(
+                    "{OBJECT_RELATIONS_ENDPOINT}?class_relation={class_relation_ids}&sort=id&limit=2&cursor={cursor}"
+                ),
+                None => format!(
+                    "{OBJECT_RELATIONS_ENDPOINT}?class_relation={class_relation_ids}&sort=id&limit=2"
+                ),
+            },
+        )
+        .await;
+
+        assert_eq!(total_count, 3);
+        assert_eq!(relations.len(), 3);
+
+        cleanup(&classes).await;
+    }
+
     // class_idx object_idx, expected_code, filter, expected_object_ids
     // TODO: Add tests against _classes / _namespaces / _object
     // Note that <int> in the filter will be replaced with the object id with that index.
@@ -1142,6 +1252,117 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(fetched_ids, vec![relation_12.id, relation_15.id]);
         assert!(!fetched_ids.contains(&relation_23.id));
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_related_class_relations_total_count_matches_paginated_results(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let (classes, _relations) =
+            create_classes_and_relations(&context, "related_class_relations_total_count").await;
+
+        let (relations, total_count): (Vec<HubuumClassRelation>, i64) =
+            assert_paginated_collection_total_count(
+                &context.pool,
+                &context.admin_token,
+                10,
+                |cursor| match cursor {
+                    Some(cursor) => format!(
+                        "{}?sort=id&limit=1&cursor={cursor}",
+                        related_class_relations_endpoint(classes[2].id)
+                    ),
+                    None => format!(
+                        "{}?sort=id&limit=1",
+                        related_class_relations_endpoint(classes[2].id)
+                    ),
+                },
+            )
+            .await;
+
+        assert_eq!(total_count, 2);
+        assert_eq!(relations.len(), 2);
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_related_object_relations_total_count_matches_paginated_results(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let (classes, relations) =
+            create_classes_and_relations(&context, "related_object_relations_total_count").await;
+        let objects = create_objects_in_classes(&context.pool, &classes).await;
+
+        create_object_relation(&context.pool, &objects[0], &objects[1], &relations[0]).await;
+        create_object_relation(&context.pool, &objects[1], &objects[2], &relations[1]).await;
+        let class_relation_15 = create_relation(&context.pool, &classes[0], &classes[4]).await;
+        create_object_relation(&context.pool, &objects[0], &objects[4], &class_relation_15).await;
+
+        let (object_relations, total_count): (Vec<HubuumObjectRelation>, i64) =
+            assert_paginated_collection_total_count(
+                &context.pool,
+                &context.admin_token,
+                10,
+                |cursor| match cursor {
+                    Some(cursor) => format!(
+                        "{}?sort=id&limit=1&cursor={cursor}",
+                        related_relations_endpoint(classes[0].id, objects[0].id)
+                    ),
+                    None => format!(
+                        "{}?sort=id&limit=1",
+                        related_relations_endpoint(classes[0].id, objects[0].id)
+                    ),
+                },
+            )
+            .await;
+
+        assert_eq!(total_count, 2);
+        assert_eq!(object_relations.len(), 2);
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_related_objects_total_count_matches_paginated_results(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let (classes, relations) =
+            create_classes_and_relations(&context, "related_objects_total_count").await;
+        let objects = create_objects_in_classes(&context.pool, &classes).await;
+
+        create_object_relation(&context.pool, &objects[0], &objects[1], &relations[0]).await;
+        create_object_relation(&context.pool, &objects[1], &objects[2], &relations[1]).await;
+        let class_relation_15 = create_relation(&context.pool, &classes[0], &classes[4]).await;
+        create_object_relation(&context.pool, &objects[0], &objects[4], &class_relation_15).await;
+
+        let (related_objects, total_count): (Vec<HubuumObjectWithPath>, i64) =
+            assert_paginated_collection_total_count(
+                &context.pool,
+                &context.admin_token,
+                10,
+                |cursor| match cursor {
+                    Some(cursor) => format!(
+                        "{}?sort=id&limit=2&cursor={cursor}",
+                        related_objects_endpoint(classes[0].id, objects[0].id)
+                    ),
+                    None => format!(
+                        "{}?sort=id&limit=2",
+                        related_objects_endpoint(classes[0].id, objects[0].id)
+                    ),
+                },
+            )
+            .await;
+
+        assert_eq!(total_count, 3);
+        assert_eq!(related_objects.len(), 3);
 
         cleanup(&classes).await;
     }

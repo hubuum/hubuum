@@ -7,7 +7,7 @@ mod tests {
         ReportContentType, ReportTemplate, UpdateReportTemplate,
     };
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
-    use crate::tests::asserts::assert_response_status;
+    use crate::tests::asserts::{assert_paginated_collection_total_count, assert_response_status};
     use crate::tests::{
         create_test_group, create_test_user, ensure_admin_group, setup_pool_and_tokens,
     };
@@ -113,6 +113,72 @@ mod tests {
         )
         .await;
         assert_response_status(resp, StatusCode::NOT_FOUND).await;
+
+        namespace.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_template_list_total_count_matches_paginated_results() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let namespace = create_namespace(&pool, "pagination").await;
+
+        let expected_ids = vec![
+            post_request(
+                &pool,
+                &admin_token,
+                TEMPLATES_ENDPOINT,
+                &new_template_payload(namespace.id, "tmpl-page-a"),
+            )
+            .await,
+            post_request(
+                &pool,
+                &admin_token,
+                TEMPLATES_ENDPOINT,
+                &new_template_payload(namespace.id, "tmpl-page-b"),
+            )
+            .await,
+            post_request(
+                &pool,
+                &admin_token,
+                TEMPLATES_ENDPOINT,
+                &new_template_payload(namespace.id, "tmpl-page-c"),
+            )
+            .await,
+        ];
+
+        let mut created_ids = Vec::new();
+        for resp in expected_ids {
+            let resp = assert_response_status(resp, StatusCode::CREATED).await;
+            let created: ReportTemplate = test::read_body_json(resp).await;
+            created_ids.push(created.id);
+        }
+
+        let (templates, total_count): (Vec<ReportTemplate>, i64) =
+            assert_paginated_collection_total_count(
+                &pool,
+                &admin_token,
+                10,
+                |cursor| match cursor {
+                    Some(cursor) => format!(
+                        "{TEMPLATES_ENDPOINT}?namespace_id={}&sort=id&limit=2&cursor={cursor}",
+                        namespace.id
+                    ),
+                    None => format!(
+                        "{TEMPLATES_ENDPOINT}?namespace_id={}&sort=id&limit=2",
+                        namespace.id
+                    ),
+                },
+            )
+            .await;
+
+        assert_eq!(total_count, created_ids.len() as i64);
+        assert_eq!(
+            templates
+                .iter()
+                .map(|template| template.id)
+                .collect::<Vec<_>>(),
+            created_ids
+        );
 
         namespace.delete(&pool).await.unwrap();
     }
