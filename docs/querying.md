@@ -185,10 +185,25 @@ Nested JSON paths use comma-separated keys:
 JSON-backed IP address and CIDR values also support network-aware operators:
 
 - `is_in_network`
+  Matches when the stored IP/network is inside the filter network, including equality.
+  Example: stored `10.0.0.10`, filter `10.0.0.0/24` -> match.
+  Example: stored `10.0.0.0/25`, filter `10.0.0.0/24` -> match.
 - `contains_network`
+  Matches when the stored network fully contains the filter IP/network, including equality.
+  Example: stored `10.0.0.0/24`, filter `10.0.0.0/25` -> match.
+  Example: stored `10.0.0.0/24`, filter `10.0.1.0/24` -> no match.
 - `contains_ip`
+  Matches when the stored network strictly contains the filter host IP.
+  Example: stored `10.0.0.0/24`, filter `10.0.0.10` -> match.
+  Example: stored `10.0.0.10`, filter `10.0.0.10` -> no match, because a host does not strictly contain itself.
 - `overlaps_network`
+  Matches when the stored IP/network overlaps the filter network at all.
+  Example: stored `10.0.0.0/24`, filter `10.0.0.64/26` -> match.
+  Example: stored `10.0.1.0/24`, filter `10.0.0.0/24` -> no match.
 - `ip_equals`
+  Matches normalized network equality using PostgreSQL `inet` semantics rather than raw string equality.
+  Example: stored `10.0.0.10`, filter `10.0.0.10/32` -> match.
+  Example: stored `10.0.0.0/24`, filter `10.0.0.0/25` -> no match.
 
 Examples:
 

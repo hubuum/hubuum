@@ -1,7 +1,10 @@
 #[cfg(test)]
 mod tests {
+    use diesel::prelude::*;
+    use diesel::sql_types::Text;
     use rstest::rstest;
 
+    use crate::db::with_connection;
     use crate::models::{HubuumObject, NewHubuumClass, NewHubuumObject, UpdateHubuumObject};
     use crate::traits::{CanDelete, CanSave};
     use actix_web::{http::StatusCode, test};
@@ -22,6 +25,13 @@ mod tests {
 
     fn objects_in_class_endpoint(class_id: i32) -> String {
         format!("{OBJECT_ENDPOINT}/{class_id}/")
+    }
+
+    #[derive(QueryableByName)]
+    struct ExplainRow {
+        #[diesel(sql_type = Text)]
+        #[diesel(column_name = "QUERY PLAN")]
+        query_plan: String,
     }
 
     async fn create_test_objects(
@@ -57,6 +67,109 @@ mod tests {
         )
         .await
         .unwrap()
+    }
+
+    async fn create_json_ip_filter_fixture(
+        context: &TestContext,
+        prefix: &str,
+    ) -> (crate::tests::NamespaceFixture, crate::models::HubuumClass) {
+        let namespace = context.namespace_fixture(prefix).await;
+        let class = NewHubuumClass {
+            namespace_id: namespace.namespace.id,
+            name: format!("json ip filter class {prefix}"),
+            description: format!("json ip filter class {prefix}"),
+            json_schema: None,
+            validate_schema: None,
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let test_objects = [
+            (
+                "network_filter_object_0",
+                serde_json::json!({
+                    "network": { "address": "10.0.0.10" }
+                }),
+            ),
+            (
+                "network_filter_object_1",
+                serde_json::json!({
+                    "network": { "address": "10.0.0.0/24" }
+                }),
+            ),
+            (
+                "network_filter_object_2",
+                serde_json::json!({
+                    "network": { "address": "10.0.0.0/25" }
+                }),
+            ),
+            (
+                "network_filter_object_3",
+                serde_json::json!({
+                    "network": { "address": "not-an-ip" }
+                }),
+            ),
+            (
+                "network_filter_object_4",
+                serde_json::json!({
+                    "network": { "address": "2001:db8::10" }
+                }),
+            ),
+            (
+                "network_filter_object_5",
+                serde_json::json!({
+                    "network": { "address": "10.0.1.10" }
+                }),
+            ),
+            (
+                "network_filter_object_6",
+                serde_json::json!({
+                    "hostname": "missing-network"
+                }),
+            ),
+        ];
+
+        for (name, data) in test_objects {
+            NewHubuumObject {
+                namespace_id: namespace.namespace.id,
+                hubuum_class_id: class.id,
+                data,
+                name: name.to_string(),
+                description: name.to_string(),
+            }
+            .save(&context.pool)
+            .await
+            .unwrap();
+        }
+
+        (namespace, class)
+    }
+
+    async fn assert_json_ip_filter_query(
+        context: &TestContext,
+        prefix: &str,
+        query_string: &str,
+        expected_names: Vec<&str>,
+    ) {
+        let (namespace, class) = create_json_ip_filter_fixture(context, prefix).await;
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{OBJECT_ENDPOINT}/{}/?namespaces={}&{}&sort=id",
+                class.id, namespace.namespace.id, query_string
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let objects: Vec<HubuumObject> = test::read_body_json(resp).await;
+
+        let object_names: Vec<&str> = objects.iter().map(|object| object.name.as_str()).collect();
+        assert_eq!(object_names, expected_names);
+
+        namespace.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -437,99 +550,57 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let namespace_name = format!(
+        let unique = format!(
             "test_api_objects_filter_json_data_ip_operators_{}",
             query_string
                 .chars()
                 .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
                 .collect::<String>()
         );
-        let namespace = context.namespace_fixture(&namespace_name).await;
-        let class = NewHubuumClass {
-            namespace_id: namespace.namespace.id,
-            name: format!("json ip filter class {namespace_name}"),
-            description: format!("json ip filter class {namespace_name}"),
-            json_schema: None,
-            validate_schema: None,
-        }
-        .save(&context.pool)
-        .await
-        .unwrap();
+        assert_json_ip_filter_query(&context, &unique, query_string, expected_names).await;
+    }
 
-        let test_objects = [
-            (
-                "network_filter_object_0",
-                serde_json::json!({
-                    "network": { "address": "10.0.0.10" }
-                }),
-            ),
-            (
-                "network_filter_object_1",
-                serde_json::json!({
-                    "network": { "address": "10.0.0.0/24" }
-                }),
-            ),
-            (
-                "network_filter_object_2",
-                serde_json::json!({
-                    "network": { "address": "10.0.0.0/25" }
-                }),
-            ),
-            (
-                "network_filter_object_3",
-                serde_json::json!({
-                    "network": { "address": "not-an-ip" }
-                }),
-            ),
-            (
-                "network_filter_object_4",
-                serde_json::json!({
-                    "network": { "address": "2001:db8::10" }
-                }),
-            ),
-            (
-                "network_filter_object_5",
-                serde_json::json!({
-                    "network": { "address": "10.0.1.10" }
-                }),
-            ),
-            (
-                "network_filter_object_6",
-                serde_json::json!({
-                    "hostname": "missing-network"
-                }),
-            ),
-        ];
-
-        for (name, data) in test_objects {
-            NewHubuumObject {
-                namespace_id: namespace.namespace.id,
-                hubuum_class_id: class.id,
-                data,
-                name: name.to_string(),
-                description: name.to_string(),
-            }
-            .save(&context.pool)
-            .await
-            .unwrap();
-        }
-
-        let resp = get_request(
-            &context.pool,
-            &context.admin_token,
-            &format!(
-                "{OBJECT_ENDPOINT}/{}/?namespaces={}&{}&sort=id",
-                class.id, namespace.namespace.id, query_string
-            ),
-        )
-        .await;
-        let resp = assert_response_status(resp, StatusCode::OK).await;
-        let objects: Vec<HubuumObject> = test::read_body_json(resp).await;
-
-        let object_names: Vec<&str> = objects.iter().map(|object| object.name.as_str()).collect();
-        assert_eq!(object_names, expected_names);
-
-        namespace.cleanup().await.unwrap();
+    // Covers docs/querying.md "JSON filtering" network-aware JSON/IP operator examples.
+    #[rstest]
+    #[case::docs_is_in_network(
+        "json_data__is_in_network=network,address=10.0.0.0/24",
+        vec![
+            "network_filter_object_0",
+            "network_filter_object_1",
+            "network_filter_object_2"
+        ]
+    )]
+    #[case::docs_contains_network(
+        "json_data__contains_network=network,address=10.0.0.0/25",
+        vec!["network_filter_object_1", "network_filter_object_2"]
+    )]
+    #[case::docs_contains_ip(
+        "json_data__contains_ip=network,address=10.0.0.10",
+        vec!["network_filter_object_1", "network_filter_object_2"]
+    )]
+    #[case::docs_overlaps_network(
+        "json_data__overlaps_network=network,address=10.0.0.64/26",
+        vec!["network_filter_object_1", "network_filter_object_2"]
+    )]
+    #[case::docs_ip_equals(
+        "json_data__ip_equals=network,address=10.0.0.10",
+        vec!["network_filter_object_0"]
+    )]
+    #[actix_web::test]
+    async fn docs_api_objects_filter_json_data_ip_examples(
+        #[case] query_string: &str,
+        #[case] expected_names: Vec<&str>,
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let unique = format!(
+            "docs_api_objects_filter_json_data_ip_examples_{}",
+            query_string
+                .chars()
+                .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+                .collect::<String>()
+        );
+        assert_json_ip_filter_query(&context, &unique, query_string, expected_names).await;
     }
 
     #[rstest]
@@ -583,6 +654,151 @@ mod tests {
         )
         .await;
         let _ = assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+
+        namespace.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_api_objects_filter_json_data_ip_operators_large_dataset_and_expression_index(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let namespace = context
+            .namespace_fixture(
+                "test_api_objects_filter_json_data_ip_operators_large_dataset_and_expression_index",
+            )
+            .await;
+        let class = NewHubuumClass {
+            namespace_id: namespace.namespace.id,
+            name: "json ip large dataset class".to_string(),
+            description: "json ip large dataset class".to_string(),
+            json_schema: None,
+            validate_schema: None,
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let mut expected_names = Vec::new();
+        for subnet in 0..4 {
+            for host in 1..=150 {
+                let name = format!("large_network_object_{subnet}_{host}");
+                let address = format!("10.42.{subnet}.{host}");
+                if subnet == 1 {
+                    expected_names.push(name.clone());
+                }
+
+                NewHubuumObject {
+                    namespace_id: namespace.namespace.id,
+                    hubuum_class_id: class.id,
+                    data: serde_json::json!({
+                        "network": { "address": address }
+                    }),
+                    name: name.clone(),
+                    description: name,
+                }
+                .save(&context.pool)
+                .await
+                .unwrap();
+            }
+        }
+
+        for suffix in ["invalid", "missing", "ipv6"] {
+            let (name, data) = match suffix {
+                "invalid" => (
+                    "large_network_invalid".to_string(),
+                    serde_json::json!({ "network": { "address": "not-an-ip" } }),
+                ),
+                "missing" => (
+                    "large_network_missing".to_string(),
+                    serde_json::json!({ "hostname": "no-network" }),
+                ),
+                _ => (
+                    "large_network_ipv6".to_string(),
+                    serde_json::json!({ "network": { "address": "2001:db8::10" } }),
+                ),
+            };
+
+            NewHubuumObject {
+                namespace_id: namespace.namespace.id,
+                hubuum_class_id: class.id,
+                data,
+                name: name.clone(),
+                description: name,
+            }
+            .save(&context.pool)
+            .await
+            .unwrap();
+        }
+
+        with_connection(&context.pool, |conn| {
+            diesel::sql_query(
+                "CREATE INDEX idx_test_json_ip_expression \
+                 ON hubuumobject (try_inet(data #>> '{network,address}')) \
+                 WHERE try_inet(data #>> '{network,address}') IS NOT NULL",
+            )
+            .execute(conn)?;
+            diesel::sql_query("ANALYZE hubuumobject").execute(conn)?;
+            diesel::sql_query("SET enable_seqscan = off").execute(conn)?;
+            Ok::<_, diesel::result::Error>(())
+        })
+        .unwrap();
+
+        let plan_rows = with_connection(&context.pool, |conn| {
+            diesel::sql_query(
+                "EXPLAIN SELECT id FROM hubuumobject \
+                 WHERE try_inet(data #>> '{network,address}') IS NOT NULL \
+                 AND try_inet(data #>> '{network,address}') <<= '10.42.1.0/24'::inet",
+            )
+            .load::<ExplainRow>(conn)
+        })
+        .unwrap();
+        let plan_text = plan_rows
+            .iter()
+            .map(|row| row.query_plan.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            plan_text.contains("idx_test_json_ip_expression"),
+            "Expected EXPLAIN plan to reference idx_test_json_ip_expression, got:\n{plan_text}",
+        );
+
+        with_connection(&context.pool, |conn| {
+            diesel::sql_query("SET enable_seqscan = on").execute(conn)
+        })
+        .unwrap();
+
+        let mut cursor = None;
+        let mut fetched_names = Vec::new();
+        loop {
+            let cursor_param = cursor
+                .as_ref()
+                .map(|value: &String| format!("&cursor={value}"))
+                .unwrap_or_default();
+            let resp = get_request(
+                &context.pool,
+                &context.admin_token,
+                &format!(
+                    "{OBJECT_ENDPOINT}/{}/?namespaces={}&json_data__is_in_network=network,address=10.42.1.0/24&sort=id&limit=100{}",
+                    class.id, namespace.namespace.id, cursor_param
+                ),
+            )
+            .await;
+            let resp = assert_response_status(resp, StatusCode::OK).await;
+            let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+            let objects: Vec<HubuumObject> = test::read_body_json(resp).await;
+            fetched_names.extend(objects.into_iter().map(|object| object.name));
+
+            if let Some(next_cursor) = next_cursor {
+                cursor = Some(next_cursor);
+            } else {
+                break;
+            }
+        }
+
+        assert_eq!(fetched_names.len(), expected_names.len());
+        assert_eq!(fetched_names, expected_names);
 
         namespace.cleanup().await.unwrap();
     }
