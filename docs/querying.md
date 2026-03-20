@@ -54,6 +54,14 @@ Example:
 
 - `equals`
 
+### IP/network JSON fields
+
+- `is_in_network`
+- `contains_network`
+- `contains_ip`
+- `overlaps_network`
+- `ip_equals`
+
 ## Negation
 
 You can negate an operator by prefixing it with `not_`.
