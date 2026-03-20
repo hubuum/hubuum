@@ -316,6 +316,22 @@ mod tests {
         vec!["json_filter_object_0", "json_filter_object_1"]
     )]
     #[case::filter_missing_path("json_data__equals=missing=value", vec![])]
+    #[case::filter_ip_is_in_network(
+        "json_data__is_in_network=ip=10.0.0.0/24",
+        vec!["json_filter_object_0", "json_filter_object_1", "json_filter_object_2"]
+    )]
+    #[case::filter_ip_not_is_in_network(
+        "json_data__not_is_in_network=ip=10.0.0.0/24",
+        vec![]
+    )]
+    #[case::filter_ip_is_in_subnet(
+        "json_data__is_in_network=ip=10.0.0.8/29",
+        vec!["json_filter_object_0", "json_filter_object_1", "json_filter_object_2"]
+    )]
+    #[case::filter_ip_not_in_other_network(
+        "json_data__is_in_network=ip=192.168.0.0/24",
+        vec![]
+    )]
     #[actix_web::test]
     async fn docs_api_objects_filter_json_data_examples(
         #[case] query_string: &str,

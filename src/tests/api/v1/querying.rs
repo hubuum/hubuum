@@ -35,6 +35,7 @@ mod tests {
     const NUMERIC_DATE_OPERATORS: &[&str] = &["equals", "gt", "gte", "lt", "lte", "between"];
     const ARRAY_OPERATORS: &[&str] = &["equals", "contains"];
     const BOOLEAN_OPERATORS: &[&str] = &["equals"];
+    const IP_NETWORK_OPERATORS: &[&str] = &["is_in_network", "contains_ip", "network_overlaps"];
 
     fn objects_in_class_endpoint(class_id: i32) -> String {
         format!("/api/v1/classes/{class_id}/")
@@ -225,6 +226,7 @@ mod tests {
     #[case::numeric_date("Numeric and date fields", NUMERIC_DATE_OPERATORS)]
     #[case::array("Array fields", ARRAY_OPERATORS)]
     #[case::boolean("Boolean fields", BOOLEAN_OPERATORS)]
+    #[case::ip_network("IP/network fields", IP_NETWORK_OPERATORS)]
     fn test_querying_docs_operator_lists(
         #[case] section: &str,
         #[case] expected_operators: &[&str],
@@ -242,6 +244,7 @@ mod tests {
     #[case::numeric_date("Numeric and date fields", DataType::NumericOrDate)]
     #[case::array("Array fields", DataType::Array)]
     #[case::boolean("Boolean fields", DataType::Boolean)]
+    #[case::ip_network("IP/network fields", DataType::INet)]
     fn test_documented_operators_parse_for_documented_data_types(
         #[case] section: &str,
         #[case] data_type: DataType,
@@ -496,6 +499,104 @@ mod tests {
 
         let class_names: Vec<&str> = classes.iter().map(|class| class.name.as_str()).collect();
         assert_eq!(class_names, expected_names);
+
+        namespace.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[case::is_in_network(
+        "json_data__is_in_network=ip=10.0.0.0/24",
+        vec!["ip-inside"]
+    )]
+    #[case::not_is_in_network(
+        "json_data__not_is_in_network=ip=10.0.0.0/24",
+        vec!["ip-outside"]
+    )]
+    #[case::contains_ip(
+        "json_data__contains_ip=network=10.0.0.5",
+        vec!["ip-inside"]
+    )]
+    #[case::not_contains_ip(
+        "json_data__not_contains_ip=network=10.0.0.5",
+        vec!["ip-outside"]
+    )]
+    #[case::network_overlaps(
+        "json_data__network_overlaps=network=10.0.0.0/25",
+        vec!["ip-inside"]
+    )]
+    #[case::not_network_overlaps(
+        "json_data__not_network_overlaps=network=10.0.0.0/25",
+        vec!["ip-outside"]
+    )]
+    #[case::dot_notation(
+        "json_data__is_in_network=ip=10.0.0.0/24",
+        vec!["ip-inside"]
+    )]
+    #[actix_web::test]
+    async fn test_documented_ip_network_operators_on_objects(
+        #[case] query: &str,
+        #[case] expected_names: Vec<&str>,
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let label = format!(
+            "querying_inet_{}",
+            query
+                .chars()
+                .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+                .collect::<String>()
+        );
+        let namespace = context.namespace_fixture(&label).await;
+        let class = NewHubuumClass {
+            namespace_id: namespace.namespace.id,
+            name: format!("{label}_class"),
+            description: format!("{label}_class"),
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        // "ip-inside"  has an individual IP inside 10.0.0.0/24 and a /24 network
+        // "ip-outside" has an IP and network in a completely different range
+        for (name, data) in [
+            (
+                "ip-inside",
+                serde_json::json!({ "ip": "10.0.0.5", "network": "10.0.0.0/24" }),
+            ),
+            (
+                "ip-outside",
+                serde_json::json!({ "ip": "192.168.1.1", "network": "192.168.0.0/16" }),
+            ),
+        ] {
+            NewHubuumObject {
+                namespace_id: namespace.namespace.id,
+                hubuum_class_id: class.id,
+                data,
+                name: name.to_string(),
+                description: name.to_string(),
+            }
+            .save(&context.pool)
+            .await
+            .unwrap();
+        }
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{}?{}&sort=name.asc",
+                objects_in_class_endpoint(class.id),
+                query
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let objects: Vec<HubuumObject> = actix_test::read_body_json(resp).await;
+
+        let object_names: Vec<&str> = objects.iter().map(|object| object.name.as_str()).collect();
+        assert_eq!(object_names, expected_names);
 
         namespace.cleanup().await.unwrap();
     }

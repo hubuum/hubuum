@@ -54,6 +54,12 @@ Example:
 
 - `equals`
 
+### IP/network fields
+
+- `is_in_network`
+- `contains_ip`
+- `network_overlaps`
+
 ## Negation
 
 You can negate an operator by prefixing it with `not_`.
@@ -177,6 +183,23 @@ You can also use string-oriented operators for textual JSON values:
 ```
 
 If the JSON path does not exist, the filter does not match, but it does not fail the request.
+
+You can also filter by IP address and CIDR range using the IP/network operators. The value stored
+in the JSON field is cast to an `inet` or `cidr` type and compared using PostgreSQL network
+operators:
+
+```text
+/api/v1/classes/12/?json_data__is_in_network=ip=10.0.0.0/24
+/api/v1/classes/12/?json_data__contains_ip=network=10.0.0.5
+/api/v1/classes/12/?json_data__network_overlaps=network=192.168.0.0/16
+```
+
+Nested keys are supported using comma or dot notation:
+
+```text
+/api/v1/classes/12/?json_data__is_in_network=interfaces,eth0=10.0.0.0/24
+/api/v1/classes/12/?json_data__is_in_network=interfaces.eth0=10.0.0.0/24
+```
 
 ## Contextual endpoints
 

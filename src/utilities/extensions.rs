@@ -6,13 +6,24 @@ use tracing::error;
 pub trait CustomStringExtensions {
     /// ## Check if the value is a valid json key for hubuum
     ///
-    /// We support only lowercase alphanumeric characters and underscores, as
-    /// well as the comma character for nested keys. No spaces are allowed.
+    /// We support only alphanumeric characters, underscores, dollar signs,
+    /// commas, and dots for nested keys (dots are normalised to commas before
+    /// being passed to PostgreSQL). No spaces are allowed.
     ///
     /// ### Returns
     ///
     /// * A boolean
     fn is_valid_jsonb_search_key(&self) -> bool;
+
+    /// ## Check if the value is a valid inet or CIDR address
+    ///
+    /// Accepts individual IP addresses (IPv4 and IPv6) and CIDR prefixes such
+    /// as `10.0.0.0/24` or `2001:db8::/32`.
+    ///
+    /// ### Returns
+    ///
+    /// * A boolean
+    fn is_valid_inet_address(&self) -> bool;
 
     /// ## Coerce the value into a boolean
     ///
@@ -78,7 +89,14 @@ impl<T: AsRef<str>> CustomStringExtensions for T {
     fn is_valid_jsonb_search_key(&self) -> bool {
         self.as_ref()
             .chars()
-            .all(|c| c.is_alphanumeric() || c == '_' || c == ',' || c == '$')
+            .all(|c| c.is_alphanumeric() || c == '_' || c == ',' || c == '.' || c == '$')
+    }
+
+    fn is_valid_inet_address(&self) -> bool {
+        use ipnet::IpNet;
+        use std::net::IpAddr;
+        let s = self.as_ref();
+        s.parse::<IpAddr>().is_ok() || s.parse::<IpNet>().is_ok()
     }
 
     fn as_integer(&self) -> Result<Vec<i32>, ApiError> {
