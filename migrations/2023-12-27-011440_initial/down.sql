@@ -27,6 +27,10 @@ DROP FUNCTION IF EXISTS reverse_integer_array(INT[]);
 DROP FUNCTION IF EXISTS cleanup_invalid_object_relations();
 DROP FUNCTION IF EXISTS validate_object_relation();
 DROP FUNCTION IF EXISTS update_modified_column();
+DROP FUNCTION IF EXISTS are_classes_related(INT, INT);
+DROP FUNCTION IF EXISTS try_inet(TEXT);
+DROP FUNCTION IF EXISTS update_object_closure();
+DROP FUNCTION IF EXISTS update_class_closure();
 DROP FUNCTION IF EXISTS enforce_object_relation_order();
 DROP FUNCTION IF EXISTS enforce_class_relation_order();
 

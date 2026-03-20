@@ -176,7 +176,31 @@ You can also use string-oriented operators for textual JSON values:
 /api/v1/classes/12/?json_data__contains=hostname=srv
 ```
 
-If the JSON path does not exist, the filter does not match, but it does not fail the request.
+Nested JSON paths use comma-separated keys:
+
+```text
+/api/v1/classes/12/?json_data__equals=network,address=10.0.0.10
+```
+
+JSON-backed IP address and CIDR values also support network-aware operators:
+
+- `is_in_network`
+- `contains_network`
+- `contains_ip`
+- `overlaps_network`
+- `ip_equals`
+
+Examples:
+
+```text
+/api/v1/classes/12/?json_data__is_in_network=network,address=10.0.0.0/24
+/api/v1/classes/12/?json_data__contains_network=network,address=10.0.0.0/25
+/api/v1/classes/12/?json_data__contains_ip=network,address=10.0.0.10
+/api/v1/classes/12/?json_data__overlaps_network=network,address=10.0.0.64/26
+/api/v1/classes/12/?json_data__ip_equals=network,address=10.0.0.10
+```
+
+If the JSON path does not exist, or the stored value is not a valid IP/CIDR for one of the network-aware operators, the filter does not match, but it does not fail the request.
 
 ## Contextual endpoints
 

@@ -402,6 +402,192 @@ mod tests {
     }
 
     #[rstest]
+    #[case::is_in_network(
+        "json_data__is_in_network=network,address=10.0.0.0/24",
+        vec![
+            "network_filter_object_0",
+            "network_filter_object_1",
+            "network_filter_object_2"
+        ]
+    )]
+    #[case::contains_network(
+        "json_data__contains_network=network,address=10.0.0.0/25",
+        vec!["network_filter_object_1", "network_filter_object_2"]
+    )]
+    #[case::contains_ip(
+        "json_data__contains_ip=network,address=10.0.0.10",
+        vec!["network_filter_object_1", "network_filter_object_2"]
+    )]
+    #[case::overlaps_network(
+        "json_data__overlaps_network=network,address=10.0.0.64/26",
+        vec!["network_filter_object_1", "network_filter_object_2"]
+    )]
+    #[case::ip_equals(
+        "json_data__ip_equals=network,address=10.0.0.10/32",
+        vec!["network_filter_object_0"]
+    )]
+    #[case::not_is_in_network(
+        "json_data__not_is_in_network=network,address=10.0.0.0/24",
+        vec!["network_filter_object_4", "network_filter_object_5"]
+    )]
+    #[actix_web::test]
+    async fn test_api_objects_filter_json_data_ip_operators(
+        #[case] query_string: &str,
+        #[case] expected_names: Vec<&str>,
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let namespace_name = format!(
+            "test_api_objects_filter_json_data_ip_operators_{}",
+            query_string
+                .chars()
+                .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+                .collect::<String>()
+        );
+        let namespace = context.namespace_fixture(&namespace_name).await;
+        let class = NewHubuumClass {
+            namespace_id: namespace.namespace.id,
+            name: format!("json ip filter class {namespace_name}"),
+            description: format!("json ip filter class {namespace_name}"),
+            json_schema: None,
+            validate_schema: None,
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let test_objects = [
+            (
+                "network_filter_object_0",
+                serde_json::json!({
+                    "network": { "address": "10.0.0.10" }
+                }),
+            ),
+            (
+                "network_filter_object_1",
+                serde_json::json!({
+                    "network": { "address": "10.0.0.0/24" }
+                }),
+            ),
+            (
+                "network_filter_object_2",
+                serde_json::json!({
+                    "network": { "address": "10.0.0.0/25" }
+                }),
+            ),
+            (
+                "network_filter_object_3",
+                serde_json::json!({
+                    "network": { "address": "not-an-ip" }
+                }),
+            ),
+            (
+                "network_filter_object_4",
+                serde_json::json!({
+                    "network": { "address": "2001:db8::10" }
+                }),
+            ),
+            (
+                "network_filter_object_5",
+                serde_json::json!({
+                    "network": { "address": "10.0.1.10" }
+                }),
+            ),
+            (
+                "network_filter_object_6",
+                serde_json::json!({
+                    "hostname": "missing-network"
+                }),
+            ),
+        ];
+
+        for (name, data) in test_objects {
+            NewHubuumObject {
+                namespace_id: namespace.namespace.id,
+                hubuum_class_id: class.id,
+                data,
+                name: name.to_string(),
+                description: name.to_string(),
+            }
+            .save(&context.pool)
+            .await
+            .unwrap();
+        }
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{OBJECT_ENDPOINT}/{}/?namespaces={}&{}&sort=id",
+                class.id, namespace.namespace.id, query_string
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let objects: Vec<HubuumObject> = test::read_body_json(resp).await;
+
+        let object_names: Vec<&str> = objects.iter().map(|object| object.name.as_str()).collect();
+        assert_eq!(object_names, expected_names);
+
+        namespace.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[case("json_data__is_in_network=network,address=not-an-ip")]
+    #[case("json_data__contains_ip=network,address=10.0.0.0/24")]
+    #[actix_web::test]
+    async fn test_api_objects_filter_json_data_ip_operators_reject_invalid_rhs(
+        #[case] query_string: &str,
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let unique = format!(
+            "test_api_objects_filter_json_data_ip_operators_reject_invalid_rhs_{}",
+            query_string
+                .chars()
+                .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+                .collect::<String>()
+        );
+        let namespace = context.namespace_fixture(&unique).await;
+        let class = NewHubuumClass {
+            namespace_id: namespace.namespace.id,
+            name: format!("json ip invalid filter class {unique}"),
+            description: format!("json ip invalid filter class {unique}"),
+            json_schema: None,
+            validate_schema: None,
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        NewHubuumObject {
+            namespace_id: namespace.namespace.id,
+            hubuum_class_id: class.id,
+            data: serde_json::json!({
+                "network": { "address": "10.0.0.10" }
+            }),
+            name: "network_filter_invalid_rhs".to_string(),
+            description: "network_filter_invalid_rhs".to_string(),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{OBJECT_ENDPOINT}/{}/?namespaces={}&{}",
+                class.id, namespace.namespace.id, query_string
+            ),
+        )
+        .await;
+        let _ = assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+
+        namespace.cleanup().await.unwrap();
+    }
+
+    #[rstest]
     #[case::ok_40_74(r#"{"latitude": 40.7128, "longitude": -74.0060}"#, true)]
     #[case::failed_91_74(r#"{"latitude": 91, "longitude": 200}"#, false)]
     #[case::failed_neg91_74(r#"{"latitude": -91, "longitude": 200}"#, false)]

@@ -1,7 +1,9 @@
 #![allow(dead_code)]
 use chrono::NaiveDateTime;
+use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::net::IpAddr;
 use std::str::FromStr;
 use tracing::debug;
 
@@ -435,6 +437,7 @@ impl ParsedQueryParam {
         */
 
         let key = format!("'{{{key}}}'");
+        let field_expr = format!("{} #>> {}", field.table_field(), key);
 
         // The bind variables for the SQL query. We can't bind the key as using
         // bind variables for the key itself is not supported in Postgres.
@@ -445,6 +448,10 @@ impl ParsedQueryParam {
 
         let (op, neg) = self.operator.op_and_neg();
         let neg_str = if neg { "NOT " } else { "" };
+
+        if op.is_ip_operator() {
+            return self.as_json_ip_sql(&field_expr, value, op, neg);
+        }
 
         let sql_type = get_jsonb_field_type_from_value_and_operator(value, op.clone());
 
@@ -482,46 +489,22 @@ impl ParsedQueryParam {
             }
             Some(SQLMappedType::String) | Some(SQLMappedType::None) => {
                 bind_variables.push(SQLValue::String(value));
-                format!(
-                    "{}{} #>> {} {} ?",
-                    neg_str,
-                    field.table_field(),
-                    key,
-                    sql_op
-                )
+                format!("{}{} {} ?", neg_str, field_expr, sql_op)
             }
             Some(SQLMappedType::Numeric) => {
                 let ints = value.as_integer()?;
                 bind_variables.push(SQLValue::Integer(ints[0]));
-                format!(
-                    "{}({} #>> {})::numeric {} ?",
-                    neg_str,
-                    field.table_field(),
-                    key,
-                    sql_op
-                )
+                format!("{}({})::numeric {} ?", neg_str, field_expr, sql_op)
             }
             Some(SQLMappedType::Date) => {
                 let dates = value.as_date()?;
                 bind_variables.push(SQLValue::Date(dates[0]));
-                format!(
-                    "{}({} #>> {})::date {} ?",
-                    neg_str,
-                    field.table_field(),
-                    key,
-                    sql_op
-                )
+                format!("{}({})::date {} ?", neg_str, field_expr, sql_op)
             }
             Some(SQLMappedType::Boolean) => {
                 let boolean = value.as_boolean()?;
                 bind_variables.push(SQLValue::Boolean(boolean));
-                format!(
-                    "{}({} #>> {})::boolean {} ?",
-                    neg_str,
-                    field.table_field(),
-                    key,
-                    sql_op
-                )
+                format!("{}({})::boolean {} ?", neg_str, field_expr, sql_op)
             }
         };
 
@@ -530,6 +513,39 @@ impl ParsedQueryParam {
         Ok(SQLComponent {
             sql,
             bind_variables,
+        })
+    }
+
+    fn as_json_ip_sql(
+        &self,
+        field_expr: &str,
+        value: &str,
+        op: Operator,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError> {
+        let value = parse_json_ip_filter_value(value, &op)?;
+        let lhs_expr = format!("try_inet({field_expr})");
+        let sql_op = match op {
+            Operator::IpEquals => "=",
+            Operator::IsInNetwork => "<<=",
+            Operator::ContainsNetwork => ">>=",
+            Operator::ContainsIp => ">>",
+            Operator::OverlapsNetwork => "&&",
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Invalid operator for JSON IP search: '{op:?}'"
+                )));
+            }
+        };
+        let predicate = if negated {
+            format!("NOT ({lhs_expr} {sql_op} ?::inet)")
+        } else {
+            format!("{lhs_expr} {sql_op} ?::inet")
+        };
+
+        Ok(SQLComponent {
+            sql: format!("{lhs_expr} IS NOT NULL AND {predicate}"),
+            bind_variables: vec![SQLValue::String(value)],
         })
     }
 }
@@ -732,6 +748,11 @@ pub enum Operator {
     Lt,
     Lte,
     Between,
+    IsInNetwork,
+    ContainsNetwork,
+    ContainsIp,
+    OverlapsNetwork,
+    IpEquals,
 }
 
 impl std::fmt::Display for Operator {
@@ -752,8 +773,26 @@ impl std::fmt::Display for Operator {
             Operator::Lt => "lt",
             Operator::Lte => "lte",
             Operator::Between => "between",
+            Operator::IsInNetwork => "is_in_network",
+            Operator::ContainsNetwork => "contains_network",
+            Operator::ContainsIp => "contains_ip",
+            Operator::OverlapsNetwork => "overlaps_network",
+            Operator::IpEquals => "ip_equals",
         };
         write!(f, "{op}")
+    }
+}
+
+impl Operator {
+    fn is_ip_operator(&self) -> bool {
+        matches!(
+            self,
+            Operator::IsInNetwork
+                | Operator::ContainsNetwork
+                | Operator::ContainsIp
+                | Operator::OverlapsNetwork
+                | Operator::IpEquals
+        )
     }
 }
 
@@ -778,6 +817,11 @@ pub enum SearchOperator {
     Lt { is_negated: bool },
     Lte { is_negated: bool },
     Between { is_negated: bool },
+    IsInNetwork { is_negated: bool },
+    ContainsNetwork { is_negated: bool },
+    ContainsIp { is_negated: bool },
+    OverlapsNetwork { is_negated: bool },
+    IpEquals { is_negated: bool },
 }
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum DataType {
@@ -806,6 +850,11 @@ impl SearchOperator {
             | SO::Lt { .. }
             | SO::Lte { .. }
             | SO::Between { .. } => matches!(data_type, DataType::NumericOrDate),
+            SO::IsInNetwork { .. }
+            | SO::ContainsNetwork { .. }
+            | SO::ContainsIp { .. }
+            | SO::OverlapsNetwork { .. }
+            | SO::IpEquals { .. } => false,
             SO::Contains { .. } => {
                 matches!(data_type, DataType::String) || matches!(data_type, DataType::Array)
             }
@@ -832,6 +881,15 @@ impl SearchOperator {
             SearchOperator::Lt { is_negated, .. } => (Operator::Lt, *is_negated),
             SearchOperator::Lte { is_negated, .. } => (Operator::Lte, *is_negated),
             SearchOperator::Between { is_negated, .. } => (Operator::Between, *is_negated),
+            SearchOperator::IsInNetwork { is_negated, .. } => (Operator::IsInNetwork, *is_negated),
+            SearchOperator::ContainsNetwork { is_negated, .. } => {
+                (Operator::ContainsNetwork, *is_negated)
+            }
+            SearchOperator::ContainsIp { is_negated, .. } => (Operator::ContainsIp, *is_negated),
+            SearchOperator::OverlapsNetwork { is_negated, .. } => {
+                (Operator::OverlapsNetwork, *is_negated)
+            }
+            SearchOperator::IpEquals { is_negated, .. } => (Operator::IpEquals, *is_negated),
         }
     }
 
@@ -892,6 +950,21 @@ impl SearchOperator {
                 is_negated: negated,
             }),
             "between" => Ok(SO::Between {
+                is_negated: negated,
+            }),
+            "is_in_network" => Ok(SO::IsInNetwork {
+                is_negated: negated,
+            }),
+            "contains_network" => Ok(SO::ContainsNetwork {
+                is_negated: negated,
+            }),
+            "contains_ip" => Ok(SO::ContainsIp {
+                is_negated: negated,
+            }),
+            "overlaps_network" => Ok(SO::OverlapsNetwork {
+                is_negated: negated,
+            }),
+            "ip_equals" => Ok(SO::IpEquals {
                 is_negated: negated,
             }),
 
@@ -1091,6 +1164,42 @@ pub fn get_jsonb_field_type_from_value_and_operator(
         | Operator::IEndsWith
         | Operator::Like
         | Operator::Regex => Some(SQLMappedType::String),
+        Operator::IsInNetwork
+        | Operator::ContainsNetwork
+        | Operator::ContainsIp
+        | Operator::OverlapsNetwork
+        | Operator::IpEquals => None,
+    }
+}
+
+fn parse_json_ip_filter_value(value: &str, operator: &Operator) -> Result<String, ApiError> {
+    match operator {
+        Operator::ContainsIp => value
+            .parse::<IpAddr>()
+            .map(|ip| ip.to_string())
+            .map_err(|_| ApiError::BadRequest(format!("Invalid IP address: '{value}'"))),
+        Operator::IsInNetwork
+        | Operator::ContainsNetwork
+        | Operator::OverlapsNetwork
+        | Operator::IpEquals => parse_ip_or_host_network(value),
+        _ => Err(ApiError::InternalServerError(format!(
+            "Unexpected non-IP operator passed to IP parser: '{operator:?}'"
+        ))),
+    }
+}
+
+fn parse_ip_or_host_network(value: &str) -> Result<String, ApiError> {
+    IpNet::from_str(value)
+        .or_else(|_| ip_to_host_net(value))
+        .map(|net| net.to_string())
+        .map_err(|_| ApiError::BadRequest(format!("Invalid IP/CIDR: '{value}'")))
+}
+
+fn ip_to_host_net(value: &str) -> Result<IpNet, ()> {
+    match value.parse::<IpAddr>() {
+        Ok(IpAddr::V4(addr)) => Ipv4Net::new(addr, 32).map(IpNet::from).map_err(|_| ()),
+        Ok(IpAddr::V6(addr)) => Ipv6Net::new(addr, 128).map(IpNet::from).map_err(|_| ()),
+        Err(_) => Err(()),
     }
 }
 
@@ -1446,6 +1555,21 @@ mod test {
                     ),
                 ],
             },
+            TestCase {
+                query_string: "json_data__is_in_network=network,address=10.0.0.0/24&json_data__contains_ip=network,address=10.0.0.10",
+                expected: vec![
+                    pq(
+                        "json_data",
+                        SearchOperator::IsInNetwork { is_negated: false },
+                        "network,address=10.0.0.0/24",
+                    ),
+                    pq(
+                        "json_data",
+                        SearchOperator::ContainsIp { is_negated: false },
+                        "network,address=10.0.0.10",
+                    ),
+                ],
+            },
         ];
 
         for case in test_cases {
@@ -1500,6 +1624,82 @@ mod test {
                     bind_variables: vec![sqlvalue]
                 },
                 "Failed test case for param: {param:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_json_schema_sql_query_ip_generation() {
+        let field = "json_schema";
+        let test_cases = vec![
+            (
+                pq(
+                    "json_schema",
+                    SearchOperator::IsInNetwork { is_negated: false },
+                    "key,subkey=10.0.0.0/24",
+                ),
+                format!(
+                    "try_inet({field} #>> '{{key,subkey}}') IS NOT NULL AND try_inet({field} #>> '{{key,subkey}}') <<= ?::inet"
+                ),
+                SQLValue::String("10.0.0.0/24".to_string()),
+            ),
+            (
+                pq(
+                    "json_schema",
+                    SearchOperator::ContainsIp { is_negated: false },
+                    "key=10.0.0.10",
+                ),
+                format!(
+                    "try_inet({field} #>> '{{key}}') IS NOT NULL AND try_inet({field} #>> '{{key}}') >> ?::inet"
+                ),
+                SQLValue::String("10.0.0.10".to_string()),
+            ),
+            (
+                pq(
+                    "json_schema",
+                    SearchOperator::IpEquals { is_negated: true },
+                    "key=10.0.0.10",
+                ),
+                format!(
+                    "try_inet({field} #>> '{{key}}') IS NOT NULL AND NOT (try_inet({field} #>> '{{key}}') = ?::inet)"
+                ),
+                SQLValue::String("10.0.0.10/32".to_string()),
+            ),
+        ];
+
+        for (param, expected, sqlvalue) in test_cases {
+            let result = param.as_json_sql();
+            assert_eq!(
+                result.unwrap(),
+                SQLComponent {
+                    sql: expected.to_string(),
+                    bind_variables: vec![sqlvalue]
+                },
+                "Failed test case for param: {param:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_json_schema_sql_query_ip_validation() {
+        let test_cases = vec![
+            pq(
+                "json_schema",
+                SearchOperator::IsInNetwork { is_negated: false },
+                "key=not-an-ip",
+            ),
+            pq(
+                "json_schema",
+                SearchOperator::ContainsIp { is_negated: false },
+                "key=10.0.0.0/24",
+            ),
+        ];
+
+        for param in test_cases {
+            let result = param.as_json_sql();
+            assert!(
+                result.is_err(),
+                "Expected bad request for param: {param:?}, got {result:?}",
             );
         }
     }
@@ -1808,6 +2008,17 @@ mod test {
             ("lt", SO::Lt { is_negated: false }),
             ("lte", SO::Lte { is_negated: false }),
             ("between", SO::Between { is_negated: false }),
+            ("is_in_network", SO::IsInNetwork { is_negated: false }),
+            (
+                "contains_network",
+                SO::ContainsNetwork { is_negated: false },
+            ),
+            ("contains_ip", SO::ContainsIp { is_negated: false }),
+            (
+                "overlaps_network",
+                SO::OverlapsNetwork { is_negated: false },
+            ),
+            ("ip_equals", SO::IpEquals { is_negated: false }),
             ("not_equals", SO::Equals { is_negated: true }),
             ("not_iequals", SO::IEquals { is_negated: true }),
             ("not_contains", SO::Contains { is_negated: true }),
@@ -1822,6 +2033,17 @@ mod test {
             ("not_gte", SO::Gte { is_negated: true }),
             ("not_lt", SO::Lt { is_negated: true }),
             ("not_lte", SO::Lte { is_negated: true }),
+            ("not_is_in_network", SO::IsInNetwork { is_negated: true }),
+            (
+                "not_contains_network",
+                SO::ContainsNetwork { is_negated: true },
+            ),
+            ("not_contains_ip", SO::ContainsIp { is_negated: true }),
+            (
+                "not_overlaps_network",
+                SO::OverlapsNetwork { is_negated: true },
+            ),
+            ("not_ip_equals", SO::IpEquals { is_negated: true }),
         ];
 
         for (input, expected) in test_cases {

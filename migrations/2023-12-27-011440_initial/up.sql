@@ -276,6 +276,21 @@
     END;
     $$ language 'plpgsql';
 
+    CREATE OR REPLACE FUNCTION try_inet(value TEXT)
+    RETURNS inet
+    LANGUAGE plpgsql
+    IMMUTABLE
+    STRICT
+    PARALLEL SAFE
+    AS $$
+    BEGIN
+        RETURN value::inet;
+    EXCEPTION
+        WHEN OTHERS THEN
+            RETURN NULL;
+    END;
+    $$;
+
     -- In relation tables, ensure that the from entry is always less than the to entry, this ensures
     -- that we don't need to check for both directions when querying the database
     CREATE OR REPLACE FUNCTION enforce_class_relation_order()
