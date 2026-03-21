@@ -190,6 +190,28 @@ Nested JSON paths use comma-separated keys:
 /api/v1/classes/12/?json_data__equals=network,address=10.0.0.10
 ```
 
+JSON-backed numeric, boolean, and date/datetime values build on the same filter interface used elsewhere:
+
+- numeric/date operators: `equals`, `gt`, `gte`, `lt`, `lte`, `between`
+- boolean operators: `equals`
+
+Examples:
+
+```text
+/api/v1/classes/12/?json_data__equals=metrics,cpu_count=8
+/api/v1/classes/12/?json_data__gte=metrics,cpu_count=4
+/api/v1/classes/12/?json_data__equals=flags,enabled=true
+/api/v1/classes/12/?json_data__gt=maintenance,window_start=2026-03-01
+/api/v1/classes/12/?json_data__between=maintenance,window_start=2026-03-01,2026-03-31
+```
+
+Date-oriented JSON filters accept the same date formats as other date filters:
+
+- RFC3339 timestamps such as `2026-03-01T12:30:00Z`
+- calendar dates such as `2026-03-01`
+
+`between` uses the same comma-separated `min,max` format as the rest of the query interface.
+
 JSON-backed IP address and CIDR values also support network-aware operators:
 
 - `is_in_network`
@@ -223,7 +245,7 @@ Examples:
 /api/v1/classes/12/?json_data__ip_equals=network,address=10.0.0.10
 ```
 
-If the JSON path does not exist, or the stored value is not a valid IP/CIDR for one of the network-aware operators, the filter does not match, but it does not fail the request.
+If the JSON path does not exist, or the stored value cannot be interpreted as the requested JSON type, the filter does not match, but it does not fail the request.
 
 ## Contextual endpoints
 

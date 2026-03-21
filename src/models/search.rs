@@ -458,6 +458,19 @@ impl ParsedQueryParam {
         // TODO: Add JSON Schema usage type support via
         // get_jsonb_field_type_from_json_schema(schema, key)
 
+        match sql_type {
+            Some(SQLMappedType::Numeric) => {
+                return self.as_json_numeric_sql(&field_expr, value, op, neg);
+            }
+            Some(SQLMappedType::Date) => {
+                return self.as_json_date_sql(&field_expr, value, op, neg);
+            }
+            Some(SQLMappedType::Boolean) => {
+                return self.as_json_boolean_sql(&field_expr, value, op, neg);
+            }
+            _ => {}
+        }
+
         let (sql_op, value) = match op {
             Operator::Equals => ("=", (*value).to_string()),
             Operator::IEquals => ("ILIKE", (*value).to_string()),
@@ -491,21 +504,9 @@ impl ParsedQueryParam {
                 bind_variables.push(SQLValue::String(value));
                 format!("{}{} {} ?", neg_str, field_expr, sql_op)
             }
-            Some(SQLMappedType::Numeric) => {
-                let ints = value.as_integer()?;
-                bind_variables.push(SQLValue::Integer(ints[0]));
-                format!("{}({})::numeric {} ?", neg_str, field_expr, sql_op)
-            }
-            Some(SQLMappedType::Date) => {
-                let dates = value.as_date()?;
-                bind_variables.push(SQLValue::Date(dates[0]));
-                format!("{}({})::date {} ?", neg_str, field_expr, sql_op)
-            }
-            Some(SQLMappedType::Boolean) => {
-                let boolean = value.as_boolean()?;
-                bind_variables.push(SQLValue::Boolean(boolean));
-                format!("{}({})::boolean {} ?", neg_str, field_expr, sql_op)
-            }
+            Some(SQLMappedType::Numeric)
+            | Some(SQLMappedType::Date)
+            | Some(SQLMappedType::Boolean) => unreachable!(),
         };
 
         debug!(message = "SQL JSONB generation", sql = %sql, bind_varaibles = ?bind_variables);
@@ -546,6 +547,143 @@ impl ParsedQueryParam {
         Ok(SQLComponent {
             sql: format!("{lhs_expr} IS NOT NULL AND {predicate}"),
             bind_variables: vec![SQLValue::String(value)],
+        })
+    }
+
+    fn as_json_numeric_sql(
+        &self,
+        field_expr: &str,
+        value: &str,
+        op: Operator,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError> {
+        let bind_variables = value
+            .as_integer()?
+            .into_iter()
+            .map(SQLValue::Integer)
+            .collect::<Vec<_>>();
+        self.as_json_cast_sql(
+            &format!("try_numeric({field_expr})"),
+            bind_variables,
+            op,
+            negated,
+        )
+    }
+
+    fn as_json_date_sql(
+        &self,
+        field_expr: &str,
+        value: &str,
+        op: Operator,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError> {
+        let bind_variables = value
+            .as_date()?
+            .into_iter()
+            .map(SQLValue::Date)
+            .collect::<Vec<_>>();
+        self.as_json_cast_sql(
+            &format!("try_timestamp({field_expr})"),
+            bind_variables,
+            op,
+            negated,
+        )
+    }
+
+    fn as_json_boolean_sql(
+        &self,
+        field_expr: &str,
+        value: &str,
+        op: Operator,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError> {
+        let bind_variables = vec![SQLValue::Boolean(value.as_boolean()?)];
+        self.as_json_cast_sql(
+            &format!("try_boolean({field_expr})"),
+            bind_variables,
+            op,
+            negated,
+        )
+    }
+
+    fn as_json_cast_sql(
+        &self,
+        lhs_expr: &str,
+        bind_variables: Vec<SQLValue>,
+        op: Operator,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError> {
+        let predicate = match op {
+            Operator::Equals => {
+                if bind_variables.len() != 1 {
+                    return Err(ApiError::BadRequest(format!(
+                        "Operator 'equals' requires exactly 1 value for JSON field '{}'",
+                        self.field
+                    )));
+                }
+                format!("{lhs_expr} = ?")
+            }
+            Operator::Gt => {
+                if bind_variables.len() != 1 {
+                    return Err(ApiError::BadRequest(format!(
+                        "Operator 'gt' requires exactly 1 value for JSON field '{}'",
+                        self.field
+                    )));
+                }
+                format!("{lhs_expr} > ?")
+            }
+            Operator::Gte => {
+                if bind_variables.len() != 1 {
+                    return Err(ApiError::BadRequest(format!(
+                        "Operator 'gte' requires exactly 1 value for JSON field '{}'",
+                        self.field
+                    )));
+                }
+                format!("{lhs_expr} >= ?")
+            }
+            Operator::Lt => {
+                if bind_variables.len() != 1 {
+                    return Err(ApiError::BadRequest(format!(
+                        "Operator 'lt' requires exactly 1 value for JSON field '{}'",
+                        self.field
+                    )));
+                }
+                format!("{lhs_expr} < ?")
+            }
+            Operator::Lte => {
+                if bind_variables.len() != 1 {
+                    return Err(ApiError::BadRequest(format!(
+                        "Operator 'lte' requires exactly 1 value for JSON field '{}'",
+                        self.field
+                    )));
+                }
+                format!("{lhs_expr} <= ?")
+            }
+            Operator::Between => {
+                if bind_variables.len() != 2 {
+                    return Err(ApiError::BadRequest(format!(
+                        "Operator 'between' requires exactly 2 values for JSON field '{}'",
+                        self.field
+                    )));
+                }
+                format!("{lhs_expr} BETWEEN ? AND ?")
+            }
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Invalid operator for typed JSON search: '{op:?}'"
+                )));
+            }
+        };
+
+        let predicate = if negated {
+            format!("NOT ({predicate})")
+        } else {
+            predicate
+        };
+
+        Ok(SQLComponent {
+            sql: format!("{lhs_expr} IS NOT NULL AND {predicate}"),
+            bind_variables,
         })
     }
 }
@@ -1127,19 +1265,12 @@ pub fn get_jsonb_field_type_from_value_and_operator(
                 SQLMappedType::String,
             ],
         ),
-        Operator::Contains => get_sql_mapped_type_from_value(
-            value,
-            &[
-                SQLMappedType::Date,
-                SQLMappedType::Numeric,
-                SQLMappedType::String,
-            ],
-        ),
+        Operator::Contains => Some(SQLMappedType::String),
         Operator::Gt | Operator::Gte | Operator::Lt | Operator::Lte => {
             get_sql_mapped_type_from_value(value, &[SQLMappedType::Date, SQLMappedType::Numeric])
         }
         Operator::Between => {
-            let parts = value.split("--").collect::<Vec<&str>>();
+            let parts = value.split(',').collect::<Vec<&str>>();
             if parts.len() != 2 {
                 return None;
             }
@@ -1610,7 +1741,9 @@ mod test {
                     SearchOperator::Gt { is_negated: false },
                     "key,subkey=3",
                 ),
-                format!("({field} #>> '{{key,subkey}}')::numeric > ?"),
+                format!(
+                    "try_numeric({field} #>> '{{key,subkey}}') IS NOT NULL AND try_numeric({field} #>> '{{key,subkey}}') > ?"
+                ),
                 SQLValue::Integer(3),
             ),
         ];
@@ -1714,7 +1847,9 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key=2021-01-01",
                 ),
-                format!("({field} #>> '{{key}}')::date = ?"),
+                format!(
+                    "try_timestamp({field} #>> '{{key}}') IS NOT NULL AND try_timestamp({field} #>> '{{key}}') = ?"
+                ),
                 SQLValue::Date("2021-01-01".as_date().unwrap()[0]),
             ),
             (
@@ -1723,7 +1858,9 @@ mod test {
                     SearchOperator::Gt { is_negated: false },
                     "key,subkey=2021-01-01",
                 ),
-                format!("({field} #>> '{{key,subkey}}')::date > ?"),
+                format!(
+                    "try_timestamp({field} #>> '{{key,subkey}}') IS NOT NULL AND try_timestamp({field} #>> '{{key,subkey}}') > ?"
+                ),
                 SQLValue::Date("2021-01-01".as_date().unwrap()[0]),
             ),
             (
@@ -1732,18 +1869,41 @@ mod test {
                     SearchOperator::Gt { is_negated: true },
                     "key,subkey=2021-01-01",
                 ),
-                format!("NOT ({field} #>> '{{key,subkey}}')::date > ?"),
+                format!(
+                    "try_timestamp({field} #>> '{{key,subkey}}') IS NOT NULL AND NOT (try_timestamp({field} #>> '{{key,subkey}}') > ?)"
+                ),
                 SQLValue::Date("2021-01-01".as_date().unwrap()[0]),
+            ),
+            (
+                pq(
+                    "json_schema",
+                    SearchOperator::Between { is_negated: false },
+                    "key=2021-01-01,2021-01-31",
+                ),
+                format!(
+                    "try_timestamp({field} #>> '{{key}}') IS NOT NULL AND try_timestamp({field} #>> '{{key}}') BETWEEN ? AND ?"
+                ),
+                SQLValue::Date("2021-01-01,2021-01-31".as_date().unwrap()[0]),
             ),
         ];
 
-        for (param, expected, sqlvalue) in test_cases {
+        for (index, (param, expected, sqlvalue)) in test_cases.into_iter().enumerate() {
             let result = param.as_json_sql();
+            let expected_bindings = if index == 3 {
+                "2021-01-01,2021-01-31"
+                    .as_date()
+                    .unwrap()
+                    .into_iter()
+                    .map(SQLValue::Date)
+                    .collect::<Vec<_>>()
+            } else {
+                vec![sqlvalue]
+            };
             assert_eq!(
                 result.unwrap(),
                 SQLComponent {
                     sql: expected.to_string(),
-                    bind_variables: vec![sqlvalue]
+                    bind_variables: expected_bindings
                 },
                 "Failed test case for param: {param:?}",
             );
@@ -1760,7 +1920,9 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key=3",
                 ),
-                format!("({field} #>> '{{key}}')::numeric = ?"),
+                format!(
+                    "try_numeric({field} #>> '{{key}}') IS NOT NULL AND try_numeric({field} #>> '{{key}}') = ?"
+                ),
                 SQLValue::Integer(3),
             ),
             (
@@ -1769,7 +1931,9 @@ mod test {
                     SearchOperator::Gt { is_negated: false },
                     "key,subkey=3",
                 ),
-                format!("({field} #>> '{{key,subkey}}')::numeric > ?"),
+                format!(
+                    "try_numeric({field} #>> '{{key,subkey}}') IS NOT NULL AND try_numeric({field} #>> '{{key,subkey}}') > ?"
+                ),
                 SQLValue::Integer(3),
             ),
             (
@@ -1778,8 +1942,67 @@ mod test {
                     SearchOperator::Gt { is_negated: true },
                     "key,subkey=3",
                 ),
-                format!("NOT ({field} #>> '{{key,subkey}}')::numeric > ?"),
+                format!(
+                    "try_numeric({field} #>> '{{key,subkey}}') IS NOT NULL AND NOT (try_numeric({field} #>> '{{key,subkey}}') > ?)"
+                ),
                 SQLValue::Integer(3),
+            ),
+            (
+                pq(
+                    "json_schema",
+                    SearchOperator::Between { is_negated: false },
+                    "key=3,5",
+                ),
+                format!(
+                    "try_numeric({field} #>> '{{key}}') IS NOT NULL AND try_numeric({field} #>> '{{key}}') BETWEEN ? AND ?"
+                ),
+                SQLValue::Integer(3),
+            ),
+        ];
+
+        for (index, (param, expected, sqlvalue)) in test_cases.into_iter().enumerate() {
+            let result = param.as_json_sql();
+            let expected_bindings = if index == 3 {
+                vec![SQLValue::Integer(3), SQLValue::Integer(5)]
+            } else {
+                vec![sqlvalue]
+            };
+            assert_eq!(
+                result.unwrap(),
+                SQLComponent {
+                    sql: expected.to_string(),
+                    bind_variables: expected_bindings
+                },
+                "Failed test case for param: {param:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_json_schema_sql_query_boolean_generation() {
+        let field = "json_schema";
+        let test_cases = vec![
+            (
+                pq(
+                    "json_schema",
+                    SearchOperator::Equals { is_negated: false },
+                    "key=true",
+                ),
+                format!(
+                    "try_boolean({field} #>> '{{key}}') IS NOT NULL AND try_boolean({field} #>> '{{key}}') = ?"
+                ),
+                SQLValue::Boolean(true),
+            ),
+            (
+                pq(
+                    "json_schema",
+                    SearchOperator::Equals { is_negated: true },
+                    "key=false",
+                ),
+                format!(
+                    "try_boolean({field} #>> '{{key}}') IS NOT NULL AND NOT (try_boolean({field} #>> '{{key}}') = ?)"
+                ),
+                SQLValue::Boolean(false),
             ),
         ];
 
@@ -1806,7 +2029,9 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key,subkey=3",
                 ),
-                format!("({field} #>> '{{key,subkey}}')::numeric = ?"),
+                format!(
+                    "try_numeric({field} #>> '{{key,subkey}}') IS NOT NULL AND try_numeric({field} #>> '{{key,subkey}}') = ?"
+                ),
             ),
             (
                 pq(
@@ -1814,7 +2039,9 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key,subkey,subsubkey=3",
                 ),
-                format!("({field} #>> '{{key,subkey,subsubkey}}')::numeric = ?"),
+                format!(
+                    "try_numeric({field} #>> '{{key,subkey,subsubkey}}') IS NOT NULL AND try_numeric({field} #>> '{{key,subkey,subsubkey}}') = ?"
+                ),
             ),
             (
                 pq(
@@ -1822,7 +2049,9 @@ mod test {
                     SearchOperator::Equals { is_negated: true },
                     "key,subkey,subsubkey,subsubsubkey=3",
                 ),
-                format!("NOT ({field} #>> '{{key,subkey,subsubkey,subsubsubkey}}')::numeric = ?",),
+                format!(
+                    "try_numeric({field} #>> '{{key,subkey,subsubkey,subsubsubkey}}') IS NOT NULL AND NOT (try_numeric({field} #>> '{{key,subkey,subsubkey,subsubsubkey}}') = ?)"
+                ),
             ),
         ];
 
@@ -1975,6 +2204,13 @@ mod test {
             ("true", Operator::Equals, Some(SQLMappedType::Boolean)),
             ("2021-01-01", Operator::Gt, Some(SQLMappedType::Date)),
             ("3", Operator::Gt, Some(SQLMappedType::Numeric)),
+            (
+                "2021-01-01,2021-01-31",
+                Operator::Between,
+                Some(SQLMappedType::Date),
+            ),
+            ("3,5", Operator::Between, Some(SQLMappedType::Numeric)),
+            ("3", Operator::Contains, Some(SQLMappedType::String)),
             ("null", Operator::Gt, None),
             ("foo", Operator::Gt, None),
         ];

@@ -172,6 +172,105 @@ mod tests {
         namespace.cleanup().await.unwrap();
     }
 
+    async fn create_json_typed_filter_fixture(
+        context: &TestContext,
+        prefix: &str,
+    ) -> (crate::tests::NamespaceFixture, crate::models::HubuumClass) {
+        let namespace = context.namespace_fixture(prefix).await;
+        let class = NewHubuumClass {
+            namespace_id: namespace.namespace.id,
+            name: format!("json typed filter class {prefix}"),
+            description: format!("json typed filter class {prefix}"),
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let test_objects = [
+            (
+                "typed_filter_object_0",
+                serde_json::json!({
+                    "metrics": { "cpu_count": 2 },
+                    "flags": { "enabled": true },
+                    "maintenance": { "window_start": "2026-03-01" }
+                }),
+            ),
+            (
+                "typed_filter_object_1",
+                serde_json::json!({
+                    "metrics": { "cpu_count": 8 },
+                    "flags": { "enabled": false },
+                    "maintenance": { "window_start": "2026-03-15T08:00:00Z" }
+                }),
+            ),
+            (
+                "typed_filter_object_2",
+                serde_json::json!({
+                    "metrics": { "cpu_count": 16 },
+                    "flags": { "enabled": true },
+                    "maintenance": { "window_start": "2026-04-01T01:00:00+01:00" }
+                }),
+            ),
+            (
+                "typed_filter_object_invalid",
+                serde_json::json!({
+                    "metrics": { "cpu_count": "many" },
+                    "flags": { "enabled": "sometimes" },
+                    "maintenance": { "window_start": "not-a-date" }
+                }),
+            ),
+            (
+                "typed_filter_object_missing",
+                serde_json::json!({
+                    "hostname": "no-typed-fields"
+                }),
+            ),
+        ];
+
+        for (name, data) in test_objects {
+            NewHubuumObject {
+                namespace_id: namespace.namespace.id,
+                hubuum_class_id: class.id,
+                data,
+                name: name.to_string(),
+                description: name.to_string(),
+            }
+            .save(&context.pool)
+            .await
+            .unwrap();
+        }
+
+        (namespace, class)
+    }
+
+    async fn assert_json_typed_filter_query(
+        context: &TestContext,
+        prefix: &str,
+        query_string: &str,
+        expected_names: Vec<&str>,
+    ) {
+        let (namespace, class) = create_json_typed_filter_fixture(context, prefix).await;
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{OBJECT_ENDPOINT}/{}/?namespaces={}&{}&sort=id",
+                class.id, namespace.namespace.id, query_string
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let objects: Vec<HubuumObject> = test::read_body_json(resp).await;
+
+        let object_names: Vec<&str> = objects.iter().map(|object| object.name.as_str()).collect();
+        assert_eq!(object_names, expected_names);
+
+        namespace.cleanup().await.unwrap();
+    }
+
     #[rstest]
     #[actix_rt::test]
     async fn get_patch_and_delete_objects_in_class(#[future(awt)] test_context: TestContext) {
@@ -512,6 +611,49 @@ mod tests {
         assert_eq!(object_names, expected_names);
 
         namespace.cleanup().await.unwrap();
+    }
+
+    // Covers docs/querying.md typed JSON examples and ensures malformed stored values do not fail the request.
+    #[rstest]
+    #[case::json_numeric_equals(
+        "json_data__equals=metrics,cpu_count=8",
+        vec!["typed_filter_object_1"]
+    )]
+    #[case::json_numeric_between(
+        "json_data__between=metrics,cpu_count=4,16",
+        vec!["typed_filter_object_1", "typed_filter_object_2"]
+    )]
+    #[case::json_boolean_equals(
+        "json_data__equals=flags,enabled=true",
+        vec!["typed_filter_object_0", "typed_filter_object_2"]
+    )]
+    #[case::json_date_gt(
+        "json_data__gt=maintenance,window_start=2026-03-01",
+        vec!["typed_filter_object_1", "typed_filter_object_2"]
+    )]
+    #[case::json_date_between(
+        "json_data__between=maintenance,window_start=2026-03-01,2026-03-31",
+        vec!["typed_filter_object_0", "typed_filter_object_1"]
+    )]
+    #[case::json_date_not_between(
+        "json_data__not_between=maintenance,window_start=2026-03-01,2026-03-31",
+        vec!["typed_filter_object_2"]
+    )]
+    #[actix_web::test]
+    async fn docs_api_objects_filter_json_data_typed_examples(
+        #[case] query_string: &str,
+        #[case] expected_names: Vec<&str>,
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let unique = format!(
+            "docs_api_objects_filter_json_data_typed_examples_{}",
+            query_string
+                .chars()
+                .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+                .collect::<String>()
+        );
+        assert_json_typed_filter_query(&context, &unique, query_string, expected_names).await;
     }
 
     #[rstest]

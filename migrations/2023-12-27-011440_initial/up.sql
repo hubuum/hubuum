@@ -291,6 +291,56 @@
     END;
     $$;
 
+    CREATE OR REPLACE FUNCTION try_numeric(value TEXT)
+    RETURNS numeric
+    LANGUAGE plpgsql
+    IMMUTABLE
+    STRICT
+    PARALLEL SAFE
+    AS $$
+    BEGIN
+        RETURN value::numeric;
+    EXCEPTION
+        WHEN OTHERS THEN
+            RETURN NULL;
+    END;
+    $$;
+
+    CREATE OR REPLACE FUNCTION try_boolean(value TEXT)
+    RETURNS boolean
+    LANGUAGE plpgsql
+    IMMUTABLE
+    STRICT
+    PARALLEL SAFE
+    AS $$
+    BEGIN
+        RETURN value::boolean;
+    EXCEPTION
+        WHEN OTHERS THEN
+            RETURN NULL;
+    END;
+    $$;
+
+    CREATE OR REPLACE FUNCTION try_timestamp(value TEXT)
+    RETURNS timestamp
+    LANGUAGE plpgsql
+    IMMUTABLE
+    STRICT
+    PARALLEL SAFE
+    AS $$
+    BEGIN
+        BEGIN
+            RETURN value::timestamptz AT TIME ZONE 'UTC';
+        EXCEPTION
+            WHEN OTHERS THEN
+                RETURN value::timestamp;
+        END;
+    EXCEPTION
+        WHEN OTHERS THEN
+            RETURN NULL;
+    END;
+    $$;
+
     -- In relation tables, ensure that the from entry is always less than the to entry, this ensures
     -- that we don't need to check for both directions when querying the database
     CREATE OR REPLACE FUNCTION enforce_class_relation_order()
