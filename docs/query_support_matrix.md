@@ -23,7 +23,7 @@ Notes:
 
 | Endpoints | Filter fields | Sort fields | Default sort | Notes |
 |-----------|---------------|-------------|--------------|-------|
-| `/api/v1/namespaces` | `id`, `name`, `description`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `created_at`, `updated_at` | `id.asc` | `permissions` narrows the namespaces to those where the caller has the named permission |
+| `/api/v1/namespaces` | `id`, `name`, `description`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `description`, `created_at`, `updated_at` | `id.asc` | `permissions` narrows the namespaces to those where the caller has the named permission |
 | `/api/v1/namespaces/{namespace_id}/permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at` | `id.asc` | returns `GroupPermission` rows |
 | `/api/v1/namespaces/{namespace_id}/permissions/user/{user_id}` | `id`, `name`, `groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at` | `id.asc` | constrained to one namespace and one user's memberships |
 | `/api/v1/namespaces/{namespace_id}/has_permissions/{permission}` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id.asc` | path permission already narrows the result set |
@@ -32,8 +32,8 @@ Notes:
 
 | Endpoints | Filter fields | Sort fields | Default sort | Notes |
 |-----------|---------------|-------------|--------------|-------|
-| `/api/v1/classes` | `id`, `namespaces`, `name`, `description`, `validate_schema`, `json_schema`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `namespaces`, `namespace_id`, `created_at`, `updated_at` | `id.asc` | `json_schema` is only filterable, not sortable |
-| `/api/v1/classes/{class_id}/` | `id`, `name`, `description`, `namespaces`, `namespace_id`, `classes`, `class_id`, `json_data`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `namespaces`, `namespace_id`, `classes`, `class_id`, `created_at`, `updated_at` | `id.asc` | path constrains the result to a single class |
+| `/api/v1/classes` | `id`, `namespaces`, `name`, `description`, `validate_schema`, `json_schema`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `description`, `namespaces`, `namespace_id`, `created_at`, `updated_at` | `id.asc` | `json_schema` is only filterable, not sortable |
+| `/api/v1/classes/{class_id}/` | `id`, `name`, `description`, `namespaces`, `namespace_id`, `classes`, `class_id`, `json_data`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `description`, `namespaces`, `namespace_id`, `classes`, `class_id`, `created_at`, `updated_at` | `id.asc` | path constrains the result to a single class |
 | `/api/v1/classes/{class_id}/permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at` | `id.asc` | namespace permission rows for the class's namespace |
 
 ## Relations

@@ -15,11 +15,11 @@ use crate::utilities::response::{
 };
 
 use crate::models::{
-    ClassClosureRow, GroupPermission, HubuumClass, HubuumClassExpanded, HubuumClassID,
+    ClassGraphRow, GroupPermission, HubuumClass, HubuumClassExpanded, HubuumClassID,
     HubuumClassRelation, HubuumClassRelationID, HubuumClassWithPath, HubuumObject, HubuumObjectID,
     HubuumObjectRelation, HubuumObjectWithPath, NamespaceID, NewHubuumClass,
     NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation, Permissions,
-    RelatedClassGraph, RelatedObjectClosureRow, RelatedObjectGraph, UpdateHubuumClass,
+    RelatedClassGraph, RelatedObjectGraph, RelatedObjectGraphRow, UpdateHubuumClass,
     UpdateHubuumObject,
 };
 use crate::traits::{CanDelete, CanSave, CanUpdate, NamespaceAccessors, Search, SelfAccessors};
@@ -396,7 +396,7 @@ async fn get_related_classes(
     let class = class_id.instance(&pool).await?;
     can!(&pool, user, [Permissions::ReadClass], class);
 
-    let search_params = prepare_db_pagination::<ClassClosureRow>(&params)?;
+    let search_params = prepare_db_pagination::<ClassGraphRow>(&params)?;
     let (classes, total_count) = user
         .classes_related_to_page(&pool, class, search_params)
         .await?;
@@ -930,7 +930,7 @@ async fn get_related_objects(
         ignore_self_class = related_options.ignore_self_class,
     );
 
-    let search_params = prepare_db_pagination::<RelatedObjectClosureRow>(&params)?;
+    let search_params = prepare_db_pagination::<RelatedObjectGraphRow>(&params)?;
     let (hits, total_count) = user
         .objects_related_to_page(&pool, object, search_params)
         .await?;

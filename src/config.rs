@@ -22,6 +22,7 @@ pub const DEFAULT_TASK_POLL_INTERVAL_MS: u64 = 200;
 pub const DEFAULT_TOKEN_LIFETIME_HOURS: i64 = 24;
 pub const DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS: usize = 5;
 pub const DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS: u64 = 300;
+pub const DEFAULT_MAX_TRANSITIVE_DEPTH: i32 = 100;
 
 struct TokenHashKeyConfig {
     key: Vec<u8>,
@@ -172,6 +173,14 @@ pub struct AppConfig {
     )]
     pub max_page_limit: usize,
 
+    /// Maximum recursion depth for transitive relation graph walks
+    #[clap(
+        long,
+        env = "HUBUUM_MAX_TRANSITIVE_DEPTH",
+        default_value_t = DEFAULT_MAX_TRANSITIVE_DEPTH
+    )]
+    pub max_transitive_depth: i32,
+
     /// The name of the admin group
     #[clap(long, env = "HUBUUM_ADMIN_GROUPNAME", default_value = "admin")]
     pub admin_groupname: String,
@@ -255,6 +264,12 @@ impl AppConfig {
             ));
         }
 
+        if self.max_transitive_depth <= 0 {
+            return Err(ApiError::BadRequest(
+                "max_transitive_depth must be greater than 0".to_string(),
+            ));
+        }
+
         if self.default_page_limit == 0 {
             return Err(ApiError::BadRequest(
                 "default_page_limit must be greater than 0".to_string(),
@@ -290,6 +305,20 @@ pub fn token_lifetime_hours_i32() -> i32 {
         .unwrap_or(DEFAULT_TOKEN_LIFETIME_HOURS);
 
     hours.clamp(1, i32::MAX as i64) as i32
+}
+
+pub fn max_transitive_depth() -> i32 {
+    #[cfg(test)]
+    let depth = get_config_from_env()
+        .map(|config| config.max_transitive_depth)
+        .unwrap_or(DEFAULT_MAX_TRANSITIVE_DEPTH);
+
+    #[cfg(not(test))]
+    let depth = get_config()
+        .map(|config| config.max_transitive_depth)
+        .unwrap_or(DEFAULT_MAX_TRANSITIVE_DEPTH);
+
+    depth
 }
 
 pub fn token_hash_key_bytes() -> &'static [u8] {
@@ -426,6 +455,9 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         max_page_limit: env_or_default("HUBUUM_MAX_PAGE_LIMIT", "250")
             .parse()
             .unwrap_or(MAX_PAGE_LIMIT),
+        max_transitive_depth: env_or_default("HUBUUM_MAX_TRANSITIVE_DEPTH", "100")
+            .parse()
+            .unwrap_or(DEFAULT_MAX_TRANSITIVE_DEPTH),
         admin_groupname: env_or_default("HUBUUM_ADMIN_GROUPNAME", "admin"),
         tls_cert_path: env_or_default_opt("HUBUUM_TLS_CERT_PATH", None),
         tls_key_path: env_or_default_opt("HUBUUM_TLS_KEY_PATH", None),

@@ -1047,7 +1047,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         class: K,
         query_options: QueryOptions,
-    ) -> Result<Vec<ClassClosureRow>, ApiError>
+    ) -> Result<Vec<ClassGraphRow>, ApiError>
     where
         K: SelfAccessors<HubuumClass>,
     {
@@ -1066,7 +1066,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         class: K,
         query_options: QueryOptions,
-    ) -> Result<(Vec<ClassClosureRow>, i64), ApiError>
+    ) -> Result<(Vec<ClassGraphRow>, i64), ApiError>
     where
         K: SelfAccessors<HubuumClass>,
     {
@@ -1086,19 +1086,27 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         class: K,
         query_options: QueryOptions,
         is_admin: bool,
-    ) -> Result<Vec<ClassClosureRow>, ApiError>
+    ) -> Result<Vec<ClassGraphRow>, ApiError>
     where
         K: SelfAccessors<HubuumClass>,
     {
-        let (items, _) = self
-            .classes_related_to_page_from_backend_with_admin_status(
-                pool,
-                class,
-                query_options,
-                is_admin,
-            )
-            .await?;
-        Ok(items)
+        let Some(base_spec) =
+            build_related_classes_query_spec(self, pool, class, query_options.clone(), is_admin)
+                .await?
+        else {
+            return Ok(vec![]);
+        };
+        let spec = apply_raw_sql_pagination::<ClassGraphRow>(base_spec, &query_options)?;
+
+        let query = bind_raw_sql_query!(spec.clone());
+        debug!(
+            message = "Searching related classes",
+            raw_sql = %spec.sql,
+            bind_variables = ?spec.bind_variables
+        );
+        trace_query!(query, "Searching related classes");
+
+        with_connection(pool, |conn| query.get_results::<ClassGraphRow>(conn))
     }
 
     async fn classes_related_to_page_from_backend_with_admin_status<K>(
@@ -1107,7 +1115,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         class: K,
         query_options: QueryOptions,
         is_admin: bool,
-    ) -> Result<(Vec<ClassClosureRow>, i64), ApiError>
+    ) -> Result<(Vec<ClassGraphRow>, i64), ApiError>
     where
         K: SelfAccessors<HubuumClass>,
     {
@@ -1118,7 +1126,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             return Ok((vec![], 0));
         };
         let total_count_spec = base_spec.clone().into_count_query("related_classes_count");
-        let spec = apply_raw_sql_pagination::<ClassClosureRow>(base_spec, &query_options)?;
+        let spec = apply_raw_sql_pagination::<ClassGraphRow>(base_spec, &query_options)?;
 
         let total_count = with_connection(pool, |conn| {
             bind_raw_sql_query!(total_count_spec)
@@ -1126,9 +1134,14 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
                 .map(|row| row.count)
         })?;
 
-        let query = bind_raw_sql_query!(spec);
+        let query = bind_raw_sql_query!(spec.clone());
+        debug!(
+            message = "Searching related classes",
+            raw_sql = %spec.sql,
+            bind_variables = ?spec.bind_variables
+        );
         trace_query!(query, "Searching related classes");
-        let items = with_connection(pool, |conn| query.get_results::<ClassClosureRow>(conn))?;
+        let items = with_connection(pool, |conn| query.get_results::<ClassGraphRow>(conn))?;
 
         Ok((items, total_count))
     }
@@ -1502,7 +1515,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         object: O,
         query_options: QueryOptions,
-    ) -> Result<Vec<RelatedObjectClosureRow>, ApiError>
+    ) -> Result<Vec<RelatedObjectGraphRow>, ApiError>
     where
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
@@ -1521,7 +1534,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         object: O,
         query_options: QueryOptions,
-    ) -> Result<(Vec<RelatedObjectClosureRow>, i64), ApiError>
+    ) -> Result<(Vec<RelatedObjectGraphRow>, i64), ApiError>
     where
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
@@ -1541,19 +1554,27 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         object: O,
         query_options: QueryOptions,
         is_admin: bool,
-    ) -> Result<Vec<RelatedObjectClosureRow>, ApiError>
+    ) -> Result<Vec<RelatedObjectGraphRow>, ApiError>
     where
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
-        let (items, _) = self
-            .objects_related_to_page_from_backend_with_admin_status(
-                pool,
-                object,
-                query_options,
-                is_admin,
-            )
-            .await?;
-        Ok(items)
+        let Some(base_spec) =
+            build_related_objects_query_spec(self, pool, object, query_options.clone(), is_admin)
+                .await?
+        else {
+            return Ok(vec![]);
+        };
+        let spec = apply_raw_sql_pagination::<RelatedObjectGraphRow>(base_spec, &query_options)?;
+
+        let query = bind_raw_sql_query!(spec.clone());
+        debug!(
+            message = "Searching source-relative related objects",
+            raw_sql = %spec.sql,
+            bind_variables = ?spec.bind_variables
+        );
+        trace_query!(query, "Searching source-relative related objects");
+
+        with_connection(pool, |conn| query.get_results::<RelatedObjectGraphRow>(conn))
     }
 
     async fn objects_related_to_page_from_backend_with_admin_status<O>(
@@ -1562,7 +1583,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         object: O,
         query_options: QueryOptions,
         is_admin: bool,
-    ) -> Result<(Vec<RelatedObjectClosureRow>, i64), ApiError>
+    ) -> Result<(Vec<RelatedObjectGraphRow>, i64), ApiError>
     where
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
@@ -1573,7 +1594,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             return Ok((vec![], 0));
         };
         let total_count_spec = base_spec.clone().into_count_query("related_objects_count");
-        let spec = apply_raw_sql_pagination::<RelatedObjectClosureRow>(base_spec, &query_options)?;
+        let spec = apply_raw_sql_pagination::<RelatedObjectGraphRow>(base_spec, &query_options)?;
 
         let total_count = with_connection(pool, |conn| {
             bind_raw_sql_query!(total_count_spec)
@@ -1589,7 +1610,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         );
         trace_query!(query, "Searching source-relative related objects");
         let items = with_connection(pool, |conn| {
-            query.get_results::<RelatedObjectClosureRow>(conn)
+            query.get_results::<RelatedObjectGraphRow>(conn)
         })?;
 
         Ok((items, total_count))

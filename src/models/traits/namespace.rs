@@ -143,7 +143,11 @@ impl CursorPaginated for Namespace {
     fn supports_sort(field: &FilterField) -> bool {
         matches!(
             field,
-            FilterField::Id | FilterField::Name | FilterField::CreatedAt | FilterField::UpdatedAt
+            FilterField::Id
+                | FilterField::Name
+                | FilterField::Description
+                | FilterField::CreatedAt
+                | FilterField::UpdatedAt
         )
     }
 
@@ -151,6 +155,9 @@ impl CursorPaginated for Namespace {
         Ok(match field {
             FilterField::Id => crate::traits::CursorValue::Integer(self.id as i64),
             FilterField::Name => crate::traits::CursorValue::String(self.name.clone()),
+            FilterField::Description => {
+                crate::traits::CursorValue::String(self.description.clone())
+            }
             FilterField::CreatedAt => crate::traits::CursorValue::DateTime(self.created_at),
             FilterField::UpdatedAt => crate::traits::CursorValue::DateTime(self.updated_at),
             _ => {
@@ -184,6 +191,11 @@ impl CursorSqlMapping for Namespace {
             },
             FilterField::Name => CursorSqlField {
                 column: "namespaces.name",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::Description => CursorSqlField {
+                column: "namespaces.description",
                 sql_type: CursorSqlType::String,
                 nullable: false,
             },

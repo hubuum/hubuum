@@ -529,3 +529,31 @@ macro_rules! boolean_search {
         }
     }};
 }
+
+/// Bind `TransitiveFilterParams` to a query in the agreed parameter order.
+///
+/// Parameter order bound by this macro:
+/// 1. depth_op
+/// 2. depth_values
+/// 3. depth_negated
+/// 4. path_op
+/// 5. path_values
+/// 6. path_negated
+#[macro_export]
+macro_rules! bind_transitive_filter_params {
+    ($query:expr, $filter:expr) => {{
+        $query
+            .bind::<diesel::sql_types::Nullable<diesel::sql_types::Text>, _>($filter.depth_op)
+            .bind::<
+                diesel::sql_types::Nullable<diesel::sql_types::Array<diesel::sql_types::Integer>>,
+                _,
+            >($filter.depth_values)
+            .bind::<diesel::sql_types::Bool, _>($filter.depth_negated)
+            .bind::<diesel::sql_types::Nullable<diesel::sql_types::Text>, _>($filter.path_op)
+            .bind::<
+                diesel::sql_types::Nullable<diesel::sql_types::Array<diesel::sql_types::Integer>>,
+                _,
+            >($filter.path_values)
+            .bind::<diesel::sql_types::Bool, _>($filter.path_negated)
+    }};
+}

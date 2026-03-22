@@ -2,8 +2,8 @@ use std::iter::IntoIterator;
 
 use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, SortParam};
 use crate::models::{
-    ClassClosureRow, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
-    HubuumObjectRelation, Namespace, Permissions, RelatedObjectClosureRow, UnifiedSearchSpec, User,
+    ClassGraphRow, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
+    HubuumObjectRelation, Namespace, Permissions, RelatedObjectGraphRow, UnifiedSearchSpec, User,
     UserID,
 };
 
@@ -125,7 +125,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         backend: &C,
         class: K,
         query_options: QueryOptions,
-    ) -> Result<Vec<ClassClosureRow>, ApiError>
+    ) -> Result<Vec<ClassGraphRow>, ApiError>
     where
         C: BackendContext + ?Sized,
         K: SelfAccessors<HubuumClass>,
@@ -139,7 +139,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         backend: &C,
         class: K,
         query_options: QueryOptions,
-    ) -> Result<(Vec<ClassClosureRow>, i64), ApiError>
+    ) -> Result<(Vec<ClassGraphRow>, i64), ApiError>
     where
         C: BackendContext + ?Sized,
         K: SelfAccessors<HubuumClass>,
@@ -203,7 +203,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         backend: &C,
         object: O,
         query_options: QueryOptions,
-    ) -> Result<Vec<RelatedObjectClosureRow>, ApiError>
+    ) -> Result<Vec<RelatedObjectGraphRow>, ApiError>
     where
         C: BackendContext + ?Sized,
         O: SelfAccessors<HubuumObject> + ClassAccessors,
@@ -217,7 +217,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         backend: &C,
         object: O,
         query_options: QueryOptions,
-    ) -> Result<(Vec<RelatedObjectClosureRow>, i64), ApiError>
+    ) -> Result<(Vec<RelatedObjectGraphRow>, i64), ApiError>
     where
         C: BackendContext + ?Sized,
         O: SelfAccessors<HubuumObject> + ClassAccessors,

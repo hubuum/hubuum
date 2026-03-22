@@ -1,6 +1,8 @@
 use crate::db::traits::ClassRelation;
 use diesel::prelude::*;
 
+pub use crate::config::max_transitive_depth as max_transitive_depth_from_config;
+
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions};
@@ -10,7 +12,9 @@ use crate::models::{
     HubuumObjectTransitiveLink, NewHubuumClassRelation, NewHubuumObjectRelation, User,
     user_can_on_any,
 };
-use crate::{date_search, numeric_search, string_search, trace_query};
+use crate::{
+    bind_transitive_filter_params, date_search, numeric_search, string_search, trace_query,
+};
 
 use crate::traits::{GroupAccessors, SelfAccessors};
 
@@ -18,6 +22,141 @@ use super::{ObjectRelationsFromUser, Relations, SelfRelations};
 
 impl<C1> SelfRelations<HubuumClass> for C1 where C1: SelfAccessors<HubuumClass> + Clone + Send + Sync
 {}
+
+#[derive(Debug, Clone, Default)]
+pub struct TransitiveFilterParams {
+    pub depth_op: Option<String>,
+    pub depth_values: Option<Vec<i32>>,
+    pub depth_negated: bool,
+    pub path_op: Option<String>,
+    pub path_values: Option<Vec<i32>>,
+    pub path_negated: bool,
+}
+
+fn parse_depth_filter(param: &ParsedQueryParam) -> Result<(String, Vec<i32>, bool), ApiError> {
+    use crate::models::search::{DataType, Operator};
+
+    if !param.operator.is_applicable_to(DataType::NumericOrDate) {
+        return Err(ApiError::OperatorMismatch(format!(
+            "Operator '{:?}' is not applicable to field '{}'",
+            param.operator, param.field
+        )));
+    }
+
+    let values = param.value_as_integer()?;
+    if values.is_empty() {
+        return Err(ApiError::BadRequest(format!(
+            "Searching on field '{}' requires a value",
+            param.field
+        )));
+    }
+
+    let (op, negated) = param.operator.op_and_neg();
+    let op_name = match op {
+        Operator::Equals => "equals",
+        Operator::Gt => "gt",
+        Operator::Gte => "gte",
+        Operator::Lt => "lt",
+        Operator::Lte => "lte",
+        Operator::Between => {
+            if values.len() != 2 {
+                return Err(ApiError::OperatorMismatch(format!(
+                    "Operator 'between' requires 2 values (min,max) for field '{}'",
+                    param.field
+                )));
+            }
+            "between"
+        }
+        _ => {
+            return Err(ApiError::OperatorMismatch(format!(
+                "Operator '{:?}' not implemented for field '{}' (type: numeric)",
+                param.operator, param.field
+            )));
+        }
+    };
+
+    Ok((op_name.to_string(), values, negated))
+}
+
+fn parse_path_filter(param: &ParsedQueryParam) -> Result<(String, Vec<i32>, bool), ApiError> {
+    use crate::models::search::{DataType, Operator};
+
+    if !param.operator.is_applicable_to(DataType::Array) {
+        return Err(ApiError::OperatorMismatch(format!(
+            "Operator '{:?}' is not applicable to field '{}'",
+            param.operator, param.field
+        )));
+    }
+
+    let values = param.value_as_integer()?;
+    if values.is_empty() {
+        return Err(ApiError::BadRequest(format!(
+            "Searching on field '{}' requires a value",
+            param.field
+        )));
+    }
+
+    let (op, negated) = param.operator.op_and_neg();
+    let op_name = match op {
+        Operator::Contains => "contains",
+        Operator::Equals => "equals",
+        _ => {
+            return Err(ApiError::OperatorMismatch(format!(
+                "Operator '{:?}' not implemented for field '{}' (type: array)",
+                param.operator, param.field
+            )));
+        }
+    };
+
+    Ok((op_name.to_string(), values, negated))
+}
+
+pub fn parse_transitive_filter_params(
+    query_options: &QueryOptions,
+) -> Result<TransitiveFilterParams, ApiError> {
+    let mut params = TransitiveFilterParams::default();
+
+    for param in &query_options.filters {
+        match param.field {
+            FilterField::Depth => {
+                if params.depth_op.is_some() {
+                    return Err(ApiError::BadRequest(
+                        "Multiple depth filters are not supported for transitive class relations"
+                            .to_string(),
+                    ));
+                }
+                let (op_name, values, negated) = parse_depth_filter(param)?;
+                params.depth_op = Some(op_name);
+                params.depth_values = Some(values);
+                params.depth_negated = negated;
+            }
+            FilterField::Path => {
+                if params.path_op.is_some() {
+                    return Err(ApiError::BadRequest(
+                        "Multiple path filters are not supported for transitive class relations"
+                            .to_string(),
+                    ));
+                }
+
+                let (op_name, values, negated) = parse_path_filter(param)?;
+                params.path_op = Some(op_name);
+                params.path_values = Some(values);
+                params.path_negated = negated;
+            }
+            FilterField::ClassFrom | FilterField::ClassTo => {
+                // These are constrained by the caller in this trait module.
+            }
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' isn't searchable (or does not exist) for transitive class relations",
+                    param.field
+                )));
+            }
+        }
+    }
+
+    Ok(params)
+}
 
 pub trait SelfRelationsBackend {
     async fn transitive_relations_from_backend(
@@ -46,21 +185,20 @@ where
         &self,
         pool: &DbPool,
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError> {
-        use crate::schema::hubuumclass_closure::dsl::*;
+        use diesel::prelude::*;
+        use diesel::sql_query;
+        use diesel::sql_types::Integer;
 
         with_connection(pool, |conn| {
-            hubuumclass_closure
-                .or_filter(ancestor_class_id.eq(self.id()))
-                .or_filter(descendant_class_id.eq(self.id()))
-                .then_order_by(depth.asc())
-                .then_order_by(descendant_class_id.asc())
-                .select((
-                    ancestor_class_id.assume_not_null(),
-                    descendant_class_id.assume_not_null(),
-                    depth,
-                    path,
-                ))
-                .load::<HubuumClassRelationTransitive>(conn)
+            sql_query(
+                "SELECT ancestor_class_id, descendant_class_id, depth, path
+                 FROM get_bidirectionally_related_classes($1, ARRAY[]::INT[], $2)
+                 WHERE ancestor_class_id = $1 OR descendant_class_id = $1
+                 ORDER BY depth ASC, descendant_class_id ASC",
+            )
+            .bind::<Integer, _>(self.id())
+            .bind::<Integer, _>(max_transitive_depth_from_config())
+            .load::<HubuumClassRelationTransitive>(conn)
         })
     }
 
@@ -222,27 +360,25 @@ where
     C1: SelfAccessors<HubuumClass> + Clone + Send + Sync,
     C2: SelfAccessors<HubuumClass> + Clone + Send + Sync,
 {
-    use crate::schema::hubuumclass_closure::dsl::*;
     use diesel::prelude::*;
+    use diesel::sql_query;
+    use diesel::sql_types::Integer;
 
-    // Use the smallest ID as from and the largest as to. Also,
-    // resolve the ID first as from and to may be different types
-    // that implement SelfAccessors<HubuumClass>. This makes a direct
-    // tuple swap problematic.
     let (from, to) = (from.id(), to.id());
     let (from, to) = if from > to { (to, from) } else { (from, to) };
 
     with_connection(pool, |conn| {
-        hubuumclass_closure
-            .filter(ancestor_class_id.eq(from))
-            .filter(descendant_class_id.eq(to))
-            .select((
-                ancestor_class_id.assume_not_null(),
-                descendant_class_id.assume_not_null(),
-                depth,
-                path,
-            ))
-            .load::<HubuumClassRelationTransitive>(conn)
+        sql_query(
+            "SELECT ancestor_class_id, descendant_class_id, depth, path
+             FROM get_bidirectionally_related_classes($1, ARRAY[]::INT[], $2)
+             WHERE ancestor_class_id = $3 AND descendant_class_id = $4
+             ORDER BY depth ASC, descendant_class_id ASC",
+        )
+        .bind::<Integer, _>(from)
+        .bind::<Integer, _>(max_transitive_depth_from_config())
+        .bind::<Integer, _>(from)
+        .bind::<Integer, _>(to)
+        .load::<HubuumClassRelationTransitive>(conn)
     })
 }
 
@@ -257,48 +393,53 @@ where
     C1: SelfAccessors<HubuumClass> + Clone + Send + Sync,
     C2: SelfAccessors<HubuumClass> + Clone + Send + Sync,
 {
-    use crate::schema::hubuumclass_closure::dsl::*;
-    use crate::{array_search, numeric_search};
+    use crate::pagination::{cursor_filter_sql, normalized_sorts, order_sql_clause};
     use diesel::prelude::*;
+    use diesel::sql_query;
+    use diesel::sql_types::Integer;
 
     let (from, to) = (from.id(), to.id());
     let (from, to) = if from > to { (to, from) } else { (from, to) };
 
-    let mut base_query = hubuumclass_closure
-        .filter(ancestor_class_id.eq(from))
-        .filter(descendant_class_id.eq(to))
-        .into_boxed();
+    let filter = parse_transitive_filter_params(query_options)?;
+    let sorts = normalized_sorts::<HubuumClassRelationTransitive>(&query_options.sort)?;
+    let mut raw_sql = String::from(
+        "SELECT ancestor_class_id, descendant_class_id, depth, path
+         FROM get_bidirectionally_related_classes(
+             $1, ARRAY[]::INT[], $2, $3, $4, $5, $6, $7, $8
+         )
+         WHERE ancestor_class_id = $9 AND descendant_class_id = $10",
+    );
 
-    for param in &query_options.filters {
-        let operator = param.operator.clone();
-        match param.field {
-            FilterField::ClassFrom => {
-                numeric_search!(base_query, param, operator, ancestor_class_id)
-            }
-            FilterField::ClassTo => {
-                numeric_search!(base_query, param, operator, descendant_class_id)
-            }
-            FilterField::Depth => numeric_search!(base_query, param, operator, depth),
-            FilterField::Path => array_search!(base_query, param, operator, path),
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' isn't searchable (or does not exist) for transitive class relations",
-                    param.field
-                )));
-            }
-        }
+    if let Some(cursor_sql) =
+        cursor_filter_sql::<HubuumClassRelationTransitive>(&sorts, query_options.cursor.as_deref())?
+    {
+        raw_sql.push_str("\n  AND ");
+        raw_sql.push_str(&cursor_sql);
     }
 
-    crate::apply_query_options!(base_query, query_options, HubuumClassRelationTransitive);
+    let order_by = sorts
+        .iter()
+        .map(order_sql_clause::<HubuumClassRelationTransitive>)
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
+    raw_sql.push_str(&format!("\nORDER BY {order_by}"));
+
+    if let Some(limit) = query_options.limit {
+        raw_sql.push_str(&format!("\nLIMIT {limit}"));
+    }
 
     with_connection(pool, |conn| {
-        base_query
-            .select((
-                ancestor_class_id.assume_not_null(),
-                descendant_class_id.assume_not_null(),
-                depth,
-                path,
-            ))
+        let query = bind_transitive_filter_params!(
+            sql_query(raw_sql.clone())
+                .bind::<Integer, _>(from)
+                .bind::<Integer, _>(max_transitive_depth_from_config()),
+            filter
+        );
+
+        query
+            .bind::<Integer, _>(from)
+            .bind::<Integer, _>(to)
             .load::<HubuumClassRelationTransitive>(conn)
     })
 }
@@ -325,12 +466,13 @@ where
 
         let namespaces = user_can_on_any(pool, self, Permissions::ReadObject).await?;
         with_connection(pool, |conn| {
-            sql_query("SELECT * FROM get_transitively_linked_objects($1, $2, $3)")
+            sql_query("SELECT * FROM get_transitively_linked_objects($1, $2, $3, $4)")
                 .bind::<Integer, _>(source_object.id())
                 .bind::<Integer, _>(target_class.id())
                 .bind::<Array<Integer>, _>(
                     namespaces.into_iter().map(|n| n.id()).collect::<Vec<_>>(),
                 )
+                .bind::<Integer, _>(max_transitive_depth_from_config())
                 .load::<HubuumObjectTransitiveLink>(conn)
         })
     }
@@ -469,7 +611,9 @@ where
         with_connection(pool, |conn| {
             base_query
                 .inner_join(
-                    obj_rel::hubuumobject_relation.on(obj::id.eq(obj_rel::from_hubuum_object_id)),
+                    obj_rel::hubuumobject_relation.on(obj::id
+                        .eq(obj_rel::from_hubuum_object_id)
+                        .or(obj::id.eq(obj_rel::to_hubuum_object_id))),
                 )
                 .inner_join(
                     class_rel::hubuumclass_relation
@@ -485,6 +629,8 @@ where
                         .eq(class.id())
                         .or(class_rel::to_hubuum_class_id.eq(class.id())),
                 )
+                // Exclude self from results — we want the *other* objects
+                .filter(obj::id.ne(self.id()))
                 .select(obj::hubuumobject::all_columns())
                 .distinct()
                 .load::<HubuumObject>(conn)
