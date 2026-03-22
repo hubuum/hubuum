@@ -1,16 +1,16 @@
 use actix_web::{HttpResponse, http::StatusCode};
 use serde::Serialize;
 
-use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::sync::LazyLock;
 use tracing::debug;
 
 use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
 use crate::pagination::{CursorPaginated, finalize_page, pagination_headers};
 
-static NO_CONTENT_STATUS_CODES: Lazy<HashSet<StatusCode>> = Lazy::new(|| {
+static NO_CONTENT_STATUS_CODES: LazyLock<HashSet<StatusCode>> = LazyLock::new(|| {
     let mut m = HashSet::new();
     m.insert(StatusCode::NO_CONTENT);
     m.insert(StatusCode::RESET_CONTENT);
