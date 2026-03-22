@@ -6,8 +6,6 @@ use std::sync::{RwLock, RwLockReadGuard};
 
 use clap::{Parser, ValueEnum};
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
-#[cfg(not(test))]
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::num::NonZeroUsize;
@@ -373,7 +371,7 @@ fn load_config() -> Result<AppConfig, ApiError> {
 }
 
 #[cfg(not(test))]
-pub static CONFIG: Lazy<RwLock<AppConfig>> = Lazy::new(|| {
+pub static CONFIG: LazyLock<RwLock<AppConfig>> = LazyLock::new(|| {
     let config = load_config().unwrap_or_else(|e| panic!("Invalid application configuration: {e}"));
     RwLock::new(config)
 });

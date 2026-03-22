@@ -1,6 +1,6 @@
 use serde_json;
 
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -12,8 +12,7 @@ pub enum SchemaType {
     Address,
 }
 
-// Use once_cell to hold your parsed schemas
-static SCHEMAS: Lazy<HashMap<SchemaType, Value>> = Lazy::new(|| {
+static SCHEMAS: LazyLock<HashMap<SchemaType, Value>> = LazyLock::new(|| {
     let mut m = HashMap::new();
     m.insert(
         SchemaType::Geo,

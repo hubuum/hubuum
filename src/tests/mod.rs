@@ -28,9 +28,9 @@ use crate::models::{HubuumClass, HubuumObject, NewHubuumClass, NewHubuumObject};
 use crate::utilities::auth::generate_random_password;
 
 use crate::traits::{CanDelete, CanSave};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
-static POOL: Lazy<DbPool> = Lazy::new(|| {
+static POOL: LazyLock<DbPool> = LazyLock::new(|| {
     let config = get_config().unwrap();
     init_pool(&config.database_url, 20)
 });
