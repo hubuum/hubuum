@@ -165,6 +165,12 @@ macro_rules! numeric_search {
         use diesel::dsl::not;
         use $crate::errors::ApiError;
         use $crate::models::search::{DataType, Operator};
+
+        let (op_pre, _) = $operator.op_and_neg();
+        if op_pre == Operator::IsNull {
+            $crate::is_null_search!($base_query, $parsed_query_param, $operator, $diesel_field);
+        } else {
+
         let values = $parsed_query_param.value_as_integer()?;
 
         if !$operator.is_applicable_to(DataType::NumericOrDate) {
@@ -210,18 +216,18 @@ macro_rules! numeric_search {
         // and combine them along the lines of
         // "WHERE field = any([1,3]) or (field BETWEEN 5 AND 7 OR field BETWEEN 11 AND 17)"
         // while merging with the rest of the filters via AND.
-        if op == Operator::Equals && values.len() > 50 {
+        if (op == Operator::Equals || op == Operator::In) && values.len() > 50 {
             return Err(ApiError::OperatorMismatch(format!(
-                "Operator 'equals' is limited to 50 values, got {} (use between?)",
-                values.len()
+                "Operator '{}' is limited to 50 values, got {} (use between?)",
+                op, values.len()
             )));
         }
 
         match (op, negated) {
-            (Operator::Equals, false) => {
+            (Operator::Equals, false) | (Operator::In, false) => {
                 $base_query = $base_query.filter($diesel_field.eq_any(values.clone()))
             }
-            (Operator::Equals, true) => {
+            (Operator::Equals, true) | (Operator::In, true) => {
                 $base_query = $base_query.filter(not($diesel_field.eq_any(values.clone())))
             }
             (Operator::Gt, false) => {
@@ -257,6 +263,8 @@ macro_rules! numeric_search {
                 )));
             }
         };
+
+        } // end else (not IsNull)
     }};
 }
 
@@ -268,6 +276,11 @@ macro_rules! date_search {
         use diesel::prelude::*;
         use $crate::errors::ApiError;
         use $crate::models::search::{DataType, Operator};
+
+        let (op_pre, _) = $operator.op_and_neg();
+        if op_pre == Operator::IsNull {
+            $crate::is_null_search!($base_query, $parsed_query_param, $operator, $diesel_field);
+        } else {
 
         let values = $parsed_query_param.value_as_date()?;
 
@@ -309,10 +322,10 @@ macro_rules! date_search {
         }
 
         match (op, negated) {
-            (Operator::Equals, false) => {
+            (Operator::Equals, false) | (Operator::In, false) => {
                 $base_query = $base_query.filter($diesel_field.eq_any(values.clone()))
             }
-            (Operator::Equals, true) => {
+            (Operator::Equals, true) | (Operator::In, true) => {
                 $base_query = $base_query.filter(not($diesel_field.eq_any(values.clone())))
             }
             (Operator::Gt, false) => {
@@ -348,6 +361,8 @@ macro_rules! date_search {
                 )));
             }
         };
+
+        } // end else (not IsNull)
     }};
 }
 
@@ -359,6 +374,11 @@ macro_rules! array_search {
         use diesel::prelude::*;
         use $crate::errors::ApiError;
         use $crate::models::search::{DataType, Operator};
+
+        let (op_pre, _) = $operator.op_and_neg();
+        if op_pre == Operator::IsNull {
+            $crate::is_null_search!($base_query, $param, $operator, $diesel_field);
+        } else {
 
         let values = $param.value_as_integer()?;
 
@@ -397,6 +417,8 @@ macro_rules! array_search {
                 )));
             }
         }
+
+        } // end else (not IsNull)
     }};
 }
 
@@ -408,6 +430,11 @@ macro_rules! string_search {
         use diesel::prelude::*;
         use $crate::errors::ApiError;
         use $crate::models::search::{DataType, Operator};
+
+        let (op_pre, _) = $operator.op_and_neg();
+        if op_pre == Operator::IsNull {
+            $crate::is_null_search!($base_query, $param, $operator, $diesel_field);
+        } else {
 
         let value = $param.value.clone();
 
@@ -432,6 +459,14 @@ macro_rules! string_search {
             (Operator::Equals, false) => $base_query = $base_query.filter($diesel_field.eq(value)),
             (Operator::Equals, true) => {
                 $base_query = $base_query.filter(not($diesel_field.eq(value)))
+            }
+            (Operator::In, false) => {
+                let values: Vec<String> = value.split(',').map(|s| s.to_string()).collect();
+                $base_query = $base_query.filter($diesel_field.eq_any(values))
+            }
+            (Operator::In, true) => {
+                let values: Vec<String> = value.split(',').map(|s| s.to_string()).collect();
+                $base_query = $base_query.filter(not($diesel_field.eq_any(values)))
             }
             (Operator::IEquals, false) => {
                 $base_query = $base_query.filter($diesel_field.ilike(value))
@@ -493,6 +528,8 @@ macro_rules! string_search {
                 )));
             }
         }
+
+        } // end else (not IsNull)
     }};
 }
 
@@ -503,6 +540,11 @@ macro_rules! boolean_search {
         use diesel::dsl::not;
         use $crate::errors::ApiError;
         use $crate::models::search::{DataType, Operator};
+
+        let (op_pre, _) = $operator.op_and_neg();
+        if op_pre == Operator::IsNull {
+            $crate::is_null_search!($base_query, $param, $operator, $diesel_field);
+        } else {
 
         let value = $param.value_as_boolean()?;
 
@@ -526,6 +568,23 @@ macro_rules! boolean_search {
                     $operator, $param.field
                 )));
             }
+        }
+
+        } // end else (not IsNull)
+    }};
+}
+
+#[macro_export]
+/// A null check search macro for is_null operator on any field type
+macro_rules! is_null_search {
+    ($base_query:expr, $param:expr, $operator:expr, $diesel_field:expr) => {{
+        let is_null_value = $param.value_as_boolean()?;
+        let (_, is_null_negated) = $operator.op_and_neg();
+        let should_be_null = is_null_value != is_null_negated;
+        if should_be_null {
+            $base_query = $base_query.filter($diesel_field.is_null())
+        } else {
+            $base_query = $base_query.filter($diesel_field.is_not_null())
         }
     }};
 }

@@ -407,11 +407,18 @@ impl ParsedQueryParam {
 
         let field = self.field.clone();
 
+        let (op, neg) = self.operator.op_and_neg();
+
+        // is_null has no value part — the entire RHS is the JSON path
+        if op == Operator::IsNull {
+            return self.as_json_is_null_sql(&field, neg);
+        }
+
         // split the value on key=value
         let parts: Vec<&str> = self.value.splitn(2, '=').collect();
 
         let (key, value) = match parts.as_slice() {
-            [key, value] => (key, value),
+            [key, value] => (*key, *value),
             _ => {
                 return Err(ApiError::BadRequest(
                     "Expected exactly two parts of key=value".to_string(),
@@ -436,7 +443,8 @@ impl ParsedQueryParam {
         }
         */
 
-        let key = format!("'{{{key}}}'");
+        let raw_key = key;
+        let key = format!("'{{{raw_key}}}'");
         let field_expr = format!("{} #>> {}", field.table_field(), key);
 
         // The bind variables for the SQL query. We can't bind the key as using
@@ -446,11 +454,26 @@ impl ParsedQueryParam {
         // TODO: Optionally validate that the keys exist:
         // https://github.com/terjekv/hubuum_rust/issues/4
 
-        let (op, neg) = self.operator.op_and_neg();
         let neg_str = if neg { "NOT " } else { "" };
 
         if op.is_ip_operator() {
             return self.as_json_ip_sql(&field_expr, value, op, neg);
+        }
+
+        if op == Operator::HasKey {
+            return self.as_json_has_key_sql(&field, raw_key, value, neg);
+        }
+
+        if op == Operator::All {
+            return self.as_json_all_sql(&field, raw_key, value, neg);
+        }
+
+        if op == Operator::ArrayLength {
+            return self.as_json_array_length_sql(&field, raw_key, value, neg);
+        }
+
+        if op == Operator::In {
+            return self.as_json_in_sql(&field, &field_expr, raw_key, value, neg);
         }
 
         let sql_type = get_jsonb_field_type_from_value_and_operator(value, op.clone());
@@ -547,6 +570,158 @@ impl ParsedQueryParam {
         Ok(SQLComponent {
             sql: format!("{lhs_expr} IS NOT NULL AND {predicate}"),
             bind_variables: vec![SQLValue::String(value)],
+        })
+    }
+
+    fn as_json_is_null_sql(
+        &self,
+        field: &FilterField,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError> {
+        let path = &self.value;
+        if !path.is_valid_jsonb_search_key() {
+            return Err(ApiError::BadRequest(format!(
+                "Invalid JSON search key: '{path}'"
+            )));
+        }
+        let key = format!("'{{{path}}}'");
+        let field_expr = format!("{} #>> {}", field.table_field(), key);
+        let sql = if negated {
+            format!("{field_expr} IS NOT NULL")
+        } else {
+            format!("{field_expr} IS NULL")
+        };
+        Ok(SQLComponent {
+            sql,
+            bind_variables: vec![],
+        })
+    }
+
+    fn as_json_has_key_sql(
+        &self,
+        field: &FilterField,
+        path: &str,
+        key_name: &str,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError> {
+        let key = format!("'{{{path}}}'");
+        let jsonb_expr = format!("{} #> {}", field.table_field(), key);
+        let predicate = format!("jsonb_has_key({jsonb_expr}, ?)");
+        let sql = if negated {
+            format!("NOT ({predicate})")
+        } else {
+            predicate
+        };
+        Ok(SQLComponent {
+            sql,
+            bind_variables: vec![SQLValue::String(key_name.to_string())],
+        })
+    }
+
+    fn as_json_in_sql(
+        &self,
+        field: &FilterField,
+        field_expr: &str,
+        path: &str,
+        value: &str,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError> {
+        let values: Vec<&str> = value.split(',').collect();
+        if values.is_empty() {
+            return Err(ApiError::BadRequest(
+                "'in' requires at least one value".to_string(),
+            ));
+        }
+
+        // Scalar check: text extraction IN
+        let scalar_placeholders = values.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        let scalar_check = format!("{field_expr} IN ({scalar_placeholders})");
+
+        // Array check: jsonb containment
+        let array_placeholders = values.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        let key = format!("'{{{path}}}'");
+        let jsonb_expr = format!("{} #> {}", field.table_field(), key);
+        let array_check =
+            format!("jsonb_contains_any({jsonb_expr}, ARRAY[{array_placeholders}])");
+
+        let combined = format!("({scalar_check} OR {array_check})");
+        let sql = if negated {
+            format!("NOT {combined}")
+        } else {
+            combined
+        };
+
+        // Bind values twice: once for IN, once for ARRAY
+        let mut bind_variables: Vec<SQLValue> = values
+            .iter()
+            .map(|v| SQLValue::String(v.to_string()))
+            .collect();
+        let array_binds: Vec<SQLValue> = values
+            .iter()
+            .map(|v| SQLValue::String(v.to_string()))
+            .collect();
+        bind_variables.extend(array_binds);
+
+        Ok(SQLComponent {
+            sql,
+            bind_variables,
+        })
+    }
+
+    fn as_json_all_sql(
+        &self,
+        field: &FilterField,
+        path: &str,
+        value: &str,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError> {
+        let values: Vec<&str> = value.split(',').collect();
+        if values.is_empty() {
+            return Err(ApiError::BadRequest(
+                "'all' requires at least one value".to_string(),
+            ));
+        }
+        let placeholders = values.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        let key = format!("'{{{path}}}'");
+        let jsonb_expr = format!("{} #> {}", field.table_field(), key);
+        let predicate = format!("jsonb_contains_all({jsonb_expr}, ARRAY[{placeholders}])");
+        let sql = if negated {
+            format!("NOT ({predicate})")
+        } else {
+            predicate
+        };
+        let bind_variables = values
+            .iter()
+            .map(|v| SQLValue::String(v.to_string()))
+            .collect();
+        Ok(SQLComponent {
+            sql,
+            bind_variables,
+        })
+    }
+
+    fn as_json_array_length_sql(
+        &self,
+        field: &FilterField,
+        path: &str,
+        value: &str,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError> {
+        let length: i32 = value.parse().map_err(|_| {
+            ApiError::BadRequest(format!(
+                "array_length requires an integer, got '{value}'"
+            ))
+        })?;
+        let key = format!("'{{{path}}}'");
+        let jsonb_expr = format!("{} #> {}", field.table_field(), key);
+        let len_expr = format!("jsonb_array_length({jsonb_expr})");
+        let cmp = if negated { "!=" } else { "=" };
+        let sql = format!(
+            "jsonb_typeof({jsonb_expr}) = 'array' AND {len_expr} {cmp} ?"
+        );
+        Ok(SQLComponent {
+            sql,
+            bind_variables: vec![SQLValue::Integer(length)],
         })
     }
 
@@ -891,6 +1066,11 @@ pub enum Operator {
     ContainsIp,
     OverlapsNetwork,
     InetEquals,
+    In,
+    All,
+    ArrayLength,
+    HasKey,
+    IsNull,
 }
 
 impl std::fmt::Display for Operator {
@@ -916,6 +1096,11 @@ impl std::fmt::Display for Operator {
             Operator::ContainsIp => "contains_ip",
             Operator::OverlapsNetwork => "overlaps_network",
             Operator::InetEquals => "inet_equals",
+            Operator::In => "in",
+            Operator::All => "all",
+            Operator::ArrayLength => "array_length",
+            Operator::HasKey => "has_key",
+            Operator::IsNull => "is_null",
         };
         write!(f, "{op}")
     }
@@ -930,6 +1115,17 @@ impl Operator {
                 | Operator::ContainsIp
                 | Operator::OverlapsNetwork
                 | Operator::InetEquals
+        )
+    }
+
+    fn is_json_structure_operator(&self) -> bool {
+        matches!(
+            self,
+            Operator::In
+                | Operator::All
+                | Operator::ArrayLength
+                | Operator::HasKey
+                | Operator::IsNull
         )
     }
 }
@@ -960,6 +1156,11 @@ pub enum SearchOperator {
     ContainsIp { is_negated: bool },
     OverlapsNetwork { is_negated: bool },
     InetEquals { is_negated: bool },
+    In { is_negated: bool },
+    All { is_negated: bool },
+    ArrayLength { is_negated: bool },
+    HasKey { is_negated: bool },
+    IsNull { is_negated: bool },
 }
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum DataType {
@@ -993,6 +1194,12 @@ impl SearchOperator {
             | SO::ContainsIp { .. }
             | SO::OverlapsNetwork { .. }
             | SO::InetEquals { .. } => false,
+            SO::In { .. } => {
+                matches!(data_type, DataType::String)
+                    || matches!(data_type, DataType::NumericOrDate)
+            }
+            SO::IsNull { .. } => true,
+            SO::All { .. } | SO::ArrayLength { .. } | SO::HasKey { .. } => false,
             SO::Contains { .. } => {
                 matches!(data_type, DataType::String) || matches!(data_type, DataType::Array)
             }
@@ -1028,6 +1235,11 @@ impl SearchOperator {
                 (Operator::OverlapsNetwork, *is_negated)
             }
             SearchOperator::InetEquals { is_negated, .. } => (Operator::InetEquals, *is_negated),
+            SearchOperator::In { is_negated, .. } => (Operator::In, *is_negated),
+            SearchOperator::All { is_negated, .. } => (Operator::All, *is_negated),
+            SearchOperator::ArrayLength { is_negated, .. } => (Operator::ArrayLength, *is_negated),
+            SearchOperator::HasKey { is_negated, .. } => (Operator::HasKey, *is_negated),
+            SearchOperator::IsNull { is_negated, .. } => (Operator::IsNull, *is_negated),
         }
     }
 
@@ -1103,6 +1315,21 @@ impl SearchOperator {
                 is_negated: negated,
             }),
             "inet_equals" => Ok(SO::InetEquals {
+                is_negated: negated,
+            }),
+            "in" | "any" => Ok(SO::In {
+                is_negated: negated,
+            }),
+            "all" => Ok(SO::All {
+                is_negated: negated,
+            }),
+            "array_length" => Ok(SO::ArrayLength {
+                is_negated: negated,
+            }),
+            "has_key" => Ok(SO::HasKey {
+                is_negated: negated,
+            }),
+            "is_null" => Ok(SO::IsNull {
                 is_negated: negated,
             }),
 
@@ -1300,6 +1527,11 @@ pub fn get_jsonb_field_type_from_value_and_operator(
         | Operator::ContainsIp
         | Operator::OverlapsNetwork
         | Operator::InetEquals => None,
+        Operator::In => Some(SQLMappedType::String),
+        Operator::All
+        | Operator::ArrayLength
+        | Operator::HasKey
+        | Operator::IsNull => None,
     }
 }
 
