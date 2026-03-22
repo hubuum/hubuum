@@ -527,8 +527,8 @@ impl ParsedQueryParam {
         let value = parse_json_ip_filter_value(value, &op)?;
         let lhs_expr = format!("try_inet({field_expr})");
         let sql_op = match op {
-            Operator::IpEquals => "=",
-            Operator::IsInNetwork => "<<=",
+            Operator::InetEquals => "=",
+            Operator::WithinNetwork => "<<=",
             Operator::ContainsNetwork => ">>=",
             Operator::ContainsIp => ">>",
             Operator::OverlapsNetwork => "&&",
@@ -886,11 +886,11 @@ pub enum Operator {
     Lt,
     Lte,
     Between,
-    IsInNetwork,
+    WithinNetwork,
     ContainsNetwork,
     ContainsIp,
     OverlapsNetwork,
-    IpEquals,
+    InetEquals,
 }
 
 impl std::fmt::Display for Operator {
@@ -911,11 +911,11 @@ impl std::fmt::Display for Operator {
             Operator::Lt => "lt",
             Operator::Lte => "lte",
             Operator::Between => "between",
-            Operator::IsInNetwork => "is_in_network",
+            Operator::WithinNetwork => "within_network",
             Operator::ContainsNetwork => "contains_network",
             Operator::ContainsIp => "contains_ip",
             Operator::OverlapsNetwork => "overlaps_network",
-            Operator::IpEquals => "ip_equals",
+            Operator::InetEquals => "inet_equals",
         };
         write!(f, "{op}")
     }
@@ -925,11 +925,11 @@ impl Operator {
     fn is_ip_operator(&self) -> bool {
         matches!(
             self,
-            Operator::IsInNetwork
+            Operator::WithinNetwork
                 | Operator::ContainsNetwork
                 | Operator::ContainsIp
                 | Operator::OverlapsNetwork
-                | Operator::IpEquals
+                | Operator::InetEquals
         )
     }
 }
@@ -955,11 +955,11 @@ pub enum SearchOperator {
     Lt { is_negated: bool },
     Lte { is_negated: bool },
     Between { is_negated: bool },
-    IsInNetwork { is_negated: bool },
+    WithinNetwork { is_negated: bool },
     ContainsNetwork { is_negated: bool },
     ContainsIp { is_negated: bool },
     OverlapsNetwork { is_negated: bool },
-    IpEquals { is_negated: bool },
+    InetEquals { is_negated: bool },
 }
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum DataType {
@@ -988,11 +988,11 @@ impl SearchOperator {
             | SO::Lt { .. }
             | SO::Lte { .. }
             | SO::Between { .. } => matches!(data_type, DataType::NumericOrDate),
-            SO::IsInNetwork { .. }
+            SO::WithinNetwork { .. }
             | SO::ContainsNetwork { .. }
             | SO::ContainsIp { .. }
             | SO::OverlapsNetwork { .. }
-            | SO::IpEquals { .. } => false,
+            | SO::InetEquals { .. } => false,
             SO::Contains { .. } => {
                 matches!(data_type, DataType::String) || matches!(data_type, DataType::Array)
             }
@@ -1019,7 +1019,7 @@ impl SearchOperator {
             SearchOperator::Lt { is_negated, .. } => (Operator::Lt, *is_negated),
             SearchOperator::Lte { is_negated, .. } => (Operator::Lte, *is_negated),
             SearchOperator::Between { is_negated, .. } => (Operator::Between, *is_negated),
-            SearchOperator::IsInNetwork { is_negated, .. } => (Operator::IsInNetwork, *is_negated),
+            SearchOperator::WithinNetwork { is_negated, .. } => (Operator::WithinNetwork, *is_negated),
             SearchOperator::ContainsNetwork { is_negated, .. } => {
                 (Operator::ContainsNetwork, *is_negated)
             }
@@ -1027,7 +1027,7 @@ impl SearchOperator {
             SearchOperator::OverlapsNetwork { is_negated, .. } => {
                 (Operator::OverlapsNetwork, *is_negated)
             }
-            SearchOperator::IpEquals { is_negated, .. } => (Operator::IpEquals, *is_negated),
+            SearchOperator::InetEquals { is_negated, .. } => (Operator::InetEquals, *is_negated),
         }
     }
 
@@ -1090,7 +1090,7 @@ impl SearchOperator {
             "between" => Ok(SO::Between {
                 is_negated: negated,
             }),
-            "is_in_network" => Ok(SO::IsInNetwork {
+            "within_network" => Ok(SO::WithinNetwork {
                 is_negated: negated,
             }),
             "contains_network" => Ok(SO::ContainsNetwork {
@@ -1102,7 +1102,7 @@ impl SearchOperator {
             "overlaps_network" => Ok(SO::OverlapsNetwork {
                 is_negated: negated,
             }),
-            "ip_equals" => Ok(SO::IpEquals {
+            "inet_equals" => Ok(SO::InetEquals {
                 is_negated: negated,
             }),
 
@@ -1295,11 +1295,11 @@ pub fn get_jsonb_field_type_from_value_and_operator(
         | Operator::IEndsWith
         | Operator::Like
         | Operator::Regex => Some(SQLMappedType::String),
-        Operator::IsInNetwork
+        Operator::WithinNetwork
         | Operator::ContainsNetwork
         | Operator::ContainsIp
         | Operator::OverlapsNetwork
-        | Operator::IpEquals => None,
+        | Operator::InetEquals => None,
     }
 }
 
@@ -1309,10 +1309,10 @@ fn parse_json_ip_filter_value(value: &str, operator: &Operator) -> Result<String
             .parse::<IpAddr>()
             .map(|ip| ip.to_string())
             .map_err(|_| ApiError::BadRequest(format!("Invalid IP address: '{value}'"))),
-        Operator::IsInNetwork
+        Operator::WithinNetwork
         | Operator::ContainsNetwork
         | Operator::OverlapsNetwork
-        | Operator::IpEquals => parse_ip_or_host_network(value),
+        | Operator::InetEquals => parse_ip_or_host_network(value),
         _ => Err(ApiError::InternalServerError(format!(
             "Unexpected non-IP operator passed to IP parser: '{operator:?}'"
         ))),
@@ -1687,11 +1687,11 @@ mod test {
                 ],
             },
             TestCase {
-                query_string: "json_data__is_in_network=network,address=10.0.0.0/24&json_data__contains_ip=network,address=10.0.0.10",
+                query_string: "json_data__within_network=network,address=10.0.0.0/24&json_data__contains_ip=network,address=10.0.0.10",
                 expected: vec![
                     pq(
                         "json_data",
-                        SearchOperator::IsInNetwork { is_negated: false },
+                        SearchOperator::WithinNetwork { is_negated: false },
                         "network,address=10.0.0.0/24",
                     ),
                     pq(
@@ -1768,7 +1768,7 @@ mod test {
             (
                 pq(
                     "json_schema",
-                    SearchOperator::IsInNetwork { is_negated: false },
+                    SearchOperator::WithinNetwork { is_negated: false },
                     "key,subkey=10.0.0.0/24",
                 ),
                 format!(
@@ -1790,7 +1790,7 @@ mod test {
             (
                 pq(
                     "json_schema",
-                    SearchOperator::IpEquals { is_negated: true },
+                    SearchOperator::InetEquals { is_negated: true },
                     "key=10.0.0.10",
                 ),
                 format!(
@@ -1818,7 +1818,7 @@ mod test {
         let test_cases = vec![
             pq(
                 "json_schema",
-                SearchOperator::IsInNetwork { is_negated: false },
+                SearchOperator::WithinNetwork { is_negated: false },
                 "key=not-an-ip",
             ),
             pq(
@@ -2244,7 +2244,7 @@ mod test {
             ("lt", SO::Lt { is_negated: false }),
             ("lte", SO::Lte { is_negated: false }),
             ("between", SO::Between { is_negated: false }),
-            ("is_in_network", SO::IsInNetwork { is_negated: false }),
+            ("within_network", SO::WithinNetwork { is_negated: false }),
             (
                 "contains_network",
                 SO::ContainsNetwork { is_negated: false },
@@ -2254,7 +2254,7 @@ mod test {
                 "overlaps_network",
                 SO::OverlapsNetwork { is_negated: false },
             ),
-            ("ip_equals", SO::IpEquals { is_negated: false }),
+            ("inet_equals", SO::InetEquals { is_negated: false }),
             ("not_equals", SO::Equals { is_negated: true }),
             ("not_iequals", SO::IEquals { is_negated: true }),
             ("not_contains", SO::Contains { is_negated: true }),
@@ -2269,7 +2269,7 @@ mod test {
             ("not_gte", SO::Gte { is_negated: true }),
             ("not_lt", SO::Lt { is_negated: true }),
             ("not_lte", SO::Lte { is_negated: true }),
-            ("not_is_in_network", SO::IsInNetwork { is_negated: true }),
+            ("not_within_network", SO::WithinNetwork { is_negated: true }),
             (
                 "not_contains_network",
                 SO::ContainsNetwork { is_negated: true },
@@ -2279,7 +2279,7 @@ mod test {
                 "not_overlaps_network",
                 SO::OverlapsNetwork { is_negated: true },
             ),
-            ("not_ip_equals", SO::IpEquals { is_negated: true }),
+            ("not_inet_equals", SO::InetEquals { is_negated: true }),
         ];
 
         for (input, expected) in test_cases {

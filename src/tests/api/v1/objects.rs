@@ -657,8 +657,8 @@ mod tests {
     }
 
     #[rstest]
-    #[case::is_in_network(
-        "json_data__is_in_network=network,address=10.0.0.0/24",
+    #[case::within_network(
+        "json_data__within_network=network,address=10.0.0.0/24",
         vec![
             "network_filter_object_0",
             "network_filter_object_1",
@@ -677,12 +677,12 @@ mod tests {
         "json_data__overlaps_network=network,address=10.0.0.64/26",
         vec!["network_filter_object_1", "network_filter_object_2"]
     )]
-    #[case::ip_equals(
-        "json_data__ip_equals=network,address=10.0.0.10/32",
+    #[case::inet_equals(
+        "json_data__inet_equals=network,address=10.0.0.10/32",
         vec!["network_filter_object_0"]
     )]
-    #[case::not_is_in_network(
-        "json_data__not_is_in_network=network,address=10.0.0.0/24",
+    #[case::not_within_network(
+        "json_data__not_within_network=network,address=10.0.0.0/24",
         vec!["network_filter_object_4", "network_filter_object_5"]
     )]
     #[actix_web::test]
@@ -704,8 +704,8 @@ mod tests {
 
     // Covers docs/querying.md "JSON filtering" network-aware JSON/IP operator examples.
     #[rstest]
-    #[case::docs_is_in_network(
-        "json_data__is_in_network=network,address=10.0.0.0/24",
+    #[case::docs_within_network(
+        "json_data__within_network=network,address=10.0.0.0/24",
         vec![
             "network_filter_object_0",
             "network_filter_object_1",
@@ -724,8 +724,8 @@ mod tests {
         "json_data__overlaps_network=network,address=10.0.0.64/26",
         vec!["network_filter_object_1", "network_filter_object_2"]
     )]
-    #[case::docs_ip_equals(
-        "json_data__ip_equals=network,address=10.0.0.10",
+    #[case::docs_inet_equals(
+        "json_data__inet_equals=network,address=10.0.0.10",
         vec!["network_filter_object_0"]
     )]
     #[actix_web::test]
@@ -746,7 +746,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case("json_data__is_in_network=network,address=not-an-ip")]
+    #[case("json_data__within_network=network,address=not-an-ip")]
     #[case("json_data__contains_ip=network,address=10.0.0.0/24")]
     #[actix_web::test]
     async fn test_api_objects_filter_json_data_ip_operators_reject_invalid_rhs(
@@ -922,7 +922,7 @@ mod tests {
                 &context.pool,
                 &context.admin_token,
                 &format!(
-                    "{OBJECT_ENDPOINT}/{}/?namespaces={}&json_data__is_in_network=network,address=10.42.1.0/24&sort=id&limit=100{}",
+                    "{OBJECT_ENDPOINT}/{}/?namespaces={}&json_data__within_network=network,address=10.42.1.0/24&sort=id&limit=100{}",
                     class.id, namespace.namespace.id, cursor_param
                 ),
             )

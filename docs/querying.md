@@ -56,11 +56,11 @@ Example:
 
 ### IP/network JSON fields
 
-- `is_in_network`
+- `within_network`
 - `contains_network`
 - `contains_ip`
 - `overlaps_network`
-- `ip_equals`
+- `inet_equals`
 
 ## Negation
 
@@ -214,7 +214,7 @@ Date-oriented JSON filters accept the same date formats as other date filters:
 
 JSON-backed IP address and CIDR values also support network-aware operators:
 
-- `is_in_network`
+- `within_network`
   Matches when the stored IP/network is inside the filter network, including equality.
   Example: stored `10.0.0.10`, filter `10.0.0.0/24` -> match.
   Example: stored `10.0.0.0/25`, filter `10.0.0.0/24` -> match.
@@ -230,7 +230,7 @@ JSON-backed IP address and CIDR values also support network-aware operators:
   Matches when the stored IP/network overlaps the filter network at all.
   Example: stored `10.0.0.0/24`, filter `10.0.0.64/26` -> match.
   Example: stored `10.0.1.0/24`, filter `10.0.0.0/24` -> no match.
-- `ip_equals`
+- `inet_equals`
   Matches normalized network equality using PostgreSQL `inet` semantics rather than raw string equality.
   Example: stored `10.0.0.10`, filter `10.0.0.10/32` -> match.
   Example: stored `10.0.0.0/24`, filter `10.0.0.0/25` -> no match.
@@ -238,11 +238,11 @@ JSON-backed IP address and CIDR values also support network-aware operators:
 Examples:
 
 ```text
-/api/v1/classes/12/?json_data__is_in_network=network,address=10.0.0.0/24
+/api/v1/classes/12/?json_data__within_network=network,address=10.0.0.0/24
 /api/v1/classes/12/?json_data__contains_network=network,address=10.0.0.0/25
 /api/v1/classes/12/?json_data__contains_ip=network,address=10.0.0.10
 /api/v1/classes/12/?json_data__overlaps_network=network,address=10.0.0.64/26
-/api/v1/classes/12/?json_data__ip_equals=network,address=10.0.0.10
+/api/v1/classes/12/?json_data__inet_equals=network,address=10.0.0.10
 ```
 
 If the JSON path does not exist, or the stored value cannot be interpreted as the requested JSON type, the filter does not match, but it does not fail the request.

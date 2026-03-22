@@ -1339,8 +1339,8 @@ mod tests {
         "?from_json_data__contains_ip=network,address=10.0.0.42",
         vec![1, 2, 4]
     )]
-    #[case::to_json_data_is_in_network(
-        "?to_json_data__is_in_network=network,address=10.0.0.0/24",
+    #[case::to_json_data_within_network(
+        "?to_json_data__within_network=network,address=10.0.0.0/24",
         vec![1]
     )]
     #[actix_web::test]

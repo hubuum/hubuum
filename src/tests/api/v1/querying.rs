@@ -37,11 +37,11 @@ mod tests {
     const ARRAY_OPERATORS: &[&str] = &["equals", "contains"];
     const BOOLEAN_OPERATORS: &[&str] = &["equals"];
     const IP_NETWORK_JSON_OPERATORS: &[&str] = &[
-        "is_in_network",
+        "within_network",
         "contains_network",
         "contains_ip",
         "overlaps_network",
-        "ip_equals",
+        "inet_equals",
     ];
 
     fn objects_in_class_endpoint(class_id: i32) -> String {
