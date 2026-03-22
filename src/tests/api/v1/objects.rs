@@ -1144,4 +1144,196 @@ mod tests {
         assert_eq!(objects[1].id, created_objects[3].id);
         created_objects.cleanup().await.unwrap();
     }
+
+    async fn create_json_structure_filter_fixture(
+        context: &TestContext,
+        prefix: &str,
+    ) -> (crate::tests::NamespaceFixture, crate::models::HubuumClass) {
+        let namespace = context.namespace_fixture(prefix).await;
+        let class = NewHubuumClass {
+            namespace_id: namespace.namespace.id,
+            name: format!("json struct filter class {prefix}"),
+            description: format!("json struct filter class {prefix}"),
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let test_objects = [
+            (
+                "struct_obj_0",
+                serde_json::json!({
+                    "status": "active",
+                    "tags": ["web", "api"],
+                    "ports": [80, 443],
+                    "config": { "hostname": "srv-01", "port": 8080 },
+                    "optional_field": "present"
+                }),
+            ),
+            (
+                "struct_obj_1",
+                serde_json::json!({
+                    "status": "standby",
+                    "tags": ["web", "frontend"],
+                    "ports": [8080],
+                    "config": { "hostname": "srv-02" },
+                    "optional_field": null
+                }),
+            ),
+            (
+                "struct_obj_2",
+                serde_json::json!({
+                    "status": "maintenance",
+                    "tags": ["api", "backend", "internal"],
+                    "ports": [443, 8443, 9090],
+                    "config": { "port": 9090 }
+                }),
+            ),
+            (
+                "struct_obj_3",
+                serde_json::json!({
+                    "status": "active",
+                    "tags": ["web", "api", "frontend"],
+                    "ports": [80, 8080, 443],
+                    "config": {}
+                }),
+            ),
+        ];
+
+        for (name, data) in test_objects {
+            NewHubuumObject {
+                namespace_id: namespace.namespace.id,
+                hubuum_class_id: class.id,
+                data,
+                name: name.to_string(),
+                description: name.to_string(),
+            }
+            .save(&context.pool)
+            .await
+            .unwrap();
+        }
+
+        (namespace, class)
+    }
+
+    async fn assert_json_structure_filter_query(
+        context: &TestContext,
+        prefix: &str,
+        query_string: &str,
+        expected_names: Vec<&str>,
+    ) {
+        let (namespace, class) = create_json_structure_filter_fixture(context, prefix).await;
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{OBJECT_ENDPOINT}/{}/?namespaces={}&{}&sort=id",
+                class.id, namespace.namespace.id, query_string
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let objects: Vec<HubuumObject> = test::read_body_json(resp).await;
+
+        let object_names: Vec<&str> = objects.iter().map(|object| object.name.as_str()).collect();
+        assert_eq!(object_names, expected_names);
+
+        namespace.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    // in (scalar): status is one of "active", "standby"
+    #[case::in_scalar(
+        "json_data__in=status=active,standby",
+        vec!["struct_obj_0", "struct_obj_1", "struct_obj_3"]
+    )]
+    // in (array): tags array contains "frontend"
+    #[case::in_array(
+        "json_data__in=tags=frontend",
+        vec!["struct_obj_1", "struct_obj_3"]
+    )]
+    // not_in (scalar)
+    #[case::not_in_scalar(
+        "json_data__not_in=status=active,standby",
+        vec!["struct_obj_2"]
+    )]
+    // not_in (array): tags array does NOT contain "frontend"
+    #[case::not_in_array(
+        "json_data__not_in=tags=frontend",
+        vec!["struct_obj_0", "struct_obj_2"]
+    )]
+    // all: tags array contains both "web" AND "api"
+    #[case::all_tags(
+        "json_data__all=tags=web,api",
+        vec!["struct_obj_0", "struct_obj_3"]
+    )]
+    // not_all: tags does NOT contain both
+    #[case::not_all_tags(
+        "json_data__not_all=tags=web,api",
+        vec!["struct_obj_1", "struct_obj_2"]
+    )]
+    // array_length: tags has exactly 2 elements
+    #[case::array_length_2(
+        "json_data__array_length=tags=2",
+        vec!["struct_obj_0", "struct_obj_1"]
+    )]
+    // array_length: tags has exactly 3 elements
+    #[case::array_length_3(
+        "json_data__array_length=tags=3",
+        vec!["struct_obj_2", "struct_obj_3"]
+    )]
+    // in on numeric array: ports array contains 443
+    #[case::in_numeric_array(
+        "json_data__in=ports=443",
+        vec!["struct_obj_0", "struct_obj_2", "struct_obj_3"]
+    )]
+    // all on numeric array: ports array contains both 80 and 443
+    #[case::all_numeric_array(
+        "json_data__all=ports=80,443",
+        vec!["struct_obj_0", "struct_obj_3"]
+    )]
+    // not_array_length: tags does NOT have exactly 2 elements
+    #[case::not_array_length(
+        "json_data__not_array_length=tags=2",
+        vec!["struct_obj_2", "struct_obj_3"]
+    )]
+    // has_key: config object has "hostname" key
+    #[case::has_key(
+        "json_data__has_key=config=hostname",
+        vec!["struct_obj_0", "struct_obj_1"]
+    )]
+    // not_has_key: config does NOT have "hostname"
+    #[case::not_has_key(
+        "json_data__not_has_key=config=hostname",
+        vec!["struct_obj_2", "struct_obj_3"]
+    )]
+    // is_null: optional_field is null or missing
+    #[case::is_null(
+        "json_data__is_null=optional_field",
+        vec!["struct_obj_1", "struct_obj_2", "struct_obj_3"]
+    )]
+    // not_is_null: optional_field is present and not null
+    #[case::not_is_null(
+        "json_data__not_is_null=optional_field",
+        vec!["struct_obj_0"]
+    )]
+    #[actix_web::test]
+    async fn test_api_objects_filter_json_data_structure_operators(
+        #[case] query: &str,
+        #[case] expected_names: Vec<&str>,
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let prefix = format!(
+            "json_struct_{}",
+            query
+                .chars()
+                .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+                .collect::<String>()
+        );
+        assert_json_structure_filter_query(&context, &prefix, query, expected_names).await;
+    }
 }

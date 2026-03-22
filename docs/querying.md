@@ -35,6 +35,8 @@ Example:
 - `iendswith`
 - `like`
 - `regex`
+- `in`
+- `is_null`
 
 ### Numeric and date fields
 
@@ -44,15 +46,19 @@ Example:
 - `lt`
 - `lte`
 - `between`
+- `in`
+- `is_null`
 
 ### Array fields
 
 - `equals`
 - `contains`
+- `is_null`
 
 ### Boolean fields
 
 - `equals`
+- `is_null`
 
 ### IP/network JSON fields
 
@@ -243,6 +249,40 @@ Examples:
 /api/v1/classes/12/?json_data__contains_ip=network,address=10.0.0.10
 /api/v1/classes/12/?json_data__overlaps_network=network,address=10.0.0.64/26
 /api/v1/classes/12/?json_data__inet_equals=network,address=10.0.0.10
+```
+
+### JSON array and structure operators
+
+- `in`
+- `all`
+- `array_length`
+- `has_key`
+- `is_null`
+
+JSON fields support operators for arrays, key existence, and null checking.
+`in` is aliased as `any`; both names parse to the same operator.
+
+- `in` (alias: `any`): Matches when the stored JSON scalar value is one of the given values, or when a stored JSON array contains any of the given values. Values are comma-separated.
+  Example: `json_data__in=status=active,standby` matches if `status` is `"active"` or `"standby"`.
+  Example: `json_data__in=tags=web,api` matches if `tags` is `["web", "frontend"]` because `"web"` is present.
+- `all`: Matches when the stored JSON array contains all of the given values. Values are comma-separated.
+  Example: `json_data__all=tags=web,api` matches only if `tags` contains both `"web"` and `"api"`.
+- `array_length`: Matches when the stored JSON array has exactly the given number of elements.
+  Example: `json_data__array_length=tags=3` matches if `tags` has exactly 3 elements.
+- `has_key`: Matches when the stored JSON object contains the given key, regardless of the key's value (including JSON `null`).
+  Example: `json_data__has_key=config=hostname` matches if `config` is an object with a `hostname` key.
+- `is_null`: Matches when the stored JSON path is null or does not exist. Unlike other operators, `is_null` does not use a `key=value` format; the entire right-hand side is the JSON path.
+  Example: `json_data__is_null=optional_field` matches if `optional_field` is missing or JSON `null`.
+
+Examples:
+
+```text
+/api/v1/classes/12/?json_data__in=status=active,standby,maintenance
+/api/v1/classes/12/?json_data__all=tags=web,api
+/api/v1/classes/12/?json_data__array_length=tags=2
+/api/v1/classes/12/?json_data__has_key=config=hostname
+/api/v1/classes/12/?json_data__is_null=decommissioned_at
+/api/v1/classes/12/?json_data__not_is_null=hostname
 ```
 
 If the JSON path does not exist, or the stored value cannot be interpreted as the requested JSON type, the filter does not match, but it does not fail the request.

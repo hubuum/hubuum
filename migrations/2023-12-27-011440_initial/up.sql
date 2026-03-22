@@ -341,6 +341,63 @@
     END;
     $$;
 
+    CREATE OR REPLACE FUNCTION jsonb_contains_any(val jsonb, items text[])
+    RETURNS boolean
+    LANGUAGE plpgsql
+    IMMUTABLE
+    STRICT
+    PARALLEL SAFE
+    AS $$
+    BEGIN
+        IF jsonb_typeof(val) = 'array' THEN
+            RETURN EXISTS (
+                SELECT 1 FROM jsonb_array_elements_text(val) AS elem
+                WHERE elem = ANY(items)
+            );
+        END IF;
+        RETURN false;
+    EXCEPTION
+        WHEN OTHERS THEN
+            RETURN false;
+    END;
+    $$;
+
+    CREATE OR REPLACE FUNCTION jsonb_contains_all(val jsonb, items text[])
+    RETURNS boolean
+    LANGUAGE plpgsql
+    IMMUTABLE
+    STRICT
+    PARALLEL SAFE
+    AS $$
+    BEGIN
+        IF jsonb_typeof(val) = 'array' THEN
+            RETURN (
+                SELECT count(DISTINCT elem) FROM jsonb_array_elements_text(val) AS elem
+                WHERE elem = ANY(items)
+            ) = array_length(items, 1);
+        END IF;
+        RETURN false;
+    EXCEPTION
+        WHEN OTHERS THEN
+            RETURN false;
+    END;
+    $$;
+
+    CREATE OR REPLACE FUNCTION jsonb_has_key(val jsonb, k text)
+    RETURNS boolean
+    LANGUAGE plpgsql
+    IMMUTABLE
+    STRICT
+    PARALLEL SAFE
+    AS $$
+    BEGIN
+        RETURN val ? k;
+    EXCEPTION
+        WHEN OTHERS THEN
+            RETURN false;
+    END;
+    $$;
+
     -- In relation tables, ensure that the from entry is always less than the to entry, this ensures
     -- that we don't need to check for both directions when querying the database
     CREATE OR REPLACE FUNCTION enforce_class_relation_order()

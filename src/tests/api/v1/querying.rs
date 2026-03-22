@@ -32,10 +32,13 @@ mod tests {
         "iendswith",
         "like",
         "regex",
+        "in",
+        "is_null",
     ];
-    const NUMERIC_DATE_OPERATORS: &[&str] = &["equals", "gt", "gte", "lt", "lte", "between"];
-    const ARRAY_OPERATORS: &[&str] = &["equals", "contains"];
-    const BOOLEAN_OPERATORS: &[&str] = &["equals"];
+    const NUMERIC_DATE_OPERATORS: &[&str] =
+        &["equals", "gt", "gte", "lt", "lte", "between", "in", "is_null"];
+    const ARRAY_OPERATORS: &[&str] = &["equals", "contains", "is_null"];
+    const BOOLEAN_OPERATORS: &[&str] = &["equals", "is_null"];
     const IP_NETWORK_JSON_OPERATORS: &[&str] = &[
         "within_network",
         "contains_network",
@@ -43,6 +46,8 @@ mod tests {
         "overlaps_network",
         "inet_equals",
     ];
+    const JSON_STRUCTURE_OPERATORS: &[&str] =
+        &["in", "all", "array_length", "has_key", "is_null"];
 
     fn objects_in_class_endpoint(class_id: i32) -> String {
         format!("/api/v1/classes/{class_id}/")
@@ -234,6 +239,7 @@ mod tests {
     #[case::array("Array fields", ARRAY_OPERATORS)]
     #[case::boolean("Boolean fields", BOOLEAN_OPERATORS)]
     #[case::ip_network_json("IP/network JSON fields", IP_NETWORK_JSON_OPERATORS)]
+    #[case::json_structure("JSON array and structure operators", JSON_STRUCTURE_OPERATORS)]
     fn test_querying_docs_operator_lists(
         #[case] section: &str,
         #[case] expected_operators: &[&str],
@@ -260,6 +266,46 @@ mod tests {
             assert!(
                 parsed.is_applicable_to(data_type),
                 "operator '{operator}' from section '{section}' should apply to {data_type:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_any_is_alias_for_in() {
+        let from_in = SearchOperator::new_from_string("in").unwrap();
+        let from_any = SearchOperator::new_from_string("any").unwrap();
+        assert_eq!(from_in, from_any);
+        assert_eq!(from_in.to_string(), "in");
+
+        let neg_in = SearchOperator::new_from_string("not_in").unwrap();
+        let neg_any = SearchOperator::new_from_string("not_any").unwrap();
+        assert_eq!(neg_in, neg_any);
+        assert_eq!(neg_in.to_string(), "not_in");
+    }
+
+    #[test]
+    fn test_documented_json_structure_operators_parse() {
+        let documented = documented_operators("JSON array and structure operators");
+        let expected = JSON_STRUCTURE_OPERATORS
+            .iter()
+            .map(|operator| operator.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(documented, expected);
+
+        for operator in documented {
+            let parsed = SearchOperator::new_from_string(&operator).unwrap();
+            let rendered = parsed.to_string();
+            assert_eq!(
+                rendered, operator,
+                "operator '{operator}' should round-trip"
+            );
+
+            let negated = SearchOperator::new_from_string(&format!("not_{operator}")).unwrap();
+            assert_eq!(
+                negated.to_string(),
+                format!("not_{operator}"),
+                "operator '{operator}' should support not_ round-trip"
             );
         }
     }
@@ -302,6 +348,11 @@ mod tests {
     #[case::iendswith("name__iendswith=one", vec!["Alpha-One", "Beta-ONE"])]
     #[case::like("name__like=Alpha-%", vec!["Alpha-One"])]
     #[case::regex("name__regex=^(Alpha|Beta)-.*$", vec!["Alpha-One", "Beta-ONE"])]
+    #[case::in_op("name__in=Alpha-One,alpha-two", vec!["Alpha-One", "alpha-two"])]
+    #[case::not_in_op("name__not_in=Alpha-One,alpha-two", vec!["Beta-ONE", "Gamma-Three"])]
+    #[case::is_null_false("name__is_null=false", vec!["Alpha-One", "alpha-two", "Beta-ONE", "Gamma-Three"])]
+    #[case::is_null_true("name__is_null=true", vec![])]
+    #[case::not_is_null_true("name__not_is_null=true", vec!["Alpha-One", "alpha-two", "Beta-ONE", "Gamma-Three"])]
     #[actix_web::test]
     async fn test_documented_string_operators_on_objects(
         #[case] query: &str,
@@ -349,6 +400,8 @@ mod tests {
     #[case::lt("id__lt=<2>", vec![0, 1])]
     #[case::lte("id__lte=<1>", vec![0, 1])]
     #[case::between("id__between=<0>,<1>", vec![0, 1])]
+    #[case::in_op("id__in=<0>,<2>", vec![0, 2])]
+    #[case::not_in_op("id__not_in=<0>,<2>", vec![1])]
     #[actix_web::test]
     async fn test_documented_numeric_operators_on_objects(
         #[case] query_template: &str,
@@ -403,6 +456,8 @@ mod tests {
     #[case::lt("created_at__lt=2024-01-03", vec!["dated-0", "dated-1"])]
     #[case::lte("created_at__lte=2024-01-02", vec!["dated-0", "dated-1"])]
     #[case::between("created_at__between=2024-01-02,2024-01-03", vec!["dated-1", "dated-2"])]
+    #[case::in_op("created_at__in=2024-01-01,2024-01-03", vec!["dated-0", "dated-2"])]
+    #[case::not_in_op("created_at__not_in=2024-01-01,2024-01-03", vec!["dated-1"])]
     #[actix_web::test]
     async fn test_documented_date_operators_on_objects(
         #[case] query: &str,
