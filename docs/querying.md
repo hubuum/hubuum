@@ -54,6 +54,14 @@ Example:
 
 - `equals`
 
+### IP/network JSON fields
+
+- `within_network`
+- `contains_network`
+- `contains_ip`
+- `overlaps_network`
+- `inet_equals`
+
 ## Negation
 
 You can negate an operator by prefixing it with `not_`.
@@ -176,7 +184,68 @@ You can also use string-oriented operators for textual JSON values:
 /api/v1/classes/12/?json_data__contains=hostname=srv
 ```
 
-If the JSON path does not exist, the filter does not match, but it does not fail the request.
+Nested JSON paths use comma-separated keys:
+
+```text
+/api/v1/classes/12/?json_data__equals=network,address=10.0.0.10
+```
+
+JSON-backed numeric, boolean, and date/datetime values build on the same filter interface used elsewhere:
+
+- numeric/date operators: `equals`, `gt`, `gte`, `lt`, `lte`, `between`
+- boolean operators: `equals`
+
+Examples:
+
+```text
+/api/v1/classes/12/?json_data__equals=metrics,cpu_count=8
+/api/v1/classes/12/?json_data__gte=metrics,cpu_count=4
+/api/v1/classes/12/?json_data__equals=flags,enabled=true
+/api/v1/classes/12/?json_data__gt=maintenance,window_start=2026-03-01
+/api/v1/classes/12/?json_data__between=maintenance,window_start=2026-03-01,2026-03-31
+```
+
+Date-oriented JSON filters accept the same date formats as other date filters:
+
+- RFC3339 timestamps such as `2026-03-01T12:30:00Z`
+- calendar dates such as `2026-03-01`
+
+`between` uses the same comma-separated `min,max` format as the rest of the query interface.
+
+JSON-backed IP address and CIDR values also support network-aware operators:
+
+- `within_network`
+  Matches when the stored IP/network is inside the filter network, including equality.
+  Example: stored `10.0.0.10`, filter `10.0.0.0/24` -> match.
+  Example: stored `10.0.0.0/25`, filter `10.0.0.0/24` -> match.
+- `contains_network`
+  Matches when the stored network fully contains the filter IP/network, including equality.
+  Example: stored `10.0.0.0/24`, filter `10.0.0.0/25` -> match.
+  Example: stored `10.0.0.0/24`, filter `10.0.1.0/24` -> no match.
+- `contains_ip`
+  Matches when the stored network strictly contains the filter host IP.
+  Example: stored `10.0.0.0/24`, filter `10.0.0.10` -> match.
+  Example: stored `10.0.0.10`, filter `10.0.0.10` -> no match, because a host does not strictly contain itself.
+- `overlaps_network`
+  Matches when the stored IP/network overlaps the filter network at all.
+  Example: stored `10.0.0.0/24`, filter `10.0.0.64/26` -> match.
+  Example: stored `10.0.1.0/24`, filter `10.0.0.0/24` -> no match.
+- `inet_equals`
+  Matches normalized network equality using PostgreSQL `inet` semantics rather than raw string equality.
+  Example: stored `10.0.0.10`, filter `10.0.0.10/32` -> match.
+  Example: stored `10.0.0.0/24`, filter `10.0.0.0/25` -> no match.
+
+Examples:
+
+```text
+/api/v1/classes/12/?json_data__within_network=network,address=10.0.0.0/24
+/api/v1/classes/12/?json_data__contains_network=network,address=10.0.0.0/25
+/api/v1/classes/12/?json_data__contains_ip=network,address=10.0.0.10
+/api/v1/classes/12/?json_data__overlaps_network=network,address=10.0.0.64/26
+/api/v1/classes/12/?json_data__inet_equals=network,address=10.0.0.10
+```
+
+If the JSON path does not exist, or the stored value cannot be interpreted as the requested JSON type, the filter does not match, but it does not fail the request.
 
 ## Contextual endpoints
 

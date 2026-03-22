@@ -141,37 +141,43 @@ mod tests {
                     "role": "source-root",
                     "hostname": "root-01",
                     "env": "prod",
-                    "service": "gateway"
+                    "service": "gateway",
+                    "network": { "address": "10.0.0.0/24" }
                 }),
                 1 => serde_json::json!({
                     "role": "service-api",
                     "hostname": "api-01",
                     "env": "prod",
-                    "service": "api"
+                    "service": "api",
+                    "network": { "address": "10.0.0.10" }
                 }),
                 2 => serde_json::json!({
                     "role": "service-db",
                     "hostname": "db-01",
                     "env": "prod",
-                    "service": "db"
+                    "service": "db",
+                    "network": { "address": "10.0.1.20" }
                 }),
                 3 => serde_json::json!({
                     "role": "service-worker",
                     "hostname": "worker-01",
                     "env": "stage",
-                    "service": "worker"
+                    "service": "worker",
+                    "network": { "address": "10.0.2.30" }
                 }),
                 4 => serde_json::json!({
                     "role": "service-cache",
                     "hostname": "cache-01",
                     "env": "stage",
-                    "service": "cache"
+                    "service": "cache",
+                    "network": { "address": "2001:db8::10" }
                 }),
                 _ => serde_json::json!({
                     "role": format!("service-{index}"),
                     "hostname": format!("node-{index:02}"),
                     "env": "stage",
-                    "service": "misc"
+                    "service": "misc",
+                    "network": { "address": format!("10.0.3.{index}") }
                 }),
             };
 
@@ -1324,6 +1330,56 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(fetched_ids, expected_ids, "{endpoint}");
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[case::from_json_data_contains_ip(
+        "?from_json_data__contains_ip=network,address=10.0.0.42",
+        vec![1, 2, 4]
+    )]
+    #[case::to_json_data_within_network(
+        "?to_json_data__within_network=network,address=10.0.0.0/24",
+        vec![1]
+    )]
+    #[actix_web::test]
+    async fn test_api_related_objects_filter_json_data_ip_examples(
+        #[case] filter: &str,
+        #[case] expected_object_ids: Vec<usize>,
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let unique = format!("related_objects_json_ip_{}", filter)
+            .replace(&['=', '&', '?', ' ', '<', '>'][..], "_");
+        let context = test_context;
+        let (classes, relations) = create_classes_and_relations(&context, &unique).await;
+        let objects = create_objects_in_classes(&context.pool, &classes).await;
+
+        let _ =
+            create_object_relation(&context.pool, &objects[0], &objects[1], &relations[0]).await;
+        let _ =
+            create_object_relation(&context.pool, &objects[1], &objects[2], &relations[1]).await;
+        let class_relation_15 = create_relation(&context.pool, &classes[0], &classes[4]).await;
+        let _ = create_object_relation(&context.pool, &objects[0], &objects[4], &class_relation_15)
+            .await;
+
+        let endpoint = format!(
+            "{}{}",
+            related_objects_endpoint(classes[0].id, objects[0].id),
+            filter
+        );
+
+        let resp = get_request(&context.pool, &context.admin_token, &endpoint).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let body = test::read_body(resp).await;
+        let objects_fetched: Vec<HubuumObjectWithPath> = serde_json::from_slice(&body).unwrap();
+        let expected_ids: Vec<i32> = expected_object_ids
+            .iter()
+            .map(|i| objects[*i].id)
+            .collect::<Vec<_>>();
+        let fetched_ids = objects_fetched.iter().map(|o| o.id).collect::<Vec<_>>();
+
+        assert_eq!(fetched_ids, expected_ids);
 
         cleanup(&classes).await;
     }

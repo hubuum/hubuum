@@ -1,7 +1,9 @@
 #![allow(dead_code)]
 use chrono::NaiveDateTime;
+use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::net::IpAddr;
 use std::str::FromStr;
 use tracing::debug;
 
@@ -435,6 +437,7 @@ impl ParsedQueryParam {
         */
 
         let key = format!("'{{{key}}}'");
+        let field_expr = format!("{} #>> {}", field.table_field(), key);
 
         // The bind variables for the SQL query. We can't bind the key as using
         // bind variables for the key itself is not supported in Postgres.
@@ -446,10 +449,27 @@ impl ParsedQueryParam {
         let (op, neg) = self.operator.op_and_neg();
         let neg_str = if neg { "NOT " } else { "" };
 
+        if op.is_ip_operator() {
+            return self.as_json_ip_sql(&field_expr, value, op, neg);
+        }
+
         let sql_type = get_jsonb_field_type_from_value_and_operator(value, op.clone());
 
         // TODO: Add JSON Schema usage type support via
         // get_jsonb_field_type_from_json_schema(schema, key)
+
+        match sql_type {
+            Some(SQLMappedType::Numeric) => {
+                return self.as_json_numeric_sql(&field_expr, value, op, neg);
+            }
+            Some(SQLMappedType::Date) => {
+                return self.as_json_date_sql(&field_expr, value, op, neg);
+            }
+            Some(SQLMappedType::Boolean) => {
+                return self.as_json_boolean_sql(&field_expr, value, op, neg);
+            }
+            _ => {}
+        }
 
         let (sql_op, value) = match op {
             Operator::Equals => ("=", (*value).to_string()),
@@ -482,53 +502,187 @@ impl ParsedQueryParam {
             }
             Some(SQLMappedType::String) | Some(SQLMappedType::None) => {
                 bind_variables.push(SQLValue::String(value));
-                format!(
-                    "{}{} #>> {} {} ?",
-                    neg_str,
-                    field.table_field(),
-                    key,
-                    sql_op
-                )
+                format!("{}{} {} ?", neg_str, field_expr, sql_op)
             }
-            Some(SQLMappedType::Numeric) => {
-                let ints = value.as_integer()?;
-                bind_variables.push(SQLValue::Integer(ints[0]));
-                format!(
-                    "{}({} #>> {})::numeric {} ?",
-                    neg_str,
-                    field.table_field(),
-                    key,
-                    sql_op
-                )
-            }
-            Some(SQLMappedType::Date) => {
-                let dates = value.as_date()?;
-                bind_variables.push(SQLValue::Date(dates[0]));
-                format!(
-                    "{}({} #>> {})::date {} ?",
-                    neg_str,
-                    field.table_field(),
-                    key,
-                    sql_op
-                )
-            }
-            Some(SQLMappedType::Boolean) => {
-                let boolean = value.as_boolean()?;
-                bind_variables.push(SQLValue::Boolean(boolean));
-                format!(
-                    "{}({} #>> {})::boolean {} ?",
-                    neg_str,
-                    field.table_field(),
-                    key,
-                    sql_op
-                )
-            }
+            Some(SQLMappedType::Numeric)
+            | Some(SQLMappedType::Date)
+            | Some(SQLMappedType::Boolean) => unreachable!(),
         };
 
         debug!(message = "SQL JSONB generation", sql = %sql, bind_varaibles = ?bind_variables);
 
         Ok(SQLComponent {
             sql,
+            bind_variables,
+        })
+    }
+
+    fn as_json_ip_sql(
+        &self,
+        field_expr: &str,
+        value: &str,
+        op: Operator,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError> {
+        let value = parse_json_ip_filter_value(value, &op)?;
+        let lhs_expr = format!("try_inet({field_expr})");
+        let sql_op = match op {
+            Operator::InetEquals => "=",
+            Operator::WithinNetwork => "<<=",
+            Operator::ContainsNetwork => ">>=",
+            Operator::ContainsIp => ">>",
+            Operator::OverlapsNetwork => "&&",
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Invalid operator for JSON IP search: '{op:?}'"
+                )));
+            }
+        };
+        let predicate = if negated {
+            format!("NOT ({lhs_expr} {sql_op} ?::inet)")
+        } else {
+            format!("{lhs_expr} {sql_op} ?::inet")
+        };
+
+        Ok(SQLComponent {
+            sql: format!("{lhs_expr} IS NOT NULL AND {predicate}"),
+            bind_variables: vec![SQLValue::String(value)],
+        })
+    }
+
+    fn as_json_numeric_sql(
+        &self,
+        field_expr: &str,
+        value: &str,
+        op: Operator,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError> {
+        let bind_variables = value
+            .as_integer()?
+            .into_iter()
+            .map(SQLValue::Integer)
+            .collect::<Vec<_>>();
+        self.as_json_cast_sql(
+            &format!("try_numeric({field_expr})"),
+            bind_variables,
+            op,
+            negated,
+        )
+    }
+
+    fn as_json_date_sql(
+        &self,
+        field_expr: &str,
+        value: &str,
+        op: Operator,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError> {
+        let bind_variables = value
+            .as_date()?
+            .into_iter()
+            .map(SQLValue::Date)
+            .collect::<Vec<_>>();
+        self.as_json_cast_sql(
+            &format!("try_timestamp({field_expr})"),
+            bind_variables,
+            op,
+            negated,
+        )
+    }
+
+    fn as_json_boolean_sql(
+        &self,
+        field_expr: &str,
+        value: &str,
+        op: Operator,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError> {
+        let bind_variables = vec![SQLValue::Boolean(value.as_boolean()?)];
+        self.as_json_cast_sql(
+            &format!("try_boolean({field_expr})"),
+            bind_variables,
+            op,
+            negated,
+        )
+    }
+
+    fn as_json_cast_sql(
+        &self,
+        lhs_expr: &str,
+        bind_variables: Vec<SQLValue>,
+        op: Operator,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError> {
+        let predicate = match op {
+            Operator::Equals => {
+                if bind_variables.len() != 1 {
+                    return Err(ApiError::BadRequest(format!(
+                        "Operator 'equals' requires exactly 1 value for JSON field '{}'",
+                        self.field
+                    )));
+                }
+                format!("{lhs_expr} = ?")
+            }
+            Operator::Gt => {
+                if bind_variables.len() != 1 {
+                    return Err(ApiError::BadRequest(format!(
+                        "Operator 'gt' requires exactly 1 value for JSON field '{}'",
+                        self.field
+                    )));
+                }
+                format!("{lhs_expr} > ?")
+            }
+            Operator::Gte => {
+                if bind_variables.len() != 1 {
+                    return Err(ApiError::BadRequest(format!(
+                        "Operator 'gte' requires exactly 1 value for JSON field '{}'",
+                        self.field
+                    )));
+                }
+                format!("{lhs_expr} >= ?")
+            }
+            Operator::Lt => {
+                if bind_variables.len() != 1 {
+                    return Err(ApiError::BadRequest(format!(
+                        "Operator 'lt' requires exactly 1 value for JSON field '{}'",
+                        self.field
+                    )));
+                }
+                format!("{lhs_expr} < ?")
+            }
+            Operator::Lte => {
+                if bind_variables.len() != 1 {
+                    return Err(ApiError::BadRequest(format!(
+                        "Operator 'lte' requires exactly 1 value for JSON field '{}'",
+                        self.field
+                    )));
+                }
+                format!("{lhs_expr} <= ?")
+            }
+            Operator::Between => {
+                if bind_variables.len() != 2 {
+                    return Err(ApiError::BadRequest(format!(
+                        "Operator 'between' requires exactly 2 values for JSON field '{}'",
+                        self.field
+                    )));
+                }
+                format!("{lhs_expr} BETWEEN ? AND ?")
+            }
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Invalid operator for typed JSON search: '{op:?}'"
+                )));
+            }
+        };
+
+        let predicate = if negated {
+            format!("NOT ({predicate})")
+        } else {
+            predicate
+        };
+
+        Ok(SQLComponent {
+            sql: format!("{lhs_expr} IS NOT NULL AND {predicate}"),
             bind_variables,
         })
     }
@@ -732,6 +886,11 @@ pub enum Operator {
     Lt,
     Lte,
     Between,
+    WithinNetwork,
+    ContainsNetwork,
+    ContainsIp,
+    OverlapsNetwork,
+    InetEquals,
 }
 
 impl std::fmt::Display for Operator {
@@ -752,8 +911,26 @@ impl std::fmt::Display for Operator {
             Operator::Lt => "lt",
             Operator::Lte => "lte",
             Operator::Between => "between",
+            Operator::WithinNetwork => "within_network",
+            Operator::ContainsNetwork => "contains_network",
+            Operator::ContainsIp => "contains_ip",
+            Operator::OverlapsNetwork => "overlaps_network",
+            Operator::InetEquals => "inet_equals",
         };
         write!(f, "{op}")
+    }
+}
+
+impl Operator {
+    fn is_ip_operator(&self) -> bool {
+        matches!(
+            self,
+            Operator::WithinNetwork
+                | Operator::ContainsNetwork
+                | Operator::ContainsIp
+                | Operator::OverlapsNetwork
+                | Operator::InetEquals
+        )
     }
 }
 
@@ -778,6 +955,11 @@ pub enum SearchOperator {
     Lt { is_negated: bool },
     Lte { is_negated: bool },
     Between { is_negated: bool },
+    WithinNetwork { is_negated: bool },
+    ContainsNetwork { is_negated: bool },
+    ContainsIp { is_negated: bool },
+    OverlapsNetwork { is_negated: bool },
+    InetEquals { is_negated: bool },
 }
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum DataType {
@@ -806,6 +988,11 @@ impl SearchOperator {
             | SO::Lt { .. }
             | SO::Lte { .. }
             | SO::Between { .. } => matches!(data_type, DataType::NumericOrDate),
+            SO::WithinNetwork { .. }
+            | SO::ContainsNetwork { .. }
+            | SO::ContainsIp { .. }
+            | SO::OverlapsNetwork { .. }
+            | SO::InetEquals { .. } => false,
             SO::Contains { .. } => {
                 matches!(data_type, DataType::String) || matches!(data_type, DataType::Array)
             }
@@ -832,6 +1019,15 @@ impl SearchOperator {
             SearchOperator::Lt { is_negated, .. } => (Operator::Lt, *is_negated),
             SearchOperator::Lte { is_negated, .. } => (Operator::Lte, *is_negated),
             SearchOperator::Between { is_negated, .. } => (Operator::Between, *is_negated),
+            SearchOperator::WithinNetwork { is_negated, .. } => (Operator::WithinNetwork, *is_negated),
+            SearchOperator::ContainsNetwork { is_negated, .. } => {
+                (Operator::ContainsNetwork, *is_negated)
+            }
+            SearchOperator::ContainsIp { is_negated, .. } => (Operator::ContainsIp, *is_negated),
+            SearchOperator::OverlapsNetwork { is_negated, .. } => {
+                (Operator::OverlapsNetwork, *is_negated)
+            }
+            SearchOperator::InetEquals { is_negated, .. } => (Operator::InetEquals, *is_negated),
         }
     }
 
@@ -892,6 +1088,21 @@ impl SearchOperator {
                 is_negated: negated,
             }),
             "between" => Ok(SO::Between {
+                is_negated: negated,
+            }),
+            "within_network" => Ok(SO::WithinNetwork {
+                is_negated: negated,
+            }),
+            "contains_network" => Ok(SO::ContainsNetwork {
+                is_negated: negated,
+            }),
+            "contains_ip" => Ok(SO::ContainsIp {
+                is_negated: negated,
+            }),
+            "overlaps_network" => Ok(SO::OverlapsNetwork {
+                is_negated: negated,
+            }),
+            "inet_equals" => Ok(SO::InetEquals {
                 is_negated: negated,
             }),
 
@@ -1054,19 +1265,12 @@ pub fn get_jsonb_field_type_from_value_and_operator(
                 SQLMappedType::String,
             ],
         ),
-        Operator::Contains => get_sql_mapped_type_from_value(
-            value,
-            &[
-                SQLMappedType::Date,
-                SQLMappedType::Numeric,
-                SQLMappedType::String,
-            ],
-        ),
+        Operator::Contains => Some(SQLMappedType::String),
         Operator::Gt | Operator::Gte | Operator::Lt | Operator::Lte => {
             get_sql_mapped_type_from_value(value, &[SQLMappedType::Date, SQLMappedType::Numeric])
         }
         Operator::Between => {
-            let parts = value.split("--").collect::<Vec<&str>>();
+            let parts = value.split(',').collect::<Vec<&str>>();
             if parts.len() != 2 {
                 return None;
             }
@@ -1091,6 +1295,42 @@ pub fn get_jsonb_field_type_from_value_and_operator(
         | Operator::IEndsWith
         | Operator::Like
         | Operator::Regex => Some(SQLMappedType::String),
+        Operator::WithinNetwork
+        | Operator::ContainsNetwork
+        | Operator::ContainsIp
+        | Operator::OverlapsNetwork
+        | Operator::InetEquals => None,
+    }
+}
+
+fn parse_json_ip_filter_value(value: &str, operator: &Operator) -> Result<String, ApiError> {
+    match operator {
+        Operator::ContainsIp => value
+            .parse::<IpAddr>()
+            .map(|ip| ip.to_string())
+            .map_err(|_| ApiError::BadRequest(format!("Invalid IP address: '{value}'"))),
+        Operator::WithinNetwork
+        | Operator::ContainsNetwork
+        | Operator::OverlapsNetwork
+        | Operator::InetEquals => parse_ip_or_host_network(value),
+        _ => Err(ApiError::InternalServerError(format!(
+            "Unexpected non-IP operator passed to IP parser: '{operator:?}'"
+        ))),
+    }
+}
+
+fn parse_ip_or_host_network(value: &str) -> Result<String, ApiError> {
+    IpNet::from_str(value)
+        .or_else(|_| ip_to_host_net(value))
+        .map(|net| net.to_string())
+        .map_err(|_| ApiError::BadRequest(format!("Invalid IP/CIDR: '{value}'")))
+}
+
+fn ip_to_host_net(value: &str) -> Result<IpNet, ()> {
+    match value.parse::<IpAddr>() {
+        Ok(IpAddr::V4(addr)) => Ipv4Net::new(addr, 32).map(IpNet::from).map_err(|_| ()),
+        Ok(IpAddr::V6(addr)) => Ipv6Net::new(addr, 128).map(IpNet::from).map_err(|_| ()),
+        Err(_) => Err(()),
     }
 }
 
@@ -1446,6 +1686,21 @@ mod test {
                     ),
                 ],
             },
+            TestCase {
+                query_string: "json_data__within_network=network,address=10.0.0.0/24&json_data__contains_ip=network,address=10.0.0.10",
+                expected: vec![
+                    pq(
+                        "json_data",
+                        SearchOperator::WithinNetwork { is_negated: false },
+                        "network,address=10.0.0.0/24",
+                    ),
+                    pq(
+                        "json_data",
+                        SearchOperator::ContainsIp { is_negated: false },
+                        "network,address=10.0.0.10",
+                    ),
+                ],
+            },
         ];
 
         for case in test_cases {
@@ -1486,7 +1741,9 @@ mod test {
                     SearchOperator::Gt { is_negated: false },
                     "key,subkey=3",
                 ),
-                format!("({field} #>> '{{key,subkey}}')::numeric > ?"),
+                format!(
+                    "try_numeric({field} #>> '{{key,subkey}}') IS NOT NULL AND try_numeric({field} #>> '{{key,subkey}}') > ?"
+                ),
                 SQLValue::Integer(3),
             ),
         ];
@@ -1505,35 +1762,41 @@ mod test {
     }
 
     #[test]
-    fn test_json_schema_sql_query_date_generation() {
+    fn test_json_schema_sql_query_ip_generation() {
         let field = "json_schema";
         let test_cases = vec![
             (
                 pq(
                     "json_schema",
-                    SearchOperator::Equals { is_negated: false },
-                    "key=2021-01-01",
+                    SearchOperator::WithinNetwork { is_negated: false },
+                    "key,subkey=10.0.0.0/24",
                 ),
-                format!("({field} #>> '{{key}}')::date = ?"),
-                SQLValue::Date("2021-01-01".as_date().unwrap()[0]),
+                format!(
+                    "try_inet({field} #>> '{{key,subkey}}') IS NOT NULL AND try_inet({field} #>> '{{key,subkey}}') <<= ?::inet"
+                ),
+                SQLValue::String("10.0.0.0/24".to_string()),
             ),
             (
                 pq(
                     "json_schema",
-                    SearchOperator::Gt { is_negated: false },
-                    "key,subkey=2021-01-01",
+                    SearchOperator::ContainsIp { is_negated: false },
+                    "key=10.0.0.10",
                 ),
-                format!("({field} #>> '{{key,subkey}}')::date > ?"),
-                SQLValue::Date("2021-01-01".as_date().unwrap()[0]),
+                format!(
+                    "try_inet({field} #>> '{{key}}') IS NOT NULL AND try_inet({field} #>> '{{key}}') >> ?::inet"
+                ),
+                SQLValue::String("10.0.0.10".to_string()),
             ),
             (
                 pq(
                     "json_schema",
-                    SearchOperator::Gt { is_negated: true },
-                    "key,subkey=2021-01-01",
+                    SearchOperator::InetEquals { is_negated: true },
+                    "key=10.0.0.10",
                 ),
-                format!("NOT ({field} #>> '{{key,subkey}}')::date > ?"),
-                SQLValue::Date("2021-01-01".as_date().unwrap()[0]),
+                format!(
+                    "try_inet({field} #>> '{{key}}') IS NOT NULL AND NOT (try_inet({field} #>> '{{key}}') = ?::inet)"
+                ),
+                SQLValue::String("10.0.0.10/32".to_string()),
             ),
         ];
 
@@ -1544,6 +1807,103 @@ mod test {
                 SQLComponent {
                     sql: expected.to_string(),
                     bind_variables: vec![sqlvalue]
+                },
+                "Failed test case for param: {param:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_json_schema_sql_query_ip_validation() {
+        let test_cases = vec![
+            pq(
+                "json_schema",
+                SearchOperator::WithinNetwork { is_negated: false },
+                "key=not-an-ip",
+            ),
+            pq(
+                "json_schema",
+                SearchOperator::ContainsIp { is_negated: false },
+                "key=10.0.0.0/24",
+            ),
+        ];
+
+        for param in test_cases {
+            let result = param.as_json_sql();
+            assert!(
+                result.is_err(),
+                "Expected bad request for param: {param:?}, got {result:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_json_schema_sql_query_date_generation() {
+        let field = "json_schema";
+        let test_cases = vec![
+            (
+                pq(
+                    "json_schema",
+                    SearchOperator::Equals { is_negated: false },
+                    "key=2021-01-01",
+                ),
+                format!(
+                    "try_timestamp({field} #>> '{{key}}') IS NOT NULL AND try_timestamp({field} #>> '{{key}}') = ?"
+                ),
+                SQLValue::Date("2021-01-01".as_date().unwrap()[0]),
+            ),
+            (
+                pq(
+                    "json_schema",
+                    SearchOperator::Gt { is_negated: false },
+                    "key,subkey=2021-01-01",
+                ),
+                format!(
+                    "try_timestamp({field} #>> '{{key,subkey}}') IS NOT NULL AND try_timestamp({field} #>> '{{key,subkey}}') > ?"
+                ),
+                SQLValue::Date("2021-01-01".as_date().unwrap()[0]),
+            ),
+            (
+                pq(
+                    "json_schema",
+                    SearchOperator::Gt { is_negated: true },
+                    "key,subkey=2021-01-01",
+                ),
+                format!(
+                    "try_timestamp({field} #>> '{{key,subkey}}') IS NOT NULL AND NOT (try_timestamp({field} #>> '{{key,subkey}}') > ?)"
+                ),
+                SQLValue::Date("2021-01-01".as_date().unwrap()[0]),
+            ),
+            (
+                pq(
+                    "json_schema",
+                    SearchOperator::Between { is_negated: false },
+                    "key=2021-01-01,2021-01-31",
+                ),
+                format!(
+                    "try_timestamp({field} #>> '{{key}}') IS NOT NULL AND try_timestamp({field} #>> '{{key}}') BETWEEN ? AND ?"
+                ),
+                SQLValue::Date("2021-01-01,2021-01-31".as_date().unwrap()[0]),
+            ),
+        ];
+
+        for (index, (param, expected, sqlvalue)) in test_cases.into_iter().enumerate() {
+            let result = param.as_json_sql();
+            let expected_bindings = if index == 3 {
+                "2021-01-01,2021-01-31"
+                    .as_date()
+                    .unwrap()
+                    .into_iter()
+                    .map(SQLValue::Date)
+                    .collect::<Vec<_>>()
+            } else {
+                vec![sqlvalue]
+            };
+            assert_eq!(
+                result.unwrap(),
+                SQLComponent {
+                    sql: expected.to_string(),
+                    bind_variables: expected_bindings
                 },
                 "Failed test case for param: {param:?}",
             );
@@ -1560,7 +1920,9 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key=3",
                 ),
-                format!("({field} #>> '{{key}}')::numeric = ?"),
+                format!(
+                    "try_numeric({field} #>> '{{key}}') IS NOT NULL AND try_numeric({field} #>> '{{key}}') = ?"
+                ),
                 SQLValue::Integer(3),
             ),
             (
@@ -1569,7 +1931,9 @@ mod test {
                     SearchOperator::Gt { is_negated: false },
                     "key,subkey=3",
                 ),
-                format!("({field} #>> '{{key,subkey}}')::numeric > ?"),
+                format!(
+                    "try_numeric({field} #>> '{{key,subkey}}') IS NOT NULL AND try_numeric({field} #>> '{{key,subkey}}') > ?"
+                ),
                 SQLValue::Integer(3),
             ),
             (
@@ -1578,8 +1942,67 @@ mod test {
                     SearchOperator::Gt { is_negated: true },
                     "key,subkey=3",
                 ),
-                format!("NOT ({field} #>> '{{key,subkey}}')::numeric > ?"),
+                format!(
+                    "try_numeric({field} #>> '{{key,subkey}}') IS NOT NULL AND NOT (try_numeric({field} #>> '{{key,subkey}}') > ?)"
+                ),
                 SQLValue::Integer(3),
+            ),
+            (
+                pq(
+                    "json_schema",
+                    SearchOperator::Between { is_negated: false },
+                    "key=3,5",
+                ),
+                format!(
+                    "try_numeric({field} #>> '{{key}}') IS NOT NULL AND try_numeric({field} #>> '{{key}}') BETWEEN ? AND ?"
+                ),
+                SQLValue::Integer(3),
+            ),
+        ];
+
+        for (index, (param, expected, sqlvalue)) in test_cases.into_iter().enumerate() {
+            let result = param.as_json_sql();
+            let expected_bindings = if index == 3 {
+                vec![SQLValue::Integer(3), SQLValue::Integer(5)]
+            } else {
+                vec![sqlvalue]
+            };
+            assert_eq!(
+                result.unwrap(),
+                SQLComponent {
+                    sql: expected.to_string(),
+                    bind_variables: expected_bindings
+                },
+                "Failed test case for param: {param:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_json_schema_sql_query_boolean_generation() {
+        let field = "json_schema";
+        let test_cases = vec![
+            (
+                pq(
+                    "json_schema",
+                    SearchOperator::Equals { is_negated: false },
+                    "key=true",
+                ),
+                format!(
+                    "try_boolean({field} #>> '{{key}}') IS NOT NULL AND try_boolean({field} #>> '{{key}}') = ?"
+                ),
+                SQLValue::Boolean(true),
+            ),
+            (
+                pq(
+                    "json_schema",
+                    SearchOperator::Equals { is_negated: true },
+                    "key=false",
+                ),
+                format!(
+                    "try_boolean({field} #>> '{{key}}') IS NOT NULL AND NOT (try_boolean({field} #>> '{{key}}') = ?)"
+                ),
+                SQLValue::Boolean(false),
             ),
         ];
 
@@ -1606,7 +2029,9 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key,subkey=3",
                 ),
-                format!("({field} #>> '{{key,subkey}}')::numeric = ?"),
+                format!(
+                    "try_numeric({field} #>> '{{key,subkey}}') IS NOT NULL AND try_numeric({field} #>> '{{key,subkey}}') = ?"
+                ),
             ),
             (
                 pq(
@@ -1614,7 +2039,9 @@ mod test {
                     SearchOperator::Equals { is_negated: false },
                     "key,subkey,subsubkey=3",
                 ),
-                format!("({field} #>> '{{key,subkey,subsubkey}}')::numeric = ?"),
+                format!(
+                    "try_numeric({field} #>> '{{key,subkey,subsubkey}}') IS NOT NULL AND try_numeric({field} #>> '{{key,subkey,subsubkey}}') = ?"
+                ),
             ),
             (
                 pq(
@@ -1622,7 +2049,9 @@ mod test {
                     SearchOperator::Equals { is_negated: true },
                     "key,subkey,subsubkey,subsubsubkey=3",
                 ),
-                format!("NOT ({field} #>> '{{key,subkey,subsubkey,subsubsubkey}}')::numeric = ?",),
+                format!(
+                    "try_numeric({field} #>> '{{key,subkey,subsubkey,subsubsubkey}}') IS NOT NULL AND NOT (try_numeric({field} #>> '{{key,subkey,subsubkey,subsubsubkey}}') = ?)"
+                ),
             ),
         ];
 
@@ -1775,6 +2204,13 @@ mod test {
             ("true", Operator::Equals, Some(SQLMappedType::Boolean)),
             ("2021-01-01", Operator::Gt, Some(SQLMappedType::Date)),
             ("3", Operator::Gt, Some(SQLMappedType::Numeric)),
+            (
+                "2021-01-01,2021-01-31",
+                Operator::Between,
+                Some(SQLMappedType::Date),
+            ),
+            ("3,5", Operator::Between, Some(SQLMappedType::Numeric)),
+            ("3", Operator::Contains, Some(SQLMappedType::String)),
             ("null", Operator::Gt, None),
             ("foo", Operator::Gt, None),
         ];
@@ -1808,6 +2244,17 @@ mod test {
             ("lt", SO::Lt { is_negated: false }),
             ("lte", SO::Lte { is_negated: false }),
             ("between", SO::Between { is_negated: false }),
+            ("within_network", SO::WithinNetwork { is_negated: false }),
+            (
+                "contains_network",
+                SO::ContainsNetwork { is_negated: false },
+            ),
+            ("contains_ip", SO::ContainsIp { is_negated: false }),
+            (
+                "overlaps_network",
+                SO::OverlapsNetwork { is_negated: false },
+            ),
+            ("inet_equals", SO::InetEquals { is_negated: false }),
             ("not_equals", SO::Equals { is_negated: true }),
             ("not_iequals", SO::IEquals { is_negated: true }),
             ("not_contains", SO::Contains { is_negated: true }),
@@ -1822,6 +2269,17 @@ mod test {
             ("not_gte", SO::Gte { is_negated: true }),
             ("not_lt", SO::Lt { is_negated: true }),
             ("not_lte", SO::Lte { is_negated: true }),
+            ("not_within_network", SO::WithinNetwork { is_negated: true }),
+            (
+                "not_contains_network",
+                SO::ContainsNetwork { is_negated: true },
+            ),
+            ("not_contains_ip", SO::ContainsIp { is_negated: true }),
+            (
+                "not_overlaps_network",
+                SO::OverlapsNetwork { is_negated: true },
+            ),
+            ("not_inet_equals", SO::InetEquals { is_negated: true }),
         ];
 
         for (input, expected) in test_cases {

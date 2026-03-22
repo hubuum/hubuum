@@ -36,6 +36,13 @@ mod tests {
     const NUMERIC_DATE_OPERATORS: &[&str] = &["equals", "gt", "gte", "lt", "lte", "between"];
     const ARRAY_OPERATORS: &[&str] = &["equals", "contains"];
     const BOOLEAN_OPERATORS: &[&str] = &["equals"];
+    const IP_NETWORK_JSON_OPERATORS: &[&str] = &[
+        "within_network",
+        "contains_network",
+        "contains_ip",
+        "overlaps_network",
+        "inet_equals",
+    ];
 
     fn objects_in_class_endpoint(class_id: i32) -> String {
         format!("/api/v1/classes/{class_id}/")
@@ -226,6 +233,7 @@ mod tests {
     #[case::numeric_date("Numeric and date fields", NUMERIC_DATE_OPERATORS)]
     #[case::array("Array fields", ARRAY_OPERATORS)]
     #[case::boolean("Boolean fields", BOOLEAN_OPERATORS)]
+    #[case::ip_network_json("IP/network JSON fields", IP_NETWORK_JSON_OPERATORS)]
     fn test_querying_docs_operator_lists(
         #[case] section: &str,
         #[case] expected_operators: &[&str],
@@ -252,6 +260,33 @@ mod tests {
             assert!(
                 parsed.is_applicable_to(data_type),
                 "operator '{operator}' from section '{section}' should apply to {data_type:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_documented_ip_network_json_operators_parse() {
+        let documented = documented_operators("IP/network JSON fields");
+        let expected = IP_NETWORK_JSON_OPERATORS
+            .iter()
+            .map(|operator| operator.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(documented, expected);
+
+        for operator in documented {
+            let parsed = SearchOperator::new_from_string(&operator).unwrap();
+            let rendered = parsed.to_string();
+            assert_eq!(
+                rendered, operator,
+                "operator '{operator}' should round-trip"
+            );
+
+            let negated = SearchOperator::new_from_string(&format!("not_{operator}")).unwrap();
+            assert_eq!(
+                negated.to_string(),
+                format!("not_{operator}"),
+                "operator '{operator}' should support not_ round-trip"
             );
         }
     }
