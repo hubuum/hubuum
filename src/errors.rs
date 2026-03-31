@@ -32,6 +32,22 @@ pub fn fatal_error(message: &str, exit_code: i32) -> ! {
         file = location.file(),
         line = location.line(),
     );
+    eprintln!(
+        "Fatal startup error at {}:{}: {} (exit code {})",
+        location.file(),
+        location.line(),
+        message,
+        exit_code
+    );
+    #[cfg(test)]
+    panic!(
+        "Fatal startup error at {}:{}: {} (exit code {})",
+        location.file(),
+        location.line(),
+        message,
+        exit_code
+    );
+    #[cfg(not(test))]
     std::process::exit(exit_code);
 }
 

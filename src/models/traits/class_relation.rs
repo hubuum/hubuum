@@ -39,7 +39,7 @@ impl IdAccessor for HubuumClassRelation {
 
 impl InstanceAdapter<HubuumClassRelation> for HubuumClassRelation {
     async fn instance_adapter(&self, _pool: &DbPool) -> Result<HubuumClassRelation, ApiError> {
-        Ok(*self)
+        Ok(self.clone())
     }
 }
 

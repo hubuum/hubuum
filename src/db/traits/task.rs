@@ -3,11 +3,13 @@ use diesel::prelude::*;
 use tracing::info;
 
 use crate::apply_query_options;
+use crate::config::get_config;
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
 use crate::models::{
-    ImportTaskResultRecord, NewImportTaskResultRecord, NewTaskEventRecord, NewTaskRecord,
+    ImportTaskResultRecord, NewImportTaskResultRecord, NewReportTaskOutputRecord,
+    NewTaskEventRecord, NewTaskRecord, ReportTaskOutputRecord, ReportTaskOutputSummaryRecord,
     TaskEventRecord, TaskKind, TaskRecord, TaskResponse, TaskResultCounts, TaskStatus,
 };
 use crate::pagination::{CursorValue, decode_cursor_values, page_limits_or_defaults};
@@ -217,6 +219,97 @@ pub async fn list_import_results_with_total_count(
     Ok((items, total_count))
 }
 
+pub async fn find_report_task_output(
+    pool: &DbPool,
+    task_id_value: i32,
+) -> Result<Option<ReportTaskOutputRecord>, ApiError> {
+    use crate::schema::report_task_outputs::dsl::{report_task_outputs, task_id};
+
+    with_connection(pool, |conn| {
+        report_task_outputs
+            .filter(task_id.eq(task_id_value))
+            .first::<ReportTaskOutputRecord>(conn)
+            .optional()
+    })
+}
+
+pub async fn find_report_task_output_summary(
+    pool: &DbPool,
+    task_id_value: i32,
+) -> Result<Option<ReportTaskOutputSummaryRecord>, ApiError> {
+    use crate::schema::report_task_outputs::dsl::{report_task_outputs, task_id};
+
+    with_connection(pool, |conn| {
+        report_task_outputs
+            .filter(task_id.eq(task_id_value))
+            .first::<ReportTaskOutputSummaryRecord>(conn)
+            .optional()
+    })
+}
+
+pub async fn list_report_task_output_summaries(
+    pool: &DbPool,
+    task_ids: &[i32],
+) -> Result<Vec<ReportTaskOutputSummaryRecord>, ApiError> {
+    use crate::schema::report_task_outputs::dsl::{report_task_outputs, task_id};
+
+    if task_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    with_connection(pool, |conn| {
+        report_task_outputs
+            .filter(task_id.eq_any(task_ids))
+            .load::<ReportTaskOutputSummaryRecord>(conn)
+    })
+}
+
+pub async fn purge_expired_report_outputs(pool: &DbPool) -> Result<Vec<i32>, ApiError> {
+    use crate::schema::report_task_outputs::dsl::{
+        output_expires_at, report_task_outputs, task_id,
+    };
+    use crate::schema::task_events::dsl::task_events;
+
+    let now = Utc::now().naive_utc();
+    let expired_task_ids = with_transaction(pool, |conn| {
+        let expired_task_ids =
+            diesel::delete(report_task_outputs.filter(output_expires_at.le(now)))
+                .returning(task_id)
+                .get_results::<i32>(conn)?;
+
+        if !expired_task_ids.is_empty() {
+            let events = expired_task_ids
+                .iter()
+                .map(|expired_task_id| NewTaskEventRecord {
+                    task_id: *expired_task_id,
+                    event_type: "cleanup".to_string(),
+                    message: "Stored report output expired and was cleaned up".to_string(),
+                    data: Some(serde_json::json!({
+                        "cleaned_at": now,
+                    })),
+                })
+                .collect::<Vec<_>>();
+            diesel::insert_into(task_events)
+                .values(&events)
+                .execute(conn)?;
+        }
+
+        Ok::<_, diesel::result::Error>(expired_task_ids)
+    })?;
+
+    if !expired_task_ids.is_empty() {
+        info!(
+            message = "Expired report outputs cleaned up",
+            cleaned_count = expired_task_ids.len(),
+            retention_hours = get_config()
+                .map(|config| config.report_output_retention_hours)
+                .unwrap_or(168)
+        );
+    }
+
+    Ok(expired_task_ids)
+}
+
 pub async fn count_import_results_summary(
     pool: &DbPool,
     task_id_value: i32,
@@ -357,6 +450,59 @@ pub async fn finalize_task_terminal_state(
 
     info!(
         message = "Task reached terminal state",
+        task_id = record.id,
+        task_kind = record.kind.as_str(),
+        status = record.status.as_str(),
+        processed_items = record.processed_items,
+        success_items = record.success_items,
+        failed_items = record.failed_items,
+        summary = record.summary.as_deref()
+    );
+
+    Ok(record)
+}
+
+pub async fn finalize_report_task_with_output(
+    pool: &DbPool,
+    task_id_value: i32,
+    update: TaskStateUpdate,
+    event: NewTaskEventRecord,
+    output: NewReportTaskOutputRecord,
+) -> Result<TaskRecord, ApiError> {
+    use crate::schema::report_task_outputs::dsl::report_task_outputs;
+    use crate::schema::task_events::dsl::task_events;
+    use crate::schema::tasks::dsl::{
+        failed_items, finished_at, id, processed_items, request_payload, request_redacted_at,
+        started_at, status, success_items, summary, tasks, updated_at,
+    };
+
+    let record = with_transaction(pool, |conn| {
+        diesel::insert_into(report_task_outputs)
+            .values(output)
+            .execute(conn)?;
+
+        let event_record = diesel::insert_into(task_events)
+            .values(event)
+            .get_result::<TaskEventRecord>(conn)?;
+
+        diesel::update(tasks.filter(id.eq(task_id_value)))
+            .set((
+                status.eq(update.status.as_str()),
+                summary.eq(update.summary),
+                processed_items.eq(update.processed_items),
+                success_items.eq(update.success_items),
+                failed_items.eq(update.failed_items),
+                started_at.eq(update.started_at),
+                finished_at.eq(Some(event_record.created_at)),
+                request_payload.eq::<Option<serde_json::Value>>(None),
+                request_redacted_at.eq(event_record.created_at),
+                updated_at.eq(event_record.created_at),
+            ))
+            .get_result::<TaskRecord>(conn)
+    })?;
+
+    info!(
+        message = "Report task output stored and task finalized",
         task_id = record.id,
         task_kind = record.kind.as_str(),
         status = record.status.as_str(),

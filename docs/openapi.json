@@ -5430,27 +5430,12 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "Rendered report output. JSON is returned by default. Text outputs require `output.template_id`.",
+          "202": {
+            "description": "Report task accepted",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ReportJsonResponse"
-                }
-              },
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "text/csv": {
-                "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/TaskResponse"
                 }
               }
             }
@@ -5475,8 +5460,57 @@
               }
             }
           },
-          "406": {
-            "description": "Not acceptable",
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/reports/{task_id}": {
+      "get": {
+        "tags": [
+          "reports"
+        ],
+        "summary": "Get Api V1 Reports By Task Id",
+        "description": "Auto-generated documentation for GET /api/v1/reports/{task_id}.",
+        "operationId": "getApiV1ReportsByTaskId",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Report task ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Report task projection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
             "content": {
               "application/json": {
                 "schema": {
@@ -5485,8 +5519,82 @@
               }
             }
           },
-          "413": {
-            "description": "Rendered report exceeded max_output_bytes",
+          "404": {
+            "description": "Report task not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/reports/{task_id}/output": {
+      "get": {
+        "tags": [
+          "reports"
+        ],
+        "summary": "Get Api V1 Reports By Task Id Output",
+        "description": "Auto-generated documentation for GET /api/v1/reports/{task_id}/output.",
+        "operationId": "getApiV1ReportsByTaskIdOutput",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Report task ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stored report output",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportJsonResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Report output not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -6670,6 +6778,12 @@
             "type": "string",
             "format": "date-time"
           },
+          "forward_template_alias": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "from_hubuum_class_id": {
             "type": "integer",
             "format": "int32"
@@ -6677,6 +6791,12 @@
           "id": {
             "type": "integer",
             "format": "int32"
+          },
+          "reverse_template_alias": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "to_hubuum_class_id": {
             "type": "integer",
@@ -6919,6 +7039,12 @@
       "ImportClassRelationInput": {
         "type": "object",
         "properties": {
+          "forward_template_alias": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "from_class_key": {
             "oneOf": [
               {
@@ -6936,6 +7062,12 @@
             ]
           },
           "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reverse_template_alias": {
             "type": [
               "string",
               "null"
@@ -7456,9 +7588,21 @@
           "to_hubuum_class_id"
         ],
         "properties": {
+          "forward_template_alias": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "from_hubuum_class_id": {
             "type": "integer",
             "format": "int32"
+          },
+          "reverse_template_alias": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "to_hubuum_class_id": {
             "type": "integer",
@@ -7466,7 +7610,9 @@
           }
         },
         "example": {
+          "forward_template_alias": "rooms",
           "from_hubuum_class_id": 1,
+          "reverse_template_alias": "hosts",
           "to_hubuum_class_id": 2
         }
       },
@@ -7477,12 +7623,26 @@
           "to_hubuum_class_id"
         ],
         "properties": {
+          "forward_template_alias": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reverse_template_alias": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "to_hubuum_class_id": {
             "type": "integer",
             "format": "int32"
           }
         },
         "example": {
+          "forward_template_alias": "rooms",
+          "reverse_template_alias": "hosts",
           "to_hubuum_class_id": 2
         }
       },
@@ -7608,7 +7768,7 @@
           "description": "Template for owner listing",
           "name": "owner-report",
           "namespace_id": 7,
-          "template": "{{#each items}}{{this.name}}={{this.data.owner}}\\n{{/each}}"
+          "template": "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}"
         }
       },
       "NewUser": {
@@ -8017,6 +8177,22 @@
           "template_id": 12
         }
       },
+      "ReportRelationContext": {
+        "type": "object",
+        "properties": {
+          "depth": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "depth": 2
+        }
+      },
       "ReportRequest": {
         "type": "object",
         "required": [
@@ -8059,6 +8235,16 @@
               "null"
             ]
           },
+          "relation_context": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportRelationContext"
+              }
+            ]
+          },
           "scope": {
             "$ref": "#/components/schemas/ReportScope"
           }
@@ -8073,6 +8259,7 @@
             "template_id": 12
           },
           "query": "name__icontains=server&sort=name",
+          "relation_context": null,
           "scope": {
             "class_id": 42,
             "kind": "objects_in_class",
@@ -8120,6 +8307,53 @@
           "object_relations",
           "related_objects"
         ]
+      },
+      "ReportTaskDetails": {
+        "type": "object",
+        "required": [
+          "output_url",
+          "output_available"
+        ],
+        "properties": {
+          "output_available": {
+            "type": "boolean"
+          },
+          "output_content_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "output_expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "output_url": {
+            "type": "string"
+          },
+          "template_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "truncated": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "warning_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
       },
       "ReportTemplate": {
         "type": "object",
@@ -8170,7 +8404,7 @@
           "id": 1,
           "name": "owner-report",
           "namespace_id": 7,
-          "template": "{{#each items}}{{this.name}}={{this.data.owner}}\\n{{/each}}",
+          "template": "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}",
           "updated_at": "2026-03-06T12:00:00"
         }
       },
@@ -8201,7 +8435,7 @@
         "example": {
           "code": "missing_value",
           "message": "Template lookup failed",
-          "path": "this.data.owner"
+          "path": "item.data.owner"
         }
       },
       "TaskDetails": {
@@ -8214,6 +8448,16 @@
               },
               {
                 "$ref": "#/components/schemas/ImportTaskDetails"
+              }
+            ]
+          },
+          "report": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportTaskDetails"
               }
             ]
           }
@@ -8276,6 +8520,18 @@
             ]
           },
           "import_results": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "report": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "report_output": {
             "type": [
               "string",
               "null"
@@ -8809,7 +9065,7 @@
           "description": "Updated template description",
           "name": "owner-report-v2",
           "namespace_id": 9,
-          "template": "{{#each items}}{{this.name}}\\n{{/each}}"
+          "template": "{% for item in items %}{{ item.name }}\n{% endfor %}"
         }
       },
       "UpdateUser": {

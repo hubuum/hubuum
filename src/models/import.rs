@@ -106,6 +106,8 @@ pub struct ImportClassRelationInput {
     pub from_class_key: Option<ClassKey>,
     pub to_class_ref: Option<String>,
     pub to_class_key: Option<ClassKey>,
+    pub forward_template_alias: Option<String>,
+    pub reverse_template_alias: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
