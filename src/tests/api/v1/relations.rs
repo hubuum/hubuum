@@ -65,6 +65,8 @@ mod tests {
         let relation = NewHubuumClassRelation {
             from_hubuum_class_id: from_class.id,
             to_hubuum_class_id: to_class.id,
+            forward_template_alias: None,
+            reverse_template_alias: None,
         };
 
         relation.save(pool).await.unwrap()
@@ -658,6 +660,8 @@ mod tests {
 
         let content = NewHubuumClassRelationFromClass {
             to_hubuum_class_id: classes[1].id,
+            forward_template_alias: None,
+            reverse_template_alias: None,
         };
 
         let endpoint = format!("/api/v1/classes/{}/relations/", classes[0].id);
@@ -692,9 +696,13 @@ mod tests {
 
         let forward_content = NewHubuumClassRelationFromClass {
             to_hubuum_class_id: classes[1].id,
+            forward_template_alias: None,
+            reverse_template_alias: None,
         };
         let reverse_content = NewHubuumClassRelationFromClass {
             to_hubuum_class_id: classes[0].id,
+            forward_template_alias: None,
+            reverse_template_alias: None,
         };
 
         let forward_endpoint = format!("/api/v1/classes/{}/relations/", classes[0].id);

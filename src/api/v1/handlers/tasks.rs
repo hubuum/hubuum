@@ -3,7 +3,8 @@ use actix_web::{HttpRequest, Responder, get, http::StatusCode, routes, web};
 use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
 use crate::db::traits::task::{
-    find_task_record, list_task_events_with_total_count, list_tasks_with_total_count,
+    find_report_task_output_summary, find_task_record, list_report_task_output_summaries,
+    list_task_events_with_total_count, list_tasks_with_total_count,
 };
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
@@ -130,9 +131,20 @@ pub async fn get_tasks(
         &search_params,
     )
     .await?;
+    let tasks = tasks.into_iter().collect::<Vec<_>>();
+    let report_task_ids = tasks
+        .iter()
+        .filter(|task| task.kind == TaskKind::Report.as_str())
+        .map(|task| task.id)
+        .collect::<Vec<_>>();
+    let report_outputs = list_report_task_output_summaries(&pool, &report_task_ids)
+        .await?
+        .into_iter()
+        .map(|output| (output.task_id, output))
+        .collect::<std::collections::HashMap<_, _>>();
     let tasks = tasks
         .into_iter()
-        .map(|task| task.to_response())
+        .map(|task| task.to_response_with_report_output(report_outputs.get(&task.id)))
         .collect::<Result<Vec<_>, _>>()?;
 
     paginated_json_response(tasks, total_count, StatusCode::OK, &params)
@@ -161,7 +173,15 @@ pub async fn get_task(
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
     let task = load_authorized_task(&pool, &requestor.user, task_id.into_inner()).await?;
-    Ok(json_response(task.to_response()?, StatusCode::OK))
+    let report_output = if task.kind == TaskKind::Report.as_str() {
+        find_report_task_output_summary(&pool, task.id).await?
+    } else {
+        None
+    };
+    Ok(json_response(
+        task.to_response_with_report_output(report_output.as_ref())?,
+        StatusCode::OK,
+    ))
 }
 
 #[utoipa::path(

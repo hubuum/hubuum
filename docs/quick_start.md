@@ -11,7 +11,7 @@ Hubuum can be configured using environment variables or command-line arguments. 
 | `HUBUUM_BIND_IP` | `127.0.0.1` | IP address the server binds to |
 | `HUBUUM_BIND_PORT` | `8080` | Port the server listens on |
 | `HUBUUM_LOG_LEVEL` | `info` | Logging level (trace, debug, info, warn, error) |
-| `HUBUUM_ACTIX_WORKERS` | `4` | Number of Actix worker threads |
+| `HUBUUM_ACTIX_WORKERS` | Detected CPU count | Number of Actix worker threads |
 
 ### Access Control Configuration
 
@@ -29,12 +29,33 @@ Hubuum can be configured using environment variables or command-line arguments. 
 | `HUBUUM_DATABASE_URL` | `postgres://localhost` | PostgreSQL connection URL |
 | `HUBUUM_DB_POOL_SIZE` | `10` | Maximum number of database connections in the pool |
 
+### Task System Configuration
+
+| Variable | Default | Description |
+| -------- | ------- | ----------- |
+| `HUBUUM_TASK_WORKERS` | About half the detected CPU count, minimum `1` | Number of background task workers |
+| `HUBUUM_TASK_POLL_INTERVAL_MS` | `200` | Idle polling interval for background task workers |
+
+### Report and Template Execution Configuration
+
+| Variable | Default | Description |
+| -------- | ------- | ----------- |
+| `HUBUUM_REPORT_OUTPUT_RETENTION_HOURS` | `168` | How long successful async report outputs remain refetchable before cleanup |
+| `HUBUUM_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS` | `300` | How often workers attempt cleanup of expired stored report outputs |
+| `HUBUUM_REPORT_TEMPLATE_RECURSION_LIMIT` | `64` | MiniJinja recursion and template composition depth limit |
+| `HUBUUM_REPORT_TEMPLATE_FUEL` | `50000` | MiniJinja fuel budget for one render |
+| `HUBUUM_REPORT_TEMPLATE_MAX_OBJECTS` | `2000` | Maximum hydrated relation-aware template objects per report root |
+| `HUBUUM_REPORT_STAGE_TIMEOUT_MS` | `10000` | Maximum elapsed time allowed for each report execution stage |
+
+**Report/template note**: These settings control async report task behavior, including stored output retention, template execution limits, and relation hydration guardrails. See [Report API](report_api.md) and [Template Guide](template_guide.md) for the user-facing behavior these limits affect.
+
 ### Pagination Configuration
 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
 | `HUBUUM_DEFAULT_PAGE_LIMIT` | `100` | Default number of items per page |
 | `HUBUUM_MAX_PAGE_LIMIT` | `250` | Maximum number of items per page |
+| `HUBUUM_MAX_TRANSITIVE_DEPTH` | `100` | Maximum recursion depth for transitive relation graph walks |
 
 ### Authentication & Authorization
 
@@ -55,6 +76,7 @@ Hubuum can be configured using environment variables or command-line arguments. 
 | `HUBUUM_TLS_CERT_PATH` | None | Path to TLS certificate chain file (PEM format) |
 | `HUBUUM_TLS_KEY_PATH` | None | Path to TLS private key file (PEM format) |
 | `HUBUUM_TLS_KEY_PASSPHRASE` | None | Passphrase for encrypted private key (OpenSSL only) |
+| `HUBUUM_TLS_BACKEND` | Auto / unset | Preferred TLS backend when TLS is enabled (`rustls` or `openssl`) |
 
 **Note**: TLS requires both certificate and key paths to be set. The rustls feature does not support encrypted keys with passphrases.
 
@@ -143,5 +165,6 @@ services:
 - [Unified search](search_api.md) - grouped search across namespaces, classes, and objects
 - [Query Support Matrix](query_support_matrix.md) - Endpoint-by-endpoint filter and sort support
 - [Relationships](relationship_endpoints.md) - Working with object relationships
+- [Task System](task_system.md) - Background workers, queue claiming, and task execution flow
 - [Report API](report_api.md) - Server-side report execution and templated output
 - [Template Guide](template_guide.md) - Stored template syntax, context, and examples

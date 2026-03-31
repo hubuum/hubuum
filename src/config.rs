@@ -17,6 +17,12 @@ use crate::errors::ApiError;
 pub const DEFAULT_PAGE_LIMIT: usize = 100;
 pub const MAX_PAGE_LIMIT: usize = 250;
 pub const DEFAULT_TASK_POLL_INTERVAL_MS: u64 = 200;
+pub const DEFAULT_REPORT_OUTPUT_RETENTION_HOURS: i64 = 24 * 7;
+pub const DEFAULT_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS: u64 = 300;
+pub const DEFAULT_REPORT_TEMPLATE_RECURSION_LIMIT: usize = 64;
+pub const DEFAULT_REPORT_TEMPLATE_FUEL: u64 = 50_000;
+pub const DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS: usize = 2_000;
+pub const DEFAULT_REPORT_STAGE_TIMEOUT_MS: u64 = 10_000;
 pub const DEFAULT_TOKEN_LIFETIME_HOURS: i64 = 24;
 pub const DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS: usize = 5;
 pub const DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS: u64 = 300;
@@ -127,6 +133,54 @@ pub struct AppConfig {
     )]
     pub task_poll_interval_ms: u64,
 
+    /// How long successful stored report outputs remain available for refetch.
+    #[clap(
+        long,
+        env = "HUBUUM_REPORT_OUTPUT_RETENTION_HOURS",
+        default_value_t = DEFAULT_REPORT_OUTPUT_RETENTION_HOURS
+    )]
+    pub report_output_retention_hours: i64,
+
+    /// How often workers attempt cleanup of expired stored report outputs.
+    #[clap(
+        long,
+        env = "HUBUUM_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS",
+        default_value_t = DEFAULT_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS
+    )]
+    pub report_output_cleanup_interval_seconds: u64,
+
+    /// MiniJinja recursion limit for report template rendering.
+    #[clap(
+        long,
+        env = "HUBUUM_REPORT_TEMPLATE_RECURSION_LIMIT",
+        default_value_t = DEFAULT_REPORT_TEMPLATE_RECURSION_LIMIT
+    )]
+    pub report_template_recursion_limit: usize,
+
+    /// MiniJinja fuel budget for report template rendering.
+    #[clap(
+        long,
+        env = "HUBUUM_REPORT_TEMPLATE_FUEL",
+        default_value_t = DEFAULT_REPORT_TEMPLATE_FUEL
+    )]
+    pub report_template_fuel: u64,
+
+    /// Maximum number of hydrated relation-aware template objects rendered for one report root.
+    #[clap(
+        long,
+        env = "HUBUUM_REPORT_TEMPLATE_MAX_OBJECTS",
+        default_value_t = DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS
+    )]
+    pub report_template_max_objects: usize,
+
+    /// Maximum allowed elapsed time per report execution stage.
+    #[clap(
+        long,
+        env = "HUBUUM_REPORT_STAGE_TIMEOUT_MS",
+        default_value_t = DEFAULT_REPORT_STAGE_TIMEOUT_MS
+    )]
+    pub report_stage_timeout_ms: u64,
+
     /// Number of DB connections in the pool
     #[clap(long, env = "HUBUUM_DB_POOL_SIZE", default_value_t = 10)]
     pub db_pool_size: u32,
@@ -235,6 +289,42 @@ impl AppConfig {
         if self.task_poll_interval_ms == 0 {
             return Err(ApiError::BadRequest(
                 "task_poll_interval_ms must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.report_output_retention_hours <= 0 {
+            return Err(ApiError::BadRequest(
+                "report_output_retention_hours must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.report_output_cleanup_interval_seconds == 0 {
+            return Err(ApiError::BadRequest(
+                "report_output_cleanup_interval_seconds must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.report_template_recursion_limit == 0 {
+            return Err(ApiError::BadRequest(
+                "report_template_recursion_limit must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.report_template_fuel == 0 {
+            return Err(ApiError::BadRequest(
+                "report_template_fuel must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.report_template_max_objects == 0 {
+            return Err(ApiError::BadRequest(
+                "report_template_max_objects must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.report_stage_timeout_ms == 0 {
+            return Err(ApiError::BadRequest(
+                "report_stage_timeout_ms must be greater than 0".to_string(),
             ));
         }
 
@@ -432,6 +522,32 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_TASK_POLL_INTERVAL_MS),
+        report_output_retention_hours: env::var("HUBUUM_REPORT_OUTPUT_RETENTION_HOURS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_REPORT_OUTPUT_RETENTION_HOURS),
+        report_output_cleanup_interval_seconds: env::var(
+            "HUBUUM_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS",
+        )
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(DEFAULT_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS),
+        report_template_recursion_limit: env::var("HUBUUM_REPORT_TEMPLATE_RECURSION_LIMIT")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_REPORT_TEMPLATE_RECURSION_LIMIT),
+        report_template_fuel: env::var("HUBUUM_REPORT_TEMPLATE_FUEL")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_REPORT_TEMPLATE_FUEL),
+        report_template_max_objects: env::var("HUBUUM_REPORT_TEMPLATE_MAX_OBJECTS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS),
+        report_stage_timeout_ms: env::var("HUBUUM_REPORT_STAGE_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_REPORT_STAGE_TIMEOUT_MS),
         db_pool_size: env_or_default("HUBUUM_DB_POOL_SIZE", "2")
             .parse()
             .unwrap_or(5),

@@ -14,12 +14,12 @@ use crate::models::{
     NewNamespaceWithAssignee, NewReportTemplate, NewUser, ObjectKey, ObjectsByClass, Permission,
     Permissions, RelatedClassGraph, RelatedObjectGraph, ReportContentType, ReportJsonResponse,
     ReportLimits, ReportMeta, ReportMissingDataPolicy, ReportOutputRequest, ReportRequest,
-    ReportScope, ReportScopeKind, ReportTemplate, ReportTemplateID, ReportWarning, TaskDetails,
-    TaskEventResponse, TaskKind, TaskLinks, TaskProgress, TaskResponse, TaskStatus,
-    UnifiedSearchBatchResponse, UnifiedSearchDoneEvent, UnifiedSearchErrorEvent, UnifiedSearchKind,
-    UnifiedSearchResponse, UnifiedSearchStartedEvent, UpdateGroup, UpdateHubuumClass,
-    UpdateHubuumObject, UpdateNamespace, UpdateReportTemplate, UpdateUser, User, UserToken,
-    UserTokenMetadata,
+    ReportScope, ReportScopeKind, ReportTaskDetails, ReportTemplate, ReportTemplateID,
+    ReportWarning, TaskDetails, TaskEventResponse, TaskKind, TaskLinks, TaskProgress, TaskResponse,
+    TaskStatus, UnifiedSearchBatchResponse, UnifiedSearchDoneEvent, UnifiedSearchErrorEvent,
+    UnifiedSearchKind, UnifiedSearchResponse, UnifiedSearchStartedEvent, UpdateGroup,
+    UpdateHubuumClass, UpdateHubuumObject, UpdateNamespace, UpdateReportTemplate, UpdateUser, User,
+    UserToken, UserTokenMetadata,
 };
 use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER, page_limits_or_defaults};
 use actix_web::{HttpResponse, Responder};
@@ -90,6 +90,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
         search::get_search,
         search::stream_search,
         reports::run_report,
+        reports::get_report,
+        reports::get_report_output,
         tasks::get_tasks,
         tasks::get_task,
         tasks::get_task_events,
@@ -170,6 +172,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             TaskProgress,
             TaskLinks,
             ImportTaskDetails,
+            ReportTaskDetails,
             TaskDetails,
             TaskResponse,
             TaskEventResponse,
@@ -677,6 +680,8 @@ mod tests {
             "/api/v1/imports/{task_id}",
             "/api/v1/imports/{task_id}/results",
             "/api/v1/reports",
+            "/api/v1/reports/{task_id}",
+            "/api/v1/reports/{task_id}/output",
             "/api/v1/search",
             "/api/v1/search/stream",
             "/api/v1/tasks",
@@ -721,6 +726,14 @@ mod tests {
                 .is_some()
         );
         assert!(json.pointer("/paths/~1api~1v1~1reports/post").is_some());
+        assert!(
+            json.pointer("/paths/~1api~1v1~1reports~1{task_id}/get")
+                .is_some()
+        );
+        assert!(
+            json.pointer("/paths/~1api~1v1~1reports~1{task_id}~1output/get")
+                .is_some()
+        );
         assert!(json.pointer("/paths/~1api~1v1~1templates/get").is_some());
         assert!(
             json.pointer("/paths/~1api~1v1~1relations~1objects/post")
