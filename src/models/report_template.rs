@@ -11,6 +11,7 @@ use crate::pagination::{
 };
 use crate::schema::report_templates;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter, NamespaceAdapter};
+use crate::utilities::reporting::validate_template;
 use crate::{date_search, numeric_search, string_search};
 
 #[derive(Debug, Clone, Queryable, Selectable)]
@@ -148,6 +149,16 @@ pub async fn create_report_template(
     use crate::schema::report_templates::dsl::report_templates;
 
     let new_row = template.validate()?;
+    ensure_template_name_is_available(pool, new_row.namespace_id, &new_row.name, None).await?;
+    let namespace_templates =
+        report_templates_in_namespace(pool, new_row.namespace_id, None).await?;
+    validate_template(
+        &new_row.name,
+        &new_row.template,
+        new_row.namespace_id,
+        &namespace_templates,
+        ReportContentType::from_mime(&new_row.content_type)?,
+    )?;
     let row = with_connection(pool, |conn| {
         diesel::insert_into(report_templates)
             .values(&new_row)
@@ -162,7 +173,7 @@ pub async fn update_report_template(
     template_id: i32,
     update: UpdateReportTemplate,
 ) -> Result<ReportTemplate, ApiError> {
-    use crate::schema::report_templates::dsl::{id, name, namespace_id, report_templates};
+    use crate::schema::report_templates::dsl::{id, report_templates};
 
     let current_row = with_connection(pool, |conn| {
         report_templates
@@ -179,22 +190,22 @@ pub async fn update_report_template(
         .name
         .clone()
         .unwrap_or_else(|| current_row.name.clone());
+    let target_template = update
+        .template
+        .clone()
+        .unwrap_or_else(|| current_row.template.clone());
 
-    let existing_name_conflict = with_connection(pool, |conn| {
-        report_templates
-            .filter(namespace_id.eq(target_namespace_id))
-            .filter(name.eq(&target_name))
-            .filter(id.ne(template_id))
-            .first::<ReportTemplateRow>(conn)
-            .optional()
-    })?;
-
-    if existing_name_conflict.is_some() {
-        return Err(ApiError::Conflict(format!(
-            "Template name '{}' already exists in namespace {}",
-            target_name, target_namespace_id
-        )));
-    }
+    ensure_template_name_is_available(pool, target_namespace_id, &target_name, Some(template_id))
+        .await?;
+    let namespace_templates =
+        report_templates_in_namespace(pool, target_namespace_id, Some(template_id)).await?;
+    validate_template(
+        &target_name,
+        &target_template,
+        target_namespace_id,
+        &namespace_templates,
+        ReportContentType::from_mime(&current_row.content_type)?,
+    )?;
 
     let changeset = update.as_changeset();
     let row = with_connection(pool, |conn| {
@@ -212,6 +223,66 @@ pub async fn delete_report_template(pool: &DbPool, template_id: i32) -> Result<(
     with_connection(pool, |conn| {
         diesel::delete(report_templates.filter(id.eq(template_id))).execute(conn)
     })?;
+
+    Ok(())
+}
+
+pub async fn report_templates_in_namespace(
+    pool: &DbPool,
+    target_namespace_id: i32,
+    exclude_template_id: Option<i32>,
+) -> Result<Vec<ReportTemplate>, ApiError> {
+    use crate::schema::report_templates::dsl::{id, namespace_id, report_templates};
+
+    let rows = with_connection(pool, |conn| {
+        let mut query = report_templates
+            .into_boxed()
+            .filter(namespace_id.eq(target_namespace_id));
+        if let Some(exclude_template_id) = exclude_template_id {
+            query = query.filter(id.ne(exclude_template_id));
+        }
+        query.load::<ReportTemplateRow>(conn)
+    })?;
+
+    rows.into_iter().map(TryInto::try_into).collect()
+}
+
+#[allow(dead_code)]
+pub async fn list_all_report_templates(pool: &DbPool) -> Result<Vec<ReportTemplate>, ApiError> {
+    use crate::schema::report_templates::dsl::report_templates;
+
+    let rows = with_connection(pool, |conn| {
+        report_templates.load::<ReportTemplateRow>(conn)
+    })?;
+
+    rows.into_iter().map(TryInto::try_into).collect()
+}
+
+async fn ensure_template_name_is_available(
+    pool: &DbPool,
+    target_namespace_id: i32,
+    target_name: &str,
+    exclude_template_id: Option<i32>,
+) -> Result<(), ApiError> {
+    use crate::schema::report_templates::dsl::{id, name, namespace_id, report_templates};
+
+    let existing_name_conflict = with_connection(pool, |conn| {
+        let mut query = report_templates
+            .into_boxed()
+            .filter(namespace_id.eq(target_namespace_id))
+            .filter(name.eq(target_name));
+        if let Some(exclude_template_id) = exclude_template_id {
+            query = query.filter(id.ne(exclude_template_id));
+        }
+        query.first::<ReportTemplateRow>(conn).optional()
+    })?;
+
+    if existing_name_conflict.is_some() {
+        return Err(ApiError::Conflict(format!(
+            "Template name '{}' already exists in namespace {}",
+            target_name, target_namespace_id
+        )));
+    }
 
     Ok(())
 }
@@ -434,7 +505,8 @@ fn report_template_example() -> ReportTemplate {
         name: "owner-report".to_string(),
         description: "Template for owner listing".to_string(),
         content_type: ReportContentType::TextPlain,
-        template: "{{#each items}}{{this.name}}={{this.data.owner}}\\n{{/each}}".to_string(),
+        template: "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}"
+            .to_string(),
         created_at: example_timestamp,
         updated_at: example_timestamp,
     }
@@ -447,7 +519,8 @@ fn new_report_template_example() -> NewReportTemplate {
         name: "owner-report".to_string(),
         description: "Template for owner listing".to_string(),
         content_type: ReportContentType::TextPlain,
-        template: "{{#each items}}{{this.name}}={{this.data.owner}}\\n{{/each}}".to_string(),
+        template: "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}"
+            .to_string(),
     }
 }
 
@@ -457,6 +530,6 @@ fn update_report_template_example() -> UpdateReportTemplate {
         namespace_id: Some(9),
         name: Some("owner-report-v2".to_string()),
         description: Some("Updated template description".to_string()),
-        template: Some("{{#each items}}{{this.name}}\\n{{/each}}".to_string()),
+        template: Some("{% for item in items %}{{ item.name }}\n{% endfor %}".to_string()),
     }
 }

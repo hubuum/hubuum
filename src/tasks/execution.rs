@@ -448,7 +448,13 @@ pub(super) fn execute_planned_item(
                 input.to_class_ref.as_deref(),
                 input.to_class_key.as_ref(),
             )?;
-            create_class_relation_db(conn, from_class.id, to_class.id)?;
+            create_class_relation_db(
+                conn,
+                from_class.id,
+                to_class.id,
+                input.forward_template_alias.clone(),
+                input.reverse_template_alias.clone(),
+            )?;
         }
         PlannedExecution::CreateObjectRelation(input) => {
             let from_object = resolve_object_runtime(

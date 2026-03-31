@@ -5,7 +5,7 @@ use utoipa::ToSchema;
 
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
-use crate::schema::{import_task_results, task_events, tasks};
+use crate::schema::{import_task_results, report_task_outputs, task_events, tasks};
 use crate::traits::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
@@ -222,6 +222,8 @@ pub struct TaskLinks {
     pub events: String,
     pub import: Option<String>,
     pub import_results: Option<String>,
+    pub report: Option<String>,
+    pub report_output: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -230,8 +232,20 @@ pub struct ImportTaskDetails {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct ReportTaskDetails {
+    pub output_url: String,
+    pub output_available: bool,
+    pub output_expires_at: Option<NaiveDateTime>,
+    pub template_name: Option<String>,
+    pub output_content_type: Option<String>,
+    pub warning_count: Option<i32>,
+    pub truncated: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct TaskDetails {
     pub import: Option<ImportTaskDetails>,
+    pub report: Option<ReportTaskDetails>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -274,14 +288,113 @@ pub struct ImportTaskResultResponse {
     pub created_at: NaiveDateTime,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable)]
+#[diesel(table_name = report_task_outputs)]
+pub struct ReportTaskOutputRecord {
+    pub id: i32,
+    pub task_id: i32,
+    pub template_name: Option<String>,
+    pub content_type: String,
+    pub json_output: Option<serde_json::Value>,
+    pub text_output: Option<String>,
+    pub meta_json: serde_json::Value,
+    pub warnings_json: serde_json::Value,
+    pub warning_count: i32,
+    pub truncated: bool,
+    pub output_expires_at: NaiveDateTime,
+    pub total_duration_ms: i32,
+    pub query_duration_ms: i32,
+    pub hydration_duration_ms: i32,
+    pub render_duration_ms: i32,
+    pub created_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = report_task_outputs)]
+pub struct NewReportTaskOutputRecord {
+    pub task_id: i32,
+    pub template_name: Option<String>,
+    pub content_type: String,
+    pub json_output: Option<serde_json::Value>,
+    pub text_output: Option<String>,
+    pub meta_json: serde_json::Value,
+    pub warnings_json: serde_json::Value,
+    pub warning_count: i32,
+    pub truncated: bool,
+    pub output_expires_at: NaiveDateTime,
+    pub total_duration_ms: i32,
+    pub query_duration_ms: i32,
+    pub hydration_duration_ms: i32,
+    pub render_duration_ms: i32,
+}
+
+#[derive(Debug, Clone, Queryable, Selectable)]
+#[diesel(table_name = report_task_outputs)]
+#[allow(dead_code)]
+pub struct ReportTaskOutputSummaryRecord {
+    pub id: i32,
+    pub task_id: i32,
+    pub template_name: Option<String>,
+    pub content_type: String,
+    pub json_output: Option<serde_json::Value>,
+    pub text_output: Option<String>,
+    pub meta_json: serde_json::Value,
+    pub warnings_json: serde_json::Value,
+    pub warning_count: i32,
+    pub truncated: bool,
+    pub output_expires_at: NaiveDateTime,
+    pub total_duration_ms: i32,
+    pub query_duration_ms: i32,
+    pub hydration_duration_ms: i32,
+    pub render_duration_ms: i32,
+    pub created_at: NaiveDateTime,
+}
+
 impl TaskRecord {
     pub fn to_response(&self) -> Result<TaskResponse, ApiError> {
+        self.to_response_with_report_output(None)
+    }
+
+    pub fn to_response_with_report_output(
+        &self,
+        report_output_summary: Option<&ReportTaskOutputSummaryRecord>,
+    ) -> Result<TaskResponse, ApiError> {
         let kind = TaskKind::from_db(&self.kind)?;
         let status = TaskStatus::from_db(&self.status)?;
         let task_url = format!("/api/v1/tasks/{}", self.id);
         let import_url = (kind == TaskKind::Import).then(|| format!("/api/v1/imports/{}", self.id));
         let import_results =
             (kind == TaskKind::Import).then(|| format!("/api/v1/imports/{}/results", self.id));
+        let report_url = (kind == TaskKind::Report).then(|| format!("/api/v1/reports/{}", self.id));
+        let report_output_url =
+            (kind == TaskKind::Report).then(|| format!("/api/v1/reports/{}/output", self.id));
+        let details = match kind {
+            TaskKind::Import => import_results.clone().map(|results_url| TaskDetails {
+                import: Some(ImportTaskDetails { results_url }),
+                report: None,
+            }),
+            TaskKind::Report => report_output_url.clone().map(|output_url| {
+                let output_summary = report_output_summary.cloned();
+                TaskDetails {
+                    import: None,
+                    report: Some(ReportTaskDetails {
+                        output_url,
+                        output_available: output_summary.is_some(),
+                        output_expires_at: output_summary
+                            .as_ref()
+                            .map(|summary| summary.output_expires_at),
+                        template_name: output_summary
+                            .as_ref()
+                            .and_then(|summary| summary.template_name.clone()),
+                        output_content_type: report_output_summary
+                            .map(|summary| summary.content_type.clone()),
+                        warning_count: report_output_summary.map(|summary| summary.warning_count),
+                        truncated: report_output_summary.map(|summary| summary.truncated),
+                    }),
+                }
+            }),
+            _ => None,
+        };
 
         Ok(TaskResponse {
             id: self.id,
@@ -304,10 +417,10 @@ impl TaskRecord {
                 events: format!("{task_url}/events"),
                 import: import_url.clone(),
                 import_results: import_results.clone(),
+                report: report_url,
+                report_output: report_output_url,
             },
-            details: import_results.map(|results_url| TaskDetails {
-                import: Some(ImportTaskDetails { results_url }),
-            }),
+            details,
         })
     }
 }
