@@ -10,30 +10,36 @@ use crate::{schema::hubuumclass_relation, schema::hubuumobject_relation};
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct HubuumClassRelationID(pub i32);
 
-#[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, Queryable, Clone, PartialEq, Eq, ToSchema)]
 #[diesel(table_name = hubuumclass_relation)]
 pub struct HubuumClassRelation {
     pub id: i32,
     pub from_hubuum_class_id: i32,
     pub to_hubuum_class_id: i32,
+    pub forward_template_alias: Option<String>,
+    pub reverse_template_alias: Option<String>,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
 }
 
-#[derive(Debug, Serialize, Deserialize, Insertable, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Insertable, ToSchema)]
 #[schema(example = new_hubuum_class_relation_example)]
 #[diesel(table_name = hubuumclass_relation)]
 pub struct NewHubuumClassRelation {
     pub from_hubuum_class_id: i32,
     pub to_hubuum_class_id: i32,
+    pub forward_template_alias: Option<String>,
+    pub reverse_template_alias: Option<String>,
 }
 
 /// To create new relations between classes from within a class
 /// we only need the id of the class we want to relate to.
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(example = new_hubuum_class_relation_from_class_example)]
 pub struct NewHubuumClassRelationFromClass {
     pub to_hubuum_class_id: i32,
+    pub forward_template_alias: Option<String>,
+    pub reverse_template_alias: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -207,6 +213,8 @@ fn new_hubuum_class_relation_example() -> NewHubuumClassRelation {
     NewHubuumClassRelation {
         from_hubuum_class_id: 1,
         to_hubuum_class_id: 2,
+        forward_template_alias: Some("rooms".to_string()),
+        reverse_template_alias: Some("hosts".to_string()),
     }
 }
 
@@ -214,6 +222,8 @@ fn new_hubuum_class_relation_example() -> NewHubuumClassRelation {
 fn new_hubuum_class_relation_from_class_example() -> NewHubuumClassRelationFromClass {
     NewHubuumClassRelationFromClass {
         to_hubuum_class_id: 2,
+        forward_template_alias: Some("rooms".to_string()),
+        reverse_template_alias: Some("hosts".to_string()),
     }
 }
 
@@ -280,6 +290,8 @@ pub mod tests {
         let relation = NewHubuumClassRelation {
             from_hubuum_class_id: class1.id,
             to_hubuum_class_id: class2.id,
+            forward_template_alias: None,
+            reverse_template_alias: None,
         };
 
         let relation = relation.save(pool).await.unwrap();
@@ -290,11 +302,15 @@ pub mod tests {
             NewHubuumClassRelation {
                 from_hubuum_class_id: class2.id,
                 to_hubuum_class_id: class1.id,
+                forward_template_alias: None,
+                reverse_template_alias: None,
             }
         } else {
             NewHubuumClassRelation {
                 from_hubuum_class_id: class1.id,
                 to_hubuum_class_id: class2.id,
+                forward_template_alias: None,
+                reverse_template_alias: None,
             }
         };
 
@@ -348,6 +364,8 @@ pub mod tests {
         let relation = NewHubuumClassRelation {
             from_hubuum_class_id: class1.id,
             to_hubuum_class_id: class1.id,
+            forward_template_alias: None,
+            reverse_template_alias: None,
         };
 
         match relation.save(&pool).await {
@@ -374,6 +392,8 @@ pub mod tests {
         let old_relation = NewHubuumClassRelation {
             from_hubuum_class_id: class2.id,
             to_hubuum_class_id: class1.id,
+            forward_template_alias: None,
+            reverse_template_alias: None,
         };
         match old_relation.save(&pool).await {
             Err(ApiError::Conflict(_)) => {}

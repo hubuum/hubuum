@@ -109,6 +109,8 @@
         id SERIAL PRIMARY KEY,
         from_hubuum_class_id INT REFERENCES hubuumclass (id) ON DELETE CASCADE NOT NULL,
         to_hubuum_class_id INT REFERENCES hubuumclass (id) ON DELETE CASCADE NOT NULL,
+        forward_template_alias VARCHAR NULL,
+        reverse_template_alias VARCHAR NULL,
         created_at TIMESTAMP NOT NULL DEFAULT now(),
         updated_at TIMESTAMP NOT NULL DEFAULT now(),
         UNIQUE (from_hubuum_class_id, to_hubuum_class_id)
@@ -213,6 +215,30 @@
         created_at TIMESTAMP NOT NULL DEFAULT now()
     );
 
+    DROP TABLE IF EXISTS report_task_outputs CASCADE;
+    CREATE TABLE report_task_outputs (
+        id SERIAL PRIMARY KEY,
+        task_id INT REFERENCES tasks (id) ON DELETE CASCADE NOT NULL UNIQUE,
+        template_name VARCHAR NULL,
+        content_type VARCHAR NOT NULL,
+        json_output JSONB NULL,
+        text_output TEXT NULL,
+        meta_json JSONB NOT NULL,
+        warnings_json JSONB NOT NULL,
+        warning_count INT NOT NULL DEFAULT 0,
+        truncated BOOLEAN NOT NULL DEFAULT FALSE,
+        output_expires_at TIMESTAMP NOT NULL,
+        total_duration_ms INT NOT NULL DEFAULT 0,
+        query_duration_ms INT NOT NULL DEFAULT 0,
+        hydration_duration_ms INT NOT NULL DEFAULT 0,
+        render_duration_ms INT NOT NULL DEFAULT 0,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        CHECK (
+            (json_output IS NOT NULL AND text_output IS NULL)
+            OR (json_output IS NULL AND text_output IS NOT NULL)
+        )
+    );
+
     ----------------------
     ---- Indexes
     ----------------------
@@ -262,6 +288,7 @@
     CREATE INDEX idx_tasks_active_status ON tasks (deleted_at, status);
     CREATE INDEX idx_task_events_task_id_created_at ON task_events (task_id, created_at);
     CREATE INDEX idx_import_task_results_task_id_created_at ON import_task_results (task_id, created_at);
+    CREATE INDEX idx_report_task_outputs_task_id_created_at ON report_task_outputs (task_id, created_at);
 
     ----------------------
     ---- Functions
@@ -404,12 +431,16 @@
     RETURNS TRIGGER AS $$
     DECLARE
         temp INT;
+        temp_alias VARCHAR;
     BEGIN
         IF NEW.from_hubuum_class_id > NEW.to_hubuum_class_id THEN
             -- Swap the IDs if they are in the wrong order
             temp := NEW.from_hubuum_class_id;
             NEW.from_hubuum_class_id := NEW.to_hubuum_class_id;
             NEW.to_hubuum_class_id := temp;
+            temp_alias := NEW.forward_template_alias;
+            NEW.forward_template_alias := NEW.reverse_template_alias;
+            NEW.reverse_template_alias := temp_alias;
         END IF;
         RETURN NEW;
     END;

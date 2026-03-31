@@ -46,6 +46,8 @@ mod test {
         let rel1 = NewHubuumClassRelation {
             from_hubuum_class_id: classes[0].id,
             to_hubuum_class_id: classes[1].id,
+            forward_template_alias: None,
+            reverse_template_alias: None,
         }
         .save(pool)
         .await
@@ -54,6 +56,8 @@ mod test {
         let rel2 = NewHubuumClassRelation {
             from_hubuum_class_id: classes[1].id,
             to_hubuum_class_id: classes[2].id,
+            forward_template_alias: None,
+            reverse_template_alias: None,
         }
         .save(pool)
         .await

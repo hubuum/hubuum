@@ -1,8 +1,8 @@
 use serde_json;
 
-use std::sync::LazyLock;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 // Define an enum with variants for each schema
 #[derive(Debug, PartialEq, Eq, Hash)]

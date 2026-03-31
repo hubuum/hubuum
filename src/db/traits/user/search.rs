@@ -1574,7 +1574,9 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         );
         trace_query!(query, "Searching source-relative related objects");
 
-        with_connection(pool, |conn| query.get_results::<RelatedObjectGraphRow>(conn))
+        with_connection(pool, |conn| {
+            query.get_results::<RelatedObjectGraphRow>(conn)
+        })
     }
 
     async fn objects_related_to_page_from_backend_with_admin_status<O>(

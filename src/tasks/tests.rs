@@ -1267,7 +1267,7 @@ fn test_best_effort_execution_only_aborts_for_matching_policy_failures() {
 }
 
 #[test]
-fn test_process_one_task_zero_item_failure_keeps_counters_consistent() {
+fn test_process_one_task_report_failure_marks_single_failed_item() {
     let context = block_on(TestContext::new());
     let task = block_on(create_task_record(
         &context.pool,
@@ -1306,8 +1306,8 @@ fn test_process_one_task_zero_item_failure_keeps_counters_consistent() {
         let stored = block_on(find_task_record(&context.pool, task.id)).unwrap();
         if stored.status == TaskStatus::Failed.as_str() {
             assert_eq!(stored.total_items, 0);
-            assert_eq!(stored.processed_items, 0);
-            assert_eq!(stored.failed_items, 0);
+            assert_eq!(stored.processed_items, 1);
+            assert_eq!(stored.failed_items, 1);
             return;
         }
     }

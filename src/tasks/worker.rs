@@ -1,16 +1,17 @@
-use std::sync::{Once, OnceLock};
+use std::sync::{Mutex, Once, OnceLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use actix_rt::time::sleep;
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
+use crate::api::v1::handlers::reports::execute_report_task;
 use crate::config::{DEFAULT_TASK_POLL_INTERVAL_MS, get_config};
 use crate::db::DbPool;
 use crate::db::traits::task::{
     TaskStateUpdate, claim_next_queued_task, count_import_results_summary,
-    finalize_task_terminal_state,
+    finalize_task_terminal_state, purge_expired_report_outputs,
 };
 use crate::errors::ApiError;
 use crate::models::{
@@ -23,9 +24,14 @@ use super::types::WorkerLoopAction;
 
 static TASK_WORKER: Once = Once::new();
 static TASK_WORKER_NOTIFY: OnceLock<Notify> = OnceLock::new();
+static REPORT_OUTPUT_CLEANUP_STATE: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 
 fn get_task_worker_notify() -> &'static Notify {
     TASK_WORKER_NOTIFY.get_or_init(Notify::new)
+}
+
+fn cleanup_state() -> &'static Mutex<Option<Instant>> {
+    REPORT_OUTPUT_CLEANUP_STATE.get_or_init(|| Mutex::new(None))
 }
 
 fn configured_task_worker_count() -> usize {
@@ -103,6 +109,8 @@ pub fn kick_task_worker(pool: DbPool) {
 }
 
 pub(super) async fn process_one_task(pool: &DbPool) -> Result<bool, ApiError> {
+    maybe_cleanup_expired_report_outputs(pool).await?;
+
     let Some(task) = claim_next_queued_task(pool).await? else {
         return Ok(false);
     };
@@ -122,6 +130,30 @@ pub(super) async fn process_one_task(pool: &DbPool) -> Result<bool, ApiError> {
     Ok(true)
 }
 
+async fn maybe_cleanup_expired_report_outputs(pool: &DbPool) -> Result<(), ApiError> {
+    let cleanup_interval = get_config()
+        .map(|config| config.report_output_cleanup_interval_seconds)
+        .unwrap_or(300);
+    let should_run = {
+        let mut state = cleanup_state().lock().map_err(|_| {
+            ApiError::InternalServerError("Cleanup state lock poisoned".to_string())
+        })?;
+        match *state {
+            Some(last_run) if last_run.elapsed() < Duration::from_secs(cleanup_interval) => false,
+            _ => {
+                *state = Some(Instant::now());
+                true
+            }
+        }
+    };
+
+    if should_run {
+        purge_expired_report_outputs(pool).await?;
+    }
+
+    Ok(())
+}
+
 async fn process_claimed_task(pool: &DbPool, task: &TaskRecord) -> Result<(), ApiError> {
     let submitted_by = task.submitted_by.ok_or_else(|| {
         ApiError::BadRequest("Submitting user is no longer available for this task".to_string())
@@ -138,6 +170,7 @@ async fn process_claimed_task(pool: &DbPool, task: &TaskRecord) -> Result<(), Ap
 
     match TaskKind::from_db(&task.kind)? {
         TaskKind::Import => execute_import_task(pool, task, &submitted_by).await,
+        TaskKind::Report => execute_report_task(pool, task, &submitted_by).await,
         other => Err(ApiError::BadRequest(format!(
             "Task kind '{}' is not implemented",
             other.as_str()
@@ -153,6 +186,7 @@ pub(super) async fn mark_claimed_task_failed(
     let summary = sanitize_error_for_storage(err);
     let counts = match TaskKind::from_db(&task.kind)? {
         TaskKind::Import => count_import_results_summary(pool, task.id).await?,
+        TaskKind::Report => TaskResultCounts::new(1, 0, 1)?,
         _ => TaskResultCounts::default(),
     };
 

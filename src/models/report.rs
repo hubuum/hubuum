@@ -73,7 +73,7 @@ impl ReportScope {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
 pub enum ReportContentType {
     #[serde(rename = "application/json")]
     ApplicationJson,
@@ -125,7 +125,7 @@ pub struct ReportOutputRequest {
     pub template_id: Option<i32>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReportMissingDataPolicy {
     Strict,
@@ -141,6 +141,13 @@ pub struct ReportLimits {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[schema(example = openapi_examples::report_relation_context_example)]
+#[serde(deny_unknown_fields)]
+pub struct ReportRelationContext {
+    pub depth: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[schema(example = openapi_examples::report_request_example)]
 pub struct ReportRequest {
     pub scope: ReportScope,
@@ -148,6 +155,7 @@ pub struct ReportRequest {
     pub output: Option<ReportOutputRequest>,
     pub missing_data_policy: Option<ReportMissingDataPolicy>,
     pub limits: Option<ReportLimits>,
+    pub relation_context: Option<ReportRelationContext>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -222,14 +230,19 @@ mod openapi_examples {
             output: Some(report_output_example()),
             missing_data_policy: Some(ReportMissingDataPolicy::Strict),
             limits: Some(report_limits_example()),
+            relation_context: None,
         }
+    }
+
+    pub(super) fn report_relation_context_example() -> ReportRelationContext {
+        ReportRelationContext { depth: Some(2) }
     }
 
     pub(super) fn report_warning_example() -> ReportWarning {
         ReportWarning {
             code: "missing_value".to_string(),
             message: "Template lookup failed".to_string(),
-            path: Some("this.data.owner".to_string()),
+            path: Some("item.data.owner".to_string()),
         }
     }
 
