@@ -641,8 +641,7 @@ impl ParsedQueryParam {
         let array_placeholders = values.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
         let key = format!("'{{{path}}}'");
         let jsonb_expr = format!("{} #> {}", field.table_field(), key);
-        let array_check =
-            format!("jsonb_contains_any({jsonb_expr}, ARRAY[{array_placeholders}])");
+        let array_check = format!("jsonb_contains_any({jsonb_expr}, ARRAY[{array_placeholders}])");
 
         let combined = format!("({scalar_check} OR {array_check})");
         let sql = if negated {
@@ -708,17 +707,13 @@ impl ParsedQueryParam {
         negated: bool,
     ) -> Result<SQLComponent, ApiError> {
         let length: i32 = value.parse().map_err(|_| {
-            ApiError::BadRequest(format!(
-                "array_length requires an integer, got '{value}'"
-            ))
+            ApiError::BadRequest(format!("array_length requires an integer, got '{value}'"))
         })?;
         let key = format!("'{{{path}}}'");
         let jsonb_expr = format!("{} #> {}", field.table_field(), key);
         let len_expr = format!("jsonb_array_length({jsonb_expr})");
         let cmp = if negated { "!=" } else { "=" };
-        let sql = format!(
-            "jsonb_typeof({jsonb_expr}) = 'array' AND {len_expr} {cmp} ?"
-        );
+        let sql = format!("jsonb_typeof({jsonb_expr}) = 'array' AND {len_expr} {cmp} ?");
         Ok(SQLComponent {
             sql,
             bind_variables: vec![SQLValue::Integer(length)],
@@ -1226,7 +1221,9 @@ impl SearchOperator {
             SearchOperator::Lt { is_negated, .. } => (Operator::Lt, *is_negated),
             SearchOperator::Lte { is_negated, .. } => (Operator::Lte, *is_negated),
             SearchOperator::Between { is_negated, .. } => (Operator::Between, *is_negated),
-            SearchOperator::WithinNetwork { is_negated, .. } => (Operator::WithinNetwork, *is_negated),
+            SearchOperator::WithinNetwork { is_negated, .. } => {
+                (Operator::WithinNetwork, *is_negated)
+            }
             SearchOperator::ContainsNetwork { is_negated, .. } => {
                 (Operator::ContainsNetwork, *is_negated)
             }
@@ -1528,10 +1525,7 @@ pub fn get_jsonb_field_type_from_value_and_operator(
         | Operator::OverlapsNetwork
         | Operator::InetEquals => None,
         Operator::In => Some(SQLMappedType::String),
-        Operator::All
-        | Operator::ArrayLength
-        | Operator::HasKey
-        | Operator::IsNull => None,
+        Operator::All | Operator::ArrayLength | Operator::HasKey | Operator::IsNull => None,
     }
 }
 

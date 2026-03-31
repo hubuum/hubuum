@@ -38,6 +38,8 @@ diesel::table! {
         id -> Int4,
         from_hubuum_class_id -> Int4,
         to_hubuum_class_id -> Int4,
+        forward_template_alias -> Nullable<Varchar>,
+        reverse_template_alias -> Nullable<Varchar>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
     }
@@ -127,6 +129,27 @@ diesel::table! {
 }
 
 diesel::table! {
+    report_task_outputs (id) {
+        id -> Int4,
+        task_id -> Int4,
+        template_name -> Nullable<Varchar>,
+        content_type -> Varchar,
+        json_output -> Nullable<Jsonb>,
+        text_output -> Nullable<Text>,
+        meta_json -> Jsonb,
+        warnings_json -> Jsonb,
+        warning_count -> Int4,
+        truncated -> Bool,
+        output_expires_at -> Timestamp,
+        total_duration_ms -> Int4,
+        query_duration_ms -> Int4,
+        hydration_duration_ms -> Int4,
+        render_duration_ms -> Int4,
+        created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     report_templates (id) {
         id -> Int4,
         namespace_id -> Int4,
@@ -209,6 +232,7 @@ diesel::joinable!(hubuumobject_relation -> hubuumclass_relation (class_relation_
 diesel::joinable!(import_task_results -> tasks (task_id));
 diesel::joinable!(permissions -> groups (group_id));
 diesel::joinable!(permissions -> namespaces (namespace_id));
+diesel::joinable!(report_task_outputs -> tasks (task_id));
 diesel::joinable!(report_templates -> namespaces (namespace_id));
 diesel::joinable!(task_events -> tasks (task_id));
 diesel::joinable!(tokens -> users (user_id));
@@ -225,6 +249,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     import_task_results,
     namespaces,
     permissions,
+    report_task_outputs,
     report_templates,
     task_events,
     tasks,

@@ -88,5 +88,10 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/iam/users
 - The default image can also run without TLS if no certificate and key are configured.
 - Slim container tags ending in `-rustls-only` include only the `rustls` backend.
 
+### Configuration Reference
+
+- The canonical environment-variable reference lives in [docs/quick_start.md](docs/quick_start.md).
+- Task-worker and async report-template tuning settings are documented there alongside the core server, DB, auth, and TLS settings.
+
 [^1]: Hubuum is probably a loanword from Akkadian.
 [^2]: [JSON schema](https://json-schema.org) is a powerful tool for validating the structure of JSON data. It allows you to define the expected format of your data, including required fields, data types, and constraints on values.

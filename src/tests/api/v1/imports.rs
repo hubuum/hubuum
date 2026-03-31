@@ -267,7 +267,23 @@ mod tests {
         assert_eq!(task_response.kind, TaskKind::Report);
         assert_eq!(task_response.status, TaskStatus::Succeeded);
         assert!(task_response.links.import.is_none());
-        assert!(task_response.details.is_none());
+        let expected_report_link = format!("/api/v1/reports/{}", task.id);
+        let expected_output_link = format!("/api/v1/reports/{}/output", task.id);
+        assert_eq!(
+            task_response.links.report.as_deref(),
+            Some(expected_report_link.as_str())
+        );
+        assert_eq!(
+            task_response.links.report_output.as_deref(),
+            Some(expected_output_link.as_str())
+        );
+        assert!(
+            task_response
+                .details
+                .as_ref()
+                .and_then(|d| d.report.as_ref())
+                .is_some()
+        );
     }
 
     #[rstest]

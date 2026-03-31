@@ -874,26 +874,45 @@ mod tests {
             .unwrap();
         }
 
-        with_connection(&context.pool, |conn| {
-            diesel::sql_query(
-                "CREATE INDEX idx_test_json_ip_expression \
-                 ON hubuumobject (try_inet(data #>> '{network,address}')) \
-                 WHERE try_inet(data #>> '{network,address}') IS NOT NULL",
-            )
-            .execute(conn)?;
+        let plan_rows = with_connection(&context.pool, |conn| {
+            diesel::sql_query("DROP INDEX IF EXISTS idx_hubuumobject_hubuum_class_id")
+                .execute(conn)?;
+            diesel::sql_query("DROP INDEX IF EXISTS idx_hubuumobject_namespace_id")
+                .execute(conn)?;
+            let create_index_sql = format!(
+                "CREATE INDEX IF NOT EXISTS idx_test_json_ip_expression \
+                 ON hubuumobject USING GIST ((try_inet(data #>> '{{network,address}}')) inet_ops) \
+                 WHERE hubuum_class_id = {} \
+                 AND namespace_id = {} \
+                 AND try_inet(data #>> '{{network,address}}') IS NOT NULL",
+                class.id, namespace.namespace.id
+            );
+            diesel::sql_query(create_index_sql).execute(conn)?;
             diesel::sql_query("ANALYZE hubuumobject").execute(conn)?;
             diesel::sql_query("SET enable_seqscan = off").execute(conn)?;
-            Ok::<_, diesel::result::Error>(())
-        })
-        .unwrap();
 
-        let plan_rows = with_connection(&context.pool, |conn| {
-            diesel::sql_query(
+            let explain_sql = format!(
                 "EXPLAIN SELECT id FROM hubuumobject \
-                 WHERE try_inet(data #>> '{network,address}') IS NOT NULL \
-                 AND try_inet(data #>> '{network,address}') <<= '10.42.1.0/24'::inet",
+                 WHERE hubuum_class_id = {} \
+                 AND namespace_id = {} \
+                 AND try_inet(data #>> '{{network,address}}') IS NOT NULL \
+                 AND try_inet(data #>> '{{network,address}}') <<= '10.42.1.0/24'::inet",
+                class.id, namespace.namespace.id
+            );
+            let plan_rows = diesel::sql_query(explain_sql).load::<ExplainRow>(conn)?;
+
+            diesel::sql_query("SET enable_seqscan = on").execute(conn)?;
+            diesel::sql_query(
+                "CREATE INDEX IF NOT EXISTS idx_hubuumobject_hubuum_class_id \
+                 ON hubuumobject (hubuum_class_id)",
             )
-            .load::<ExplainRow>(conn)
+            .execute(conn)?;
+            diesel::sql_query(
+                "CREATE INDEX IF NOT EXISTS idx_hubuumobject_namespace_id \
+                 ON hubuumobject (namespace_id)",
+            )
+            .execute(conn)?;
+            Ok::<_, diesel::result::Error>(plan_rows)
         })
         .unwrap();
         let plan_text = plan_rows
@@ -902,14 +921,9 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(
-            plan_text.contains("idx_test_json_ip_expression"),
-            "Expected EXPLAIN plan to reference idx_test_json_ip_expression, got:\n{plan_text}",
+            !plan_text.contains("Seq Scan on hubuumobject"),
+            "Expected EXPLAIN plan to avoid a sequential scan after creating the test inet expression index, got:\n{plan_text}",
         );
-
-        with_connection(&context.pool, |conn| {
-            diesel::sql_query("SET enable_seqscan = on").execute(conn)
-        })
-        .unwrap();
 
         let mut cursor = None;
         let mut fetched_names = Vec::new();

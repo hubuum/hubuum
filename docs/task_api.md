@@ -2,12 +2,13 @@
 
 The task API is the generic interface for long-running operations.
 
-Imports are the first task kind implemented today, but the API is designed so later long-running reports, exports, or reindex jobs can use the same status and event model.
+Imports and reports are public task-producing APIs today, and the task model is designed so later
+exports or reindex jobs can use the same status and event model too.
 
 The current architecture is:
 
 - generic task framework: task submission state, lifecycle, polling, and event history
-- typed per-task-kind result tables: import results live behind import-specific endpoints rather than in a fully generic result table
+- typed per-task-kind result tables: import results and report outputs live behind task-kind-specific endpoints rather than in a fully generic result table
 
 Endpoints:
 
@@ -33,7 +34,10 @@ Current and reserved task kinds:
 - `export`
 - `reindex`
 
-Only `import` has a public submission endpoint today.
+Public task-producing endpoints today:
+
+- `POST /api/v1/imports`
+- `POST /api/v1/reports`
 
 ## Task statuses
 
@@ -139,6 +143,17 @@ Example for an import:
 
 For a non-import task kind, the import-specific links may be `null`.
 
+Example for a report:
+
+```json
+{
+  "task": "/api/v1/tasks/22",
+  "events": "/api/v1/tasks/22/events",
+  "report": "/api/v1/reports/22",
+  "report_output": "/api/v1/reports/22/output"
+}
+```
+
 ## List tasks
 
 `GET /api/v1/tasks`
@@ -222,6 +237,22 @@ Current example:
 }
 ```
 
+Report example:
+
+```json
+{
+  "report": {
+    "output_url": "/api/v1/reports/22/output",
+    "output_available": true,
+    "output_expires_at": "2026-04-06T10:15:23",
+    "template_name": "report.host_room_people",
+    "output_content_type": "text/plain",
+    "warning_count": 1,
+    "truncated": false
+  }
+}
+```
+
 ## Task events
 
 `GET /api/v1/tasks/{task_id}/events`
@@ -277,7 +308,7 @@ Example:
 
 Typical client flow:
 
-1. Create a task indirectly through a task-producing endpoint such as `POST /api/v1/imports`
+1. Create a task indirectly through a task-producing endpoint such as `POST /api/v1/imports` or `POST /api/v1/reports`
 2. Read the `Location` header or the returned `links.task`
 3. Poll `GET /api/v1/tasks/{task_id}` until the status is terminal
 4. Optionally fetch `GET /api/v1/tasks/{task_id}/events`
@@ -311,17 +342,12 @@ GET /api/v1/tasks/12
 - `links.import` and `links.import_results` are present
 - import item outcomes come from the import-specific result model, not a generic shared result table
 
-### Future report task
+### Report task
 
-A future async report task is expected to reuse:
-
-- the same task state endpoint
-- the same event history endpoint
-- the same status vocabulary
-
-But it would be expected to expose its own typed output surface, just as imports expose `/api/v1/imports/{task_id}/results`.
-
-Only the task-producing endpoint and any report-specific result links would differ.
+- `kind` is `report`
+- `details.report.output_url` is present
+- `links.report` and `links.report_output` are present
+- the stored output lives behind `GET /api/v1/reports/{task_id}/output`
 
 ## Errors
 
