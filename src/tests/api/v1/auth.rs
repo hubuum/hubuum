@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use crate::api::handlers::auth::reset_login_rate_limit_for_tests;
     use crate::config::get_config;
     use crate::db::traits::ActiveTokens;
     use crate::db::{init_pool, with_connection};
+    use crate::middlewares::rate_limit::reset_login_rate_limit_for_tests;
     use crate::models::user::LoginUser;
     use crate::tests::{create_test_admin, create_test_user};
     use crate::{api, assert_not_contains};
@@ -549,5 +549,18 @@ mod tests {
             .await;
 
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        let other_user_login = web::Form(LoginUser {
+            username: "other-throttle-user".to_string(),
+            password: "wrongpassword".to_string(),
+        });
+
+        let resp = test::TestRequest::post()
+            .uri(LOGIN_ENDPOINT)
+            .set_json(&other_user_login)
+            .send_request(&app)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 }
