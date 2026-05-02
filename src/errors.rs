@@ -17,6 +17,7 @@ pub const EXIT_CODE_CONFIG_ERROR: i32 = 2; // Config/validation
 pub const EXIT_CODE_DATABASE_ERROR: i32 = 3; // Database connection/pool error
 pub const EXIT_CODE_INIT_ERROR: i32 = 4; // Critical initialization error (admin user/group)
 pub const EXIT_CODE_TLS_ERROR: i32 = 5; // TLS setup error
+pub const EXIT_CODE_PERMISSION_BACKEND_ERROR: i32 = 6; // Permission backend unreachable / failed startup health check
 
 /// Log a fatal error and exit the process with the specified exit code.
 /// This provides a consistent way to handle unrecoverable errors during startup.
@@ -51,6 +52,8 @@ pub enum ApiError {
     OperatorMismatch(String),
     InvalidIntegerRange(String),
     ValidationError(String),
+    NotImplemented(String),
+    PermissionBackendUnavailable(String),
 }
 
 impl ApiError {
@@ -58,6 +61,7 @@ impl ApiError {
     /// Failure modes:
     /// - Configuration/validation errors (BadRequest, ValidationError, etc.) → EXIT_CODE_CONFIG_ERROR (2)
     /// - Database errors (DatabaseError, DbConnectionError) → EXIT_CODE_DATABASE_ERROR (3)
+    /// - Permission backend errors (PermissionBackendUnavailable) → EXIT_CODE_PERMISSION_BACKEND_ERROR (6)
     /// - Other errors → EXIT_CODE_GENERIC_ERROR (1)
     pub fn exit_code(&self) -> i32 {
         match self {
@@ -68,6 +72,8 @@ impl ApiError {
             | ApiError::InvalidIntegerRange(_) => EXIT_CODE_CONFIG_ERROR,
             // Database errors: can't connect or pool exhausted
             ApiError::DatabaseError(_) | ApiError::DbConnectionError(_) => EXIT_CODE_DATABASE_ERROR,
+            // Permission backend errors: can't connect to backend
+            ApiError::PermissionBackendUnavailable(_) => EXIT_CODE_PERMISSION_BACKEND_ERROR,
             // Generic errors: should not occur during startup
             _ => EXIT_CODE_GENERIC_ERROR,
         }
@@ -91,6 +97,8 @@ impl fmt::Display for ApiError {
             ApiError::ValidationError(message) => write!(f, "{message}"),
             ApiError::NotAcceptable(message) => write!(f, "{message}"),
             ApiError::PayloadTooLarge(message) => write!(f, "{message}"),
+            ApiError::NotImplemented(message) => write!(f, "{message}"),
+            ApiError::PermissionBackendUnavailable(message) => write!(f, "{message}"),
         }
     }
 }
@@ -129,6 +137,13 @@ impl ResponseError for ApiError {
                 .json(json!({ "error": "Invalid Integer Range", "message": message })),
             ApiError::ValidationError(message) => HttpResponse::NotAcceptable()
                 .json(json!({ "error": "Validation Error", "message": message })),
+            ApiError::NotImplemented(message) => HttpResponse::NotImplemented()
+                .json(json!({ "error": "Not Implemented", "message": message })),
+            ApiError::PermissionBackendUnavailable(message) => {
+                HttpResponse::ServiceUnavailable()
+                    .insert_header(("Retry-After", "5"))
+                    .json(json!({ "error": "Service Unavailable", "message": message }))
+            }
         }
     }
 
@@ -148,6 +163,8 @@ impl ResponseError for ApiError {
             ApiError::OperatorMismatch(_) => StatusCode::BAD_REQUEST,
             ApiError::InvalidIntegerRange(_) => StatusCode::BAD_REQUEST,
             ApiError::ValidationError(_) => StatusCode::NOT_ACCEPTABLE,
+            ApiError::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
+            ApiError::PermissionBackendUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
 }
@@ -246,6 +263,7 @@ mod tests {
             EXIT_CODE_DATABASE_ERROR,
             EXIT_CODE_INIT_ERROR,
             EXIT_CODE_GENERIC_ERROR,
+            EXIT_CODE_PERMISSION_BACKEND_ERROR,
         ];
 
         for i in 0..codes.len() {
@@ -348,5 +366,26 @@ mod tests {
             ApiError::Conflict("test".to_string()).status_code(),
             StatusCode::CONFLICT
         );
+    }
+
+    #[test]
+    fn not_implemented_maps_to_501() {
+        let err = ApiError::NotImplemented("permission mutations are managed out-of-band".to_string());
+        assert_eq!(err.status_code(), StatusCode::NOT_IMPLEMENTED);
+    }
+
+    #[test]
+    fn permission_backend_unavailable_maps_to_503() {
+        let err = ApiError::PermissionBackendUnavailable("treetop unreachable".to_string());
+        assert_eq!(err.status_code(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[test]
+    fn permission_backend_error_exit_code_distinct() {
+        assert_ne!(EXIT_CODE_PERMISSION_BACKEND_ERROR, EXIT_CODE_GENERIC_ERROR);
+        assert_ne!(EXIT_CODE_PERMISSION_BACKEND_ERROR, EXIT_CODE_DATABASE_ERROR);
+        assert_ne!(EXIT_CODE_PERMISSION_BACKEND_ERROR, EXIT_CODE_INIT_ERROR);
+        assert_ne!(EXIT_CODE_PERMISSION_BACKEND_ERROR, EXIT_CODE_TLS_ERROR);
+        assert_ne!(EXIT_CODE_PERMISSION_BACKEND_ERROR, EXIT_CODE_CONFIG_ERROR);
     }
 }

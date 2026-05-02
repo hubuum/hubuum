@@ -60,6 +60,8 @@ pub(super) fn sanitize_error_for_storage(err: &ApiError) -> String {
         ApiError::PayloadTooLarge(msg) => format!("Payload too large: {}", msg),
         ApiError::OperatorMismatch(msg) => format!("Invalid operation: {}", msg),
         ApiError::InvalidIntegerRange(msg) => format!("Invalid value: {}", msg),
+        ApiError::NotImplemented(msg) => format!("Not implemented: {}", msg),
+        ApiError::PermissionBackendUnavailable(msg) => format!("Permission backend unavailable: {}", msg),
     }
 }
 
