@@ -139,11 +139,9 @@ impl ResponseError for ApiError {
                 .json(json!({ "error": "Validation Error", "message": message })),
             ApiError::NotImplemented(message) => HttpResponse::NotImplemented()
                 .json(json!({ "error": "Not Implemented", "message": message })),
-            ApiError::PermissionBackendUnavailable(message) => {
-                HttpResponse::ServiceUnavailable()
-                    .insert_header(("Retry-After", "5"))
-                    .json(json!({ "error": "Service Unavailable", "message": message }))
-            }
+            ApiError::PermissionBackendUnavailable(message) => HttpResponse::ServiceUnavailable()
+                .insert_header(("Retry-After", "5"))
+                .json(json!({ "error": "Service Unavailable", "message": message })),
         }
     }
 
@@ -288,6 +286,13 @@ mod tests {
 
         let generic_error = ApiError::InternalServerError("internal error".to_string());
         assert_eq!(generic_error.exit_code(), EXIT_CODE_GENERIC_ERROR);
+
+        let permission_backend_error =
+            ApiError::PermissionBackendUnavailable("backend down".to_string());
+        assert_eq!(
+            permission_backend_error.exit_code(),
+            EXIT_CODE_PERMISSION_BACKEND_ERROR
+        );
     }
 
     #[test]
@@ -370,7 +375,8 @@ mod tests {
 
     #[test]
     fn not_implemented_maps_to_501() {
-        let err = ApiError::NotImplemented("permission mutations are managed out-of-band".to_string());
+        let err =
+            ApiError::NotImplemented("permission mutations are managed out-of-band".to_string());
         assert_eq!(err.status_code(), StatusCode::NOT_IMPLEMENTED);
     }
 
@@ -378,6 +384,17 @@ mod tests {
     fn permission_backend_unavailable_maps_to_503() {
         let err = ApiError::PermissionBackendUnavailable("treetop unreachable".to_string());
         assert_eq!(err.status_code(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[test]
+    fn permission_backend_unavailable_includes_retry_after_header() {
+        let err = ApiError::PermissionBackendUnavailable("test".to_string());
+        let response = err.error_response();
+        let header = response
+            .headers()
+            .get(actix_web::http::header::RETRY_AFTER)
+            .expect("Retry-After header should be set");
+        assert_eq!(header.to_str().unwrap(), "5");
     }
 
     #[test]
