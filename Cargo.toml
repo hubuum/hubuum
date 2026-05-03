@@ -19,6 +19,7 @@ actix-service = "2"
 actix-web = { version = "4" }
 actix-http = { version = "3" }
 argon2 = { version = "0.5", features = ["std"] }
+async-trait = "0.1"
 bytes = "1"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
@@ -57,16 +58,21 @@ uuid = { version = "1", features = ["v4"] }
 percent-encoding = "2"
 rustls = { version = "0.23", features = ["aws-lc-rs", "ring"], optional = true }
 openssl = { version = "0", optional = true }
+# treetop-client is at 0.0.1 and not yet on crates.io. Pin to a known good
+# revision; bump explicitly when the upstream API stabilizes.
+treetop-client = { git = "https://github.com/terjekv/treetop-client", optional = true }
 
 [dev-dependencies]
 regex = "1"
 rstest = "0.26"
 
 [features]
-default = ["swagger-ui"]
+default = ["swagger-ui", "permissions-local", "permissions-treetop"]
 swagger-ui = ["dep:utoipa-swagger-ui"]
 tls-rustls = ["dep:rustls", "actix-web/rustls-0_23"]
 tls-openssl = ["dep:openssl", "actix-web/openssl"]
+permissions-local = []
+permissions-treetop = ["dep:treetop-client"]
 
 [profile.release]
 codegen-units = 1
