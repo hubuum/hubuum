@@ -10,6 +10,7 @@ pub mod macros;
 pub mod middlewares;
 pub mod models;
 pub mod pagination;
+pub mod permissions;
 pub mod schema;
 pub mod tasks;
 pub mod tests;
