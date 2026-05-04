@@ -35,8 +35,9 @@ mod tests {
         "in",
         "is_null",
     ];
-    const NUMERIC_DATE_OPERATORS: &[&str] =
-        &["equals", "gt", "gte", "lt", "lte", "between", "in", "is_null"];
+    const NUMERIC_DATE_OPERATORS: &[&str] = &[
+        "equals", "gt", "gte", "lt", "lte", "between", "in", "is_null",
+    ];
     const ARRAY_OPERATORS: &[&str] = &["equals", "contains", "is_null"];
     const BOOLEAN_OPERATORS: &[&str] = &["equals", "is_null"];
     const IP_NETWORK_JSON_OPERATORS: &[&str] = &[
@@ -46,8 +47,7 @@ mod tests {
         "overlaps_network",
         "inet_equals",
     ];
-    const JSON_STRUCTURE_OPERATORS: &[&str] =
-        &["in", "all", "array_length", "has_key", "is_null"];
+    const JSON_STRUCTURE_OPERATORS: &[&str] = &["in", "all", "array_length", "has_key", "is_null"];
 
     fn objects_in_class_endpoint(class_id: i32) -> String {
         format!("/api/v1/classes/{class_id}/")

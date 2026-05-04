@@ -61,7 +61,9 @@ pub(super) fn sanitize_error_for_storage(err: &ApiError) -> String {
         ApiError::OperatorMismatch(msg) => format!("Invalid operation: {}", msg),
         ApiError::InvalidIntegerRange(msg) => format!("Invalid value: {}", msg),
         ApiError::NotImplemented(msg) => format!("Not implemented: {}", msg),
-        ApiError::PermissionBackendUnavailable(msg) => format!("Permission backend unavailable: {}", msg),
+        ApiError::PermissionBackendUnavailable(msg) => {
+            format!("Permission backend unavailable: {}", msg)
+        }
     }
 }
 
