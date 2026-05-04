@@ -83,7 +83,10 @@ pub struct AuthorizedRequest {
 /// HubuumObject, …).
 #[async_trait::async_trait]
 pub trait AuthzTarget: Send + Sync {
-    async fn to_resource_ref(&self, pool: &crate::db::DbPool) -> Result<ResourceRef, crate::errors::ApiError>;
+    async fn to_resource_ref(
+        &self,
+        pool: &crate::db::DbPool,
+    ) -> Result<ResourceRef, crate::errors::ApiError>;
 }
 
 #[cfg(test)]
