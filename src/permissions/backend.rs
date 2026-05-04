@@ -1,14 +1,10 @@
 use async_trait::async_trait;
 
 use crate::errors::ApiError;
-use crate::models::{
-    GroupPermission, Namespace, Permission, Permissions, PermissionsList,
-};
 use crate::models::search::QueryOptions;
+use crate::models::{GroupPermission, Namespace, Permission, Permissions, PermissionsList};
 
-use super::types::{
-    AuthorizedRequest, PermissionDecision, PermissionRequest, PrincipalRef,
-};
+use super::types::{AuthorizedRequest, PermissionDecision, PermissionRequest, PrincipalRef};
 
 #[async_trait]
 pub trait PermissionBackend: Send + Sync {
