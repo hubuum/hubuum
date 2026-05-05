@@ -24,6 +24,34 @@ treetop-client (git pin until published), async-trait, rstest.
 
 ---
 
+## Plan Amendments (2026-05-05)
+
+After Phase 1 review, the trait/type surface tightened. **Use the amended
+shapes wherever earlier versions of the plan show different signatures.**
+The trait section in §1 below is the authoritative copy.
+
+- **`PermissionBackend::authorize_many` is the only required decision
+  method.** `authorize` and `filter_authorized` have default impls that
+  wrap `authorize_many`. Backends that can batch transport-side (Treetop)
+  override `authorize_many`; backends that can't (Local) get less
+  boilerplate.
+- **`namespaces_user_can` takes `&[Permissions]`** (a slice, conjunctive
+  AND), not a single `Permissions`. Empty slice means "any row qualifies."
+- **`PrincipalRef::new(user_id, group_ids)`** is the canonical constructor
+  — it sorts and deduplicates the group list so Treetop request payloads
+  are deterministic. Prefer this over the struct-literal form at call sites.
+- **`ResourceAttrs` carries the relation context fields**: `from_class_id`,
+  `to_class_id`, `from_object_id`, `to_object_id`, `class_relation_id`
+  (in addition to the originally listed fields). Relation `AuthzTarget`
+  impls in Task 3.1 should populate these so policy authors can scope by
+  endpoint as well as by namespace.
+- **The `BackendContext for DbPool` panic shim** added in Task 1.3 is
+  short-lived. Task 3.8 removes it. If you find it at the start of a Phase
+  3 task, your first instinct should be: "is this call site ready to
+  migrate to `AppContext`?" — not "extend the shim."
+
+---
+
 ## Scope Note
 
 This plan is one cohesive subsystem (permissions) with several integration
@@ -421,38 +449,61 @@ use super::types::{
 
 #[async_trait]
 pub trait PermissionBackend: Send + Sync {
-    /// Single point check: does the principal satisfy all `request.permissions`
-    /// on `request.resource`?
-    async fn authorize(
-        &self,
-        principal: &PrincipalRef,
-        request: PermissionRequest,
-    ) -> Result<PermissionDecision, ApiError>;
-
-    /// Batch point checks. Implementations should batch transport-side when
-    /// possible (e.g. Treetop's `AuthorizeRequest`). Order of the returned
-    /// vector matches the order of `requests`.
+    /// Batch point check: does the principal satisfy each request?
+    /// Order of the returned vector matches the order of `requests`.
+    ///
+    /// This is the only required decision method. The single-request and
+    /// filter helpers below default to wrapping it; backends that can
+    /// batch transport-side (e.g. Treetop's `AuthorizeRequest`) only need
+    /// to override `authorize_many`.
     async fn authorize_many(
         &self,
         principal: &PrincipalRef,
         requests: Vec<PermissionRequest>,
     ) -> Result<Vec<PermissionDecision>, ApiError>;
 
-    /// Filter a candidate set: returns only the requests that resolve to
-    /// `Allow`, in input order. Used by list/search visibility paths.
+    /// Single point check. Default: dispatches to `authorize_many` with a
+    /// one-element vector. Backends rarely override.
+    async fn authorize(
+        &self,
+        principal: &PrincipalRef,
+        request: PermissionRequest,
+    ) -> Result<PermissionDecision, ApiError> {
+        let mut decisions = self.authorize_many(principal, vec![request]).await?;
+        decisions.pop().ok_or_else(|| {
+            ApiError::InternalServerError(
+                "permission backend returned no decisions for a single request".to_string(),
+            )
+        })
+    }
+
+    /// Filter a candidate set: tags each request with its decision, in
+    /// input order. Default: pairs `authorize_many`'s result with the
+    /// inputs.
     async fn filter_authorized(
         &self,
         principal: &PrincipalRef,
         requests: Vec<PermissionRequest>,
-    ) -> Result<Vec<AuthorizedRequest>, ApiError>;
+    ) -> Result<Vec<AuthorizedRequest>, ApiError> {
+        let decisions = self.authorize_many(principal, requests.clone()).await?;
+        Ok(requests
+            .into_iter()
+            .zip(decisions)
+            .map(|(request, decision)| AuthorizedRequest { request, decision })
+            .collect())
+    }
 
-    /// All namespaces on which the principal has the given permission.
+    /// All namespaces on which the principal has every requested permission.
     /// Used by listing endpoints that want to scope their candidate query
     /// (e.g. `GET /templates`).
+    ///
+    /// Empty `permissions` means "any permission grants visibility" — the
+    /// namespace appears if the principal has any row on it. Callers
+    /// usually pass one or more concrete permissions.
     async fn namespaces_user_can(
         &self,
         principal: &PrincipalRef,
-        permission: Permissions,
+        permissions: &[Permissions],
     ) -> Result<Vec<Namespace>, ApiError>;
 
     /// (group, permission) pairs visible on a namespace, paginated.
@@ -783,63 +834,44 @@ impl LocalPermissionBackend {
 
 #[async_trait]
 impl PermissionBackend for LocalPermissionBackend {
-    async fn authorize(
-        &self,
-        principal: &PrincipalRef,
-        request: PermissionRequest,
-    ) -> Result<PermissionDecision, ApiError> {
-        let namespace_id = match request.resource.namespace_id() {
-            Some(id) => id,
-            None => {
-                // System-scoped checks delegate to admin status. Mid-phase
-                // migration: admin short-circuit lives in the high-level
-                // PermissionController; here we simply deny system access.
-                return Ok(PermissionDecision::Deny);
-            }
-        };
-
-        let allowed = queries::user_can_all_query(
-            &self.pool,
-            principal.user_id,
-            namespace_id,
-            request.permissions,
-        )
-        .await?;
-
-        Ok(if allowed { PermissionDecision::Allow } else { PermissionDecision::Deny })
-    }
-
     async fn authorize_many(
         &self,
         principal: &PrincipalRef,
         requests: Vec<PermissionRequest>,
     ) -> Result<Vec<PermissionDecision>, ApiError> {
+        // SQL backend has no transport-side batch; just loop.
         let mut decisions = Vec::with_capacity(requests.len());
-        for req in requests {
-            decisions.push(self.authorize(principal, req).await?);
+        for request in requests {
+            let decision = match request.resource.namespace_id() {
+                None => {
+                    // System-scoped checks: admin short-circuit lives one
+                    // level up in PermissionController; here we deny.
+                    PermissionDecision::Deny
+                }
+                Some(namespace_id) => {
+                    let allowed = queries::user_can_all_query(
+                        &self.pool,
+                        principal.user_id,
+                        namespace_id,
+                        request.permissions,
+                    )
+                    .await?;
+                    if allowed { PermissionDecision::Allow } else { PermissionDecision::Deny }
+                }
+            };
+            decisions.push(decision);
         }
         Ok(decisions)
     }
 
-    async fn filter_authorized(
-        &self,
-        principal: &PrincipalRef,
-        requests: Vec<PermissionRequest>,
-    ) -> Result<Vec<AuthorizedRequest>, ApiError> {
-        let decisions = self.authorize_many(principal, requests.clone()).await?;
-        Ok(requests
-            .into_iter()
-            .zip(decisions)
-            .map(|(request, decision)| AuthorizedRequest { request, decision })
-            .collect())
-    }
+    // `authorize` and `filter_authorized` use the trait defaults.
 
     async fn namespaces_user_can(
         &self,
         principal: &PrincipalRef,
-        permission: Permissions,
+        permissions: &[Permissions],
     ) -> Result<Vec<Namespace>, ApiError> {
-        queries::user_can_on_any_query(&self.pool, principal.user_id, permission).await
+        queries::user_can_on_any_query(&self.pool, principal.user_id, permissions).await
     }
 
     async fn groups_with_permissions_on(
@@ -950,6 +982,52 @@ pub(super) async fn user_can_all_query(
     })?;
 
     Ok(result.is_some())
+}
+
+pub(super) async fn user_can_on_any_query(
+    pool: &DbPool,
+    user_id: i32,
+    permissions_requested: &[Permissions],
+) -> Result<Vec<Namespace>, ApiError> {
+    // Lifted from user_can_on_any_from_backend in
+    // src/db/traits/namespace/permissions.rs but extended to take a slice
+    // of permissions (matches PermissionBackend::namespaces_user_can).
+    // Empty `permissions_requested` means "any row qualifies" — return
+    // namespaces where the user has any permission row.
+    use crate::models::UserID;
+    use crate::traits::{GroupAccessors, GroupMemberships};
+
+    let user = UserID(user_id);
+    if user.is_admin(pool).await? {
+        return crate::db::with_connection(pool, |conn| {
+            crate::schema::namespaces::table.load::<Namespace>(conn)
+        });
+    }
+
+    let group_id_subquery = user.group_ids_subquery_from_backend();
+    let mut filtered = crate::schema::permissions::dsl::permissions
+        .into_boxed()
+        .filter(crate::schema::permissions::dsl::group_id.eq_any(group_id_subquery));
+
+    for permission in permissions_requested {
+        filtered = permission.create_boxed_filter(filtered, true);
+    }
+
+    let accessible_namespace_ids: Vec<i32> = crate::db::with_connection(pool, |conn| {
+        filtered
+            .select(crate::schema::permissions::dsl::namespace_id)
+            .load::<i32>(conn)
+    })?;
+
+    if accessible_namespace_ids.is_empty() {
+        return Ok(vec![]);
+    }
+
+    crate::db::with_connection(pool, |conn| {
+        crate::schema::namespaces::table
+            .filter(crate::schema::namespaces::id.eq_any(accessible_namespace_ids))
+            .load::<Namespace>(conn)
+    })
 }
 ```
 
@@ -1975,13 +2053,13 @@ table) but does not exist for Treetop. Route the lookup through the backend:
 - [ ] **Step 1: Replace the call**
 
 ```rust
-let principal = PrincipalRef {
-    user_id: requestor.user.id,
-    group_ids: requestor.user.group_ids(ctx.db_pool()).await?,
-};
+let principal = PrincipalRef::new(
+    requestor.user.id,
+    requestor.user.group_ids(ctx.db_pool()).await?,
+);
 let visible_namespaces = ctx
     .permission_backend()
-    .namespaces_user_can(&principal, Permissions::ReadTemplate)
+    .namespaces_user_can(&principal, &[Permissions::ReadTemplate])
     .await?;
 ```
 
@@ -2015,13 +2093,10 @@ let namespaces = user_can_on_any(pool, self, Permissions::ReadObject).await?;
 Refactor the surrounding function to take `&dyn BackendContext` and use:
 
 ```rust
-let principal = PrincipalRef {
-    user_id: self.id(),
-    group_ids: self.group_ids(ctx.db_pool()).await?,
-};
+let principal = PrincipalRef::new(self.id(), self.group_ids(ctx.db_pool()).await?);
 let namespaces = ctx
     .permission_backend()
-    .namespaces_user_can(&principal, Permissions::ReadObject)
+    .namespaces_user_can(&principal, &[Permissions::ReadObject])
     .await?;
 ```
 
@@ -2279,7 +2354,7 @@ impl PermissionBackend for MockTreetopBackend {
     async fn namespaces_user_can(
         &self,
         _principal: &PrincipalRef,
-        _permission: Permissions,
+        _permissions: &[Permissions],
     ) -> Result<Vec<Namespace>, ApiError> {
         Err(ApiError::NotImplemented(
             "MockTreetopBackend does not enumerate namespaces; build via a real DB".to_string(),
@@ -2662,7 +2737,7 @@ impl PermissionBackend for TreetopPermissionBackend {
     async fn namespaces_user_can(
         &self,
         principal: &PrincipalRef,
-        permission: Permissions,
+        permissions: &[Permissions],
     ) -> Result<Vec<Namespace>, ApiError> {
         // Enumerate from local DB, filter via Treetop.
         let all_namespaces = queries::all_namespaces(&self.pool).await?;
@@ -2670,7 +2745,7 @@ impl PermissionBackend for TreetopPermissionBackend {
             .iter()
             .map(|ns| PermissionRequest {
                 resource: crate::permissions::types::ResourceRef::namespace(ns.id),
-                permissions: vec![permission],
+                permissions: permissions.to_vec(),
             })
             .collect();
         let authorized = self.filter_authorized(principal, requests).await?;
