@@ -6,6 +6,8 @@ pub mod types;
 
 pub use backend::PermissionBackend;
 pub use context::AppContext;
+#[cfg(feature = "permissions-local")]
+pub use local::LocalPermissionBackend;
 pub use types::{
     AuthorizationResult, AuthzTarget, PermissionDecision, PermissionRequest, PrincipalRef,
     ResourceAttrs, ResourceKind, ResourceRef,
