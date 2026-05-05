@@ -6,6 +6,19 @@ pub struct PrincipalRef {
     pub group_ids: Vec<i32>,
 }
 
+impl PrincipalRef {
+    /// Build a principal with a normalized (sorted, deduplicated) group list.
+    /// Sorting keeps Treetop request payloads deterministic so equivalent
+    /// principals always serialize identically — handy for caching, log
+    /// diffing, and snapshot tests.
+    pub fn new(user_id: i32, group_ids: impl IntoIterator<Item = i32>) -> Self {
+        let mut group_ids: Vec<i32> = group_ids.into_iter().collect();
+        group_ids.sort_unstable();
+        group_ids.dedup();
+        Self { user_id, group_ids }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResourceKind {
     System,
@@ -24,6 +37,11 @@ pub struct ResourceAttrs {
     pub class_id: Option<i32>,
     pub from_namespace_id: Option<i32>,
     pub to_namespace_id: Option<i32>,
+    pub from_class_id: Option<i32>,
+    pub to_class_id: Option<i32>,
+    pub from_object_id: Option<i32>,
+    pub to_object_id: Option<i32>,
+    pub class_relation_id: Option<i32>,
     pub submitted_by: Option<i32>,
     pub name: Option<String>,
 }
@@ -106,5 +124,18 @@ mod tests {
         let r = ResourceRef::system();
         assert_eq!(r.kind, ResourceKind::System);
         assert_eq!(r.namespace_id(), None);
+    }
+
+    #[test]
+    fn principal_new_sorts_and_deduplicates_group_ids() {
+        let p = PrincipalRef::new(7, vec![3, 1, 3, 2, 1]);
+        assert_eq!(p.user_id, 7);
+        assert_eq!(p.group_ids, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn principal_new_handles_empty_groups() {
+        let p = PrincipalRef::new(42, std::iter::empty());
+        assert_eq!(p.group_ids, Vec::<i32>::new());
     }
 }

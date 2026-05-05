@@ -8,6 +8,7 @@ mod macros;
 mod middlewares;
 mod models;
 mod pagination;
+mod permissions;
 mod schema;
 mod tasks;
 mod tests;
