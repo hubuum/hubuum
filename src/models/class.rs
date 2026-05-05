@@ -96,6 +96,36 @@ fn update_hubuum_class_example() -> UpdateHubuumClass {
     }
 }
 
+#[async_trait::async_trait]
+impl crate::permissions::AuthzTarget for HubuumClass {
+    async fn to_resource_ref(
+        &self,
+        _pool: &crate::db::DbPool,
+    ) -> Result<crate::permissions::ResourceRef, crate::errors::ApiError> {
+        Ok(crate::permissions::ResourceRef {
+            kind: crate::permissions::ResourceKind::Class,
+            id: self.id,
+            attrs: crate::permissions::ResourceAttrs {
+                namespace_id: Some(self.namespace_id),
+                name: Some(self.name.clone()),
+                ..Default::default()
+            },
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::permissions::AuthzTarget for HubuumClassID {
+    async fn to_resource_ref(
+        &self,
+        pool: &crate::db::DbPool,
+    ) -> Result<crate::permissions::ResourceRef, crate::errors::ApiError> {
+        use crate::traits::SelfAccessors;
+        let loaded = self.instance(pool).await?;
+        loaded.to_resource_ref(pool).await
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;

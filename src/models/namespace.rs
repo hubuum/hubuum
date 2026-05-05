@@ -318,6 +318,36 @@ where
     namespace_backend::group_on_from_backend(backend.db_pool(), nid, gid).await
 }
 
+#[async_trait::async_trait]
+impl crate::permissions::AuthzTarget for Namespace {
+    async fn to_resource_ref(
+        &self,
+        _pool: &crate::db::DbPool,
+    ) -> Result<crate::permissions::ResourceRef, crate::errors::ApiError> {
+        Ok(crate::permissions::ResourceRef {
+            kind: crate::permissions::ResourceKind::Namespace,
+            id: self.id,
+            attrs: crate::permissions::ResourceAttrs {
+                namespace_id: Some(self.id),
+                name: Some(self.name.clone()),
+                ..Default::default()
+            },
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::permissions::AuthzTarget for NamespaceID {
+    async fn to_resource_ref(
+        &self,
+        pool: &crate::db::DbPool,
+    ) -> Result<crate::permissions::ResourceRef, crate::errors::ApiError> {
+        use crate::traits::SelfAccessors;
+        let loaded = self.instance(pool).await?;
+        loaded.to_resource_ref(pool).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::vec;

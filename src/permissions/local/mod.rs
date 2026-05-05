@@ -32,27 +32,90 @@ impl PermissionBackend for LocalPermissionBackend {
         principal: &PrincipalRef,
         requests: Vec<PermissionRequest>,
     ) -> Result<Vec<PermissionDecision>, ApiError> {
+        use super::types::ResourceKind;
+
         // SQL backend has no transport-side batch; loop sequentially.
         let mut decisions = Vec::with_capacity(requests.len());
         for request in requests {
-            let decision = match request.resource.namespace_id() {
-                None => {
-                    // System-scoped checks: admin short-circuit lives one
-                    // level up in PermissionController. Here we deny.
-                    PermissionDecision::Deny
-                }
-                Some(namespace_id) => {
-                    let allowed = queries::user_can_all_query(
-                        &self.pool,
-                        principal.user_id,
-                        namespace_id,
-                        request.permissions.to_vec(),
-                    )
-                    .await?;
-                    if allowed {
-                        PermissionDecision::Allow
-                    } else {
+            let decision = match request.resource.kind {
+                ResourceKind::ClassRelation | ResourceKind::ObjectRelation => {
+                    // Relations span two namespaces and require permission on both.
+                    // This preserves the legacy "AND across both namespaces" semantics
+                    // from UserPermissions::can(..., namespaces.0, namespaces.1).
+                    let from_ns = request.resource.attrs.from_namespace_id;
+                    let to_ns = request.resource.attrs.to_namespace_id;
+
+                    // Defensive: real AuthzTarget impls always populate both.
+                    if from_ns.is_none() || to_ns.is_none() {
                         PermissionDecision::Deny
+                    } else {
+                        let from_ns_id = from_ns.unwrap();
+                        let to_ns_id = to_ns.unwrap();
+
+                        // Optimization: if same namespace, one query suffices.
+                        if from_ns_id == to_ns_id {
+                            let allowed = queries::user_can_all_query(
+                                &self.pool,
+                                principal.user_id,
+                                from_ns_id,
+                                request.permissions.to_vec(),
+                            )
+                            .await?;
+                            if allowed {
+                                PermissionDecision::Allow
+                            } else {
+                                PermissionDecision::Deny
+                            }
+                        } else {
+                            // Cross-namespace: check both.
+                            let from_allowed = queries::user_can_all_query(
+                                &self.pool,
+                                principal.user_id,
+                                from_ns_id,
+                                request.permissions.clone(),
+                            )
+                            .await?;
+                            if !from_allowed {
+                                PermissionDecision::Deny
+                            } else {
+                                let to_allowed = queries::user_can_all_query(
+                                    &self.pool,
+                                    principal.user_id,
+                                    to_ns_id,
+                                    request.permissions.to_vec(),
+                                )
+                                .await?;
+                                if to_allowed {
+                                    PermissionDecision::Allow
+                                } else {
+                                    PermissionDecision::Deny
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    // Non-relation resources: use the single namespace_id field.
+                    match request.resource.namespace_id() {
+                        None => {
+                            // System-scoped checks: admin short-circuit lives one
+                            // level up in PermissionController. Here we deny.
+                            PermissionDecision::Deny
+                        }
+                        Some(namespace_id) => {
+                            let allowed = queries::user_can_all_query(
+                                &self.pool,
+                                principal.user_id,
+                                namespace_id,
+                                request.permissions.to_vec(),
+                            )
+                            .await?;
+                            if allowed {
+                                PermissionDecision::Allow
+                            } else {
+                                PermissionDecision::Deny
+                            }
+                        }
                     }
                 }
             };

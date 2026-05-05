@@ -226,6 +226,87 @@ fn new_hubuum_object_relation_example() -> NewHubuumObjectRelation {
     }
 }
 
+#[async_trait::async_trait]
+impl crate::permissions::AuthzTarget for HubuumClassRelation {
+    async fn to_resource_ref(
+        &self,
+        pool: &crate::db::DbPool,
+    ) -> Result<crate::permissions::ResourceRef, crate::errors::ApiError> {
+        use crate::traits::NamespaceAccessors;
+        let (from_ns, to_ns) = self.namespace(pool).await?;
+        let namespace_id = if from_ns.id == to_ns.id {
+            Some(from_ns.id)
+        } else {
+            None
+        };
+        Ok(crate::permissions::ResourceRef {
+            kind: crate::permissions::ResourceKind::ClassRelation,
+            id: self.id,
+            attrs: crate::permissions::ResourceAttrs {
+                from_namespace_id: Some(from_ns.id),
+                to_namespace_id: Some(to_ns.id),
+                namespace_id,
+                from_class_id: Some(self.from_hubuum_class_id),
+                to_class_id: Some(self.to_hubuum_class_id),
+                ..Default::default()
+            },
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::permissions::AuthzTarget for HubuumClassRelationID {
+    async fn to_resource_ref(
+        &self,
+        pool: &crate::db::DbPool,
+    ) -> Result<crate::permissions::ResourceRef, crate::errors::ApiError> {
+        use crate::traits::SelfAccessors;
+        let loaded = self.instance(pool).await?;
+        loaded.to_resource_ref(pool).await
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::permissions::AuthzTarget for HubuumObjectRelation {
+    async fn to_resource_ref(
+        &self,
+        pool: &crate::db::DbPool,
+    ) -> Result<crate::permissions::ResourceRef, crate::errors::ApiError> {
+        use crate::traits::NamespaceAccessors;
+        let (from_ns, to_ns) = self.namespace(pool).await?;
+        let namespace_id = if from_ns.id == to_ns.id {
+            Some(from_ns.id)
+        } else {
+            None
+        };
+        Ok(crate::permissions::ResourceRef {
+            kind: crate::permissions::ResourceKind::ObjectRelation,
+            id: self.id,
+            attrs: crate::permissions::ResourceAttrs {
+                from_namespace_id: Some(from_ns.id),
+                to_namespace_id: Some(to_ns.id),
+                namespace_id,
+                from_object_id: Some(self.from_hubuum_object_id),
+                to_object_id: Some(self.to_hubuum_object_id),
+                class_relation_id: Some(self.class_relation_id),
+                ..Default::default()
+            },
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::permissions::AuthzTarget for HubuumObjectRelationID {
+    async fn to_resource_ref(
+        &self,
+        pool: &crate::db::DbPool,
+    ) -> Result<crate::permissions::ResourceRef, crate::errors::ApiError> {
+        use crate::traits::SelfAccessors;
+        let loaded = self.instance(pool).await?;
+        loaded.to_resource_ref(pool).await
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use rstest::rstest;

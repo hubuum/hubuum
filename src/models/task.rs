@@ -117,6 +117,9 @@ impl From<TaskResultCounts> for (i32, i32, i32) {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct TaskRecordID(pub i32);
+
 #[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable)]
 #[diesel(table_name = tasks)]
 pub struct TaskRecord {
@@ -492,5 +495,64 @@ impl CursorPaginated for ImportTaskResultResponse {
 
     fn tie_breaker_sort() -> Vec<SortParam> {
         Self::default_sort()
+    }
+}
+
+impl crate::traits::accessors::IdAccessor for TaskRecordID {
+    fn accessor_id(&self) -> i32 {
+        self.0
+    }
+}
+
+impl crate::traits::accessors::IdAccessor for TaskRecord {
+    fn accessor_id(&self) -> i32 {
+        self.id
+    }
+}
+
+impl crate::traits::accessors::InstanceAdapter<TaskRecord> for TaskRecord {
+    async fn instance_adapter(
+        &self,
+        _pool: &crate::db::DbPool,
+    ) -> Result<TaskRecord, crate::errors::ApiError> {
+        Ok(self.clone())
+    }
+}
+
+impl crate::traits::accessors::InstanceAdapter<TaskRecord> for TaskRecordID {
+    async fn instance_adapter(
+        &self,
+        pool: &crate::db::DbPool,
+    ) -> Result<TaskRecord, crate::errors::ApiError> {
+        crate::db::traits::task::find_task_record(pool, self.0).await
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::permissions::AuthzTarget for TaskRecord {
+    async fn to_resource_ref(
+        &self,
+        _pool: &crate::db::DbPool,
+    ) -> Result<crate::permissions::ResourceRef, crate::errors::ApiError> {
+        Ok(crate::permissions::ResourceRef {
+            kind: crate::permissions::ResourceKind::Task,
+            id: self.id,
+            attrs: crate::permissions::ResourceAttrs {
+                submitted_by: self.submitted_by,
+                ..Default::default()
+            },
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::permissions::AuthzTarget for TaskRecordID {
+    async fn to_resource_ref(
+        &self,
+        pool: &crate::db::DbPool,
+    ) -> Result<crate::permissions::ResourceRef, crate::errors::ApiError> {
+        use crate::traits::SelfAccessors;
+        let loaded = self.instance(pool).await?;
+        loaded.to_resource_ref(pool).await
     }
 }

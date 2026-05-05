@@ -2,3 +2,6 @@
 // at least one backend implementation is available.
 #[cfg(feature = "permissions-local")]
 pub mod backend_trait;
+
+#[cfg(feature = "permissions-local")]
+pub mod auth_target;
