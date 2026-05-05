@@ -31,8 +31,8 @@ use tracing_subscriber::{
 use crate::api::openapi::openapi_json as openapi_json_handler;
 use crate::config::{get_config, token_hash_key_is_ephemeral};
 use crate::errors::{
-    EXIT_CODE_CONFIG_ERROR, EXIT_CODE_INIT_ERROR, EXIT_CODE_TLS_ERROR, fatal_error,
-    json_error_handler,
+    EXIT_CODE_CONFIG_ERROR, EXIT_CODE_INIT_ERROR, EXIT_CODE_PERMISSION_BACKEND_ERROR,
+    EXIT_CODE_TLS_ERROR, fatal_error, json_error_handler,
 };
 use crate::tasks::ensure_task_worker_running;
 use crate::utilities::is_valid_log_level;
@@ -100,6 +100,21 @@ async fn main() -> std::io::Result<()> {
         );
     }
 
+    let permission_backend =
+        match crate::permissions::build_permission_backend(&config, pool.clone()).await {
+            Ok(b) => b,
+            Err(e) => fatal_error(
+                &format!("Failed to initialize permission backend: {e}"),
+                EXIT_CODE_PERMISSION_BACKEND_ERROR,
+            ),
+        };
+    info!(
+        message = "permission backend initialized",
+        backend = permission_backend.kind(),
+    );
+
+    let app_ctx = crate::permissions::AppContext::new(pool.clone(), permission_backend.clone());
+
     ensure_task_worker_running(pool.clone());
 
     let client_allowlist = config.client_allowlist.clone();
@@ -118,6 +133,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(Logger::default())
             .app_data(Data::new(app_config.clone()))
             .app_data(Data::new(pool.clone()))
+            .app_data(Data::new(app_ctx.clone()))
             .app_data(JsonConfig::default().error_handler(json_error_handler))
             .route("/api-doc/openapi.json", web::get().to(openapi_json_handler));
 
