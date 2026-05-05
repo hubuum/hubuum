@@ -12,6 +12,9 @@ use crate::models::{
 use super::backend::PermissionBackend;
 use super::types::{PermissionDecision, PermissionRequest, PrincipalRef};
 
+/// PostgreSQL-backed permission backend. Reads and writes go directly to
+/// the local `permissions` table via Diesel; mutations are supported.
+/// Selected at startup when `HUBUUM_PERMISSION_BACKEND=local` (default).
 pub struct LocalPermissionBackend {
     pool: DbPool,
 }
