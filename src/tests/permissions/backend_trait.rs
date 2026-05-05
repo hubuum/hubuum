@@ -11,6 +11,14 @@ use crate::permissions::{
     PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef, ResourceRef,
 };
 use crate::tests::{create_test_group, create_test_user, get_pool_and_config};
+use crate::utilities::auth::generate_random_password;
+
+/// Unique fixture label so re-runs against a persistent test DB don't trip
+/// the `groupname` unique constraint via `create_namespace_fixture`'s
+/// deterministic owner-group naming.
+fn unique_label(prefix: &str) -> String {
+    format!("{prefix}_{}", generate_random_password(8))
+}
 
 #[actix_web::test]
 async fn local_backend_grants_then_authorizes_namespace_read() {
@@ -28,7 +36,8 @@ async fn local_backend_grants_then_authorizes_namespace_read() {
     // the (group_id, namespace_id) row this test grants. The namespace
     // fixture helper creates an "owner" group with full permissions; we
     // grant our separate test group only ReadCollection.
-    let fixture = crate::tests::create_namespace_fixture(&pool, "perm_backend_smoke").await;
+    let fixture =
+        crate::tests::create_namespace_fixture(&pool, &unique_label("perm_backend_smoke")).await;
     let namespace_id = fixture.namespace.id;
 
     let principal = PrincipalRef::new(user.id, vec![group.id]);
@@ -98,8 +107,10 @@ async fn local_backend_authorize_many_returns_per_request_decisions() {
         .await
         .expect("failed to add user to group");
 
-    let granted_ns = crate::tests::create_namespace_fixture(&pool, "perm_batch_granted").await;
-    let denied_ns = crate::tests::create_namespace_fixture(&pool, "perm_batch_denied").await;
+    let granted_ns =
+        crate::tests::create_namespace_fixture(&pool, &unique_label("perm_batch_granted")).await;
+    let denied_ns =
+        crate::tests::create_namespace_fixture(&pool, &unique_label("perm_batch_denied")).await;
 
     backend
         .apply_permissions(
