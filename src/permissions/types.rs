@@ -90,8 +90,16 @@ pub enum PermissionDecision {
     Deny,
 }
 
+/// One request paired with its decision. Returned by
+/// `PermissionBackend::authorize_candidates` so call sites that need both
+/// the original request and the decision (e.g. list visibility filters,
+/// where the request carries the resource being filtered) get them
+/// together without re-zipping.
+///
+/// Note: this carries decisions for *every* request, including denials.
+/// Call sites filter on `decision == PermissionDecision::Allow` themselves.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthorizedRequest {
+pub struct AuthorizationResult {
     pub request: PermissionRequest,
     pub decision: PermissionDecision,
 }

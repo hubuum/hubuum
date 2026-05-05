@@ -4,7 +4,7 @@ use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
 use crate::models::{GroupPermission, Namespace, Permission, Permissions, PermissionsList};
 
-use super::types::{AuthorizedRequest, PermissionDecision, PermissionRequest, PrincipalRef};
+use super::types::{AuthorizationResult, PermissionDecision, PermissionRequest, PrincipalRef};
 
 #[async_trait]
 pub trait PermissionBackend: Send + Sync {
@@ -39,21 +39,26 @@ pub trait PermissionBackend: Send + Sync {
         })
     }
 
-    /// Filter a candidate set: tags each request with its decision, in
-    /// input order. Used by list/search visibility paths to keep authorized
-    /// rows alongside their original requests.
+    /// Decide each request and return decisions paired with their
+    /// original requests, in input order. Used by list/search visibility
+    /// paths to keep request data alongside its decision so callers don't
+    /// have to re-zip parallel vectors.
+    ///
+    /// **This does not filter** — it returns both Allow and Deny
+    /// decisions. Call sites filter on the resulting `decision` field
+    /// themselves.
     ///
     /// Default: pairs `authorize_many`'s result with the inputs.
-    async fn filter_authorized(
+    async fn authorize_candidates(
         &self,
         principal: &PrincipalRef,
         requests: Vec<PermissionRequest>,
-    ) -> Result<Vec<AuthorizedRequest>, ApiError> {
+    ) -> Result<Vec<AuthorizationResult>, ApiError> {
         let decisions = self.authorize_many(principal, requests.clone()).await?;
         Ok(requests
             .into_iter()
             .zip(decisions)
-            .map(|(request, decision)| AuthorizedRequest { request, decision })
+            .map(|(request, decision)| AuthorizationResult { request, decision })
             .collect())
     }
 

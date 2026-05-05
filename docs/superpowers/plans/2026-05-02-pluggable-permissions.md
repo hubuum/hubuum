@@ -31,10 +31,17 @@ shapes wherever earlier versions of the plan show different signatures.**
 The trait section in §1 below is the authoritative copy.
 
 - **`PermissionBackend::authorize_many` is the only required decision
-  method.** `authorize` and `filter_authorized` have default impls that
+  method.** `authorize` and `authorize_candidates` have default impls that
   wrap `authorize_many`. Backends that can batch transport-side (Treetop)
   override `authorize_many`; backends that can't (Local) get less
   boilerplate.
+- **`authorize_candidates` is *not* a filter** — it returns
+  `Vec<AuthorizationResult>` covering both `Allow` and `Deny`. Callers
+  filter on `result.decision == PermissionDecision::Allow` themselves. The
+  paired return shape lets call sites correlate decisions back to their
+  original requests without re-zipping. (Renamed from `filter_authorized`
+  / `AuthorizedRequest` after Phase 1 — those names misleadingly implied
+  pre-filtering.)
 - **`namespaces_user_can` takes `&[Permissions]`** (a slice, conjunctive
   AND), not a single `Permissions`. Empty slice means "any row qualifies."
 - **`PrincipalRef::new(user_id, group_ids)`** is the canonical constructor
@@ -65,7 +72,7 @@ existing behavior is preserved.
 
 - `src/permissions/mod.rs` — module entry, `build_permission_backend`, `PermissionBackendKind`
 - `src/permissions/backend.rs` — `PermissionBackend` trait
-- `src/permissions/types.rs` — `PrincipalRef`, `PermissionRequest`, `PermissionDecision`, `AuthorizedRequest`, `ResourceRef`, `ResourceKind`, `ResourceAttrs`, `AuthzTarget`
+- `src/permissions/types.rs` — `PrincipalRef`, `PermissionRequest`, `PermissionDecision`, `AuthorizationResult`, `ResourceRef`, `ResourceKind`, `ResourceAttrs`, `AuthzTarget`
 - `src/permissions/local/mod.rs` — `LocalPermissionBackend` struct and impl
 - `src/permissions/local/queries.rs` — local SQL helpers extracted from existing `db/traits/permissions.rs` and `db/traits/namespace/permissions.rs`
 - `src/permissions/treetop/mod.rs` — `TreetopPermissionBackend`
@@ -295,7 +302,7 @@ pub mod test_support;
 pub use backend::PermissionBackend;
 pub use context::AppContext;
 pub use types::{
-    AuthorizedRequest, AuthzTarget, PermissionDecision, PermissionRequest, PrincipalRef,
+    AuthorizationResult, AuthzTarget, PermissionDecision, PermissionRequest, PrincipalRef,
     ResourceAttrs, ResourceKind, ResourceRef,
 };
 ```
@@ -380,7 +387,7 @@ pub enum PermissionDecision {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthorizedRequest {
+pub struct AuthorizationResult {
     pub request: PermissionRequest,
     pub decision: PermissionDecision,
 }
@@ -444,7 +451,7 @@ use crate::models::{
 };
 
 use super::types::{
-    AuthorizedRequest, PermissionDecision, PermissionRequest, PrincipalRef,
+    AuthorizationResult, PermissionDecision, PermissionRequest, PrincipalRef,
 };
 
 #[async_trait]
@@ -480,16 +487,16 @@ pub trait PermissionBackend: Send + Sync {
     /// Filter a candidate set: tags each request with its decision, in
     /// input order. Default: pairs `authorize_many`'s result with the
     /// inputs.
-    async fn filter_authorized(
+    async fn authorize_candidates(
         &self,
         principal: &PrincipalRef,
         requests: Vec<PermissionRequest>,
-    ) -> Result<Vec<AuthorizedRequest>, ApiError> {
+    ) -> Result<Vec<AuthorizationResult>, ApiError> {
         let decisions = self.authorize_many(principal, requests.clone()).await?;
         Ok(requests
             .into_iter()
             .zip(decisions)
-            .map(|(request, decision)| AuthorizedRequest { request, decision })
+            .map(|(request, decision)| AuthorizationResult { request, decision })
             .collect())
     }
 
@@ -819,7 +826,7 @@ use crate::models::{
 
 use super::backend::PermissionBackend;
 use super::types::{
-    AuthorizedRequest, PermissionDecision, PermissionRequest, PrincipalRef, ResourceKind,
+    AuthorizationResult, PermissionDecision, PermissionRequest, PrincipalRef, ResourceKind,
 };
 
 pub struct LocalPermissionBackend {
@@ -864,7 +871,7 @@ impl PermissionBackend for LocalPermissionBackend {
         Ok(decisions)
     }
 
-    // `authorize` and `filter_authorized` use the trait defaults.
+    // `authorize` and `authorize_candidates` use the trait defaults.
 
     async fn namespaces_user_can(
         &self,
@@ -1974,7 +1981,7 @@ async fn user_visible_tasks<C: BackendContext + ?Sized>(
     // 3. Filter via backend.
     let authorized = ctx
         .permission_backend()
-        .filter_authorized(principal, requests)
+        .authorize_candidates(principal, requests)
         .await?;
 
     let visible: Vec<HubuumTask> = candidates
@@ -2040,7 +2047,7 @@ git commit -m "refactor(context): drop DbPool BackendContext shim; AppContext is
 
 ## Phase 4 — List/search/report visibility through the backend
 
-### Task 4.1: Move list-permission helpers behind `filter_authorized`
+### Task 4.1: Move list-permission helpers behind `authorize_candidates`
 
 **Files:**
 - Modify: `src/api/v1/handlers/templates.rs`
@@ -2181,7 +2188,7 @@ async fn filter_visible<C: BackendContext + ?Sized, T: AuthzTargetable>(
     }
     let authorized = ctx
         .permission_backend()
-        .filter_authorized(principal, requests)
+        .authorize_candidates(principal, requests)
         .await?;
     Ok(candidates
         .into_iter()
@@ -2278,7 +2285,7 @@ use crate::models::{
 };
 use crate::permissions::backend::PermissionBackend;
 use crate::permissions::types::{
-    AuthorizedRequest, PermissionDecision, PermissionRequest, PrincipalRef, ResourceKind,
+    AuthorizationResult, PermissionDecision, PermissionRequest, PrincipalRef, ResourceKind,
 };
 
 #[derive(Clone)]
@@ -2338,16 +2345,16 @@ impl PermissionBackend for MockTreetopBackend {
         Ok(requests.into_iter().map(|r| self.eval(principal, &r)).collect())
     }
 
-    async fn filter_authorized(
+    async fn authorize_candidates(
         &self,
         principal: &PrincipalRef,
         requests: Vec<PermissionRequest>,
-    ) -> Result<Vec<AuthorizedRequest>, ApiError> {
+    ) -> Result<Vec<AuthorizationResult>, ApiError> {
         let decisions = self.authorize_many(principal, requests.clone()).await?;
         Ok(requests
             .into_iter()
             .zip(decisions)
-            .map(|(request, decision)| AuthorizedRequest { request, decision })
+            .map(|(request, decision)| AuthorizationResult { request, decision })
             .collect())
     }
 
@@ -2469,7 +2476,7 @@ use crate::models::{
 
 use super::backend::PermissionBackend;
 use super::types::{
-    AuthorizedRequest, PermissionDecision, PermissionRequest, PrincipalRef, ResourceKind,
+    AuthorizationResult, PermissionDecision, PermissionRequest, PrincipalRef, ResourceKind,
 };
 
 pub struct TreetopPermissionBackend {
@@ -2721,16 +2728,16 @@ impl PermissionBackend for TreetopPermissionBackend {
             .collect())
     }
 
-    async fn filter_authorized(
+    async fn authorize_candidates(
         &self,
         principal: &PrincipalRef,
         requests: Vec<PermissionRequest>,
-    ) -> Result<Vec<AuthorizedRequest>, ApiError> {
+    ) -> Result<Vec<AuthorizationResult>, ApiError> {
         let decisions = self.authorize_many(principal, requests.clone()).await?;
         Ok(requests
             .into_iter()
             .zip(decisions)
-            .map(|(request, decision)| AuthorizedRequest { request, decision })
+            .map(|(request, decision)| AuthorizationResult { request, decision })
             .collect())
     }
 
@@ -2748,7 +2755,7 @@ impl PermissionBackend for TreetopPermissionBackend {
                 permissions: permissions.to_vec(),
             })
             .collect();
-        let authorized = self.filter_authorized(principal, requests).await?;
+        let authorized = self.authorize_candidates(principal, requests).await?;
         Ok(all_namespaces
             .into_iter()
             .zip(authorized)

@@ -5,7 +5,7 @@ pub mod types;
 pub use backend::PermissionBackend;
 pub use context::AppContext;
 pub use types::{
-    AuthorizedRequest, AuthzTarget, PermissionDecision, PermissionRequest, PrincipalRef,
+    AuthorizationResult, AuthzTarget, PermissionDecision, PermissionRequest, PrincipalRef,
     ResourceAttrs, ResourceKind, ResourceRef,
 };
 
