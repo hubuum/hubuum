@@ -1,5 +1,5 @@
 use crate::api::openapi::ApiErrorResponse;
-use crate::db::DbPool;
+use crate::permissions::AppContext;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::parse_query_parameter;
@@ -36,7 +36,7 @@ use actix_web::{HttpRequest, Responder, get, http::StatusCode, routes, web};
 #[get("classes")]
 #[get("classes/")]
 async fn get_class_relations(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
@@ -51,7 +51,7 @@ async fn get_class_relations(
     debug!(message = "Listing class relations", user_id = user.id());
 
     let search_params = prepare_db_pagination::<HubuumClassRelation>(&params)?;
-    let (classes, total_count) = user.class_relations_page(&pool, search_params).await?;
+    let (classes, total_count) = user.class_relations_page(&ctx.db_pool, search_params).await?;
 
     paginated_json_response(classes, total_count, StatusCode::OK, &params)
 }
@@ -72,7 +72,7 @@ async fn get_class_relations(
 )]
 #[get("classes/{relation_id}")]
 async fn get_class_relation(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     relation_id: web::Path<HubuumClassRelationID>,
 ) -> Result<impl Responder, ApiError> {
@@ -85,16 +85,16 @@ async fn get_class_relation(
         relation_id = ?relation_id,
     );
 
-    let namespaces = relation_id.namespace(&pool).await?;
+    let namespaces = relation_id.namespace(&ctx.db_pool).await?;
     can!(
-        &pool,
+        &ctx.db_pool,
         user,
         [Permissions::ReadClassRelation],
         namespaces.0,
         namespaces.1
     );
 
-    let relation = relation_id.instance(&pool).await?;
+    let relation = relation_id.instance(&ctx.db_pool).await?;
 
     Ok(json_response(relation, StatusCode::OK))
 }
@@ -116,7 +116,7 @@ async fn get_class_relation(
 #[post("classes")]
 #[post("classes/")]
 async fn create_class_relation(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     relation: web::Json<NewHubuumClassRelation>,
 ) -> Result<impl Responder, ApiError> {
@@ -130,16 +130,16 @@ async fn create_class_relation(
         to_class = relation.to_hubuum_class_id,
     );
 
-    let namespaces = relation.namespace(&pool).await?;
+    let namespaces = relation.namespace(&ctx.db_pool).await?;
     can!(
-        &pool,
+        &ctx.db_pool,
         user,
         [Permissions::CreateClassRelation],
         namespaces.0,
         namespaces.1
     );
 
-    let relation = relation.save(&pool).await?;
+    let relation = relation.save(&ctx.db_pool).await?;
 
     Ok(json_response(relation, StatusCode::CREATED))
 }
@@ -160,7 +160,7 @@ async fn create_class_relation(
 )]
 #[delete("classes/{relation_id}")]
 async fn delete_class_relation(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     relation_id: web::Path<HubuumClassRelationID>,
 ) -> Result<impl Responder, ApiError> {
@@ -173,16 +173,16 @@ async fn delete_class_relation(
         relation_id = ?relation_id,
     );
 
-    let namespaces = relation_id.namespace(&pool).await?;
+    let namespaces = relation_id.namespace(&ctx.db_pool).await?;
     can!(
-        &pool,
+        &ctx.db_pool,
         user,
         [Permissions::DeleteClassRelation],
         namespaces.0,
         namespaces.1
     );
 
-    relation_id.delete(&pool).await?;
+    relation_id.delete(&ctx.db_pool).await?;
 
     Ok(json_response("{}", StatusCode::NO_CONTENT))
 }
@@ -202,7 +202,7 @@ async fn delete_class_relation(
 #[get("objects")]
 #[get("objects/")]
 async fn get_object_relations(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
@@ -217,7 +217,7 @@ async fn get_object_relations(
     debug!(message = "Listing object relations", user_id = user.id());
 
     let search_params = prepare_db_pagination::<HubuumObjectRelation>(&params)?;
-    let (object_relations, total_count) = user.object_relations_page(&pool, search_params).await?;
+    let (object_relations, total_count) = user.object_relations_page(&ctx.db_pool, search_params).await?;
 
     paginated_json_response(object_relations, total_count, StatusCode::OK, &params)
 }
@@ -238,7 +238,7 @@ async fn get_object_relations(
 )]
 #[get("objects/{relation_id}")]
 async fn get_object_relation(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     relation_id: web::Path<HubuumObjectRelationID>,
 ) -> Result<impl Responder, ApiError> {
@@ -251,16 +251,16 @@ async fn get_object_relation(
         relation_id = ?relation_id,
     );
 
-    let namespaces = relation_id.namespace(&pool).await?;
+    let namespaces = relation_id.namespace(&ctx.db_pool).await?;
     can!(
-        &pool,
+        &ctx.db_pool,
         user,
         [Permissions::ReadObjectRelation],
         namespaces.0,
         namespaces.1
     );
 
-    let relation = relation_id.instance(&pool).await?;
+    let relation = relation_id.instance(&ctx.db_pool).await?;
 
     Ok(json_response(relation, StatusCode::OK))
 }
@@ -282,7 +282,7 @@ async fn get_object_relation(
 #[post("objects")]
 #[post("objects/")]
 async fn create_object_relation(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     relation: web::Json<NewHubuumObjectRelation>,
 ) -> Result<impl Responder, ApiError> {
@@ -296,16 +296,16 @@ async fn create_object_relation(
         to_object = relation.to_hubuum_object_id,
     );
 
-    let namespaces = relation.namespace(&pool).await?;
+    let namespaces = relation.namespace(&ctx.db_pool).await?;
     can!(
-        &pool,
+        &ctx.db_pool,
         user,
         [Permissions::CreateObjectRelation],
         namespaces.0,
         namespaces.1
     );
 
-    let relation = relation.save(&pool).await?;
+    let relation = relation.save(&ctx.db_pool).await?;
 
     Ok(json_response(relation, StatusCode::CREATED))
 }
@@ -326,7 +326,7 @@ async fn create_object_relation(
 )]
 #[delete("objects/{relation_id}")]
 async fn delete_object_relation(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     relation_id: web::Path<HubuumObjectRelationID>,
 ) -> Result<impl Responder, ApiError> {
@@ -339,16 +339,16 @@ async fn delete_object_relation(
         relation_id = ?relation_id,
     );
 
-    let namespaces = relation_id.namespace(&pool).await?;
+    let namespaces = relation_id.namespace(&ctx.db_pool).await?;
     can!(
-        &pool,
+        &ctx.db_pool,
         user,
         [Permissions::DeleteObjectRelation],
         namespaces.0,
         namespaces.1
     );
 
-    relation_id.delete(&pool).await?;
+    relation_id.delete(&ctx.db_pool).await?;
 
     Ok(json_response("{}", StatusCode::NO_CONTENT))
 }
