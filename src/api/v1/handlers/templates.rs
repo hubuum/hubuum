@@ -3,7 +3,7 @@ use tracing::{debug, info};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::can;
-use crate::db::DbPool;
+use crate::permissions::AppContext;
 use crate::db::traits::UserPermissions;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
@@ -34,7 +34,7 @@ use crate::utilities::response::{json_response, json_response_created, paginated
 #[post("")]
 #[post("/")]
 pub async fn create_template(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     template: web::Json<NewReportTemplate>,
 ) -> Result<impl Responder, ApiError> {
@@ -49,13 +49,13 @@ pub async fn create_template(
     );
 
     can!(
-        &pool,
+        &ctx.db_pool,
         user,
         [Permissions::CreateTemplate],
         NamespaceID(template.namespace_id)
     );
 
-    let created = crate::models::report_template::create_report_template(&pool, template).await?;
+    let created = crate::models::report_template::create_report_template(&ctx.db_pool, template).await?;
 
     Ok(json_response_created(
         &created,
@@ -78,7 +78,7 @@ pub async fn create_template(
 #[get("")]
 #[get("/")]
 pub async fn get_templates(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
@@ -92,7 +92,7 @@ pub async fn get_templates(
 
     let search_params = prepare_db_pagination::<ReportTemplate>(&params)?;
     let allowed_namespace_ids =
-        crate::models::namespace::user_can_on_any(&pool, user, Permissions::ReadTemplate)
+        crate::models::namespace::user_can_on_any(&ctx.db_pool, user, Permissions::ReadTemplate)
             .await?
             .into_iter()
             .map(|namespace| namespace.id)
@@ -100,7 +100,7 @@ pub async fn get_templates(
 
     let (templates, total_count) =
         crate::models::report_template::list_report_templates_with_total_count(
-            &pool,
+            &ctx.db_pool,
             &allowed_namespace_ids,
             &search_params,
         )
@@ -126,7 +126,7 @@ pub async fn get_templates(
 )]
 #[get("/{template_id}")]
 pub async fn get_template(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     template_id: web::Path<ReportTemplateID>,
 ) -> Result<impl Responder, ApiError> {
@@ -139,10 +139,10 @@ pub async fn get_template(
         template_id = template_id
     );
 
-    let template = crate::models::report_template::report_template(&pool, template_id).await?;
+    let template = crate::models::report_template::report_template(&ctx.db_pool, template_id).await?;
 
     can!(
-        &pool,
+        &ctx.db_pool,
         user,
         [Permissions::ReadTemplate],
         NamespaceID(template.namespace_id)
@@ -171,7 +171,7 @@ pub async fn get_template(
 )]
 #[patch("/{template_id}")]
 pub async fn patch_template(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     template_id: web::Path<ReportTemplateID>,
     update: web::Json<UpdateReportTemplate>,
@@ -186,10 +186,10 @@ pub async fn patch_template(
         template_id = template_id
     );
 
-    let existing = crate::models::report_template::report_template(&pool, template_id).await?;
+    let existing = crate::models::report_template::report_template(&ctx.db_pool, template_id).await?;
 
     can!(
-        &pool,
+        &ctx.db_pool,
         user.clone(),
         [Permissions::UpdateTemplate],
         NamespaceID(existing.namespace_id)
@@ -199,7 +199,7 @@ pub async fn patch_template(
         && target_namespace != existing.namespace_id
     {
         can!(
-            &pool,
+            &ctx.db_pool,
             user,
             [Permissions::CreateTemplate],
             NamespaceID(target_namespace)
@@ -207,7 +207,7 @@ pub async fn patch_template(
     }
 
     let updated =
-        crate::models::report_template::update_report_template(&pool, template_id, update).await?;
+        crate::models::report_template::update_report_template(&ctx.db_pool, template_id, update).await?;
 
     Ok(json_response(updated, StatusCode::OK))
 }
@@ -229,7 +229,7 @@ pub async fn patch_template(
 )]
 #[delete("/{template_id}")]
 pub async fn delete_template(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     template_id: web::Path<ReportTemplateID>,
 ) -> Result<impl Responder, ApiError> {
@@ -242,16 +242,16 @@ pub async fn delete_template(
         template_id = template_id
     );
 
-    let template = crate::models::report_template::report_template(&pool, template_id).await?;
+    let template = crate::models::report_template::report_template(&ctx.db_pool, template_id).await?;
 
     can!(
-        &pool,
+        &ctx.db_pool,
         user,
         [Permissions::DeleteTemplate],
         NamespaceID(template.namespace_id)
     );
 
-    crate::models::report_template::delete_report_template(&pool, template_id).await?;
+    crate::models::report_template::delete_report_template(&ctx.db_pool, template_id).await?;
 
     Ok(json_response((), StatusCode::NO_CONTENT))
 }
