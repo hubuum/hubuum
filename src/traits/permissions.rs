@@ -1,15 +1,15 @@
 use serde::Serialize;
 
-use crate::db::traits::permissions::PermissionControllerBackend;
 use crate::db::traits::user::GroupMemberships;
 use crate::errors::ApiError;
 use crate::models::traits::GroupAccessors;
 use crate::models::{Permission, Permissions, PermissionsList, User};
+use crate::permissions::{AuthzTarget, PermissionDecision, PermissionRequest, PrincipalRef};
 
 use super::{BackendContext, NamespaceAccessors, SelfAccessors};
 
 #[allow(dead_code)]
-pub trait PermissionController: Serialize + NamespaceAccessors {
+pub trait PermissionController: Serialize + AuthzTarget + NamespaceAccessors {
     /// Check if the user has the given permission on the object.
     ///
     /// - If the trait is called on a namespace, check against self.
@@ -117,14 +117,28 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
         &self,
         backend: &C,
         user: U,
-        permission: Vec<Permissions>,
+        permissions: Vec<Permissions>,
     ) -> Result<bool, ApiError>
     where
         C: BackendContext + ?Sized,
         U: SelfAccessors<User> + GroupAccessors + GroupMemberships,
     {
-        self.user_can_all_from_backend(backend.db_pool(), user, permission)
-            .await
+        // Admin short-circuit lives here, above the backend.
+        if user.is_admin(backend.db_pool()).await? {
+            return Ok(true);
+        }
+
+        let resource = self.to_resource_ref(backend.db_pool()).await?;
+        let principal = PrincipalRef::new(user.id(), user.group_ids(backend.db_pool()).await?);
+        let request = PermissionRequest {
+            resource,
+            permissions,
+        };
+        let decision = backend
+            .permission_backend()
+            .authorize(&principal, request)
+            .await?;
+        Ok(decision == PermissionDecision::Allow)
     }
 
     /// Grant a set of permissions to a group.
@@ -147,13 +161,16 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     async fn grant<C>(
         &self,
         backend: &C,
-        group_id_for_grant: i32,
+        group_id: i32,
         permission_list: PermissionsList<Permissions>,
     ) -> Result<Permission, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.apply_permissions(backend, group_id_for_grant, permission_list, false)
+        let nid = self.namespace_id(backend.db_pool()).await?;
+        backend
+            .permission_backend()
+            .apply_permissions(nid, group_id, permission_list, false)
             .await
     }
 
@@ -164,20 +181,18 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     async fn apply_permissions<C>(
         &self,
         backend: &C,
-        group_id_for_grant: i32,
+        group_id: i32,
         permission_list: PermissionsList<Permissions>,
         replace_existing: bool,
     ) -> Result<Permission, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.apply_permissions_from_backend(
-            backend.db_pool(),
-            group_id_for_grant,
-            permission_list,
-            replace_existing,
-        )
-        .await
+        let nid = self.namespace_id(backend.db_pool()).await?;
+        backend
+            .permission_backend()
+            .apply_permissions(nid, group_id, permission_list, replace_existing)
+            .await
     }
 
     /// Revoke a set of permissions from a group.
@@ -202,18 +217,17 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     async fn revoke<C>(
         &self,
         backend: &C,
-        group_id_for_revoke: i32,
+        group_id: i32,
         permission_list: PermissionsList<Permissions>,
     ) -> Result<Permission, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.revoke_permissions_from_backend(
-            backend.db_pool(),
-            group_id_for_revoke,
-            permission_list,
-        )
-        .await
+        let nid = self.namespace_id(backend.db_pool()).await?;
+        backend
+            .permission_backend()
+            .revoke_permissions(nid, group_id, permission_list)
+            .await
     }
 
     /// Grant a specific permission to a group.
@@ -334,11 +348,11 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// ## Returns
     ///
     /// An empty result.
-    async fn revoke_all<C>(&self, backend: &C, group_id_for_revoke: i32) -> Result<(), ApiError>
+    async fn revoke_all<C>(&self, backend: &C, group_id: i32) -> Result<(), ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.revoke_all_from_backend(backend.db_pool(), group_id_for_revoke)
-            .await
+        let nid = self.namespace_id(backend.db_pool()).await?;
+        backend.permission_backend().revoke_all(nid, group_id).await
     }
 }

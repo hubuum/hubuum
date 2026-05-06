@@ -313,6 +313,22 @@ pub trait GroupAccessors: SelfAccessors<User> {
             .await
     }
 
+    /// Return all group IDs that the user is a member of (eager load).
+    /// Used for principal construction in permission checks.
+    #[allow(async_fn_in_trait)]
+    async fn group_ids(&self, pool: &DbPool) -> Result<Vec<i32>, ApiError> {
+        use crate::schema::user_groups::dsl::{group_id, user_groups, user_id as ug_user_id};
+        use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl};
+
+        crate::db::with_connection(pool, |conn| {
+            user_groups
+                .filter(ug_user_id.eq(self.id()))
+                .select(group_id)
+                .load::<i32>(conn)
+        })
+        .map_err(Into::into)
+    }
+
     /// Execute the JSON schema filter query for classes and return matching class IDs.
     ///
     /// The name is historical: this returns the executed result set rather than a Diesel subquery.
