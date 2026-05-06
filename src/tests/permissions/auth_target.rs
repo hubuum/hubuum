@@ -330,6 +330,16 @@ async fn object_relation_cross_namespace_populates_all_fields() {
         Some(object_relation.to_hubuum_object_id)
     );
     assert_eq!(
+        resource_ref.attrs.from_class_id,
+        Some(class_a.id),
+        "object relation should expose the from-side class id for policy use"
+    );
+    assert_eq!(
+        resource_ref.attrs.to_class_id,
+        Some(class_b.id),
+        "object relation should expose the to-side class id for policy use"
+    );
+    assert_eq!(
         resource_ref.attrs.class_relation_id,
         Some(object_relation.class_relation_id)
     );

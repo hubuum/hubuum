@@ -42,23 +42,18 @@ impl PermissionBackend for LocalPermissionBackend {
                     // Relations span two namespaces and require permission on both.
                     // This preserves the legacy "AND across both namespaces" semantics
                     // from UserPermissions::can(..., namespaces.0, namespaces.1).
-                    let from_ns = request.resource.attrs.from_namespace_id;
-                    let to_ns = request.resource.attrs.to_namespace_id;
-
                     // Defensive: real AuthzTarget impls always populate both.
-                    if from_ns.is_none() || to_ns.is_none() {
-                        PermissionDecision::Deny
-                    } else {
-                        let from_ns_id = from_ns.unwrap();
-                        let to_ns_id = to_ns.unwrap();
-
-                        // Optimization: if same namespace, one query suffices.
-                        if from_ns_id == to_ns_id {
+                    match (
+                        request.resource.attrs.from_namespace_id,
+                        request.resource.attrs.to_namespace_id,
+                    ) {
+                        (Some(from_ns_id), Some(to_ns_id)) if from_ns_id == to_ns_id => {
+                            // Same-namespace relation: a single query suffices.
                             let allowed = queries::user_can_all_query(
                                 &self.pool,
                                 principal.user_id,
                                 from_ns_id,
-                                request.permissions.to_vec(),
+                                request.permissions,
                             )
                             .await?;
                             if allowed {
@@ -66,8 +61,9 @@ impl PermissionBackend for LocalPermissionBackend {
                             } else {
                                 PermissionDecision::Deny
                             }
-                        } else {
-                            // Cross-namespace: check both.
+                        }
+                        (Some(from_ns_id), Some(to_ns_id)) => {
+                            // Cross-namespace: AND-check both, short-circuit on Deny.
                             let from_allowed = queries::user_can_all_query(
                                 &self.pool,
                                 principal.user_id,
@@ -82,7 +78,7 @@ impl PermissionBackend for LocalPermissionBackend {
                                     &self.pool,
                                     principal.user_id,
                                     to_ns_id,
-                                    request.permissions.to_vec(),
+                                    request.permissions,
                                 )
                                 .await?;
                                 if to_allowed {
@@ -92,6 +88,7 @@ impl PermissionBackend for LocalPermissionBackend {
                                 }
                             }
                         }
+                        _ => PermissionDecision::Deny,
                     }
                 }
                 _ => {

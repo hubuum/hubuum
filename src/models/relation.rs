@@ -272,8 +272,14 @@ impl crate::permissions::AuthzTarget for HubuumObjectRelation {
         &self,
         pool: &crate::db::DbPool,
     ) -> Result<crate::permissions::ResourceRef, crate::errors::ApiError> {
-        use crate::traits::NamespaceAccessors;
+        // Load both endpoint objects so we can populate from_class_id /
+        // to_class_id without forcing Treetop policy authors to do an
+        // external lookup. This costs one extra DB hit per object-relation
+        // authorization vs. just reading the relation row, but it lets
+        // policies be expressed against the class shape on either end.
+        use crate::traits::{NamespaceAccessors, ObjectAccessors};
         let (from_ns, to_ns) = self.namespace(pool).await?;
+        let (from_obj, to_obj) = self.object(pool).await?;
         let namespace_id = if from_ns.id == to_ns.id {
             Some(from_ns.id)
         } else {
@@ -288,6 +294,8 @@ impl crate::permissions::AuthzTarget for HubuumObjectRelation {
                 namespace_id,
                 from_object_id: Some(self.from_hubuum_object_id),
                 to_object_id: Some(self.to_hubuum_object_id),
+                from_class_id: Some(from_obj.hubuum_class_id),
+                to_class_id: Some(to_obj.hubuum_class_id),
                 class_relation_id: Some(self.class_relation_id),
                 ..Default::default()
             },
