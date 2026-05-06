@@ -1,5 +1,4 @@
 use crate::api::openapi::ApiErrorResponse;
-use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, UserAccess};
 use crate::models::{
@@ -9,6 +8,7 @@ use crate::models::{
 
 use crate::models::search::parse_query_parameter;
 use crate::pagination::{count_query_options, prepare_db_pagination};
+use crate::permissions::AppContext;
 
 use crate::utilities::response::{json_response, json_response_created, paginated_json_response};
 use actix_web::{
@@ -39,7 +39,7 @@ use crate::traits::{
 #[get("")]
 #[get("/")]
 pub async fn get_namespaces(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
@@ -57,10 +57,10 @@ pub async fn get_namespaces(
     };
 
     let total_count = user
-        .count_namespaces(&pool, count_query_options(&params))
+        .count_namespaces(&ctx.db_pool, count_query_options(&params))
         .await?;
     let search_params = prepare_db_pagination::<Namespace>(&params)?;
-    let result = user.search_namespaces(&pool, search_params).await?;
+    let result = user.search_namespaces(&ctx.db_pool, search_params).await?;
     paginated_json_response(result, total_count, StatusCode::OK, &params)
 }
 
@@ -81,7 +81,7 @@ pub async fn get_namespaces(
 #[post("")]
 #[post("/")]
 pub async fn create_namespace(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     new_namespace_request: web::Json<NewNamespaceWithAssignee>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
@@ -92,7 +92,7 @@ pub async fn create_namespace(
         new_namespace = new_namespace_request.name
     );
 
-    let created_namespace = new_namespace_request.save(&pool).await?;
+    let created_namespace = new_namespace_request.save(&ctx.db_pool).await?;
 
     Ok(json_response_created(
         &created_namespace,
@@ -116,7 +116,7 @@ pub async fn create_namespace(
 )]
 #[get("/{namespace_id}")]
 pub async fn get_namespace(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     namespace_id: web::Path<NamespaceID>,
 ) -> Result<impl Responder, ApiError> {
@@ -126,10 +126,10 @@ pub async fn get_namespace(
         namespace_id = namespace_id.id()
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let namespace = namespace_id.instance(&ctx.db_pool).await?;
 
     can!(
-        &pool,
+        &ctx,
         requestor.user,
         [Permissions::ReadCollection],
         namespace
@@ -156,7 +156,7 @@ pub async fn get_namespace(
 )]
 #[patch("/{namespace_id}")]
 pub async fn update_namespace(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     namespace_id: web::Path<NamespaceID>,
     update_data: web::Json<UpdateNamespace>,
@@ -167,16 +167,16 @@ pub async fn update_namespace(
         namespace_id = namespace_id.id()
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let namespace = namespace_id.instance(&ctx.db_pool).await?;
 
     can!(
-        &pool,
+        &ctx,
         requestor.user,
         [Permissions::UpdateCollection],
         namespace
     );
 
-    let updated_namespace = update_data.into_inner().update(&pool, namespace.id).await?;
+    let updated_namespace = update_data.into_inner().update(&ctx.db_pool, namespace.id).await?;
     Ok(json_response(updated_namespace, StatusCode::ACCEPTED))
 }
 
@@ -196,7 +196,7 @@ pub async fn update_namespace(
 )]
 #[delete("/{namespace_id}")]
 pub async fn delete_namespace(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     namespace_id: web::Path<NamespaceID>,
 ) -> Result<impl Responder, ApiError> {
@@ -206,15 +206,15 @@ pub async fn delete_namespace(
         namespace_id = namespace_id.id()
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let namespace = namespace_id.instance(&ctx.db_pool).await?;
     can!(
-        &pool,
+        &ctx,
         requestor.user,
         [Permissions::DeleteCollection],
         namespace
     );
 
-    namespace.delete(&pool).await?;
+    namespace.delete(&ctx.db_pool).await?;
     Ok(json_response(json!(()), StatusCode::NO_CONTENT))
 }
 
@@ -235,7 +235,7 @@ pub async fn delete_namespace(
 )]
 #[get("/{namespace_id}/permissions")]
 pub async fn get_namespace_permissions(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     namespace_id: web::Path<NamespaceID>,
     req: HttpRequest,
@@ -248,9 +248,9 @@ pub async fn get_namespace_permissions(
 
     let params = parse_query_parameter(req.query_string())?;
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let namespace = namespace_id.instance(&ctx.db_pool).await?;
     can!(
-        &pool,
+        &ctx,
         requestor.user,
         [Permissions::ReadCollection],
         namespace
@@ -259,7 +259,7 @@ pub async fn get_namespace_permissions(
     let search_params = prepare_db_pagination::<GroupPermission>(&params)?;
     let (permissions, total_count) =
         crate::models::namespace::groups_on_paginated_with_total_count(
-            &pool,
+            &ctx.db_pool,
             namespace.clone(),
             vec![],
             &search_params,
@@ -286,7 +286,7 @@ pub async fn get_namespace_permissions(
 )]
 #[get("/{namespace_id}/permissions/group/{group_id}")]
 pub async fn get_namespace_group_permissions(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     params: web::Path<(NamespaceID, GroupID)>,
 ) -> Result<impl Responder, ApiError> {
@@ -302,15 +302,15 @@ pub async fn get_namespace_group_permissions(
         group_id = group_id.id()
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let namespace = namespace_id.instance(&ctx.db_pool).await?;
     can!(
-        &pool,
+        &ctx,
         requestor.user,
         [Permissions::ReadCollection],
         namespace
     );
 
-    let permissions = group_on(&pool, namespace.id, group_id.id()).await?;
+    let permissions = group_on(&ctx.db_pool, namespace.id, group_id.id()).await?;
 
     Ok(json_response(permissions, StatusCode::OK))
 }
@@ -344,7 +344,7 @@ pub async fn get_namespace_group_permissions(
 )]
 #[post("/{namespace_id}/permissions/group/{group_id}")]
 pub async fn grant_namespace_group_permissions(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     params: web::Path<(NamespaceID, GroupID)>,
     permissions: web::Json<Vec<Permissions>>,
@@ -360,15 +360,15 @@ pub async fn grant_namespace_group_permissions(
         permissions = ?permissions
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let namespace = namespace_id.instance(&ctx.db_pool).await?;
     can!(
-        &pool,
+        &ctx,
         requestor.user,
         [Permissions::DelegateCollection],
         namespace
     );
 
-    namespace.grant(&pool, group_id.id(), permissions).await?;
+    namespace.grant(&ctx.db_pool, group_id.id(), permissions).await?;
 
     Ok(json_response((), StatusCode::CREATED))
 }
@@ -394,7 +394,7 @@ pub async fn grant_namespace_group_permissions(
 )]
 #[put("/{namespace_id}/permissions/group/{group_id}")]
 pub async fn replace_namespace_group_permissions(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     params: web::Path<(NamespaceID, GroupID)>,
     permissions: web::Json<Vec<Permissions>>,
@@ -410,9 +410,9 @@ pub async fn replace_namespace_group_permissions(
         permissions = ?permissions
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let namespace = namespace_id.instance(&ctx.db_pool).await?;
     can!(
-        &pool,
+        &ctx,
         requestor.user,
         [Permissions::DelegateCollection],
         namespace
@@ -426,7 +426,7 @@ pub async fn replace_namespace_group_permissions(
     }
 
     namespace
-        .set_permissions(&pool, group_id.id(), permissions)
+        .set_permissions(&ctx.db_pool, group_id.id(), permissions)
         .await?;
 
     Ok(json_response((), StatusCode::OK))
@@ -450,7 +450,7 @@ pub async fn replace_namespace_group_permissions(
 )]
 #[delete("/{namespace_id}/permissions/group/{group_id}")]
 pub async fn revoke_namespace_group_permissions(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     params: web::Path<(NamespaceID, GroupID)>,
 ) -> Result<impl Responder, ApiError> {
@@ -463,15 +463,15 @@ pub async fn revoke_namespace_group_permissions(
         group_id = group_id.id()
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let namespace = namespace_id.instance(&ctx.db_pool).await?;
     can!(
-        &pool,
+        &ctx,
         requestor.user,
         [Permissions::DelegateCollection],
         namespace
     );
 
-    namespace.revoke_all(&pool, group_id.id()).await?;
+    namespace.revoke_all(&ctx.db_pool, group_id.id()).await?;
 
     Ok(json_response((), StatusCode::NO_CONTENT))
 }
@@ -494,7 +494,7 @@ pub async fn revoke_namespace_group_permissions(
 )]
 #[get("/{namespace_id}/permissions/group/{group_id}/{permission}")]
 pub async fn get_namespace_group_permission(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     params: web::Path<(NamespaceID, GroupID, Permissions)>,
 ) -> Result<impl Responder, ApiError> {
@@ -510,15 +510,15 @@ pub async fn get_namespace_group_permission(
         permission = ?permission
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let namespace = namespace_id.instance(&ctx.db_pool).await?;
     can!(
-        &pool,
+        &ctx,
         requestor.user,
         [Permissions::ReadCollection],
         namespace
     );
 
-    if group_can_on(&pool, group_id.id(), namespace, permission).await? {
+    if group_can_on(&ctx.db_pool, group_id.id(), namespace, permission).await? {
         return Ok(json_response((), StatusCode::NO_CONTENT));
     }
     Ok(json_response((), StatusCode::NOT_FOUND))
@@ -544,7 +544,7 @@ pub async fn get_namespace_group_permission(
 )]
 #[post("/{namespace_id}/permissions/group/{group_id}/{permission}")]
 pub async fn grant_namespace_group_permission(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     params: web::Path<(NamespaceID, GroupID, Permissions)>,
 ) -> Result<impl Responder, ApiError> {
@@ -558,16 +558,16 @@ pub async fn grant_namespace_group_permission(
         permission = ?permission
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let namespace = namespace_id.instance(&ctx.db_pool).await?;
     can!(
-        &pool,
+        &ctx,
         requestor.user,
         [Permissions::DelegateCollection],
         namespace
     );
 
     namespace
-        .grant(&pool, group_id.id(), PermissionsList::new([permission]))
+        .grant(&ctx.db_pool, group_id.id(), PermissionsList::new([permission]))
         .await?;
 
     Ok(json_response((), StatusCode::CREATED))
@@ -592,7 +592,7 @@ pub async fn grant_namespace_group_permission(
 )]
 #[delete("/{namespace_id}/permissions/group/{group_id}/{permission}")]
 pub async fn revoke_namespace_group_permission(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     params: web::Path<(NamespaceID, GroupID, Permissions)>,
 ) -> Result<impl Responder, ApiError> {
@@ -606,16 +606,16 @@ pub async fn revoke_namespace_group_permission(
         permission = ?permission
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let namespace = namespace_id.instance(&ctx.db_pool).await?;
     can!(
-        &pool,
+        &ctx,
         requestor.user,
         [Permissions::DelegateCollection],
         namespace
     );
 
     namespace
-        .revoke(&pool, group_id.id(), PermissionsList::new([permission]))
+        .revoke(&ctx.db_pool, group_id.id(), PermissionsList::new([permission]))
         .await?;
 
     Ok(json_response((), StatusCode::NO_CONTENT))
@@ -639,7 +639,7 @@ pub async fn revoke_namespace_group_permission(
 )]
 #[get("/{namespace_id}/permissions/user/{user_id}")]
 pub async fn get_namespace_user_permissions(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     params: web::Path<(NamespaceID, UserID)>,
     req: HttpRequest,
@@ -654,9 +654,9 @@ pub async fn get_namespace_user_permissions(
         user_id = user_id.0
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let namespace = namespace_id.instance(&ctx.db_pool).await?;
     can!(
-        &pool,
+        &ctx,
         requestor.user,
         [Permissions::ReadCollection],
         namespace
@@ -664,7 +664,7 @@ pub async fn get_namespace_user_permissions(
 
     let search_params = prepare_db_pagination::<GroupPermission>(&query_options)?;
     let (permissions, total_count) = crate::models::namespace::user_on_paginated_with_total_count(
-        &pool,
+        &ctx.db_pool,
         user_id.clone(),
         namespace.clone(),
         &search_params,
@@ -696,7 +696,7 @@ pub async fn get_namespace_user_permissions(
 )]
 #[get("/{namespace_id}/has_permissions/{permission}")]
 pub async fn get_namespace_groups_with_permission(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     params: web::Path<(NamespaceID, Permissions)>,
     req: HttpRequest,
@@ -711,9 +711,9 @@ pub async fn get_namespace_groups_with_permission(
         permission = ?permission
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let namespace = namespace_id.instance(&ctx.db_pool).await?;
     can!(
-        &pool,
+        &ctx,
         requestor.user,
         [Permissions::ReadCollection],
         namespace
@@ -721,7 +721,7 @@ pub async fn get_namespace_groups_with_permission(
 
     let search_params = prepare_db_pagination::<Group>(&query_options)?;
     let (groups, total_count) = crate::models::namespace::groups_can_on_paginated_with_total_count(
-        &pool,
+        &ctx.db_pool,
         namespace.id,
         permission,
         &search_params,
