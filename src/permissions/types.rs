@@ -115,6 +115,19 @@ pub trait AuthzTarget: Send + Sync {
     ) -> Result<ResourceRef, crate::errors::ApiError>;
 }
 
+#[async_trait::async_trait]
+impl<T> AuthzTarget for &T
+where
+    T: AuthzTarget + ?Sized + Sync,
+{
+    async fn to_resource_ref(
+        &self,
+        pool: &crate::db::DbPool,
+    ) -> Result<ResourceRef, crate::errors::ApiError> {
+        (*self).to_resource_ref(pool).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,70 +1,54 @@
 use super::*;
+use crate::permissions::{AuthzTarget, PermissionDecision, PermissionRequest, PrincipalRef};
+use crate::traits::BackendContext;
+
 pub trait UserPermissions: SelfAccessors<User> + GroupAccessors + GroupMemberships {
-    /// ## Check if a user has a set of permissions in a set of namespaces
+    /// ## Check if a user has a set of permissions on a set of targets
     ///
-    /// All permissions must be present in all namespaces for the function to return true.
+    /// All permissions must be present on all targets for the function to return true.
     ///
     /// ### Parameters
     ///
-    /// * `pool` - A database connection pool
+    /// * `ctx` - A backend context providing access to the DB pool and permission backend
     /// * `permissions` - An iterable of permissions to check for
-    /// * `namespaces` - An iterable of namespaces to check against
+    /// * `targets` - An iterable of authorization targets to check against
     ///
     /// ### Returns
     ///
     /// * Nothing if the user has the required permissions, or an ApiError::Forbidden if they do not.
-    async fn can<P, N, I>(
-        &self,
-        pool: &DbPool,
-        permissions: P,
-        namespaces: I,
-    ) -> Result<(), ApiError>
+    async fn can<C, P, N, I>(&self, ctx: &C, permissions: P, targets: I) -> Result<(), ApiError>
     where
+        C: BackendContext + ?Sized,
         P: IntoIterator<Item = Permissions>,
         I: IntoIterator<Item = N>,
-        N: NamespaceAccessors,
+        N: AuthzTarget,
     {
-        use crate::models::PermissionFilter;
-        use diesel::{dsl::sql, sql_types::BigInt};
-        use futures::stream::{self, StreamExt, TryStreamExt};
-        use std::collections::HashSet;
-
-        if self.is_admin(pool).await? {
+        // Admin short-circuit lives here, above the backend call.
+        if self.is_admin(ctx.db_pool()).await? {
             return Ok(());
         }
 
-        let lookup_table = crate::schema::permissions::dsl::permissions;
-        let group_id_field = crate::schema::permissions::dsl::group_id;
-        let namespace_id_field = crate::schema::permissions::dsl::namespace_id;
+        let permissions_vec: Vec<Permissions> = permissions.into_iter().collect();
+        let principal = PrincipalRef::new(self.id(), self.group_ids(ctx.db_pool()).await?);
 
-        let group_id_subquery = self.group_ids_subquery_from_backend();
-
-        let namespace_ids: HashSet<i32> = stream::iter(namespaces)
-            .map(|ns| async move { ns.namespace_id(pool).await })
-            // Batch the futures into groups of 5, to avoid overwhelming the database
-            .buffered(5)
-            .try_collect()
-            .await?;
-
-        let mut base_query = lookup_table
-            .into_boxed()
-            .filter(namespace_id_field.eq_any(&namespace_ids))
-            .filter(group_id_field.eq_any(group_id_subquery));
-
-        // Apply all permission filters
-        for perm in permissions {
-            base_query = perm.create_boxed_filter(base_query, true);
+        let mut requests = Vec::new();
+        for target in targets {
+            let resource = target.to_resource_ref(ctx.db_pool()).await?;
+            requests.push(PermissionRequest {
+                resource,
+                permissions: permissions_vec.clone(),
+            });
         }
 
-        // Count the number of distinct namespaces that match all criteria
-        let matching_namespaces_count = with_connection(pool, |conn| {
-            base_query
-                .select(sql::<BigInt>("COUNT(DISTINCT namespace_id)"))
-                .first::<i64>(conn)
-        })?;
+        let results = ctx
+            .permission_backend()
+            .authorize_candidates(&principal, requests)
+            .await?;
 
-        // Check if the count of matching namespaces equals the number of input namespaces
-        if matching_namespaces_count as usize == namespace_ids.len() {
+        if results
+            .iter()
+            .all(|r| r.decision == PermissionDecision::Allow)
+        {
             Ok(())
         } else {
             Err(ApiError::Forbidden(
