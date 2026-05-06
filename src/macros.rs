@@ -40,99 +40,81 @@ where
 }
 
 #[macro_export]
-/// ## Check if a user has a set of permissions in a set of namespaces.
+/// Check that a user has every listed permission on every listed target.
 ///
-/// This is a thin wrapper over the [`UserPermissions::can`] method, but with a more
-/// convenient syntax for the caller as the objects we test against may be of different types
-/// but all implement the [`NamespaceAccessors`] trait.
+/// Targets must implement [`AuthzTarget`]. The macro preserves the typed
+/// resource through to the permission backend (so the Treetop backend
+/// sees `HubuumClass`, `HubuumObject`, relations, etc. as distinct
+/// resource kinds rather than collapsed namespaces).
 ///
 /// ### Arguments
 ///
-/// * `pool` - A database connection pool.
-/// * `user` - The user (impl [`UserPermissions`]) to check permissions for.
-/// * `[permissions]` - An iterable of [`Permissions`] to check for.
-///   All permissions must be present in all namespaces.
-/// * `objects+`- Objects to check permissions on (impl [`NamespaceAccessors`]).
-///
-/// ### Returns
-///
-/// * Nothing if the user has the required permissions, or an [`ApiError::Forbidden`] if they do not.
+/// * `ctx` - A backend context (`AppContext` or anything implementing `BackendContext`).
+/// * `user` - The user to check permissions for (must implement `UserPermissions`).
+/// * `[permissions]` - One or more `Permissions` values, all required.
+/// * `targets+` - One or more values implementing `AuthzTarget`. The user
+///   must have every requested permission on EVERY target.
 ///
 /// ### Example
 ///
 /// ```ignore
 /// use hubuum::can;
-/// can!(pool, user, [Permissions::ReadCollection], namespace, class, object);
-/// can!(pool, user, [Permissions::ReadCollection, Permissions::UpdateCollection], namespace, class1, class2);
+/// can!(&ctx, user, [Permissions::ReadCollection], namespace, class, object);
 /// ```
-///
-/// [`UserPermissions::can`]: crate::db::traits::UserPermissions::can
-/// [`UserPermissions`]: crate::db::traits::UserPermissions
-/// [`NamespaceAccessors`]: crate::traits::NamespaceAccessors
-/// [`Permissions`]: crate::models::Permissions
-/// [`ApiError::Forbidden`]: crate::errors::ApiError::Forbidden
 macro_rules! can {
-    ($pool:expr, $user:expr, [$($perm:expr),+], $($namespace:expr),+) => {{
-        $user.can(
-            $pool,
-            vec![$($perm),+],
-            vec![
-                // This should be fairly cheap. We're just getting the namespace ID for each object.
-                // which is a field lookup and convertinng it to NamespaceID directly. There is no
-                // database interaction here but the trait definition requires the pool to be passed.
-                $(NamespaceID($namespace.namespace_id($pool).await?)),+
-            ]
-        ).await?
+    ($ctx:expr, $user:expr, [$($perm:expr),+], $($target:expr),+) => {{
+        $user
+            .can(
+                $ctx,
+                vec![$($perm),+],
+                vec![$(&$target as &dyn $crate::permissions::AuthzTarget),+],
+            )
+            .await?
     }};
 }
 
 #[macro_export]
-/// Check permissions for a user on a namespace, class, or object.
+/// Check permissions for a user on a typed target. Returns early with
+/// `ApiError::Forbidden` if denied.
 ///
 /// ## Arguments
 ///
-/// * `request_obj` - The request object (namespace, class, or object).
-/// * `pool` - The database pool.
-/// * `user` - The user to check permissions for (will be cloned).
-/// * `permission+` - The permissions to check for, one or more.
-///
-/// ## Returns
-///
-/// This macro causes a return with a `ApiError::Forbidden` if the user does
-/// not have the specified permission.
+/// * `target` - The target object (must implement `AuthzTarget` + `PermissionController`).
+/// * `ctx` - The backend context.
+/// * `user` - The user (will be cloned).
+/// * `permission+` - One or more permissions to check.
 ///
 /// ## Example
 ///
 /// ```ignore
 /// use hubuum::check_permissions;
-/// check_permissions!(namespace, pool, requestor.user, Permissions::ReadCollection);
-/// check_permissions!(namespace, pool, requestor.user, Permissions::ReadCollection, Permissions::UpdateCollection);
-///
+/// check_permissions!(namespace, ctx, requestor.user, Permissions::ReadCollection);
 /// ```
 macro_rules! check_permissions {
-    // Captures any number of permissions passed after the user argument and converts them into a vector
-    ($request_obj:expr, $pool:expr, $user:expr, $($permissions:expr),+ $(,)?) => {{
+    ($target:expr, $ctx:expr, $user:expr, $($permissions:expr),+ $(,)?) => {{
         use $crate::errors::ApiError;
-        use $crate::traits::{NamespaceAccessors, SelfAccessors, PermissionController};
+        use $crate::permissions::AuthzTarget;
+        use $crate::traits::PermissionController;
         use tracing::warn;
 
         let permissions_vec = vec![$($permissions),+];
 
-        if !$request_obj
-            .user_can_all(&$pool, $user.clone(), permissions_vec.clone())
+        if !$target
+            .user_can_all($ctx, $user.clone(), permissions_vec.clone())
             .await?
         {
-            let namespace_id = $request_obj.namespace_id(&$pool).await?;
             let user_id = $user.id();
+            let resource = $target.to_resource_ref($ctx.db_pool()).await?;
             warn!(
                 message = "Permission denied",
                 user_id = user_id,
-                namespace_id = namespace_id,
+                resource_kind = ?resource.kind,
+                resource_id = resource.id,
                 permissions = ?permissions_vec,
             );
             return Err(ApiError::Forbidden(format!(
-                "User {} does not have permissions {:?} on namespace {}",
-                user_id, permissions_vec, namespace_id
+                "User {} does not have permissions {:?} on {:?}::{}",
+                user_id, permissions_vec, resource.kind, resource.id
             )));
         }
     }};
