@@ -50,7 +50,7 @@ async fn class_to_resource_ref_populates_namespace_id() {
     let fixture = crate::tests::create_namespace_fixture(&pool, &unique_label("class_authz")).await;
 
     let class = NewHubuumClass {
-        name: "test_class".to_string(),
+        name: unique_label("test_class"),
         namespace_id: fixture.namespace.id,
         json_schema: None,
         validate_schema: None,
@@ -78,7 +78,7 @@ async fn object_to_resource_ref_populates_namespace_and_class_ids() {
         crate::tests::create_namespace_fixture(&pool, &unique_label("object_authz")).await;
 
     let class = NewHubuumClass {
-        name: "test_class".to_string(),
+        name: unique_label("test_class"),
         namespace_id: fixture.namespace.id,
         json_schema: None,
         validate_schema: None,
@@ -89,7 +89,7 @@ async fn object_to_resource_ref_populates_namespace_and_class_ids() {
     .expect("class creation failed");
 
     let object = NewHubuumObject {
-        name: "test_object".to_string(),
+        name: unique_label("test_object"),
         namespace_id: fixture.namespace.id,
         hubuum_class_id: class.id,
         data: serde_json::json!({}),
@@ -120,7 +120,7 @@ async fn class_relation_cross_namespace_populates_from_to_namespaces() {
         crate::tests::create_namespace_fixture(&pool, &unique_label("class_rel_b")).await;
 
     let class_a = NewHubuumClass {
-        name: "class_a".to_string(),
+        name: unique_label("class_a"),
         namespace_id: fixture_a.namespace.id,
         json_schema: None,
         validate_schema: None,
@@ -131,7 +131,7 @@ async fn class_relation_cross_namespace_populates_from_to_namespaces() {
     .expect("class_a creation failed");
 
     let class_b = NewHubuumClass {
-        name: "class_b".to_string(),
+        name: unique_label("class_b"),
         namespace_id: fixture_b.namespace.id,
         json_schema: None,
         validate_schema: None,
@@ -185,7 +185,7 @@ async fn class_relation_same_namespace_populates_namespace_id() {
         crate::tests::create_namespace_fixture(&pool, &unique_label("class_rel_same")).await;
 
     let class_a = NewHubuumClass {
-        name: "class_a".to_string(),
+        name: unique_label("class_a"),
         namespace_id: fixture.namespace.id,
         json_schema: None,
         validate_schema: None,
@@ -196,7 +196,7 @@ async fn class_relation_same_namespace_populates_namespace_id() {
     .expect("class_a creation failed");
 
     let class_b = NewHubuumClass {
-        name: "class_b".to_string(),
+        name: unique_label("class_b"),
         namespace_id: fixture.namespace.id,
         json_schema: None,
         validate_schema: None,
@@ -242,7 +242,7 @@ async fn object_relation_cross_namespace_populates_all_fields() {
     let fixture_b = crate::tests::create_namespace_fixture(&pool, &unique_label("obj_rel_b")).await;
 
     let class_a = NewHubuumClass {
-        name: "class_a".to_string(),
+        name: unique_label("class_a"),
         namespace_id: fixture_a.namespace.id,
         json_schema: None,
         validate_schema: None,
@@ -253,7 +253,7 @@ async fn object_relation_cross_namespace_populates_all_fields() {
     .expect("class_a creation failed");
 
     let class_b = NewHubuumClass {
-        name: "class_b".to_string(),
+        name: unique_label("class_b"),
         namespace_id: fixture_b.namespace.id,
         json_schema: None,
         validate_schema: None,
@@ -272,7 +272,7 @@ async fn object_relation_cross_namespace_populates_all_fields() {
     .expect("class relation creation failed");
 
     let object_a = NewHubuumObject {
-        name: "object_a".to_string(),
+        name: unique_label("object_a"),
         namespace_id: fixture_a.namespace.id,
         hubuum_class_id: class_a.id,
         data: serde_json::json!({}),
@@ -283,7 +283,7 @@ async fn object_relation_cross_namespace_populates_all_fields() {
     .expect("object_a creation failed");
 
     let object_b = NewHubuumObject {
-        name: "object_b".to_string(),
+        name: unique_label("object_b"),
         namespace_id: fixture_b.namespace.id,
         hubuum_class_id: class_b.id,
         data: serde_json::json!({}),
@@ -344,7 +344,7 @@ async fn local_backend_relation_and_check_denies_partial_permission() {
     let fixture_b = crate::tests::create_namespace_fixture(&pool, &unique_label("rel_and_b")).await;
 
     let class_a = NewHubuumClass {
-        name: "class_a".to_string(),
+        name: unique_label("class_a"),
         namespace_id: fixture_a.namespace.id,
         json_schema: None,
         validate_schema: None,
@@ -355,7 +355,7 @@ async fn local_backend_relation_and_check_denies_partial_permission() {
     .expect("class_a creation failed");
 
     let class_b = NewHubuumClass {
-        name: "class_b".to_string(),
+        name: unique_label("class_b"),
         namespace_id: fixture_b.namespace.id,
         json_schema: None,
         validate_schema: None,
