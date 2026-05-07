@@ -4,6 +4,7 @@ use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, web};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
+use crate::permissions::AppContext;
 use crate::db::traits::task::{
     TaskCreateRequest, create_generic_task, find_task_by_idempotency, find_task_record,
     list_import_results_with_total_count,
@@ -115,12 +116,12 @@ async fn find_or_create_import_task(
 )]
 #[post("")]
 pub async fn create_import(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     req: HttpRequest,
     import_request: web::Json<ImportRequest>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.get_ref().clone());
+    ensure_task_worker_running(ctx.db_pool.clone());
 
     let import_request = import_request.into_inner();
     if import_request.version != CURRENT_IMPORT_VERSION {
@@ -138,7 +139,7 @@ pub async fn create_import(
         .map(str::to_string);
 
     let task = find_or_create_import_task(
-        &pool,
+        &ctx.db_pool,
         requestor.user.id,
         idempotency_key,
         payload,
@@ -150,7 +151,7 @@ pub async fn create_import(
     let response = task.to_response()?;
     let mut headers = HashMap::new();
     headers.insert("Location".to_string(), format!("/api/v1/tasks/{}", task.id));
-    kick_task_worker(pool.get_ref().clone());
+    kick_task_worker(ctx.db_pool.clone());
 
     Ok(json_response_with_header(
         response,
@@ -176,12 +177,12 @@ pub async fn create_import(
 )]
 #[get("/{task_id}")]
 pub async fn get_import(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     task_id: web::Path<i32>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.get_ref().clone());
-    let task = load_authorized_import_task(&pool, &requestor.user, task_id.into_inner()).await?;
+    ensure_task_worker_running(ctx.db_pool.clone());
+    let task = load_authorized_import_task(&ctx.db_pool, &requestor.user, task_id.into_inner()).await?;
     Ok(json_response(task.to_response()?, StatusCode::OK))
 }
 
@@ -202,18 +203,18 @@ pub async fn get_import(
 )]
 #[get("/{task_id}/results")]
 pub async fn get_import_results(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     req: HttpRequest,
     task_id: web::Path<i32>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.get_ref().clone());
+    ensure_task_worker_running(ctx.db_pool.clone());
     let task_id = task_id.into_inner();
-    load_authorized_import_task(&pool, &requestor.user, task_id).await?;
+    load_authorized_import_task(&ctx.db_pool, &requestor.user, task_id).await?;
     let params = parse_query_parameter(req.query_string())?;
     let search_params = prepare_db_pagination::<ImportTaskResultResponse>(&params)?;
     let (results, total_count) =
-        list_import_results_with_total_count(&pool, task_id, &search_params).await?;
+        list_import_results_with_total_count(&ctx.db_pool, task_id, &search_params).await?;
     let results = results
         .into_iter()
         .map(ImportTaskResultResponse::from)

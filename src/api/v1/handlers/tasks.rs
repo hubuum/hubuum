@@ -2,6 +2,7 @@ use actix_web::{HttpRequest, Responder, get, http::StatusCode, routes, web};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
+use crate::permissions::AppContext;
 use crate::db::traits::task::{
     find_task_record, list_task_events_with_total_count, list_tasks_with_total_count,
 };
@@ -109,21 +110,21 @@ async fn load_authorized_task(
 #[get("")]
 #[get("/")]
 pub async fn get_tasks(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.get_ref().clone());
+    ensure_task_worker_running(ctx.db_pool.clone());
     let (params, filters) = parse_task_list_query(req.query_string())?;
     let search_params = prepare_db_pagination::<TaskResponse>(&params)?;
-    let is_admin = requestor.user.is_admin(&pool).await?;
+    let is_admin = requestor.user.is_admin(&ctx.db_pool).await?;
     let submitted_by_filter = if is_admin {
         filters.submitted_by
     } else {
         Some(requestor.user.id)
     };
     let (tasks, total_count) = list_tasks_with_total_count(
-        &pool,
+        &ctx.db_pool,
         submitted_by_filter,
         filters.kind.map(TaskKind::as_str),
         filters.status.map(TaskStatus::as_str),
@@ -155,12 +156,12 @@ pub async fn get_tasks(
 )]
 #[get("/{task_id}")]
 pub async fn get_task(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     task_id: web::Path<i32>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.get_ref().clone());
-    let task = load_authorized_task(&pool, &requestor.user, task_id.into_inner()).await?;
+    ensure_task_worker_running(ctx.db_pool.clone());
+    let task = load_authorized_task(&ctx.db_pool, &requestor.user, task_id.into_inner()).await?;
     Ok(json_response(task.to_response()?, StatusCode::OK))
 }
 
@@ -181,18 +182,18 @@ pub async fn get_task(
 )]
 #[get("/{task_id}/events")]
 pub async fn get_task_events(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     req: HttpRequest,
     task_id: web::Path<i32>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.get_ref().clone());
+    ensure_task_worker_running(ctx.db_pool.clone());
     let task_id = task_id.into_inner();
-    load_authorized_task(&pool, &requestor.user, task_id).await?;
+    load_authorized_task(&ctx.db_pool, &requestor.user, task_id).await?;
     let (params, _) = parse_query_parameter_with_passthrough(req.query_string(), &[])?;
     let search_params = prepare_db_pagination::<TaskEventResponse>(&params)?;
     let (events, total_count) =
-        list_task_events_with_total_count(&pool, task_id, &search_params).await?;
+        list_task_events_with_total_count(&ctx.db_pool, task_id, &search_params).await?;
     let events = events
         .into_iter()
         .map(TaskEventResponse::from)
