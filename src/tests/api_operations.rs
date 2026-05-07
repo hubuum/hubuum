@@ -13,7 +13,7 @@ fn create_token_header(token: &str) -> (http::header::HeaderName, String) {
 fn build_test_app_context(pool: &DbPool) -> Data<AppContext> {
     Data::new(AppContext::new(
         pool.clone(),
-        Arc::new(LocalPermissionBackend::new()),
+        Arc::new(LocalPermissionBackend::new(pool.clone())),
     ))
 }
 

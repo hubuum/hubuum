@@ -229,7 +229,9 @@ impl TestContext {
         // Build AppContext with LocalPermissionBackend for tests
         let app_context = web::Data::new(crate::permissions::AppContext::new(
             pool.get_ref().clone(),
-            std::sync::Arc::new(crate::permissions::LocalPermissionBackend::new()),
+            std::sync::Arc::new(crate::permissions::LocalPermissionBackend::new(
+                pool.get_ref().clone(),
+            )),
         ));
 
         Self {
