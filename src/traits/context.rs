@@ -56,10 +56,11 @@ where
 
 /// TEMPORARY: kept so the multi-phase refactor in
 /// `docs/superpowers/plans/2026-05-02-pluggable-permissions.md` can land
-/// incrementally. Will be removed in Phase 2 (Task 3.8) once every call site
-/// receives either an `AppContext` or a bare `&DbPool`. Calling
-/// `permission_backend()` here panics; that surfaces any code path that
-/// needs migration.
+/// incrementally. Removing this surfaces ~680 sites that take
+/// `&dyn BackendContext` but only call `db_pool()`. The proper fix is to
+/// split the trait into a `DbPoolContext` (just `db_pool()`) and
+/// `BackendContext: DbPoolContext` (adds `permission_backend()`) — see the
+/// follow-up to Task 3.8 for that decomposition.
 impl BackendContext for crate::db::DbPool {
     fn db_pool(&self) -> &crate::db::DbPool {
         self
