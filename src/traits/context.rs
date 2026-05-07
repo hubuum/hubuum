@@ -1,28 +1,62 @@
 use crate::db::DbPool;
 use crate::permissions::backend::PermissionBackend;
 
-/// Provides access to shared application services.
+/// Read-only access to the shared database pool.
 ///
-/// `db_pool()` is always available. `permission_backend()` is only available
-/// from `AppContext` and similar full-context wrappers — pure DB-only code
-/// paths must take a `&DbPool` directly rather than going through this trait.
-pub trait BackendContext {
+/// Code paths that only need the DB connection — most helper functions
+/// in `db/traits/*`, `models/*`, and `tasks/*` — should bound on
+/// `&dyn DbPoolContext` rather than `&dyn BackendContext`. That way
+/// callers can pass a bare `&DbPool` directly without going through
+/// `AppContext`.
+pub trait DbPoolContext {
     fn db_pool(&self) -> &DbPool;
+}
 
+/// Full application context: DB pool plus the active permission backend.
+///
+/// Permission-aware code (the `PermissionController` defaults, the
+/// `can!` / `check_permissions!` macros, the `AdminAccess` extractor)
+/// bounds on `&dyn BackendContext`. Production code receives this
+/// through `AppContext`; tests construct one with `LocalPermissionBackend`
+/// (or a mock) by default.
+pub trait BackendContext: DbPoolContext {
     /// The active permission backend. Production code receives this through
     /// `AppContext`; tests construct an `AppContext` with the local backend
     /// (or a mock) by default.
     fn permission_backend(&self) -> &dyn PermissionBackend;
 }
 
-impl<T> BackendContext for &T
+impl<T> DbPoolContext for &T
 where
-    T: BackendContext + ?Sized,
+    T: DbPoolContext + ?Sized,
 {
     fn db_pool(&self) -> &DbPool {
         (*self).db_pool()
     }
+}
 
+impl<T> DbPoolContext for std::sync::Arc<T>
+where
+    T: DbPoolContext + ?Sized,
+{
+    fn db_pool(&self) -> &DbPool {
+        self.as_ref().db_pool()
+    }
+}
+
+impl<T> DbPoolContext for actix_web::web::Data<T>
+where
+    T: DbPoolContext + ?Sized + 'static,
+{
+    fn db_pool(&self) -> &DbPool {
+        self.as_ref().db_pool()
+    }
+}
+
+impl<T> BackendContext for &T
+where
+    T: BackendContext + ?Sized,
+{
     fn permission_backend(&self) -> &dyn PermissionBackend {
         (*self).permission_backend()
     }
@@ -32,10 +66,6 @@ impl<T> BackendContext for std::sync::Arc<T>
 where
     T: BackendContext + ?Sized,
 {
-    fn db_pool(&self) -> &DbPool {
-        self.as_ref().db_pool()
-    }
-
     fn permission_backend(&self) -> &dyn PermissionBackend {
         self.as_ref().permission_backend()
     }
@@ -45,27 +75,23 @@ impl<T> BackendContext for actix_web::web::Data<T>
 where
     T: BackendContext + ?Sized + 'static,
 {
-    fn db_pool(&self) -> &DbPool {
-        self.as_ref().db_pool()
-    }
-
     fn permission_backend(&self) -> &dyn PermissionBackend {
         self.as_ref().permission_backend()
     }
 }
 
-/// TEMPORARY: kept so the multi-phase refactor in
-/// `docs/superpowers/plans/2026-05-02-pluggable-permissions.md` can land
-/// incrementally. Removing this surfaces ~680 sites that take
-/// `&dyn BackendContext` but only call `db_pool()`. The proper fix is to
-/// split the trait into a `DbPoolContext` (just `db_pool()`) and
-/// `BackendContext: DbPoolContext` (adds `permission_backend()`) — see the
-/// follow-up to Task 3.8 for that decomposition.
-impl BackendContext for crate::db::DbPool {
-    fn db_pool(&self) -> &crate::db::DbPool {
+impl DbPoolContext for DbPool {
+    fn db_pool(&self) -> &DbPool {
         self
     }
+}
 
+/// TEMPORARY: kept until Phase 4.x finishes downgrading DB-only call
+/// sites from `&dyn BackendContext` to `&dyn DbPoolContext`. After all
+/// such sites are migrated, this impl is removed (Task 3.8). The panic
+/// surfaces any code path still treating a bare `DbPool` as full
+/// permission-aware context.
+impl BackendContext for DbPool {
     fn permission_backend(&self) -> &dyn PermissionBackend {
         panic!(
             "DbPool used as BackendContext for a permission-aware operation; \

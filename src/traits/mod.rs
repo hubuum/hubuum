@@ -7,7 +7,7 @@ pub mod pagination;
 pub mod permissions;
 
 pub use accessors::{ClassAccessors, NamespaceAccessors, ObjectAccessors, SelfAccessors};
-pub use context::BackendContext;
+pub use context::{BackendContext, DbPoolContext};
 pub use crud::{CanDelete, CanSave, CanUpdate, Validate, ValidateAgainstSchema};
 pub use pagination::*;
 pub use permissions::PermissionController;

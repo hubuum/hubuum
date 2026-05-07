@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::db::DbPool;
-use crate::traits::BackendContext;
+use crate::traits::{BackendContext, DbPoolContext};
 
 use super::backend::PermissionBackend;
 
@@ -20,11 +20,13 @@ impl AppContext {
     }
 }
 
-impl BackendContext for AppContext {
+impl DbPoolContext for AppContext {
     fn db_pool(&self) -> &DbPool {
         &self.db_pool
     }
+}
 
+impl BackendContext for AppContext {
     fn permission_backend(&self) -> &dyn PermissionBackend {
         self.permissions.as_ref()
     }
