@@ -1,7 +1,9 @@
 use crate::api as prod_api;
 use crate::db::DbPool;
 use crate::middlewares::tracing::TracingMiddleware;
-use crate::permissions::{AppContext, LocalPermissionBackend};
+use crate::permissions::AppContext;
+#[cfg(feature = "permissions-local")]
+use crate::permissions::LocalPermissionBackend;
 use actix_web::{App, http, test, web::Data};
 use serde::Serialize;
 use std::sync::Arc;
@@ -10,10 +12,14 @@ fn create_token_header(token: &str) -> (http::header::HeaderName, String) {
     (http::header::AUTHORIZATION, format!("Bearer {token}"))
 }
 
+#[cfg(feature = "permissions-local")]
 fn build_test_app_context(pool: &DbPool) -> Data<AppContext> {
     Data::new(AppContext::new(
         pool.clone(),
-        Arc::new(LocalPermissionBackend::new(pool.clone())),
+        Arc::new(LocalPermissionBackend::new(
+            pool.clone(),
+            "admin".to_string(),
+        )),
     ))
 }
 

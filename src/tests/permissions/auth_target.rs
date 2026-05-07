@@ -348,7 +348,10 @@ async fn object_relation_cross_namespace_populates_all_fields() {
 #[actix_web::test]
 async fn local_backend_relation_and_check_denies_partial_permission() {
     let (pool, _) = get_pool_and_config().await;
-    let backend: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::new(pool.clone()));
+    let backend: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::new(
+        pool.clone(),
+        "admin".to_string(),
+    ));
 
     let fixture_a = crate::tests::create_namespace_fixture(&pool, &unique_label("rel_and_a")).await;
     let fixture_b = crate::tests::create_namespace_fixture(&pool, &unique_label("rel_and_b")).await;

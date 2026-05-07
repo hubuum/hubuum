@@ -23,11 +23,6 @@ pub trait UserPermissions: SelfAccessors<User> + GroupAccessors + GroupMembershi
         I: IntoIterator<Item = N>,
         N: AuthzTarget,
     {
-        // Admin short-circuit lives here, above the backend call.
-        if self.is_admin(ctx.db_pool()).await? {
-            return Ok(());
-        }
-
         let permissions_vec: Vec<Permissions> = permissions.into_iter().collect();
         let principal = PrincipalRef::new(self.id(), self.group_ids(ctx.db_pool()).await?);
 

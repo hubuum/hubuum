@@ -1,8 +1,9 @@
 use crate::db::DbPool;
-use crate::db::traits::user::GroupMemberships;
 use crate::errors::ApiError;
 use crate::models::token::Token;
+use crate::models::traits::GroupAccessors;
 use crate::models::user::User;
+use crate::permissions::{AppContext, PrincipalRef};
 use crate::utilities::iam::get_user_by_id;
 
 use actix_web::{FromRequest, HttpRequest, dev::Payload, web::Data};
@@ -76,11 +77,11 @@ impl FromRequest for UserAccess {
     type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
-        let pool = match req.app_data::<Data<DbPool>>() {
+        let ctx = match req.app_data::<Data<AppContext>>() {
             Some(data) => data.clone(),
             None => {
                 return future::ready(Err(ApiError::InternalServerError(
-                    "Pool not found".to_string(),
+                    "AppContext not found".to_string(),
                 )))
                 .boxed_local();
             }
@@ -90,7 +91,7 @@ impl FromRequest for UserAccess {
 
         async move {
             let token = token_result?;
-            let user = extract_user_from_token(&pool, &token).await?;
+            let user = extract_user_from_token(&ctx.db_pool, &token).await?;
 
             Ok(UserAccess { token, user })
         }
@@ -103,11 +104,11 @@ impl FromRequest for AdminAccess {
     type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
-        let pool = match req.app_data::<Data<DbPool>>() {
+        let ctx = match req.app_data::<Data<AppContext>>() {
             Some(data) => data.clone(),
             None => {
                 return future::ready(Err(ApiError::InternalServerError(
-                    "Pool not found".to_string(),
+                    "AppContext not found".to_string(),
                 )))
                 .boxed_local();
             }
@@ -117,9 +118,10 @@ impl FromRequest for AdminAccess {
 
         async move {
             let token = token_result?;
-            let user = extract_user_from_token(&pool, &token).await?;
+            let user = extract_user_from_token(&ctx.db_pool, &token).await?;
 
-            if user.is_admin(&pool).await? {
+            let principal = PrincipalRef::new(user.id, user.group_ids(&ctx.db_pool).await?);
+            if ctx.permissions.is_admin(&principal).await? {
                 Ok(AdminAccess { token, user })
             } else {
                 Err(ApiError::Forbidden("Permission denied".to_string()))
@@ -134,11 +136,11 @@ impl FromRequest for AdminOrSelfAccess {
     type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
-        let pool = match req.app_data::<Data<DbPool>>() {
+        let ctx = match req.app_data::<Data<AppContext>>() {
             Some(data) => data.clone(),
             None => {
                 return future::ready(Err(ApiError::InternalServerError(
-                    "Pool not found".to_string(),
+                    "AppContext not found".to_string(),
                 )))
                 .boxed_local();
             }
@@ -151,12 +153,13 @@ impl FromRequest for AdminOrSelfAccess {
 
         async move {
             let token = token_result?;
-            let user = extract_user_from_token(&pool, &token).await?;
+            let user = extract_user_from_token(&ctx.db_pool, &token).await?;
 
             // Use the extracted information instead of `req`
-            let (user_from_path, path) = get_user_and_path(&path_info, &pool).await?;
+            let (user_from_path, path) = get_user_and_path(&path_info, &ctx.db_pool).await?;
 
-            if user.is_admin(&pool).await? || user.id == user_from_path.id {
+            let principal = PrincipalRef::new(user.id, user.group_ids(&ctx.db_pool).await?);
+            if ctx.permissions.is_admin(&principal).await? || user.id == user_from_path.id {
                 Ok(AdminOrSelfAccess { token, user })
             } else {
                 debug! {

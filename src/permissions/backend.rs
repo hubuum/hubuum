@@ -121,4 +121,12 @@ pub trait PermissionBackend: Send + Sync {
 
     /// Backend kind identifier, used in tracing spans and the startup log.
     fn kind(&self) -> &'static str;
+
+    /// Whether the principal has administrative privileges. Used by the
+    /// AdminAccess extractor and by mutation paths that need a global
+    /// override. Backends are responsible for whatever "admin" means in
+    /// their model — the local backend checks group membership against
+    /// the configured admin groupname; Treetop dispatches a Cedar policy
+    /// decision against the system resource.
+    async fn is_admin(&self, principal: &PrincipalRef) -> Result<bool, ApiError>;
 }

@@ -1,6 +1,7 @@
 pub mod queries;
 
 use async_trait::async_trait;
+use tokio::sync::OnceCell;
 
 use crate::db::DbPool;
 use crate::errors::ApiError;
@@ -17,11 +18,38 @@ use super::types::{PermissionDecision, PermissionRequest, PrincipalRef};
 /// Selected at startup when `HUBUUM_PERMISSION_BACKEND=local` (default).
 pub struct LocalPermissionBackend {
     pool: DbPool,
+    admin_groupname: String,
+    admin_group_id: OnceCell<Option<i32>>,
 }
 
 impl LocalPermissionBackend {
-    pub fn new(pool: DbPool) -> Self {
-        Self { pool }
+    pub fn new(pool: DbPool, admin_groupname: String) -> Self {
+        Self {
+            pool,
+            admin_groupname,
+            admin_group_id: OnceCell::new(),
+        }
+    }
+
+    /// Resolve the admin group id from the database, caching the result.
+    /// Returns None if no group with the configured admin_groupname exists.
+    async fn admin_group_id(&self) -> Result<Option<i32>, ApiError> {
+        self.admin_group_id
+            .get_or_try_init(|| async {
+                use crate::db::with_connection;
+                use crate::schema::groups::dsl::{groupname, groups, id};
+                use diesel::prelude::*;
+
+                with_connection(&self.pool, |conn| {
+                    groups
+                        .filter(groupname.eq(&self.admin_groupname))
+                        .select(id)
+                        .first::<i32>(conn)
+                        .optional()
+                })
+            })
+            .await
+            .map(|opt_ref| *opt_ref)
     }
 }
 
@@ -34,9 +62,18 @@ impl PermissionBackend for LocalPermissionBackend {
     ) -> Result<Vec<PermissionDecision>, ApiError> {
         use super::types::ResourceKind;
 
+        // Check admin status once for this principal.
+        let is_admin = self.is_admin(principal).await?;
+
         // SQL backend has no transport-side batch; loop sequentially.
         let mut decisions = Vec::with_capacity(requests.len());
         for request in requests {
+            // Admin bypass: grant all permissions.
+            if is_admin {
+                decisions.push(PermissionDecision::Allow);
+                continue;
+            }
+
             let decision = match request.resource.kind {
                 ResourceKind::ClassRelation | ResourceKind::ObjectRelation => {
                     // Relations span two namespaces and require permission on both.
@@ -91,12 +128,16 @@ impl PermissionBackend for LocalPermissionBackend {
                         _ => PermissionDecision::Deny,
                     }
                 }
+                ResourceKind::System => {
+                    // System-scoped resource: admin-only. We've already checked
+                    // admin status above, so if we got here, deny.
+                    PermissionDecision::Deny
+                }
                 _ => {
                     // Non-relation resources: use the single namespace_id field.
                     match request.resource.namespace_id() {
                         None => {
-                            // System-scoped checks: admin short-circuit lives one
-                            // level up in PermissionController. Here we deny.
+                            // No namespace and not System → defensive deny.
                             PermissionDecision::Deny
                         }
                         Some(namespace_id) => {
@@ -189,5 +230,12 @@ impl PermissionBackend for LocalPermissionBackend {
 
     fn kind(&self) -> &'static str {
         "local"
+    }
+
+    async fn is_admin(&self, principal: &PrincipalRef) -> Result<bool, ApiError> {
+        match self.admin_group_id().await? {
+            Some(admin_gid) => Ok(principal.group_ids.contains(&admin_gid)),
+            None => Ok(false),
+        }
     }
 }

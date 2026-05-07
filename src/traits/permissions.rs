@@ -123,11 +123,6 @@ pub trait PermissionController: Serialize + AuthzTarget + NamespaceAccessors {
         C: BackendContext + ?Sized,
         U: SelfAccessors<User> + GroupAccessors + GroupMemberships,
     {
-        // Admin short-circuit lives here, above the backend.
-        if user.is_admin(backend.db_pool()).await? {
-            return Ok(true);
-        }
-
         let resource = self.to_resource_ref(backend.db_pool()).await?;
         let principal = PrincipalRef::new(user.id(), user.group_ids(backend.db_pool()).await?);
         let request = PermissionRequest {

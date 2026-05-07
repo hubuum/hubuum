@@ -28,7 +28,10 @@ pub async fn build_permission_backend(
 ) -> Result<Arc<dyn PermissionBackend>, ApiError> {
     match cfg.permission_backend {
         #[cfg(feature = "permissions-local")]
-        PermissionBackendKind::Local => Ok(Arc::new(local::LocalPermissionBackend::new(pool))),
+        PermissionBackendKind::Local => Ok(Arc::new(local::LocalPermissionBackend::new(
+            pool,
+            cfg.admin_groupname.clone(),
+        ))),
 
         #[cfg(not(feature = "permissions-local"))]
         PermissionBackendKind::Local => Err(ApiError::BadRequest(

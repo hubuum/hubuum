@@ -3,14 +3,15 @@ mod tests {
     use crate::api::handlers::auth::reset_login_rate_limit_for_tests;
     use crate::config::get_config;
     use crate::db::traits::ActiveTokens;
-    use crate::db::{init_pool, with_connection};
+    use crate::db::{init_pool, with_connection, DbPool};
     use crate::models::user::LoginUser;
+    use crate::permissions::{AppContext, LocalPermissionBackend};
     use crate::tests::{create_test_admin, create_test_user};
     use crate::{api, assert_not_contains};
     use actix_web::http::header;
     use actix_web::{App, http::StatusCode, test, web, web::Data};
     use diesel::prelude::*;
-    use std::sync::LazyLock;
+    use std::sync::{Arc, LazyLock};
     use tokio::sync::{Mutex, MutexGuard};
 
     const LOGIN_ENDPOINT: &str = "/api/v0/auth/login";
@@ -26,6 +27,16 @@ mod tests {
         AUTH_TEST_LOCK.lock().await
     }
 
+    fn build_app_context(pool: &DbPool) -> Data<AppContext> {
+        Data::new(AppContext::new(
+            pool.clone(),
+            Arc::new(LocalPermissionBackend::new(
+                pool.clone(),
+                "admin".to_string(),
+            )),
+        ))
+    }
+
     #[actix_web::test]
     async fn test_valid_login() {
         let _guard = lock_auth_test_state().await;
@@ -38,6 +49,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(Data::new(pool.clone()))
+                .app_data(build_app_context(&pool))
                 .configure(api::config),
         )
         .await;
@@ -147,6 +159,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(Data::new(pool.clone()))
+                .app_data(build_app_context(&pool))
                 .configure(api::config),
         )
         .await;
@@ -181,6 +194,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(Data::new(pool.clone()))
+                .app_data(build_app_context(&pool))
                 .configure(api::config),
         )
         .await;
@@ -248,6 +262,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(Data::new(pool.clone()))
+                .app_data(build_app_context(&pool))
                 .configure(api::config),
         )
         .await;
@@ -326,6 +341,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(Data::new(pool.clone()))
+                .app_data(build_app_context(&pool))
                 .configure(api::config),
         )
         .await;
@@ -413,6 +429,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(Data::new(pool.clone()))
+                .app_data(build_app_context(&pool))
                 .configure(api::config),
         )
         .await;
@@ -473,6 +490,7 @@ mod tests {
             App::new()
                 .app_data(Data::new(config.clone()))
                 .app_data(Data::new(pool.clone()))
+                .app_data(build_app_context(&pool))
                 .configure(api::config),
         )
         .await;
@@ -518,6 +536,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(Data::new(pool.clone()))
+                .app_data(build_app_context(&pool))
                 .configure(api::config),
         )
         .await;

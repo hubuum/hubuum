@@ -218,6 +218,7 @@ pub struct TestContext {
 }
 
 impl TestContext {
+    #[cfg(feature = "permissions-local")]
     pub async fn new() -> Self {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
@@ -231,6 +232,7 @@ impl TestContext {
             pool.get_ref().clone(),
             std::sync::Arc::new(crate::permissions::LocalPermissionBackend::new(
                 pool.get_ref().clone(),
+                "admin".to_string(),
             )),
         ));
 

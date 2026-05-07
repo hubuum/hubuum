@@ -23,7 +23,10 @@ fn unique_label(prefix: &str) -> String {
 #[actix_web::test]
 async fn local_backend_grants_then_authorizes_namespace_read() {
     let (pool, _) = get_pool_and_config().await;
-    let backend: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::new(pool.clone()));
+    let backend: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::new(
+        pool.clone(),
+        "admin".to_string(),
+    ));
 
     let user = create_test_user(&pool).await;
     let group = create_test_group(&pool).await;
@@ -98,7 +101,10 @@ async fn local_backend_grants_then_authorizes_namespace_read() {
 #[actix_web::test]
 async fn local_backend_authorize_many_returns_per_request_decisions() {
     let (pool, _) = get_pool_and_config().await;
-    let backend: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::new(pool.clone()));
+    let backend: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::new(
+        pool.clone(),
+        "admin".to_string(),
+    ));
 
     let user = create_test_user(&pool).await;
     let group = create_test_group(&pool).await;
