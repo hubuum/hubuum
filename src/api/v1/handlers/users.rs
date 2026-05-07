@@ -1,5 +1,5 @@
 use crate::api::openapi::ApiErrorResponse;
-use crate::db::DbPool;
+use crate::permissions::AppContext;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, AdminOrSelfAccess, UserAccess};
 use crate::models::search::parse_query_parameter;
@@ -28,7 +28,7 @@ use tracing::debug;
 #[get("")]
 #[get("/")]
 pub async fn get_users(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
@@ -43,10 +43,10 @@ pub async fn get_users(
     debug!(message = "User list requested", requestor = user.username);
 
     let total_count = user
-        .count_users(&pool, count_query_options(&params))
+        .count_users(&ctx.db_pool, count_query_options(&params))
         .await?;
     let search_params = prepare_db_pagination::<User>(&params)?;
-    let result = user.search_users(&pool, search_params).await?;
+    let result = user.search_users(&ctx.db_pool, search_params).await?;
 
     paginated_json_response(result, total_count, StatusCode::OK, &params)
 }
@@ -68,7 +68,7 @@ pub async fn get_users(
 #[post("")]
 #[post("/")]
 pub async fn create_user(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     new_user: web::Json<NewUser>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
@@ -78,7 +78,7 @@ pub async fn create_user(
         new_user = new_user.username.as_str()
     );
 
-    let user = new_user.into_inner().save(&pool).await?;
+    let user = new_user.into_inner().save(&ctx.db_pool).await?;
 
     Ok(json_response_created(
         &user,
@@ -102,7 +102,7 @@ pub async fn create_user(
 )]
 #[get("/{user_id}/tokens")]
 pub async fn get_user_tokens(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     user_id: web::Path<UserID>,
     requestor: AdminOrSelfAccess,
     req: HttpRequest,
@@ -110,7 +110,7 @@ pub async fn get_user_tokens(
     use crate::db::traits::ActiveTokens;
     let params = parse_query_parameter(req.query_string())?;
 
-    let user = user_id.into_inner().user(&pool).await?;
+    let user = user_id.into_inner().user(&ctx.db_pool).await?;
     debug!(
         message = "User tokens requested",
         target = user.id,
@@ -119,7 +119,7 @@ pub async fn get_user_tokens(
 
     let search_params = prepare_db_pagination::<UserToken>(&params)?;
     let (valid_tokens, total_count) = user
-        .tokens_paginated_with_total_count(&pool, &search_params)
+        .tokens_paginated_with_total_count(&ctx.db_pool, &search_params)
         .await?;
     paginated_json_mapped_response(
         valid_tokens,
@@ -146,11 +146,11 @@ pub async fn get_user_tokens(
 )]
 #[get("/{user_id}")]
 pub async fn get_user(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     user_id: web::Path<UserID>,
     requestor: UserAccess,
 ) -> Result<impl Responder, ApiError> {
-    let user = user_id.into_inner().user(&pool).await?;
+    let user = user_id.into_inner().user(&ctx.db_pool).await?;
     debug!(
         message = "User get requested",
         target = user.id,
@@ -176,7 +176,7 @@ pub async fn get_user(
 )]
 #[get("/{user_id}/groups")]
 pub async fn get_user_groups(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     user_id: web::Path<UserID>,
     requestor: AdminOrSelfAccess,
     req: HttpRequest,
@@ -184,7 +184,7 @@ pub async fn get_user_groups(
     use crate::models::traits::GroupAccessors;
     let params = parse_query_parameter(req.query_string())?;
 
-    let user = user_id.into_inner().user(&pool).await?;
+    let user = user_id.into_inner().user(&ctx.db_pool).await?;
     debug!(
         message = "User groups requested",
         target = user.id,
@@ -193,7 +193,7 @@ pub async fn get_user_groups(
 
     let search_params = prepare_db_pagination::<Group>(&params)?;
     let (groups, total_count) = user
-        .groups_paginated_with_total_count(&pool, &search_params)
+        .groups_paginated_with_total_count(&ctx.db_pool, &search_params)
         .await?;
     paginated_json_response(groups, total_count, StatusCode::OK, &params)
 }
@@ -216,12 +216,12 @@ pub async fn get_user_groups(
 )]
 #[patch("/{user_id}")]
 pub async fn update_user(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     user_id: web::Path<UserID>,
     updated_user: web::Json<UpdateUser>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    let user = user_id.into_inner().user(&pool).await?;
+    let user = user_id.into_inner().user(&ctx.db_pool).await?;
     debug!(
         message = "User patch requested",
         target = user.id,
@@ -231,7 +231,7 @@ pub async fn update_user(
     let user = updated_user
         .into_inner()
         .hash_password()?
-        .save(user.id, &pool)
+        .save(user.id, &ctx.db_pool)
         .await?;
     Ok(json_response(user, StatusCode::OK))
 }
@@ -252,7 +252,7 @@ pub async fn update_user(
 )]
 #[delete("/{user_id}")]
 pub async fn delete_user(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     user_id: web::Path<UserID>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
@@ -262,7 +262,7 @@ pub async fn delete_user(
         requestor = requestor.user.id
     );
 
-    let delete_result = user_id.delete(&pool).await;
+    let delete_result = user_id.delete(&ctx.db_pool).await;
 
     match delete_result {
         Ok(elements) => Ok(json_response(json!(elements), StatusCode::NO_CONTENT)),

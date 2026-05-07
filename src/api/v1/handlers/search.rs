@@ -4,7 +4,7 @@ use futures_util::stream;
 use serde::Serialize;
 
 use crate::api::openapi::ApiErrorResponse;
-use crate::db::DbPool;
+use crate::permissions::AppContext;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::{
@@ -44,12 +44,12 @@ fn sse_event<T: Serialize>(event: &str, payload: &T) -> Result<Bytes, ApiError> 
 )]
 #[get("")]
 pub async fn get_search(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let params = parse_unified_search_query(req.query_string())?;
-    let response = execute_unified_search(&requestor.user, &pool, &params).await?;
+    let response = execute_unified_search(&requestor.user, &ctx.db_pool, &params).await?;
     Ok(json_response(response, StatusCode::OK))
 }
 
@@ -76,7 +76,7 @@ pub async fn get_search(
 )]
 #[get("/stream")]
 pub async fn stream_search(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
@@ -97,7 +97,7 @@ pub async fn stream_search(
             continue;
         }
 
-        match execute_unified_search_batch(&requestor.user, &pool, &params, kind).await {
+        match execute_unified_search_batch(&requestor.user, &ctx.db_pool, &params, kind).await {
             Ok(batch) => events.push(sse_event("batch", &batch)?),
             Err(error) => {
                 events.push(sse_event(

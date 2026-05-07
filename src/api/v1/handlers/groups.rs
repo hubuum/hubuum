@@ -1,5 +1,5 @@
 use crate::api::openapi::ApiErrorResponse;
-use crate::db::DbPool;
+use crate::permissions::AppContext;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, UserAccess};
 use crate::models::group::{GroupID, NewGroup, UpdateGroup};
@@ -33,7 +33,7 @@ struct GroupMember {
 #[get("")]
 #[get("/")]
 pub async fn get_groups(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
@@ -52,10 +52,10 @@ pub async fn get_groups(
     );
 
     let total_count = user
-        .count_groups(&pool, count_query_options(&params))
+        .count_groups(&ctx.db_pool, count_query_options(&params))
         .await?;
     let search_params = prepare_db_pagination::<Group>(&params)?;
-    let result = user.search_groups(&pool, search_params).await?;
+    let result = user.search_groups(&ctx.db_pool, search_params).await?;
 
     paginated_json_response(result, total_count, StatusCode::OK, &params)
 }
@@ -77,7 +77,7 @@ pub async fn get_groups(
 #[post("")]
 #[post("/")]
 pub async fn create_group(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     new_group: web::Json<NewGroup>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
@@ -87,7 +87,7 @@ pub async fn create_group(
         new_group = ?new_group
     );
 
-    let group = new_group.save(&pool).await?;
+    let group = new_group.save(&ctx.db_pool).await?;
 
     Ok(json_response_created(
         &group,
@@ -111,11 +111,11 @@ pub async fn create_group(
 )]
 #[get("/{group_id}")]
 pub async fn get_group(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     group_id: web::Path<GroupID>,
     requestor: UserAccess,
 ) -> Result<impl Responder, ApiError> {
-    let group = group_id.group(&pool).await?;
+    let group = group_id.group(&ctx.db_pool).await?;
 
     debug!(
         message = "Group get requested",
@@ -144,12 +144,12 @@ pub async fn get_group(
 )]
 #[patch("/{group_id}")]
 pub async fn update_group(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     group_id: web::Path<GroupID>,
     updated_group: web::Json<UpdateGroup>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    let group = group_id.group(&pool).await?;
+    let group = group_id.group(&ctx.db_pool).await?;
 
     debug!(
         message = "Group patch requested",
@@ -157,7 +157,7 @@ pub async fn update_group(
         requestor = requestor.user.id
     );
 
-    let updated = updated_group.into_inner().save(group.id, &pool).await?;
+    let updated = updated_group.into_inner().save(group.id, &ctx.db_pool).await?;
     Ok(json_response(updated, StatusCode::OK))
 }
 
@@ -177,7 +177,7 @@ pub async fn update_group(
 )]
 #[delete("/{group_id}")]
 pub async fn delete_group(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     group_id: web::Path<GroupID>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
@@ -187,7 +187,7 @@ pub async fn delete_group(
         requestor = requestor.user.id
     );
 
-    group_id.delete(&pool).await?;
+    group_id.delete(&ctx.db_pool).await?;
     Ok(json_response(json!({}), StatusCode::NO_CONTENT))
 }
 
@@ -207,14 +207,14 @@ pub async fn delete_group(
 )]
 #[get("/{group_id}/members")]
 pub async fn get_group_members(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     group_id: web::Path<GroupID>,
     requestor: UserAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let params = parse_query_parameter(req.query_string())?;
 
-    let group = group_id.group(&pool).await?;
+    let group = group_id.group(&ctx.db_pool).await?;
 
     debug!(
         message = "Group members requested",
@@ -223,9 +223,9 @@ pub async fn get_group_members(
     );
 
     let count_params = count_query_options(&params);
-    let total_count = group.count_members_paginated(&pool, &count_params).await?;
+    let total_count = group.count_members_paginated(&ctx.db_pool, &count_params).await?;
     let search_params = prepare_db_pagination::<User>(&params)?;
-    let members = group.members_paginated(&pool, &search_params).await?;
+    let members = group.members_paginated(&ctx.db_pool, &search_params).await?;
 
     paginated_json_response(members, total_count, StatusCode::OK, &params)
 }
@@ -247,12 +247,12 @@ pub async fn get_group_members(
 )]
 #[post("/{group_id}/members/{user_id}")]
 pub async fn add_group_member(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     user_group_ids: web::Path<GroupMember>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    let group = user_group_ids.group_id.group(&pool).await?;
-    let user = user_group_ids.user_id.user(&pool).await?;
+    let group = user_group_ids.group_id.group(&ctx.db_pool).await?;
+    let user = user_group_ids.user_id.user(&ctx.db_pool).await?;
 
     debug!(
         message = "Adding user to group",
@@ -261,7 +261,7 @@ pub async fn add_group_member(
         requestor = requestor.user.id
     );
 
-    group.add_member(&pool, &user).await?;
+    group.add_member(&ctx.db_pool, &user).await?;
 
     Ok(json_response(json!({}), StatusCode::NO_CONTENT))
 }
@@ -283,12 +283,12 @@ pub async fn add_group_member(
 )]
 #[delete("/{group_id}/members/{user_id}")]
 pub async fn delete_group_member(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     user_group_ids: web::Path<GroupMember>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    let group = user_group_ids.group_id.group(&pool).await?;
-    let user = user_group_ids.user_id.user(&pool).await?;
+    let group = user_group_ids.group_id.group(&ctx.db_pool).await?;
+    let user = user_group_ids.user_id.user(&ctx.db_pool).await?;
 
     debug!(
         message = "Deleting user from group",
@@ -297,6 +297,6 @@ pub async fn delete_group_member(
         requestor = requestor.user.id
     );
 
-    group.remove_member(&user, &pool).await?;
+    group.remove_member(&user, &ctx.db_pool).await?;
     Ok(json_response(json!({}), StatusCode::NO_CONTENT))
 }
