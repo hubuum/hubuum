@@ -75,7 +75,7 @@ fn test_execute_import_strict_rolls_back_on_runtime_failure() {
 
     let mut accumulator = ExecutionAccumulator::default();
     let result = block_on(execute_import_strict(
-        &context.app_context,
+        &context.pool,
         1,
         &planned_items,
         &mut accumulator,
@@ -156,7 +156,7 @@ fn test_execute_import_best_effort_keeps_successful_items() {
 
     let mut accumulator = ExecutionAccumulator::default();
     block_on(execute_import_best_effort(
-        &context.app_context,
+        &context.pool,
         1,
         &planned_items,
         &ImportMode {
@@ -235,7 +235,7 @@ fn test_execute_import_best_effort_continues_after_non_policy_runtime_error() {
 
     let mut accumulator = ExecutionAccumulator::default();
     block_on(execute_import_best_effort(
-        &context.app_context,
+        &context.pool,
         1,
         &planned_items,
         &ImportMode {
@@ -283,7 +283,7 @@ fn test_execute_import_strict_preserves_underlying_error_variant() {
 
     let mut accumulator = ExecutionAccumulator::default();
     let result = block_on(execute_import_strict(
-        &context.app_context,
+        &context.pool,
         1,
         &planned_items,
         &mut accumulator,
@@ -328,9 +328,9 @@ fn test_process_one_task_marks_claimed_task_failed_when_execution_setup_errors()
     .unwrap();
 
     for _ in 0..20 {
-        let _ = block_on(process_one_task(&context.pool)).unwrap();
+        let _ = block_on(process_one_task(&context.app_context)).unwrap();
 
-        let stored = block_on(find_task_record(&context.app_context, task.id)).unwrap();
+        let stored = block_on(find_task_record(&context.pool, task.id)).unwrap();
         if stored.status == TaskStatus::Failed.as_str() {
             assert!(stored.finished_at.is_some());
             assert!(stored.request_redacted_at.is_some());
@@ -1302,8 +1302,8 @@ fn test_process_one_task_zero_item_failure_keeps_counters_consistent() {
     .unwrap();
 
     for _ in 0..20 {
-        let _ = block_on(process_one_task(&context.pool)).unwrap();
-        let stored = block_on(find_task_record(&context.app_context, task.id)).unwrap();
+        let _ = block_on(process_one_task(&context.app_context)).unwrap();
+        let stored = block_on(find_task_record(&context.pool, task.id)).unwrap();
         if stored.status == TaskStatus::Failed.as_str() {
             assert_eq!(stored.total_items, 0);
             assert_eq!(stored.processed_items, 0);
