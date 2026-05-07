@@ -28,10 +28,11 @@ use crate::db::traits::task_import::{
 };
 
 pub(super) async fn execute_import_task(
-    pool: &DbPool,
+    app_ctx: &crate::permissions::AppContext,
     task: &TaskRecord,
     user: &User,
 ) -> Result<(), ApiError> {
+    let pool = &app_ctx.db_pool;
     let payload = task
         .request_payload
         .clone()
@@ -60,7 +61,7 @@ pub(super) async fn execute_import_task(
     async {
         let total_start = Instant::now();
         let planning_start = Instant::now();
-        let planning = plan_import(pool, user, &request)
+        let planning = plan_import(app_ctx, user, &request)
             .instrument(info_span!("import_planning"))
             .await;
         let planning_time = planning_start.elapsed();
@@ -167,6 +168,20 @@ pub(super) async fn execute_import_task(
         .await?;
 
         let execution_start = Instant::now();
+
+        // Check if permission mutations are supported for this import
+        let has_permission_items = planned_items.iter().any(|item| {
+            matches!(
+                item.execution,
+                Some(PlannedExecution::ApplyNamespacePermissions(_))
+            )
+        });
+        if has_permission_items && !app_ctx.permissions.supports_mutation() {
+            return Err(ApiError::NotImplemented(
+                "Permission imports are not supported when treetop backend is active".to_string(),
+            ));
+        }
+
         if request.dry_run() {
             for failure in failures {
                 accumulator.push_failure(

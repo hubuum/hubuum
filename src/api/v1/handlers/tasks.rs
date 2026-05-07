@@ -12,7 +12,7 @@ use crate::models::{TaskEventResponse, TaskKind, TaskRecord, TaskResponse, TaskS
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
 use crate::tasks::ensure_task_worker_running;
-use crate::traits::GroupMemberships;
+use crate::traits::{BackendContext, GroupAccessors, GroupMemberships};
 use crate::utilities::response::{json_response, paginated_json_response};
 
 #[derive(Debug, Default)]
@@ -74,12 +74,17 @@ fn parse_task_list_query(
 }
 
 async fn load_authorized_task(
-    pool: &DbPool,
+    ctx: &impl crate::traits::BackendContext,
     requestor: &User,
     task_id: i32,
 ) -> Result<TaskRecord, ApiError> {
-    let task = find_task_record(pool, task_id).await?;
-    if task.submitted_by == Some(requestor.id) || requestor.is_admin(pool).await? {
+    let task = find_task_record(ctx.db_pool(), task_id).await?;
+    let group_ids = requestor.group_ids(ctx.db_pool()).await?;
+    let principal = crate::permissions::PrincipalRef::new(requestor.id, group_ids);
+
+    if task.submitted_by == Some(requestor.id)
+        || ctx.permission_backend().is_admin(&principal).await?
+    {
         Ok(task)
     } else {
         // Return 404 instead of 403 to hide existence of task from unauthorized users
@@ -114,10 +119,12 @@ pub async fn get_tasks(
     requestor: UserAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(ctx.db_pool.clone());
+    ensure_task_worker_running(ctx.db_pool.clone(), ctx.permissions.clone());
     let (params, filters) = parse_task_list_query(req.query_string())?;
     let search_params = prepare_db_pagination::<TaskResponse>(&params)?;
-    let is_admin = requestor.user.is_admin(&ctx.db_pool).await?;
+    let group_ids = requestor.user.group_ids(&ctx.db_pool).await?;
+    let principal = crate::permissions::PrincipalRef::new(requestor.user.id, group_ids);
+    let is_admin = ctx.permission_backend().is_admin(&principal).await?;
     let submitted_by_filter = if is_admin {
         filters.submitted_by
     } else {
@@ -160,8 +167,8 @@ pub async fn get_task(
     requestor: UserAccess,
     task_id: web::Path<i32>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(ctx.db_pool.clone());
-    let task = load_authorized_task(&ctx.db_pool, &requestor.user, task_id.into_inner()).await?;
+    ensure_task_worker_running(ctx.db_pool.clone(), ctx.permissions.clone());
+    let task = load_authorized_task(&*ctx, &requestor.user, task_id.into_inner()).await?;
     Ok(json_response(task.to_response()?, StatusCode::OK))
 }
 
@@ -187,9 +194,9 @@ pub async fn get_task_events(
     req: HttpRequest,
     task_id: web::Path<i32>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(ctx.db_pool.clone());
+    ensure_task_worker_running(ctx.db_pool.clone(), ctx.permissions.clone());
     let task_id = task_id.into_inner();
-    load_authorized_task(&ctx.db_pool, &requestor.user, task_id).await?;
+    load_authorized_task(&*ctx, &requestor.user, task_id).await?;
     let (params, _) = parse_query_parameter_with_passthrough(req.query_string(), &[])?;
     let search_params = prepare_db_pagination::<TaskEventResponse>(&params)?;
     let (events, total_count) =

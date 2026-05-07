@@ -115,7 +115,7 @@ async fn main() -> std::io::Result<()> {
 
     let app_ctx = crate::permissions::AppContext::new(pool.clone(), permission_backend.clone());
 
-    ensure_task_worker_running(pool.clone());
+    ensure_task_worker_running(pool.clone(), permission_backend.clone());
 
     let client_allowlist = config.client_allowlist.clone();
     let trust_ip_headers = config.trust_ip_headers;

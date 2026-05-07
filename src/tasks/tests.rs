@@ -75,7 +75,7 @@ fn test_execute_import_strict_rolls_back_on_runtime_failure() {
 
     let mut accumulator = ExecutionAccumulator::default();
     let result = block_on(execute_import_strict(
-        &context.pool,
+        &context.app_context,
         1,
         &planned_items,
         &mut accumulator,
@@ -156,7 +156,7 @@ fn test_execute_import_best_effort_keeps_successful_items() {
 
     let mut accumulator = ExecutionAccumulator::default();
     block_on(execute_import_best_effort(
-        &context.pool,
+        &context.app_context,
         1,
         &planned_items,
         &ImportMode {
@@ -235,7 +235,7 @@ fn test_execute_import_best_effort_continues_after_non_policy_runtime_error() {
 
     let mut accumulator = ExecutionAccumulator::default();
     block_on(execute_import_best_effort(
-        &context.pool,
+        &context.app_context,
         1,
         &planned_items,
         &ImportMode {
@@ -283,7 +283,7 @@ fn test_execute_import_strict_preserves_underlying_error_variant() {
 
     let mut accumulator = ExecutionAccumulator::default();
     let result = block_on(execute_import_strict(
-        &context.pool,
+        &context.app_context,
         1,
         &planned_items,
         &mut accumulator,
@@ -330,7 +330,7 @@ fn test_process_one_task_marks_claimed_task_failed_when_execution_setup_errors()
     for _ in 0..20 {
         let _ = block_on(process_one_task(&context.pool)).unwrap();
 
-        let stored = block_on(find_task_record(&context.pool, task.id)).unwrap();
+        let stored = block_on(find_task_record(&context.app_context, task.id)).unwrap();
         if stored.status == TaskStatus::Failed.as_str() {
             assert!(stored.finished_at.is_some());
             assert!(stored.request_redacted_at.is_some());
@@ -410,7 +410,7 @@ fn test_plan_namespace_rejects_duplicate_name_within_request() {
     };
 
     block_on(plan_namespace(
-        &context.pool,
+        &context.app_context,
         &context.admin_user,
         &mode,
         &mut state,
@@ -423,7 +423,7 @@ fn test_plan_namespace_rejects_duplicate_name_within_request() {
         ..input
     };
     let err = block_on(plan_namespace(
-        &context.pool,
+        &context.app_context,
         &context.admin_user,
         &mode,
         &mut state,
@@ -467,7 +467,7 @@ fn test_plan_class_rejects_duplicate_name_against_virtual_planned_class() {
     };
 
     block_on(plan_class(
-        &context.pool,
+        &context.app_context,
         &context.admin_user,
         &mode,
         &mut state,
@@ -480,7 +480,7 @@ fn test_plan_class_rejects_duplicate_name_against_virtual_planned_class() {
         ..input
     };
     let err = block_on(plan_class(
-        &context.pool,
+        &context.app_context,
         &context.admin_user,
         &mode,
         &mut state,
@@ -536,7 +536,7 @@ fn test_plan_object_rejects_duplicate_name_against_virtual_planned_object() {
     };
 
     block_on(plan_object(
-        &context.pool,
+        &context.app_context,
         &context.admin_user,
         &mode,
         &mut state,
@@ -549,7 +549,7 @@ fn test_plan_object_rejects_duplicate_name_against_virtual_planned_object() {
         ..input
     };
     let err = block_on(plan_object(
-        &context.pool,
+        &context.app_context,
         &context.admin_user,
         &mode,
         &mut state,
@@ -604,7 +604,7 @@ fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
     };
 
     block_on(plan_class(
-        &context.pool,
+        &context.app_context,
         &context.admin_user,
         &mode,
         &mut state,
@@ -618,7 +618,7 @@ fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
         ..input
     };
     let err = block_on(plan_class(
-        &context.pool,
+        &context.app_context,
         &context.admin_user,
         &mode,
         &mut state,
@@ -697,7 +697,7 @@ fn test_plan_object_rejects_duplicate_ref_against_virtual_planned_object() {
     };
 
     block_on(plan_object(
-        &context.pool,
+        &context.app_context,
         &context.admin_user,
         &mode,
         &mut state,
@@ -711,7 +711,7 @@ fn test_plan_object_rejects_duplicate_ref_against_virtual_planned_object() {
         ..input
     };
     let err = block_on(plan_object(
-        &context.pool,
+        &context.app_context,
         &context.admin_user,
         &mode,
         &mut state,
@@ -1072,7 +1072,7 @@ fn test_plan_class_update_preserves_existing_schema_for_following_objects() {
     };
 
     block_on(plan_class(
-        &context.pool,
+        &context.app_context,
         &context.admin_user,
         &mode,
         &mut state,
@@ -1089,7 +1089,7 @@ fn test_plan_class_update_preserves_existing_schema_for_following_objects() {
     .unwrap();
 
     let err = block_on(plan_object(
-        &context.pool,
+        &context.app_context,
         &context.admin_user,
         &mode,
         &mut state,
@@ -1303,7 +1303,7 @@ fn test_process_one_task_zero_item_failure_keeps_counters_consistent() {
 
     for _ in 0..20 {
         let _ = block_on(process_one_task(&context.pool)).unwrap();
-        let stored = block_on(find_task_record(&context.pool, task.id)).unwrap();
+        let stored = block_on(find_task_record(&context.app_context, task.id)).unwrap();
         if stored.status == TaskStatus::Failed.as_str() {
             assert_eq!(stored.total_items, 0);
             assert_eq!(stored.processed_items, 0);

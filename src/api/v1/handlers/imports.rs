@@ -18,24 +18,29 @@ use crate::models::{
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
 use crate::tasks::{ensure_task_worker_running, kick_task_worker, request_hash};
-use crate::traits::GroupMemberships;
+use crate::traits::{BackendContext, GroupAccessors, GroupMemberships};
 use crate::utilities::response::{
     json_response, json_response_with_header, paginated_json_response,
 };
 
 async fn load_authorized_import_task(
-    pool: &DbPool,
+    ctx: &impl crate::traits::BackendContext,
     requestor: &User,
     task_id: i32,
 ) -> Result<TaskRecord, ApiError> {
-    let task = find_task_record(pool, task_id).await?;
+    let task = find_task_record(ctx.db_pool(), task_id).await?;
     if task.kind != TaskKind::Import.as_str() {
         return Err(ApiError::NotFound(format!(
             "Import task {} not found",
             task_id
         )));
     }
-    if task.submitted_by == Some(requestor.id) || requestor.is_admin(pool).await? {
+    let group_ids = requestor.group_ids(ctx.db_pool()).await?;
+    let principal = crate::permissions::PrincipalRef::new(requestor.id, group_ids);
+
+    if task.submitted_by == Some(requestor.id)
+        || ctx.permission_backend().is_admin(&principal).await?
+    {
         Ok(task)
     } else {
         // Return 404 instead of 403 to hide existence of task from unauthorized users
@@ -121,7 +126,7 @@ pub async fn create_import(
     req: HttpRequest,
     import_request: web::Json<ImportRequest>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(ctx.db_pool.clone());
+    ensure_task_worker_running(ctx.db_pool.clone(), ctx.permissions.clone());
 
     let import_request = import_request.into_inner();
     if import_request.version != CURRENT_IMPORT_VERSION {
@@ -151,7 +156,7 @@ pub async fn create_import(
     let response = task.to_response()?;
     let mut headers = HashMap::new();
     headers.insert("Location".to_string(), format!("/api/v1/tasks/{}", task.id));
-    kick_task_worker(ctx.db_pool.clone());
+    kick_task_worker(ctx.db_pool.clone(), ctx.permissions.clone());
 
     Ok(json_response_with_header(
         response,
@@ -181,9 +186,8 @@ pub async fn get_import(
     requestor: UserAccess,
     task_id: web::Path<i32>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(ctx.db_pool.clone());
-    let task =
-        load_authorized_import_task(&ctx.db_pool, &requestor.user, task_id.into_inner()).await?;
+    ensure_task_worker_running(ctx.db_pool.clone(), ctx.permissions.clone());
+    let task = load_authorized_import_task(&*ctx, &requestor.user, task_id.into_inner()).await?;
     Ok(json_response(task.to_response()?, StatusCode::OK))
 }
 
@@ -209,9 +213,9 @@ pub async fn get_import_results(
     req: HttpRequest,
     task_id: web::Path<i32>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(ctx.db_pool.clone());
+    ensure_task_worker_running(ctx.db_pool.clone(), ctx.permissions.clone());
     let task_id = task_id.into_inner();
-    load_authorized_import_task(&ctx.db_pool, &requestor.user, task_id).await?;
+    load_authorized_import_task(&*ctx, &requestor.user, task_id).await?;
     let params = parse_query_parameter(req.query_string())?;
     let search_params = prepare_db_pagination::<ImportTaskResultResponse>(&params)?;
     let (results, total_count) =

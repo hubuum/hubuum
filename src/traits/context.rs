@@ -28,6 +28,19 @@ where
     }
 }
 
+impl<T> BackendContext for std::sync::Arc<T>
+where
+    T: BackendContext + ?Sized,
+{
+    fn db_pool(&self) -> &DbPool {
+        self.as_ref().db_pool()
+    }
+
+    fn permission_backend(&self) -> &dyn PermissionBackend {
+        self.as_ref().permission_backend()
+    }
+}
+
 impl<T> BackendContext for actix_web::web::Data<T>
 where
     T: BackendContext + ?Sized + 'static,

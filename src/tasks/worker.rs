@@ -1,4 +1,4 @@
-use std::sync::{Once, OnceLock};
+use std::sync::{Arc, Once, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -16,6 +16,8 @@ use crate::errors::ApiError;
 use crate::models::{
     NewTaskEventRecord, TaskKind, TaskRecord, TaskResultCounts, TaskStatus, UserID,
 };
+use crate::permissions::AppContext;
+use crate::permissions::backend::PermissionBackend;
 
 use super::execution::execute_import_task;
 use super::helpers::sanitize_error_for_storage;
@@ -57,9 +59,9 @@ async fn wait_for_task_worker_wakeup(poll_interval: Duration) {
     }
 }
 
-async fn task_worker_loop(pool: DbPool, poll_interval: Duration) {
+async fn task_worker_loop(app_ctx: AppContext, poll_interval: Duration) {
     loop {
-        let result = process_one_task(&pool).await;
+        let result = process_one_task(&app_ctx).await;
         match background_worker_action(&result) {
             WorkerLoopAction::Continue => continue,
             WorkerLoopAction::Sleep => wait_for_task_worker_wakeup(poll_interval).await,
@@ -67,7 +69,7 @@ async fn task_worker_loop(pool: DbPool, poll_interval: Duration) {
     }
 }
 
-fn spawn_task_worker_loop(pool: DbPool, poll_interval: Duration, worker_index: usize) {
+fn spawn_task_worker_loop(app_ctx: AppContext, poll_interval: Duration, worker_index: usize) {
     thread::Builder::new()
         .name(format!("task-worker-{worker_index}"))
         .spawn(move || {
@@ -77,14 +79,15 @@ fn spawn_task_worker_loop(pool: DbPool, poll_interval: Duration, worker_index: u
                 poll_interval = ?poll_interval
             );
             let system = actix_rt::System::new();
-            system.block_on(task_worker_loop(pool, poll_interval));
+            system.block_on(task_worker_loop(app_ctx, poll_interval));
         })
         .expect("failed to spawn task worker thread");
 }
 
-pub fn ensure_task_worker_running(pool: DbPool) {
+pub fn ensure_task_worker_running(pool: DbPool, permissions: Arc<dyn PermissionBackend>) {
     let worker_count = configured_task_worker_count();
     let poll_interval = configured_task_poll_interval();
+    let app_ctx = AppContext::new(pool, permissions);
     TASK_WORKER.call_once(move || {
         info!(
             message = "Initializing task workers",
@@ -92,18 +95,18 @@ pub fn ensure_task_worker_running(pool: DbPool) {
             poll_interval = ?poll_interval
         );
         for worker_index in 0..worker_count {
-            spawn_task_worker_loop(pool.clone(), poll_interval, worker_index);
+            spawn_task_worker_loop(app_ctx.clone(), poll_interval, worker_index);
         }
     });
 }
 
-pub fn kick_task_worker(pool: DbPool) {
-    ensure_task_worker_running(pool);
+pub fn kick_task_worker(pool: DbPool, permissions: Arc<dyn PermissionBackend>) {
+    ensure_task_worker_running(pool, permissions);
     get_task_worker_notify().notify_one();
 }
 
-pub(super) async fn process_one_task(pool: &DbPool) -> Result<bool, ApiError> {
-    let Some(task) = claim_next_queued_task(pool).await? else {
+pub(super) async fn process_one_task(app_ctx: &AppContext) -> Result<bool, ApiError> {
+    let Some(task) = claim_next_queued_task(&app_ctx.db_pool).await? else {
         return Ok(false);
     };
 
@@ -115,18 +118,18 @@ pub(super) async fn process_one_task(pool: &DbPool) -> Result<bool, ApiError> {
         worker = std::thread::current().name().unwrap_or("task-worker")
     );
 
-    if let Err(err) = process_claimed_task(pool, &task).await {
-        mark_claimed_task_failed(pool, &task, &err).await?;
+    if let Err(err) = process_claimed_task(app_ctx, &task).await {
+        mark_claimed_task_failed(&app_ctx.db_pool, &task, &err).await?;
     }
 
     Ok(true)
 }
 
-async fn process_claimed_task(pool: &DbPool, task: &TaskRecord) -> Result<(), ApiError> {
+async fn process_claimed_task(app_ctx: &AppContext, task: &TaskRecord) -> Result<(), ApiError> {
     let submitted_by = task.submitted_by.ok_or_else(|| {
         ApiError::BadRequest("Submitting user is no longer available for this task".to_string())
     })?;
-    let submitted_by = UserID(submitted_by).user(pool).await?;
+    let submitted_by = UserID(submitted_by).user(&app_ctx.db_pool).await?;
 
     info!(
         message = "Dispatching task execution",
@@ -137,7 +140,7 @@ async fn process_claimed_task(pool: &DbPool, task: &TaskRecord) -> Result<(), Ap
     );
 
     match TaskKind::from_db(&task.kind)? {
-        TaskKind::Import => execute_import_task(pool, task, &submitted_by).await,
+        TaskKind::Import => execute_import_task(app_ctx, task, &submitted_by).await,
         other => Err(ApiError::BadRequest(format!(
             "Task kind '{}' is not implemented",
             other.as_str()

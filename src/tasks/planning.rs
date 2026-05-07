@@ -33,7 +33,7 @@ use crate::models::{
 use crate::traits::GroupMemberships;
 
 async fn is_import_admin(
-    pool: &DbPool,
+    app_ctx: &crate::permissions::AppContext,
     user: &User,
     state: &mut PlanningState,
 ) -> Result<bool, String> {
@@ -41,13 +41,23 @@ async fn is_import_admin(
         return Ok(is_admin);
     }
 
-    let is_admin = user.is_admin(pool).await.map_err(|err| err.to_string())?;
+    use crate::traits::{BackendContext, GroupAccessors};
+    let group_ids = user
+        .group_ids(&app_ctx.db_pool)
+        .await
+        .map_err(|err| err.to_string())?;
+    let principal = crate::permissions::PrincipalRef::new(user.id, group_ids);
+    let is_admin = app_ctx
+        .permission_backend()
+        .is_admin(&principal)
+        .await
+        .map_err(|err| err.to_string())?;
     state.is_admin = Some(is_admin);
     Ok(is_admin)
 }
 
 async fn ensure_namespace_permission_cached(
-    pool: &DbPool,
+    app_ctx: &crate::permissions::AppContext,
     user: &User,
     state: &mut PlanningState,
     namespace_id: i32,
@@ -55,7 +65,7 @@ async fn ensure_namespace_permission_cached(
     permission: Permissions,
 ) -> Result<(), String> {
     if !namespace_exists_in_db {
-        if is_import_admin(pool, user, state).await? {
+        if is_import_admin(app_ctx, user, state).await? {
             return Ok(());
         }
         return Err("Only admins may operate on newly created namespaces within an import".into());
@@ -67,7 +77,11 @@ async fn ensure_namespace_permission_cached(
     }
 
     let result = user
-        .can(pool, vec![permission], vec![NamespaceID(namespace_id)])
+        .can(
+            &app_ctx.db_pool,
+            vec![permission],
+            vec![NamespaceID(namespace_id)],
+        )
         .await
         .map_err(|err| err.to_string());
     state.namespace_permission_cache.insert(key, result.clone());
@@ -134,7 +148,7 @@ fn collect_request_object_keys(request: &ImportRequest) -> Vec<ObjectKey> {
 }
 
 async fn preload_namespaces_for_class_keys(
-    pool: &DbPool,
+    app_ctx: &crate::permissions::AppContext,
     state: &mut PlanningState,
     class_keys: &[ClassKey],
 ) -> Result<(), String> {
@@ -153,7 +167,7 @@ async fn preload_namespaces_for_class_keys(
         .into_iter()
         .collect::<Vec<_>>();
 
-    let namespaces = lookup_namespaces_by_names(pool, &names)
+    let namespaces = lookup_namespaces_by_names(&app_ctx.db_pool, &names)
         .await
         .map_err(|err| err.to_string())?;
     let found_names = namespaces
@@ -173,16 +187,17 @@ async fn preload_namespaces_for_class_keys(
 }
 
 async fn preload_existing_classes(
-    pool: &DbPool,
+    app_ctx: &crate::permissions::AppContext,
     state: &mut PlanningState,
     request: &ImportRequest,
 ) -> Result<(), String> {
     let class_keys = collect_request_class_keys(request);
-    preload_namespaces_for_class_keys(pool, state, &class_keys).await?;
+    preload_namespaces_for_class_keys(app_ctx, state, &class_keys).await?;
 
     let mut requested = HashMap::<i32, HashSet<String>>::new();
     for key in class_keys {
-        let Some(namespace) = resolve_class_namespace_for_preload(pool, state, &key).await? else {
+        let Some(namespace) = resolve_class_namespace_for_preload(app_ctx, state, &key).await?
+        else {
             continue;
         };
         if !namespace.exists_in_db {
@@ -208,7 +223,7 @@ async fn preload_existing_classes(
 
     for (namespace_id, names) in requested {
         let names = names.into_iter().collect::<Vec<_>>();
-        let classes = lookup_classes_by_namespace_and_names(pool, namespace_id, &names)
+        let classes = lookup_classes_by_namespace_and_names(&app_ctx.db_pool, namespace_id, &names)
             .await
             .map_err(|err| err.to_string())?;
         let found_names = classes
@@ -229,7 +244,7 @@ async fn preload_existing_classes(
 }
 
 async fn resolve_class_namespace_for_preload(
-    pool: &DbPool,
+    app_ctx: &crate::permissions::AppContext,
     state: &mut PlanningState,
     key: &ClassKey,
 ) -> Result<Option<NamespaceResolution>, String> {
@@ -242,7 +257,7 @@ async fn resolve_class_namespace_for_preload(
             if state.missing_namespace_names.contains(name) {
                 return Ok(None);
             }
-            let namespace = lookup_namespace_by_name(pool, name)
+            let namespace = lookup_namespace_by_name(&app_ctx.db_pool, name)
                 .await
                 .map_err(|err| err.to_string())?
                 .map(namespace_to_resolution);
@@ -258,7 +273,7 @@ async fn resolve_class_namespace_for_preload(
 }
 
 async fn preload_existing_objects(
-    pool: &DbPool,
+    app_ctx: &crate::permissions::AppContext,
     state: &mut PlanningState,
     request: &ImportRequest,
 ) -> Result<(), String> {
@@ -267,7 +282,7 @@ async fn preload_existing_objects(
 
     for key in object_keys {
         let class = match resolve_class_planning(
-            pool,
+            &app_ctx.db_pool,
             state,
             key.class_ref.as_deref(),
             key.class_key.as_ref(),
@@ -301,7 +316,7 @@ async fn preload_existing_objects(
 
     for (class_id, names) in requested {
         let names = names.into_iter().collect::<Vec<_>>();
-        let objects = lookup_objects_by_class_and_names(pool, class_id, &names)
+        let objects = lookup_objects_by_class_and_names(&app_ctx.db_pool, class_id, &names)
             .await
             .map_err(|err| err.to_string())?;
         let found_names = objects
@@ -322,7 +337,7 @@ async fn preload_existing_objects(
 }
 
 async fn class_relation_exists_cached(
-    pool: &DbPool,
+    app_ctx: &crate::permissions::AppContext,
     state: &mut PlanningState,
     left: i32,
     right: i32,
@@ -335,7 +350,7 @@ async fn class_relation_exists_cached(
         return Ok(*exists);
     }
 
-    let exists = lookup_direct_class_relation(pool, pair.0, pair.1)
+    let exists = lookup_direct_class_relation(&app_ctx.db_pool, pair.0, pair.1)
         .await
         .map_err(|err| sanitize_error_for_storage(&err))?
         .is_some();
@@ -344,7 +359,7 @@ async fn class_relation_exists_cached(
 }
 
 async fn object_relation_exists_cached(
-    pool: &DbPool,
+    app_ctx: &crate::permissions::AppContext,
     state: &mut PlanningState,
     left: i32,
     right: i32,
@@ -357,7 +372,7 @@ async fn object_relation_exists_cached(
         return Ok(*exists);
     }
 
-    let exists = lookup_object_relation(pool, pair.0, pair.1)
+    let exists = lookup_object_relation(&app_ctx.db_pool, pair.0, pair.1)
         .await
         .map_err(|err| sanitize_error_for_storage(&err))?
         .is_some();
@@ -366,10 +381,11 @@ async fn object_relation_exists_cached(
 }
 
 pub(super) async fn plan_import(
-    pool: &DbPool,
+    app_ctx: &crate::permissions::AppContext,
     user: &User,
     request: &ImportRequest,
 ) -> PlanningOutcome {
+    let pool = &app_ctx.db_pool;
     let mode = request.mode();
     let mut state = PlanningState::new();
     let mut planned_items = Vec::with_capacity(request.total_items() as usize);
@@ -403,7 +419,7 @@ pub(super) async fn plan_import(
     let namespace_start = Instant::now();
     async {
         for namespace in &request.graph.namespaces {
-            push_or_stop!(plan_namespace(pool, user, &mode, &mut state, namespace));
+            push_or_stop!(plan_namespace(app_ctx, user, &mode, &mut state, namespace));
         }
     }
     .instrument(info_span!(
@@ -429,7 +445,7 @@ pub(super) async fn plan_import(
         };
     }
 
-    if let Err(message) = preload_existing_classes(pool, &mut state, request).await {
+    if let Err(message) = preload_existing_classes(app_ctx, &mut state, request).await {
         failures.push(PlanningFailure {
             kind: FailureKind::Runtime,
             item: planned_result("class", "lookup", None, None),
@@ -446,7 +462,7 @@ pub(super) async fn plan_import(
     let class_start = Instant::now();
     async {
         for class in &request.graph.classes {
-            push_or_stop!(plan_class(pool, user, &mode, &mut state, class));
+            push_or_stop!(plan_class(app_ctx, user, &mode, &mut state, class));
         }
     }
     .instrument(info_span!(
@@ -472,7 +488,7 @@ pub(super) async fn plan_import(
         };
     }
 
-    if let Err(message) = preload_existing_objects(pool, &mut state, request).await {
+    if let Err(message) = preload_existing_objects(app_ctx, &mut state, request).await {
         failures.push(PlanningFailure {
             kind: FailureKind::Runtime,
             item: planned_result("object", "lookup", None, None),
@@ -489,7 +505,7 @@ pub(super) async fn plan_import(
     let object_start = Instant::now();
     async {
         for object in &request.graph.objects {
-            push_or_stop!(plan_object(pool, user, &mode, &mut state, object));
+            push_or_stop!(plan_object(app_ctx, user, &mode, &mut state, object));
         }
     }
     .instrument(info_span!(
@@ -518,7 +534,9 @@ pub(super) async fn plan_import(
     let class_relation_start = Instant::now();
     async {
         for relation in &request.graph.class_relations {
-            push_or_stop!(plan_class_relation(pool, user, &mode, &mut state, relation));
+            push_or_stop!(plan_class_relation(
+                app_ctx, user, &mode, &mut state, relation
+            ));
         }
     }
     .instrument(info_span!(
@@ -548,7 +566,7 @@ pub(super) async fn plan_import(
     async {
         for relation in &request.graph.object_relations {
             push_or_stop!(plan_object_relation(
-                pool, user, &mode, &mut state, relation
+                app_ctx, user, &mode, &mut state, relation
             ));
         }
     }
@@ -579,7 +597,7 @@ pub(super) async fn plan_import(
     async {
         for acl in &request.graph.namespace_permissions {
             push_or_stop!(plan_namespace_permission(
-                pool, user, &mode, &mut state, acl
+                app_ctx, user, &mode, &mut state, acl
             ));
         }
     }
@@ -607,12 +625,14 @@ pub(super) async fn plan_import(
 }
 
 pub(super) async fn plan_namespace(
-    pool: &DbPool,
+    app_ctx: &crate::permissions::AppContext,
     user: &User,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportNamespaceInput,
 ) -> Result<PlannedItem, PlanningFailure> {
+    let pool = &app_ctx.db_pool;
+    let pool = &app_ctx.db_pool;
     if let Some(reference) = &input.ref_
         && state.namespaces_by_ref.contains_key(reference)
     {
@@ -656,7 +676,7 @@ pub(super) async fn plan_namespace(
             created_at: Utc::now().naive_utc(),
             updated_at: Utc::now().naive_utc(),
         })
-        .or(lookup_namespace_by_name(pool, &input.name)
+        .or(lookup_namespace_by_name(&app_ctx.db_pool, &input.name)
             .await
             .map_err(|message| PlanningFailure {
                 kind: FailureKind::Runtime,
@@ -671,7 +691,7 @@ pub(super) async fn plan_namespace(
 
     if let Some(namespace) = existing {
         ensure_namespace_permission_cached(
-            pool,
+            app_ctx,
             user,
             state,
             namespace.id,
@@ -724,7 +744,7 @@ pub(super) async fn plan_namespace(
             }),
         })
     } else {
-        if !is_import_admin(pool, user, state)
+        if !is_import_admin(app_ctx, user, state)
             .await
             .map_err(|err| PlanningFailure {
                 kind: FailureKind::Permission,
@@ -770,12 +790,13 @@ pub(super) async fn plan_namespace(
 }
 
 pub(super) async fn plan_class(
-    pool: &DbPool,
+    app_ctx: &crate::permissions::AppContext,
     user: &User,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportClassInput,
 ) -> Result<PlannedItem, PlanningFailure> {
+    let pool = &app_ctx.db_pool;
     if let Some(reference) = &input.ref_
         && state.classes_by_ref.contains_key(reference)
     {
@@ -855,7 +876,7 @@ pub(super) async fn plan_class(
 
     if let Some(class) = existing {
         ensure_namespace_permission_cached(
-            pool,
+            app_ctx,
             user,
             state,
             namespace.id,
@@ -912,7 +933,7 @@ pub(super) async fn plan_class(
         })
     } else {
         ensure_namespace_permission_cached(
-            pool,
+            app_ctx,
             user,
             state,
             namespace.id,
@@ -949,12 +970,13 @@ pub(super) async fn plan_class(
 }
 
 pub(super) async fn plan_object(
-    pool: &DbPool,
+    app_ctx: &crate::permissions::AppContext,
     user: &User,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportObjectInput,
 ) -> Result<PlannedItem, PlanningFailure> {
+    let pool = &app_ctx.db_pool;
     if let Some(reference) = &input.ref_
         && state.objects_by_ref.contains_key(reference)
     {
@@ -1061,7 +1083,7 @@ pub(super) async fn plan_object(
 
     if let Some(object) = existing {
         ensure_namespace_permission_cached(
-            pool,
+            app_ctx,
             user,
             state,
             namespace.id,
@@ -1114,7 +1136,7 @@ pub(super) async fn plan_object(
         })
     } else {
         ensure_namespace_permission_cached(
-            pool,
+            app_ctx,
             user,
             state,
             namespace.id,
@@ -1150,12 +1172,13 @@ pub(super) async fn plan_object(
 }
 
 pub(super) async fn plan_class_relation(
-    pool: &DbPool,
+    app_ctx: &crate::permissions::AppContext,
     user: &User,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportClassRelationInput,
 ) -> Result<PlannedItem, PlanningFailure> {
+    let pool = &app_ctx.db_pool;
     let from_class = resolve_class_planning(
         pool,
         state,
@@ -1209,7 +1232,7 @@ pub(super) async fn plan_class_relation(
         })?;
 
     ensure_namespace_permission_cached(
-        pool,
+        app_ctx,
         user,
         state,
         from_namespace.id,
@@ -1228,7 +1251,7 @@ pub(super) async fn plan_class_relation(
         message,
     })?;
     ensure_namespace_permission_cached(
-        pool,
+        app_ctx,
         user,
         state,
         to_namespace.id,
@@ -1247,7 +1270,7 @@ pub(super) async fn plan_class_relation(
         message,
     })?;
 
-    if class_relation_exists_cached(pool, state, pair.0, pair.1)
+    if class_relation_exists_cached(app_ctx, state, pair.0, pair.1)
         .await
         .map_err(|message| PlanningFailure {
             kind: FailureKind::Runtime,
@@ -1288,12 +1311,13 @@ pub(super) async fn plan_class_relation(
 }
 
 pub(super) async fn plan_object_relation(
-    pool: &DbPool,
+    app_ctx: &crate::permissions::AppContext,
     user: &User,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportObjectRelationInput,
 ) -> Result<PlannedItem, PlanningFailure> {
+    let pool = &app_ctx.db_pool;
     let from_object = resolve_object_planning(
         pool,
         state,
@@ -1336,7 +1360,7 @@ pub(super) async fn plan_object_relation(
         })?;
 
     ensure_namespace_permission_cached(
-        pool,
+        app_ctx,
         user,
         state,
         from_namespace.id,
@@ -1350,7 +1374,7 @@ pub(super) async fn plan_object_relation(
         message,
     })?;
     ensure_namespace_permission_cached(
-        pool,
+        app_ctx,
         user,
         state,
         to_namespace.id,
@@ -1366,7 +1390,7 @@ pub(super) async fn plan_object_relation(
 
     let class_pair = normalize_pair(from_object.class_id, to_object.class_id);
     let class_relation_exists =
-        class_relation_exists_cached(pool, state, class_pair.0, class_pair.1)
+        class_relation_exists_cached(app_ctx, state, class_pair.0, class_pair.1)
             .await
             .map_err(|message| PlanningFailure {
                 kind: FailureKind::Runtime,
@@ -1383,7 +1407,7 @@ pub(super) async fn plan_object_relation(
         });
     }
 
-    if object_relation_exists_cached(pool, state, pair.0, pair.1)
+    if object_relation_exists_cached(app_ctx, state, pair.0, pair.1)
         .await
         .map_err(|message| PlanningFailure {
             kind: FailureKind::Runtime,
@@ -1419,12 +1443,13 @@ pub(super) async fn plan_object_relation(
 }
 
 pub(super) async fn plan_namespace_permission(
-    pool: &DbPool,
+    app_ctx: &crate::permissions::AppContext,
     user: &User,
     _mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportNamespacePermissionInput,
 ) -> Result<PlannedItem, PlanningFailure> {
+    let pool = &app_ctx.db_pool;
     let namespace = resolve_namespace_planning(
         pool,
         state,
@@ -1444,7 +1469,7 @@ pub(super) async fn plan_namespace_permission(
     })?;
 
     ensure_namespace_permission_cached(
-        pool,
+        app_ctx,
         user,
         state,
         namespace.id,
