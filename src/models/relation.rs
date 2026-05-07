@@ -732,7 +732,7 @@ pub mod tests {
 
         let rels = context
             .admin_user
-            .get_related_objects(pool, &object1, &class2)
+            .get_related_objects(&context.app_context, &object1, &class2)
             .await
             .unwrap();
 
@@ -787,7 +787,7 @@ pub mod tests {
         // Forward: from oA, find objects of classC
         let forward = context
             .admin_user
-            .get_related_objects(pool, &obj_a, &class_c)
+            .get_related_objects(&context.app_context, &obj_a, &class_c)
             .await
             .unwrap();
         assert_eq!(
@@ -800,7 +800,7 @@ pub mod tests {
         // Backward: from oC, find objects of classA — this is the key bidirectional test
         let backward = context
             .admin_user
-            .get_related_objects(pool, &obj_c, &class_a)
+            .get_related_objects(&context.app_context, &obj_c, &class_a)
             .await
             .unwrap();
         assert_eq!(
@@ -984,7 +984,7 @@ pub mod tests {
 
         let related = context
             .admin_user
-            .get_related_objects(pool, &obj_a1, &class_a)
+            .get_related_objects(&context.app_context, &obj_a1, &class_a)
             .await
             .unwrap();
 

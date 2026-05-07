@@ -449,22 +449,29 @@ where
     U: SelfAccessors<User> + GroupAccessors,
     for<'a> &'a U: GroupAccessors,
 {
-    async fn get_related_objects<O, C>(
+    async fn get_related_objects<C, O, K>(
         &self,
-        pool: &DbPool,
+        ctx: &C,
         source_object: &O,
-        target_class: &C,
+        target_class: &K,
     ) -> Result<Vec<HubuumObjectTransitiveLink>, ApiError>
     where
+        C: crate::traits::BackendContext + ?Sized,
         O: SelfAccessors<HubuumObject> + Clone + Send + Sync,
-        C: SelfAccessors<HubuumClass> + Clone + Send + Sync,
+        K: SelfAccessors<HubuumClass> + Clone + Send + Sync,
     {
         use crate::models::Permissions;
+        use crate::permissions::PrincipalRef;
         use diesel::RunQueryDsl;
         use diesel::sql_query;
         use diesel::sql_types::{Array, Integer};
 
-        let namespaces = user_can_on_any(pool, self, Permissions::ReadObject).await?;
+        let pool = ctx.db_pool();
+        let principal = PrincipalRef::new(self.id(), self.group_ids(pool).await?);
+        let namespaces = ctx
+            .permission_backend()
+            .namespaces_user_can(&principal, &[Permissions::ReadObject])
+            .await?;
         with_connection(pool, |conn| {
             sql_query("SELECT * FROM get_transitively_linked_objects($1, $2, $3, $4)")
                 .bind::<Integer, _>(source_object.id())

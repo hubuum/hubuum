@@ -216,15 +216,23 @@ pub trait ObjectRelationsFromUser: SelfAccessors<User> + GroupAccessors
 where
     for<'a> &'a Self: GroupAccessors,
 {
-    async fn get_related_objects<O, C>(
+    /// Return objects transitively reachable from `source_object` along
+    /// the class-relation graph that end up at `target_class`, scoped to
+    /// namespaces where the user has `Permissions::ReadObject`.
+    ///
+    /// Routes the namespace-set lookup through the active permission
+    /// backend so Treetop can authoritatively decide which namespaces the
+    /// user may read objects on.
+    async fn get_related_objects<C, O, K>(
         &self,
-        pool: &DbPool,
+        ctx: &C,
         source_object: &O,
-        target_class: &C,
+        target_class: &K,
     ) -> Result<Vec<HubuumObjectTransitiveLink>, ApiError>
     where
+        C: crate::traits::BackendContext + ?Sized,
         O: SelfAccessors<HubuumObject> + Clone + Send + Sync,
-        C: SelfAccessors<HubuumClass> + Clone + Send + Sync;
+        K: SelfAccessors<HubuumClass> + Clone + Send + Sync;
 }
 
 #[allow(dead_code)]
