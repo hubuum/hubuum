@@ -12,15 +12,25 @@ fn create_token_header(token: &str) -> (http::header::HeaderName, String) {
     (http::header::AUTHORIZATION, format!("Bearer {token}"))
 }
 
-#[cfg(feature = "permissions-local")]
 fn build_test_app_context(pool: &DbPool) -> Data<AppContext> {
-    Data::new(AppContext::new(
-        pool.clone(),
-        Arc::new(LocalPermissionBackend::new(
+    #[cfg(feature = "permissions-local")]
+    {
+        Data::new(AppContext::new(
             pool.clone(),
-            "admin".to_string(),
-        )),
-    ))
+            Arc::new(LocalPermissionBackend::new(
+                pool.clone(),
+                "admin".to_string(),
+            )),
+        ))
+    }
+    #[cfg(not(feature = "permissions-local"))]
+    {
+        let _ = pool;
+        unimplemented!(
+            "test infrastructure requires the `permissions-local` feature; \
+             integration tests are not designed to run without a backend"
+        )
+    }
 }
 
 pub async fn get_request_with_correlation(

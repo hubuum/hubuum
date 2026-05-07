@@ -3,7 +3,7 @@ mod tests {
     use crate::api::handlers::auth::reset_login_rate_limit_for_tests;
     use crate::config::get_config;
     use crate::db::traits::ActiveTokens;
-    use crate::db::{init_pool, with_connection, DbPool};
+    use crate::db::{DbPool, init_pool, with_connection};
     use crate::models::user::LoginUser;
     use crate::permissions::{AppContext, LocalPermissionBackend};
     use crate::tests::{create_test_admin, create_test_user};
