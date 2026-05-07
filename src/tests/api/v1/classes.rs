@@ -37,8 +37,12 @@ pub mod tests {
                 get_schema(SchemaType::Blog).clone()
             };
 
+            // Class names have a global UNIQUE constraint, so include a
+            // per-call random suffix to keep parallel/repeat runs from
+            // colliding on the persistent test DB.
+            let unique = crate::utilities::auth::generate_random_password(8);
             classes.push(NewHubuumClass {
-                name: format!("{prefix}_api_class_{i}"),
+                name: format!("{prefix}_api_class_{i}_{unique}"),
                 description: format!("{prefix}_api_description_{i}"),
                 namespace_id: 0,
                 json_schema: Some(schema),

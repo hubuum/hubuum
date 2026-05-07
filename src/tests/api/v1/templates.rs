@@ -19,7 +19,10 @@ mod tests {
         let admin_group = ensure_admin_group(pool).await;
 
         NewNamespaceWithAssignee {
-            name: format!("template_ns_{suffix}"),
+            name: format!(
+                "template_ns_{suffix}_{}",
+                crate::utilities::auth::generate_random_password(8)
+            ),
             description: "template test namespace".to_string(),
             group_id: admin_group.id,
         }

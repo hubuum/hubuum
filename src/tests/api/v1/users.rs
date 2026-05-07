@@ -196,7 +196,10 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let prefix = format!("test_list_users_sorted_{}", sort_order.replace('.', "_"));
+        let prefix = context.scoped_name(&format!(
+            "test_list_users_sorted_{}",
+            sort_order.replace('.', "_")
+        ));
 
         let mut created_users = Vec::new();
         for i in 0..3 {
@@ -233,7 +236,7 @@ mod tests {
     #[actix_web::test]
     async fn test_list_users_limit(#[case] limit: usize, #[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let prefix = format!("test_list_users_limit_{limit}");
+        let prefix = context.scoped_name(&format!("test_list_users_limit_{limit}"));
 
         let mut created_users = Vec::new();
         for i in 0..3 {
@@ -264,7 +267,8 @@ mod tests {
     #[actix_web::test]
     async fn test_list_users_cursor_pagination(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let prefix = "cursor_user";
+        let scoped = context.scoped_name("cursor_user");
+        let prefix = scoped.as_str();
         let mut created_users = Vec::new();
 
         for idx in 0..3 {

@@ -49,12 +49,16 @@ mod tests {
 
         let mut objects = Vec::new();
 
+        // Object names are UNIQUE per (name, hubuum_class_id). The class
+        // gets created fresh below so collision is unlikely, but a per-call
+        // random suffix is cheap insurance against re-run pollution.
+        let unique = crate::utilities::auth::generate_random_password(8);
         for i in 0..count {
             objects.push(NewHubuumObject {
                 namespace_id: 0,
                 hubuum_class_id: 0,
                 data: serde_json::json!({"test": format!("data_{i}")}),
-                name: format!("{prefix} test object {i}"),
+                name: format!("{prefix} test object {i} {unique}"),
                 description: format!("{prefix} test object description {i}"),
             });
         }

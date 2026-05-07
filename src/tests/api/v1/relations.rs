@@ -103,6 +103,9 @@ mod tests {
     }
 
     async fn create_hidden_classes(context: &TestContext, prefix: &str) -> ClassFixture {
+        // Append a per-call random suffix so class names stay unique on
+        // re-runs against a persistent test DB (hubuumclass.name UNIQUE).
+        let unique = crate::utilities::auth::generate_random_password(8);
         create_class_fixture(
             &context.pool,
             context
@@ -112,14 +115,14 @@ mod tests {
             vec![
                 NewHubuumClass {
                     namespace_id: 0,
-                    name: format!("{prefix}_class_1"),
+                    name: format!("{prefix}_class_1_{unique}"),
                     description: format!("{prefix}_class_1"),
                     json_schema: None,
                     validate_schema: Some(false),
                 },
                 NewHubuumClass {
                     namespace_id: 0,
-                    name: format!("{prefix}_class_2"),
+                    name: format!("{prefix}_class_2_{unique}"),
                     description: format!("{prefix}_class_2"),
                     json_schema: None,
                     validate_schema: Some(false),

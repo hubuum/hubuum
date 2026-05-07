@@ -57,9 +57,13 @@ mod test {
                 schema = address_schema.clone();
             }
 
+            // Per-call random suffix on class names: hubuumclass.name is
+            // globally UNIQUE, and the deterministic prefix collides on
+            // re-runs against a persistent test DB.
+            let unique = crate::utilities::auth::generate_random_password(8);
             classes.push(
                 NewHubuumClass {
-                    name: format!("{prefix}_class_{padded_i}"),
+                    name: format!("{prefix}_class_{padded_i}_{unique}"),
                     description: format!("{pretty_prefix} class {padded_i}"),
                     json_schema: Some(schema),
                     validate_schema: Some(false),

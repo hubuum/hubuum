@@ -334,7 +334,13 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let prefix = format!("test_list_groups_sorted_{}", sort_order.replace('.', "_"));
+        // Scope the prefix via the per-run TestScope so groupnames stay
+        // unique across re-runs while remaining matchable by the
+        // contains-filter URL below.
+        let prefix = context.scoped_name(&format!(
+            "test_list_groups_sorted_{}",
+            sort_order.replace('.', "_")
+        ));
 
         let mut created_groups = Vec::new();
         for i in 0..3 {
@@ -373,7 +379,7 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let prefix = format!("test_list_groups_limit_{limit}");
+        let prefix = context.scoped_name(&format!("test_list_groups_limit_{limit}"));
 
         let mut created_groups = Vec::new();
         for i in 0..3 {
@@ -402,7 +408,7 @@ mod tests {
     #[actix_web::test]
     async fn test_list_groups_cursor_pagination(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let prefix = "cursor-group";
+        let prefix = context.scoped_name("cursor-group");
         let mut created_groups = Vec::new();
 
         for idx in 0..3 {
