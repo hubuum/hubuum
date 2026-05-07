@@ -16,6 +16,7 @@ use tracing::{debug, info, warn};
 use crate::api::openapi::ApiErrorResponse;
 use crate::can;
 use crate::db::DbPool;
+use crate::permissions::AppContext;
 use crate::db::traits::UserPermissions;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
@@ -74,7 +75,7 @@ struct ReportExecution {
 )]
 #[post("")]
 pub async fn run_report(
-    pool: web::Data<DbPool>,
+    ctx: web::Data<AppContext>,
     requestor: UserAccess,
     req: HttpRequest,
     report: web::Json<ReportRequest>,
@@ -90,12 +91,12 @@ pub async fn run_report(
         query = report.query
     );
 
-    let runtime = prepare_report_runtime(&pool, &req, &user, report).await?;
+    let runtime = prepare_report_runtime(&ctx.db_pool, &req, &user, report).await?;
     let scope = runtime.report.scope.kind;
     let content_type = runtime.content_type;
 
     let execution_start = Instant::now();
-    let execution = match build_report_execution(&pool, &user, &runtime).await {
+    let execution = match build_report_execution(&ctx.db_pool, &user, &runtime).await {
         Ok(execution) => execution,
         Err(error) => {
             warn!(
