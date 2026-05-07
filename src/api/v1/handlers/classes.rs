@@ -22,7 +22,9 @@ use crate::models::{
     RelatedClassGraph, RelatedObjectGraph, RelatedObjectGraphRow, UpdateHubuumClass,
     UpdateHubuumObject,
 };
-use crate::traits::{CanDelete, CanSave, CanUpdate, NamespaceAccessors, Search, SelfAccessors};
+use crate::traits::{
+    BackendContext, CanDelete, CanSave, CanUpdate, NamespaceAccessors, Search, SelfAccessors,
+};
 use crate::utilities::extensions::CustomStringExtensions;
 
 use super::check_if_object_in_class;
@@ -319,7 +321,6 @@ async fn get_class_permissions(
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    use crate::models::namespace::groups_on_paginated;
     use crate::traits::NamespaceAccessors;
 
     let user = requestor.user;
@@ -336,32 +337,20 @@ async fn get_class_permissions(
     can!(&ctx, user, [Permissions::ReadClass], class);
 
     let nid = class.namespace_id(&ctx.db_pool).await?;
-    let count_params = count_query_options(&params);
-    let total_count = crate::models::namespace::count_groups_on_paginated(
-        &ctx.db_pool,
-        NamespaceID(nid),
-        vec![
-            Permissions::CreateClass,
-            Permissions::UpdateClass,
-            Permissions::ReadClass,
-            Permissions::DeleteClass,
-        ],
-        &count_params,
-    )
-    .await?;
+    let class_perms = [
+        Permissions::CreateClass,
+        Permissions::UpdateClass,
+        Permissions::ReadClass,
+        Permissions::DeleteClass,
+    ];
     let search_params = prepare_db_pagination::<GroupPermission>(&params)?;
-    let permissions = groups_on_paginated(
-        &ctx.db_pool,
-        NamespaceID(nid),
-        vec![
-            Permissions::CreateClass,
-            Permissions::UpdateClass,
-            Permissions::ReadClass,
-            Permissions::DeleteClass,
-        ],
-        &search_params,
-    )
-    .await?;
+    let (permissions, total_count) = ctx
+        .permission_backend()
+        .groups_with_permissions_on(nid, &class_perms, &search_params)
+        .await?;
+    // count_query_options is no longer used: groups_with_permissions_on
+    // returns the total alongside the page.
+    let _ = count_query_options(&params);
 
     paginated_json_response(permissions, total_count, StatusCode::OK, &params)
 }

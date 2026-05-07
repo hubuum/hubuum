@@ -21,7 +21,8 @@ use crate::can;
 
 use crate::db::traits::UserPermissions;
 use crate::traits::{
-    CanDelete, CanSave, CanUpdate, NamespaceAccessors, PermissionController, Search, SelfAccessors,
+    BackendContext, CanDelete, CanSave, CanUpdate, NamespaceAccessors, PermissionController,
+    Search, SelfAccessors,
 };
 
 #[utoipa::path(
@@ -260,13 +261,9 @@ pub async fn get_namespace_permissions(
     );
 
     let search_params = prepare_db_pagination::<GroupPermission>(&params)?;
-    let (permissions, total_count) =
-        crate::models::namespace::groups_on_paginated_with_total_count(
-            &ctx.db_pool,
-            namespace.clone(),
-            vec![],
-            &search_params,
-        )
+    let (permissions, total_count) = ctx
+        .permission_backend()
+        .groups_with_permissions_on(namespace.id, &[], &search_params)
         .await?;
     paginated_json_response(permissions, total_count, StatusCode::OK, &params)
 }
