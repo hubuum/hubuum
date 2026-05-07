@@ -176,7 +176,10 @@ pub async fn update_namespace(
         namespace
     );
 
-    let updated_namespace = update_data.into_inner().update(&ctx.db_pool, namespace.id).await?;
+    let updated_namespace = update_data
+        .into_inner()
+        .update(&ctx.db_pool, namespace.id)
+        .await?;
     Ok(json_response(updated_namespace, StatusCode::ACCEPTED))
 }
 
@@ -368,7 +371,9 @@ pub async fn grant_namespace_group_permissions(
         namespace
     );
 
-    namespace.grant(&ctx.db_pool, group_id.id(), permissions).await?;
+    namespace
+        .grant(&ctx.db_pool, group_id.id(), permissions)
+        .await?;
 
     Ok(json_response((), StatusCode::CREATED))
 }
@@ -567,7 +572,11 @@ pub async fn grant_namespace_group_permission(
     );
 
     namespace
-        .grant(&ctx.db_pool, group_id.id(), PermissionsList::new([permission]))
+        .grant(
+            &ctx.db_pool,
+            group_id.id(),
+            PermissionsList::new([permission]),
+        )
         .await?;
 
     Ok(json_response((), StatusCode::CREATED))
@@ -615,7 +624,11 @@ pub async fn revoke_namespace_group_permission(
     );
 
     namespace
-        .revoke(&ctx.db_pool, group_id.id(), PermissionsList::new([permission]))
+        .revoke(
+            &ctx.db_pool,
+            group_id.id(),
+            PermissionsList::new([permission]),
+        )
         .await?;
 
     Ok(json_response((), StatusCode::NO_CONTENT))

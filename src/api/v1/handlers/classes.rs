@@ -7,9 +7,9 @@ use crate::can;
 use crate::db::traits::{ClassRelation, ObjectRelationMemberships, UserPermissions};
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
-use crate::permissions::AppContext;
 use crate::models::traits::{ExpandNamespace, ToHubuumObjects};
 use crate::pagination::{count_query_options, prepare_db_pagination};
+use crate::permissions::AppContext;
 use crate::utilities::response::{
     json_response, json_response_created, paginated_json_mapped_response, paginated_json_response,
 };
@@ -626,7 +626,9 @@ async fn get_related_class_graph(
     can!(&ctx, user, [Permissions::ReadClass], class);
 
     let root_class = class_with_root_path(&class);
-    let connected_classes = user.search_classes_related_to(&ctx.db_pool, class, params).await?;
+    let connected_classes = user
+        .search_classes_related_to(&ctx.db_pool, class, params)
+        .await?;
     let mut classes = Vec::with_capacity(connected_classes.len() + 1);
     classes.push(root_class);
     classes.extend(connected_classes.to_descendant_classes_with_path());
@@ -1244,7 +1246,9 @@ async fn create_object_relation(
         to_class
     );
 
-    let is_related = from_class.direct_relation_to(&ctx.db_pool, &to_class).await?;
+    let is_related = from_class
+        .direct_relation_to(&ctx.db_pool, &to_class)
+        .await?;
 
     if is_related.is_none() {
         debug!(

@@ -1,11 +1,11 @@
 use crate::api::openapi::ApiErrorResponse;
-use crate::permissions::AppContext;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, AdminOrSelfAccess, UserAccess};
 use crate::models::search::parse_query_parameter;
 use crate::models::user::{NewUser, UpdateUser, UserID};
 use crate::models::{Group, User, UserToken, UserTokenMetadata};
 use crate::pagination::{count_query_options, prepare_db_pagination};
+use crate::permissions::AppContext;
 use crate::utilities::response::{
     json_response, json_response_created, paginated_json_mapped_response, paginated_json_response,
 };

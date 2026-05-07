@@ -4,7 +4,6 @@ use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, web};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
-use crate::permissions::AppContext;
 use crate::db::traits::task::{
     TaskCreateRequest, create_generic_task, find_task_by_idempotency, find_task_record,
     list_import_results_with_total_count,
@@ -17,6 +16,7 @@ use crate::models::{
     TaskResponse, User,
 };
 use crate::pagination::prepare_db_pagination;
+use crate::permissions::AppContext;
 use crate::tasks::{ensure_task_worker_running, kick_task_worker, request_hash};
 use crate::traits::GroupMemberships;
 use crate::utilities::response::{
@@ -182,7 +182,8 @@ pub async fn get_import(
     task_id: web::Path<i32>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(ctx.db_pool.clone());
-    let task = load_authorized_import_task(&ctx.db_pool, &requestor.user, task_id.into_inner()).await?;
+    let task =
+        load_authorized_import_task(&ctx.db_pool, &requestor.user, task_id.into_inner()).await?;
     Ok(json_response(task.to_response()?, StatusCode::OK))
 }
 

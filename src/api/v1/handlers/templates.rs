@@ -3,7 +3,6 @@ use tracing::{debug, info};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::can;
-use crate::permissions::AppContext;
 use crate::db::traits::UserPermissions;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
@@ -13,6 +12,7 @@ use crate::models::{
     UpdateReportTemplate,
 };
 use crate::pagination::prepare_db_pagination;
+use crate::permissions::AppContext;
 use crate::traits::NamespaceAccessors;
 use crate::utilities::response::{json_response, json_response_created, paginated_json_response};
 
@@ -55,7 +55,8 @@ pub async fn create_template(
         NamespaceID(template.namespace_id)
     );
 
-    let created = crate::models::report_template::create_report_template(&ctx.db_pool, template).await?;
+    let created =
+        crate::models::report_template::create_report_template(&ctx.db_pool, template).await?;
 
     Ok(json_response_created(
         &created,
@@ -139,7 +140,8 @@ pub async fn get_template(
         template_id = template_id
     );
 
-    let template = crate::models::report_template::report_template(&ctx.db_pool, template_id).await?;
+    let template =
+        crate::models::report_template::report_template(&ctx.db_pool, template_id).await?;
 
     can!(
         &ctx.db_pool,
@@ -186,7 +188,8 @@ pub async fn patch_template(
         template_id = template_id
     );
 
-    let existing = crate::models::report_template::report_template(&ctx.db_pool, template_id).await?;
+    let existing =
+        crate::models::report_template::report_template(&ctx.db_pool, template_id).await?;
 
     can!(
         &ctx.db_pool,
@@ -207,7 +210,8 @@ pub async fn patch_template(
     }
 
     let updated =
-        crate::models::report_template::update_report_template(&ctx.db_pool, template_id, update).await?;
+        crate::models::report_template::update_report_template(&ctx.db_pool, template_id, update)
+            .await?;
 
     Ok(json_response(updated, StatusCode::OK))
 }
@@ -242,7 +246,8 @@ pub async fn delete_template(
         template_id = template_id
     );
 
-    let template = crate::models::report_template::report_template(&ctx.db_pool, template_id).await?;
+    let template =
+        crate::models::report_template::report_template(&ctx.db_pool, template_id).await?;
 
     can!(
         &ctx.db_pool,

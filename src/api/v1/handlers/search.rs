@@ -4,7 +4,6 @@ use futures_util::stream;
 use serde::Serialize;
 
 use crate::api::openapi::ApiErrorResponse;
-use crate::permissions::AppContext;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::{
@@ -12,6 +11,7 @@ use crate::models::{
     UnifiedSearchStartedEvent, execute_unified_search, execute_unified_search_batch,
     parse_unified_search_query,
 };
+use crate::permissions::AppContext;
 use crate::utilities::response::json_response;
 
 fn sse_event<T: Serialize>(event: &str, payload: &T) -> Result<Bytes, ApiError> {

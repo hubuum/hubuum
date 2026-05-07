@@ -1,11 +1,11 @@
 use crate::api::openapi::ApiErrorResponse;
-use crate::permissions::AppContext;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, UserAccess};
 use crate::models::group::{GroupID, NewGroup, UpdateGroup};
 use crate::models::search::parse_query_parameter;
 use crate::models::{Group, User, UserID};
 use crate::pagination::{count_query_options, prepare_db_pagination};
+use crate::permissions::AppContext;
 use crate::utilities::response::{json_response, json_response_created, paginated_json_response};
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 use serde::{Deserialize, Serialize};
@@ -157,7 +157,10 @@ pub async fn update_group(
         requestor = requestor.user.id
     );
 
-    let updated = updated_group.into_inner().save(group.id, &ctx.db_pool).await?;
+    let updated = updated_group
+        .into_inner()
+        .save(group.id, &ctx.db_pool)
+        .await?;
     Ok(json_response(updated, StatusCode::OK))
 }
 
@@ -223,9 +226,13 @@ pub async fn get_group_members(
     );
 
     let count_params = count_query_options(&params);
-    let total_count = group.count_members_paginated(&ctx.db_pool, &count_params).await?;
+    let total_count = group
+        .count_members_paginated(&ctx.db_pool, &count_params)
+        .await?;
     let search_params = prepare_db_pagination::<User>(&params)?;
-    let members = group.members_paginated(&ctx.db_pool, &search_params).await?;
+    let members = group
+        .members_paginated(&ctx.db_pool, &search_params)
+        .await?;
 
     paginated_json_response(members, total_count, StatusCode::OK, &params)
 }

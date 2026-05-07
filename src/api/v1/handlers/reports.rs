@@ -16,7 +16,6 @@ use tracing::{debug, info, warn};
 use crate::api::openapi::ApiErrorResponse;
 use crate::can;
 use crate::db::DbPool;
-use crate::permissions::AppContext;
 use crate::db::traits::UserPermissions;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
@@ -27,6 +26,7 @@ use crate::models::{
     ReportTemplate, ReportTemplateID, ReportWarning,
 };
 use crate::pagination::page_limits_or_defaults;
+use crate::permissions::AppContext;
 use crate::traits::{NamespaceAccessors, Search, SelfAccessors};
 use crate::utilities::reporting::render_template;
 use crate::utilities::response::json_response_with_header;

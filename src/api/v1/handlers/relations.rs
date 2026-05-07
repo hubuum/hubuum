@@ -1,5 +1,4 @@
 use crate::api::openapi::ApiErrorResponse;
-use crate::permissions::AppContext;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::parse_query_parameter;
@@ -8,6 +7,7 @@ use crate::models::{
     NamespaceID, NewHubuumClassRelation, NewHubuumObjectRelation, Permissions,
 };
 use crate::pagination::prepare_db_pagination;
+use crate::permissions::AppContext;
 
 use crate::can;
 use crate::db::traits::UserPermissions;
@@ -51,7 +51,9 @@ async fn get_class_relations(
     debug!(message = "Listing class relations", user_id = user.id());
 
     let search_params = prepare_db_pagination::<HubuumClassRelation>(&params)?;
-    let (classes, total_count) = user.class_relations_page(&ctx.db_pool, search_params).await?;
+    let (classes, total_count) = user
+        .class_relations_page(&ctx.db_pool, search_params)
+        .await?;
 
     paginated_json_response(classes, total_count, StatusCode::OK, &params)
 }
@@ -217,7 +219,9 @@ async fn get_object_relations(
     debug!(message = "Listing object relations", user_id = user.id());
 
     let search_params = prepare_db_pagination::<HubuumObjectRelation>(&params)?;
-    let (object_relations, total_count) = user.object_relations_page(&ctx.db_pool, search_params).await?;
+    let (object_relations, total_count) = user
+        .object_relations_page(&ctx.db_pool, search_params)
+        .await?;
 
     paginated_json_response(object_relations, total_count, StatusCode::OK, &params)
 }
