@@ -1,11 +1,20 @@
 use crate::api as prod_api;
 use crate::db::DbPool;
 use crate::middlewares::tracing::TracingMiddleware;
+use crate::permissions::{AppContext, LocalPermissionBackend};
 use actix_web::{App, http, test, web::Data};
 use serde::Serialize;
+use std::sync::Arc;
 
 fn create_token_header(token: &str) -> (http::header::HeaderName, String) {
     (http::header::AUTHORIZATION, format!("Bearer {token}"))
+}
+
+fn build_test_app_context(pool: &DbPool) -> Data<AppContext> {
+    Data::new(AppContext::new(
+        pool.clone(),
+        Arc::new(LocalPermissionBackend::new()),
+    ))
 }
 
 pub async fn get_request_with_correlation(
@@ -14,10 +23,12 @@ pub async fn get_request_with_correlation(
     endpoint: &str,
     correlation_id: Option<&str>,
 ) -> actix_web::dev::ServiceResponse {
+    let app_context = build_test_app_context(pool);
     let app = test::init_service(
         App::new()
             .wrap(TracingMiddleware::new())
             .app_data(Data::new(pool.clone()))
+            .app_data(app_context)
             .configure(prod_api::config),
     )
     .await;
@@ -59,10 +70,12 @@ pub async fn post_request_with_headers<T>(
 where
     T: Serialize,
 {
+    let app_context = build_test_app_context(pool);
     let app = test::init_service(
         App::new()
             .wrap(TracingMiddleware::new())
             .app_data(Data::new(pool.clone()))
+            .app_data(app_context)
             .configure(prod_api::config),
     )
     .await;
@@ -95,10 +108,12 @@ pub async fn delete_request(
     token: &str,
     endpoint: &str,
 ) -> actix_web::dev::ServiceResponse {
+    let app_context = build_test_app_context(pool);
     let app = test::init_service(
         App::new()
             .wrap(TracingMiddleware::new())
             .app_data(Data::new(pool.clone()))
+            .app_data(app_context)
             .configure(prod_api::config),
     )
     .await;
@@ -119,10 +134,12 @@ pub async fn patch_request<T>(
 where
     T: Serialize,
 {
+    let app_context = build_test_app_context(pool);
     let app = test::init_service(
         App::new()
             .wrap(TracingMiddleware::new())
             .app_data(Data::new(pool.clone()))
+            .app_data(app_context)
             .configure(prod_api::config),
     )
     .await;
@@ -144,10 +161,12 @@ pub async fn put_request<T>(
 where
     T: Serialize,
 {
+    let app_context = build_test_app_context(pool);
     let app = test::init_service(
         App::new()
             .wrap(TracingMiddleware::new())
             .app_data(Data::new(pool.clone()))
+            .app_data(app_context)
             .configure(prod_api::config),
     )
     .await;

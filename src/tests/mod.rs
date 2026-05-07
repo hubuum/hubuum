@@ -209,6 +209,7 @@ impl Default for TestScope {
 #[derive(Clone)]
 pub struct TestContext {
     pub pool: web::Data<DbPool>,
+    pub app_context: web::Data<crate::permissions::AppContext>,
     pub admin_user: User,
     pub admin_token: String,
     pub normal_user: User,
@@ -225,8 +226,15 @@ impl TestContext {
         let normal_user = create_test_user(&pool).await;
         let normal_token = normal_user.create_token(&pool).await.unwrap().get_token();
 
+        // Build AppContext with LocalPermissionBackend for tests
+        let app_context = web::Data::new(crate::permissions::AppContext::new(
+            pool.get_ref().clone(),
+            std::sync::Arc::new(crate::permissions::LocalPermissionBackend::new()),
+        ));
+
         Self {
             pool,
+            app_context,
             admin_user,
             admin_token,
             normal_user,
