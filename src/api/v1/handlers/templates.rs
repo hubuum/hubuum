@@ -7,13 +7,14 @@ use crate::db::traits::UserPermissions;
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::parse_query_parameter;
+use crate::models::traits::GroupAccessors;
 use crate::models::{
     NamespaceID, NewReportTemplate, Permissions, ReportTemplate, ReportTemplateID,
     UpdateReportTemplate,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
-use crate::traits::NamespaceAccessors;
+use crate::traits::{BackendContext, NamespaceAccessors};
 use crate::utilities::response::{json_response, json_response_created, paginated_json_response};
 
 #[utoipa::path(
@@ -49,7 +50,7 @@ pub async fn create_template(
     );
 
     can!(
-        &ctx.db_pool,
+        &ctx,
         user,
         [Permissions::CreateTemplate],
         NamespaceID(template.namespace_id)
@@ -92,12 +93,15 @@ pub async fn get_templates(
     );
 
     let search_params = prepare_db_pagination::<ReportTemplate>(&params)?;
-    let allowed_namespace_ids =
-        crate::models::namespace::user_can_on_any(&ctx.db_pool, user, Permissions::ReadTemplate)
-            .await?
-            .into_iter()
-            .map(|namespace| namespace.id)
-            .collect::<Vec<_>>();
+    let principal =
+        crate::permissions::PrincipalRef::new(user.id, user.group_ids(&ctx.db_pool).await?);
+    let allowed_namespace_ids = ctx
+        .permission_backend()
+        .namespaces_user_can(&principal, &[Permissions::ReadTemplate])
+        .await?
+        .into_iter()
+        .map(|namespace| namespace.id)
+        .collect::<Vec<_>>();
 
     let (templates, total_count) =
         crate::models::report_template::list_report_templates_with_total_count(
@@ -144,7 +148,7 @@ pub async fn get_template(
         crate::models::report_template::report_template(&ctx.db_pool, template_id).await?;
 
     can!(
-        &ctx.db_pool,
+        &ctx,
         user,
         [Permissions::ReadTemplate],
         NamespaceID(template.namespace_id)
@@ -192,7 +196,7 @@ pub async fn patch_template(
         crate::models::report_template::report_template(&ctx.db_pool, template_id).await?;
 
     can!(
-        &ctx.db_pool,
+        &ctx,
         user.clone(),
         [Permissions::UpdateTemplate],
         NamespaceID(existing.namespace_id)
@@ -202,7 +206,7 @@ pub async fn patch_template(
         && target_namespace != existing.namespace_id
     {
         can!(
-            &ctx.db_pool,
+            &ctx,
             user,
             [Permissions::CreateTemplate],
             NamespaceID(target_namespace)
@@ -250,7 +254,7 @@ pub async fn delete_template(
         crate::models::report_template::report_template(&ctx.db_pool, template_id).await?;
 
     can!(
-        &ctx.db_pool,
+        &ctx,
         user,
         [Permissions::DeleteTemplate],
         NamespaceID(template.namespace_id)

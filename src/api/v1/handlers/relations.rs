@@ -89,7 +89,7 @@ async fn get_class_relation(
 
     let namespaces = relation_id.namespace(&ctx.db_pool).await?;
     can!(
-        &ctx.db_pool,
+        &ctx,
         user,
         [Permissions::ReadClassRelation],
         namespaces.0,
@@ -134,7 +134,7 @@ async fn create_class_relation(
 
     let namespaces = relation.namespace(&ctx.db_pool).await?;
     can!(
-        &ctx.db_pool,
+        &ctx,
         user,
         [Permissions::CreateClassRelation],
         namespaces.0,
@@ -177,7 +177,7 @@ async fn delete_class_relation(
 
     let namespaces = relation_id.namespace(&ctx.db_pool).await?;
     can!(
-        &ctx.db_pool,
+        &ctx,
         user,
         [Permissions::DeleteClassRelation],
         namespaces.0,
@@ -257,7 +257,7 @@ async fn get_object_relation(
 
     let namespaces = relation_id.namespace(&ctx.db_pool).await?;
     can!(
-        &ctx.db_pool,
+        &ctx,
         user,
         [Permissions::ReadObjectRelation],
         namespaces.0,
@@ -302,7 +302,7 @@ async fn create_object_relation(
 
     let namespaces = relation.namespace(&ctx.db_pool).await?;
     can!(
-        &ctx.db_pool,
+        &ctx,
         user,
         [Permissions::CreateObjectRelation],
         namespaces.0,
@@ -345,7 +345,7 @@ async fn delete_object_relation(
 
     let namespaces = relation_id.namespace(&ctx.db_pool).await?;
     can!(
-        &ctx.db_pool,
+        &ctx,
         user,
         [Permissions::DeleteObjectRelation],
         namespaces.0,

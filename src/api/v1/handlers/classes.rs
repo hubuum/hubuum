@@ -455,13 +455,7 @@ async fn create_class_relation(
         .namespace_id(&ctx.db_pool)
         .await
         .map(|(id0, id1)| (NamespaceID(id0), NamespaceID(id1)))?;
-    can!(
-        &ctx.db_pool,
-        user,
-        [Permissions::CreateClassRelation],
-        ids.0,
-        ids.1
-    );
+    can!(&ctx, user, [Permissions::CreateClassRelation], ids.0, ids.1);
 
     let relation = relation.save(&ctx.db_pool).await?;
 
@@ -517,13 +511,7 @@ async fn delete_class_relation(
         .await
         .map(|(id0, id1)| (NamespaceID(id0), NamespaceID(id1)))?;
 
-    can!(
-        &ctx.db_pool,
-        user,
-        [Permissions::DeleteClassRelation],
-        ids.0,
-        ids.1
-    );
+    can!(&ctx, user, [Permissions::DeleteClassRelation], ids.0, ids.1);
 
     if relation.from_hubuum_class_id == class_id.id()
         || relation.to_hubuum_class_id == class_id.id()
@@ -1092,7 +1080,7 @@ async fn get_object_relation_from_class_and_objects(
     );
 
     can!(
-        &ctx.db_pool,
+        &ctx,
         user,
         [Permissions::ReadObjectRelation],
         from_class,
@@ -1157,7 +1145,7 @@ async fn delete_object_relation(
     );
 
     can!(
-        &ctx.db_pool,
+        &ctx,
         user,
         [Permissions::DeleteObjectRelation],
         from_class,
@@ -1239,7 +1227,7 @@ async fn create_object_relation(
     );
 
     can!(
-        &ctx.db_pool,
+        &ctx,
         user,
         [Permissions::CreateObjectRelation],
         from_class,
