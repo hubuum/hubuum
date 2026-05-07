@@ -763,7 +763,11 @@ mod tests {
 
         // Grant permissions to the group (and indirectly to the user).
         namespace
-            .grant_one(&context.pool, group.id, Permissions::ReadClassRelation)
+            .grant_one(
+                &context.app_context,
+                group.id,
+                Permissions::ReadClassRelation,
+            )
             .await
             .unwrap();
 
@@ -1834,7 +1838,7 @@ mod tests {
             .await
             .unwrap();
         namespace
-            .grant_one(&context.pool, group.id, Permissions::ReadObject)
+            .grant_one(&context.app_context, group.id, Permissions::ReadObject)
             .await
             .unwrap();
 
@@ -1950,11 +1954,15 @@ mod tests {
             .await
             .unwrap();
         visible_namespace
-            .grant_one(&context.pool, group.id, Permissions::ReadObject)
+            .grant_one(&context.app_context, group.id, Permissions::ReadObject)
             .await
             .unwrap();
         visible_namespace
-            .grant_one(&context.pool, group.id, Permissions::ReadObjectRelation)
+            .grant_one(
+                &context.app_context,
+                group.id,
+                Permissions::ReadObjectRelation,
+            )
             .await
             .unwrap();
 

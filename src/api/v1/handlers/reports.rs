@@ -91,7 +91,7 @@ pub async fn run_report(
         query = report.query
     );
 
-    let runtime = prepare_report_runtime(&ctx.db_pool, &req, &user, report).await?;
+    let runtime = prepare_report_runtime(&ctx, &req, &user, report).await?;
     let scope = runtime.report.scope.kind;
     let content_type = runtime.content_type;
 
@@ -152,15 +152,18 @@ pub async fn run_report(
     response
 }
 
-async fn prepare_report_runtime(
-    pool: &DbPool,
+async fn prepare_report_runtime<C>(
+    ctx: &C,
     req: &HttpRequest,
     user: &crate::models::User,
     report: ReportRequest,
-) -> Result<ReportRuntime, ApiError> {
+) -> Result<ReportRuntime, ApiError>
+where
+    C: crate::traits::BackendContext + ?Sized,
+{
     report.scope.validate()?;
 
-    let template = resolve_template(pool, user, &report).await?;
+    let template = resolve_template(ctx, user, &report).await?;
     let content_type = resolve_content_type(req, template.as_ref())?;
 
     if template.is_none() && content_type != ReportContentType::ApplicationJson {
@@ -180,18 +183,23 @@ async fn prepare_report_runtime(
     })
 }
 
-async fn resolve_template(
-    pool: &DbPool,
+async fn resolve_template<C>(
+    ctx: &C,
     user: &crate::models::User,
     report: &ReportRequest,
-) -> Result<Option<ReportTemplate>, ApiError> {
+) -> Result<Option<ReportTemplate>, ApiError>
+where
+    C: crate::traits::BackendContext + ?Sized,
+{
     let Some(template_id) = report.output.as_ref().and_then(|output| output.template_id) else {
         return Ok(None);
     };
 
-    let template = ReportTemplateID(template_id).instance(pool).await?;
+    let template = ReportTemplateID(template_id)
+        .instance(ctx.db_pool())
+        .await?;
     can!(
-        pool,
+        ctx,
         user.clone(),
         [Permissions::ReadTemplate],
         NamespaceID(template.namespace_id)

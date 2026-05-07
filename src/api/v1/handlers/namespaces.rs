@@ -371,9 +371,7 @@ pub async fn grant_namespace_group_permissions(
         namespace
     );
 
-    namespace
-        .grant(&ctx.db_pool, group_id.id(), permissions)
-        .await?;
+    namespace.grant(&ctx, group_id.id(), permissions).await?;
 
     Ok(json_response((), StatusCode::CREATED))
 }
@@ -431,7 +429,7 @@ pub async fn replace_namespace_group_permissions(
     }
 
     namespace
-        .set_permissions(&ctx.db_pool, group_id.id(), permissions)
+        .set_permissions(&ctx, group_id.id(), permissions)
         .await?;
 
     Ok(json_response((), StatusCode::OK))
@@ -476,7 +474,7 @@ pub async fn revoke_namespace_group_permissions(
         namespace
     );
 
-    namespace.revoke_all(&ctx.db_pool, group_id.id()).await?;
+    namespace.revoke_all(&ctx, group_id.id()).await?;
 
     Ok(json_response((), StatusCode::NO_CONTENT))
 }
@@ -572,11 +570,7 @@ pub async fn grant_namespace_group_permission(
     );
 
     namespace
-        .grant(
-            &ctx.db_pool,
-            group_id.id(),
-            PermissionsList::new([permission]),
-        )
+        .grant(&ctx, group_id.id(), PermissionsList::new([permission]))
         .await?;
 
     Ok(json_response((), StatusCode::CREATED))

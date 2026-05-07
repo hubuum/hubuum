@@ -446,7 +446,7 @@ mod tests {
         // Now, let us grant test_group read permission to the namespace
         let np_read = Permissions::ReadCollection;
         ns.namespace
-            .grant_one(&context.pool, test_group.id, np_read)
+            .grant_one(&context.app_context, test_group.id, np_read)
             .await
             .unwrap();
 
@@ -463,7 +463,7 @@ mod tests {
         // Now, let us grant test_group update permission to the namespace
         let np_update = Permissions::UpdateCollection;
         ns.namespace
-            .grant_one(&context.pool, test_group.id, np_update)
+            .grant_one(&context.app_context, test_group.id, np_update)
             .await
             .unwrap();
 
@@ -490,7 +490,7 @@ mod tests {
         // Grant test_group delegate permission to the namespace
         let np_delegate = Permissions::DelegateCollection;
         ns.namespace
-            .grant_one(&context.pool, test_group.id, np_delegate)
+            .grant_one(&context.app_context, test_group.id, np_delegate)
             .await
             .unwrap();
 
@@ -546,11 +546,19 @@ mod tests {
         .unwrap();
 
         ns.namespace
-            .grant_one(&context.pool, group_one.id, Permissions::ReadCollection)
+            .grant_one(
+                &context.app_context,
+                group_one.id,
+                Permissions::ReadCollection,
+            )
             .await
             .unwrap();
         ns.namespace
-            .grant_one(&context.pool, group_two.id, Permissions::ReadCollection)
+            .grant_one(
+                &context.app_context,
+                group_two.id,
+                Permissions::ReadCollection,
+            )
             .await
             .unwrap();
 
@@ -628,7 +636,7 @@ mod tests {
 
         for group in [&group_one, &group_two, &group_three] {
             ns.namespace
-                .grant_one(&context.pool, group.id, Permissions::ReadCollection)
+                .grant_one(&context.app_context, group.id, Permissions::ReadCollection)
                 .await
                 .unwrap();
         }
