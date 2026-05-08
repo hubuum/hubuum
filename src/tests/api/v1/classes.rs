@@ -129,19 +129,20 @@ pub mod tests {
             .scope
             .namespace_fixture("admin_lists_hidden_classes")
             .await;
+        let unique = crate::utilities::auth::generate_random_password(8);
         let classes = create_class_fixture(
             &context.pool,
             namespace,
             vec![
                 NewHubuumClass {
-                    name: "hidden class a".to_string(),
+                    name: format!("hidden class a {unique}"),
                     description: "hidden class a".to_string(),
                     namespace_id: 0,
                     json_schema: None,
                     validate_schema: Some(false),
                 },
                 NewHubuumClass {
-                    name: "hidden class b".to_string(),
+                    name: format!("hidden class b {unique}"),
                     description: "hidden class b".to_string(),
                     namespace_id: 0,
                     json_schema: None,

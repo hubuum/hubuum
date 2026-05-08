@@ -77,8 +77,9 @@ mod tests {
         let context = test_context;
         let namespace = context.namespace_fixture("unified_schema_toggle").await;
 
+        let unique = crate::utilities::auth::generate_random_password(8);
         let class = NewHubuumClass {
-            name: "ordinary-class".to_string(),
+            name: format!("ordinary-class {unique}"),
             namespace_id: namespace.namespace.id,
             json_schema: Some(serde_json::json!({
                 "type": "object",
@@ -123,8 +124,9 @@ mod tests {
             .namespace_fixture("unified_object_data_toggle")
             .await;
 
+        let unique = crate::utilities::auth::generate_random_password(8);
         let class = NewHubuumClass {
-            name: "search-data-class".to_string(),
+            name: format!("search-data-class {unique}"),
             namespace_id: namespace.namespace.id,
             json_schema: None,
             validate_schema: Some(false),
@@ -135,7 +137,7 @@ mod tests {
         .unwrap();
 
         let object = NewHubuumObject {
-            name: "ordinary-object".to_string(),
+            name: format!("ordinary-object {unique}"),
             namespace_id: namespace.namespace.id,
             hubuum_class_id: class.id,
             data: serde_json::json!({"owner": "jsononlyneedle", "ignored_key": "value"}),
@@ -175,9 +177,10 @@ mod tests {
         let context = test_context;
         let namespace = context.namespace_fixture("unified_cursor_page").await;
 
+        let unique = crate::utilities::auth::generate_random_password(8);
         for idx in 0..3 {
             NewHubuumClass {
-                name: format!("cursorclass{idx}"),
+                name: format!("cursorclass{idx}_{unique}"),
                 namespace_id: namespace.namespace.id,
                 json_schema: None,
                 validate_schema: Some(false),
@@ -320,8 +323,9 @@ mod tests {
         let context = test_context;
         let namespace = context.namespace_fixture("streamneedle").await;
 
+        let unique = crate::utilities::auth::generate_random_password(8);
         let class = NewHubuumClass {
-            name: "streamneedle-class".to_string(),
+            name: format!("streamneedle-class {unique}"),
             namespace_id: namespace.namespace.id,
             json_schema: None,
             validate_schema: Some(false),
@@ -332,7 +336,7 @@ mod tests {
         .unwrap();
 
         NewHubuumObject {
-            name: "streamneedle-object".to_string(),
+            name: format!("streamneedle-object {unique}"),
             namespace_id: namespace.namespace.id,
             hubuum_class_id: class.id,
             data: serde_json::json!({"label": "streamneedle"}),

@@ -22,16 +22,17 @@ mod tests {
         pool: &crate::db::DbPool,
         class: &HubuumClass,
     ) -> Vec<crate::models::HubuumObject> {
+        let unique = crate::utilities::auth::generate_random_password(8);
         let objects = vec![
             NewHubuumObject {
-                name: "report-app-01".to_string(),
+                name: format!("report-app-01 {unique}"),
                 description: "App server".to_string(),
                 namespace_id: class.namespace_id,
                 hubuum_class_id: class.id,
                 data: serde_json::json!({"hostname": "report-app-01", "owner": "alice"}),
             },
             NewHubuumObject {
-                name: "report-db-01".to_string(),
+                name: format!("report-db-01 {unique}"),
                 description: "Database server".to_string(),
                 namespace_id: class.namespace_id,
                 hubuum_class_id: class.id,

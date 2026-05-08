@@ -91,9 +91,10 @@ mod tests {
         names: &[&str],
     ) -> (NamespaceFixture, HubuumClass, Vec<HubuumObject>) {
         let namespace = context.namespace_fixture(label).await;
+        let unique = crate::utilities::auth::generate_random_password(8);
         let class = NewHubuumClass {
             namespace_id: namespace.namespace.id,
-            name: format!("{label}_class"),
+            name: format!("{label}_class_{unique}"),
             description: format!("{label}_class"),
             json_schema: None,
             validate_schema: Some(false),
@@ -109,7 +110,7 @@ mod tests {
                     namespace_id: namespace.namespace.id,
                     hubuum_class_id: class.id,
                     data: serde_json::json!({ "name": name }),
-                    name: (*name).to_string(),
+                    name: format!("{}_{unique}", name),
                     description: (*name).to_string(),
                 }
                 .save(&context.pool)
@@ -140,6 +141,7 @@ mod tests {
     async fn create_boolean_class_fixture(context: &TestContext, label: &str) -> NamespaceFixture {
         let namespace = context.namespace_fixture(label).await;
 
+        let unique = crate::utilities::auth::generate_random_password(8);
         for (name, validate_schema) in [
             ("bool-true-a", true),
             ("bool-false", false),
@@ -147,7 +149,7 @@ mod tests {
         ] {
             NewHubuumClass {
                 namespace_id: namespace.namespace.id,
-                name: format!("{label}-{name}"),
+                name: format!("{label}-{name}_{unique}"),
                 description: format!("{label}-{name}"),
                 json_schema: None,
                 validate_schema: Some(validate_schema),
@@ -166,12 +168,13 @@ mod tests {
     ) -> (NamespaceFixture, Vec<HubuumClass>, Vec<HubuumObject>) {
         let namespace = context.namespace_fixture(label).await;
 
+        let unique = crate::utilities::auth::generate_random_password(8);
         let mut classes = Vec::new();
         for suffix in ["a", "b", "c"] {
             classes.push(
                 NewHubuumClass {
                     namespace_id: namespace.namespace.id,
-                    name: format!("{label}-class-{suffix}"),
+                    name: format!("{label}-class-{suffix}_{unique}"),
                     description: format!("{label}-class-{suffix}"),
                     json_schema: None,
                     validate_schema: Some(false),
@@ -204,7 +207,7 @@ mod tests {
                     namespace_id: namespace.namespace.id,
                     hubuum_class_id: class.id,
                     data: serde_json::json!({ "index": index }),
-                    name: format!("{label}-object-{index}"),
+                    name: format!("{label}-object-{index}_{unique}"),
                     description: format!("{label}-object-{index}"),
                 }
                 .save(&context.pool)
@@ -599,8 +602,9 @@ mod tests {
         let context = test_context;
         let admin_group = ensure_admin_group(&context.pool).await;
 
+        let ns_prefix = context.scoped_name("querying_sort_description_ns");
         let namespace_z = NewNamespaceWithAssignee {
-            name: "querying_sort_description_ns_z".to_string(),
+            name: format!("{ns_prefix}_z"),
             description: "querying-sort-description-z".to_string(),
             group_id: admin_group.id,
         }
@@ -608,7 +612,7 @@ mod tests {
         .await
         .unwrap();
         let namespace_a = NewNamespaceWithAssignee {
-            name: "querying_sort_description_ns_a".to_string(),
+            name: format!("{ns_prefix}_a"),
             description: "querying-sort-description-a".to_string(),
             group_id: admin_group.id,
         }
@@ -616,7 +620,7 @@ mod tests {
         .await
         .unwrap();
         let namespace_m = NewNamespaceWithAssignee {
-            name: "querying_sort_description_ns_m".to_string(),
+            name: format!("{ns_prefix}_m"),
             description: "querying-sort-description-m".to_string(),
             group_id: admin_group.id,
         }
@@ -627,7 +631,7 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            "/api/v1/namespaces?name__contains=querying_sort_description_ns_&sort=description.asc",
+            &format!("/api/v1/namespaces?name__contains={ns_prefix}_&sort=description.asc"),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
@@ -646,9 +650,10 @@ mod tests {
             ]
         );
 
+        let class_prefix = context.scoped_name("querying_sort_description_class");
         NewHubuumClass {
             namespace_id: namespace_a.id,
-            name: "querying_sort_description_class_z".to_string(),
+            name: format!("{class_prefix}_z"),
             description: "querying-sort-description-z".to_string(),
             json_schema: None,
             validate_schema: Some(false),
@@ -658,7 +663,7 @@ mod tests {
         .unwrap();
         NewHubuumClass {
             namespace_id: namespace_a.id,
-            name: "querying_sort_description_class_a".to_string(),
+            name: format!("{class_prefix}_a"),
             description: "querying-sort-description-a".to_string(),
             json_schema: None,
             validate_schema: Some(false),
@@ -668,7 +673,7 @@ mod tests {
         .unwrap();
         NewHubuumClass {
             namespace_id: namespace_a.id,
-            name: "querying_sort_description_class_m".to_string(),
+            name: format!("{class_prefix}_m"),
             description: "querying-sort-description-m".to_string(),
             json_schema: None,
             validate_schema: Some(false),
@@ -681,7 +686,7 @@ mod tests {
             &context.pool,
             &context.admin_token,
             &format!(
-                "/api/v1/classes?namespaces={}&name__contains=querying_sort_description_class_&sort=description.asc",
+                "/api/v1/classes?namespaces={}&name__contains={class_prefix}_&sort=description.asc",
                 namespace_a.id
             ),
         )
@@ -702,9 +707,10 @@ mod tests {
             ]
         );
 
+        let object_class_prefix = context.scoped_name("querying_sort_description_object_class");
         let object_class = NewHubuumClass {
             namespace_id: namespace_a.id,
-            name: "querying_sort_description_object_class".to_string(),
+            name: object_class_prefix.clone(),
             description: "querying-sort-description-object-class".to_string(),
             json_schema: None,
             validate_schema: Some(false),
@@ -713,11 +719,12 @@ mod tests {
         .await
         .unwrap();
 
+        let object_prefix = context.scoped_name("querying_sort_description_object");
         NewHubuumObject {
             namespace_id: namespace_a.id,
             hubuum_class_id: object_class.id,
             data: serde_json::json!({ "i": 1 }),
-            name: "querying_sort_description_object_z".to_string(),
+            name: format!("{object_prefix}_z"),
             description: "querying-sort-description-z".to_string(),
         }
         .save(&context.pool)
@@ -727,7 +734,7 @@ mod tests {
             namespace_id: namespace_a.id,
             hubuum_class_id: object_class.id,
             data: serde_json::json!({ "i": 2 }),
-            name: "querying_sort_description_object_a".to_string(),
+            name: format!("{object_prefix}_a"),
             description: "querying-sort-description-a".to_string(),
         }
         .save(&context.pool)
@@ -737,7 +744,7 @@ mod tests {
             namespace_id: namespace_a.id,
             hubuum_class_id: object_class.id,
             data: serde_json::json!({ "i": 3 }),
-            name: "querying_sort_description_object_m".to_string(),
+            name: format!("{object_prefix}_m"),
             description: "querying-sort-description-m".to_string(),
         }
         .save(&context.pool)
@@ -748,7 +755,7 @@ mod tests {
             &context.pool,
             &context.admin_token,
             &format!(
-                "/api/v1/classes/{}/?name__contains=querying_sort_description_object_&sort=description.asc",
+                "/api/v1/classes/{}/?name__contains={object_prefix}_&sort=description.asc",
                 object_class.id
             ),
         )
@@ -780,8 +787,9 @@ mod tests {
         let context = test_context;
         let admin_group = ensure_admin_group(&context.pool).await;
 
+        let ns_prefix = context.scoped_name("descending_sort");
         let ns_z = NewNamespaceWithAssignee {
-            name: "descending_sort_z".to_string(),
+            name: format!("{ns_prefix}_z"),
             description: "z-description".to_string(),
             group_id: admin_group.id,
         }
@@ -789,7 +797,7 @@ mod tests {
         .await
         .unwrap();
         let ns_a = NewNamespaceWithAssignee {
-            name: "descending_sort_a".to_string(),
+            name: format!("{ns_prefix}_a"),
             description: "a-description".to_string(),
             group_id: admin_group.id,
         }
@@ -797,7 +805,7 @@ mod tests {
         .await
         .unwrap();
         let ns_m = NewNamespaceWithAssignee {
-            name: "descending_sort_m".to_string(),
+            name: format!("{ns_prefix}_m"),
             description: "m-description".to_string(),
             group_id: admin_group.id,
         }
@@ -808,7 +816,7 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            "/api/v1/namespaces?name__contains=descending_sort_&sort=description.desc",
+            &format!("/api/v1/namespaces?name__contains={ns_prefix}_&sort=description.desc"),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;

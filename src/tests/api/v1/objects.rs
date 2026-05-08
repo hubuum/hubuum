@@ -78,9 +78,10 @@ mod tests {
         prefix: &str,
     ) -> (crate::tests::NamespaceFixture, crate::models::HubuumClass) {
         let namespace = context.namespace_fixture(prefix).await;
+        let unique = crate::utilities::auth::generate_random_password(8);
         let class = NewHubuumClass {
             namespace_id: namespace.namespace.id,
-            name: format!("json ip filter class {prefix}"),
+            name: format!("json ip filter class {prefix} {unique}"),
             description: format!("json ip filter class {prefix}"),
             json_schema: None,
             validate_schema: None,
@@ -91,43 +92,43 @@ mod tests {
 
         let test_objects = [
             (
-                "network_filter_object_0",
+                format!("network_filter_object_0_{unique}"),
                 serde_json::json!({
                     "network": { "address": "10.0.0.10" }
                 }),
             ),
             (
-                "network_filter_object_1",
+                format!("network_filter_object_1_{unique}"),
                 serde_json::json!({
                     "network": { "address": "10.0.0.0/24" }
                 }),
             ),
             (
-                "network_filter_object_2",
+                format!("network_filter_object_2_{unique}"),
                 serde_json::json!({
                     "network": { "address": "10.0.0.0/25" }
                 }),
             ),
             (
-                "network_filter_object_3",
+                format!("network_filter_object_3_{unique}"),
                 serde_json::json!({
                     "network": { "address": "not-an-ip" }
                 }),
             ),
             (
-                "network_filter_object_4",
+                format!("network_filter_object_4_{unique}"),
                 serde_json::json!({
                     "network": { "address": "2001:db8::10" }
                 }),
             ),
             (
-                "network_filter_object_5",
+                format!("network_filter_object_5_{unique}"),
                 serde_json::json!({
                     "network": { "address": "10.0.1.10" }
                 }),
             ),
             (
-                "network_filter_object_6",
+                format!("network_filter_object_6_{unique}"),
                 serde_json::json!({
                     "hostname": "missing-network"
                 }),
@@ -181,9 +182,10 @@ mod tests {
         prefix: &str,
     ) -> (crate::tests::NamespaceFixture, crate::models::HubuumClass) {
         let namespace = context.namespace_fixture(prefix).await;
+        let unique = crate::utilities::auth::generate_random_password(8);
         let class = NewHubuumClass {
             namespace_id: namespace.namespace.id,
-            name: format!("json typed filter class {prefix}"),
+            name: format!("json typed filter class {prefix} {unique}"),
             description: format!("json typed filter class {prefix}"),
             json_schema: None,
             validate_schema: Some(false),
@@ -194,7 +196,7 @@ mod tests {
 
         let test_objects = [
             (
-                "typed_filter_object_0",
+                format!("typed_filter_object_0_{unique}"),
                 serde_json::json!({
                     "metrics": { "cpu_count": 2 },
                     "flags": { "enabled": true },
@@ -202,7 +204,7 @@ mod tests {
                 }),
             ),
             (
-                "typed_filter_object_1",
+                format!("typed_filter_object_1_{unique}"),
                 serde_json::json!({
                     "metrics": { "cpu_count": 8 },
                     "flags": { "enabled": false },
@@ -210,7 +212,7 @@ mod tests {
                 }),
             ),
             (
-                "typed_filter_object_2",
+                format!("typed_filter_object_2_{unique}"),
                 serde_json::json!({
                     "metrics": { "cpu_count": 16 },
                     "flags": { "enabled": true },
@@ -218,7 +220,7 @@ mod tests {
                 }),
             ),
             (
-                "typed_filter_object_invalid",
+                format!("typed_filter_object_invalid_{unique}"),
                 serde_json::json!({
                     "metrics": { "cpu_count": "many" },
                     "flags": { "enabled": "sometimes" },
@@ -226,7 +228,7 @@ mod tests {
                 }),
             ),
             (
-                "typed_filter_object_missing",
+                format!("typed_filter_object_missing_{unique}"),
                 serde_json::json!({
                     "hostname": "no-typed-fields"
                 }),
@@ -283,11 +285,12 @@ mod tests {
 
         let class = &classes[0];
 
+        let unique = crate::utilities::auth::generate_random_password(8);
         let object = NewHubuumObject {
             namespace_id: class.namespace_id,
             hubuum_class_id: class.id,
             data: serde_json::json!({"test": "data"}),
-            name: "test object".to_string(),
+            name: format!("test object {unique}"),
             description: "test object description".to_string(),
         };
 
@@ -382,6 +385,7 @@ mod tests {
         );
         let classes = create_test_classes(&context, &literal).await;
 
+        let unique = crate::utilities::auth::generate_random_password(8);
         for (class_id, expected_status) in class_ids.iter().zip(expected_statuses.iter()) {
             let class = &classes[*class_id as usize];
 
@@ -389,7 +393,7 @@ mod tests {
                 namespace_id: class.namespace_id,
                 hubuum_class_id: class.id,
                 data: serde_json::json!({"test": "data"}),
-                name: "test create object".to_string(),
+                name: format!("test create object {unique}"),
                 description: "test create object description".to_string(),
             };
 
@@ -432,12 +436,13 @@ mod tests {
 
         let mut objects = vec![];
 
+        let unique = crate::utilities::auth::generate_random_password(8);
         for i in 0..5 {
             let object = NewHubuumObject {
                 namespace_id: class.namespace_id,
                 hubuum_class_id: classes[0].id,
                 data: serde_json::json!({"test": format!("data_{i}")}),
-                name: format!("test get objects {i}"),
+                name: format!("test get objects {i} {unique}"),
                 description: format!("test object description {i}"),
             };
             objects.push(object.save(&context.pool).await.unwrap());
@@ -462,6 +467,7 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
+        let unique = crate::utilities::auth::generate_random_password(8);
         let hidden_fixture = create_object_fixture(
             &context.pool,
             context
@@ -470,7 +476,7 @@ mod tests {
                 .await,
             NewHubuumClass {
                 namespace_id: 0,
-                name: "hidden object class".to_string(),
+                name: format!("hidden object class {unique}"),
                 description: "hidden object class".to_string(),
                 json_schema: None,
                 validate_schema: Some(false),
@@ -480,14 +486,14 @@ mod tests {
                     namespace_id: 0,
                     hubuum_class_id: 0,
                     data: serde_json::json!({"name": "hidden-object-1"}),
-                    name: "hidden object 1".to_string(),
+                    name: format!("hidden object 1 {unique}"),
                     description: "hidden object 1".to_string(),
                 },
                 NewHubuumObject {
                     namespace_id: 0,
                     hubuum_class_id: 0,
                     data: serde_json::json!({"name": "hidden-object-2"}),
-                    name: "hidden object 2".to_string(),
+                    name: format!("hidden object 2 {unique}"),
                     description: "hidden object 2".to_string(),
                 },
             ],
@@ -548,9 +554,10 @@ mod tests {
                 .collect::<String>()
         );
         let namespace = context.namespace_fixture(&namespace_name).await;
+        let unique = crate::utilities::auth::generate_random_password(8);
         let class = NewHubuumClass {
             namespace_id: namespace.namespace.id,
-            name: format!("json filter class {namespace_name}"),
+            name: format!("json filter class {namespace_name} {unique}"),
             description: format!("json filter class {namespace_name}"),
             json_schema: None,
             validate_schema: None,
@@ -561,7 +568,7 @@ mod tests {
 
         let test_objects = [
             (
-                "json_filter_object_0",
+                format!("json_filter_object_0_{unique}"),
                 serde_json::json!({
                     "hostname": "srv-01",
                     "status": "active",
@@ -569,7 +576,7 @@ mod tests {
                 }),
             ),
             (
-                "json_filter_object_1",
+                format!("json_filter_object_1_{unique}"),
                 serde_json::json!({
                     "hostname": "srv-02",
                     "status": "inactive",
@@ -577,7 +584,7 @@ mod tests {
                 }),
             ),
             (
-                "json_filter_object_2",
+                format!("json_filter_object_2_{unique}"),
                 serde_json::json!({
                     "hostname": "db-01",
                     "status": "active",
@@ -758,18 +765,19 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let unique = format!(
+        let prefix = format!(
             "test_api_objects_filter_json_data_ip_operators_reject_invalid_rhs_{}",
             query_string
                 .chars()
                 .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
                 .collect::<String>()
         );
-        let namespace = context.namespace_fixture(&unique).await;
+        let namespace = context.namespace_fixture(&prefix).await;
+        let unique = crate::utilities::auth::generate_random_password(8);
         let class = NewHubuumClass {
             namespace_id: namespace.namespace.id,
-            name: format!("json ip invalid filter class {unique}"),
-            description: format!("json ip invalid filter class {unique}"),
+            name: format!("json ip invalid filter class {prefix} {unique}"),
+            description: format!("json ip invalid filter class {prefix}"),
             json_schema: None,
             validate_schema: None,
         }
@@ -783,7 +791,7 @@ mod tests {
             data: serde_json::json!({
                 "network": { "address": "10.0.0.10" }
             }),
-            name: "network_filter_invalid_rhs".to_string(),
+            name: format!("network_filter_invalid_rhs_{unique}"),
             description: "network_filter_invalid_rhs".to_string(),
         }
         .save(&context.pool)
@@ -815,9 +823,10 @@ mod tests {
                 "test_api_objects_filter_json_data_ip_operators_large_dataset_and_expression_index",
             )
             .await;
+        let unique = crate::utilities::auth::generate_random_password(8);
         let class = NewHubuumClass {
             namespace_id: namespace.namespace.id,
-            name: "json ip large dataset class".to_string(),
+            name: format!("json ip large dataset class {unique}"),
             description: "json ip large dataset class".to_string(),
             json_schema: None,
             validate_schema: None,
@@ -829,7 +838,7 @@ mod tests {
         let mut expected_names = Vec::new();
         for subnet in 0..4 {
             for host in 1..=150 {
-                let name = format!("large_network_object_{subnet}_{host}");
+                let name = format!("large_network_object_{subnet}_{host}_{unique}");
                 let address = format!("10.42.{subnet}.{host}");
                 if subnet == 1 {
                     expected_names.push(name.clone());
@@ -853,15 +862,15 @@ mod tests {
         for suffix in ["invalid", "missing", "ipv6"] {
             let (name, data) = match suffix {
                 "invalid" => (
-                    "large_network_invalid".to_string(),
+                    format!("large_network_invalid_{unique}"),
                     serde_json::json!({ "network": { "address": "not-an-ip" } }),
                 ),
                 "missing" => (
-                    "large_network_missing".to_string(),
+                    format!("large_network_missing_{unique}"),
                     serde_json::json!({ "hostname": "no-network" }),
                 ),
                 _ => (
-                    "large_network_ipv6".to_string(),
+                    format!("large_network_ipv6_{unique}"),
                     serde_json::json!({ "network": { "address": "2001:db8::10" } }),
                 ),
             };
@@ -970,13 +979,17 @@ mod tests {
     ) {
         let context = test_context;
 
-        let unique_name = format!("{json_data}_create_objects_in_class_failing_validation");
+        let safe_label = json_data
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect::<String>();
+        let namespace_name = format!("{safe_label}_create_objects_in_class_failing_validation");
+        let namespace = context.namespace_fixture(&namespace_name).await;
 
-        let namespace = context.namespace_fixture(&unique_name).await;
-
+        let unique = crate::utilities::auth::generate_random_password(8);
         let schema = get_schema(SchemaType::Geo);
         let class = NewHubuumClass {
-            name: unique_name.clone(),
+            name: format!("{namespace_name}_class_{unique}"),
             namespace_id: namespace.namespace.id,
             description: "Test class".to_string(),
             json_schema: Some(schema.clone()),
@@ -987,7 +1000,7 @@ mod tests {
         .unwrap();
 
         let object = NewHubuumObject {
-            name: unique_name.clone(),
+            name: format!("{namespace_name}_object_{unique}"),
             namespace_id: namespace.namespace.id,
             hubuum_class_id: class.id,
             data: serde_json::from_str(json_data).unwrap(),
@@ -1154,9 +1167,10 @@ mod tests {
         prefix: &str,
     ) -> (crate::tests::NamespaceFixture, crate::models::HubuumClass) {
         let namespace = context.namespace_fixture(prefix).await;
+        let unique = crate::utilities::auth::generate_random_password(8);
         let class = NewHubuumClass {
             namespace_id: namespace.namespace.id,
-            name: format!("json struct filter class {prefix}"),
+            name: format!("json struct filter class {prefix} {unique}"),
             description: format!("json struct filter class {prefix}"),
             json_schema: None,
             validate_schema: Some(false),
@@ -1167,7 +1181,7 @@ mod tests {
 
         let test_objects = [
             (
-                "struct_obj_0",
+                format!("struct_obj_0_{unique}"),
                 serde_json::json!({
                     "status": "active",
                     "tags": ["web", "api"],
@@ -1177,7 +1191,7 @@ mod tests {
                 }),
             ),
             (
-                "struct_obj_1",
+                format!("struct_obj_1_{unique}"),
                 serde_json::json!({
                     "status": "standby",
                     "tags": ["web", "frontend"],
@@ -1187,7 +1201,7 @@ mod tests {
                 }),
             ),
             (
-                "struct_obj_2",
+                format!("struct_obj_2_{unique}"),
                 serde_json::json!({
                     "status": "maintenance",
                     "tags": ["api", "backend", "internal"],
@@ -1196,7 +1210,7 @@ mod tests {
                 }),
             ),
             (
-                "struct_obj_3",
+                format!("struct_obj_3_{unique}"),
                 serde_json::json!({
                     "status": "active",
                     "tags": ["web", "api", "frontend"],
