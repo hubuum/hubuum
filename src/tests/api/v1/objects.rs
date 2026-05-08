@@ -171,8 +171,16 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let objects: Vec<HubuumObject> = test::read_body_json(resp).await;
 
-        let object_names: Vec<&str> = objects.iter().map(|object| object.name.as_str()).collect();
-        assert_eq!(object_names, expected_names);
+        // Object names now have unique suffixes; check count and prefix match
+        assert_eq!(objects.len(), expected_names.len());
+        for (object, expected_prefix) in objects.iter().zip(expected_names.iter()) {
+            assert!(
+                object.name.starts_with(expected_prefix),
+                "Expected object name to start with '{}', but got '{}'",
+                expected_prefix,
+                object.name
+            );
+        }
 
         namespace.cleanup().await.unwrap();
     }
@@ -271,8 +279,16 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let objects: Vec<HubuumObject> = test::read_body_json(resp).await;
 
-        let object_names: Vec<&str> = objects.iter().map(|object| object.name.as_str()).collect();
-        assert_eq!(object_names, expected_names);
+        // Object names now have unique suffixes; check count and prefix match
+        assert_eq!(objects.len(), expected_names.len());
+        for (object, expected_prefix) in objects.iter().zip(expected_names.iter()) {
+            assert!(
+                object.name.starts_with(expected_prefix),
+                "Expected object name to start with '{}', but got '{}'",
+                expected_prefix,
+                object.name
+            );
+        }
 
         namespace.cleanup().await.unwrap();
     }
@@ -618,8 +634,16 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let objects: Vec<HubuumObject> = test::read_body_json(resp).await;
 
-        let object_names: Vec<&str> = objects.iter().map(|object| object.name.as_str()).collect();
-        assert_eq!(object_names, expected_names);
+        // Object names now have unique suffixes; check count and prefix match
+        assert_eq!(objects.len(), expected_names.len());
+        for (object, expected_prefix) in objects.iter().zip(expected_names.iter()) {
+            assert!(
+                object.name.starts_with(expected_prefix),
+                "Expected object name to start with '{}', but got '{}'",
+                expected_prefix,
+                object.name
+            );
+        }
 
         namespace.cleanup().await.unwrap();
     }
@@ -1256,8 +1280,16 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let objects: Vec<HubuumObject> = test::read_body_json(resp).await;
 
-        let object_names: Vec<&str> = objects.iter().map(|object| object.name.as_str()).collect();
-        assert_eq!(object_names, expected_names);
+        // Object names now have unique suffixes; check count and prefix match
+        assert_eq!(objects.len(), expected_names.len());
+        for (object, expected_prefix) in objects.iter().zip(expected_names.iter()) {
+            assert!(
+                object.name.starts_with(expected_prefix),
+                "Expected object name to start with '{}', but got '{}'",
+                expected_prefix,
+                object.name
+            );
+        }
 
         namespace.cleanup().await.unwrap();
     }

@@ -110,7 +110,7 @@ mod tests {
                     namespace_id: namespace.namespace.id,
                     hubuum_class_id: class.id,
                     data: serde_json::json!({ "name": name }),
-                    name: format!("{}_{unique}", name),
+                    name: (*name).to_string(),
                     description: (*name).to_string(),
                 }
                 .save(&context.pool)
@@ -207,7 +207,7 @@ mod tests {
                     namespace_id: namespace.namespace.id,
                     hubuum_class_id: class.id,
                     data: serde_json::json!({ "index": index }),
-                    name: format!("{label}-object-{index}_{unique}"),
+                    name: format!("{label}-object-{index}"),
                     description: format!("{label}-object-{index}"),
                 }
                 .save(&context.pool)
