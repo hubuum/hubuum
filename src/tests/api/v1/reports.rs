@@ -22,17 +22,20 @@ mod tests {
         pool: &crate::db::DbPool,
         class: &HubuumClass,
     ) -> Vec<crate::models::HubuumObject> {
-        let unique = crate::utilities::auth::generate_random_password(8);
+        // No per-call random suffix on the object name: hubuumobject is
+        // UNIQUE on (name, hubuum_class_id), and `class` is created fresh
+        // per test, so the literal names suffice. The report-rendering
+        // assertions downstream check the exact name string.
         let objects = vec![
             NewHubuumObject {
-                name: format!("report-app-01 {unique}"),
+                name: "report-app-01".to_string(),
                 description: "App server".to_string(),
                 namespace_id: class.namespace_id,
                 hubuum_class_id: class.id,
                 data: serde_json::json!({"hostname": "report-app-01", "owner": "alice"}),
             },
             NewHubuumObject {
-                name: format!("report-db-01 {unique}"),
+                name: "report-db-01".to_string(),
                 description: "Database server".to_string(),
                 namespace_id: class.namespace_id,
                 hubuum_class_id: class.id,

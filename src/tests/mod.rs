@@ -597,6 +597,22 @@ pub async fn setup_pool_and_tokens() -> (DbPool, String, String) {
     (pool, admin_token, normal_token)
 }
 
+/// Build a `web::Data<AppContext>` around the given pool using a fresh
+/// `LocalPermissionBackend` with the default admin groupname. Used by tests
+/// that don't go through `TestContext` (e.g. the templates and reports
+/// integration tests) but still need permission methods to route through
+/// the backend rather than panicking via the BackendContext-for-DbPool shim.
+#[cfg(feature = "permissions-local")]
+pub fn app_context_for(pool: &DbPool) -> web::Data<crate::permissions::AppContext> {
+    web::Data::new(crate::permissions::AppContext::new(
+        pool.clone(),
+        std::sync::Arc::new(crate::permissions::LocalPermissionBackend::new(
+            pool.clone(),
+            "admin".to_string(),
+        )),
+    ))
+}
+
 pub fn get_test_pool() -> web::Data<DbPool> {
     web::Data::new(POOL.clone())
 }

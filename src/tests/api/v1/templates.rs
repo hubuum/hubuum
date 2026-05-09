@@ -58,6 +58,7 @@ mod tests {
     #[actix_web::test]
     async fn test_template_crud_admin() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let app_ctx = crate::tests::app_context_for(&pool);
         let namespace = create_namespace(&pool, "crud").await;
 
         let create_payload = new_template_payload(namespace.id, "tmpl-crud");
@@ -123,6 +124,7 @@ mod tests {
     #[actix_web::test]
     async fn test_template_list_total_count_matches_paginated_results() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let app_ctx = crate::tests::app_context_for(&pool);
         let namespace = create_namespace(&pool, "pagination").await;
 
         let expected_ids = vec![
@@ -189,6 +191,7 @@ mod tests {
     #[actix_web::test]
     async fn test_template_create_requires_permission() {
         let (pool, _admin_token, normal_token) = setup_pool_and_tokens().await;
+        let app_ctx = crate::tests::app_context_for(&pool);
         let namespace = create_namespace(&pool, "forbidden_create").await;
 
         let create_payload = new_template_payload(namespace.id, "tmpl-forbidden");
@@ -201,6 +204,7 @@ mod tests {
     #[actix_web::test]
     async fn test_template_move_requires_create_on_target_namespace() {
         let (pool, admin_token, _normal_token) = setup_pool_and_tokens().await;
+        let app_ctx = crate::tests::app_context_for(&pool);
         let source_namespace = create_namespace(&pool, "move_src").await;
         let target_namespace = create_namespace(&pool, "move_dst").await;
 
@@ -216,7 +220,7 @@ mod tests {
 
         source_namespace
             .grant(
-                &pool,
+                &app_ctx,
                 test_group.id,
                 PermissionsList::new([Permissions::UpdateTemplate]),
             )
@@ -241,7 +245,7 @@ mod tests {
 
         target_namespace
             .grant(
-                &pool,
+                &app_ctx,
                 test_group.id,
                 PermissionsList::new([Permissions::CreateTemplate]),
             )
@@ -266,6 +270,7 @@ mod tests {
     #[actix_web::test]
     async fn test_template_move_conflict_on_target_name() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let app_ctx = crate::tests::app_context_for(&pool);
         let source_namespace = create_namespace(&pool, "conflict_src").await;
         let target_namespace = create_namespace(&pool, "conflict_dst").await;
 
@@ -302,6 +307,7 @@ mod tests {
     #[actix_web::test]
     async fn test_template_create_duplicate_name_in_namespace_returns_conflict() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let app_ctx = crate::tests::app_context_for(&pool);
         let namespace = create_namespace(&pool, "duplicate_create").await;
 
         let payload = new_template_payload(namespace.id, "tmpl-duplicate");
@@ -317,6 +323,7 @@ mod tests {
     #[actix_web::test]
     async fn test_template_rename_conflict_in_same_namespace_returns_conflict() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let app_ctx = crate::tests::app_context_for(&pool);
         let namespace = create_namespace(&pool, "rename_conflict").await;
 
         let payload_a = new_template_payload(namespace.id, "tmpl-rename-a");
@@ -352,6 +359,7 @@ mod tests {
     #[actix_web::test]
     async fn test_template_move_requires_update_on_source_namespace() {
         let (pool, admin_token, _normal_token) = setup_pool_and_tokens().await;
+        let app_ctx = crate::tests::app_context_for(&pool);
         let source_namespace = create_namespace(&pool, "move_missing_source_update_src").await;
         let target_namespace = create_namespace(&pool, "move_missing_source_update_dst").await;
 
@@ -367,7 +375,7 @@ mod tests {
 
         target_namespace
             .grant(
-                &pool,
+                &app_ctx,
                 test_group.id,
                 PermissionsList::new([Permissions::CreateTemplate]),
             )
@@ -399,6 +407,7 @@ mod tests {
     #[actix_web::test]
     async fn test_template_list_filters_by_read_template_permission() {
         let (pool, admin_token, _normal_token) = setup_pool_and_tokens().await;
+        let app_ctx = crate::tests::app_context_for(&pool);
         let visible_namespace = create_namespace(&pool, "list_visible").await;
         let hidden_namespace = create_namespace(&pool, "list_hidden").await;
 
@@ -420,7 +429,7 @@ mod tests {
 
         visible_namespace
             .grant(
-                &pool,
+                &app_ctx,
                 test_group.id,
                 PermissionsList::new([Permissions::ReadTemplate]),
             )
@@ -451,6 +460,7 @@ mod tests {
     #[actix_web::test]
     async fn test_template_list_keeps_admin_visibility_without_template_permission_rows() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let app_ctx = crate::tests::app_context_for(&pool);
         let namespace = create_namespace(&pool, "admin_list_visibility").await;
         let admin_group = ensure_admin_group(&pool).await;
 
@@ -461,7 +471,7 @@ mod tests {
 
         namespace
             .revoke(
-                &pool,
+                &app_ctx,
                 admin_group.id,
                 PermissionsList::new([
                     Permissions::ReadTemplate,
@@ -493,6 +503,7 @@ mod tests {
     #[actix_web::test]
     async fn test_template_get_and_delete_require_permissions() {
         let (pool, admin_token, normal_token) = setup_pool_and_tokens().await;
+        let app_ctx = crate::tests::app_context_for(&pool);
         let namespace = create_namespace(&pool, "get_delete_forbidden").await;
 
         let payload = new_template_payload(namespace.id, "tmpl-get-delete-forbidden");
@@ -522,6 +533,7 @@ mod tests {
     #[actix_web::test]
     async fn test_template_create_rejects_invalid_content_type() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let app_ctx = crate::tests::app_context_for(&pool);
         let namespace = create_namespace(&pool, "invalid_content_type").await;
 
         let payload = new_template_payload_with_content_type(
@@ -538,6 +550,7 @@ mod tests {
     #[actix_web::test]
     async fn test_template_update_content_requires_update_permission() {
         let (pool, admin_token, _normal_token) = setup_pool_and_tokens().await;
+        let app_ctx = crate::tests::app_context_for(&pool);
         let namespace = create_namespace(&pool, "update_content_forbidden").await;
 
         let create_payload = new_template_payload(namespace.id, "tmpl-update-test");
@@ -553,7 +566,7 @@ mod tests {
         // Grant only ReadTemplate, not UpdateTemplate
         namespace
             .grant(
-                &pool,
+                &app_ctx,
                 test_group.id,
                 PermissionsList::new([Permissions::ReadTemplate]),
             )
@@ -579,7 +592,7 @@ mod tests {
         // Now grant UpdateTemplate and verify it works
         namespace
             .grant(
-                &pool,
+                &app_ctx,
                 test_group.id,
                 PermissionsList::new([Permissions::UpdateTemplate]),
             )
@@ -605,6 +618,7 @@ mod tests {
     #[actix_web::test]
     async fn test_template_delete_requires_delete_permission() {
         let (pool, admin_token, _normal_token) = setup_pool_and_tokens().await;
+        let app_ctx = crate::tests::app_context_for(&pool);
         let namespace = create_namespace(&pool, "delete_forbidden").await;
 
         let create_payload = new_template_payload(namespace.id, "tmpl-delete-test");
@@ -620,7 +634,7 @@ mod tests {
         // Grant only ReadTemplate and UpdateTemplate, not DeleteTemplate
         namespace
             .grant(
-                &pool,
+                &app_ctx,
                 test_group.id,
                 PermissionsList::new([Permissions::ReadTemplate, Permissions::UpdateTemplate]),
             )
@@ -638,7 +652,7 @@ mod tests {
         // Now grant DeleteTemplate and verify it works
         namespace
             .grant(
-                &pool,
+                &app_ctx,
                 test_group.id,
                 PermissionsList::new([Permissions::DeleteTemplate]),
             )
