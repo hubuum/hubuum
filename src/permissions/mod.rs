@@ -3,6 +3,7 @@ pub mod context;
 #[cfg(feature = "permissions-local")]
 pub mod local;
 pub mod types;
+pub mod visibility;
 
 pub use backend::PermissionBackend;
 pub use context::AppContext;

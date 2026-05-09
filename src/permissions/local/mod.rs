@@ -238,4 +238,8 @@ impl PermissionBackend for LocalPermissionBackend {
             None => Ok(false),
         }
     }
+
+    fn supports_sql_visibility_join(&self) -> bool {
+        true
+    }
 }

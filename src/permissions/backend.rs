@@ -129,4 +129,14 @@ pub trait PermissionBackend: Send + Sync {
     /// the configured admin groupname; Treetop dispatches a Cedar policy
     /// decision against the system resource.
     async fn is_admin(&self, principal: &PrincipalRef) -> Result<bool, ApiError>;
+
+    /// Whether this backend can answer visibility-filtered queries via a
+    /// single SQL join against the `permissions` table. Backends that
+    /// return `true` (LocalPermissionBackend) keep using the existing
+    /// SQL-join fast path. Backends that return `false` (the default,
+    /// Treetop) must use the candidate-then-authorize helper in
+    /// `crate::permissions::visibility`.
+    fn supports_sql_visibility_join(&self) -> bool {
+        false
+    }
 }

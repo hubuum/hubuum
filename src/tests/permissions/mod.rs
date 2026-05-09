@@ -5,3 +5,6 @@ pub mod backend_trait;
 
 #[cfg(feature = "permissions-local")]
 pub mod auth_target;
+
+#[cfg(feature = "permissions-local")]
+pub mod visibility;
