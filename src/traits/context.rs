@@ -86,11 +86,15 @@ impl DbPoolContext for DbPool {
     }
 }
 
-/// TEMPORARY: kept until Phase 4.x finishes downgrading DB-only call
-/// sites from `&dyn BackendContext` to `&dyn DbPoolContext`. After all
-/// such sites are migrated, this impl is removed (Task 3.8). The panic
-/// surfaces any code path still treating a bare `DbPool` as full
-/// permission-aware context.
+/// TEMPORARY: kept until every `&dyn BackendContext` call site that only
+/// needs `db_pool()` has its bound downgraded to `&dyn DbPoolContext`.
+/// As of the close of Phase 4 there are still ~49 files whose bounds
+/// were not touched by Phases 4.1–4.4 (those tasks added/migrated specific
+/// call sites only; the broader `db/traits`, `models`, `tasks` helpers
+/// still bound on `BackendContext`). Removing this shim produces ~680
+/// type errors. The proper fix is a sweep that downgrades each helper
+/// bound; that sweep is its own task and is gated to land before Phase 5
+/// is considered closed.
 impl BackendContext for DbPool {
     fn permission_backend(&self) -> &dyn PermissionBackend {
         panic!(
@@ -99,3 +103,4 @@ impl BackendContext for DbPool {
         )
     }
 }
+
