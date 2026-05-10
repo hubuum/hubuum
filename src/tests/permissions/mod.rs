@@ -8,3 +8,6 @@ pub mod auth_target;
 
 #[cfg(feature = "permissions-local")]
 pub mod visibility;
+
+#[cfg(feature = "permissions-local")]
+pub mod mock_treetop;
