@@ -39,17 +39,35 @@ impl TreetopPermissionBackend {
     ///
     /// Returns a fatal `ApiError` if the server is unreachable or unhealthy —
     /// per the spec, we fail-closed-fatal on startup health failures.
-    pub async fn connect(url: &str, _cfg: &AppConfig, pool: DbPool) -> Result<Self, ApiError> {
-        // Build the client with default timeouts. The upstream ClientBuilder
-        // exposes connect_timeout / request_timeout / pool_idle_timeout /
-        // danger_accept_invalid_certs / add_root_certificate methods. We use
-        // the defaults for now (5s connect, 30s request, 90s idle). Future
-        // work: wire these from AppConfig if operators need customization.
-        //
-        // TODO: Apply custom timeouts and cert config from AppConfig once
-        // those fields are added to the config schema. For now, the upstream
-        // defaults are reasonable for production.
-        let client = Client::builder(url).build().map_err(treetop_to_api_error)?;
+    pub async fn connect(url: &str, cfg: &AppConfig, pool: DbPool) -> Result<Self, ApiError> {
+        // Wire AppConfig timeouts + the dev-only accept-invalid-certs flag
+        // through to the upstream ClientBuilder. CA certificate loading
+        // (HUBUUM_TREETOP_CA_CERT) requires constructing a reqwest::Certificate,
+        // and reqwest is not a direct dependency of this crate yet. If an
+        // operator sets that env var we surface an explicit error rather than
+        // silently ignoring it.
+        let mut builder = Client::builder(url)
+            .connect_timeout(std::time::Duration::from_millis(
+                cfg.treetop_connect_timeout_ms,
+            ))
+            .request_timeout(std::time::Duration::from_millis(
+                cfg.treetop_request_timeout_ms,
+            ));
+
+        if cfg.treetop_accept_invalid_certs {
+            builder = builder.danger_accept_invalid_certs(true);
+        }
+
+        if cfg.treetop_ca_cert.is_some() {
+            return Err(ApiError::InternalServerError(
+                "HUBUUM_TREETOP_CA_CERT is set but CA certificate loading is not yet wired \
+                 — the project would need to take a direct dependency on reqwest to construct \
+                 the Certificate. Unset the env var or add the wiring."
+                    .to_string(),
+            ));
+        }
+
+        let client = builder.build().map_err(treetop_to_api_error)?;
 
         // Startup health check — fail-closed-fatal per Q9 of the spec.
         client.health().await.map_err(treetop_to_api_error)?;
