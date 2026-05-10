@@ -5,7 +5,7 @@ use utoipa::ToSchema;
 use crate::db::traits::class::total_class_count_from_backend;
 use crate::errors::ApiError;
 use crate::schema::hubuumclass;
-use crate::traits::BackendContext;
+use crate::traits::DbPoolContext;
 
 #[derive(Serialize, Deserialize, Queryable, Clone, PartialEq, Debug, ToSchema)]
 #[diesel(table_name = hubuumclass )]
@@ -69,7 +69,7 @@ pub struct HubuumClassID(pub i32);
 
 pub async fn total_class_count<C>(backend: &C) -> Result<i64, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: DbPoolContext + ?Sized,
 {
     total_class_count_from_backend(backend.db_pool()).await
 }

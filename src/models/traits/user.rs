@@ -15,8 +15,8 @@ use crate::db::traits::user::{
 use crate::errors::ApiError;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{
-    BackendContext, ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping,
-    CursorSqlType, CursorValue, GroupMemberships, SelfAccessors,
+    ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+    DbPoolContext, GroupMemberships, SelfAccessors,
 };
 
 /// Search resources that are visible to a user.
@@ -30,7 +30,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         query_options: QueryOptions,
     ) -> Result<Vec<Namespace>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.search_namespaces_from_backend(backend.db_pool(), query_options)
             .await
@@ -42,7 +42,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         query_options: QueryOptions,
     ) -> Result<i64, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.count_namespaces_from_backend(backend.db_pool(), query_options)
             .await
@@ -54,7 +54,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         query_options: QueryOptions,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.search_classes_from_backend(backend.db_pool(), query_options)
             .await
@@ -66,7 +66,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         query_options: QueryOptions,
     ) -> Result<i64, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.count_classes_from_backend(backend.db_pool(), query_options)
             .await
@@ -78,7 +78,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         query_options: QueryOptions,
     ) -> Result<Vec<HubuumObject>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.search_objects_from_backend(backend.db_pool(), query_options)
             .await
@@ -90,7 +90,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         query_options: QueryOptions,
     ) -> Result<i64, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.count_objects_from_backend(backend.db_pool(), query_options)
             .await
@@ -102,7 +102,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         query_options: QueryOptions,
     ) -> Result<Vec<HubuumClassRelation>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.search_class_relations_from_backend(backend.db_pool(), query_options)
             .await
@@ -114,7 +114,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         query_options: QueryOptions,
     ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.class_relations_page_from_backend(backend.db_pool(), query_options)
             .await
@@ -127,7 +127,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         query_options: QueryOptions,
     ) -> Result<Vec<ClassGraphRow>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
         K: SelfAccessors<HubuumClass>,
     {
         self.search_classes_related_to_from_backend(backend.db_pool(), class, query_options)
@@ -141,7 +141,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         query_options: QueryOptions,
     ) -> Result<(Vec<ClassGraphRow>, i64), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
         K: SelfAccessors<HubuumClass>,
     {
         self.classes_related_to_page_from_backend(backend.db_pool(), class, query_options)
@@ -155,7 +155,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         query_options: QueryOptions,
     ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
         K: SelfAccessors<HubuumClass>,
     {
         self.class_relations_touching_page_from_backend(backend.db_pool(), class, query_options)
@@ -168,7 +168,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         class_ids: &[i32],
     ) -> Result<Vec<HubuumClassRelation>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.search_class_relations_between_ids_from_backend(backend.db_pool(), class_ids)
             .await
@@ -180,7 +180,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         query_options: QueryOptions,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.search_object_relations_from_backend(backend.db_pool(), query_options)
             .await
@@ -192,7 +192,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         query_options: QueryOptions,
     ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.object_relations_page_from_backend(backend.db_pool(), query_options)
             .await
@@ -205,7 +205,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         query_options: QueryOptions,
     ) -> Result<Vec<RelatedObjectGraphRow>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
         self.search_objects_related_to_from_backend(backend.db_pool(), object, query_options)
@@ -219,7 +219,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         query_options: QueryOptions,
     ) -> Result<(Vec<RelatedObjectGraphRow>, i64), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
         self.objects_related_to_page_from_backend(backend.db_pool(), object, query_options)
@@ -233,7 +233,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         query_options: QueryOptions,
     ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
         O: SelfAccessors<HubuumObject>,
     {
         self.object_relations_touching_page_from_backend(backend.db_pool(), object, query_options)
@@ -246,7 +246,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         object_ids: &[i32],
     ) -> Result<Vec<HubuumObjectRelation>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.search_object_relations_between_ids_from_backend(backend.db_pool(), object_ids)
             .await
@@ -258,7 +258,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         query: &UnifiedSearchSpec,
     ) -> Result<Vec<Namespace>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.search_unified_namespaces_from_backend(backend.db_pool(), query)
             .await
@@ -270,7 +270,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         query: &UnifiedSearchSpec,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.search_unified_classes_from_backend(backend.db_pool(), query)
             .await
@@ -282,7 +282,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         query: &UnifiedSearchSpec,
     ) -> Result<Vec<HubuumObject>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.search_unified_objects_from_backend(backend.db_pool(), query)
             .await
@@ -295,7 +295,7 @@ pub trait GroupAccessors: SelfAccessors<User> {
     #[allow(async_fn_in_trait, dead_code)]
     async fn groups<C>(&self, backend: &C) -> Result<Vec<Group>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.load_user_groups(backend.db_pool()).await
     }
@@ -307,7 +307,7 @@ pub trait GroupAccessors: SelfAccessors<User> {
         query_options: &QueryOptions,
     ) -> Result<(Vec<Group>, i64), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.load_user_groups_paginated_with_total_count(backend.db_pool(), query_options)
             .await
@@ -338,7 +338,7 @@ pub trait GroupAccessors: SelfAccessors<User> {
         json_schema_query_params: Vec<&ParsedQueryParam>,
     ) -> Result<Vec<i32>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.query_class_ids_for_json_schema(backend.db_pool(), json_schema_query_params)
     }
@@ -352,7 +352,7 @@ pub trait GroupAccessors: SelfAccessors<User> {
         json_schema_query_params: Vec<&ParsedQueryParam>,
     ) -> Result<Vec<i32>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.query_object_ids_for_json_data(backend.db_pool(), json_schema_query_params)
     }
@@ -364,7 +364,7 @@ pub trait UserNamespaceAccessors: SelfAccessors<User> + GroupAccessors + GroupMe
     #[allow(dead_code)] // Lazy-used in tests.
     async fn namespaces_read<C>(&self, backend: &C) -> Result<Vec<Namespace>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.namespaces(backend, &[Permissions::ReadCollection])
             .await
@@ -377,7 +377,7 @@ pub trait UserNamespaceAccessors: SelfAccessors<User> + GroupAccessors + GroupMe
         permissions_list: &'a I,
     ) -> Result<Vec<Namespace>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
         &'a I: IntoIterator<Item = &'a Permissions>,
     {
         self.load_namespaces_with_permissions(backend.db_pool(), permissions_list)

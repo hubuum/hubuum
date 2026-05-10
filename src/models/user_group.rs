@@ -6,7 +6,7 @@ use crate::models::user::User;
 
 use crate::errors::ApiError;
 use crate::schema::user_groups;
-use crate::traits::BackendContext;
+use crate::traits::DbPoolContext;
 
 use crate::db::DbPool;
 
@@ -43,28 +43,28 @@ impl SaveAdapter for NewUserGroup {
 impl UserGroup {
     pub async fn user<C>(&self, backend: &C) -> Result<User, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.load_user_group_user(backend.db_pool()).await
     }
 
     pub async fn group<C>(&self, backend: &C) -> Result<Group, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.load_user_group_group(backend.db_pool()).await
     }
 
     pub async fn save<C>(&self, backend: &C) -> Result<UserGroup, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.save_user_group_record(backend.db_pool()).await
     }
 
     pub async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.delete_user_group_record(backend.db_pool()).await
     }

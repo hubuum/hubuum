@@ -12,7 +12,7 @@ use crate::models::search::{FilterField, SortParam};
 use crate::traits::accessors::{IdAccessor, InstanceAdapter, NamespaceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 use crate::traits::{
-    BackendContext, CanUpdate, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType,
+    CanUpdate, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, DbPoolContext,
     NamespaceAccessors, PermissionController,
 };
 
@@ -112,7 +112,7 @@ impl NewNamespace {
         assignee: GroupID,
     ) -> Result<Namespace, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.save_namespace_for_group_record(backend.db_pool(), assignee.0)
             .await
@@ -129,7 +129,7 @@ impl NewNamespace {
         ns_with_assignee: NewNamespaceWithAssignee,
     ) -> Result<Namespace, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.save_namespace_for_group_record(backend.db_pool(), ns_with_assignee.group_id)
             .await

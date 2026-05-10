@@ -4,7 +4,7 @@ use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::{HubuumClass, HubuumObject, Namespace};
 
-use super::context::BackendContext;
+use super::context::DbPoolContext;
 
 /// Provide a uniform way to work with both an entity and its identifier wrapper.
 ///
@@ -24,7 +24,7 @@ pub trait SelfAccessors<T> {
     /// usually loads the instance from the backend.
     async fn instance<C>(&self, backend: &C) -> Result<T, ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: DbPoolContext + ?Sized;
 }
 
 #[doc(hidden)]
@@ -47,7 +47,7 @@ where
 
     async fn instance<C>(&self, backend: &C) -> Result<T, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.instance_adapter(backend.db_pool()).await
     }
@@ -80,12 +80,12 @@ pub trait NamespaceAccessors<N = Namespace, I = i32> {
     /// Return the namespace instance for this value.
     async fn namespace<C>(&self, backend: &C) -> Result<N, ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: DbPoolContext + ?Sized;
 
     /// Return the namespace identifier for this value.
     async fn namespace_id<C>(&self, backend: &C) -> Result<I, ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: DbPoolContext + ?Sized;
 }
 
 #[doc(hidden)]
@@ -100,14 +100,14 @@ where
 {
     async fn namespace<C>(&self, backend: &C) -> Result<N, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.namespace_adapter(backend.db_pool()).await
     }
 
     async fn namespace_id<C>(&self, backend: &C) -> Result<I, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.namespace_id_adapter(backend.db_pool()).await
     }
@@ -134,12 +134,12 @@ pub trait ClassAccessors<C = HubuumClass, I = i32> {
     /// Return the class instance for this value.
     async fn class<B>(&self, backend: &B) -> Result<C, ApiError>
     where
-        B: BackendContext + ?Sized;
+        B: DbPoolContext + ?Sized;
 
     /// Return the class identifier for this value.
     async fn class_id<B>(&self, backend: &B) -> Result<I, ApiError>
     where
-        B: BackendContext + ?Sized;
+        B: DbPoolContext + ?Sized;
 }
 
 #[doc(hidden)]
@@ -154,14 +154,14 @@ where
 {
     async fn class<B>(&self, backend: &B) -> Result<C, ApiError>
     where
-        B: BackendContext + ?Sized,
+        B: DbPoolContext + ?Sized,
     {
         self.class_adapter(backend.db_pool()).await
     }
 
     async fn class_id<B>(&self, backend: &B) -> Result<I, ApiError>
     where
-        B: BackendContext + ?Sized,
+        B: DbPoolContext + ?Sized,
     {
         self.class_id_adapter(backend.db_pool()).await
     }
@@ -189,12 +189,12 @@ pub trait ObjectAccessors<O = HubuumObject, I = i32> {
     /// Return the object instance for this value.
     async fn object<B>(&self, backend: &B) -> Result<O, ApiError>
     where
-        B: BackendContext + ?Sized;
+        B: DbPoolContext + ?Sized;
 
     /// Return the object identifier for this value.
     async fn object_id<B>(&self, backend: &B) -> Result<I, ApiError>
     where
-        B: BackendContext + ?Sized;
+        B: DbPoolContext + ?Sized;
 }
 
 #[doc(hidden)]
@@ -210,14 +210,14 @@ where
 {
     async fn object<B>(&self, backend: &B) -> Result<O, ApiError>
     where
-        B: BackendContext + ?Sized,
+        B: DbPoolContext + ?Sized,
     {
         self.object_adapter(backend.db_pool()).await
     }
 
     async fn object_id<B>(&self, backend: &B) -> Result<I, ApiError>
     where
-        B: BackendContext + ?Sized,
+        B: DbPoolContext + ?Sized,
     {
         self.object_id_adapter(backend.db_pool()).await
     }

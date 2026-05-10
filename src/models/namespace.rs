@@ -16,7 +16,7 @@ use crate::models::search::QueryOptions;
 use crate::models::{Permission, Permissions};
 
 use crate::models::traits::GroupAccessors;
-use crate::traits::{BackendContext, NamespaceAccessors, SelfAccessors};
+use crate::traits::{DbPoolContext, NamespaceAccessors, SelfAccessors};
 
 #[derive(Serialize, Deserialize, Queryable, PartialEq, Debug, Clone, Selectable, ToSchema)]
 #[diesel(table_name = namespaces)]
@@ -82,7 +82,7 @@ fn new_namespace_with_assignee_example() -> NewNamespaceWithAssignee {
 
 pub async fn total_namespace_count<C>(backend: &C) -> Result<i64, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: DbPoolContext + ?Sized,
 {
     namespace_backend::total_namespace_count_from_backend(backend.db_pool()).await
 }
@@ -104,7 +104,7 @@ pub async fn user_on<C, T>(
     namespace_ref: T,
 ) -> Result<Vec<GroupPermission>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: DbPoolContext + ?Sized,
     T: NamespaceAccessors,
 {
     namespace_backend::user_on_from_backend(backend.db_pool(), user_id, namespace_ref).await
@@ -117,7 +117,7 @@ pub async fn user_on_paginated_with_total_count<C, T>(
     query_options: &QueryOptions,
 ) -> Result<(Vec<GroupPermission>, i64), ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: DbPoolContext + ?Sized,
     T: NamespaceAccessors,
 {
     namespace_backend::user_on_paginated_with_total_count_from_backend(
@@ -147,7 +147,7 @@ pub async fn user_can_on_any<C, U>(
     permission_type: Permissions,
 ) -> Result<Vec<Namespace>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: DbPoolContext + ?Sized,
     U: SelfAccessors<User> + GroupAccessors,
 {
     namespace_backend::user_can_on_any_from_backend(backend.db_pool(), user_id, permission_type)
@@ -172,7 +172,7 @@ pub async fn group_can_on<C, T>(
     permission_type: Permissions,
 ) -> Result<bool, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: DbPoolContext + ?Sized,
     T: NamespaceAccessors,
 {
     namespace_backend::group_can_on_from_backend(
@@ -201,7 +201,7 @@ pub async fn groups_can_on<C>(
     permission_type: Permissions,
 ) -> Result<Vec<Group>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: DbPoolContext + ?Sized,
 {
     namespace_backend::groups_can_on_from_backend(backend.db_pool(), nid, permission_type).await
 }
@@ -213,7 +213,7 @@ pub async fn groups_can_on_paginated_with_total_count<C>(
     query_options: &QueryOptions,
 ) -> Result<(Vec<Group>, i64), ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: DbPoolContext + ?Sized,
 {
     namespace_backend::groups_can_on_paginated_with_total_count_from_backend(
         backend.db_pool(),
@@ -241,7 +241,7 @@ pub async fn groups_on<C, T>(
     query_options: QueryOptions,
 ) -> Result<Vec<GroupPermission>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: DbPoolContext + ?Sized,
     T: NamespaceAccessors,
 {
     namespace_backend::groups_on_from_backend(
@@ -260,7 +260,7 @@ pub async fn groups_on_paginated<C, T>(
     query_options: &QueryOptions,
 ) -> Result<Vec<GroupPermission>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: DbPoolContext + ?Sized,
     T: NamespaceAccessors,
 {
     namespace_backend::groups_on_paginated_from_backend(
@@ -279,7 +279,7 @@ pub async fn groups_on_paginated_with_total_count<C, T>(
     query_options: &QueryOptions,
 ) -> Result<(Vec<GroupPermission>, i64), ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: DbPoolContext + ?Sized,
     T: NamespaceAccessors,
 {
     namespace_backend::groups_on_paginated_with_total_count_from_backend(
@@ -298,7 +298,7 @@ pub async fn count_groups_on_paginated<C, T>(
     query_options: &QueryOptions,
 ) -> Result<i64, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: DbPoolContext + ?Sized,
     T: NamespaceAccessors,
 {
     namespace_backend::count_groups_on_paginated_from_backend(
@@ -313,7 +313,7 @@ where
 /// List all permissions for a given group on a namespace
 pub async fn group_on<C>(backend: &C, nid: i32, gid: i32) -> Result<Permission, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: DbPoolContext + ?Sized,
 {
     namespace_backend::group_on_from_backend(backend.db_pool(), nid, gid).await
 }
@@ -411,7 +411,7 @@ mod tests {
         // This should return an ApiError::NotFound
         let result = namespace
             .namespace
-            .grant_one(&pool, 99999999, Permissions::ReadCollection)
+            .grant_one(&app_ctx, 99999999, Permissions::ReadCollection)
             .await;
 
         assert!(result.is_err());
@@ -542,7 +542,7 @@ mod tests {
             // Grant this subset of permissions
             namespace
                 .namespace
-                .grant(&pool, group_id, PermissionsList::new(subset.clone()))
+                .grant(&app_ctx, group_id, PermissionsList::new(subset.clone()))
                 .await
                 .unwrap();
 
@@ -608,14 +608,14 @@ mod tests {
             // Grant all permissions
             namespace
                 .namespace
-                .grant(&pool, group_id, PermissionsList::new(permissions.clone()))
+                .grant(&app_ctx, group_id, PermissionsList::new(permissions.clone()))
                 .await
                 .unwrap();
 
             // Revoke this subset of permissions
             namespace
                 .namespace
-                .revoke(&pool, group_id, PermissionsList::new(subset.clone()))
+                .revoke(&app_ctx, group_id, PermissionsList::new(subset.clone()))
                 .await
                 .unwrap();
 
@@ -659,7 +659,7 @@ mod tests {
 
         namespace
             .namespace
-            .grant_one(&pool, group_id, NP::ReadCollection)
+            .grant_one(&app_ctx, group_id, NP::ReadCollection)
             .await
             .unwrap();
 
@@ -693,7 +693,7 @@ mod tests {
 
         namespace
             .namespace
-            .grant_one(&pool, group_id, NP::UpdateCollection)
+            .grant_one(&app_ctx, group_id, NP::UpdateCollection)
             .await
             .unwrap();
 
@@ -722,7 +722,7 @@ mod tests {
 
         namespace
             .namespace
-            .revoke_one(&pool, group_id, NP::UpdateCollection)
+            .revoke_one(&app_ctx, group_id, NP::UpdateCollection)
             .await
             .unwrap();
 
@@ -778,7 +778,7 @@ mod tests {
         namespace
             .namespace
             .set_permissions(
-                &pool,
+                &app_ctx,
                 group_id,
                 PermissionsList::new([Permissions::ReadTemplate, Permissions::UpdateTemplate]),
             )
@@ -828,7 +828,7 @@ mod tests {
 
         namespace
             .namespace
-            .grant_one(&pool, group_id, Permissions::CreateTemplate)
+            .grant_one(&app_ctx, group_id, Permissions::CreateTemplate)
             .await
             .unwrap();
 
@@ -845,7 +845,7 @@ mod tests {
 
         namespace
             .namespace
-            .revoke_one(&pool, group_id, Permissions::UpdateTemplate)
+            .revoke_one(&app_ctx, group_id, Permissions::UpdateTemplate)
             .await
             .unwrap();
 
@@ -900,12 +900,12 @@ mod tests {
 
         namespace
             .namespace
-            .grant_one(&pool, delegate_group.id, Permissions::DelegateCollection)
+            .grant_one(&app_ctx, delegate_group.id, Permissions::DelegateCollection)
             .await
             .unwrap();
         namespace
             .namespace
-            .grant_one(&pool, non_delegate_group.id, Permissions::ReadCollection)
+            .grant_one(&app_ctx, non_delegate_group.id, Permissions::ReadCollection)
             .await
             .unwrap();
 

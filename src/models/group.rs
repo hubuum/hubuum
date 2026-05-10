@@ -15,8 +15,8 @@ use utoipa::ToSchema;
 
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{
-    BackendContext, CanSave, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType,
-    CursorValue,
+    CanSave, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+    DbPoolContext,
 };
 
 use crate::db::DbPool;
@@ -39,14 +39,14 @@ impl InstanceAdapter<Group> for GroupID {
 impl GroupID {
     pub async fn group<C>(&self, backend: &C) -> Result<Group, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.load_group_record(backend.db_pool()).await
     }
 
     pub async fn delete<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.delete_group_record(backend.db_pool()).await
     }
@@ -79,7 +79,7 @@ impl InstanceAdapter<Group> for Group {
 impl Group {
     pub async fn members<C>(&self, backend: &C) -> Result<Vec<User>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.load_group_members(backend.db_pool()).await
     }
@@ -90,7 +90,7 @@ impl Group {
         query_options: &QueryOptions,
     ) -> Result<Vec<User>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.load_group_members_paginated(backend.db_pool(), query_options)
             .await
@@ -102,7 +102,7 @@ impl Group {
         query_options: &QueryOptions,
     ) -> Result<i64, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.count_group_members_paginated(backend.db_pool(), query_options)
             .await
@@ -121,7 +121,7 @@ impl Group {
     /// If the user is already a member of the group, this function is a safe noop.
     pub async fn add_member<C>(&self, backend: &C, user: &User) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         NewUserGroup {
             user_id: user.id,
@@ -135,7 +135,7 @@ impl Group {
 
     pub async fn remove_member<C>(&self, user: &User, backend: &C) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.remove_group_member_from_backend(user, backend.db_pool())
             .await
@@ -143,7 +143,7 @@ impl Group {
 
     pub async fn delete<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.delete_group_record(backend.db_pool()).await
     }
@@ -167,7 +167,7 @@ impl NewGroup {
 
     pub async fn save<C>(&self, backend: &C) -> Result<Group, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.save_group_record(backend.db_pool()).await
     }
@@ -183,7 +183,7 @@ pub struct UpdateGroup {
 impl UpdateGroup {
     pub async fn save<C>(&self, group_id: i32, backend: &C) -> Result<Group, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.update_group_record(group_id, backend.db_pool()).await
     }

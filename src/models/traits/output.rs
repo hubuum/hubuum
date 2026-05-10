@@ -8,7 +8,7 @@ use crate::models::{
     GroupPermission, HubuumClass, HubuumClassExpanded, Namespace, NamespaceID, Permission,
 };
 use crate::traits::{
-    BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue, DbPoolContext,
     SelfAccessors,
 };
 
@@ -24,13 +24,13 @@ pub trait FromTuple<T> {
 pub trait ExpandNamespace<T> {
     async fn expand_namespace<C>(&self, backend: &C) -> Result<T, ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: DbPoolContext + ?Sized;
 }
 
 impl ExpandNamespace<HubuumClassExpanded> for HubuumClass {
     async fn expand_namespace<C>(&self, backend: &C) -> Result<HubuumClassExpanded, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         let namespace = NamespaceID(self.namespace_id).instance(backend).await?;
 

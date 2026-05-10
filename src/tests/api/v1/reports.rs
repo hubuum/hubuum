@@ -334,11 +334,12 @@ mod tests {
         let user_token = test_user.create_token(pool).await.unwrap().get_token();
 
         // Grant ReadTemplate permission to the namespace
+        let app_ctx = crate::tests::app_context_for(pool);
         classes
             .namespace
             .namespace
             .grant(
-                pool,
+                &app_ctx,
                 classes.namespace.owner_group.id,
                 PermissionsList::new([Permissions::ReadTemplate, Permissions::ReadObject]),
             )

@@ -615,11 +615,7 @@ pub async fn revoke_namespace_group_permission(
     );
 
     namespace
-        .revoke(
-            &ctx.db_pool,
-            group_id.id(),
-            PermissionsList::new([permission]),
-        )
+        .revoke(&ctx, group_id.id(), PermissionsList::new([permission]))
         .await?;
 
     Ok(json_response((), StatusCode::NO_CONTENT))

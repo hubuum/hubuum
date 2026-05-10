@@ -112,10 +112,11 @@ mod tests {
         groups[0].add_member(&pool, &users[0]).await.unwrap();
         groups[1].add_member(&pool, &users[1]).await.unwrap();
 
+        let app_ctx = crate::tests::app_context_for(&pool);
         namespaces[0]
             .namespace
             .grant(
-                &pool,
+                &app_ctx,
                 groups[0].id,
                 PL::new(vec![P::CreateClass, P::ReadClass]),
             )
@@ -124,7 +125,7 @@ mod tests {
         namespaces[1]
             .namespace
             .grant(
-                &pool,
+                &app_ctx,
                 groups[0].id,
                 PL::new(vec![P::CreateClass, P::DeleteClass]),
             )
@@ -134,7 +135,7 @@ mod tests {
         namespaces[0]
             .namespace
             .grant(
-                &pool,
+                &app_ctx,
                 groups[1].id,
                 PL::new(vec![P::CreateObject, P::ReadObject]),
             )
@@ -143,7 +144,7 @@ mod tests {
         namespaces[1]
             .namespace
             .grant(
-                &pool,
+                &app_ctx,
                 groups[1].id,
                 PL::new(vec![P::CreateObject, P::DeleteObject]),
             )

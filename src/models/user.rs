@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::errors::ApiError;
-use crate::traits::BackendContext;
+use crate::traits::DbPoolContext;
 
 use tracing::{error, warn};
 
@@ -27,7 +27,7 @@ pub struct User {
 impl User {
     pub async fn create_token<C>(&self, backend: &C) -> Result<Token, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         let generated_token = crate::utilities::auth::generate_token();
 
@@ -43,7 +43,7 @@ impl User {
         backend: &C,
     ) -> Result<UserToken, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.load_owned_user_token_record(&token_param, backend.db_pool())
             .await
@@ -51,7 +51,7 @@ impl User {
 
     pub async fn delete_token<C>(&self, token_param: Token, backend: &C) -> Result<usize, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.delete_owned_user_token_record(&token_param, backend.db_pool())
             .await
@@ -59,14 +59,14 @@ impl User {
 
     pub async fn delete_all_tokens<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.delete_all_user_tokens_record(backend.db_pool()).await
     }
 
     pub async fn delete<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.delete_user_record(backend.db_pool()).await
     }
@@ -103,7 +103,7 @@ impl UpdateUser {
 
     pub async fn save<C>(self, user_id: i32, backend: &C) -> Result<User, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         let hashed = self.hash_password()?;
         hashed.update_user_record(user_id, backend.db_pool()).await
@@ -135,7 +135,7 @@ impl NewUser {
 
     pub async fn save<C>(self, backend: &C) -> Result<User, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         let hashed = self.hash_password()?;
         hashed.create_user_record(backend.db_pool()).await
@@ -160,7 +160,7 @@ pub struct UserID(pub i32);
 impl UserID {
     pub async fn user<C>(&self, backend: &C) -> Result<User, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         use crate::db::traits::user::LoadUserRecord;
         self.load_user_record(backend.db_pool()).await
@@ -168,7 +168,7 @@ impl UserID {
 
     pub async fn delete<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.delete_user_record(backend.db_pool()).await
     }
@@ -190,7 +190,7 @@ impl LoginUser {
     /// matches the hashed password in the database.
     pub async fn login<C>(self, backend: &C) -> Result<User, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         // We could do .first::<User>(&mut conn)? here, due to the way errors.rs uses "From"
         // to map diesel errors. But, we specifically map Diesel's NotFound to our own NotFound

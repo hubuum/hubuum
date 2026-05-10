@@ -1,7 +1,7 @@
 use crate::db::DbPool;
 use crate::errors::ApiError;
 
-use super::context::BackendContext;
+use super::context::DbPoolContext;
 
 /// Delete the value represented by `self`.
 ///
@@ -10,7 +10,7 @@ use super::context::BackendContext;
 pub trait CanDelete {
     async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: DbPoolContext + ?Sized;
 }
 
 /// Persist `self` and return the saved representation.
@@ -21,7 +21,7 @@ pub trait CanSave {
     type Output;
     async fn save<C>(&self, backend: &C) -> Result<Self::Output, ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: DbPoolContext + ?Sized;
 }
 
 /// Update an existing persisted value and return the updated representation.
@@ -32,7 +32,7 @@ pub trait CanUpdate {
     type Output;
     async fn update<C>(&self, backend: &C, entry_id: i32) -> Result<Self::Output, ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: DbPoolContext + ?Sized;
 }
 
 #[doc(hidden)]
@@ -46,7 +46,7 @@ where
 {
     async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.delete_adapter(backend.db_pool()).await
     }
@@ -67,7 +67,7 @@ where
 
     async fn save<C>(&self, backend: &C) -> Result<Self::Output, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.save_adapter(backend.db_pool()).await
     }
@@ -88,7 +88,7 @@ where
 
     async fn update<C>(&self, backend: &C, entry_id: i32) -> Result<Self::Output, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.update_adapter(backend.db_pool(), entry_id).await
     }
@@ -107,7 +107,7 @@ pub trait Validate {
     ///   fails validation against the class's JSON schema (json_schema).
     async fn validate<C>(&self, backend: &C) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: DbPoolContext + ?Sized;
 }
 
 #[allow(dead_code)]

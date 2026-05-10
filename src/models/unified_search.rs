@@ -8,7 +8,7 @@ use utoipa::ToSchema;
 use crate::errors::ApiError;
 use crate::models::{HubuumClassExpanded, HubuumObject, Namespace, User};
 use crate::pagination::{page_limits, validate_page_limit};
-use crate::traits::{BackendContext, Search};
+use crate::traits::{DbPoolContext, Search};
 use crate::utilities::extensions::CustomStringExtensions;
 
 #[derive(
@@ -402,7 +402,7 @@ async fn search_namespaces<C>(
     search_spec: &UnifiedSearchSpec,
 ) -> Result<SearchPage<Namespace>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: DbPoolContext + ?Sized,
 {
     let rows = user.search_unified_namespaces(backend, search_spec).await?;
     if rows.is_empty() {
@@ -439,7 +439,7 @@ async fn search_classes<C>(
     search_spec: &UnifiedSearchSpec,
 ) -> Result<SearchPage<HubuumClassExpanded>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: DbPoolContext + ?Sized,
 {
     let rows = user.search_unified_classes(backend, search_spec).await?;
     if rows.is_empty() {
@@ -479,7 +479,7 @@ async fn search_objects<C>(
     search_spec: &UnifiedSearchSpec,
 ) -> Result<SearchPage<HubuumObject>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: DbPoolContext + ?Sized,
 {
     let rows = user.search_unified_objects(backend, search_spec).await?;
     if rows.is_empty() {
@@ -514,7 +514,7 @@ pub async fn execute_unified_search<C>(
     params: &UnifiedSearchQuery,
 ) -> Result<UnifiedSearchResponse, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: DbPoolContext + ?Sized,
 {
     let search_spec = params.search_spec();
     let namespaces = if params.includes(UnifiedSearchKind::Namespace) {
@@ -566,7 +566,7 @@ pub async fn execute_unified_search_batch<C>(
     kind: UnifiedSearchKind,
 ) -> Result<UnifiedSearchBatchResponse, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: DbPoolContext + ?Sized,
 {
     let search_spec = params.search_spec();
     match kind {

@@ -14,9 +14,8 @@ use crate::models::search::{FilterField, SortParam};
 use crate::traits::accessors::{ClassAdapter, IdAccessor, InstanceAdapter, NamespaceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 use crate::traits::{
-    BackendContext, ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping,
-    CursorSqlType, CursorValue, NamespaceAccessors, PermissionController, Validate,
-    ValidateAgainstSchema,
+    ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+    DbPoolContext, NamespaceAccessors, PermissionController, Validate, ValidateAgainstSchema,
 };
 
 impl HubuumObject {
@@ -54,7 +53,7 @@ impl HubuumObject {
 impl Validate for HubuumObject {
     async fn validate<C>(&self, backend: &C) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.validate_object_record(backend.db_pool()).await
     }
@@ -69,7 +68,7 @@ impl ValidateAgainstSchema for HubuumObject {
 impl Validate for NewHubuumObject {
     async fn validate<C>(&self, backend: &C) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.validate_object_record(backend.db_pool()).await
     }
@@ -84,7 +83,7 @@ impl ValidateAgainstSchema for NewHubuumObject {
 impl Validate for (&UpdateHubuumObject, i32) {
     async fn validate<C>(&self, backend: &C) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: DbPoolContext + ?Sized,
     {
         self.validate_object_record(backend.db_pool()).await
     }
