@@ -2,6 +2,8 @@ pub mod backend;
 pub mod context;
 #[cfg(feature = "permissions-local")]
 pub mod local;
+#[cfg(feature = "permissions-treetop")]
+pub mod treetop;
 pub mod types;
 pub mod visibility;
 
