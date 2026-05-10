@@ -51,18 +51,11 @@ pub async fn build_permission_backend(
 
         #[cfg(feature = "permissions-treetop")]
         PermissionBackendKind::Treetop => {
-            // Treetop backend lands in Phase 5 (Task 5.3). Until then this
-            // arm is reachable only if an operator sets the env var with the
-            // treetop feature compiled in; fail fast with a clear message
-            // so it's obvious the feature isn't available yet.
-            //
-            // The unused params are intentional — they document the future
-            // signature without dragging in a half-implementation.
-            let _ = &cfg.treetop_url;
-            let _ = pool;
-            Err(ApiError::InternalServerError(
-                "treetop backend not yet implemented (Phase 5 / Task 5.3)".to_string(),
-            ))
+            let url = cfg.treetop_url.as_deref().ok_or_else(|| {
+                ApiError::BadRequest("HUBUUM_TREETOP_URL is required".to_string())
+            })?;
+            let backend = treetop::TreetopPermissionBackend::connect(url, cfg, pool).await?;
+            Ok(Arc::new(backend))
         }
 
         #[cfg(not(feature = "permissions-treetop"))]

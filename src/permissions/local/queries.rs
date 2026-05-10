@@ -502,6 +502,14 @@ pub(crate) async fn user_on_paginated_query<T: NamespaceAccessors>(
     ))
 }
 
+/// Load all namespaces from the database without any permission filtering.
+/// Used by the Treetop backend's candidate enumeration.
+pub(crate) async fn all_namespaces(pool: &DbPool) -> Result<Vec<Namespace>, ApiError> {
+    with_connection(pool, |conn| {
+        crate::schema::namespaces::table.load::<Namespace>(conn)
+    })
+}
+
 pub(crate) async fn user_can_on_any_query(
     pool: &DbPool,
     user_id: i32,
@@ -512,9 +520,7 @@ pub(crate) async fn user_can_on_any_query(
 
     let user = UserID(user_id);
     if user.is_admin(pool).await? {
-        return with_connection(pool, |conn| {
-            crate::schema::namespaces::table.load::<Namespace>(conn)
-        });
+        return all_namespaces(pool).await;
     }
 
     let group_id_subquery = user.group_ids_subquery_from_backend();
