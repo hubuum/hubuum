@@ -368,11 +368,12 @@ mod tests {
         permissions: PermissionsList<Permissions>,
     ) {
         let namespace = namespace.clone();
+        let app_ctx = crate::tests::app_context_for(pool);
 
         for group in groups {
             namespace
                 .clone()
-                .grant(pool, group.id, permissions.clone())
+                .grant(&app_ctx, group.id, permissions.clone())
                 .await
                 .unwrap();
 
@@ -405,6 +406,7 @@ mod tests {
     async fn grant_to_nonexistent_group() {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
+        let app_ctx = crate::tests::app_context_for(&pool);
 
         let namespace = scope.namespace_fixture("grant_to_nonexistent_group").await;
 
@@ -422,6 +424,7 @@ mod tests {
     async fn test_list_groups_who_can() {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
+        let app_ctx = crate::tests::app_context_for(&pool);
 
         let mut groups = Vec::new();
         for group_number in [1, 2, 3, 4, 5] {
@@ -505,6 +508,7 @@ mod tests {
     async fn test_permission_grant_combinations() {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
+        let app_ctx = crate::tests::app_context_for(&pool);
 
         let permissions = vec![
             Permissions::ReadCollection,
@@ -565,6 +569,7 @@ mod tests {
     async fn test_permission_revoke_combinations() {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
+        let app_ctx = crate::tests::app_context_for(&pool);
 
         type NP = Permissions;
 
@@ -608,7 +613,11 @@ mod tests {
             // Grant all permissions
             namespace
                 .namespace
-                .grant(&app_ctx, group_id, PermissionsList::new(permissions.clone()))
+                .grant(
+                    &app_ctx,
+                    group_id,
+                    PermissionsList::new(permissions.clone()),
+                )
                 .await
                 .unwrap();
 
@@ -640,6 +649,7 @@ mod tests {
     async fn test_permission_grant_without_side_effects() {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
+        let app_ctx = crate::tests::app_context_for(&pool);
 
         type NP = Permissions;
 
@@ -761,6 +771,7 @@ mod tests {
     async fn test_template_permissions_set_grant_and_revoke() {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
+        let app_ctx = crate::tests::app_context_for(&pool);
 
         let namespace = scope
             .namespace_fixture("test_template_permissions_set_grant_and_revoke")
@@ -878,6 +889,7 @@ mod tests {
     async fn test_template_permission_backfill_updates_only_delegators() {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
+        let app_ctx = crate::tests::app_context_for(&pool);
         let namespace = scope
             .namespace_fixture("test_template_permission_backfill")
             .await;

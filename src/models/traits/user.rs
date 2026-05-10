@@ -573,7 +573,7 @@ mod test {
 
         class
             .grant(
-                &context.pool,
+                &context.app_context,
                 test_group_1.id,
                 PermissionsList::new([
                     Permissions::ReadClass,
@@ -633,9 +633,13 @@ mod test {
             .unwrap();
         assert_not_contains!(&classlist, &class);
 
-        ns.grant_one(&context.pool, test_group_2.id, Permissions::ReadCollection)
-            .await
-            .unwrap();
+        ns.grant_one(
+            &context.app_context,
+            test_group_2.id,
+            Permissions::ReadCollection,
+        )
+        .await
+        .unwrap();
 
         let nslist = test_user_2
             .search_namespaces(
@@ -661,7 +665,11 @@ mod test {
         assert_contains!(&classlist, &class);
 
         class
-            .grant_one(&context.pool, test_group_2.id, Permissions::ReadClass)
+            .grant_one(
+                &context.app_context,
+                test_group_2.id,
+                Permissions::ReadClass,
+            )
             .await
             .unwrap();
 
@@ -675,7 +683,11 @@ mod test {
         assert_contains!(&classlist, &class);
 
         class
-            .revoke_one(&context.pool, test_group_2.id, Permissions::ReadClass)
+            .revoke_one(
+                &context.app_context,
+                test_group_2.id,
+                Permissions::ReadClass,
+            )
             .await
             .unwrap();
 
@@ -697,7 +709,9 @@ mod test {
             .unwrap();
         assert_contains!(&nslist, &ns);
 
-        ns.revoke_all(&context.pool, test_group_2.id).await.unwrap();
+        ns.revoke_all(&context.app_context, test_group_2.id)
+            .await
+            .unwrap();
 
         let nslist = test_user_2
             .search_namespaces(

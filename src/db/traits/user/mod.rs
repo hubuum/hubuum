@@ -157,7 +157,7 @@ mod tests {
             .map(|i| &namespaces[*i].namespace)
             .collect::<Vec<_>>();
 
-        let result = user.can(&pool, permissions, namespaces).await;
+        let result = user.can(&app_ctx, permissions, namespaces).await;
 
         match (result, expected) {
             (Ok(()), true) => {
