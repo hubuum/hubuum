@@ -208,6 +208,7 @@ sudo ./uninstall-single-host.sh --purge
 Required:
 
 - `--api`: public backend API hostname served by Caddy.
+- `--api-port`: internal backend API listen port. Default: `8080`.
 - `--email`: Let's Encrypt registration email.
 - `--web`: public frontend hostname. Required only in `all` mode.
 
@@ -243,7 +244,7 @@ Backend:
 
 - `HUBUUM_DATABASE_URL` and `DATABASE_URL`: Postgres connection URL.
 - `HUBUUM_BIND_IP=0.0.0.0`
-- `HUBUUM_BIND_PORT=8080`
+- `HUBUUM_BIND_PORT`: internal backend API listen port. Default: `8080`.
 - `HUBUUM_LOG_LEVEL=info`
 - `HUBUUM_TOKEN_HASH_KEY`: generated stable token hash key.
 - `HUBUUM_CLIENT_ALLOWLIST`: defaults to the container bridge subnet.
@@ -254,7 +255,7 @@ Backend:
 
 Frontend, all-in-one mode only:
 
-- `BACKEND_BASE_URL=http://hubuum-api:8080`
+- `BACKEND_BASE_URL`: internal backend URL, derived from `--api-port`.
 - `VALKEY_URL=redis://valkey:6379/0`
 - `SESSION_TTL_SECONDS=28800`
 - `SESSION_PREFIX=hubuum:sess:`
