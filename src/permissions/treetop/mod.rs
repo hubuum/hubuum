@@ -129,6 +129,13 @@ fn extract_decisions(response: &AuthorizeBriefResponse) -> Vec<bool> {
         .collect()
 }
 
+// Re-export the synthesize helpers from test_support so they're available
+// within this module. The actual implementations live in test_support to
+// avoid circular dependencies when building without the treetop feature.
+use crate::permissions::test_support::mock_treetop::{
+    permission_has_any_grant, synthesize_permission,
+};
+
 #[async_trait]
 impl PermissionBackend for TreetopPermissionBackend {
     async fn authorize_many(
@@ -205,48 +212,117 @@ impl PermissionBackend for TreetopPermissionBackend {
 
     async fn groups_with_permissions_on(
         &self,
-        _namespace_id: i32,
-        _permissions_filter: &[Permissions],
-        _page: &QueryOptions,
+        namespace_id: i32,
+        permissions_filter: &[Permissions],
+        page: &QueryOptions,
     ) -> Result<(Vec<GroupPermission>, i64), ApiError> {
-        // For each (group, permission) pair on the namespace, ask Treetop
-        // whether that group has that permission. Synthesize GroupPermission
-        // rows with the resulting boolean grid.
-        //
-        // Implementation note: this is genuinely expensive if there are
-        // many groups, but the namespace listing endpoint always paginates,
-        // so we only materialize one page at a time.
-        //
-        // TODO: implement candidate enumeration over all groups + per-permission
-        // authorize. The synthetic GroupPermission shape mirrors
-        // LocalPermissionBackend's row.
-        Err(ApiError::NotImplemented(
-            "TreetopPermissionBackend::groups_with_permissions_on is not yet implemented — \
-             synthetic permission listing for Treetop mode is low-priority and only affects \
-             the namespace permission-listing endpoints."
-                .to_string(),
-        ))
+        use crate::models::Group;
+        use crate::schema::groups::dsl::groups as groups_dsl;
+
+        // Load all groups from the local DB — the candidate set.
+        let all_groups: Vec<Group> =
+            with_connection(&self.pool, |conn| groups_dsl.load::<Group>(conn))?;
+
+        if all_groups.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
+
+        // For each group, build all 24 PermissionRequests against this
+        // namespace. Flatten into one big batch — Treetop returns decisions
+        // in input order, so we know which group/permission each maps to.
+        let resource = ResourceRef::namespace(namespace_id);
+        let perms = Permissions::all();
+
+        let mut all_results: Vec<GroupPermission> = Vec::new();
+        for group in &all_groups {
+            let principal = PrincipalRef::new(0, vec![group.id]);
+            let requests: Vec<PermissionRequest> = perms
+                .iter()
+                .map(|p| PermissionRequest {
+                    resource: resource.clone(),
+                    permissions: vec![*p],
+                })
+                .collect();
+
+            let decisions: Vec<bool> = self
+                .authorize_many(&principal, requests)
+                .await?
+                .into_iter()
+                .map(|d| d == PermissionDecision::Allow)
+                .collect();
+
+            let row = synthesize_permission(namespace_id, group.id, &decisions);
+
+            // Filter:
+            //   - empty filter → include if any permission is Allow
+            //   - non-empty   → include only if ALL filter permissions are Allow
+            let include = if permissions_filter.is_empty() {
+                permission_has_any_grant(&row)
+            } else {
+                permissions_filter.iter().all(|wanted| {
+                    let idx = perms
+                        .iter()
+                        .position(|p| p == wanted)
+                        .expect("Permissions::all() must contain every variant");
+                    decisions[idx]
+                })
+            };
+
+            if include {
+                all_results.push(GroupPermission {
+                    group: group.clone(),
+                    permission: row,
+                });
+            }
+        }
+
+        let total_count = all_results.len() as i64;
+
+        // Apply page ordering + limit. The QueryOptions surface for
+        // sort and limit is established but cursor pagination doesn't
+        // translate to in-memory sorts cleanly — for now we sort by group
+        // id ascending (matches the LocalPermissionBackend default) and
+        // apply page.limit if present. Cursor-based pagination is a follow-up.
+        all_results.sort_by_key(|gp| gp.group.id);
+
+        let limit = page.limit.unwrap_or(usize::MAX);
+        let rows: Vec<GroupPermission> = all_results.into_iter().take(limit).collect();
+
+        Ok((rows, total_count))
     }
 
     async fn group_permission_on(
         &self,
-        _namespace_id: i32,
-        _group_id: i32,
+        namespace_id: i32,
+        group_id: i32,
     ) -> Result<Option<Permission>, ApiError> {
-        // Synthesize a Permission row by asking Treetop "does this group
-        // have <each Permissions variant> on this namespace?" 24 questions,
-        // 24 booleans, one synthetic row.
-        //
-        // id=0, created_at/updated_at=now (documented in the spec — these
-        // fields are synthetic for Treetop-mode responses).
-        //
-        // TODO: synthesize Permission row from per-variant authorize results.
-        Err(ApiError::NotImplemented(
-            "TreetopPermissionBackend::group_permission_on is not yet implemented — \
-             synthetic permission rows for Treetop mode are low-priority and only affect \
-             the single-group permission lookup endpoint."
-                .to_string(),
-        ))
+        let principal = PrincipalRef::new(0, vec![group_id]);
+        let resource = ResourceRef::namespace(namespace_id);
+
+        // Build one PermissionRequest per Permissions variant. authorize_many
+        // collapses each into a single Allow/Deny — for our purposes a single
+        // permission per request suffices (no need for the AND collapse).
+        let requests: Vec<PermissionRequest> = Permissions::all()
+            .iter()
+            .map(|perm| PermissionRequest {
+                resource: resource.clone(),
+                permissions: vec![*perm],
+            })
+            .collect();
+
+        let decisions: Vec<bool> = self
+            .authorize_many(&principal, requests)
+            .await?
+            .into_iter()
+            .map(|d| d == PermissionDecision::Allow)
+            .collect();
+
+        let row = synthesize_permission(namespace_id, group_id, &decisions);
+        Ok(if permission_has_any_grant(&row) {
+            Some(row)
+        } else {
+            None
+        })
     }
 
     async fn apply_permissions(

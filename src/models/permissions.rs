@@ -75,6 +75,39 @@ impl Permissions {
             _ => Err(ApiError::BadRequest(format!("Invalid permission: '{s}'"))),
         }
     }
+
+    /// Every permission variant. Used by backends that need to enumerate
+    /// all permission slots — Treetop's synthetic Permission row builder
+    /// asks per-variant decisions and projects them into the boolean grid.
+    pub fn all() -> &'static [Permissions] {
+        use Permissions::*;
+        &[
+            ReadCollection,
+            UpdateCollection,
+            DeleteCollection,
+            DelegateCollection,
+            CreateClass,
+            ReadClass,
+            UpdateClass,
+            DeleteClass,
+            CreateObject,
+            ReadObject,
+            UpdateObject,
+            DeleteObject,
+            CreateClassRelation,
+            ReadClassRelation,
+            UpdateClassRelation,
+            DeleteClassRelation,
+            CreateObjectRelation,
+            ReadObjectRelation,
+            UpdateObjectRelation,
+            DeleteObjectRelation,
+            ReadTemplate,
+            CreateTemplate,
+            UpdateTemplate,
+            DeleteTemplate,
+        ]
+    }
 }
 impl Display for Permissions {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -396,6 +429,62 @@ mod tests {
             assert!(
                 sql.contains(expected_column),
                 "Expected SQL to contain '{expected_column}', got: {sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn permissions_all_contains_exactly_24_variants() {
+        let all_perms = Permissions::all();
+        assert_eq!(
+            all_perms.len(),
+            24,
+            "Permissions::all() must contain exactly 24 entries"
+        );
+
+        // Check each variant appears exactly once by round-tripping through Display
+        use std::collections::HashSet;
+        let mut seen = HashSet::new();
+        for perm in all_perms {
+            let name = perm.to_string();
+            assert!(
+                !seen.contains(&name),
+                "Duplicate permission in all(): {name}"
+            );
+            seen.insert(name);
+        }
+
+        // Verify each expected variant is present
+        let expected = [
+            "ReadCollection",
+            "UpdateCollection",
+            "DeleteCollection",
+            "DelegateCollection",
+            "CreateClass",
+            "ReadClass",
+            "UpdateClass",
+            "DeleteClass",
+            "CreateObject",
+            "ReadObject",
+            "UpdateObject",
+            "DeleteObject",
+            "CreateClassRelation",
+            "ReadClassRelation",
+            "UpdateClassRelation",
+            "DeleteClassRelation",
+            "CreateObjectRelation",
+            "ReadObjectRelation",
+            "UpdateObjectRelation",
+            "DeleteObjectRelation",
+            "ReadTemplate",
+            "CreateTemplate",
+            "UpdateTemplate",
+            "DeleteTemplate",
+        ];
+        for expected_name in expected {
+            assert!(
+                seen.contains(expected_name),
+                "Missing permission in all(): {expected_name}"
             );
         }
     }

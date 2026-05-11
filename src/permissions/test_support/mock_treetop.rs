@@ -8,8 +8,121 @@ use crate::models::{GroupPermission, Namespace, Permission, Permissions, Permiss
 
 use super::super::backend::PermissionBackend;
 use super::super::types::{
-    PermissionDecision, PermissionRequest, PrincipalRef, ResourceAttrs, ResourceKind,
+    PermissionDecision, PermissionRequest, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
 };
+
+/// Build a synthetic Permission row from a per-variant decision list.
+/// Used by both MockTreetopBackend and TreetopPermissionBackend for
+/// synthesizing Permission rows from per-variant authorize results.
+pub(crate) fn synthesize_permission(
+    namespace_id: i32,
+    group_id: i32,
+    decisions: &[bool],
+) -> Permission {
+    use Permissions::*;
+    let now = chrono::Utc::now().naive_utc();
+
+    let perms = Permissions::all();
+    debug_assert_eq!(
+        perms.len(),
+        decisions.len(),
+        "synthesize_permission: decisions length must match Permissions::all() length"
+    );
+
+    let mut row = Permission {
+        id: 0,
+        namespace_id,
+        group_id,
+        has_read_namespace: false,
+        has_update_namespace: false,
+        has_delete_namespace: false,
+        has_delegate_namespace: false,
+        has_create_class: false,
+        has_read_class: false,
+        has_update_class: false,
+        has_delete_class: false,
+        has_create_object: false,
+        has_read_object: false,
+        has_update_object: false,
+        has_delete_object: false,
+        has_create_class_relation: false,
+        has_read_class_relation: false,
+        has_update_class_relation: false,
+        has_delete_class_relation: false,
+        has_create_object_relation: false,
+        has_read_object_relation: false,
+        has_update_object_relation: false,
+        has_delete_object_relation: false,
+        has_read_template: false,
+        has_create_template: false,
+        has_update_template: false,
+        has_delete_template: false,
+        created_at: now,
+        updated_at: now,
+    };
+
+    for (perm, decision) in perms.iter().zip(decisions) {
+        if !decision {
+            continue;
+        }
+        match perm {
+            ReadCollection => row.has_read_namespace = true,
+            UpdateCollection => row.has_update_namespace = true,
+            DeleteCollection => row.has_delete_namespace = true,
+            DelegateCollection => row.has_delegate_namespace = true,
+            CreateClass => row.has_create_class = true,
+            ReadClass => row.has_read_class = true,
+            UpdateClass => row.has_update_class = true,
+            DeleteClass => row.has_delete_class = true,
+            CreateObject => row.has_create_object = true,
+            ReadObject => row.has_read_object = true,
+            UpdateObject => row.has_update_object = true,
+            DeleteObject => row.has_delete_object = true,
+            CreateClassRelation => row.has_create_class_relation = true,
+            ReadClassRelation => row.has_read_class_relation = true,
+            UpdateClassRelation => row.has_update_class_relation = true,
+            DeleteClassRelation => row.has_delete_class_relation = true,
+            CreateObjectRelation => row.has_create_object_relation = true,
+            ReadObjectRelation => row.has_read_object_relation = true,
+            UpdateObjectRelation => row.has_update_object_relation = true,
+            DeleteObjectRelation => row.has_delete_object_relation = true,
+            ReadTemplate => row.has_read_template = true,
+            CreateTemplate => row.has_create_template = true,
+            UpdateTemplate => row.has_update_template = true,
+            DeleteTemplate => row.has_delete_template = true,
+        }
+    }
+
+    row
+}
+
+/// Whether a synthesized Permission has at least one true field.
+pub(crate) fn permission_has_any_grant(p: &Permission) -> bool {
+    p.has_read_namespace
+        || p.has_update_namespace
+        || p.has_delete_namespace
+        || p.has_delegate_namespace
+        || p.has_create_class
+        || p.has_read_class
+        || p.has_update_class
+        || p.has_delete_class
+        || p.has_create_object
+        || p.has_read_object
+        || p.has_update_object
+        || p.has_delete_object
+        || p.has_create_class_relation
+        || p.has_read_class_relation
+        || p.has_update_class_relation
+        || p.has_delete_class_relation
+        || p.has_create_object_relation
+        || p.has_read_object_relation
+        || p.has_update_object_relation
+        || p.has_delete_object_relation
+        || p.has_read_template
+        || p.has_create_template
+        || p.has_update_template
+        || p.has_delete_template
+}
 
 /// A single Allow rule. The mock evaluates a request as Allow iff there
 /// exists a rule whose group_id is in the principal's group set, whose
@@ -38,12 +151,18 @@ const ADMIN_ACTION_MARKER: Permissions = Permissions::ReadCollection;
 #[derive(Default)]
 pub struct MockTreetopBackend {
     rules: Mutex<Vec<MockAllowRule>>,
+    /// Optional override of the candidate group set used by
+    /// groups_with_permissions_on. When None, the method returns
+    /// NotImplemented (matching the previous behavior). Set this in
+    /// tests that want to exercise the groups-listing path.
+    group_candidates: Mutex<Option<Vec<crate::models::Group>>>,
 }
 
 impl MockTreetopBackend {
     pub fn new() -> Self {
         Self {
             rules: Mutex::new(Vec::new()),
+            group_candidates: Mutex::new(None),
         }
     }
 
@@ -60,6 +179,13 @@ impl MockTreetopBackend {
             resource_id: None,
             attrs: ResourceAttrs::default(),
         });
+    }
+
+    /// Set the group candidates for groups_with_permissions_on. When set,
+    /// the mock will synthesize Permission rows for these groups instead
+    /// of returning NotImplemented.
+    pub fn set_group_candidates(&self, groups: Vec<crate::models::Group>) {
+        *self.group_candidates.lock().unwrap() = Some(groups);
     }
 
     fn rule_matches(rule: &MockAllowRule, request: &PermissionRequest, perm: Permissions) -> bool {
@@ -173,23 +299,102 @@ impl PermissionBackend for MockTreetopBackend {
 
     async fn groups_with_permissions_on(
         &self,
-        _namespace_id: i32,
-        _permissions_filter: &[Permissions],
-        _page: &QueryOptions,
+        namespace_id: i32,
+        permissions_filter: &[Permissions],
+        page: &QueryOptions,
     ) -> Result<(Vec<GroupPermission>, i64), ApiError> {
-        Err(ApiError::NotImplemented(
-            "MockTreetopBackend does not enumerate groups".to_string(),
-        ))
+        let groups_opt = self.group_candidates.lock().unwrap().clone();
+        let all_groups = match groups_opt {
+            Some(g) => g,
+            None => {
+                return Err(ApiError::NotImplemented(
+                    "MockTreetopBackend does not enumerate groups — call set_group_candidates() in tests".to_string(),
+                ))
+            }
+        };
+
+        if all_groups.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
+
+        let perms = Permissions::all();
+        let mut all_results: Vec<GroupPermission> = Vec::new();
+
+        for group in &all_groups {
+            let principal = PrincipalRef::new(0, vec![group.id]);
+            let requests: Vec<PermissionRequest> = perms
+                .iter()
+                .map(|p| PermissionRequest {
+                    resource: ResourceRef::namespace(namespace_id),
+                    permissions: vec![*p],
+                })
+                .collect();
+
+            let decisions: Vec<bool> = self
+                .authorize_many(&principal, requests)
+                .await?
+                .into_iter()
+                .map(|d| d == PermissionDecision::Allow)
+                .collect();
+
+            let row = synthesize_permission(namespace_id, group.id, &decisions);
+
+            let include = if permissions_filter.is_empty() {
+                permission_has_any_grant(&row)
+            } else {
+                permissions_filter.iter().all(|wanted| {
+                    let idx = perms
+                        .iter()
+                        .position(|p| p == wanted)
+                        .expect("Permissions::all() must contain every variant");
+                    decisions[idx]
+                })
+            };
+
+            if include {
+                all_results.push(GroupPermission {
+                    group: group.clone(),
+                    permission: row,
+                });
+            }
+        }
+
+        let total_count = all_results.len() as i64;
+        all_results.sort_by_key(|gp| gp.group.id);
+
+        let limit = page.limit.unwrap_or(usize::MAX);
+        let rows: Vec<GroupPermission> = all_results.into_iter().take(limit).collect();
+
+        Ok((rows, total_count))
     }
 
     async fn group_permission_on(
         &self,
-        _namespace_id: i32,
-        _group_id: i32,
+        namespace_id: i32,
+        group_id: i32,
     ) -> Result<Option<Permission>, ApiError> {
-        Err(ApiError::NotImplemented(
-            "MockTreetopBackend does not synthesize Permission rows".to_string(),
-        ))
+        let principal = PrincipalRef::new(0, vec![group_id]);
+        let requests: Vec<PermissionRequest> = Permissions::all()
+            .iter()
+            .map(|perm| PermissionRequest {
+                resource: ResourceRef::namespace(namespace_id),
+                permissions: vec![*perm],
+            })
+            .collect();
+
+        let decisions: Vec<bool> = self
+            .authorize_many(&principal, requests)
+            .await?
+            .into_iter()
+            .map(|d| d == PermissionDecision::Allow)
+            .collect();
+
+        let row = synthesize_permission(namespace_id, group_id, &decisions);
+        Ok(if permission_has_any_grant(&row) {
+            Some(row)
+        } else {
+            None
+        })
     }
 
     async fn apply_permissions(
