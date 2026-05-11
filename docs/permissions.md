@@ -8,6 +8,15 @@ Permissions within Hubuum are based on the following principles:
 - Permissions are granted on collections. Permissions are never granted to individual classes or objects.
 - Permissions are not inherited from any structure to any other. If a user (through a group membership) has read access to a class, they do not automatically have read access to the objects of that class.
 
+## Backend selection
+
+Hubuum supports two permission backends, selected at runtime via `HUBUUM_PERMISSION_BACKEND`:
+
+- **`local`** (default): the SQL `permissions` table described in the rest of this document is authoritative. Grants and revokes go through the REST API; `hubuum-admin` and the standard endpoints all work.
+- **`treetop`**: an external Cedar policy server is authoritative. Permission decisions are delegated to Treetop; mutations through the REST API return `501 Not Implemented` (policies are managed out-of-band). See [`treetop/README.md`](treetop/README.md) for setup and the bootstrap workflow.
+
+The rest of this document describes the local-backend semantics and the on-the-wire permission model that both backends conform to.
+
 ## Permission types
 
 There are three types of permissions for each collection:

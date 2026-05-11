@@ -75,3 +75,17 @@ To keep backend code navigable, large trait backends are split into focused modu
   `relations.rs`, `records.rs`, `permissions.rs`
 
 The `mod.rs` files in these folders re-export the public backend traits so existing imports (`crate::db::traits::user::*`, `crate::db::traits::namespace::*`) keep working.
+
+## Testing
+
+### Treetop parity tests
+
+`tests::permissions::live_treetop_parity` runs against an actual Treetop server when `HUBUUM_TREETOP_TEST_URL` is set. Without the env var, every test in that module skips cleanly. See [`docs/treetop/test-fixture.md`](treetop/test-fixture.md) for the Cedar entities and policies the external server must have for the assertions to pass.
+
+To run the parity suite locally:
+
+```bash
+HUBUUM_DATABASE_URL=postgres://user:pass@localhost/hubuum \
+HUBUUM_TREETOP_TEST_URL=https://your-treetop-instance \
+  cargo test tests::permissions::live_treetop_parity
+```

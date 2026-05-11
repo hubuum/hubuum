@@ -36,7 +36,9 @@ async fn live_backend(url: &str) -> Result<TreetopPermissionBackend, crate::erro
     let pool = crate::tests::get_test_pool().get_ref().clone();
     // In test context, get_config() uses get_config_from_env() which reads
     // the environment. Clone it and override the treetop fields.
-    let mut cfg = crate::config::get_config().expect("failed to load test config").clone();
+    let mut cfg = crate::config::get_config()
+        .expect("failed to load test config")
+        .clone();
     cfg.treetop_url = Some(url.to_string());
     cfg.permission_backend = crate::config::PermissionBackendKind::Treetop;
     TreetopPermissionBackend::connect(url, &cfg, pool).await
