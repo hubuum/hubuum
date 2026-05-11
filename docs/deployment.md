@@ -67,17 +67,17 @@ You can use the same DNS name and public `80`/`443` ports for both frontend and 
 sudo ./scripts/install-single-host.sh \
   --web hubuum.example.com \
   --api hubuum.example.com \
-  --shared-host-routing prefixed \
+  --shared-host-routing direct \
   --email admin@example.com
 ```
 
 Modes:
 
-- `prefixed`: exposes the backend under `/hubuum-api/` and sends everything else to the frontend. This avoids collisions with frontend-owned `/api/...` BFF routes and is the recommended shared-host mode.
-- `direct`: sends backend-owned paths such as `/api/v0...`, `/api/v1...`, `/api-doc...`, and `/swagger-ui...` directly to the backend, with everything else going to the frontend. This makes the backend available at its normal paths, but those paths bypass the frontend BFF.
-- `bff`: sends all traffic to the frontend. The backend is publicly available only through frontend-owned BFF/proxy routes. Use this only if the frontend intentionally proxies every backend API route you need to expose.
+- `direct`: sends backend-owned paths such as `/api/v0...`, `/api/v1...`, `/api-doc...`, and `/swagger-ui...` directly to the backend, with everything else going to the frontend. This is the recommended shared-host mode now that frontend-owned BFF routes live under `/_hubuum-bff/...`.
+- `prefixed`: exposes the backend under `/hubuum-api/` and sends everything else to the frontend. This is useful if you want to avoid exposing backend routes at their native paths.
+- `bff`: sends all traffic to the frontend. The backend is not directly exposed by Caddy in this mode; use it only when frontend proxy coverage is the intended public API surface.
 
-For the frontend to make shared-host deployments easier, it should keep its internal/BFF routes under a distinct prefix that will never collide with direct backend routes, for example `/_hubuum-bff/...` or `/api/frontend/...`. That would let Caddy route backend paths like `/api/v1/...` directly to the backend while reserving a separate namespace for frontend-only session and proxy behavior.
+The frontend makes shared-host deployments easier by keeping internal/BFF routes under `/_hubuum-bff/...`, which does not collide with direct backend routes like `/api/v1/...`.
 
 ## Curl Install
 
