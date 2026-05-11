@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::process::exit;
 use tracing::warn;
 use tracing_subscriber::{
@@ -13,25 +13,35 @@ use hubuum::utilities::auth::generate_random_password;
 use hubuum::utilities::is_valid_log_level;
 
 #[derive(Parser)]
-#[command(
-    author = "Terje Kvernes <terje@kvernes.no>",
-    version = env!("CARGO_PKG_VERSION"),
-    about = "Admin CLI for Hubuum",
-    long_about = None
-)]
+#[command(version = env!("CARGO_PKG_VERSION"), about = "Admin CLI for Hubuum")]
 struct AdminCli {
-    /// Reset the password for the specified username
-    #[arg(long)]
-    reset_password: Option<String>,
+    #[command(subcommand)]
+    command: AdminCommand,
 
-    /// Database URL
     #[arg(long, env = "HUBUUM_DATABASE_URL")]
     database_url: Option<String>,
 
-    /// Log level
-    /// Possible values: trace, debug, info, warn, error
     #[arg(long, env = "HUBUUM_LOG_LEVEL", default_value = "info")]
     log_level: String,
+}
+
+#[derive(Subcommand)]
+enum AdminCommand {
+    /// Reset the password for a username.
+    ResetPassword { username: String },
+
+    /// Export the current SQL permissions table as a Cedar policy bundle.
+    /// The bundle is operator-managed: pipe to a file and upload to Treetop yourself.
+    ExportPermissions {
+        /// Output format. Cedar is the only format today.
+        #[arg(long, value_enum, default_value_t = ExportFormat::Cedar)]
+        as_: ExportFormat,
+    },
+}
+
+#[derive(clap::ValueEnum, Clone, Copy)]
+enum ExportFormat {
+    Cedar,
 }
 
 #[tokio::main]
@@ -51,10 +61,13 @@ async fn main() -> Result<(), ApiError> {
     // Initialize database connection
     let pool = init_pool(&database_url, 1);
 
-    if let Some(username) = admin_cli.reset_password {
-        reset_password(pool, &username).await?;
-    } else {
-        println!("No command specified. Use --help for usage information.");
+    match admin_cli.command {
+        AdminCommand::ResetPassword { username } => reset_password(pool, &username).await?,
+        AdminCommand::ExportPermissions {
+            as_: ExportFormat::Cedar,
+        } => {
+            hubuum::permissions::export::export_cedar_to(&pool, &mut std::io::stdout()).await?;
+        }
     }
 
     Ok(())
