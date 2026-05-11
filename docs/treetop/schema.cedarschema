@@ -25,40 +25,54 @@ entity Group;
 // Used for admin authorization checks.
 entity HubuumSystem;
 
-// A namespace (collection) scoped by its numeric ID.
-// The entity ID is the namespace's database id; the namespace_id attribute
-// is set for child resources only (classes, objects, templates), not on
-// HubuumNamespace itself.
-entity HubuumNamespace;
-
-// A class definition within a namespace.
-entity HubuumClass {
-    namespace_id: Long
+// A namespace (collection). The entity ID is the namespace's database id.
+// `namespace_id` is also exposed as an attribute (it always equals the entity
+// id) so that policies can be written uniformly across namespace and child
+// resources without special-casing. `name` is set when the runtime has loaded
+// the full namespace row (most authorize paths); not when only the id is
+// known.
+entity HubuumNamespace {
+    namespace_id?: Long,
+    name?: String
 };
 
-// An object instance within a namespace and class.
+// A class definition within a namespace. `name` is populated when the full
+// class row was loaded by the request that triggered the authorization.
+entity HubuumClass {
+    namespace_id: Long,
+    name?: String
+};
+
+// An object instance within a namespace and class. `name` is populated when
+// the full object row was loaded.
 entity HubuumObject {
     namespace_id: Long,
-    class_id: Long
+    class_id: Long,
+    name?: String
 };
 
-// A template within a namespace.
+// A template within a namespace. `name` is populated when the full template
+// row was loaded.
 entity HubuumTemplate {
-    namespace_id: Long
+    namespace_id: Long,
+    name?: String
 };
 
 // A relationship definition between two classes.
-// Relations span two namespaces (which may be the same) and do NOT carry a
-// single namespace_id attribute. Policies targeting relations must use
-// from_namespace_id and to_namespace_id.
+// Relations span two namespaces (which may be the same). `from_namespace_id`
+// and `to_namespace_id` are always set; `namespace_id` is set ONLY when both
+// endpoints share a namespace, as a convenience for policies that don't need
+// to discriminate by direction.
 entity HubuumClassRelation {
     from_namespace_id: Long,
     to_namespace_id: Long,
     from_class_id: Long,
-    to_class_id: Long
+    to_class_id: Long,
+    namespace_id?: Long
 };
 
-// A relationship instance between two objects.
+// A relationship instance between two objects. Same `namespace_id?` rule as
+// HubuumClassRelation: present iff `from_namespace_id == to_namespace_id`.
 entity HubuumObjectRelation {
     from_namespace_id: Long,
     to_namespace_id: Long,
@@ -66,12 +80,14 @@ entity HubuumObjectRelation {
     to_class_id: Long,
     from_object_id: Long,
     to_object_id: Long,
-    class_relation_id: Long
+    class_relation_id: Long,
+    namespace_id?: Long
 };
 
-// A background task.
+// A background task. `submitted_by` is the user id that submitted the task,
+// optional because legacy tasks may not have a recorded submitter.
 entity HubuumTask {
-    submitted_by: Long
+    submitted_by?: Long
 };
 
 // ============================================================================

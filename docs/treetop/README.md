@@ -22,13 +22,15 @@ When you switch to Treetop mode:
 
 **Unchanged:**
 - Identity: users and groups are still managed in the Hubuum database.
-- Data model: namespaces, classes, objects, templates, and relations work exactly as before.
-- REST surface: all endpoints accept the same requests and return the same response shapes.
+- Data storage: namespaces, classes, objects, templates, and relations are stored in the same SQL tables with the same schemas.
+- REST surface: all endpoints accept the same requests and return the same response shapes (with the exceptions noted under "Changed" below).
 
 **Changed:**
 - Permission DECISIONS: every authorization check is delegated to Treetop instead of the local SQL `permissions` table.
 - Permission MUTATIONS: the grant/revoke endpoints (`POST /api/v1/namespaces/{id}/permissions`, etc.) return `501 Not Implemented`. Permissions are managed out-of-band via Treetop's policy upload API.
 - Admin determination: admin status is determined by a Cedar policy on `HubuumSystem` instead of checking the local `admin_groupname` config. See "Admin override" below.
+- Relation authorization semantics: the policies emitted by `hubuum-admin export-permissions --as cedar` use OR-on-endpoints (permission on EITHER endpoint namespace is sufficient), while the Local backend uses AND-on-both-endpoints. This is a deliberate divergence — see "Relation policies: OR vs AND semantics" below.
+- `Permission` GET responses: synthetic, with placeholder `id` and timestamps. See "Synthetic Permission rows" below.
 
 ## Configuration
 
