@@ -17,3 +17,8 @@ pub mod mock_treetop;
 // connection. Only compile when both features are enabled.
 #[cfg(all(feature = "permissions-local", feature = "permissions-treetop"))]
 pub mod live_treetop_parity;
+
+// Exporter round-trip tests require both backends: permissions-local for
+// generating SQL fixtures and permissions-treetop for MockTreetopBackend.
+#[cfg(all(feature = "permissions-local", feature = "permissions-treetop"))]
+pub mod exporter_round_trip;
