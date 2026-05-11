@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use async_trait::async_trait;
 use diesel::prelude::*;
 use treetop_client::{
@@ -11,8 +13,11 @@ use crate::models::search::QueryOptions;
 use crate::models::{GroupPermission, Namespace, Permission, Permissions, PermissionsList};
 
 use super::backend::PermissionBackend;
+use super::observability::{record_authorize_many, record_is_admin, record_reverse_query};
 use super::types::{PermissionDecision, PermissionRequest, PrincipalRef, ResourceRef};
 use super::visibility::paginate_authorized;
+
+const BACKEND_KIND: &str = "treetop";
 
 pub mod error;
 pub mod mapping;
@@ -143,11 +148,16 @@ impl PermissionBackend for TreetopPermissionBackend {
         principal: &PrincipalRef,
         requests: Vec<PermissionRequest>,
     ) -> Result<Vec<PermissionDecision>, ApiError> {
+        let start = Instant::now();
+        let request_count = requests.len();
+
         if requests.is_empty() {
+            record_authorize_many(BACKEND_KIND, 0, 0, 0, 0, start.elapsed());
             return Ok(Vec::new());
         }
 
         let (batch, spans) = Self::build_batch(principal, &requests);
+        let cedar_request_count = batch.requests.len();
 
         let response = self
             .client
@@ -160,7 +170,7 @@ impl PermissionBackend for TreetopPermissionBackend {
 
         // Collapse across the spans: each input PermissionRequest is Allow
         // iff ALL its per-permission Cedar decisions are Allow.
-        Ok(spans
+        let decisions: Vec<PermissionDecision> = spans
             .into_iter()
             .map(|(start, count)| {
                 let all_allow = (start..start + count).all(|i| cedar_decisions[i]);
@@ -170,19 +180,38 @@ impl PermissionBackend for TreetopPermissionBackend {
                     PermissionDecision::Deny
                 }
             })
-            .collect())
+            .collect();
+
+        let allow_count = decisions
+            .iter()
+            .filter(|d| **d == PermissionDecision::Allow)
+            .count();
+        let deny_count = decisions.len() - allow_count;
+        record_authorize_many(
+            BACKEND_KIND,
+            request_count,
+            cedar_request_count,
+            allow_count,
+            deny_count,
+            start.elapsed(),
+        );
+
+        Ok(decisions)
     }
 
     async fn is_admin(&self, principal: &PrincipalRef) -> Result<bool, ApiError> {
         // Delegate to authorize against System resource. Use the same
         // "ReadCollection on System" overload that MockTreetopBackend
         // adopted (Task 5.1). Cedar policies decide what's admin.
+        let start = Instant::now();
         let request = PermissionRequest {
             resource: ResourceRef::system(),
             permissions: vec![Permissions::ReadCollection],
         };
         let decision = self.authorize(principal, request).await?;
-        Ok(decision == PermissionDecision::Allow)
+        let allowed = decision == PermissionDecision::Allow;
+        record_is_admin(BACKEND_KIND, allowed, start.elapsed());
+        Ok(allowed)
     }
 
     async fn namespaces_user_can(
@@ -193,9 +222,11 @@ impl PermissionBackend for TreetopPermissionBackend {
         // Enumerate candidates from the local DB, filter via Treetop.
         // We load all namespaces without any permission filtering, then
         // use paginate_authorized to filter via Treetop batch authorization.
+        let start = Instant::now();
         let all_namespaces = with_connection(&self.pool, |conn| {
             crate::schema::namespaces::table.load::<Namespace>(conn)
         })?;
+        let candidate_count = all_namespaces.len();
         let perms = permissions.to_vec();
         let page = paginate_authorized(
             self,
@@ -207,6 +238,13 @@ impl PermissionBackend for TreetopPermissionBackend {
             |ns: &Namespace| ResourceRef::namespace(ns.id),
         )
         .await?;
+        record_reverse_query(
+            BACKEND_KIND,
+            "namespaces_user_can",
+            candidate_count,
+            page.rows.len(),
+            start.elapsed(),
+        );
         Ok(page.rows)
     }
 
@@ -219,9 +257,12 @@ impl PermissionBackend for TreetopPermissionBackend {
         use crate::models::Group;
         use crate::schema::groups::dsl::groups as groups_dsl;
 
+        let start = Instant::now();
+
         // Load all groups from the local DB — the candidate set.
         let all_groups: Vec<Group> =
             with_connection(&self.pool, |conn| groups_dsl.load::<Group>(conn))?;
+        let candidate_count = all_groups.len();
 
         if all_groups.is_empty() {
             return Ok((Vec::new(), 0));
@@ -288,6 +329,14 @@ impl PermissionBackend for TreetopPermissionBackend {
         let limit = page.limit.unwrap_or(usize::MAX);
         let rows: Vec<GroupPermission> = all_results.into_iter().take(limit).collect();
 
+        record_reverse_query(
+            BACKEND_KIND,
+            "groups_with_permissions_on",
+            candidate_count,
+            rows.len(),
+            start.elapsed(),
+        );
+
         Ok((rows, total_count))
     }
 
@@ -296,6 +345,7 @@ impl PermissionBackend for TreetopPermissionBackend {
         namespace_id: i32,
         group_id: i32,
     ) -> Result<Option<Permission>, ApiError> {
+        let start = Instant::now();
         let principal = PrincipalRef::new(0, vec![group_id]);
         let resource = ResourceRef::namespace(namespace_id);
 
@@ -318,11 +368,19 @@ impl PermissionBackend for TreetopPermissionBackend {
             .collect();
 
         let row = synthesize_permission(namespace_id, group_id, &decisions);
-        Ok(if permission_has_any_grant(&row) {
+        let result = if permission_has_any_grant(&row) {
             Some(row)
         } else {
             None
-        })
+        };
+        record_reverse_query(
+            BACKEND_KIND,
+            "group_permission_on",
+            1,
+            result.as_ref().map(|_| 1).unwrap_or(0),
+            start.elapsed(),
+        );
+        Ok(result)
     }
 
     async fn apply_permissions(

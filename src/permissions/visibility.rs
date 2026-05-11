@@ -1,7 +1,10 @@
+use std::time::Instant;
+
 use crate::errors::ApiError;
 use crate::models::Permissions;
 
 use super::backend::PermissionBackend;
+use super::observability::record_paginate_authorized;
 use super::types::{PermissionDecision, PermissionRequest, PrincipalRef, ResourceRef};
 
 /// A page of authorized rows plus the total authorized count.
@@ -43,7 +46,12 @@ pub async fn paginate_authorized<T, F>(
 where
     F: Fn(&T) -> ResourceRef,
 {
+    let start = Instant::now();
+    let backend_kind = backend.kind();
+    let candidate_count = candidates.len();
+
     if candidates.is_empty() {
+        record_paginate_authorized(backend_kind, 0, 0, offset, limit, 0, start.elapsed());
         return Ok(AuthorizedPage {
             rows: Vec::new(),
             total_count: 0,
@@ -72,8 +80,20 @@ where
         })
         .collect();
 
-    let total_count = authorized.len() as i64;
+    let authorized_count = authorized.len();
+    let total_count = authorized_count as i64;
     let rows: Vec<T> = authorized.into_iter().skip(offset).take(limit).collect();
+    let returned_count = rows.len();
+
+    record_paginate_authorized(
+        backend_kind,
+        candidate_count,
+        authorized_count,
+        offset,
+        limit,
+        returned_count,
+        start.elapsed(),
+    );
 
     Ok(AuthorizedPage { rows, total_count })
 }

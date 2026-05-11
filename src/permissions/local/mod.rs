@@ -1,5 +1,7 @@
 pub mod queries;
 
+use std::time::Instant;
+
 use async_trait::async_trait;
 use tokio::sync::OnceCell;
 
@@ -11,7 +13,10 @@ use crate::models::{
 };
 
 use super::backend::PermissionBackend;
+use super::observability::{record_authorize_many, record_is_admin, record_reverse_query};
 use super::types::{PermissionDecision, PermissionRequest, PrincipalRef};
+
+const BACKEND_KIND: &str = "local";
 
 /// PostgreSQL-backed permission backend. Reads and writes go directly to
 /// the local `permissions` table via Diesel; mutations are supported.
@@ -61,6 +66,9 @@ impl PermissionBackend for LocalPermissionBackend {
         requests: Vec<PermissionRequest>,
     ) -> Result<Vec<PermissionDecision>, ApiError> {
         use super::types::ResourceKind;
+
+        let start = Instant::now();
+        let request_count = requests.len();
 
         // Check admin status once for this principal.
         let is_admin = self.is_admin(principal).await?;
@@ -159,6 +167,21 @@ impl PermissionBackend for LocalPermissionBackend {
             };
             decisions.push(decision);
         }
+        let allow_count = decisions
+            .iter()
+            .filter(|d| **d == PermissionDecision::Allow)
+            .count();
+        let deny_count = decisions.len() - allow_count;
+        // Local backend has no transport-side batching, so cedar_request_count
+        // matches request_count one-for-one.
+        record_authorize_many(
+            BACKEND_KIND,
+            request_count,
+            request_count,
+            allow_count,
+            deny_count,
+            start.elapsed(),
+        );
         Ok(decisions)
     }
 
@@ -170,7 +193,20 @@ impl PermissionBackend for LocalPermissionBackend {
         principal: &PrincipalRef,
         permissions: &[Permissions],
     ) -> Result<Vec<Namespace>, ApiError> {
-        queries::user_can_on_any_query(&self.pool, principal.user_id, permissions).await
+        let start = Instant::now();
+        let result =
+            queries::user_can_on_any_query(&self.pool, principal.user_id, permissions).await?;
+        let n = result.len();
+        // Local backend uses a SQL join, so candidate_count and result_count
+        // are equal — the DB filtered before we saw the rows.
+        record_reverse_query(
+            BACKEND_KIND,
+            "namespaces_user_can",
+            n,
+            n,
+            start.elapsed(),
+        );
+        Ok(result)
     }
 
     async fn groups_with_permissions_on(
@@ -179,13 +215,22 @@ impl PermissionBackend for LocalPermissionBackend {
         permissions_filter: &[Permissions],
         page: &QueryOptions,
     ) -> Result<(Vec<GroupPermission>, i64), ApiError> {
-        queries::groups_on_paginated_with_total_count_query(
+        let start = Instant::now();
+        let (rows, total) = queries::groups_on_paginated_with_total_count_query(
             &self.pool,
             NamespaceID(namespace_id),
             permissions_filter.to_vec(),
             page,
         )
-        .await
+        .await?;
+        record_reverse_query(
+            BACKEND_KIND,
+            "groups_with_permissions_on",
+            total as usize,
+            rows.len(),
+            start.elapsed(),
+        );
+        Ok((rows, total))
     }
 
     async fn group_permission_on(
@@ -193,11 +238,21 @@ impl PermissionBackend for LocalPermissionBackend {
         namespace_id: i32,
         group_id: i32,
     ) -> Result<Option<Permission>, ApiError> {
-        match queries::group_on_query(&self.pool, namespace_id, group_id).await {
+        let start = Instant::now();
+        let result = match queries::group_on_query(&self.pool, namespace_id, group_id).await {
             Ok(p) => Ok(Some(p)),
             Err(ApiError::NotFound(_)) => Ok(None),
             Err(e) => Err(e),
-        }
+        };
+        let result_count = result.as_ref().map(|o| o.is_some() as usize).unwrap_or(0);
+        record_reverse_query(
+            BACKEND_KIND,
+            "group_permission_on",
+            1,
+            result_count,
+            start.elapsed(),
+        );
+        result
     }
 
     async fn apply_permissions(
@@ -233,10 +288,13 @@ impl PermissionBackend for LocalPermissionBackend {
     }
 
     async fn is_admin(&self, principal: &PrincipalRef) -> Result<bool, ApiError> {
-        match self.admin_group_id().await? {
-            Some(admin_gid) => Ok(principal.group_ids.contains(&admin_gid)),
-            None => Ok(false),
-        }
+        let start = Instant::now();
+        let allowed = match self.admin_group_id().await? {
+            Some(admin_gid) => principal.group_ids.contains(&admin_gid),
+            None => false,
+        };
+        record_is_admin(BACKEND_KIND, allowed, start.elapsed());
+        Ok(allowed)
     }
 
     fn supports_sql_visibility_join(&self) -> bool {

@@ -4,6 +4,7 @@ pub mod context;
 pub mod export;
 #[cfg(feature = "permissions-local")]
 pub mod local;
+pub mod observability;
 #[cfg(feature = "permissions-treetop")]
 pub mod treetop;
 pub mod types;
