@@ -6,6 +6,7 @@ INSTALL_DIR="/opt/hubuum"
 MODE="all"
 WEB_FQDN=""
 API_FQDN=""
+API_PORT="8080"
 LETSENCRYPT_EMAIL=""
 BACKEND_REF="main"
 FRONTEND_REF="main"
@@ -47,6 +48,7 @@ Options:
   --dir PATH              Install directory. Default: /opt/hubuum
   --web FQDN              Public frontend hostname. Required in all mode
   --api FQDN              Public backend API hostname. Required
+  --api-port PORT         Internal backend API listen port. Default: 8080
   --email EMAIL           Let's Encrypt registration email. Required
   --backend-image IMAGE   Backend image. Default: ghcr.io/hubuum/hubuum-server:main
   --frontend-image IMAGE  Frontend image. Default: ghcr.io/hubuum/hubuum-frontend:main
@@ -114,6 +116,7 @@ while [[ $# -gt 0 ]]; do
     --dir) INSTALL_DIR="$2"; shift 2 ;;
     --web) WEB_FQDN="$2"; shift 2 ;;
     --api) API_FQDN="$2"; shift 2 ;;
+    --api-port) API_PORT="$2"; shift 2 ;;
     --email) LETSENCRYPT_EMAIL="$2"; shift 2 ;;
     --backend-image) BACKEND_IMAGE="$2"; shift 2 ;;
     --frontend-image) FRONTEND_IMAGE="$2"; shift 2 ;;
@@ -142,6 +145,7 @@ done
 
 [[ "$MODE" == "all" || "$MODE" == "backend" ]] || die "--mode must be all or backend"
 [[ "$ENGINE" == "auto" || "$ENGINE" == "docker" || "$ENGINE" == "podman" ]] || die "--engine must be auto, docker, or podman"
+[[ "$API_PORT" =~ ^[0-9]+$ && "$API_PORT" -ge 1 && "$API_PORT" -le 65535 ]] || die "--api-port must be an integer between 1 and 65535"
 SERVICE_NAME="${SERVICE_NAME%.service}"
 if [[ "$PURGE" == "true" && "$ACTION" != "uninstall" ]]; then
   die "--purge can only be used with --uninstall"
@@ -383,7 +387,7 @@ fi
   printf 'HUBUUM_DATABASE_URL=%s\n' "$(quote_env "$HUBUUM_DATABASE_URL")"
   printf 'DATABASE_URL=%s\n' "$(quote_env "$HUBUUM_DATABASE_URL")"
   printf 'HUBUUM_BIND_IP=0.0.0.0\n'
-  printf 'HUBUUM_BIND_PORT=8080\n'
+  printf 'HUBUUM_BIND_PORT=%s\n' "$API_PORT"
   printf 'HUBUUM_LOG_LEVEL=info\n'
   printf 'HUBUUM_TOKEN_HASH_KEY=%s\n' "$HUBUUM_TOKEN_HASH_KEY"
   printf 'HUBUUM_CLIENT_ALLOWLIST=%s\n' "$NETWORK_SUBNET"
@@ -392,7 +396,7 @@ fi
   printf 'HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS=5\n'
   printf 'HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS=300\n'
   printf '\n'
-  printf 'BACKEND_BASE_URL=http://hubuum-api:8080\n'
+  printf 'BACKEND_BASE_URL=http://hubuum-api:%s\n' "$API_PORT"
   printf 'VALKEY_URL=redis://valkey:6379/0\n'
   printf 'SESSION_TTL_SECONDS=28800\n'
   printf 'SESSION_PREFIX=hubuum:sess:\n'
@@ -414,7 +418,7 @@ if [[ "$MODE" == "all" ]]; then
 
 {$API_FQDN} {
     encode zstd gzip
-    reverse_proxy hubuum-api:8080
+    reverse_proxy hubuum-api:{$HUBUUM_BIND_PORT}
 }
 EOF
 else
@@ -425,7 +429,7 @@ else
 
 {$API_FQDN} {
     encode zstd gzip
-    reverse_proxy hubuum-api:8080
+    reverse_proxy hubuum-api:{$HUBUUM_BIND_PORT}
 }
 EOF
 fi
@@ -500,7 +504,7 @@ fi
 
 cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
     expose:
-      - "8080"
+      - "${HUBUUM_BIND_PORT}"
     networks:
       - hubuum_net
 EOF
