@@ -32,6 +32,9 @@ enum AdminCommand {
 
     /// Export the current SQL permissions table as a Cedar policy bundle.
     /// The bundle is operator-managed: pipe to a file and upload to Treetop yourself.
+    /// Requires the `permissions-local` build feature (the SQL exporter reads
+    /// the `permissions` table directly).
+    #[cfg(feature = "permissions-local")]
     ExportPermissions {
         /// Output format. Cedar is the only format today.
         #[arg(long, value_enum, default_value_t = ExportFormat::Cedar)]
@@ -39,6 +42,7 @@ enum AdminCommand {
     },
 }
 
+#[cfg(feature = "permissions-local")]
 #[derive(clap::ValueEnum, Clone, Copy)]
 enum ExportFormat {
     Cedar,
@@ -63,6 +67,7 @@ async fn main() -> Result<(), ApiError> {
 
     match admin_cli.command {
         AdminCommand::ResetPassword { username } => reset_password(pool, &username).await?,
+        #[cfg(feature = "permissions-local")]
         AdminCommand::ExportPermissions {
             as_: ExportFormat::Cedar,
         } => {

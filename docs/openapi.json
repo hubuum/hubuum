@@ -116,6 +116,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -166,6 +176,16 @@
           },
           "500": {
             "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -232,6 +252,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -279,6 +309,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -309,6 +349,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -363,6 +413,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -410,6 +470,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -450,6 +520,16 @@
           },
           "500": {
             "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -550,6 +630,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -608,6 +698,16 @@
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -674,6 +774,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -717,6 +827,16 @@
           },
           "404": {
             "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -794,6 +914,16 @@
           },
           "404": {
             "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -914,6 +1044,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -984,6 +1124,16 @@
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1063,6 +1213,16 @@
           },
           "404": {
             "description": "Class or object not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1211,6 +1371,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1334,6 +1504,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1430,6 +1610,16 @@
           },
           "404": {
             "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1550,6 +1740,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1612,6 +1812,16 @@
           },
           "404": {
             "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1732,6 +1942,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1811,6 +2031,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1876,6 +2106,16 @@
           },
           "404": {
             "description": "Class or relation not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1965,6 +2205,16 @@
           },
           "404": {
             "description": "Relation not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2079,6 +2329,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2159,6 +2419,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2228,6 +2498,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2281,6 +2561,16 @@
           },
           "404": {
             "description": "Object not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2368,6 +2658,16 @@
           },
           "404": {
             "description": "Object not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2468,6 +2768,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2526,6 +2836,16 @@
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2592,6 +2912,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2635,6 +2965,16 @@
           },
           "404": {
             "description": "Group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2712,6 +3052,16 @@
           },
           "404": {
             "description": "Group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2822,6 +3172,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2884,6 +3244,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2937,6 +3307,16 @@
           },
           "404": {
             "description": "User or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3037,6 +3417,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3095,6 +3485,16 @@
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3161,6 +3561,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3204,6 +3614,16 @@
           },
           "404": {
             "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3281,6 +3701,16 @@
           },
           "404": {
             "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3391,6 +3821,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3494,6 +3934,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3554,6 +4004,16 @@
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3630,6 +4090,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3695,6 +4165,16 @@
           },
           "404": {
             "description": "Import task not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3795,6 +4275,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3853,6 +4343,16 @@
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3919,6 +4419,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3962,6 +4472,16 @@
           },
           "404": {
             "description": "Namespace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4039,6 +4559,16 @@
           },
           "404": {
             "description": "Namespace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4158,6 +4688,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -4261,6 +4801,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -4323,6 +4873,16 @@
           },
           "404": {
             "description": "Namespace or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4413,6 +4973,26 @@
                 }
               }
             }
+          },
+          "501": {
+            "description": "Returned when the configured permission backend does not support mutation. In Treetop mode permissions are managed out-of-band via Treetop's policy upload API, so grant / replace / revoke endpoints return 501.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -4496,6 +5076,26 @@
                 }
               }
             }
+          },
+          "501": {
+            "description": "Returned when the configured permission backend does not support mutation. In Treetop mode permissions are managed out-of-band via Treetop's policy upload API, so grant / replace / revoke endpoints return 501.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -4549,6 +5149,26 @@
           },
           "404": {
             "description": "Namespace or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Returned when the configured permission backend does not support mutation. In Treetop mode permissions are managed out-of-band via Treetop's policy upload API, so grant / replace / revoke endpoints return 501.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4610,6 +5230,16 @@
           },
           "404": {
             "description": "Group missing permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4686,6 +5316,26 @@
                 }
               }
             }
+          },
+          "501": {
+            "description": "Returned when the configured permission backend does not support mutation. In Treetop mode permissions are managed out-of-band via Treetop's policy upload API, so grant / replace / revoke endpoints return 501.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -4748,6 +5398,26 @@
           },
           "404": {
             "description": "Namespace or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Returned when the configured permission backend does not support mutation. In Treetop mode permissions are managed out-of-band via Treetop's policy upload API, so grant / replace / revoke endpoints return 501.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4868,6 +5538,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -4961,6 +5641,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -5019,6 +5709,16 @@
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5085,6 +5785,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -5128,6 +5838,16 @@
           },
           "404": {
             "description": "Relation not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5228,6 +5948,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -5286,6 +6016,16 @@
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5352,6 +6092,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -5395,6 +6145,16 @@
           },
           "404": {
             "description": "Relation not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5487,6 +6247,16 @@
           },
           "413": {
             "description": "Rendered report exceeded max_output_bytes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5616,6 +6386,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -5724,6 +6504,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5853,6 +6643,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -5915,6 +6715,16 @@
           },
           "404": {
             "description": "Task not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5987,6 +6797,16 @@
           },
           "404": {
             "description": "Task not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6087,6 +6907,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -6155,6 +6985,16 @@
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6231,6 +7071,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -6284,6 +7134,16 @@
           },
           "404": {
             "description": "Template not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6381,6 +7241,16 @@
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Permission backend unavailable. Returned when Treetop (or the configured backend) is unreachable or its startup health check has not yet succeeded. The response includes a `Retry-After: 5` header.",
             "content": {
               "application/json": {
                 "schema": {
