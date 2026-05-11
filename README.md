@@ -88,5 +88,13 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/iam/users
 - The default image can also run without TLS if no certificate and key are configured.
 - Slim container tags ending in `-rustls-only` include only the `rustls` backend.
 
+### Deployment
+
+- Single-host Docker/Podman Compose deployment scripts are documented in [docs/deployment.md](docs/deployment.md).
+- The scripts support all-in-one frontend/backend installs, backend-only installs, managed Postgres, and an existing external Postgres URL.
+- All-in-one installs expose both frontend and backend API hostnames; browser frontend flows can still use the frontend BFF routes.
+- Published container images are used by default; local repository cloning/building is opt-in for source builds.
+- Curl-style install, update, stop, and uninstall flows are supported; systemd service installation is opt-in.
+
 [^1]: Hubuum is probably a loanword from Akkadian.
 [^2]: [JSON schema](https://json-schema.org) is a powerful tool for validating the structure of JSON data. It allows you to define the expected format of your data, including required fields, data types, and constraints on values.
