@@ -11,3 +11,9 @@ pub mod visibility;
 
 #[cfg(feature = "permissions-local")]
 pub mod mock_treetop;
+
+// Live-Treetop parity tests require both backends: permissions-local for
+// the scaffold (comparison baseline) and permissions-treetop for the live
+// connection. Only compile when both features are enabled.
+#[cfg(all(feature = "permissions-local", feature = "permissions-treetop"))]
+pub mod live_treetop_parity;
