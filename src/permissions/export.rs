@@ -89,14 +89,20 @@ pub async fn export_cedar_to<W: Write>(pool: &DbPool, writer: &mut W) -> Result<
     Ok(())
 }
 
+/// Emit one `permit` clause. The caller passes the entire `when`
+/// predicate as a fully-formed Cedar boolean expression so the emitter
+/// doesn't have to know which resources have a `namespace_id` attribute.
+/// Relations don't carry a `namespace_id` (only `from_namespace_id` and
+/// `to_namespace_id`), so a previous version that always prepended
+/// `resource.namespace_id == N` produced policies that always evaluated
+/// false on a real Cedar engine.
 fn emit_block<W: Write>(
     writer: &mut W,
     perm: &Permission,
     group: &Group,
     namespace: &Namespace,
-    resource_type: &str,
     actions: &[&str],
-    extra_when: Option<&str>,
+    when_predicate: &str,
 ) -> Result<(), ApiError> {
     if actions.is_empty() {
         return Ok(());
@@ -124,16 +130,29 @@ fn emit_block<W: Write>(
     )?;
     w!(writer, "    resource")?;
     w!(writer, ") when {{")?;
-    w!(
-        writer,
-        "    resource is {} && resource.namespace_id == {}{}",
-        resource_type,
-        namespace.id,
-        extra_when.unwrap_or("")
-    )?;
+    w!(writer, "    {}", when_predicate)?;
     w!(writer, "}};")?;
     w!(writer)?;
     Ok(())
+}
+
+/// Predicate matching child resources scoped to a namespace via the
+/// `namespace_id` attribute. Used for HubuumClass / HubuumObject /
+/// HubuumTemplate.
+fn child_resource_predicate(resource_type: &str, namespace_id: i32) -> String {
+    format!("resource is {resource_type} && resource.namespace_id == {namespace_id}")
+}
+
+/// Predicate matching a relation whose either endpoint sits in the given
+/// namespace. Relations don't have a `namespace_id` attribute — only
+/// `from_namespace_id` / `to_namespace_id` — so the predicate must NOT
+/// reference `resource.namespace_id`.
+fn relation_resource_predicate(resource_type: &str, namespace_id: i32) -> String {
+    format!(
+        "resource is {resource_type} && \
+         (resource.from_namespace_id == {namespace_id} || \
+          resource.to_namespace_id == {namespace_id})"
+    )
 }
 
 fn emit_collection_actions<W: Write>(
@@ -218,9 +237,8 @@ fn emit_class_actions<W: Write>(
         perm,
         group,
         namespace,
-        "HubuumClass",
         &actions,
-        None,
+        &child_resource_predicate("HubuumClass", namespace.id),
     )
 }
 
@@ -248,9 +266,8 @@ fn emit_object_actions<W: Write>(
         perm,
         group,
         namespace,
-        "HubuumObject",
         &actions,
-        None,
+        &child_resource_predicate("HubuumObject", namespace.id),
     )
 }
 
@@ -273,22 +290,18 @@ fn emit_class_relation_actions<W: Write>(
     if perm.has_create_class_relation {
         actions.push("CreateClassRelation");
     }
-    // For class relations, the resource attribute namespace_id won't
-    // necessarily equal the namespace this row authorizes — relations
-    // span two namespaces. The Local backend's AND-check handles this
-    // via from_namespace_id/to_namespace_id; the Cedar policy mirrors
-    // that by checking "the row's namespace appears as either endpoint."
+    // Relations have NO `namespace_id` attribute in the Cedar schema —
+    // they expose `from_namespace_id` and `to_namespace_id` only. The
+    // predicate matches the row's namespace as either endpoint (OR).
+    // The Local backend's AND-on-both-endpoints semantics is the
+    // documented divergence (see header comment in this file).
     emit_block(
         writer,
         perm,
         group,
         namespace,
-        "HubuumClassRelation",
         &actions,
-        Some(&format!(
-            " && (resource.from_namespace_id == {nid} || resource.to_namespace_id == {nid})",
-            nid = namespace.id,
-        )),
+        &relation_resource_predicate("HubuumClassRelation", namespace.id),
     )?;
     Ok(())
 }
@@ -317,12 +330,8 @@ fn emit_object_relation_actions<W: Write>(
         perm,
         group,
         namespace,
-        "HubuumObjectRelation",
         &actions,
-        Some(&format!(
-            " && (resource.from_namespace_id == {nid} || resource.to_namespace_id == {nid})",
-            nid = namespace.id,
-        )),
+        &relation_resource_predicate("HubuumObjectRelation", namespace.id),
     )?;
     Ok(())
 }
@@ -351,8 +360,7 @@ fn emit_template_actions<W: Write>(
         perm,
         group,
         namespace,
-        "HubuumTemplate",
         &actions,
-        None,
+        &child_resource_predicate("HubuumTemplate", namespace.id),
     )
 }

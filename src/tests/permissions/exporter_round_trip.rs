@@ -211,6 +211,23 @@ mod tests {
             .expect("export failed");
         let cedar = String::from_utf8(buf).expect("non-utf8");
 
+        // Relations have no `namespace_id` attribute in the Cedar schema.
+        // The exporter MUST NOT prepend `resource.namespace_id == N` for
+        // relation resources — Cedar would treat that as undefined-attr
+        // and the permit would always evaluate false on a real engine.
+        // (Caught while reviewing Phase 6.1: emit_block previously
+        // prepended namespace_id unconditionally.)
+        assert!(
+            !cedar.contains("HubuumClassRelation && resource.namespace_id"),
+            "exporter emitted dead relation policy: HubuumClassRelation with resource.namespace_id check.\n\
+             Full output:\n{cedar}"
+        );
+        assert!(
+            !cedar.contains("HubuumObjectRelation && resource.namespace_id"),
+            "exporter emitted dead relation policy: HubuumObjectRelation with resource.namespace_id check.\n\
+             Full output:\n{cedar}"
+        );
+
         let mock = MockTreetopBackend::new();
         parse_cedar_into_mock(&cedar, &mock);
 
@@ -420,7 +437,14 @@ mod tests {
     }
 
     fn parse_relation_resource(when: &str) -> Option<(ResourceKind, i32)> {
-        let re = Regex::new(r"resource is (HubuumClassRelation|HubuumObjectRelation) && resource\.namespace_id == (\d+) && \(resource\.from_namespace_id == \d+ \|\| resource\.to_namespace_id == \d+\)").unwrap();
+        // Relations have NO namespace_id attribute in the Cedar schema —
+        // the predicate is "resource is HubuumXRelation && (from == N || to == N)".
+        // Whitespace inside the OR is flexible because the emitter
+        // wraps the OR clause across lines for readability.
+        let re = Regex::new(
+            r"resource is (HubuumClassRelation|HubuumObjectRelation)\s*&&\s*\(\s*resource\.from_namespace_id == (\d+)\s*\|\|\s*resource\.to_namespace_id == \d+\s*\)",
+        )
+        .unwrap();
         let caps = re.captures(when)?;
         let kind = match &caps[1] {
             "HubuumClassRelation" => ResourceKind::ClassRelation,
