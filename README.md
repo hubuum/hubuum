@@ -128,5 +128,13 @@ inspecting and releasing throttled scopes), see [docs/login_rate_limiting.md](do
 - The canonical environment-variable reference lives in [docs/quick_start.md](docs/quick_start.md).
 - Task-worker and async report-template tuning settings are documented there alongside the core server, DB, auth, and TLS settings.
 
+### Deployment
+
+- Single-host Docker/Podman Compose deployment scripts are documented in [docs/deployment.md](docs/deployment.md).
+- The scripts support all-in-one frontend/backend installs, backend-only installs, managed Postgres, and an existing external Postgres URL.
+- All-in-one installs expose both frontend and backend API hostnames; browser frontend flows can still use the frontend BFF routes.
+- Published container images are used by default; local repository cloning/building is opt-in for source builds.
+- Curl-style install, update, stop, and uninstall flows are supported; systemd service installation is opt-in.
+
 [^1]: Hubuum is probably a loanword from Akkadian.
 [^2]: [JSON schema](https://json-schema.org) is a powerful tool for validating the structure of JSON data. It allows you to define the expected format of your data, including required fields, data types, and constraints on values.

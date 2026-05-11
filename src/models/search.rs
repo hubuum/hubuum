@@ -998,12 +998,8 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
     fn permissions(&self) -> Result<PermissionsList<Permissions>, ApiError> {
         let mut unique_permissions = HashSet::new();
         for param in self.iter().filter(|p| p.is_permission()) {
-            match param.value_as_permission() {
-                Ok(permission) => {
-                    unique_permissions.insert(permission);
-                }
-                Err(e) => return Err(e),
-            }
+            let permission = param.value_as_permission()?;
+            unique_permissions.insert(permission);
         }
         Ok(PermissionsList::new(unique_permissions))
     }
@@ -1467,10 +1463,9 @@ fn get_jsonb_field_type_from_json_schema(
             Value::Object(map) => {
                 if let Some(sub_schema) = map.get("properties").and_then(|p| p.get(key)) {
                     current_schema = sub_schema;
-                } else if let Some(items_schema) = map.get("items") {
-                    current_schema = items_schema;
                 } else {
-                    return None;
+                    let items_schema = map.get("items")?;
+                    current_schema = items_schema;
                 }
             }
             _ => return None,
