@@ -7,6 +7,7 @@ MODE="all"
 WEB_FQDN=""
 API_FQDN=""
 API_PORT="8080"
+SHARED_HOST_ROUTING=""
 LETSENCRYPT_EMAIL=""
 BACKEND_REF="main"
 FRONTEND_REF="main"
@@ -49,6 +50,8 @@ Options:
   --web FQDN              Public frontend hostname. Required in all mode
   --api FQDN              Public backend API hostname. Required
   --api-port PORT         Internal backend API listen port. Default: 8080
+  --shared-host-routing MODE
+                          Required when --web and --api are the same in all mode: bff, direct, or prefixed
   --email EMAIL           Let's Encrypt registration email. Required
   --backend-image IMAGE   Backend image. Default: ghcr.io/hubuum/hubuum-server:main
   --frontend-image IMAGE  Frontend image. Default: ghcr.io/hubuum/hubuum-frontend:main
@@ -117,6 +120,7 @@ while [[ $# -gt 0 ]]; do
     --web) WEB_FQDN="$2"; shift 2 ;;
     --api) API_FQDN="$2"; shift 2 ;;
     --api-port) API_PORT="$2"; shift 2 ;;
+    --shared-host-routing) SHARED_HOST_ROUTING="$2"; shift 2 ;;
     --email) LETSENCRYPT_EMAIL="$2"; shift 2 ;;
     --backend-image) BACKEND_IMAGE="$2"; shift 2 ;;
     --frontend-image) FRONTEND_IMAGE="$2"; shift 2 ;;
@@ -146,6 +150,9 @@ done
 [[ "$MODE" == "all" || "$MODE" == "backend" ]] || die "--mode must be all or backend"
 [[ "$ENGINE" == "auto" || "$ENGINE" == "docker" || "$ENGINE" == "podman" ]] || die "--engine must be auto, docker, or podman"
 [[ "$API_PORT" =~ ^[0-9]+$ && "$API_PORT" -ge 1 && "$API_PORT" -le 65535 ]] || die "--api-port must be an integer between 1 and 65535"
+if [[ -n "$SHARED_HOST_ROUTING" && "$SHARED_HOST_ROUTING" != "bff" && "$SHARED_HOST_ROUTING" != "direct" && "$SHARED_HOST_ROUTING" != "prefixed" ]]; then
+  die "--shared-host-routing must be bff, direct, or prefixed"
+fi
 SERVICE_NAME="${SERVICE_NAME%.service}"
 if [[ "$PURGE" == "true" && "$ACTION" != "uninstall" ]]; then
   die "--purge can only be used with --uninstall"
@@ -164,6 +171,15 @@ fi
 if [[ "$ACTION" == "install" && "$MODE" == "all" && -z "$WEB_FQDN" ]]; then
   usage
   exit 2
+fi
+if [[ "$ACTION" == "install" && "$MODE" == "all" && "$WEB_FQDN" == "$API_FQDN" && -z "$SHARED_HOST_ROUTING" ]]; then
+  die "--shared-host-routing is required when --web and --api use the same hostname"
+fi
+if [[ "$ACTION" == "install" && "$MODE" == "all" && "$WEB_FQDN" != "$API_FQDN" && -n "$SHARED_HOST_ROUTING" ]]; then
+  die "--shared-host-routing only applies when --web and --api use the same hostname"
+fi
+if [[ "$ACTION" == "install" && "$MODE" == "backend" && -n "$SHARED_HOST_ROUTING" ]]; then
+  die "--shared-host-routing only applies in all mode"
 fi
 if [[ "$EUID" -ne 0 ]]; then
   die "run as root, or via sudo"
@@ -365,6 +381,7 @@ fi
   printf 'INSTALL_MODE=%s\n' "$MODE"
   printf 'WEB_FQDN=%s\n' "$WEB_FQDN"
   printf 'API_FQDN=%s\n' "$API_FQDN"
+  printf 'SHARED_HOST_ROUTING=%s\n' "$SHARED_HOST_ROUTING"
   printf 'LETSENCRYPT_EMAIL=%s\n' "$LETSENCRYPT_EMAIL"
   printf 'BUILD_FROM_SOURCE=%s\n' "$BUILD_FROM_SOURCE"
   printf 'CONTAINER_ENGINE=%s\n' "$ENGINE_BIN"
@@ -405,7 +422,7 @@ fi
 
 chmod 0600 "$ENV_FILE"
 
-if [[ "$MODE" == "all" ]]; then
+if [[ "$MODE" == "all" && -z "$SHARED_HOST_ROUTING" ]]; then
   cat > "$INSTALL_DIR/Caddyfile" <<'EOF'
 {
     email {$LETSENCRYPT_EMAIL}
@@ -419,6 +436,69 @@ if [[ "$MODE" == "all" ]]; then
 {$API_FQDN} {
     encode zstd gzip
     reverse_proxy hubuum-api:{$HUBUUM_BIND_PORT}
+}
+EOF
+elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "bff" ]]; then
+  cat > "$INSTALL_DIR/Caddyfile" <<'EOF'
+{
+    email {$LETSENCRYPT_EMAIL}
+}
+
+{$WEB_FQDN} {
+    encode zstd gzip
+    reverse_proxy hubuum-web:3000
+}
+EOF
+elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "direct" ]]; then
+  cat > "$INSTALL_DIR/Caddyfile" <<'EOF'
+{
+    email {$LETSENCRYPT_EMAIL}
+}
+
+{$WEB_FQDN} {
+    encode zstd gzip
+
+    handle /api/v0* {
+        reverse_proxy hubuum-api:{$HUBUUM_BIND_PORT}
+    }
+
+    handle /api/v1* {
+        reverse_proxy hubuum-api:{$HUBUUM_BIND_PORT}
+    }
+
+    handle /api-doc* {
+        reverse_proxy hubuum-api:{$HUBUUM_BIND_PORT}
+    }
+
+    handle /swagger-ui* {
+        reverse_proxy hubuum-api:{$HUBUUM_BIND_PORT}
+    }
+
+    handle {
+        reverse_proxy hubuum-web:3000
+    }
+}
+EOF
+elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "prefixed" ]]; then
+  cat > "$INSTALL_DIR/Caddyfile" <<'EOF'
+{
+    email {$LETSENCRYPT_EMAIL}
+}
+
+{$WEB_FQDN} {
+    encode zstd gzip
+
+    handle /hubuum-api {
+        redir /hubuum-api/
+    }
+
+    handle_path /hubuum-api/* {
+        reverse_proxy hubuum-api:{$HUBUUM_BIND_PORT}
+    }
+
+    handle {
+        reverse_proxy hubuum-web:3000
+    }
 }
 EOF
 else
@@ -687,8 +767,21 @@ Image source:
   $([[ "$BUILD_FROM_SOURCE" == "true" ]] && printf 'local source builds' || printf 'published container images')
 
 Backend API:
+EOF
+
+if [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "prefixed" ]]; then
+  cat <<EOF
+  https://${API_FQDN}/hubuum-api/
+EOF
+elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "bff" ]]; then
+  cat <<EOF
+  https://${API_FQDN} via frontend BFF routes
+EOF
+else
+  cat <<EOF
   https://${API_FQDN}
 EOF
+fi
 
 if [[ "$MODE" == "all" ]]; then
   cat <<EOF
@@ -730,7 +823,7 @@ Important:
   Make sure DNS for ${API_FQDN} points to this host.
 EOF
 
-if [[ "$MODE" == "all" ]]; then
+if [[ "$MODE" == "all" && "$WEB_FQDN" != "$API_FQDN" ]]; then
   cat <<EOF
   Make sure DNS for ${WEB_FQDN} points to this host.
 EOF
