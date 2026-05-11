@@ -28,7 +28,8 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
 use utoipa::openapi::header::Header;
 use utoipa::openapi::path::{Operation, Parameter, ParameterBuilder, ParameterIn, PathItem};
 use utoipa::openapi::security::{Http, HttpAuthScheme, SecurityScheme};
-use utoipa::openapi::{Object, RefOr, Required, Type};
+use utoipa::openapi::response::Response;
+use utoipa::openapi::{Content, Object, Ref, RefOr, Required, Type};
 use utoipa::{Modify, OpenApi, ToSchema};
 
 #[derive(OpenApi)]
@@ -212,7 +213,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             UpdateReportTemplate
         )
     ),
-    modifiers(&SecurityAddon, &OperationDefaults),
+    modifiers(&SecurityAddon, &OperationDefaults, &PermissionBackendResponses),
     tags(
         (name = "meta", description = "Meta and database state endpoints"),
         (name = "auth", description = "Authentication and token lifecycle"),
@@ -346,6 +347,106 @@ impl Modify for OperationDefaults {
             });
         }
     }
+}
+
+/// Adds the two permission-backend-aware response codes to every operation
+/// that interacts with the permission backend:
+///
+/// * `503` — emitted by `ApiError::PermissionBackendUnavailable` when the
+///   configured backend is unreachable. Applied to every authenticated
+///   operation, since every authenticated path either calls `is_admin` (via
+///   the AdminAccess extractor) or `authorize` (via the `can!` macro), and
+///   either may fail closed if Treetop is down.
+/// * `501` — emitted by `ApiError::NotImplemented` from the Treetop backend
+///   on permission mutation calls. Applied only to the specific permission
+///   grant/revoke endpoints, since those are the only paths that invoke
+///   `apply_permissions` / `revoke_permissions` / `revoke_all`.
+///
+/// We do this in a `Modify` pass instead of editing every `#[utoipa::path]`
+/// annotation by hand. Adding a new authenticated handler will pick the 503
+/// up automatically; adding a new permission mutation requires updating the
+/// list in `is_permission_mutation_operation` (called out by a unit test
+/// that fails if a path here doesn't resolve to a real route).
+struct PermissionBackendResponses;
+
+impl Modify for PermissionBackendResponses {
+    fn modify(&self, openapi: &mut OpenApiDoc) {
+        for (path, path_item) in &mut openapi.paths.paths {
+            for_each_operation_mut(path_item, |method, operation| {
+                if operation_has_bearer_auth(operation) {
+                    insert_response(
+                        operation,
+                        "503",
+                        "Permission backend unavailable. Returned when Treetop \
+                         (or the configured backend) is unreachable or its startup \
+                         health check has not yet succeeded. The response includes \
+                         a `Retry-After: 5` header.",
+                    );
+                }
+                if is_permission_mutation_operation(path, method) {
+                    insert_response(
+                        operation,
+                        "501",
+                        "Returned when the configured permission backend does not \
+                         support mutation. In Treetop mode permissions are managed \
+                         out-of-band via Treetop's policy upload API, so grant / \
+                         replace / revoke endpoints return 501.",
+                    );
+                }
+            });
+        }
+    }
+}
+
+fn operation_has_bearer_auth(operation: &Operation) -> bool {
+    // SecurityRequirement keeps its inner map private and exposes it only
+    // via Serialize (it's a serde-flatten struct). Round-tripping through
+    // serde_json is the supported way to inspect what's set without
+    // pulling in private utoipa internals.
+    let Some(security) = operation.security.as_ref() else {
+        return false;
+    };
+    security.iter().any(|requirement| {
+        serde_json::to_value(requirement)
+            .ok()
+            .and_then(|v| v.as_object().map(|obj| obj.contains_key("bearer_auth")))
+            .unwrap_or(false)
+    })
+}
+
+fn is_permission_mutation_operation(path: &str, method: &str) -> bool {
+    matches!(
+        (path, method.to_ascii_lowercase().as_str()),
+        (
+            "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}",
+            "post" | "put" | "delete"
+        ) | (
+            "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}/{permission}",
+            "post" | "delete"
+        )
+    )
+}
+
+/// Insert a response keyed by status code if not already present.
+/// Existing hand-written responses are preserved verbatim — the modifier
+/// only fills the gaps.
+fn insert_response(operation: &mut Operation, status_code: &str, description: &str) {
+    if operation
+        .responses
+        .responses
+        .contains_key(status_code)
+    {
+        return;
+    }
+    let mut response = Response::new(description);
+    response.content.insert(
+        "application/json".to_string(),
+        Content::new(Some(Ref::from_schema_name("ApiErrorResponse"))),
+    );
+    operation
+        .responses
+        .responses
+        .insert(status_code.to_string(), RefOr::T(response));
 }
 
 fn is_cursor_paginated_get(path: &str, method: &str) -> bool {
@@ -898,5 +999,72 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn permission_mutation_endpoints_document_501() {
+        let json = openapi_json();
+        let mutation_pointers = [
+            "/paths/~1api~1v1~1namespaces~1{namespace_id}~1permissions~1group~1{group_id}/post/responses/501",
+            "/paths/~1api~1v1~1namespaces~1{namespace_id}~1permissions~1group~1{group_id}/put/responses/501",
+            "/paths/~1api~1v1~1namespaces~1{namespace_id}~1permissions~1group~1{group_id}/delete/responses/501",
+            "/paths/~1api~1v1~1namespaces~1{namespace_id}~1permissions~1group~1{group_id}~1{permission}/post/responses/501",
+            "/paths/~1api~1v1~1namespaces~1{namespace_id}~1permissions~1group~1{group_id}~1{permission}/delete/responses/501",
+        ];
+        for pointer in mutation_pointers {
+            assert!(
+                json.pointer(pointer).is_some(),
+                "permission mutation endpoint missing 501 response: {pointer}"
+            );
+        }
+    }
+
+    #[test]
+    fn permission_read_endpoints_do_not_document_501() {
+        // Read endpoints don't return 501 — only mutation endpoints do.
+        // If this test starts failing, the modifier is over-broad.
+        let json = openapi_json();
+        let read_pointers = [
+            "/paths/~1api~1v1~1namespaces~1{namespace_id}~1permissions/get/responses/501",
+            "/paths/~1api~1v1~1namespaces~1{namespace_id}~1permissions~1group~1{group_id}/get/responses/501",
+            "/paths/~1api~1v1~1namespaces~1{namespace_id}~1permissions~1group~1{group_id}~1{permission}/get/responses/501",
+        ];
+        for pointer in read_pointers {
+            assert!(
+                json.pointer(pointer).is_none(),
+                "read endpoint should not document 501: {pointer}"
+            );
+        }
+    }
+
+    #[test]
+    fn authenticated_endpoints_document_503() {
+        let json = openapi_json();
+        // Sample a handful of authenticated endpoints across resource kinds.
+        let sample_pointers = [
+            "/paths/~1api~1v1~1namespaces~1{namespace_id}~1permissions/get/responses/503",
+            "/paths/~1api~1v1~1namespaces~1{namespace_id}~1permissions~1group~1{group_id}/post/responses/503",
+            "/paths/~1api~1v1~1classes~1{class_id}/get/responses/503",
+            "/paths/~1api~1v1~1iam~1users/get/responses/503",
+            "/paths/~1api~1v0~1meta~1db/get/responses/503",
+        ];
+        for pointer in sample_pointers {
+            assert!(
+                json.pointer(pointer).is_some(),
+                "authenticated endpoint missing 503 response: {pointer}"
+            );
+        }
+    }
+
+    #[test]
+    fn unauthenticated_endpoints_do_not_document_503() {
+        // The login endpoint does not go through the permission backend, so
+        // it should not document 503.
+        let json = openapi_json();
+        assert!(
+            json.pointer("/paths/~1api~1v0~1auth~1login/post/responses/503")
+                .is_none(),
+            "login endpoint should not document 503"
+        );
     }
 }
