@@ -3,6 +3,8 @@
 //! These tests exercise a backend through the public trait surface so the
 //! same scenarios can be reused for the Treetop backend in Phase 5.
 
+#![cfg(test)]
+
 use std::sync::Arc;
 
 use crate::models::{Permissions, PermissionsList};

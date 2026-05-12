@@ -6,6 +6,7 @@ use crate::permissions::AppContext;
 use crate::permissions::LocalPermissionBackend;
 use actix_web::{App, http, test, web::Data};
 use serde::Serialize;
+#[cfg(feature = "permissions-local")]
 use std::sync::Arc;
 
 fn create_token_header(token: &str) -> (http::header::HeaderName, String) {

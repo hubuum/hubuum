@@ -54,7 +54,7 @@ impl LocalPermissionBackend {
                 })
             })
             .await
-            .map(|opt_ref| *opt_ref)
+            .copied()
     }
 }
 
@@ -199,13 +199,7 @@ impl PermissionBackend for LocalPermissionBackend {
         let n = result.len();
         // Local backend uses a SQL join, so candidate_count and result_count
         // are equal — the DB filtered before we saw the rows.
-        record_reverse_query(
-            BACKEND_KIND,
-            "namespaces_user_can",
-            n,
-            n,
-            start.elapsed(),
-        );
+        record_reverse_query(BACKEND_KIND, "namespaces_user_can", n, n, start.elapsed());
         Ok(result)
     }
 

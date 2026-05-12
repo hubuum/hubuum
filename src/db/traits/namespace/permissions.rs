@@ -1,6 +1,13 @@
 //! Compatibility shims. The implementations now live in
 //! `crate::permissions::local::queries`. Phase 3 routes call sites through
 //! `PermissionBackend`; this file goes away once that lands.
+//!
+//! When built without `permissions-local`, every shim's body collapses to
+//! the `Err(InternalServerError)` arm and the parameters go untouched. The
+//! file-level `unused_variables` allowance covers that case so the
+//! treetop-only build stays clippy-clean. The lint is still active for the
+//! `permissions-local` paths because they actually use the params.
+#![cfg_attr(not(feature = "permissions-local"), allow(unused_variables))]
 
 use super::*;
 
@@ -162,6 +169,7 @@ pub async fn groups_on_from_backend<T: NamespaceAccessors>(
     }
 }
 
+#[allow(dead_code)]
 pub async fn groups_on_paginated_from_backend<T: NamespaceAccessors>(
     pool: &DbPool,
     namespace_ref: T,
@@ -186,6 +194,7 @@ pub async fn groups_on_paginated_from_backend<T: NamespaceAccessors>(
     }
 }
 
+#[allow(dead_code)]
 pub async fn groups_on_paginated_with_total_count_from_backend<T: NamespaceAccessors>(
     pool: &DbPool,
     namespace_ref: T,
@@ -210,6 +219,7 @@ pub async fn groups_on_paginated_with_total_count_from_backend<T: NamespaceAcces
     }
 }
 
+#[allow(dead_code)]
 pub async fn count_groups_on_paginated_from_backend<T: NamespaceAccessors>(
     pool: &DbPool,
     namespace_ref: T,
@@ -234,11 +244,12 @@ pub async fn count_groups_on_paginated_from_backend<T: NamespaceAccessors>(
     }
 }
 
+#[cfg(test)]
 pub async fn group_on_from_backend(
     pool: &DbPool,
     nid: i32,
     gid: i32,
-) -> Result<Permission, ApiError> {
+) -> Result<crate::models::Permission, ApiError> {
     #[cfg(feature = "permissions-local")]
     {
         crate::permissions::local::queries::group_on_query(pool, nid, gid).await

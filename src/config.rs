@@ -89,6 +89,7 @@ pub enum PermissionBackendKind {
 }
 
 impl PermissionBackendKind {
+    #[allow(dead_code)]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Local => "local",

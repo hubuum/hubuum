@@ -4,19 +4,20 @@
 //! and that the local backend handles relation resources with proper AND-checks
 //! across both namespaces.
 
+#![cfg(test)]
+
 use std::sync::Arc;
 
 use crate::models::{
-    HubuumClass, HubuumClassRelation, HubuumObject, HubuumObjectRelation, Namespace,
     NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, Permissions,
-    PermissionsList, ReportTemplate,
+    PermissionsList,
 };
 use crate::permissions::{
     AuthzTarget, LocalPermissionBackend, PermissionBackend, PermissionDecision, PermissionRequest,
     PrincipalRef, ResourceKind,
 };
 use crate::tests::{create_test_group, create_test_user, get_pool_and_config};
-use crate::traits::{CanSave, SelfAccessors};
+use crate::traits::CanSave;
 use crate::utilities::auth::generate_random_password;
 
 /// Unique fixture label so re-runs against a persistent test DB don't collide.

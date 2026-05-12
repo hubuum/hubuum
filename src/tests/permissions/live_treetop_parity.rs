@@ -10,7 +10,8 @@
 //! to assert correct behavior. The test setup uses fixed numeric IDs
 //! (`TEST_USER_ID`, `TEST_ADMIN_GROUP_ID`, etc.) that the docs reference.
 
-use crate::config::AppConfig;
+#![cfg(test)]
+
 use crate::models::Permissions;
 use crate::permissions::backend::PermissionBackend;
 use crate::permissions::treetop::TreetopPermissionBackend;

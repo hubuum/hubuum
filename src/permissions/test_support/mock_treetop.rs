@@ -158,6 +158,7 @@ pub struct MockTreetopBackend {
     group_candidates: Mutex<Option<Vec<crate::models::Group>>>,
 }
 
+#[allow(dead_code)]
 impl MockTreetopBackend {
     pub fn new() -> Self {
         Self {
@@ -195,10 +196,10 @@ impl MockTreetopBackend {
         if rule.resource_kind != request.resource.kind {
             return false;
         }
-        if let Some(id) = rule.resource_id {
-            if id != request.resource.id {
-                return false;
-            }
+        if let Some(id) = rule.resource_id
+            && id != request.resource.id
+        {
+            return false;
         }
         // attrs match: every Some field on the rule must equal the
         // corresponding field on the request resource. None on rule = wildcard.

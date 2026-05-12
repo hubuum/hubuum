@@ -27,7 +27,7 @@ use crate::models::{
 };
 use crate::pagination::page_limits_or_defaults;
 use crate::permissions::AppContext;
-use crate::traits::{NamespaceAccessors, Search, SelfAccessors};
+use crate::traits::{Search, SelfAccessors};
 use crate::utilities::reporting::render_template;
 use crate::utilities::response::json_response_with_header;
 

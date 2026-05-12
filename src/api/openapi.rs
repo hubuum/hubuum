@@ -27,8 +27,8 @@ use serde::Serialize;
 use utoipa::openapi::OpenApi as OpenApiDoc;
 use utoipa::openapi::header::Header;
 use utoipa::openapi::path::{Operation, Parameter, ParameterBuilder, ParameterIn, PathItem};
-use utoipa::openapi::security::{Http, HttpAuthScheme, SecurityScheme};
 use utoipa::openapi::response::Response;
+use utoipa::openapi::security::{Http, HttpAuthScheme, SecurityScheme};
 use utoipa::openapi::{Content, Object, Ref, RefOr, Required, Type};
 use utoipa::{Modify, OpenApi, ToSchema};
 
@@ -431,11 +431,7 @@ fn is_permission_mutation_operation(path: &str, method: &str) -> bool {
 /// Existing hand-written responses are preserved verbatim — the modifier
 /// only fills the gaps.
 fn insert_response(operation: &mut Operation, status_code: &str, description: &str) {
-    if operation
-        .responses
-        .responses
-        .contains_key(status_code)
-    {
+    if operation.responses.responses.contains_key(status_code) {
         return;
     }
     let mut response = Response::new(description);

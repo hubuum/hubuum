@@ -613,6 +613,21 @@ pub fn app_context_for(pool: &DbPool) -> web::Data<crate::permissions::AppContex
     ))
 }
 
+/// Stub for builds without the `permissions-local` feature. The integration
+/// tests that reach for `app_context_for` are themselves only meaningful
+/// against a SQL-backed `LocalPermissionBackend`, so they're effectively
+/// dead in a Treetop-only build — but they're not feature-gated test-by-
+/// test (that would mean dozens of attribute updates), so this stub keeps
+/// the build green and surfaces a clear panic if anyone forgets and runs
+/// them.
+#[cfg(not(feature = "permissions-local"))]
+pub fn app_context_for(_pool: &DbPool) -> web::Data<crate::permissions::AppContext> {
+    panic!(
+        "app_context_for() is only available when the `permissions-local` feature is enabled; \
+         these tests exercise SQL-backed permission paths and don't run under treetop-only builds"
+    )
+}
+
 pub fn get_test_pool() -> web::Data<DbPool> {
     web::Data::new(POOL.clone())
 }

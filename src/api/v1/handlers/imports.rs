@@ -18,7 +18,7 @@ use crate::models::{
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
 use crate::tasks::{ensure_task_worker_running, kick_task_worker, request_hash};
-use crate::traits::{BackendContext, GroupAccessors, GroupMemberships};
+use crate::traits::GroupAccessors;
 use crate::utilities::response::{
     json_response, json_response_with_header, paginated_json_response,
 };

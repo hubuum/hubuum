@@ -4,6 +4,8 @@
 //! generic helper correctly filters candidates, counts the authorized set
 //! (NOT the candidate set), and applies pagination to the authorized rows.
 
+#![cfg(test)]
+
 use std::sync::Arc;
 
 use crate::models::{Namespace, Permission, Permissions, PermissionsList};

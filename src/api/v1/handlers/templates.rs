@@ -14,7 +14,7 @@ use crate::models::{
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
-use crate::traits::{BackendContext, NamespaceAccessors};
+use crate::traits::BackendContext;
 use crate::utilities::response::{json_response, json_response_created, paginated_json_response};
 
 #[utoipa::path(

@@ -16,7 +16,6 @@ use super::types::{
     ClassResolution, FailureKind, NamespaceResolution, ObjectResolution, PlannedExecution,
     PlannedItem, PlanningFailure, PlanningOutcome, PlanningState,
 };
-use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
 use crate::db::traits::task_import::{
     lookup_class_by_namespace_and_name, lookup_classes_by_namespace_and_names,
@@ -30,7 +29,6 @@ use crate::models::{
     ImportObjectRelationInput, ImportPermissionPolicy, ImportRequest, Namespace, NamespaceID,
     NamespaceKey, ObjectKey, Permissions, User,
 };
-use crate::traits::GroupMemberships;
 
 async fn is_import_admin(
     app_ctx: &crate::permissions::AppContext,
@@ -381,7 +379,6 @@ pub(super) async fn plan_import(
     user: &User,
     request: &ImportRequest,
 ) -> PlanningOutcome {
-    let pool = &app_ctx.db_pool;
     let mode = request.mode();
     let mut state = PlanningState::new();
     let mut planned_items = Vec::with_capacity(request.total_items() as usize);
@@ -627,8 +624,6 @@ pub(super) async fn plan_namespace(
     state: &mut PlanningState,
     input: &ImportNamespaceInput,
 ) -> Result<PlannedItem, PlanningFailure> {
-    let pool = &app_ctx.db_pool;
-    let pool = &app_ctx.db_pool;
     if let Some(reference) = &input.ref_
         && state.namespaces_by_ref.contains_key(reference)
     {

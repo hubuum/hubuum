@@ -22,9 +22,7 @@ use crate::models::{
     RelatedClassGraph, RelatedObjectGraph, RelatedObjectGraphRow, UpdateHubuumClass,
     UpdateHubuumObject,
 };
-use crate::traits::{
-    BackendContext, CanDelete, CanSave, CanUpdate, NamespaceAccessors, Search, SelfAccessors,
-};
+use crate::traits::{BackendContext, CanDelete, CanSave, CanUpdate, Search, SelfAccessors};
 use crate::utilities::extensions::CustomStringExtensions;
 
 use super::check_if_object_in_class;

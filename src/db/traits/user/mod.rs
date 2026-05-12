@@ -13,7 +13,7 @@ use crate::models::{
     HubuumObjectRelation, Namespace, NewUser, Permissions, RelatedObjectGraphRow, Token,
     UpdateUser, User, UserID, UserToken,
 };
-use crate::traits::{ClassAccessors, GroupAccessors, NamespaceAccessors, SelfAccessors};
+use crate::traits::{ClassAccessors, GroupAccessors, SelfAccessors};
 use crate::utilities::auth::hash_password;
 use crate::utilities::extensions::CustomStringExtensions;
 

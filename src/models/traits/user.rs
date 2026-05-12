@@ -326,7 +326,6 @@ pub trait GroupAccessors: SelfAccessors<User> {
                 .select(group_id)
                 .load::<i32>(conn)
         })
-        .map_err(Into::into)
     }
 
     /// Execute the JSON schema filter query for classes and return matching class IDs.

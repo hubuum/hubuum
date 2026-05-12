@@ -10,7 +10,6 @@ use crate::models::{
     HubuumClass, HubuumClassRelation, HubuumClassRelationID, HubuumClassRelationTransitive,
     HubuumObject, HubuumObjectID, HubuumObjectRelation, HubuumObjectRelationID,
     HubuumObjectTransitiveLink, NewHubuumClassRelation, NewHubuumObjectRelation, User,
-    user_can_on_any,
 };
 use crate::{
     bind_transitive_filter_params, date_search, numeric_search, string_search, trace_query,

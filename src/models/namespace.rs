@@ -11,9 +11,11 @@ use crate::schema::namespaces;
 
 use crate::errors::ApiError;
 
+#[cfg(test)]
+use crate::models::Permission;
+use crate::models::Permissions;
 use crate::models::output::GroupPermission;
 use crate::models::search::QueryOptions;
-use crate::models::{Permission, Permissions};
 
 use crate::models::traits::GroupAccessors;
 use crate::traits::{DbPoolContext, NamespaceAccessors, SelfAccessors};
@@ -253,6 +255,7 @@ where
     .await
 }
 
+#[allow(dead_code)]
 pub async fn groups_on_paginated<C, T>(
     backend: &C,
     namespace_ref: T,
@@ -272,6 +275,7 @@ where
     .await
 }
 
+#[allow(dead_code)]
 pub async fn groups_on_paginated_with_total_count<C, T>(
     backend: &C,
     namespace_ref: T,
@@ -291,6 +295,7 @@ where
     .await
 }
 
+#[allow(dead_code)]
 pub async fn count_groups_on_paginated<C, T>(
     backend: &C,
     namespace_ref: T,
@@ -310,7 +315,13 @@ where
     .await
 }
 
-/// List all permissions for a given group on a namespace
+/// List all permissions for a given group on a namespace.
+///
+/// Test-only after the PermissionBackend rewrite: the production handler
+/// now goes through `PermissionBackend::group_permission_on`, which
+/// synthesizes a row in Treetop mode. This SQL-direct variant is kept
+/// because the namespace tests assert against the on-disk row.
+#[cfg(test)]
 pub async fn group_on<C>(backend: &C, nid: i32, gid: i32) -> Result<Permission, ApiError>
 where
     C: DbPoolContext + ?Sized,
@@ -424,7 +435,7 @@ mod tests {
     async fn test_list_groups_who_can() {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
-        let app_ctx = crate::tests::app_context_for(&pool);
+        let _app_ctx = crate::tests::app_context_for(&pool);
 
         let mut groups = Vec::new();
         for group_number in [1, 2, 3, 4, 5] {

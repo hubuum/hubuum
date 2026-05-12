@@ -12,6 +12,7 @@ use crate::traits::{GroupAccessors, GroupMemberships, NamespaceAccessors, SelfAc
 /// COMPAT: thin wrapper around `crate::permissions::local::queries::*` so
 /// existing trait-based call sites keep working until Phase 3 routes them
 /// through `PermissionBackend`.
+#[allow(dead_code)]
 pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
     async fn user_can_all_from_backend<
         U: SelfAccessors<User> + GroupAccessors + GroupMemberships,

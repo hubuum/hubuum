@@ -136,6 +136,7 @@ pub trait PermissionBackend: Send + Sync {
     /// SQL-join fast path. Backends that return `false` (the default,
     /// Treetop) must use the candidate-then-authorize helper in
     /// `crate::permissions::visibility`.
+    #[allow(dead_code)]
     fn supports_sql_visibility_join(&self) -> bool {
         false
     }

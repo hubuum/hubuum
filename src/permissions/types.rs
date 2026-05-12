@@ -65,6 +65,11 @@ impl ResourceRef {
         }
     }
 
+    /// Construct the global System resource. Currently only Treetop's
+    /// `is_admin` dispatches against it; the SQL backend reads the admin
+    /// group directly. Marked `dead_code`-allow so a build with only
+    /// `permissions-local` doesn't lint the helper away.
+    #[allow(dead_code)]
     pub fn system() -> Self {
         Self {
             kind: ResourceKind::System,

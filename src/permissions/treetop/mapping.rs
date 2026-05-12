@@ -7,7 +7,7 @@ use treetop_client::{Action, AttrValue, Resource, User};
 /// Maps numeric user_id and group_ids to string IDs per the spec amendment
 /// (Phase 5, §4 — group identity is numeric, not by name).
 pub fn cedar_user(principal: &PrincipalRef) -> User {
-    let mut user = User::new(principal.user_id.to_string());
+    let user = User::new(principal.user_id.to_string());
     let group_strs: Vec<String> = principal.group_ids.iter().map(|g| g.to_string()).collect();
     let group_refs: Vec<&str> = group_strs.iter().map(String::as_str).collect();
     user.with_group_names(&group_refs)

@@ -1,4 +1,7 @@
-#[cfg(test)]
+// Auth integration tests construct a LocalPermissionBackend directly;
+// they're meaningless under a Treetop-only build, so the whole module
+// compiles only when permissions-local is available.
+#[cfg(all(test, feature = "permissions-local"))]
 mod tests {
     use crate::api::handlers::auth::reset_login_rate_limit_for_tests;
     use crate::config::get_config;

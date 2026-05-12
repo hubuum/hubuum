@@ -21,8 +21,7 @@ use crate::can;
 
 use crate::db::traits::UserPermissions;
 use crate::traits::{
-    BackendContext, CanDelete, CanSave, CanUpdate, NamespaceAccessors, PermissionController,
-    Search, SelfAccessors,
+    BackendContext, CanDelete, CanSave, CanUpdate, PermissionController, Search, SelfAccessors,
 };
 
 #[utoipa::path(
@@ -290,7 +289,6 @@ pub async fn get_namespace_group_permissions(
     requestor: UserAccess,
     params: web::Path<(NamespaceID, GroupID)>,
 ) -> Result<impl Responder, ApiError> {
-    use crate::models::namespace::group_on;
     use crate::models::permissions::Permissions;
 
     let (namespace_id, group_id) = params.into_inner();
@@ -310,7 +308,20 @@ pub async fn get_namespace_group_permissions(
         namespace
     );
 
-    let permissions = group_on(&ctx.db_pool, namespace.id, group_id.id()).await?;
+    // Route through the backend so Treetop synthesizes a Permission row
+    // from its decisions; the Local backend reads the SQL row directly.
+    // Returns 404 if no row / no permissions exist for the (ns, group) pair.
+    let permissions = ctx
+        .permission_backend()
+        .group_permission_on(namespace.id, group_id.id())
+        .await?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "no permissions for group {} on namespace {}",
+                group_id.id(),
+                namespace.id
+            ))
+        })?;
 
     Ok(json_response(permissions, StatusCode::OK))
 }

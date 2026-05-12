@@ -117,6 +117,7 @@ impl From<TaskResultCounts> for (i32, i32, i32) {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct TaskRecordID(pub i32);
 

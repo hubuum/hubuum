@@ -8,6 +8,13 @@ use super::observability::record_paginate_authorized;
 use super::types::{PermissionDecision, PermissionRequest, PrincipalRef, ResourceRef};
 
 /// A page of authorized rows plus the total authorized count.
+///
+/// Constructed only by `paginate_authorized`, which today is called from
+/// the Treetop backend's reverse queries. The Local backend uses the SQL
+/// join fast path instead. Marked `dead_code`-allow because a build with
+/// only `permissions-local` has no caller for either type, and the lints
+/// would otherwise fire.
+#[allow(dead_code)]
 pub struct AuthorizedPage<T> {
     pub rows: Vec<T>,
     pub total_count: i64,
@@ -34,6 +41,7 @@ pub struct AuthorizedPage<T> {
 /// semantics live a layer up; this helper concerns itself only with
 /// the authorize-then-page pipeline. The candidate set must already
 /// be sorted in the order the caller wants pagination to apply.
+#[allow(dead_code)]
 pub async fn paginate_authorized<T, F>(
     backend: &dyn PermissionBackend,
     principal: &PrincipalRef,

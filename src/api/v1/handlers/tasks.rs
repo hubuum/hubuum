@@ -1,7 +1,6 @@
 use actix_web::{HttpRequest, Responder, get, http::StatusCode, routes, web};
 
 use crate::api::openapi::ApiErrorResponse;
-use crate::db::DbPool;
 use crate::db::traits::task::{
     find_task_record, list_task_events_with_total_count, list_tasks_with_total_count,
 };
@@ -12,7 +11,7 @@ use crate::models::{TaskEventResponse, TaskKind, TaskRecord, TaskResponse, TaskS
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
 use crate::tasks::ensure_task_worker_running;
-use crate::traits::{BackendContext, GroupAccessors, GroupMemberships};
+use crate::traits::{BackendContext, GroupAccessors};
 use crate::utilities::response::{json_response, paginated_json_response};
 
 #[derive(Debug, Default)]
