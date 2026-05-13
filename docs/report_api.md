@@ -26,6 +26,9 @@ Authentication:
     "related_objects": {
       "room": {
         "class_id": 91,
+        "class_relation_id": 77,
+        "direction": "outgoing",
+        "sort": "name",
         "max_depth": 1,
         "limit": 1
       }
@@ -121,6 +124,9 @@ Report objects related to a root object:
     "related_objects": {
       "room": {
         "class_id": 91,
+        "class_relation_id": 77,
+        "direction": "outgoing",
+        "sort": "name",
         "max_depth": 1,
         "limit": 1
       }
@@ -132,14 +138,16 @@ Report objects related to a root object:
 }
 ```
 
-Each key under `include.related_objects` is an alias. The alias must match `[A-Za-z_][A-Za-z0-9_]*` and is exposed as an array at `this.related.<alias>`.
+Each key under `include.related_objects` is an alias. The alias must match `[A-Za-z_][A-Za-z0-9_]*`, and a request can include at most 8 aliases. Aliases are exposed as arrays at `this.related.<alias>`. The top-level `related` report item field is reserved for report includes.
 
 ```text
 {{#each items}}{{this.name}} is in {{this.related.room[0].name}}
 {{/each}}
 ```
 
-`class_id` is required and selects the related object class to include. `max_depth` defaults to `1` and must be between `1` and `10`. `limit` defaults to `1` and must be between `1` and `50`; it is applied per root object and per alias. Missing related objects render as an empty array, so `this.related.room` is always present when the alias was requested.
+`class_id` is required and selects the related object class to include. `class_relation_id` is optional and restricts traversal to a specific class relation. `direction` is optional and can be `any` (default), `outgoing`, or `incoming`. `sort` is optional and can be `path` (default), `name`, or `created_at`; it decides which related objects are kept first when `limit` is smaller than the number of matches.
+
+`max_depth` defaults to `1` and must be between `1` and `10`. `limit` defaults to `1` and must be between `1` and `50`; it is applied per root object and per alias. Missing related objects render as an empty array, so `this.related.room` is always present when the alias was requested.
 
 ## Output selection
 

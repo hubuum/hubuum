@@ -22,7 +22,8 @@ use crate::extractors::UserAccess;
 use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, parse_query_parameter};
 use crate::models::{
     HubuumClassID, HubuumObjectID, NamespaceID, Permissions, ReportContentType,
-    ReportIncludeRelatedObject, ReportJsonResponse, ReportMeta, ReportMissingDataPolicy,
+    ReportIncludeRelatedDirection, ReportIncludeRelatedObject, ReportIncludeRelatedQuery,
+    ReportIncludeRelatedSort, ReportJsonResponse, ReportMeta, ReportMissingDataPolicy,
     ReportRequest, ReportScope, ReportScopeKind, ReportTemplate, ReportTemplateID, ReportWarning,
 };
 use crate::pagination::page_limits_or_defaults;
@@ -39,6 +40,7 @@ const RELATED_INCLUDE_DEFAULT_MAX_DEPTH: i32 = 1;
 const RELATED_INCLUDE_MAX_DEPTH_LIMIT: i32 = 10;
 const RELATED_INCLUDE_DEFAULT_LIMIT: i32 = 1;
 const RELATED_INCLUDE_MAX_LIMIT: i32 = 50;
+const RELATED_INCLUDE_MAX_ALIASES: usize = 8;
 
 struct ReportRuntime {
     report: ReportRequest,
@@ -244,6 +246,12 @@ fn validate_report_include(report: &ReportRequest) -> Result<(), ApiError> {
         ));
     }
 
+    if related_objects.len() > RELATED_INCLUDE_MAX_ALIASES {
+        return Err(ApiError::BadRequest(format!(
+            "include.related_objects supports at most {RELATED_INCLUDE_MAX_ALIASES} aliases"
+        )));
+    }
+
     for (alias, include) in related_objects {
         validate_related_include_alias(alias)?;
         validate_related_include_options(alias, include)?;
@@ -278,6 +286,14 @@ fn validate_related_include_options(
     if include.class_id <= 0 {
         return Err(ApiError::BadRequest(format!(
             "include.related_objects.{alias}.class_id must be greater than 0"
+        )));
+    }
+
+    if let Some(class_relation_id) = include.class_relation_id
+        && class_relation_id <= 0
+    {
+        return Err(ApiError::BadRequest(format!(
+            "include.related_objects.{alias}.class_relation_id must be greater than 0"
         )));
     }
 
@@ -670,8 +686,20 @@ async fn apply_report_includes(
             .max_depth
             .unwrap_or(RELATED_INCLUDE_DEFAULT_MAX_DEPTH);
         let limit = include.limit.unwrap_or(RELATED_INCLUDE_DEFAULT_LIMIT);
+        let direction = include
+            .direction
+            .unwrap_or(ReportIncludeRelatedDirection::Any);
+        let sort = include.sort.unwrap_or(ReportIncludeRelatedSort::Path);
+        let include_query = ReportIncludeRelatedQuery {
+            class_id: include.class_id,
+            class_relation_id: include.class_relation_id,
+            direction,
+            sort,
+            max_depth,
+            limit,
+        };
         let related = user
-            .related_objects_for_roots(pool, &root_object_ids, include.class_id, max_depth, limit)
+            .related_objects_for_roots(pool, &root_object_ids, include_query)
             .await?;
 
         for row in related {

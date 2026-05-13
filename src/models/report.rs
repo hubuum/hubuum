@@ -142,11 +142,40 @@ pub struct ReportLimits {
     pub max_output_bytes: Option<usize>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportIncludeRelatedDirection {
+    Any,
+    Outgoing,
+    Incoming,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportIncludeRelatedSort {
+    Path,
+    Name,
+    CreatedAt,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct ReportIncludeRelatedObject {
     pub class_id: i32,
+    pub class_relation_id: Option<i32>,
+    pub direction: Option<ReportIncludeRelatedDirection>,
+    pub sort: Option<ReportIncludeRelatedSort>,
     pub max_depth: Option<i32>,
     pub limit: Option<i32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReportIncludeRelatedQuery {
+    pub class_id: i32,
+    pub class_relation_id: Option<i32>,
+    pub direction: ReportIncludeRelatedDirection,
+    pub sort: ReportIncludeRelatedSort,
+    pub max_depth: i32,
+    pub limit: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]

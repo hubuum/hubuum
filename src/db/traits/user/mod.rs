@@ -11,7 +11,8 @@ use crate::models::traits::user::UserNamespaceAccessors;
 use crate::models::{
     ClassGraphRow, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
     HubuumObjectRelation, Namespace, NewUser, Permissions, PermissionsList, RelatedObjectGraphRow,
-    RelatedObjectIncludeRow, Token, UpdateUser, User, UserID, UserToken,
+    RelatedObjectIncludeRow, ReportIncludeRelatedDirection, ReportIncludeRelatedQuery,
+    ReportIncludeRelatedSort, Token, UpdateUser, User, UserID, UserToken,
 };
 use crate::traits::{ClassAccessors, GroupAccessors, NamespaceAccessors, SelfAccessors};
 use crate::utilities::auth::hash_password;

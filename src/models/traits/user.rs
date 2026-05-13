@@ -4,7 +4,7 @@ use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, SortPar
 use crate::models::{
     ClassGraphRow, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
     HubuumObjectRelation, Namespace, Permissions, RelatedObjectGraphRow, RelatedObjectIncludeRow,
-    UnifiedSearchSpec, User, UserID,
+    ReportIncludeRelatedQuery, UnifiedSearchSpec, User, UserID,
 };
 
 use crate::db::DbPool;
@@ -230,21 +230,13 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         backend: &C,
         root_object_ids: &[i32],
-        target_class_id: i32,
-        max_depth: i32,
-        per_root_limit: i32,
+        include: ReportIncludeRelatedQuery,
     ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.related_objects_for_roots_from_backend(
-            backend.db_pool(),
-            root_object_ids,
-            target_class_id,
-            max_depth,
-            per_root_limit,
-        )
-        .await
+        self.related_objects_for_roots_from_backend(backend.db_pool(), root_object_ids, include)
+            .await
     }
 
     async fn object_relations_touching_page<C, O>(

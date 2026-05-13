@@ -296,6 +296,9 @@ Example report request:
     "related_objects": {
       "room": {
         "class_id": 91,
+        "class_relation_id": 77,
+        "direction": "outgoing",
+        "sort": "name",
         "max_depth": 1,
         "limit": 1
       }
@@ -315,7 +318,9 @@ Template:
 {{/each}}
 ```
 
-The alias (`room` above) becomes `this.related.room`. Included values are arrays even when `limit` is `1`, and each related object includes its normal object fields plus `path`.
+The alias (`room` above) becomes `this.related.room`. Included values are arrays even when `limit` is `1`, and each related object includes its normal object fields plus `path`. A report can include up to 8 related-object aliases.
+
+Use `class_relation_id` and `direction` when the relation meaning matters. Use `sort` (`path`, `name`, or `created_at`) to decide which related object appears first when the alias has a small `limit`. The top-level `related` item field is reserved for these report includes.
 
 ## Missing data policy
 

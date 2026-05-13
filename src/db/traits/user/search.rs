@@ -1622,17 +1622,13 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         pool: &DbPool,
         root_object_ids: &[i32],
-        target_class_id: i32,
-        max_depth: i32,
-        per_root_limit: i32,
+        include: ReportIncludeRelatedQuery,
     ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.related_objects_for_roots_from_backend_with_admin_status(
             pool,
             root_object_ids,
-            target_class_id,
-            max_depth,
-            per_root_limit,
+            include,
             is_admin,
         )
         .await
@@ -1642,9 +1638,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         pool: &DbPool,
         root_object_ids: &[i32],
-        target_class_id: i32,
-        max_depth: i32,
-        per_root_limit: i32,
+        include: ReportIncludeRelatedQuery,
         is_admin: bool,
     ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError> {
         if root_object_ids.is_empty() {
@@ -1667,10 +1661,18 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         let mut bind_variables = Vec::<SQLValue>::new();
         let root_array_sql = sql_integer_array(root_object_ids, &mut bind_variables);
         let namespace_array_sql = sql_integer_array(&namespace_ids, &mut bind_variables);
-        bind_variables.push(SQLValue::Integer(max_depth));
-        bind_variables.push(SQLValue::Integer(max_depth));
-        bind_variables.push(SQLValue::Integer(target_class_id));
-        bind_variables.push(SQLValue::Integer(per_root_limit));
+
+        let object_edges_sql = related_include_object_edges_sql(
+            include.direction,
+            include.class_relation_id,
+            &mut bind_variables,
+        );
+        let related_order_sql = related_include_order_sql(include.sort);
+
+        bind_variables.push(SQLValue::Integer(include.max_depth));
+        bind_variables.push(SQLValue::Integer(include.max_depth));
+        bind_variables.push(SQLValue::Integer(include.class_id));
+        bind_variables.push(SQLValue::Integer(include.limit));
 
         let spec = RawSqlQuerySpec {
             sql: format!(
@@ -1683,13 +1685,7 @@ valid_namespaces AS (
     SELECT unnest({namespace_array_sql}) AS namespace_id
 ),
 object_edges AS (
-    SELECT from_hubuum_object_id AS source_object_id, to_hubuum_object_id AS target_object_id
-    FROM hubuumobject_relation
-
-    UNION ALL
-
-    SELECT to_hubuum_object_id AS source_object_id, from_hubuum_object_id AS target_object_id
-    FROM hubuumobject_relation
+{object_edges_sql}
 ),
 graph_walk AS (
     SELECT
@@ -1738,7 +1734,7 @@ ranked_walk AS (
         deduped_walk.*,
         row_number() OVER (
             PARTITION BY deduped_walk.root_object_id
-            ORDER BY deduped_walk.path ASC, deduped_walk.descendant_object_id ASC
+            ORDER BY {related_order_sql}
         ) AS related_rank
     FROM deduped_walk
     JOIN hubuumobject target_object
@@ -1783,9 +1779,12 @@ ORDER BY ranked_walk.root_object_id ASC, ranked_walk.related_rank ASC
         debug!(
             message = "Searching batched related objects",
             root_object_count = root_object_ids.len(),
-            target_class_id,
-            max_depth,
-            per_root_limit,
+            target_class_id = include.class_id,
+            class_relation_id = include.class_relation_id,
+            direction = ?include.direction,
+            sort = ?include.sort,
+            max_depth = include.max_depth,
+            per_root_limit = include.limit,
             raw_sql = %spec.sql,
             bind_variables = ?spec.bind_variables
         );
@@ -1794,6 +1793,82 @@ ORDER BY ranked_walk.root_object_id ASC, ranked_walk.related_rank ASC
         with_connection(pool, |conn| {
             query.get_results::<RelatedObjectIncludeRow>(conn)
         })
+    }
+}
+
+fn related_include_object_edges_sql(
+    direction: ReportIncludeRelatedDirection,
+    class_relation_id: Option<i32>,
+    bind_variables: &mut Vec<SQLValue>,
+) -> String {
+    let mut selects = Vec::new();
+
+    match direction {
+        ReportIncludeRelatedDirection::Any | ReportIncludeRelatedDirection::Outgoing => {
+            selects.push(related_include_object_edge_select_sql(
+                "from_hubuum_object_id",
+                "to_hubuum_object_id",
+                class_relation_id,
+                bind_variables,
+            ));
+        }
+        ReportIncludeRelatedDirection::Incoming => {}
+    }
+
+    match direction {
+        ReportIncludeRelatedDirection::Any | ReportIncludeRelatedDirection::Incoming => {
+            selects.push(related_include_object_edge_select_sql(
+                "to_hubuum_object_id",
+                "from_hubuum_object_id",
+                class_relation_id,
+                bind_variables,
+            ));
+        }
+        ReportIncludeRelatedDirection::Outgoing => {}
+    }
+
+    selects.join("\n\n    UNION ALL\n\n")
+}
+
+fn related_include_object_edge_select_sql(
+    source_column: &str,
+    target_column: &str,
+    class_relation_id: Option<i32>,
+    bind_variables: &mut Vec<SQLValue>,
+) -> String {
+    let class_relation_filter_sql = if let Some(class_relation_id) = class_relation_id {
+        bind_variables.push(SQLValue::Integer(class_relation_id));
+        "  AND hubuumobject_relation.class_relation_id = ?\n"
+    } else {
+        ""
+    };
+
+    format!(
+        r#"    SELECT
+        hubuumobject_relation.{source_column} AS source_object_id,
+        hubuumobject_relation.{target_column} AS target_object_id
+    FROM hubuumobject_relation
+    JOIN hubuumobject source_edge_object
+      ON source_edge_object.id = hubuumobject_relation.{source_column}
+    JOIN hubuumobject target_edge_object
+      ON target_edge_object.id = hubuumobject_relation.{target_column}
+    WHERE source_edge_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
+      AND target_edge_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
+{class_relation_filter_sql}"#
+    )
+}
+
+fn related_include_order_sql(sort: ReportIncludeRelatedSort) -> &'static str {
+    match sort {
+        ReportIncludeRelatedSort::Path => {
+            "deduped_walk.path ASC, deduped_walk.descendant_object_id ASC"
+        }
+        ReportIncludeRelatedSort::Name => {
+            "target_object.name ASC, target_object.id ASC, deduped_walk.path ASC"
+        }
+        ReportIncludeRelatedSort::CreatedAt => {
+            "target_object.created_at ASC, target_object.id ASC, deduped_walk.path ASC"
+        }
     }
 }
 
