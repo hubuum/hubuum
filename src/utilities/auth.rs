@@ -74,5 +74,5 @@ pub fn generate_token() -> Token {
     let mut hasher = Sha512::new();
     hasher.update(raw);
     let result = hasher.finalize();
-    Token(format!("{result:x}"))
+    Token(result.iter().map(|byte| format!("{byte:02x}")).collect())
 }

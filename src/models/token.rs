@@ -2,7 +2,7 @@ use chrono::NaiveDateTime;
 
 use diesel::prelude::*;
 use diesel::sql_types::{Integer, Text, Timestamp};
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use utoipa::ToSchema;

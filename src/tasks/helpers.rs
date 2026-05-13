@@ -18,7 +18,11 @@ pub fn request_hash(payload: &serde_json::Value) -> Result<String, ApiError> {
     let bytes = serde_json::to_vec(&canonicalize_json(payload))?;
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
 }
 
 fn canonicalize_json(value: &serde_json::Value) -> serde_json::Value {
