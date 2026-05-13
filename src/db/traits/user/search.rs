@@ -1574,7 +1574,9 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         );
         trace_query!(query, "Searching source-relative related objects");
 
-        with_connection(pool, |conn| query.get_results::<RelatedObjectGraphRow>(conn))
+        with_connection(pool, |conn| {
+            query.get_results::<RelatedObjectGraphRow>(conn)
+        })
     }
 
     async fn objects_related_to_page_from_backend_with_admin_status<O>(
@@ -1614,6 +1616,184 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         })?;
 
         Ok((items, total_count))
+    }
+
+    async fn related_objects_for_roots_from_backend(
+        &self,
+        pool: &DbPool,
+        root_object_ids: &[i32],
+        target_class_id: i32,
+        max_depth: i32,
+        per_root_limit: i32,
+    ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError> {
+        let is_admin = self.is_admin(pool).await?;
+        self.related_objects_for_roots_from_backend_with_admin_status(
+            pool,
+            root_object_ids,
+            target_class_id,
+            max_depth,
+            per_root_limit,
+            is_admin,
+        )
+        .await
+    }
+
+    async fn related_objects_for_roots_from_backend_with_admin_status(
+        &self,
+        pool: &DbPool,
+        root_object_ids: &[i32],
+        target_class_id: i32,
+        max_depth: i32,
+        per_root_limit: i32,
+        is_admin: bool,
+    ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError> {
+        if root_object_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let permissions =
+            PermissionsList::new([Permissions::ReadObject, Permissions::ReadObjectRelation]);
+        let namespace_ids: Vec<i32> = self
+            .load_namespaces_with_permissions_with_admin_status(pool, &permissions, is_admin)
+            .await?
+            .into_iter()
+            .map(|namespace| namespace.id)
+            .collect();
+
+        if namespace_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut bind_variables = Vec::<SQLValue>::new();
+        let root_array_sql = sql_integer_array(root_object_ids, &mut bind_variables);
+        let namespace_array_sql = sql_integer_array(&namespace_ids, &mut bind_variables);
+        bind_variables.push(SQLValue::Integer(max_depth));
+        bind_variables.push(SQLValue::Integer(max_depth));
+        bind_variables.push(SQLValue::Integer(target_class_id));
+        bind_variables.push(SQLValue::Integer(per_root_limit));
+
+        let spec = RawSqlQuerySpec {
+            sql: format!(
+                r#"
+WITH RECURSIVE
+root_objects AS (
+    SELECT unnest({root_array_sql}) AS root_object_id
+),
+valid_namespaces AS (
+    SELECT unnest({namespace_array_sql}) AS namespace_id
+),
+object_edges AS (
+    SELECT from_hubuum_object_id AS source_object_id, to_hubuum_object_id AS target_object_id
+    FROM hubuumobject_relation
+
+    UNION ALL
+
+    SELECT to_hubuum_object_id AS source_object_id, from_hubuum_object_id AS target_object_id
+    FROM hubuumobject_relation
+),
+graph_walk AS (
+    SELECT
+        root_objects.root_object_id,
+        root_objects.root_object_id AS ancestor_object_id,
+        object_edges.target_object_id AS descendant_object_id,
+        1 AS depth,
+        ARRAY[root_objects.root_object_id, object_edges.target_object_id] AS path
+    FROM root_objects
+    JOIN object_edges
+      ON object_edges.source_object_id = root_objects.root_object_id
+    JOIN hubuumobject target_object
+      ON target_object.id = object_edges.target_object_id
+    WHERE ? >= 1
+      AND target_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
+
+    UNION ALL
+
+    SELECT
+        graph_walk.root_object_id,
+        graph_walk.ancestor_object_id,
+        object_edges.target_object_id AS descendant_object_id,
+        graph_walk.depth + 1,
+        graph_walk.path || object_edges.target_object_id
+    FROM graph_walk
+    JOIN object_edges
+      ON object_edges.source_object_id = graph_walk.descendant_object_id
+    JOIN hubuumobject target_object
+      ON target_object.id = object_edges.target_object_id
+    WHERE NOT (object_edges.target_object_id = ANY(graph_walk.path))
+      AND graph_walk.depth < ?
+      AND target_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
+),
+deduped_walk AS (
+    SELECT DISTINCT ON (root_object_id, descendant_object_id)
+        root_object_id,
+        ancestor_object_id,
+        descendant_object_id,
+        depth,
+        path
+    FROM graph_walk
+    ORDER BY root_object_id ASC, descendant_object_id ASC, depth ASC, path ASC
+),
+ranked_walk AS (
+    SELECT
+        deduped_walk.*,
+        row_number() OVER (
+            PARTITION BY deduped_walk.root_object_id
+            ORDER BY deduped_walk.path ASC, deduped_walk.descendant_object_id ASC
+        ) AS related_rank
+    FROM deduped_walk
+    JOIN hubuumobject target_object
+      ON target_object.id = deduped_walk.descendant_object_id
+    WHERE target_object.hubuum_class_id = ?
+)
+SELECT
+    ranked_walk.root_object_id,
+    source_object.id AS ancestor_object_id,
+    target_object.id AS descendant_object_id,
+    ranked_walk.depth,
+    ranked_walk.path,
+    source_object.name AS ancestor_name,
+    target_object.name AS descendant_name,
+    source_object.namespace_id AS ancestor_namespace_id,
+    target_object.namespace_id AS descendant_namespace_id,
+    source_object.hubuum_class_id AS ancestor_class_id,
+    target_object.hubuum_class_id AS descendant_class_id,
+    source_object.description AS ancestor_description,
+    target_object.description AS descendant_description,
+    source_object.data AS ancestor_data,
+    target_object.data AS descendant_data,
+    source_object.created_at AS ancestor_created_at,
+    target_object.created_at AS descendant_created_at,
+    source_object.updated_at AS ancestor_updated_at,
+    target_object.updated_at AS descendant_updated_at
+FROM ranked_walk
+JOIN hubuumobject source_object
+  ON source_object.id = ranked_walk.ancestor_object_id
+JOIN hubuumobject target_object
+  ON target_object.id = ranked_walk.descendant_object_id
+WHERE ranked_walk.related_rank <= ?
+  AND source_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
+  AND target_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
+ORDER BY ranked_walk.root_object_id ASC, ranked_walk.related_rank ASC
+"#
+            ),
+            bind_variables,
+        };
+
+        let query = bind_raw_sql_query!(spec.clone());
+        debug!(
+            message = "Searching batched related objects",
+            root_object_count = root_object_ids.len(),
+            target_class_id,
+            max_depth,
+            per_root_limit,
+            raw_sql = %spec.sql,
+            bind_variables = ?spec.bind_variables
+        );
+        trace_query!(query, "Searching batched related objects");
+
+        with_connection(pool, |conn| {
+            query.get_results::<RelatedObjectIncludeRow>(conn)
+        })
     }
 }
 

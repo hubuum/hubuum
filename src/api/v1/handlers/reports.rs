@@ -21,9 +21,9 @@ use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, parse_query_parameter};
 use crate::models::{
-    HubuumClassID, HubuumObjectID, NamespaceID, Permissions, ReportContentType, ReportJsonResponse,
-    ReportMeta, ReportMissingDataPolicy, ReportRequest, ReportScope, ReportScopeKind,
-    ReportTemplate, ReportTemplateID, ReportWarning,
+    HubuumClassID, HubuumObjectID, NamespaceID, Permissions, ReportContentType,
+    ReportIncludeRelatedObject, ReportJsonResponse, ReportMeta, ReportMissingDataPolicy,
+    ReportRequest, ReportScope, ReportScopeKind, ReportTemplate, ReportTemplateID, ReportWarning,
 };
 use crate::pagination::page_limits_or_defaults;
 use crate::traits::{NamespaceAccessors, Search, SelfAccessors};
@@ -35,6 +35,10 @@ use super::check_if_object_in_class;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 262_144;
 const REPORT_WARNINGS_HEADER: &str = "X-Hubuum-Report-Warnings";
 const REPORT_TRUNCATED_HEADER: &str = "X-Hubuum-Report-Truncated";
+const RELATED_INCLUDE_DEFAULT_MAX_DEPTH: i32 = 1;
+const RELATED_INCLUDE_MAX_DEPTH_LIMIT: i32 = 10;
+const RELATED_INCLUDE_DEFAULT_LIMIT: i32 = 1;
+const RELATED_INCLUDE_MAX_LIMIT: i32 = 50;
 
 struct ReportRuntime {
     report: ReportRequest,
@@ -158,6 +162,7 @@ async fn prepare_report_runtime(
     report: ReportRequest,
 ) -> Result<ReportRuntime, ApiError> {
     report.scope.validate()?;
+    validate_report_include(&report)?;
 
     let template = resolve_template(pool, user, &report).await?;
     let content_type = resolve_content_type(req, template.as_ref())?;
@@ -207,6 +212,8 @@ async fn build_report_execution(
     let query_options = prepare_query_options(&runtime.report)?;
     let (items, mut warnings, truncated) =
         execute_scope(pool, user, &runtime.report.scope, query_options).await?;
+    let mut items = items;
+    apply_report_includes(pool, user, &runtime.report, &mut items).await?;
 
     add_truncation_warning(&mut warnings, truncated);
 
@@ -220,6 +227,77 @@ async fn build_report_execution(
         items,
         warnings,
     })
+}
+
+fn validate_report_include(report: &ReportRequest) -> Result<(), ApiError> {
+    let Some(include) = &report.include else {
+        return Ok(());
+    };
+
+    let Some(related_objects) = &include.related_objects else {
+        return Ok(());
+    };
+
+    if !related_objects.is_empty() && report.scope.kind != ReportScopeKind::ObjectsInClass {
+        return Err(ApiError::BadRequest(
+            "include.related_objects is only supported for scope 'objects_in_class'".to_string(),
+        ));
+    }
+
+    for (alias, include) in related_objects {
+        validate_related_include_alias(alias)?;
+        validate_related_include_options(alias, include)?;
+    }
+
+    Ok(())
+}
+
+fn validate_related_include_alias(alias: &str) -> Result<(), ApiError> {
+    let mut chars = alias.chars();
+    let Some(first) = chars.next() else {
+        return Err(ApiError::BadRequest(
+            "include.related_objects aliases must not be empty".to_string(),
+        ));
+    };
+
+    if !(first == '_' || first.is_ascii_alphabetic())
+        || !chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    {
+        return Err(ApiError::BadRequest(format!(
+            "Invalid include.related_objects alias '{alias}'; expected [A-Za-z_][A-Za-z0-9_]*"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_related_include_options(
+    alias: &str,
+    include: &ReportIncludeRelatedObject,
+) -> Result<(), ApiError> {
+    if include.class_id <= 0 {
+        return Err(ApiError::BadRequest(format!(
+            "include.related_objects.{alias}.class_id must be greater than 0"
+        )));
+    }
+
+    let max_depth = include
+        .max_depth
+        .unwrap_or(RELATED_INCLUDE_DEFAULT_MAX_DEPTH);
+    if !(1..=RELATED_INCLUDE_MAX_DEPTH_LIMIT).contains(&max_depth) {
+        return Err(ApiError::BadRequest(format!(
+            "include.related_objects.{alias}.max_depth must be between 1 and {RELATED_INCLUDE_MAX_DEPTH_LIMIT}"
+        )));
+    }
+
+    let limit = include.limit.unwrap_or(RELATED_INCLUDE_DEFAULT_LIMIT);
+    if !(1..=RELATED_INCLUDE_MAX_LIMIT).contains(&limit) {
+        return Err(ApiError::BadRequest(format!(
+            "include.related_objects.{alias}.limit must be between 1 and {RELATED_INCLUDE_MAX_LIMIT}"
+        )));
+    }
+
+    Ok(())
 }
 
 fn add_truncation_warning(warnings: &mut Vec<ReportWarning>, truncated: bool) {
@@ -556,6 +634,125 @@ async fn execute_scope(
 
     let (items, truncated) = truncate_items(data, item_limit);
     Ok((items, Vec::new(), truncated))
+}
+
+async fn apply_report_includes(
+    pool: &DbPool,
+    user: &crate::models::User,
+    report: &ReportRequest,
+    items: &mut [serde_json::Value],
+) -> Result<(), ApiError> {
+    let Some(related_objects) = report
+        .include
+        .as_ref()
+        .and_then(|include| include.related_objects.as_ref())
+    else {
+        return Ok(());
+    };
+
+    if related_objects.is_empty() || items.is_empty() {
+        return Ok(());
+    }
+
+    let root_object_ids = report_item_ids(items)?;
+    for alias in related_objects.keys() {
+        initialize_related_alias(items, alias)?;
+    }
+
+    let item_indexes = root_object_ids
+        .iter()
+        .enumerate()
+        .map(|(index, object_id)| (*object_id, index))
+        .collect::<HashMap<i32, usize>>();
+
+    for (alias, include) in related_objects {
+        let max_depth = include
+            .max_depth
+            .unwrap_or(RELATED_INCLUDE_DEFAULT_MAX_DEPTH);
+        let limit = include.limit.unwrap_or(RELATED_INCLUDE_DEFAULT_LIMIT);
+        let related = user
+            .related_objects_for_roots(pool, &root_object_ids, include.class_id, max_depth, limit)
+            .await?;
+
+        for row in related {
+            let Some(item_index) = item_indexes.get(&row.root_object_id) else {
+                continue;
+            };
+            let related_object = row.to_descendant_object_with_path();
+            let related_value = serde_json::to_value(related_object).map_err(ApiError::from)?;
+            push_related_alias_value(&mut items[*item_index], alias, related_value)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn report_item_ids(items: &[serde_json::Value]) -> Result<Vec<i32>, ApiError> {
+    items
+        .iter()
+        .map(|item| {
+            let id = item
+                .get("id")
+                .and_then(serde_json::Value::as_i64)
+                .ok_or_else(|| {
+                    ApiError::InternalServerError(
+                        "Report object item did not include integer id".to_string(),
+                    )
+                })?;
+            i32::try_from(id).map_err(|_| {
+                ApiError::InternalServerError(format!(
+                    "Report object item id '{id}' is outside i32 range"
+                ))
+            })
+        })
+        .collect()
+}
+
+fn initialize_related_alias(items: &mut [serde_json::Value], alias: &str) -> Result<(), ApiError> {
+    for item in items {
+        let related = related_object_mut(item)?;
+        related.insert(alias.to_string(), serde_json::Value::Array(Vec::new()));
+    }
+    Ok(())
+}
+
+fn push_related_alias_value(
+    item: &mut serde_json::Value,
+    alias: &str,
+    value: serde_json::Value,
+) -> Result<(), ApiError> {
+    let related = related_object_mut(item)?;
+    let Some(alias_value) = related.get_mut(alias) else {
+        return Err(ApiError::InternalServerError(format!(
+            "Related include alias '{alias}' was not initialized"
+        )));
+    };
+    let Some(alias_values) = alias_value.as_array_mut() else {
+        return Err(ApiError::InternalServerError(format!(
+            "Related include alias '{alias}' is not an array"
+        )));
+    };
+    alias_values.push(value);
+    Ok(())
+}
+
+fn related_object_mut(
+    item: &mut serde_json::Value,
+) -> Result<&mut serde_json::Map<String, serde_json::Value>, ApiError> {
+    let Some(item_object) = item.as_object_mut() else {
+        return Err(ApiError::InternalServerError(
+            "Report object item was not a JSON object".to_string(),
+        ));
+    };
+
+    let related = item_object
+        .entry("related")
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    related.as_object_mut().ok_or_else(|| {
+        ApiError::InternalServerError(
+            "Report object item related field was not an object".to_string(),
+        )
+    })
 }
 
 fn push_exact_filter(

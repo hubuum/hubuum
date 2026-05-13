@@ -166,6 +166,7 @@ mod tests {
             output: None,
             missing_data_policy: None,
             limits: None,
+            include: None,
         };
 
         let resp = post_request_with_headers(
@@ -345,6 +346,366 @@ mod tests {
         );
 
         cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_run_report_objects_in_class_includes_related_objects(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
+        let classes = create_test_classes(
+            &context,
+            &context.scoped_name("report_include_related_json"),
+        )
+        .await;
+        let (objects, class_relations, _object_relations) =
+            create_report_relation_fixture(pool, &classes).await;
+
+        let second_room = NewHubuumObject {
+            name: "report-mid-02".to_string(),
+            description: "Second related object".to_string(),
+            namespace_id: classes[1].namespace_id,
+            hubuum_class_id: classes[1].id,
+            data: serde_json::json!({"hostname": "report-mid-02", "role": "middle"}),
+        }
+        .save(pool)
+        .await
+        .unwrap();
+        NewHubuumObjectRelation {
+            from_hubuum_object_id: objects[0].id,
+            to_hubuum_object_id: second_room.id,
+            class_relation_id: class_relations[0].id,
+        }
+        .save(pool)
+        .await
+        .unwrap();
+
+        let body = serde_json::json!({
+            "scope": {
+                "kind": "objects_in_class",
+                "class_id": classes[0].id
+            },
+            "query": "name__equals=report-root-01",
+            "include": {
+                "related_objects": {
+                    "room": {
+                        "class_id": classes[1].id,
+                        "limit": 1
+                    }
+                }
+            }
+        });
+
+        let resp = post_request_with_headers(
+            pool,
+            admin_token,
+            REPORTS_ENDPOINT,
+            &body,
+            vec![(header::ACCEPT, "application/json".to_string())],
+        )
+        .await;
+
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let report: ReportJsonResponse = test::read_body_json(resp).await;
+
+        assert_eq!(report.items.len(), 1);
+        assert_eq!(report.items[0]["name"], "report-root-01");
+        let room = report.items[0]["related"]["room"].as_array().unwrap();
+        assert_eq!(room.len(), 1);
+        assert_eq!(room[0]["name"], "report-mid-01");
+        assert_eq!(room[0]["data"]["hostname"], "report-mid-01");
+        assert!(room[0]["path"].as_array().is_some());
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_run_report_template_renders_included_related_objects(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
+        let classes = create_test_classes(
+            &context,
+            &context.scoped_name("report_include_related_template"),
+        )
+        .await;
+        let _fixture = create_report_relation_fixture(pool, &classes).await;
+        let template_id = create_template(
+            pool,
+            classes[0].namespace_id,
+            "included-related-template",
+            ReportContentType::TextPlain,
+            "{{#each items}}{{this.name}} is in {{this.related.room[0].name}}\\n{{/each}}",
+        )
+        .await;
+
+        let body = serde_json::json!({
+            "scope": {
+                "kind": "objects_in_class",
+                "class_id": classes[0].id
+            },
+            "query": "name__equals=report-root-01",
+            "output": {
+                "template_id": template_id
+            },
+            "include": {
+                "related_objects": {
+                    "room": {
+                        "class_id": classes[1].id
+                    }
+                }
+            }
+        });
+
+        let resp =
+            post_request_with_headers(pool, admin_token, REPORTS_ENDPOINT, &body, vec![]).await;
+
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let rendered = String::from_utf8(test::read_body(resp).await.to_vec()).unwrap();
+        assert_eq!(rendered, "report-root-01 is in report-mid-01\\n");
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_run_report_included_related_objects_empty_when_missing(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
+        let classes = create_test_classes(
+            &context,
+            &context.scoped_name("report_include_related_empty"),
+        )
+        .await;
+        let _fixture = create_report_relation_fixture(pool, &classes).await;
+        let unlinked = NewHubuumObject {
+            name: "report-root-02".to_string(),
+            description: "Unlinked root object".to_string(),
+            namespace_id: classes[0].namespace_id,
+            hubuum_class_id: classes[0].id,
+            data: serde_json::json!({"hostname": "report-root-02", "role": "root"}),
+        }
+        .save(pool)
+        .await
+        .unwrap();
+
+        let body = serde_json::json!({
+            "scope": {
+                "kind": "objects_in_class",
+                "class_id": classes[0].id
+            },
+            "query": format!("id={}", unlinked.id),
+            "include": {
+                "related_objects": {
+                    "room": {
+                        "class_id": classes[1].id
+                    }
+                }
+            }
+        });
+
+        let resp = post_request_with_headers(
+            pool,
+            admin_token,
+            REPORTS_ENDPOINT,
+            &body,
+            vec![(header::ACCEPT, "application/json".to_string())],
+        )
+        .await;
+
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let report: ReportJsonResponse = test::read_body_json(resp).await;
+
+        assert_eq!(report.items.len(), 1);
+        assert_eq!(
+            report.items[0]["related"]["room"].as_array().unwrap().len(),
+            0
+        );
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_run_report_included_related_objects_respects_max_depth(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
+        let classes = create_test_classes(
+            &context,
+            &context.scoped_name("report_include_related_depth"),
+        )
+        .await;
+        let _fixture = create_report_relation_fixture(pool, &classes).await;
+
+        let direct_body = serde_json::json!({
+            "scope": {
+                "kind": "objects_in_class",
+                "class_id": classes[0].id
+            },
+            "query": "name__equals=report-root-01",
+            "include": {
+                "related_objects": {
+                    "leaf": {
+                        "class_id": classes[2].id,
+                        "max_depth": 1
+                    }
+                }
+            }
+        });
+        let transitive_body = serde_json::json!({
+            "scope": {
+                "kind": "objects_in_class",
+                "class_id": classes[0].id
+            },
+            "query": "name__equals=report-root-01",
+            "include": {
+                "related_objects": {
+                    "leaf": {
+                        "class_id": classes[2].id,
+                        "max_depth": 2
+                    }
+                }
+            }
+        });
+
+        let direct_resp = post_request_with_headers(
+            pool,
+            admin_token,
+            REPORTS_ENDPOINT,
+            &direct_body,
+            vec![(header::ACCEPT, "application/json".to_string())],
+        )
+        .await;
+        let direct_resp = assert_response_status(direct_resp, StatusCode::OK).await;
+        let direct_report: ReportJsonResponse = test::read_body_json(direct_resp).await;
+        assert_eq!(
+            direct_report.items[0]["related"]["leaf"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+
+        let transitive_resp = post_request_with_headers(
+            pool,
+            admin_token,
+            REPORTS_ENDPOINT,
+            &transitive_body,
+            vec![(header::ACCEPT, "application/json".to_string())],
+        )
+        .await;
+        let transitive_resp = assert_response_status(transitive_resp, StatusCode::OK).await;
+        let transitive_report: ReportJsonResponse = test::read_body_json(transitive_resp).await;
+        assert_eq!(
+            transitive_report.items[0]["related"]["leaf"][0]["name"],
+            "report-leaf-01"
+        );
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_run_report_rejects_related_include_on_other_scopes(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
+
+        let body = serde_json::json!({
+            "scope": {
+                "kind": "classes"
+            },
+            "include": {
+                "related_objects": {
+                    "room": {
+                        "class_id": 1
+                    }
+                }
+            }
+        });
+
+        let resp =
+            post_request_with_headers(pool, admin_token, REPORTS_ENDPOINT, &body, vec![]).await;
+
+        assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_run_report_rejects_invalid_related_include_options(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
+
+        let invalid_includes = vec![
+            serde_json::json!({
+                "bad-alias": {
+                    "class_id": 1
+                }
+            }),
+            serde_json::json!({
+                "room": {
+                    "class_id": 0
+                }
+            }),
+            serde_json::json!({
+                "room": {
+                    "class_id": 1,
+                    "max_depth": 0
+                }
+            }),
+            serde_json::json!({
+                "room": {
+                    "class_id": 1,
+                    "max_depth": 11
+                }
+            }),
+            serde_json::json!({
+                "room": {
+                    "class_id": 1,
+                    "limit": 0
+                }
+            }),
+            serde_json::json!({
+                "room": {
+                    "class_id": 1,
+                    "limit": 51
+                }
+            }),
+        ];
+
+        for related_objects in invalid_includes {
+            let body = serde_json::json!({
+                "scope": {
+                    "kind": "objects_in_class",
+                    "class_id": 1
+                },
+                "include": {
+                    "related_objects": related_objects
+                }
+            });
+
+            let resp =
+                post_request_with_headers(pool, admin_token, REPORTS_ENDPOINT, &body, vec![]).await;
+
+            assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+        }
     }
 
     #[rstest]
@@ -803,6 +1164,7 @@ mod tests {
             output: None,
             missing_data_policy: None,
             limits: None,
+            include: None,
         };
 
         let resp = post_request_with_headers(
@@ -842,6 +1204,7 @@ mod tests {
             output: None,
             missing_data_policy: None,
             limits: None,
+            include: None,
         };
 
         // Accept header explicitly excluding application/json with q=0
@@ -882,6 +1245,7 @@ mod tests {
             output: None,
             missing_data_policy: None,
             limits: None,
+            include: None,
         };
 
         // Accept: application/*;q=0.9, text/*;q=0.5 should pick application/json
@@ -929,6 +1293,7 @@ mod tests {
             output: None,
             missing_data_policy: None,
             limits: None,
+            include: None,
         };
 
         // Should pick application/json with higher q-value

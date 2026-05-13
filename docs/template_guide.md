@@ -279,6 +279,44 @@ Related objects for {{request.scope.object_id}}
 
 For direct relation reports, `class_relations` items contain fields such as `from_hubuum_class_id` and `to_hubuum_class_id`, while `object_relations` items contain fields such as `from_hubuum_object_id`, `to_hubuum_object_id`, and `class_relation_id`.
 
+## Included related objects
+
+`objects_in_class` reports can add bounded related-object arrays to each item with `include.related_objects`. Use this when the report is centered on one class but the template needs nearby objects, such as a host's room.
+
+Example report request:
+
+```json
+{
+  "scope": {
+    "kind": "objects_in_class",
+    "class_id": 42
+  },
+  "query": "name__equals=nommo",
+  "include": {
+    "related_objects": {
+      "room": {
+        "class_id": 91,
+        "max_depth": 1,
+        "limit": 1
+      }
+    }
+  },
+  "output": {
+    "template_id": 12
+  },
+  "missing_data_policy": "strict"
+}
+```
+
+Template:
+
+```text
+{{#each items}}{{this.name}} is in {{this.related.room[0].name}}
+{{/each}}
+```
+
+The alias (`room` above) becomes `this.related.room`. Included values are arrays even when `limit` is `1`, and each related object includes its normal object fields plus `path`.
+
 ## Missing data policy
 
 Missing values are controlled by `missing_data_policy` on the report request.

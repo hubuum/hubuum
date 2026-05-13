@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -141,6 +143,18 @@ pub struct ReportLimits {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct ReportIncludeRelatedObject {
+    pub class_id: i32,
+    pub max_depth: Option<i32>,
+    pub limit: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct ReportInclude {
+    pub related_objects: Option<HashMap<String, ReportIncludeRelatedObject>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[schema(example = openapi_examples::report_request_example)]
 pub struct ReportRequest {
     pub scope: ReportScope,
@@ -148,6 +162,7 @@ pub struct ReportRequest {
     pub output: Option<ReportOutputRequest>,
     pub missing_data_policy: Option<ReportMissingDataPolicy>,
     pub limits: Option<ReportLimits>,
+    pub include: Option<ReportInclude>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -222,6 +237,7 @@ mod openapi_examples {
             output: Some(report_output_example()),
             missing_data_policy: Some(ReportMissingDataPolicy::Strict),
             limits: Some(report_limits_example()),
+            include: None,
         }
     }
 

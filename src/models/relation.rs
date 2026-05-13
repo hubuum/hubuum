@@ -190,6 +190,48 @@ pub struct RelatedObjectGraphRow {
     pub descendant_updated_at: chrono::NaiveDateTime,
 }
 
+#[derive(Debug, QueryableByName, Serialize, Deserialize, Clone)]
+pub struct RelatedObjectIncludeRow {
+    #[diesel(sql_type = Integer)]
+    pub root_object_id: i32,
+    #[diesel(sql_type = Integer)]
+    pub ancestor_object_id: i32,
+    #[diesel(sql_type = Integer)]
+    pub descendant_object_id: i32,
+    #[diesel(sql_type = Integer)]
+    pub depth: i32,
+    #[diesel(sql_type = Array<Integer>)]
+    pub path: Vec<i32>,
+    #[diesel(sql_type = Text)]
+    pub ancestor_name: String,
+    #[diesel(sql_type = Text)]
+    pub descendant_name: String,
+    #[diesel(sql_type = Integer)]
+    pub ancestor_namespace_id: i32,
+    #[diesel(sql_type = Integer)]
+    pub descendant_namespace_id: i32,
+    #[diesel(sql_type = Integer)]
+    pub ancestor_class_id: i32,
+    #[diesel(sql_type = Integer)]
+    pub descendant_class_id: i32,
+    #[diesel(sql_type = Text)]
+    pub ancestor_description: String,
+    #[diesel(sql_type = Text)]
+    pub descendant_description: String,
+    #[diesel(sql_type = Jsonb)]
+    pub ancestor_data: serde_json::Value,
+    #[diesel(sql_type = Jsonb)]
+    pub descendant_data: serde_json::Value,
+    #[diesel(sql_type = Timestamp)]
+    pub ancestor_created_at: chrono::NaiveDateTime,
+    #[diesel(sql_type = Timestamp)]
+    pub descendant_created_at: chrono::NaiveDateTime,
+    #[diesel(sql_type = Timestamp)]
+    pub ancestor_updated_at: chrono::NaiveDateTime,
+    #[diesel(sql_type = Timestamp)]
+    pub descendant_updated_at: chrono::NaiveDateTime,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct RelatedObjectGraph {
     pub objects: Vec<HubuumObjectWithPath>,

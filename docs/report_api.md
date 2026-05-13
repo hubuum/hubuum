@@ -22,6 +22,15 @@ Authentication:
   "output": {
     "template_id": 12
   },
+  "include": {
+    "related_objects": {
+      "room": {
+        "class_id": 91,
+        "max_depth": 1,
+        "limit": 1
+      }
+    }
+  },
   "missing_data_policy": "strict",
   "limits": {
     "max_items": 100,
@@ -96,6 +105,41 @@ Report objects related to a root object:
 ```
 
 `related_objects` first verifies that `object_id` belongs to `class_id`, then returns matching related objects. The returned items include the related object fields plus the relation `path`, so templates can render both the object data and how it was reached. The `depth` field is available for filtering and sorting through `query`, but is not included in the rendered item payload.
+
+### Including related objects
+
+`objects_in_class` reports can include related objects for every returned object. This is intended for reports such as "host is in room" where the base report lists hosts and the template needs a small bounded set of related room objects.
+
+```json
+{
+  "scope": {
+    "kind": "objects_in_class",
+    "class_id": 42
+  },
+  "query": "name__equals=nommo",
+  "include": {
+    "related_objects": {
+      "room": {
+        "class_id": 91,
+        "max_depth": 1,
+        "limit": 1
+      }
+    }
+  },
+  "output": {
+    "template_id": 12
+  }
+}
+```
+
+Each key under `include.related_objects` is an alias. The alias must match `[A-Za-z_][A-Za-z0-9_]*` and is exposed as an array at `this.related.<alias>`.
+
+```text
+{{#each items}}{{this.name}} is in {{this.related.room[0].name}}
+{{/each}}
+```
+
+`class_id` is required and selects the related object class to include. `max_depth` defaults to `1` and must be between `1` and `10`. `limit` defaults to `1` and must be between `1` and `50`; it is applied per root object and per alias. Missing related objects render as an empty array, so `this.related.room` is always present when the alias was requested.
 
 ## Output selection
 
