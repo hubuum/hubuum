@@ -48,12 +48,54 @@ Authentication:
 Examples:
 
 - `name__contains=server&sort=name`
-- `class_from=12&sort=created_at.desc`
-- `depth__lte=2&class_to=91`
+- `from_classes=12&sort=created_at.desc`
+- `depth__lte=2&to_classes=91`
 
 Reports do not support cursor pagination. If `cursor` is present in `query`, the request fails with `400 Bad Request`.
 
 If the rendered response exceeds `limits.max_output_bytes`, the request fails with `413 Payload Too Large`. The server does not stream partial JSON, HTML, CSV, or text bodies.
+
+### Relation report examples
+
+Report class relations from one class:
+
+```json
+{
+  "scope": {
+    "kind": "class_relations"
+  },
+  "query": "from_classes=42&sort=created_at.desc",
+  "limits": {
+    "max_items": 50
+  }
+}
+```
+
+Report object relations for relations pointing at one object:
+
+```json
+{
+  "scope": {
+    "kind": "object_relations"
+  },
+  "query": "to_objects=101&sort=created_at.desc"
+}
+```
+
+Report objects related to a root object:
+
+```json
+{
+  "scope": {
+    "kind": "related_objects",
+    "class_id": 42,
+    "object_id": 101
+  },
+  "query": "depth__lte=2&to_classes=91&sort=path"
+}
+```
+
+`related_objects` first verifies that `object_id` belongs to `class_id`, then returns matching related objects. The returned items include the related object fields plus the relation `path`, so templates can render both the object data and how it was reached. The `depth` field is available for filtering and sorting through `query`, but is not included in the rendered item payload.
 
 ## Output selection
 
@@ -108,6 +150,8 @@ Templates use a minimal template language:
 
 - `{{path.to.value}}` to interpolate a value
 - `{{this.name}}` inside loops
+- `{{this.data.tags[0]}}` or `{{this.data.tags.0}}` to read array elements
+- `{{this.data["field.with.dots"]}}` to read data keys that are not valid dot segments
 - `{{#each items}}...{{/each}}` to iterate arrays
 - nested loops are supported
 

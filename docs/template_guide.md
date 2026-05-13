@@ -117,6 +117,8 @@ The stored template language is intentionally small:
 
 - `{{path.to.value}}` interpolates a value
 - `{{this.name}}` reads from the current item inside a loop
+- `{{this.data.tags[0]}}` or `{{this.data.tags.0}}` reads an array element by index
+- `{{this.data["field.with.dots"]}}` reads object keys that cannot be written as dot segments
 - `{{#each items}}...{{/each}}` iterates arrays
 - nested `each` blocks are supported
 
@@ -125,12 +127,17 @@ Path resolution rules:
 - `this` starts from the current loop item
 - `root` starts from the full template context
 - bare paths try `this` first, then `root`
+- bracket keys can use single or double quotes, for example `{{this.data['service-owner']}}`
 
 Examples:
 
 ```text
 {{meta.count}}
 {{request.scope.kind}}
+{{#each items}}{{this.data.tags[0]}}
+{{/each}}
+{{#each items}}{{this.data["owner.name"]}}
+{{/each}}
 {{#each items}}{{this.name}}
 {{/each}}
 {{#each items}}{{#each this.data.tags}}- {{this}}
@@ -226,6 +233,51 @@ srv-db-01
   - prod
   - db
 ```
+
+You can also read a single array element directly:
+
+```text
+{{#each items}}{{this.name}} primary_tag={{this.data.tags[0]}}
+{{/each}}
+```
+
+For data keys that contain dots, spaces, or punctuation, use bracket notation:
+
+```text
+{{#each items}}{{this.data["owner.name"]}} {{this.data['service tier']}}
+{{/each}}
+```
+
+## Relation report example
+
+Relation scopes use the same template context. For `related_objects`, each item is a related object with its normal object fields plus a `path` array describing the relation traversal.
+
+Example report request:
+
+```json
+{
+  "scope": {
+    "kind": "related_objects",
+    "class_id": 42,
+    "object_id": 101
+  },
+  "query": "depth__lte=2&to_classes=91&sort=path",
+  "output": {
+    "template_id": 12
+  },
+  "missing_data_policy": "strict"
+}
+```
+
+Template:
+
+```text
+Related objects for {{request.scope.object_id}}
+{{#each items}}- {{this.name}} path={{this.path}} host={{this.data.hostname}}
+{{/each}}
+```
+
+For direct relation reports, `class_relations` items contain fields such as `from_hubuum_class_id` and `to_hubuum_class_id`, while `object_relations` items contain fields such as `from_hubuum_object_id`, `to_hubuum_object_id`, and `class_relation_id`.
 
 ## Missing data policy
 

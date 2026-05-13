@@ -6,8 +6,9 @@ mod tests {
     };
 
     use crate::models::{
-        HubuumClass, NewHubuumObject, NewReportTemplate, ReportContentType, ReportJsonResponse,
-        ReportRequest, ReportScope, ReportScopeKind,
+        HubuumClass, HubuumClassRelation, HubuumObject, HubuumObjectRelation,
+        NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewReportTemplate,
+        ReportContentType, ReportJsonResponse, ReportRequest, ReportScope, ReportScopeKind,
     };
     use crate::tests::api::v1::classes::tests::{cleanup, create_test_classes};
     use crate::tests::api_operations::post_request_with_headers;
@@ -44,6 +45,82 @@ mod tests {
             created.push(object.save(pool).await.unwrap());
         }
         created
+    }
+
+    async fn create_report_relation_fixture(
+        pool: &crate::db::DbPool,
+        classes: &[HubuumClass],
+    ) -> (
+        Vec<HubuumObject>,
+        Vec<HubuumClassRelation>,
+        Vec<HubuumObjectRelation>,
+    ) {
+        let objects = vec![
+            NewHubuumObject {
+                name: "report-root-01".to_string(),
+                description: "Report root object".to_string(),
+                namespace_id: classes[0].namespace_id,
+                hubuum_class_id: classes[0].id,
+                data: serde_json::json!({"hostname": "report-root-01", "role": "root"}),
+            },
+            NewHubuumObject {
+                name: "report-mid-01".to_string(),
+                description: "Report middle object".to_string(),
+                namespace_id: classes[1].namespace_id,
+                hubuum_class_id: classes[1].id,
+                data: serde_json::json!({"hostname": "report-mid-01", "role": "middle"}),
+            },
+            NewHubuumObject {
+                name: "report-leaf-01".to_string(),
+                description: "Report leaf object".to_string(),
+                namespace_id: classes[2].namespace_id,
+                hubuum_class_id: classes[2].id,
+                data: serde_json::json!({"hostname": "report-leaf-01", "role": "leaf"}),
+            },
+        ];
+
+        let mut created_objects = Vec::new();
+        for object in objects {
+            created_objects.push(object.save(pool).await.unwrap());
+        }
+
+        let class_relations = vec![
+            NewHubuumClassRelation {
+                from_hubuum_class_id: classes[0].id,
+                to_hubuum_class_id: classes[1].id,
+            }
+            .save(pool)
+            .await
+            .unwrap(),
+            NewHubuumClassRelation {
+                from_hubuum_class_id: classes[1].id,
+                to_hubuum_class_id: classes[2].id,
+            }
+            .save(pool)
+            .await
+            .unwrap(),
+        ];
+
+        let object_relations = vec![
+            NewHubuumObjectRelation {
+                from_hubuum_object_id: created_objects[0].id,
+                to_hubuum_object_id: created_objects[1].id,
+                class_relation_id: class_relations[0].id,
+            }
+            .save(pool)
+            .await
+            .unwrap(),
+            NewHubuumObjectRelation {
+                from_hubuum_object_id: created_objects[1].id,
+                to_hubuum_object_id: created_objects[2].id,
+                class_relation_id: class_relations[1].id,
+            }
+            .save(pool)
+            .await
+            .unwrap(),
+        ];
+
+        (created_objects, class_relations, object_relations)
     }
 
     async fn create_template(
@@ -118,6 +195,154 @@ mod tests {
         assert_eq!(report.items.len(), 2);
         assert_eq!(report.items[0]["name"], "report-app-01");
         assert_eq!(report.items[1]["name"], "report-db-01");
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn docs_report_class_relations_example_runs(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
+        let classes = create_test_classes(
+            &context,
+            &context.scoped_name("report_class_relations_docs"),
+        )
+        .await;
+        let (_objects, class_relations, _object_relations) =
+            create_report_relation_fixture(pool, &classes).await;
+
+        let body = serde_json::json!({
+            "scope": {
+                "kind": "class_relations"
+            },
+            "query": format!("from_classes={}&sort=created_at.desc", classes[0].id),
+            "limits": {
+                "max_items": 50
+            }
+        });
+
+        let resp = post_request_with_headers(
+            pool,
+            admin_token,
+            REPORTS_ENDPOINT,
+            &body,
+            vec![(header::ACCEPT, "application/json".to_string())],
+        )
+        .await;
+
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let report: ReportJsonResponse = test::read_body_json(resp).await;
+
+        assert_eq!(report.meta.scope.kind, ReportScopeKind::ClassRelations);
+        assert_eq!(report.items.len(), 1);
+        assert_eq!(report.items[0]["id"], class_relations[0].id);
+        assert_eq!(
+            report.items[0]["from_hubuum_class_id"],
+            class_relations[0].from_hubuum_class_id
+        );
+        assert_eq!(
+            report.items[0]["to_hubuum_class_id"],
+            class_relations[0].to_hubuum_class_id
+        );
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn docs_report_object_relations_example_runs(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
+        let classes = create_test_classes(
+            &context,
+            &context.scoped_name("report_object_relations_docs"),
+        )
+        .await;
+        let (objects, _class_relations, object_relations) =
+            create_report_relation_fixture(pool, &classes).await;
+
+        let body = serde_json::json!({
+            "scope": {
+                "kind": "object_relations"
+            },
+            "query": format!("to_objects={}&sort=created_at.desc", objects[1].id)
+        });
+
+        let resp = post_request_with_headers(
+            pool,
+            admin_token,
+            REPORTS_ENDPOINT,
+            &body,
+            vec![(header::ACCEPT, "application/json".to_string())],
+        )
+        .await;
+
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let report: ReportJsonResponse = test::read_body_json(resp).await;
+
+        assert_eq!(report.meta.scope.kind, ReportScopeKind::ObjectRelations);
+        assert_eq!(report.items.len(), 1);
+        assert_eq!(report.items[0]["id"], object_relations[0].id);
+        assert_eq!(
+            report.items[0]["from_hubuum_object_id"],
+            object_relations[0].from_hubuum_object_id
+        );
+        assert_eq!(
+            report.items[0]["to_hubuum_object_id"],
+            object_relations[0].to_hubuum_object_id
+        );
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn docs_report_related_objects_example_runs(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let pool = &context.pool;
+        let admin_token = &context.admin_token;
+        let classes = create_test_classes(
+            &context,
+            &context.scoped_name("report_related_objects_docs"),
+        )
+        .await;
+        let (objects, _class_relations, _object_relations) =
+            create_report_relation_fixture(pool, &classes).await;
+
+        let body = serde_json::json!({
+            "scope": {
+                "kind": "related_objects",
+                "class_id": classes[0].id,
+                "object_id": objects[0].id
+            },
+            "query": format!("depth__lte=2&to_classes={}&sort=path", classes[2].id)
+        });
+
+        let resp = post_request_with_headers(
+            pool,
+            admin_token,
+            REPORTS_ENDPOINT,
+            &body,
+            vec![(header::ACCEPT, "application/json".to_string())],
+        )
+        .await;
+
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let report: ReportJsonResponse = test::read_body_json(resp).await;
+
+        assert_eq!(report.meta.scope.kind, ReportScopeKind::RelatedObjects);
+        assert_eq!(report.items.len(), 1);
+        assert_eq!(report.items[0]["id"], objects[2].id);
+        assert_eq!(report.items[0]["name"], "report-leaf-01");
+        assert_eq!(report.items[0]["data"]["hostname"], "report-leaf-01");
+        assert!(
+            report.items[0]["path"].as_array().is_some(),
+            "expected related object report item to include path array, got {}",
+            report.items[0]
+        );
 
         cleanup(&classes).await;
     }
