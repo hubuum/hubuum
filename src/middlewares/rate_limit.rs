@@ -64,7 +64,7 @@ fn evict_stalest_login_attempt_key(attempts_by_key: &mut HashMap<String, VecDequ
     }
 }
 
-pub fn client_ip_for_request(req: &HttpRequest) -> String {
+pub(crate) fn client_ip_for_request(req: &HttpRequest) -> String {
     let trust_ip_headers = req
         .app_data::<web::Data<AppConfig>>()
         .map(|config| config.trust_ip_headers)
@@ -75,7 +75,7 @@ pub fn client_ip_for_request(req: &HttpRequest) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-pub async fn login_is_rate_limited(username: &str, client_ip: &str) -> bool {
+pub(crate) async fn login_is_rate_limited(username: &str, client_ip: &str) -> bool {
     let key = login_rate_limit_key(username, client_ip);
     let now = Instant::now();
     let mut guard = LOGIN_ATTEMPTS.lock().await;
@@ -88,7 +88,7 @@ pub async fn login_is_rate_limited(username: &str, client_ip: &str) -> bool {
     }
 }
 
-pub async fn record_login_failure(username: &str, client_ip: &str) {
+pub(crate) async fn record_login_failure(username: &str, client_ip: &str) {
     let key = login_rate_limit_key(username, client_ip);
     let now = Instant::now();
     let mut guard = LOGIN_ATTEMPTS.lock().await;
@@ -108,12 +108,68 @@ pub async fn record_login_failure(username: &str, client_ip: &str) {
     attempts.push_back(now);
 }
 
-pub async fn clear_login_failures(username: &str, client_ip: &str) {
+pub(crate) async fn clear_login_failures(username: &str, client_ip: &str) {
     let key = login_rate_limit_key(username, client_ip);
     LOGIN_ATTEMPTS.lock().await.remove(&key);
 }
 
 #[cfg(test)]
-pub async fn reset_login_rate_limit_for_tests() {
+pub(crate) async fn reset_login_rate_limit_for_tests() {
     LOGIN_ATTEMPTS.lock().await.clear();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_attempts(times: &[Instant]) -> VecDeque<Instant> {
+        times.iter().copied().collect()
+    }
+
+    #[test]
+    fn evict_stalest_login_attempt_key_removes_entry_with_oldest_last_attempt() {
+        let now = Instant::now();
+        let mut map: HashMap<String, VecDeque<Instant>> = HashMap::new();
+        map.insert(
+            "fresh".to_string(),
+            make_attempts(&[now - Duration::from_secs(10), now]),
+        );
+        map.insert(
+            "stale".to_string(),
+            make_attempts(&[
+                now - Duration::from_secs(600),
+                now - Duration::from_secs(500),
+            ]),
+        );
+        map.insert(
+            "middle".to_string(),
+            make_attempts(&[now - Duration::from_secs(120)]),
+        );
+
+        evict_stalest_login_attempt_key(&mut map);
+
+        assert!(!map.contains_key("stale"));
+        assert!(map.contains_key("fresh"));
+        assert!(map.contains_key("middle"));
+    }
+
+    #[test]
+    fn evict_stalest_login_attempt_key_skips_entries_without_attempts() {
+        let now = Instant::now();
+        let mut map: HashMap<String, VecDeque<Instant>> = HashMap::new();
+        map.insert("empty".to_string(), VecDeque::new());
+        map.insert("only".to_string(), make_attempts(&[now]));
+
+        evict_stalest_login_attempt_key(&mut map);
+
+        assert!(map.contains_key("empty"));
+        assert!(!map.contains_key("only"));
+    }
+
+    #[test]
+    fn evict_stalest_login_attempt_key_is_noop_on_empty_map() {
+        let mut map: HashMap<String, VecDeque<Instant>> = HashMap::new();
+        evict_stalest_login_attempt_key(&mut map);
+        assert!(map.is_empty());
+    }
 }
