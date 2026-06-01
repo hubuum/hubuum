@@ -38,6 +38,7 @@ DROP FUNCTION IF EXISTS enforce_object_relation_order();
 DROP FUNCTION IF EXISTS enforce_class_relation_order();
 
 -- Drop tables
+DROP TABLE IF EXISTS report_task_outputs CASCADE;
 DROP TABLE IF EXISTS import_task_results CASCADE;
 DROP TABLE IF EXISTS task_events CASCADE;
 DROP TABLE IF EXISTS tasks CASCADE;
@@ -55,6 +56,7 @@ DROP TABLE IF EXISTS groups CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 
 -- Drop indexes (not necessary if we're dropping the tables, but included for completeness)
+DROP INDEX IF EXISTS idx_report_task_outputs_task_id_created_at;
 DROP INDEX IF EXISTS idx_import_task_results_task_id_created_at;
 DROP INDEX IF EXISTS idx_task_events_task_id_created_at;
 DROP INDEX IF EXISTS idx_tasks_active_status;

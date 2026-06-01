@@ -34,7 +34,7 @@ mod tests {
             name: name.to_string(),
             description: "template description".to_string(),
             content_type: ReportContentType::TextPlain,
-            template: "{{#each items}}{{this.name}}\\n{{/each}}".to_string(),
+            template: "{% for item in items %}{{ item.name }}\n{% endfor %}".to_string(),
         }
     }
 
@@ -48,7 +48,7 @@ mod tests {
             name: name.to_string(),
             description: "template description".to_string(),
             content_type,
-            template: "{{#each items}}{{this.name}}\\n{{/each}}".to_string(),
+            template: "{% for item in items %}{{ item.name }}\n{% endfor %}".to_string(),
         }
     }
 
@@ -80,7 +80,9 @@ mod tests {
             namespace_id: None,
             name: Some("tmpl-crud-v2".to_string()),
             description: Some("updated".to_string()),
-            template: Some("{{#each items}}{{this.name}}={{this.id}}\\n{{/each}}".to_string()),
+            template: Some(
+                "{% for item in items %}{{ item.name }}={{ item.id }}\n{% endfor %}".to_string(),
+            ),
         };
         let resp = patch_request(
             &pool,
@@ -193,6 +195,106 @@ mod tests {
         assert_response_status(resp, StatusCode::FORBIDDEN).await;
 
         namespace.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_template_create_rejects_legacy_handlebars_syntax() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let namespace = create_namespace(&pool, "legacy_syntax").await;
+
+        let payload = NewReportTemplate {
+            namespace_id: namespace.id,
+            name: "tmpl-legacy".to_string(),
+            description: "legacy syntax".to_string(),
+            content_type: ReportContentType::TextPlain,
+            template: "{{#each items}}{{this.name}}\\n{{/each}}".to_string(),
+        };
+
+        let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
+        assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+
+        namespace.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_template_create_accepts_same_namespace_composition() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let namespace = create_namespace(&pool, "same_namespace_composition").await;
+
+        let layout = NewReportTemplate {
+            namespace_id: namespace.id,
+            name: "layout.html".to_string(),
+            description: "layout".to_string(),
+            content_type: ReportContentType::TextHtml,
+            template: "<ul>{% block body %}{% endblock %}</ul>".to_string(),
+        };
+        let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &layout).await;
+        assert_response_status(resp, StatusCode::CREATED).await;
+
+        let child = NewReportTemplate {
+            namespace_id: namespace.id,
+            name: "child.html".to_string(),
+            description: "child".to_string(),
+            content_type: ReportContentType::TextHtml,
+            template:
+                "{% extends \"layout.html\" %}{% block body %}<li>{{ items[0].name }}</li>{% endblock %}"
+                    .to_string(),
+        };
+        let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &child).await;
+        assert_response_status(resp, StatusCode::CREATED).await;
+
+        namespace.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_template_create_accepts_curated_helper_filters_and_functions() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let namespace = create_namespace(&pool, "helper_validation").await;
+
+        let payload = NewReportTemplate {
+            namespace_id: namespace.id,
+            name: "report.hosts".to_string(),
+            description: "helper coverage".to_string(),
+            content_type: ReportContentType::TextPlain,
+            template: "{{ csv|csv_cell }} {{ payload|tojson }} {{ coalesce(primary, fallback, \"owner\") }} {{ values|join_nonempty(\"; \") }} {{ when|format_datetime(\"date\") }}".to_string(),
+        };
+
+        let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
+        assert_response_status(resp, StatusCode::CREATED).await;
+
+        namespace.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_template_create_rejects_cross_namespace_composition() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let source_namespace = create_namespace(&pool, "cross_namespace_source").await;
+        let target_namespace = create_namespace(&pool, "cross_namespace_target").await;
+
+        let layout = NewReportTemplate {
+            namespace_id: source_namespace.id,
+            name: "layout.html".to_string(),
+            description: "layout".to_string(),
+            content_type: ReportContentType::TextHtml,
+            template: "<ul>{% block body %}{% endblock %}</ul>".to_string(),
+        };
+        let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &layout).await;
+        assert_response_status(resp, StatusCode::CREATED).await;
+
+        let child = NewReportTemplate {
+            namespace_id: target_namespace.id,
+            name: "child.html".to_string(),
+            description: "child".to_string(),
+            content_type: ReportContentType::TextHtml,
+            template:
+                "{% extends \"layout.html\" %}{% block body %}<li>{{ items[0].name }}</li>{% endblock %}"
+                    .to_string(),
+        };
+        let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &child).await;
+        assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+
+        source_namespace.delete(&pool).await.unwrap();
+        target_namespace.delete(&pool).await.unwrap();
     }
 
     #[actix_web::test]
