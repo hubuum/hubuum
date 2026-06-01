@@ -117,6 +117,8 @@ The stored template language is intentionally small:
 
 - `{{path.to.value}}` interpolates a value
 - `{{this.name}}` reads from the current item inside a loop
+- `{{this.data.tags[0]}}` or `{{this.data.tags.0}}` reads an array element by index
+- `{{this.data["field.with.dots"]}}` reads object keys that cannot be written as dot segments
 - `{{#each items}}...{{/each}}` iterates arrays
 - nested `each` blocks are supported
 
@@ -125,12 +127,17 @@ Path resolution rules:
 - `this` starts from the current loop item
 - `root` starts from the full template context
 - bare paths try `this` first, then `root`
+- bracket keys can use single or double quotes, for example `{{this.data['service-owner']}}`
 
 Examples:
 
 ```text
 {{meta.count}}
 {{request.scope.kind}}
+{{#each items}}{{this.data.tags[0]}}
+{{/each}}
+{{#each items}}{{this.data["owner.name"]}}
+{{/each}}
 {{#each items}}{{this.name}}
 {{/each}}
 {{#each items}}{{#each this.data.tags}}- {{this}}
@@ -226,6 +233,94 @@ srv-db-01
   - prod
   - db
 ```
+
+You can also read a single array element directly:
+
+```text
+{{#each items}}{{this.name}} primary_tag={{this.data.tags[0]}}
+{{/each}}
+```
+
+For data keys that contain dots, spaces, or punctuation, use bracket notation:
+
+```text
+{{#each items}}{{this.data["owner.name"]}} {{this.data['service tier']}}
+{{/each}}
+```
+
+## Relation report example
+
+Relation scopes use the same template context. For `related_objects`, each item is a related object with its normal object fields plus a `path` array describing the relation traversal.
+
+Example report request:
+
+```json
+{
+  "scope": {
+    "kind": "related_objects",
+    "class_id": 42,
+    "object_id": 101
+  },
+  "query": "depth__lte=2&to_classes=91&sort=path",
+  "output": {
+    "template_id": 12
+  },
+  "missing_data_policy": "strict"
+}
+```
+
+Template:
+
+```text
+Related objects for {{request.scope.object_id}}
+{{#each items}}- {{this.name}} path={{this.path}} host={{this.data.hostname}}
+{{/each}}
+```
+
+For direct relation reports, `class_relations` items contain fields such as `from_hubuum_class_id` and `to_hubuum_class_id`, while `object_relations` items contain fields such as `from_hubuum_object_id`, `to_hubuum_object_id`, and `class_relation_id`.
+
+## Included related objects
+
+`objects_in_class` reports can add bounded related-object arrays to each item with `include.related_objects`. Use this when the report is centered on one class but the template needs nearby objects, such as a host's room.
+
+Example report request:
+
+```json
+{
+  "scope": {
+    "kind": "objects_in_class",
+    "class_id": 42
+  },
+  "query": "name__equals=nommo",
+  "include": {
+    "related_objects": {
+      "room": {
+        "class_id": 91,
+        "class_relation_id": 77,
+        "direction": "outgoing",
+        "sort": "name",
+        "max_depth": 1,
+        "limit": 1
+      }
+    }
+  },
+  "output": {
+    "template_id": 12
+  },
+  "missing_data_policy": "strict"
+}
+```
+
+Template:
+
+```text
+{{#each items}}{{this.name}} is in {{this.related.room[0].name}}
+{{/each}}
+```
+
+The alias (`room` above) becomes `this.related.room`. Included values are arrays even when `limit` is `1`, and each related object includes its normal object fields plus `path`. A report can include up to 8 related-object aliases.
+
+Use `class_relation_id` and `direction` when the relation meaning matters. Use `sort` (`path`, `name`, or `created_at`) to decide which related object appears first when the alias has a small `limit`. The top-level `related` item field is reserved for these report includes.
 
 ## Missing data policy
 

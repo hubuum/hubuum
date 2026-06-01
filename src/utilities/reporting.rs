@@ -3,6 +3,12 @@ use std::collections::HashMap;
 use crate::errors::ApiError;
 use crate::models::{ReportContentType, ReportMissingDataPolicy, ReportWarning};
 
+#[derive(Clone, Debug, PartialEq)]
+enum PathSegment {
+    Key(String),
+    Index(usize),
+}
+
 pub fn render_template(
     template: &str,
     context: &serde_json::Value,
@@ -45,7 +51,7 @@ fn render_section(
         if let Some(expr) = tag.strip_prefix("#each ") {
             let block_start = end + 2;
             let (inner, next_index) = extract_each_block(template, block_start)?;
-            let Some(value) = lookup_value(root, current, expr.trim()) else {
+            let Some(value) = lookup_value(root, current, expr.trim())? else {
                 handle_missing_loop(expr.trim(), missing_data_policy, warnings)?;
                 index = next_index;
                 continue;
@@ -94,7 +100,7 @@ fn render_section(
             ));
         }
 
-        let rendered = match lookup_value(root, current, tag) {
+        let rendered = match lookup_value(root, current, tag)? {
             Some(value) => stringify_value(value, content_type),
             None => handle_missing_value(tag, missing_data_policy, warnings)?,
         };
@@ -139,17 +145,17 @@ fn lookup_value<'a>(
     root: &'a serde_json::Value,
     current: &'a serde_json::Value,
     expr: &str,
-) -> Option<&'a serde_json::Value> {
+) -> Result<Option<&'a serde_json::Value>, ApiError> {
     let expr = expr.trim();
     if expr.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     if expr == "this" {
-        return Some(current);
+        return Ok(Some(current));
     }
 
-    let candidates = candidate_paths(expr);
+    let candidates = candidate_paths(expr)?;
     for (base, path) in candidates {
         let value = match base.as_str() {
             "root" => walk_path(root, &path),
@@ -158,43 +164,162 @@ fn lookup_value<'a>(
         };
 
         if value.is_some() {
-            return value;
+            return Ok(value);
         }
     }
 
-    None
+    Ok(None)
 }
 
-fn candidate_paths(expr: &str) -> Vec<(String, Vec<&str>)> {
-    let parts = expr
-        .split('.')
-        .filter(|piece| !piece.is_empty())
-        .collect::<Vec<_>>();
+fn candidate_paths(expr: &str) -> Result<Vec<(String, Vec<PathSegment>)>, ApiError> {
+    let mut parts = parse_path(expr)?;
 
     if parts.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
-    if parts[0] == "root" || parts[0] == "this" {
-        return vec![(parts[0].to_string(), parts[1..].to_vec())];
+    if matches!(parts.first(), Some(PathSegment::Key(base)) if base == "root" || base == "this") {
+        let PathSegment::Key(base) = parts.remove(0) else {
+            unreachable!("first path segment was matched as a key");
+        };
+        return Ok(vec![(base, parts)]);
     }
 
-    vec![
+    Ok(vec![
         ("this".to_string(), parts.clone()),
         ("root".to_string(), parts),
-    ]
+    ])
 }
 
-fn walk_path<'a>(value: &'a serde_json::Value, path: &[&str]) -> Option<&'a serde_json::Value> {
+fn parse_path(expr: &str) -> Result<Vec<PathSegment>, ApiError> {
+    let chars = expr.chars().collect::<Vec<_>>();
+    let mut parts = Vec::new();
+    let mut index = 0usize;
+
+    while index < chars.len() {
+        match chars[index] {
+            '.' => {
+                index += 1;
+            }
+            '[' => {
+                let (segment, next_index) = parse_bracket_segment(&chars, index, expr)?;
+                parts.push(segment);
+                index = next_index;
+                let is_invalid_next = chars
+                    .get(index)
+                    .is_some_and(|next| *next != '.' && *next != '[');
+                if is_invalid_next {
+                    return Err(invalid_template_path(expr));
+                }
+            }
+            _ => {
+                let start = index;
+                while index < chars.len() && chars[index] != '.' && chars[index] != '[' {
+                    index += 1;
+                }
+                let key = chars[start..index].iter().collect::<String>();
+                if !key.is_empty() {
+                    parts.push(PathSegment::Key(key));
+                }
+            }
+        }
+    }
+
+    Ok(parts)
+}
+
+fn parse_bracket_segment(
+    chars: &[char],
+    start: usize,
+    expr: &str,
+) -> Result<(PathSegment, usize), ApiError> {
+    let mut index = start + 1;
+    while index < chars.len() && chars[index].is_whitespace() {
+        index += 1;
+    }
+
+    if index >= chars.len() {
+        return Err(invalid_template_path(expr));
+    }
+
+    if chars[index] == '"' || chars[index] == '\'' {
+        let quote = chars[index];
+        index += 1;
+        let mut key = String::new();
+        while index < chars.len() {
+            match chars[index] {
+                '\\' => {
+                    index += 1;
+                    if index >= chars.len() {
+                        return Err(invalid_template_path(expr));
+                    }
+                    key.push(chars[index]);
+                    index += 1;
+                }
+                ch if ch == quote => {
+                    index += 1;
+                    while index < chars.len() && chars[index].is_whitespace() {
+                        index += 1;
+                    }
+                    if chars.get(index) != Some(&']') {
+                        return Err(invalid_template_path(expr));
+                    }
+                    return Ok((PathSegment::Key(key), index + 1));
+                }
+                ch => {
+                    key.push(ch);
+                    index += 1;
+                }
+            }
+        }
+
+        return Err(invalid_template_path(expr));
+    }
+
+    let value_start = index;
+    while index < chars.len() && chars[index] != ']' {
+        index += 1;
+    }
+    if index >= chars.len() {
+        return Err(invalid_template_path(expr));
+    }
+
+    let value = chars[value_start..index]
+        .iter()
+        .collect::<String>()
+        .trim()
+        .to_string();
+    if value.is_empty() {
+        return Err(invalid_template_path(expr));
+    }
+
+    let segment = value
+        .parse::<usize>()
+        .map(PathSegment::Index)
+        .unwrap_or(PathSegment::Key(value));
+    Ok((segment, index + 1))
+}
+
+fn invalid_template_path(expr: &str) -> ApiError {
+    ApiError::BadRequest(format!("Invalid template path syntax: '{expr}'"))
+}
+
+fn walk_path<'a>(
+    value: &'a serde_json::Value,
+    path: &[PathSegment],
+) -> Option<&'a serde_json::Value> {
     let mut current = value;
 
-    for piece in path {
-        match current {
-            serde_json::Value::Object(map) => {
-                current = map.get(*piece)?;
+    for segment in path {
+        match (current, segment) {
+            (serde_json::Value::Object(map), PathSegment::Key(key)) => {
+                current = map.get(key)?;
             }
-            serde_json::Value::Array(items) => {
-                let index = piece.parse::<usize>().ok()?;
+            (serde_json::Value::Array(items), PathSegment::Index(index)) => {
+                current = items.get(*index)?;
+            }
+            (serde_json::Value::Array(items), PathSegment::Key(key)) => {
+                let index = key.parse::<usize>().ok()?;
                 current = items.get(index)?;
             }
             _ => return None,
@@ -316,6 +441,71 @@ mod tests {
 
         assert_eq!(rendered, "srv-01=alice\nsrv-02=bob\n");
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn renders_array_indexes_in_dotted_paths() {
+        let context = serde_json::json!({
+            "items": [
+                {"name": "srv-01", "data": {"tags": ["prod", "app"]}},
+            ]
+        });
+
+        let (rendered, warnings) = render_template(
+            "{{#each items}}{{this.name}}={{this.data.tags.0}}/{{this.data.tags[1]}}\n{{/each}}",
+            &context,
+            ReportContentType::TextPlain,
+            ReportMissingDataPolicy::Strict,
+        )
+        .unwrap();
+
+        assert_eq!(rendered, "srv-01=prod/app\n");
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn renders_quoted_hash_keys_in_bracket_paths() {
+        let context = serde_json::json!({
+            "items": [
+                {
+                    "name": "srv-01",
+                    "data": {
+                        "owner.name": "alice",
+                        "service-list": [{"display name": "frontend"}]
+                    }
+                },
+            ]
+        });
+
+        let (rendered, warnings) = render_template(
+            "{{#each items}}{{this.data[\"owner.name\"]}}/{{this.data['service-list'][0]['display name']}}\n{{/each}}",
+            &context,
+            ReportContentType::TextPlain,
+            ReportMissingDataPolicy::Strict,
+        )
+        .unwrap();
+
+        assert_eq!(rendered, "alice/frontend\n");
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn rejects_bare_path_segment_after_bracket_segment() {
+        let context = serde_json::json!({
+            "items": [{"data": [{"name": "srv-01"}]}]
+        });
+
+        let error = render_template(
+            "{{#each items}}{{this.data[0]name}}{{/each}}",
+            &context,
+            ReportContentType::TextPlain,
+            ReportMissingDataPolicy::Strict,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(error, ApiError::BadRequest(message) if message == "Invalid template path syntax: 'this.data[0]name'")
+        );
     }
 
     #[test]

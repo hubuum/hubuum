@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -140,6 +142,47 @@ pub struct ReportLimits {
     pub max_output_bytes: Option<usize>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportIncludeRelatedDirection {
+    Any,
+    Outgoing,
+    Incoming,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportIncludeRelatedSort {
+    Path,
+    Name,
+    CreatedAt,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct ReportIncludeRelatedObject {
+    pub class_id: i32,
+    pub class_relation_id: Option<i32>,
+    pub direction: Option<ReportIncludeRelatedDirection>,
+    pub sort: Option<ReportIncludeRelatedSort>,
+    pub max_depth: Option<i32>,
+    pub limit: Option<i32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReportIncludeRelatedQuery {
+    pub class_id: i32,
+    pub class_relation_id: Option<i32>,
+    pub direction: ReportIncludeRelatedDirection,
+    pub sort: ReportIncludeRelatedSort,
+    pub max_depth: i32,
+    pub limit: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct ReportInclude {
+    pub related_objects: Option<HashMap<String, ReportIncludeRelatedObject>>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[schema(example = openapi_examples::report_request_example)]
 pub struct ReportRequest {
@@ -148,6 +191,7 @@ pub struct ReportRequest {
     pub output: Option<ReportOutputRequest>,
     pub missing_data_policy: Option<ReportMissingDataPolicy>,
     pub limits: Option<ReportLimits>,
+    pub include: Option<ReportInclude>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -222,6 +266,7 @@ mod openapi_examples {
             output: Some(report_output_example()),
             missing_data_policy: Some(ReportMissingDataPolicy::Strict),
             limits: Some(report_limits_example()),
+            include: None,
         }
     }
 

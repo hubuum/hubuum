@@ -22,6 +22,18 @@ Authentication:
   "output": {
     "template_id": 12
   },
+  "include": {
+    "related_objects": {
+      "room": {
+        "class_id": 91,
+        "class_relation_id": 77,
+        "direction": "outgoing",
+        "sort": "name",
+        "max_depth": 1,
+        "limit": 1
+      }
+    }
+  },
   "missing_data_policy": "strict",
   "limits": {
     "max_items": 100,
@@ -48,12 +60,94 @@ Authentication:
 Examples:
 
 - `name__contains=server&sort=name`
-- `class_from=12&sort=created_at.desc`
-- `depth__lte=2&class_to=91`
+- `from_classes=12&sort=created_at.desc`
+- `depth__lte=2&to_classes=91`
 
 Reports do not support cursor pagination. If `cursor` is present in `query`, the request fails with `400 Bad Request`.
 
 If the rendered response exceeds `limits.max_output_bytes`, the request fails with `413 Payload Too Large`. The server does not stream partial JSON, HTML, CSV, or text bodies.
+
+### Relation report examples
+
+Report class relations from one class:
+
+```json
+{
+  "scope": {
+    "kind": "class_relations"
+  },
+  "query": "from_classes=42&sort=created_at.desc",
+  "limits": {
+    "max_items": 50
+  }
+}
+```
+
+Report object relations for relations pointing at one object:
+
+```json
+{
+  "scope": {
+    "kind": "object_relations"
+  },
+  "query": "to_objects=101&sort=created_at.desc"
+}
+```
+
+Report objects related to a root object:
+
+```json
+{
+  "scope": {
+    "kind": "related_objects",
+    "class_id": 42,
+    "object_id": 101
+  },
+  "query": "depth__lte=2&to_classes=91&sort=path"
+}
+```
+
+`related_objects` first verifies that `object_id` belongs to `class_id`, then returns matching related objects. The returned items include the related object fields plus the relation `path`, so templates can render both the object data and how it was reached. The `depth` field is available for filtering and sorting through `query`, but is not included in the rendered item payload.
+
+### Including related objects
+
+`objects_in_class` reports can include related objects for every returned object. This is intended for reports such as "host is in room" where the base report lists hosts and the template needs a small bounded set of related room objects.
+
+```json
+{
+  "scope": {
+    "kind": "objects_in_class",
+    "class_id": 42
+  },
+  "query": "name__equals=nommo",
+  "include": {
+    "related_objects": {
+      "room": {
+        "class_id": 91,
+        "class_relation_id": 77,
+        "direction": "outgoing",
+        "sort": "name",
+        "max_depth": 1,
+        "limit": 1
+      }
+    }
+  },
+  "output": {
+    "template_id": 12
+  }
+}
+```
+
+Each key under `include.related_objects` is an alias. The alias must match `[A-Za-z_][A-Za-z0-9_]*`, and a request can include at most 8 aliases. Aliases are exposed as arrays at `this.related.<alias>`. The top-level `related` report item field is reserved for report includes.
+
+```text
+{{#each items}}{{this.name}} is in {{this.related.room[0].name}}
+{{/each}}
+```
+
+`class_id` is required and selects the related object class to include. `class_relation_id` is optional and restricts traversal to a specific class relation. `direction` is optional and can be `any` (default), `outgoing`, or `incoming`. `sort` is optional and can be `path` (default), `name`, or `created_at`; it decides which related objects are kept first when `limit` is smaller than the number of matches.
+
+`max_depth` defaults to `1` and must be between `1` and `10`. `limit` defaults to `1` and must be between `1` and `50`; it is applied per root object and per alias. Missing related objects render as an empty array, so `this.related.room` is always present when the alias was requested.
 
 ## Output selection
 
@@ -108,6 +202,8 @@ Templates use a minimal template language:
 
 - `{{path.to.value}}` to interpolate a value
 - `{{this.name}}` inside loops
+- `{{this.data.tags[0]}}` or `{{this.data.tags.0}}` to read array elements
+- `{{this.data["field.with.dots"]}}` to read data keys that are not valid dot segments
 - `{{#each items}}...{{/each}}` to iterate arrays
 - nested loops are supported
 
