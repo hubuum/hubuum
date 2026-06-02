@@ -8050,6 +8050,92 @@
           "text/csv"
         ]
       },
+      "ReportInclude": {
+        "type": "object",
+        "properties": {
+          "related_objects": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ReportIncludeRelatedObject"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ReportIncludeRelatedDirection": {
+        "type": "string",
+        "enum": [
+          "any",
+          "outgoing",
+          "incoming"
+        ]
+      },
+      "ReportIncludeRelatedObject": {
+        "type": "object",
+        "required": [
+          "class_id"
+        ],
+        "properties": {
+          "class_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "class_relation_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "direction": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportIncludeRelatedDirection"
+              }
+            ]
+          },
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "max_depth": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "sort": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportIncludeRelatedSort"
+              }
+            ]
+          }
+        }
+      },
+      "ReportIncludeRelatedSort": {
+        "type": "string",
+        "enum": [
+          "path",
+          "name",
+          "created_at"
+        ]
+      },
       "ReportJsonResponse": {
         "type": "object",
         "required": [
@@ -8199,6 +8285,16 @@
           "scope"
         ],
         "properties": {
+          "include": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportInclude"
+              }
+            ]
+          },
           "limits": {
             "oneOf": [
               {
@@ -8250,6 +8346,7 @@
           }
         },
         "example": {
+          "include": null,
           "limits": {
             "max_items": 100,
             "max_output_bytes": 262144
