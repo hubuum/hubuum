@@ -181,6 +181,7 @@ mod tests {
             output: None,
             missing_data_policy: None,
             limits: None,
+            include: None,
             relation_context: None,
         };
 
@@ -353,6 +354,7 @@ mod tests {
             }),
             missing_data_policy: Some(crate::models::ReportMissingDataPolicy::Omit),
             limits: None,
+            include: None,
             relation_context: None,
         };
 
@@ -429,6 +431,7 @@ mod tests {
             output: None,
             missing_data_policy: None,
             limits: None,
+            include: None,
             relation_context: None,
         };
 
@@ -507,6 +510,7 @@ mod tests {
             output: None,
             missing_data_policy: None,
             limits: None,
+            include: None,
             relation_context: None,
         };
 
@@ -630,6 +634,7 @@ mod tests {
             output: None,
             missing_data_policy: None,
             limits: None,
+            include: None,
             relation_context: None,
         };
 
@@ -773,6 +778,7 @@ mod tests {
             }),
             missing_data_policy: None,
             limits: None,
+            include: None,
             relation_context: None,
         };
 
@@ -940,6 +946,7 @@ mod tests {
             }),
             missing_data_policy: None,
             limits: None,
+            include: None,
             relation_context: None,
         };
 
@@ -1004,6 +1011,7 @@ mod tests {
             }),
             missing_data_policy: None,
             limits: None,
+            include: None,
             relation_context: None,
         };
 
