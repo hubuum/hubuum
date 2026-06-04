@@ -1,3 +1,4 @@
+use actix_web::http::header::HeaderMap;
 use sha2::{Digest, Sha256};
 use tracing::debug;
 
@@ -23,6 +24,19 @@ pub fn request_hash(payload: &serde_json::Value) -> Result<String, ApiError> {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect())
+}
+
+pub fn idempotency_key_from_headers(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
+    headers
+        .get("Idempotency-Key")
+        .map(|value| {
+            value.to_str().map(str::to_string).map_err(|_| {
+                ApiError::BadRequest(
+                    "Idempotency-Key must be a valid HTTP header value".to_string(),
+                )
+            })
+        })
+        .transpose()
 }
 
 fn canonicalize_json(value: &serde_json::Value) -> serde_json::Value {
@@ -117,6 +131,39 @@ pub(super) fn planned_result(
 
 pub(super) fn identifier_namespace(namespace: &NamespaceResolution) -> String {
     namespace.name.clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use actix_web::http::header::{HeaderMap, HeaderName, HeaderValue};
+
+    use super::idempotency_key_from_headers;
+
+    #[test]
+    fn idempotency_key_from_headers_rejects_non_ascii_values() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("idempotency-key"),
+            HeaderValue::from_bytes(b"valid-prefix-\xff").unwrap(),
+        );
+
+        let error = idempotency_key_from_headers(&headers).unwrap_err();
+
+        assert!(error.to_string().contains("Idempotency-Key"));
+    }
+
+    #[test]
+    fn idempotency_key_from_headers_returns_valid_value() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("idempotency-key"),
+            HeaderValue::from_static("same-task"),
+        );
+
+        let key = idempotency_key_from_headers(&headers).unwrap();
+
+        assert_eq!(key.as_deref(), Some("same-task"));
+    }
 }
 
 pub(super) fn namespace_to_resolution(namespace: Namespace) -> NamespaceResolution {

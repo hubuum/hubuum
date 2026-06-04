@@ -7,10 +7,13 @@ use minijinja::{
     AutoEscape, Environment, Error as MiniJinjaError, ErrorKind as MiniJinjaErrorKind, State,
     UndefinedBehavior, escape_formatter,
 };
+use sha2::{Digest, Sha256};
 
 use crate::config::get_config;
 use crate::errors::ApiError;
 use crate::models::{ReportContentType, ReportMissingDataPolicy, ReportTemplate, ReportWarning};
+
+const TEMPLATE_ENV_CACHE_MAX_ENTRIES: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct TemplateEnvCacheKey {
@@ -81,9 +84,9 @@ pub fn render_template(
     };
 
     let cached = {
-        let cache = template_env_cache().read().map_err(|_| {
-            ApiError::InternalServerError("Template cache lock poisoned".to_string())
-        })?;
+        let cache = template_env_cache()
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         cache.get(&cache_key).cloned()
     };
 
@@ -98,9 +101,18 @@ pub fn render_template(
                 content_type,
                 missing_data_policy,
             )?);
-            let mut cache = template_env_cache().write().map_err(|_| {
-                ApiError::InternalServerError("Template cache lock poisoned".to_string())
-            })?;
+            let mut cache = template_env_cache()
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            cache.retain(|key, _| {
+                key.namespace_id != cache_key.namespace_id
+                    || key.namespace_signature == cache_key.namespace_signature
+            });
+            if cache.len() >= TEMPLATE_ENV_CACHE_MAX_ENTRIES
+                && let Some(eviction_key) = cache.keys().next().cloned()
+            {
+                cache.remove(&eviction_key);
+            }
             cache.insert(cache_key, built.clone());
             built
         }
@@ -128,11 +140,16 @@ fn namespace_signature(namespace_id: i32, namespace_templates: &[ReportTemplate]
         .iter()
         .filter(|template| template.namespace_id == namespace_id)
         .map(|template| {
+            let template_hash = Sha256::digest(template.template.as_bytes())
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
             format!(
-                "{}:{}:{}",
+                "{}:{}:{}:{}",
                 template.id,
                 template.updated_at.and_utc().timestamp_micros(),
-                template.name
+                template.name,
+                template_hash
             )
         })
         .collect::<Vec<_>>();
@@ -804,6 +821,49 @@ mod tests {
         )
         .unwrap();
         layout_v1.updated_at += chrono::Duration::seconds(2);
+        let (second, _) = render_template(
+            &child,
+            &[layout_v2],
+            &context,
+            ReportContentType::TextHtml,
+            ReportMissingDataPolicy::Strict,
+        )
+        .unwrap();
+
+        assert_eq!(first, "<ul class=\"v1\"><li>srv-01</li></ul>");
+        assert_eq!(second, "<ol class=\"v2\"><li>srv-01</li></ol>");
+    }
+
+    #[test]
+    fn invalidates_cached_environment_when_template_body_changes_without_timestamp_change() {
+        let child = template(
+            17,
+            10,
+            "child.html",
+            ReportContentType::TextHtml,
+            "{% extends \"layout.html\" %}{% block body %}<li>{{ items[0].name }}</li>{% endblock %}",
+        );
+        let layout_v1 = template(
+            18,
+            10,
+            "layout.html",
+            ReportContentType::TextHtml,
+            "<ul class=\"v1\">{% block body %}{% endblock %}</ul>",
+        );
+        let mut layout_v2 = layout_v1.clone();
+        layout_v2.template = "<ol class=\"v2\">{% block body %}{% endblock %}</ol>".to_string();
+        let context = serde_json::json!({
+            "items": [{"name": "srv-01"}]
+        });
+
+        let (first, _) = render_template(
+            &child,
+            &[layout_v1],
+            &context,
+            ReportContentType::TextHtml,
+            ReportMissingDataPolicy::Strict,
+        )
+        .unwrap();
         let (second, _) = render_template(
             &child,
             &[layout_v2],

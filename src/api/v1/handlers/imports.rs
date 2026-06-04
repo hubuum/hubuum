@@ -16,7 +16,9 @@ use crate::models::{
     TaskResponse, User,
 };
 use crate::pagination::prepare_db_pagination;
-use crate::tasks::{ensure_task_worker_running, kick_task_worker, request_hash};
+use crate::tasks::{
+    ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
+};
 use crate::traits::GroupMemberships;
 use crate::utilities::response::{
     json_response, json_response_with_header, paginated_json_response,
@@ -131,11 +133,7 @@ pub async fn create_import(
     }
     let payload = serde_json::to_value(&import_request)?;
     let hash = request_hash(&payload)?;
-    let idempotency_key = req
-        .headers()
-        .get("Idempotency-Key")
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_string);
+    let idempotency_key = idempotency_key_from_headers(req.headers())?;
 
     let task = find_or_create_import_task(
         &pool,
