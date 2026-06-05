@@ -2287,6 +2287,9 @@ fn enforce_json_output_limit(
     Ok(())
 }
 
+// This exists only for output-size enforcement: serde_json::to_vec would allocate
+// the whole response before we can reject an oversized report, while to_writer can
+// stop as soon as the configured byte budget is crossed.
 struct LimitedJsonWriter {
     max_bytes: usize,
     written: usize,
