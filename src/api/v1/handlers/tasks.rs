@@ -78,8 +78,9 @@ async fn load_authorized_task(
     requestor: &User,
     task_id: i32,
 ) -> Result<TaskRecord, ApiError> {
+    let is_admin = requestor.is_admin(pool).await?;
     let task = find_task_record(pool, task_id).await?;
-    if task.submitted_by == Some(requestor.id) || requestor.is_admin(pool).await? {
+    if task.submitted_by == Some(requestor.id) || is_admin {
         Ok(task)
     } else {
         // Return 404 instead of 403 to hide existence of task from unauthorized users

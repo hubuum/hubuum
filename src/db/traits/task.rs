@@ -1,5 +1,7 @@
 use chrono::Utc;
+use diesel::PgConnection;
 use diesel::prelude::*;
+use diesel::sql_types::{BigInt, Bool};
 use tracing::info;
 
 use crate::apply_query_options;
@@ -31,6 +33,12 @@ pub struct TaskCreateRequest {
     pub request_hash: Option<String>,
     pub request_payload: serde_json::Value,
     pub total_items: i32,
+}
+
+#[derive(QueryableByName)]
+struct AdvisoryLockRow {
+    #[diesel(sql_type = Bool)]
+    locked: bool,
 }
 
 #[cfg(test)]
@@ -586,41 +594,127 @@ pub async fn create_generic_task(
     pool: &DbPool,
     request: TaskCreateRequest,
 ) -> Result<TaskRecord, ApiError> {
+    let task = with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
+        insert_queued_task_with_event(conn, request)
+    })?;
+
+    log_task_queued(&task);
+
+    Ok(task)
+}
+
+pub async fn create_report_task_with_active_limit(
+    pool: &DbPool,
+    request: TaskCreateRequest,
+    max_active_report_tasks: usize,
+) -> Result<TaskRecord, ApiError> {
+    if request.kind != TaskKind::Report {
+        return Err(ApiError::BadRequest(
+            "create_report_task_with_active_limit only accepts report tasks".to_string(),
+        ));
+    }
+
+    let max_active_report_tasks = i64::try_from(max_active_report_tasks).unwrap_or(i64::MAX);
+    let submitter_id = request.submitted_by;
+    let task = with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
+        acquire_report_task_capacity_lock(conn, submitter_id)?;
+        let active_count = count_active_report_tasks_for_user_in_transaction(conn, submitter_id)?;
+        if active_count >= max_active_report_tasks {
+            return Err(ApiError::TooManyRequests(format!(
+                "Too many active report tasks for user ({active_count} >= {max_active_report_tasks}); wait for queued or running reports to finish"
+            )));
+        }
+
+        insert_queued_task_with_event(conn, request)
+    })?;
+
+    log_task_queued(&task);
+
+    Ok(task)
+}
+
+fn insert_queued_task_with_event(
+    conn: &mut PgConnection,
+    request: TaskCreateRequest,
+) -> Result<TaskRecord, ApiError> {
     use crate::schema::task_events::dsl::task_events;
     use crate::schema::tasks::dsl::tasks;
 
-    let task = with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
-        let task = diesel::insert_into(tasks)
-            .values(NewTaskRecord {
-                kind: request.kind.as_str().to_string(),
-                status: TaskStatus::Queued.as_str().to_string(),
-                submitted_by: Some(request.submitted_by),
-                idempotency_key: request.idempotency_key,
-                request_hash: request.request_hash,
-                request_payload: Some(request.request_payload),
-                summary: None,
-                total_items: request.total_items,
-                processed_items: 0,
-                success_items: 0,
-                failed_items: 0,
-                request_redacted_at: None,
-                started_at: None,
-                finished_at: None,
-            })
-            .get_result::<TaskRecord>(conn)?;
+    let task = diesel::insert_into(tasks)
+        .values(NewTaskRecord {
+            kind: request.kind.as_str().to_string(),
+            status: TaskStatus::Queued.as_str().to_string(),
+            submitted_by: Some(request.submitted_by),
+            idempotency_key: request.idempotency_key,
+            request_hash: request.request_hash,
+            request_payload: Some(request.request_payload),
+            summary: None,
+            total_items: request.total_items,
+            processed_items: 0,
+            success_items: 0,
+            failed_items: 0,
+            request_redacted_at: None,
+            started_at: None,
+            finished_at: None,
+        })
+        .get_result::<TaskRecord>(conn)?;
 
-        diesel::insert_into(task_events)
-            .values(NewTaskEventRecord {
-                task_id: task.id,
-                event_type: "queued".to_string(),
-                message: "Task queued".to_string(),
-                data: None,
-            })
-            .execute(conn)?;
+    diesel::insert_into(task_events)
+        .values(NewTaskEventRecord {
+            task_id: task.id,
+            event_type: "queued".to_string(),
+            message: "Task queued".to_string(),
+            data: None,
+        })
+        .execute(conn)?;
 
-        Ok::<TaskRecord, ApiError>(task)
-    })?;
+    Ok(task)
+}
 
+fn acquire_report_task_capacity_lock(
+    conn: &mut PgConnection,
+    submitted_by: i32,
+) -> Result<(), ApiError> {
+    let lock_key = report_task_capacity_lock_key(submitted_by);
+    let lock = diesel::sql_query("SELECT TRUE AS locked FROM pg_advisory_xact_lock($1)")
+        .bind::<BigInt, _>(lock_key)
+        .get_result::<AdvisoryLockRow>(conn)?;
+    if !lock.locked {
+        return Err(ApiError::InternalServerError(
+            "Failed to acquire report task capacity lock".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn report_task_capacity_lock_key(submitted_by: i32) -> i64 {
+    4_801_000_000_000_i64 + i64::from(submitted_by)
+}
+
+fn count_active_report_tasks_for_user_in_transaction(
+    conn: &mut PgConnection,
+    submitted_by_value: i32,
+) -> Result<i64, ApiError> {
+    use crate::schema::tasks::dsl::{deleted_at, kind, status, submitted_by, tasks};
+
+    let active_statuses = [
+        TaskStatus::Queued.as_str(),
+        TaskStatus::Validating.as_str(),
+        TaskStatus::Running.as_str(),
+    ];
+
+    tasks
+        .filter(kind.eq(TaskKind::Report.as_str()))
+        .filter(submitted_by.eq(Some(submitted_by_value)))
+        .filter(status.eq_any(active_statuses))
+        .filter(deleted_at.is_null())
+        .count()
+        .get_result::<i64>(conn)
+        .map_err(ApiError::from)
+}
+
+fn log_task_queued(task: &TaskRecord) {
     info!(
         message = "Task queued",
         task_id = task.id,
@@ -630,8 +724,6 @@ pub async fn create_generic_task(
         total_items = task.total_items,
         idempotency_key_present = task.idempotency_key.is_some()
     );
-
-    Ok(task)
 }
 
 #[cfg(test)]
@@ -642,11 +734,12 @@ mod tests {
     use std::thread;
 
     use super::{
-        claim_next_queued_task, create_task_record, find_task_record,
-        list_task_events_with_total_count,
+        TaskCreateRequest, claim_next_queued_task, create_report_task_with_active_limit,
+        create_task_record, find_task_record, list_task_events_with_total_count,
     };
     use crate::db::traits::user::DeleteUserRecord;
     use crate::db::with_transaction;
+    use crate::errors::ApiError;
     use crate::models::search::QueryOptions;
     use crate::models::{NewTaskRecord, TaskKind, TaskStatus};
     use crate::tests::{TestContext, create_test_user};
@@ -763,5 +856,46 @@ mod tests {
 
         let stored = block_on(find_task_record(&context.pool, task.id)).unwrap();
         assert_eq!(stored.submitted_by, None);
+    }
+
+    #[test]
+    fn test_report_task_active_limit_blocks_new_work_for_same_user() {
+        let context = block_on(TestContext::new());
+        let first = block_on(create_report_task_with_active_limit(
+            &context.pool,
+            TaskCreateRequest {
+                kind: TaskKind::Report,
+                submitted_by: context.admin_user.id,
+                idempotency_key: Some(context.scoped_name("report-cap-first")),
+                request_hash: Some(context.scoped_name("report-cap-first-hash")),
+                request_payload: serde_json::json!({"report": "first"}),
+                total_items: 1,
+            },
+            1,
+        ))
+        .unwrap();
+
+        assert_eq!(first.status, TaskStatus::Queued.as_str());
+
+        let error = block_on(create_report_task_with_active_limit(
+            &context.pool,
+            TaskCreateRequest {
+                kind: TaskKind::Report,
+                submitted_by: context.admin_user.id,
+                idempotency_key: Some(context.scoped_name("report-cap-second")),
+                request_hash: Some(context.scoped_name("report-cap-second-hash")),
+                request_payload: serde_json::json!({"report": "second"}),
+                total_items: 1,
+            },
+            1,
+        ))
+        .unwrap_err();
+
+        match error {
+            ApiError::TooManyRequests(message) => {
+                assert!(message.contains("Too many active report tasks for user"));
+            }
+            other => panic!("expected TooManyRequests, got {other:?}"),
+        }
     }
 }

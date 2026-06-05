@@ -60,6 +60,7 @@ pub(super) fn sanitize_error_for_storage(err: &ApiError) -> String {
         ApiError::InternalServerError(_) => "An internal error occurred".to_string(),
         ApiError::HashError(_) => "Hashing operation failed".to_string(),
         ApiError::Unauthorized(msg) => format!("Unauthorized: {}", msg),
+        ApiError::TooManyRequests(msg) => format!("Too many requests: {}", msg),
         ApiError::NotAcceptable(msg) => format!("Not acceptable: {}", msg),
         ApiError::PayloadTooLarge(msg) => format!("Payload too large: {}", msg),
         ApiError::OperatorMismatch(msg) => format!("Invalid operation: {}", msg),

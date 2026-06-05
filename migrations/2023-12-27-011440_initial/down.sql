@@ -56,6 +56,7 @@ DROP TABLE IF EXISTS groups CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 
 -- Drop indexes (not necessary if we're dropping the tables, but included for completeness)
+DROP INDEX IF EXISTS idx_report_task_outputs_output_expires_at;
 DROP INDEX IF EXISTS idx_report_task_outputs_task_id_created_at;
 DROP INDEX IF EXISTS idx_import_task_results_task_id_created_at;
 DROP INDEX IF EXISTS idx_task_events_task_id_created_at;

@@ -42,6 +42,7 @@ Hubuum can be configured using environment variables or command-line arguments. 
 | -------- | ------- | ----------- |
 | `HUBUUM_REPORT_OUTPUT_RETENTION_HOURS` | `168` | How long successful async report outputs remain refetchable before cleanup |
 | `HUBUUM_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS` | `300` | How often workers attempt cleanup of expired stored report outputs |
+| `HUBUUM_REPORT_MAX_ACTIVE_TASKS_PER_USER` | `100` | Maximum queued, validating, or running report tasks one user may have at once |
 | `HUBUUM_REPORT_TEMPLATE_RECURSION_LIMIT` | `64` | MiniJinja recursion and template composition depth limit |
 | `HUBUUM_REPORT_TEMPLATE_FUEL` | `50000` | MiniJinja fuel budget for one render |
 | `HUBUUM_REPORT_TEMPLATE_MAX_OBJECTS` | `2000` | Maximum hydrated relation-aware template objects per report |
