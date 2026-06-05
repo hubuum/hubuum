@@ -44,7 +44,8 @@ Hubuum can be configured using environment variables or command-line arguments. 
 | `HUBUUM_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS` | `300` | How often workers attempt cleanup of expired stored report outputs |
 | `HUBUUM_REPORT_TEMPLATE_RECURSION_LIMIT` | `64` | MiniJinja recursion and template composition depth limit |
 | `HUBUUM_REPORT_TEMPLATE_FUEL` | `50000` | MiniJinja fuel budget for one render |
-| `HUBUUM_REPORT_TEMPLATE_MAX_OBJECTS` | `2000` | Maximum hydrated relation-aware template objects per report root |
+| `HUBUUM_REPORT_TEMPLATE_MAX_OBJECTS` | `2000` | Maximum hydrated relation-aware template objects per report |
+| `HUBUUM_REPORT_MAX_OUTPUT_BYTES` | `262144` | Server maximum for rendered report output size; request-level `limits.max_output_bytes` cannot exceed this |
 | `HUBUUM_REPORT_STAGE_TIMEOUT_MS` | `10000` | Maximum elapsed time allowed for each report execution stage |
 
 **Report/template note**: These settings control async report task behavior, including stored output retention, template execution limits, and relation hydration guardrails. See [Report API](report_api.md) and [Template Guide](template_guide.md) for the user-facing behavior these limits affect.

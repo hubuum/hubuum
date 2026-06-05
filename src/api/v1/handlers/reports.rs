@@ -8,8 +8,8 @@ use serde_json::json;
 use crate::api::openapi::ApiErrorResponse;
 use crate::can;
 use crate::config::{
-    DEFAULT_REPORT_OUTPUT_RETENTION_HOURS, DEFAULT_REPORT_STAGE_TIMEOUT_MS,
-    DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS, get_config,
+    DEFAULT_REPORT_MAX_OUTPUT_BYTES, DEFAULT_REPORT_OUTPUT_RETENTION_HOURS,
+    DEFAULT_REPORT_STAGE_TIMEOUT_MS, DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS, get_config,
 };
 use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
@@ -60,7 +60,6 @@ struct ReportArtifact {
     timings: ReportExecutionTimings,
 }
 
-const DEFAULT_MAX_OUTPUT_BYTES: usize = 262_144;
 const REPORT_WARNINGS_HEADER: &str = "X-Hubuum-Report-Warnings";
 const REPORT_TRUNCATED_HEADER: &str = "X-Hubuum-Report-Truncated";
 const RELATED_INCLUDE_DEFAULT_MAX_DEPTH: i32 = 1;
@@ -128,6 +127,47 @@ struct ObjectNeighborhood {
     aliases_by_object_id: BTreeMap<i32, BTreeMap<String, Vec<i32>>>,
     class_relations_by_pair: BTreeMap<(i32, i32), crate::models::HubuumClassRelation>,
     class_names_by_id: BTreeMap<i32, String>,
+}
+
+struct HydrationBudget {
+    max_objects: usize,
+    hydrated_objects: usize,
+}
+
+impl HydrationBudget {
+    fn new(max_objects: usize) -> Self {
+        Self {
+            max_objects,
+            hydrated_objects: 0,
+        }
+    }
+
+    fn remaining(&self) -> usize {
+        self.max_objects.saturating_sub(self.hydrated_objects)
+    }
+
+    fn remaining_related_capacity(&self) -> Result<usize, ApiError> {
+        if self.remaining() == 0 {
+            return Err(ApiError::BadRequest(format!(
+                "Hydrated template object limit exceeded ({} >= {})",
+                self.hydrated_objects, self.max_objects
+            )));
+        }
+
+        Ok(self.remaining().saturating_sub(1))
+    }
+
+    fn count_object(&mut self) -> Result<(), ApiError> {
+        self.hydrated_objects = self.hydrated_objects.saturating_add(1);
+        if self.hydrated_objects > self.max_objects {
+            return Err(ApiError::BadRequest(format!(
+                "Hydrated template object limit exceeded ({} > {})",
+                self.hydrated_objects, self.max_objects
+            )));
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -905,13 +945,7 @@ fn prepare_query_options(report: &ReportRequest) -> Result<QueryOptions, ApiErro
         ));
     }
 
-    if let Some(limits) = &report.limits
-        && let Some(0) = limits.max_items
-    {
-        return Err(ApiError::BadRequest(
-            "max_items must be greater than 0".to_string(),
-        ));
-    }
+    validate_report_limits(report)?;
 
     let (default_page_limit, max_page_limit) = page_limits_or_defaults();
     let configured_limit = report
@@ -924,6 +958,35 @@ fn prepare_query_options(report: &ReportRequest) -> Result<QueryOptions, ApiErro
 
     query_options.limit = Some(effective_limit.saturating_add(1));
     Ok(query_options)
+}
+
+fn validate_report_limits(report: &ReportRequest) -> Result<(), ApiError> {
+    let Some(limits) = &report.limits else {
+        return Ok(());
+    };
+
+    if let Some(0) = limits.max_items {
+        return Err(ApiError::BadRequest(
+            "max_items must be greater than 0".to_string(),
+        ));
+    }
+
+    if let Some(0) = limits.max_output_bytes {
+        return Err(ApiError::BadRequest(
+            "max_output_bytes must be greater than 0".to_string(),
+        ));
+    }
+
+    if let Some(max_output_bytes) = limits.max_output_bytes {
+        let server_max_output_bytes = configured_report_max_output_bytes();
+        if max_output_bytes > server_max_output_bytes {
+            return Err(ApiError::BadRequest(format!(
+                "max_output_bytes ({max_output_bytes}) exceeds server maximum ({server_max_output_bytes})"
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 fn resolve_relation_hydration_plan(
@@ -1018,6 +1081,7 @@ async fn build_template_items(
     }
 
     let mut class_names = BTreeMap::new();
+    let mut hydration_budget = HydrationBudget::new(max_hydrated_template_objects());
 
     match runtime.report.scope.kind {
         ReportScopeKind::ObjectsInClass => {
@@ -1035,6 +1099,7 @@ async fn build_template_items(
                     &root,
                     relation_hydration.depth_limit,
                     &mut class_names,
+                    &mut hydration_budget,
                 )
                 .await?;
                 hydrated_items.push(serde_json::to_value(hydrated)?);
@@ -1059,6 +1124,7 @@ async fn build_template_items(
                 related_objects,
                 relation_hydration.depth_limit,
                 &mut class_names,
+                &mut hydration_budget,
             )
             .await?;
             let source = serde_json::to_value(&hydrated)?;
@@ -1074,9 +1140,17 @@ async fn hydrate_objects_in_class_root(
     root: &HubuumObject,
     depth_limit: i32,
     class_names: &mut BTreeMap<i32, String>,
+    hydration_budget: &mut HydrationBudget,
 ) -> Result<HydratedTemplateObject, ApiError> {
     let root_with_path = object_with_root_path(root);
-    let related_objects = load_related_objects_for_root(pool, user, root.id, depth_limit).await?;
+    let related_objects = load_related_objects_for_root(
+        pool,
+        user,
+        root.id,
+        depth_limit,
+        hydration_budget.remaining_related_capacity()?,
+    )
+    .await?;
     let object_ids = std::iter::once(root.id)
         .chain(related_objects.iter().map(|object| object.id))
         .collect::<Vec<_>>();
@@ -1092,14 +1166,12 @@ async fn hydrate_objects_in_class_root(
         class_names,
     )
     .await?;
-    let mut hydrated_object_count = 0usize;
     hydrate_object(
         &neighborhood,
         root_with_path.id,
         vec![root_with_path.id],
         depth_limit,
-        &mut hydrated_object_count,
-        max_hydrated_template_objects(),
+        hydration_budget,
     )
 }
 
@@ -1110,7 +1182,17 @@ async fn hydrate_related_root(
     related_objects: Vec<HubuumObjectWithPath>,
     depth_limit: i32,
     class_names: &mut BTreeMap<i32, String>,
+    hydration_budget: &mut HydrationBudget,
 ) -> Result<HydratedTemplateObject, ApiError> {
+    let max_related_objects = hydration_budget.remaining_related_capacity()?;
+    if related_objects.len() > max_related_objects {
+        return Err(ApiError::BadRequest(format!(
+            "Hydrated template object limit exceeded ({} related objects > {} remaining related capacity)",
+            related_objects.len(),
+            max_related_objects
+        )));
+    }
+
     let object_ids = std::iter::once(source.id)
         .chain(related_objects.iter().map(|object| object.id))
         .collect::<Vec<_>>();
@@ -1126,14 +1208,12 @@ async fn hydrate_related_root(
         class_names,
     )
     .await?;
-    let mut hydrated_object_count = 0usize;
     hydrate_object(
         &neighborhood,
         source.id,
         vec![source.id],
         depth_limit,
-        &mut hydrated_object_count,
-        max_hydrated_template_objects(),
+        hydration_budget,
     )
 }
 
@@ -1142,7 +1222,9 @@ async fn load_related_objects_for_root(
     user: &crate::models::User,
     root_object_id: i32,
     depth_limit: i32,
+    max_related_objects: usize,
 ) -> Result<Vec<HubuumObjectWithPath>, ApiError> {
+    let query_limit = max_related_objects.saturating_add(1);
     let query_options = QueryOptions {
         filters: vec![ParsedQueryParam::new(
             "depth",
@@ -1150,15 +1232,25 @@ async fn load_related_objects_for_root(
             &depth_limit.to_string(),
         )?],
         sort: Vec::new(),
-        limit: None,
+        limit: Some(query_limit),
         cursor: None,
     };
-    Ok(user
+    let related_objects = user
         .search_objects_related_to(pool, HubuumObjectID(root_object_id), query_options)
         .await?
         .into_iter()
         .map(|relation| relation.to_descendant_object_with_path())
-        .collect())
+        .collect::<Vec<_>>();
+
+    if related_objects.len() > max_related_objects {
+        return Err(ApiError::BadRequest(format!(
+            "Hydrated template object limit exceeded ({} related objects > {} remaining related capacity)",
+            related_objects.len(),
+            max_related_objects
+        )));
+    }
+
+    Ok(related_objects)
 }
 
 async fn build_object_neighborhood(
@@ -1555,16 +1647,9 @@ fn hydrate_object(
     object_id: i32,
     path: Vec<i32>,
     remaining_depth: i32,
-    hydrated_object_count: &mut usize,
-    max_hydrated_objects: usize,
+    hydration_budget: &mut HydrationBudget,
 ) -> Result<HydratedTemplateObject, ApiError> {
-    *hydrated_object_count = hydrated_object_count.saturating_add(1);
-    if *hydrated_object_count > max_hydrated_objects {
-        return Err(ApiError::BadRequest(format!(
-            "Hydrated template object limit exceeded ({} > {})",
-            *hydrated_object_count, max_hydrated_objects
-        )));
-    }
+    hydration_budget.count_object()?;
 
     let object = neighborhood.objects_by_id.get(&object_id).ok_or_else(|| {
         ApiError::InternalServerError("Missing object while hydrating template".to_string())
@@ -1588,8 +1673,7 @@ fn hydrate_object(
                         *neighbor_id,
                         next_path,
                         remaining_depth - 1,
-                        hydrated_object_count,
-                        max_hydrated_objects,
+                        hydration_budget,
                     )?);
                 }
             }
@@ -1607,8 +1691,7 @@ fn hydrate_object(
                 target.target_id,
                 target.path,
                 target.remaining_depth,
-                hydrated_object_count,
-                max_hydrated_objects,
+                hydration_budget,
             )?);
         }
         reachable.insert(alias, hydrated_targets);
@@ -1622,8 +1705,7 @@ fn hydrate_object(
                 target.target_id,
                 target.path,
                 target.remaining_depth,
-                hydrated_object_count,
-                max_hydrated_objects,
+                hydration_budget,
             )?);
         }
         paths.insert(alias, hydrated_targets);
@@ -1832,6 +1914,12 @@ fn max_hydrated_template_objects() -> usize {
     get_config()
         .map(|config| config.report_template_max_objects)
         .unwrap_or(DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS)
+}
+
+fn configured_report_max_output_bytes() -> usize {
+    get_config()
+        .map(|config| config.report_max_output_bytes)
+        .unwrap_or(DEFAULT_REPORT_MAX_OUTPUT_BYTES)
 }
 
 fn build_path_objects(
@@ -2139,7 +2227,7 @@ fn enforce_json_output_limit(
         .limits
         .as_ref()
         .and_then(|limits| limits.max_output_bytes)
-        .unwrap_or(DEFAULT_MAX_OUTPUT_BYTES);
+        .unwrap_or_else(configured_report_max_output_bytes);
 
     if bytes.len() > max_output_bytes {
         return Err(ApiError::PayloadTooLarge(format!(
@@ -2157,7 +2245,7 @@ fn enforce_text_output_limit(rendered: &str, report: &ReportRequest) -> Result<(
         .limits
         .as_ref()
         .and_then(|limits| limits.max_output_bytes)
-        .unwrap_or(DEFAULT_MAX_OUTPUT_BYTES);
+        .unwrap_or_else(configured_report_max_output_bytes);
 
     if rendered.len() > max_output_bytes {
         return Err(ApiError::PayloadTooLarge(format!(
@@ -2172,7 +2260,28 @@ fn enforce_text_output_limit(rendered: &str, report: &ReportRequest) -> Result<(
 
 #[cfg(test)]
 mod tests {
-    use super::{inferred_relation_alias, normalize_alias_segment, pluralize_alias};
+    use crate::models::{ReportLimits, ReportRequest, ReportScope, ReportScopeKind};
+
+    use super::{
+        HydrationBudget, inferred_relation_alias, normalize_alias_segment, pluralize_alias,
+        validate_report_limits,
+    };
+
+    fn report_with_limits(limits: ReportLimits) -> ReportRequest {
+        ReportRequest {
+            scope: ReportScope {
+                kind: ReportScopeKind::ObjectsInClass,
+                class_id: Some(1),
+                object_id: None,
+            },
+            query: None,
+            output: None,
+            missing_data_policy: None,
+            limits: Some(limits),
+            include: None,
+            relation_context: None,
+        }
+    }
 
     #[test]
     fn normalizes_relation_alias_segments_predictably() {
@@ -2195,5 +2304,64 @@ mod tests {
         assert_eq!(inferred_relation_alias("Person"), "persons");
         assert_eq!(inferred_relation_alias("Access Policy"), "access_policies");
         assert_eq!(inferred_relation_alias("Person async"), "person_asyncs");
+    }
+
+    #[test]
+    fn rejects_zero_report_limits() {
+        let max_items_error = validate_report_limits(&report_with_limits(ReportLimits {
+            max_items: Some(0),
+            max_output_bytes: None,
+        }))
+        .unwrap_err();
+
+        assert_eq!(
+            max_items_error.to_string(),
+            "max_items must be greater than 0"
+        );
+
+        let max_output_error = validate_report_limits(&report_with_limits(ReportLimits {
+            max_items: None,
+            max_output_bytes: Some(0),
+        }))
+        .unwrap_err();
+
+        assert_eq!(
+            max_output_error.to_string(),
+            "max_output_bytes must be greater than 0"
+        );
+    }
+
+    #[test]
+    fn rejects_report_output_limit_above_server_cap() {
+        let error = validate_report_limits(&report_with_limits(ReportLimits {
+            max_items: None,
+            max_output_bytes: Some(usize::MAX),
+        }))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("exceeds server maximum"));
+    }
+
+    #[test]
+    fn hydration_budget_reserves_capacity_for_root_object() {
+        let budget = HydrationBudget::new(2);
+
+        assert_eq!(budget.remaining(), 2);
+        assert_eq!(budget.remaining_related_capacity().unwrap(), 1);
+    }
+
+    #[test]
+    fn hydration_budget_rejects_when_report_budget_is_exhausted() {
+        let mut budget = HydrationBudget::new(1);
+
+        assert_eq!(budget.remaining_related_capacity().unwrap(), 0);
+        budget.count_object().unwrap();
+
+        let error = budget.remaining_related_capacity().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Hydrated template object limit exceeded (1 >= 1)"
+        );
     }
 }
