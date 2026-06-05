@@ -117,7 +117,9 @@ Example:
 
 ## Template syntax
 
-Stored templates now use Jinja syntax.
+Stored templates use Jinja syntax. See the
+[MiniJinja template syntax documentation](https://docs.rs/minijinja/latest/minijinja/syntax/)
+for the full expression and tag reference.
 
 Common features:
 
