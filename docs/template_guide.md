@@ -715,6 +715,8 @@ host,room,person
 - Stored templates support only `text/plain`, `text/html`, and `text/csv`
 - `application/json` does not use stored templates
 - Template loading for `include`/`import`/`extends` is limited to the same namespace
+- HTML templates are autoescaped; plain text and CSV templates should use `tojson` or `csv_cell`
+  when embedding JSON- or CSV-sensitive values
 - Hydrated relation templates are limited to relation depth `<= 2`
 - Rendered output still respects `limits.max_output_bytes`, capped by `HUBUUM_REPORT_MAX_OUTPUT_BYTES`
 

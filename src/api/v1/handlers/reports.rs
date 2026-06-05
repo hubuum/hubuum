@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::io::{self, Write};
 use std::time::Instant;
 
 use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, post, web};
@@ -44,10 +45,6 @@ use super::check_if_object_in_class;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredReportTaskPayload {
     report: ReportRequest,
-    content_type: ReportContentType,
-    missing_data_policy: ReportMissingDataPolicy,
-    template: Option<ReportTemplate>,
-    namespace_templates: Vec<ReportTemplate>,
 }
 
 struct ReportArtifact {
@@ -367,21 +364,7 @@ fn runtime_to_task_payload(runtime: &ReportRuntime) -> Result<StoredReportTaskPa
     validate_report_submission(runtime)?;
     Ok(StoredReportTaskPayload {
         report: runtime.report.clone(),
-        content_type: runtime.content_type,
-        missing_data_policy: runtime.missing_data_policy,
-        template: runtime.template.clone(),
-        namespace_templates: runtime.namespace_templates.clone(),
     })
-}
-
-fn runtime_from_task_payload(payload: StoredReportTaskPayload) -> ReportRuntime {
-    ReportRuntime {
-        report: payload.report,
-        content_type: payload.content_type,
-        missing_data_policy: payload.missing_data_policy,
-        template: payload.template,
-        namespace_templates: payload.namespace_templates,
-    }
 }
 
 async fn find_or_create_report_task(
@@ -470,7 +453,8 @@ pub(crate) async fn execute_report_task(
         .clone()
         .ok_or_else(|| ApiError::BadRequest("Report task payload is missing".to_string()))?;
     let payload: StoredReportTaskPayload = serde_json::from_value(payload)?;
-    let runtime = runtime_from_task_payload(payload);
+    let runtime = prepare_report_runtime(pool, user, payload.report).await?;
+    validate_report_submission(&runtime)?;
     let total_start = Instant::now();
     let mut timings = ReportExecutionTimings::default();
 
@@ -549,18 +533,26 @@ pub(crate) async fn execute_report_task(
         build_template_items(pool, user, &runtime, &items, relation_hydration).await?;
     timings.hydration_duration_ms = duration_to_millis_i32(hydration_start.elapsed());
     enforce_report_stage_timeout(hydration_start, "relation hydration")?;
+    let template_report = runtime.template.is_some();
+    let item_count = if template_report {
+        template_items.len()
+    } else {
+        items.len()
+    };
+    let execution_items = if template_report {
+        drop(items);
+        Vec::new()
+    } else {
+        items
+    };
     let execution = ReportExecution {
         meta: ReportMeta {
-            count: if runtime.template.is_some() {
-                template_items.len()
-            } else {
-                items.len()
-            },
+            count: item_count,
             truncated,
             scope: runtime.report.scope.clone(),
             content_type: runtime.content_type,
         },
-        items,
+        items: execution_items,
         template_items,
         warnings,
         source,
@@ -1696,9 +1688,13 @@ fn hydrate_object(
         }
     }
 
-    for (alias, targets) in
-        collect_reachable_targets(neighborhood, object_id, &path, remaining_depth)?
-    {
+    for (alias, targets) in collect_reachable_targets(
+        neighborhood,
+        object_id,
+        &path,
+        remaining_depth,
+        hydration_budget.remaining(),
+    )? {
         let mut hydrated_targets = Vec::with_capacity(targets.len());
         for target in targets {
             hydrated_targets.push(hydrate_object(
@@ -1712,7 +1708,13 @@ fn hydrate_object(
         reachable.insert(alias, hydrated_targets);
     }
 
-    for (alias, targets) in collect_path_targets(neighborhood, object_id, &path, remaining_depth)? {
+    for (alias, targets) in collect_path_targets(
+        neighborhood,
+        object_id,
+        &path,
+        remaining_depth,
+        hydration_budget.remaining(),
+    )? {
         let mut hydrated_targets = Vec::with_capacity(targets.len());
         for target in targets {
             hydrated_targets.push(hydrate_object(
@@ -1748,12 +1750,14 @@ fn collect_reachable_targets(
     object_id: i32,
     path: &[i32],
     remaining_depth: i32,
+    max_targets: usize,
 ) -> Result<BTreeMap<String, Vec<ReachableTemplateTarget>>, ApiError> {
     let mut reachable_by_alias = BTreeMap::<String, Vec<ReachableTemplateTarget>>::new();
     if remaining_depth <= 0 {
         return Ok(reachable_by_alias);
     }
 
+    let mut collected_targets = 0_usize;
     let mut queue = VecDeque::from([(object_id, path.to_vec(), 0_i32)]);
     let mut visited_distances = BTreeMap::from([(object_id, 0_i32)]);
     let mut alias_owners = BTreeMap::<String, i32>::new();
@@ -1807,6 +1811,7 @@ fn collect_reachable_targets(
             }
             alias_owners.insert(alias.clone(), neighbor.hubuum_class_id);
 
+            count_collected_template_target(&mut collected_targets, max_targets, "reachable")?;
             let mut next_path = current_path.clone();
             next_path.push(neighbor_id);
             visited_distances.insert(neighbor_id, next_distance);
@@ -1836,17 +1841,35 @@ fn collect_reachable_targets(
     Ok(reachable_by_alias)
 }
 
+fn count_collected_template_target(
+    collected_targets: &mut usize,
+    max_targets: usize,
+    relation_kind: &str,
+) -> Result<(), ApiError> {
+    if *collected_targets >= max_targets {
+        return Err(ApiError::BadRequest(format!(
+            "Hydrated template object limit exceeded while collecting {relation_kind} relation targets ({} >= {} remaining capacity)",
+            *collected_targets, max_targets
+        )));
+    }
+
+    *collected_targets = collected_targets.saturating_add(1);
+    Ok(())
+}
+
 fn collect_path_targets(
     neighborhood: &ObjectNeighborhood,
     object_id: i32,
     path: &[i32],
     remaining_depth: i32,
+    max_targets: usize,
 ) -> Result<BTreeMap<String, Vec<ReachableTemplateTarget>>, ApiError> {
     let mut path_targets = BTreeMap::<String, Vec<ReachableTemplateTarget>>::new();
     if remaining_depth <= 0 {
         return Ok(path_targets);
     }
 
+    let mut collected_targets = 0_usize;
     let mut queue = VecDeque::from([(object_id, path.to_vec(), 0_i32)]);
     let mut alias_owners = BTreeMap::<String, i32>::new();
 
@@ -1895,6 +1918,7 @@ fn collect_path_targets(
             }
             alias_owners.insert(alias.clone(), neighbor.hubuum_class_id);
 
+            count_collected_template_target(&mut collected_targets, max_targets, "path")?;
             let mut next_path = current_path.clone();
             next_path.push(neighbor_id);
             queue.push_back((neighbor_id, next_path.clone(), next_distance));
@@ -2241,24 +2265,62 @@ fn enforce_json_output_limit(
     response: &ReportJsonResponse,
     report: &ReportRequest,
 ) -> Result<(), ApiError> {
-    let bytes = serde_json::to_vec(response).map_err(|error| {
-        ApiError::InternalServerError(format!("Failed to serialize report: {error}"))
-    })?;
     let max_output_bytes = report
         .limits
         .as_ref()
         .and_then(|limits| limits.max_output_bytes)
         .unwrap_or_else(configured_report_max_output_bytes);
 
-    if bytes.len() > max_output_bytes {
-        return Err(ApiError::PayloadTooLarge(format!(
-            "Rendered report exceeded max_output_bytes ({} > {})",
-            bytes.len(),
-            max_output_bytes
+    let mut writer = LimitedJsonWriter::new(max_output_bytes);
+    if let Err(error) = serde_json::to_writer(&mut writer, response) {
+        if writer.exceeded() {
+            return Err(ApiError::PayloadTooLarge(format!(
+                "Rendered report exceeded max_output_bytes (> {max_output_bytes})"
+            )));
+        }
+
+        return Err(ApiError::InternalServerError(format!(
+            "Failed to serialize report: {error}"
         )));
     }
 
     Ok(())
+}
+
+struct LimitedJsonWriter {
+    max_bytes: usize,
+    written: usize,
+    exceeded: bool,
+}
+
+impl LimitedJsonWriter {
+    fn new(max_bytes: usize) -> Self {
+        Self {
+            max_bytes,
+            written: 0,
+            exceeded: false,
+        }
+    }
+
+    fn exceeded(&self) -> bool {
+        self.exceeded
+    }
+}
+
+impl Write for LimitedJsonWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.written.saturating_add(buf.len()) > self.max_bytes {
+            self.exceeded = true;
+            return Err(io::Error::other("json output limit exceeded"));
+        }
+
+        self.written += buf.len();
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 fn enforce_text_output_limit(rendered: &str, report: &ReportRequest) -> Result<(), ApiError> {
