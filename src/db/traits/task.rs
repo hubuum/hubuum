@@ -223,11 +223,15 @@ pub async fn find_report_task_output(
     pool: &DbPool,
     task_id_value: i32,
 ) -> Result<Option<ReportTaskOutputRecord>, ApiError> {
-    use crate::schema::report_task_outputs::dsl::{report_task_outputs, task_id};
+    use crate::schema::report_task_outputs::dsl::{
+        output_expires_at, report_task_outputs, task_id,
+    };
 
+    let now = Utc::now().naive_utc();
     with_connection(pool, |conn| {
         report_task_outputs
             .filter(task_id.eq(task_id_value))
+            .filter(output_expires_at.gt(now))
             .first::<ReportTaskOutputRecord>(conn)
             .optional()
     })
@@ -237,12 +241,17 @@ pub async fn find_report_task_output_summary(
     pool: &DbPool,
     task_id_value: i32,
 ) -> Result<Option<ReportTaskOutputSummaryRecord>, ApiError> {
-    use crate::schema::report_task_outputs::dsl::{report_task_outputs, task_id};
+    use crate::schema::report_task_outputs::dsl::{
+        output_expires_at, report_task_outputs, task_id,
+    };
 
+    let now = Utc::now().naive_utc();
     with_connection(pool, |conn| {
         report_task_outputs
             .filter(task_id.eq(task_id_value))
-            .first::<ReportTaskOutputSummaryRecord>(conn)
+            .filter(output_expires_at.gt(now))
+            .select(ReportTaskOutputSummaryRecord::as_select())
+            .first(conn)
             .optional()
     })
 }
@@ -251,16 +260,21 @@ pub async fn list_report_task_output_summaries(
     pool: &DbPool,
     task_ids: &[i32],
 ) -> Result<Vec<ReportTaskOutputSummaryRecord>, ApiError> {
-    use crate::schema::report_task_outputs::dsl::{report_task_outputs, task_id};
+    use crate::schema::report_task_outputs::dsl::{
+        output_expires_at, report_task_outputs, task_id,
+    };
 
     if task_ids.is_empty() {
         return Ok(Vec::new());
     }
 
+    let now = Utc::now().naive_utc();
     with_connection(pool, |conn| {
         report_task_outputs
             .filter(task_id.eq_any(task_ids))
-            .load::<ReportTaskOutputSummaryRecord>(conn)
+            .filter(output_expires_at.gt(now))
+            .select(ReportTaskOutputSummaryRecord::as_select())
+            .load(conn)
     })
 }
 

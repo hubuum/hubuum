@@ -3,7 +3,7 @@
 Stored report templates format stored report output from the async report API.
 
 Use templates when you want `text/plain`, `text/html`, or `text/csv` output from a stored definition in `POST /api/v1/templates`.
-Submit the report with `POST /api/v1/reports`, then fetch the rendered result from
+Submit the report request with `POST /api/v1/reports`, then fetch the rendered result from
 `GET /api/v1/reports/{task_id}/output`.
 
 See also:
@@ -716,7 +716,7 @@ host,room,person
 - `application/json` does not use stored templates
 - Template loading for `include`/`import`/`extends` is limited to the same namespace
 - Hydrated relation templates are limited to relation depth `<= 2`
-- Rendered output still respects `limits.max_output_bytes`
+- Rendered output still respects `limits.max_output_bytes`, capped by `HUBUUM_REPORT_MAX_OUTPUT_BYTES`
 
 ## CSV note
 

@@ -91,7 +91,7 @@ Examples:
 
 Reports do not support cursor pagination. If `cursor` is present in `query`, the request fails with `400 Bad Request`.
 
-If the rendered response exceeds `limits.max_output_bytes`, the report task fails with `413 Payload Too Large`. The server does not stream partial JSON, HTML, CSV, or text bodies.
+If the rendered response exceeds `limits.max_output_bytes`, the report task fails with `413 Payload Too Large`. The request-level value must be greater than zero and cannot exceed the server's `HUBUUM_REPORT_MAX_OUTPUT_BYTES` setting. The server does not stream partial JSON, HTML, CSV, or text bodies.
 
 ### Relation report examples
 
@@ -352,7 +352,7 @@ Relevant env vars are documented centrally in [Quick Start](quick_start.md):
 ## Cost controls
 
 - `limits.max_items` caps rows returned from the scoped query
-- `limits.max_output_bytes` caps the rendered response size
+- `limits.max_output_bytes` caps the rendered response size up to the server maximum
 - if the result set is truncated, `meta.truncated` is set to `true`
 
 ## Response headers
