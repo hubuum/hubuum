@@ -289,6 +289,7 @@
     CREATE INDEX idx_task_events_task_id_created_at ON task_events (task_id, created_at);
     CREATE INDEX idx_import_task_results_task_id_created_at ON import_task_results (task_id, created_at);
     CREATE INDEX idx_report_task_outputs_task_id_created_at ON report_task_outputs (task_id, created_at);
+    CREATE INDEX idx_report_task_outputs_output_expires_at ON report_task_outputs (output_expires_at);
 
     ----------------------
     ---- Functions

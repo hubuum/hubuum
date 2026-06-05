@@ -60,6 +60,7 @@ pub enum ApiError {
     PayloadTooLarge(String),
     DatabaseError(String),
     Conflict(String),
+    TooManyRequests(String),
     NotFound(String),
     DbConnectionError(String),
     HashError(String),
@@ -96,6 +97,7 @@ impl fmt::Display for ApiError {
             ApiError::HashError(message) => write!(f, "{message}"),
             ApiError::NotFound(message) => write!(f, "{message}"),
             ApiError::Conflict(message) => write!(f, "{message}"),
+            ApiError::TooManyRequests(message) => write!(f, "{message}"),
             ApiError::Forbidden(message) => write!(f, "{message}"),
             ApiError::InternalServerError(message) => write!(f, "{message}"),
             ApiError::Unauthorized(message) => write!(f, "{message}"),
@@ -117,6 +119,8 @@ impl ResponseError for ApiError {
             ApiError::Conflict(message) => {
                 HttpResponse::Conflict().json(json!({ "error": "Conflict", "message": message}))
             }
+            ApiError::TooManyRequests(message) => HttpResponse::TooManyRequests()
+                .json(json!({ "error": "Too Many Requests", "message": message })),
             ApiError::Forbidden(message) => {
                 HttpResponse::Forbidden().json(json!({ "error": "Forbidden", "message": message }))
             }
@@ -151,6 +155,7 @@ impl ResponseError for ApiError {
     fn status_code(&self) -> StatusCode {
         match self {
             ApiError::Conflict(_) => StatusCode::CONFLICT,
+            ApiError::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
             ApiError::NotAcceptable(_) => StatusCode::NOT_ACCEPTABLE,
             ApiError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
@@ -363,6 +368,11 @@ mod tests {
         assert_eq!(
             ApiError::Conflict("test".to_string()).status_code(),
             StatusCode::CONFLICT
+        );
+
+        assert_eq!(
+            ApiError::TooManyRequests("test".to_string()).status_code(),
+            StatusCode::TOO_MANY_REQUESTS
         );
     }
 }

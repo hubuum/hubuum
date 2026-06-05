@@ -2,39 +2,39 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::time::Instant;
 
 use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, post, web};
+use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::can;
 use crate::config::{
-    DEFAULT_REPORT_MAX_OUTPUT_BYTES, DEFAULT_REPORT_OUTPUT_RETENTION_HOURS,
-    DEFAULT_REPORT_STAGE_TIMEOUT_MS, DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS, get_config,
+    DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER, DEFAULT_REPORT_MAX_OUTPUT_BYTES,
+    DEFAULT_REPORT_OUTPUT_RETENTION_HOURS, DEFAULT_REPORT_STAGE_TIMEOUT_MS,
+    DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS, get_config,
 };
-use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
 use crate::db::traits::task::{
-    TaskCreateRequest, TaskStateUpdate, append_task_event, create_generic_task,
+    TaskCreateRequest, TaskStateUpdate, append_task_event, create_report_task_with_active_limit,
     finalize_report_task_with_output, find_report_task_output, find_report_task_output_summary,
     find_task_by_idempotency, find_task_record, update_task_state,
 };
+use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::{
     FilterField, ParsedQueryParam, QueryOptions, SearchOperator, parse_query_parameter,
 };
 use crate::models::{
-    HubuumClassID, HubuumObject, HubuumObjectID, HubuumObjectRelation, HubuumObjectWithPath,
-    NamespaceID, NewReportTaskOutputRecord, NewTaskEventRecord, Permissions, ReportContentType,
-    ReportIncludeRelatedDirection, ReportIncludeRelatedObject, ReportIncludeRelatedQuery,
-    ReportIncludeRelatedSort, ReportJsonResponse, ReportMeta, ReportMissingDataPolicy,
-    ReportRequest, ReportScope, ReportScopeKind, ReportTaskOutputRecord, ReportTemplate,
-    ReportTemplateID, ReportWarning, TaskKind, TaskRecord, TaskResponse, User,
+    HubuumClassID, HubuumClassRelation, HubuumObject, HubuumObjectID, HubuumObjectRelation,
+    HubuumObjectWithPath, NamespaceID, NewReportTaskOutputRecord, NewTaskEventRecord, Permissions,
+    ReportContentType, ReportIncludeRelatedDirection, ReportIncludeRelatedObject,
+    ReportIncludeRelatedQuery, ReportIncludeRelatedSort, ReportJsonResponse, ReportMeta,
+    ReportMissingDataPolicy, ReportRequest, ReportScope, ReportScopeKind, ReportTaskOutputRecord,
+    ReportTemplate, ReportTemplateID, ReportWarning, TaskKind, TaskRecord, TaskResponse, User,
 };
 use crate::pagination::page_limits_or_defaults;
-use crate::tasks::{
-    ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
-};
+use crate::tasks::{ensure_task_worker_running, kick_task_worker, request_hash};
 use crate::traits::{GroupMemberships, NamespaceAccessors, Search, SelfAccessors};
 use crate::utilities::reporting::render_template;
 use crate::utilities::response::{json_response, json_response_with_header};
@@ -187,7 +187,8 @@ struct ReachableTemplateTarget {
         (status = 202, description = "Report task accepted", body = TaskResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 409, description = "Conflict", body = ApiErrorResponse)
+        (status = 409, description = "Conflict", body = ApiErrorResponse),
+        (status = 429, description = "Too many active report tasks", body = ApiErrorResponse)
     )
 )]
 #[post("")]
@@ -202,7 +203,11 @@ pub async fn run_report(
     let report = report.into_inner();
     let payload = serde_json::to_value(&report)?;
     let hash = request_hash(&payload)?;
-    let idempotency_key = idempotency_key_from_headers(req.headers())?;
+    let idempotency_key = req
+        .headers()
+        .get("Idempotency-Key")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
 
     let runtime = prepare_report_runtime(&pool, &requestor.user, report).await?;
     validate_report_submission(&runtime)?;
@@ -404,7 +409,7 @@ async fn find_or_create_report_task(
         )));
     }
 
-    match create_generic_task(
+    match create_report_task_with_active_limit(
         pool,
         TaskCreateRequest {
             kind: TaskKind::Report,
@@ -414,6 +419,7 @@ async fn find_or_create_report_task(
             request_payload: payload,
             total_items: 1,
         },
+        max_active_report_tasks_per_user(),
     )
     .await
     {
@@ -439,6 +445,7 @@ async fn load_authorized_report_task(
     requestor: &User,
     task_id: i32,
 ) -> Result<TaskRecord, ApiError> {
+    let is_admin = requestor.is_admin(pool).await?;
     let task = find_task_record(pool, task_id).await?;
     if task.kind != TaskKind::Report.as_str() {
         return Err(ApiError::NotFound(format!(
@@ -446,7 +453,7 @@ async fn load_authorized_report_task(
             task_id
         )));
     }
-    if task.submitted_by == Some(requestor.id) || requestor.is_admin(pool).await? {
+    if task.submitted_by == Some(requestor.id) || is_admin {
         Ok(task)
     } else {
         Err(ApiError::NotFound("Report task not found".to_string()))
@@ -1159,7 +1166,6 @@ async fn hydrate_objects_in_class_root(
         .await?;
     let neighborhood = build_object_neighborhood(
         pool,
-        user,
         root_with_path.clone(),
         related_objects,
         relations,
@@ -1201,7 +1207,6 @@ async fn hydrate_related_root(
         .await?;
     let neighborhood = build_object_neighborhood(
         pool,
-        user,
         source.clone(),
         related_objects,
         relations,
@@ -1255,7 +1260,6 @@ async fn load_related_objects_for_root(
 
 async fn build_object_neighborhood(
     pool: &DbPool,
-    user: &User,
     root: HubuumObjectWithPath,
     related_objects: Vec<HubuumObjectWithPath>,
     relations: Vec<HubuumObjectRelation>,
@@ -1267,7 +1271,7 @@ async fn build_object_neighborhood(
         objects_by_id.insert(object.id, object);
     }
 
-    ensure_class_names(pool, user, &objects_by_id, class_names).await?;
+    ensure_class_names(pool, &objects_by_id, class_names).await?;
 
     let mut aliases_by_object_id = objects_by_id
         .keys()
@@ -1281,7 +1285,6 @@ async fn build_object_neighborhood(
 
     seed_alias_buckets_from_class_relations(
         pool,
-        user,
         &objects_by_id,
         &mut aliases_by_object_id,
         &mut alias_owners,
@@ -1335,49 +1338,18 @@ async fn build_object_neighborhood(
 
 async fn ensure_class_names(
     pool: &DbPool,
-    user: &User,
     objects_by_id: &BTreeMap<i32, HubuumObjectWithPath>,
     class_names: &mut BTreeMap<i32, String>,
 ) -> Result<(), ApiError> {
-    let mut missing_ids = objects_by_id
+    let class_ids = objects_by_id
         .values()
         .map(|object| object.hubuum_class_id)
-        .filter(|class_id| !class_names.contains_key(class_id))
         .collect::<Vec<_>>();
-    missing_ids.sort_unstable();
-    missing_ids.dedup();
-
-    for chunk in missing_ids.chunks(50) {
-        let classes = user
-            .search_classes(
-                pool,
-                QueryOptions {
-                    filters: vec![ParsedQueryParam {
-                        field: FilterField::Id,
-                        operator: SearchOperator::In { is_negated: false },
-                        value: chunk
-                            .iter()
-                            .map(i32::to_string)
-                            .collect::<Vec<_>>()
-                            .join(","),
-                    }],
-                    sort: vec![],
-                    limit: None,
-                    cursor: None,
-                },
-            )
-            .await?;
-        for class in classes {
-            class_names.insert(class.id, class.name);
-        }
-    }
-
-    Ok(())
+    ensure_class_name_ids(pool, &class_ids, class_names).await
 }
 
 async fn seed_alias_buckets_from_class_relations(
     pool: &DbPool,
-    user: &User,
     objects_by_id: &BTreeMap<i32, HubuumObjectWithPath>,
     aliases_by_object_id: &mut BTreeMap<i32, BTreeMap<String, Vec<i32>>>,
     alias_owners: &mut BTreeMap<i32, BTreeMap<String, i32>>,
@@ -1391,106 +1363,149 @@ async fn seed_alias_buckets_from_class_relations(
     object_class_ids.sort_unstable();
     object_class_ids.dedup();
 
-    let mut relations_by_class_id: BTreeMap<i32, Vec<crate::models::HubuumClassRelation>> =
-        BTreeMap::new();
-    let mut adjacent_class_ids = Vec::new();
-    for class_id in &object_class_ids {
-        let (relations, _) = user
-            .class_relations_touching_page(
-                pool,
-                HubuumClassID(*class_id),
-                QueryOptions {
-                    filters: vec![],
-                    sort: vec![],
-                    limit: None,
-                    cursor: None,
-                },
-            )
-            .await?;
-        for relation in &relations {
-            if relation.from_hubuum_class_id == *class_id {
-                adjacent_class_ids.push(relation.to_hubuum_class_id);
-            } else {
-                adjacent_class_ids.push(relation.from_hubuum_class_id);
-            }
+    let class_relations = load_class_relations_touching_classes(pool, &object_class_ids).await?;
+    let mut class_relations_by_object_class = BTreeMap::<i32, Vec<HubuumClassRelation>>::new();
+    let mut relation_class_ids = Vec::with_capacity(class_relations.len().saturating_mul(2));
+    for relation in class_relations {
+        relation_class_ids.push(relation.from_hubuum_class_id);
+        relation_class_ids.push(relation.to_hubuum_class_id);
+        if object_class_ids
+            .binary_search(&relation.from_hubuum_class_id)
+            .is_ok()
+        {
+            class_relations_by_object_class
+                .entry(relation.from_hubuum_class_id)
+                .or_default()
+                .push(relation.clone());
         }
-        relations_by_class_id.insert(*class_id, relations);
-    }
-
-    adjacent_class_ids.sort_unstable();
-    adjacent_class_ids.dedup();
-    let missing_adjacent_class_ids = adjacent_class_ids
-        .into_iter()
-        .filter(|class_id| !class_names.contains_key(class_id))
-        .collect::<Vec<_>>();
-    for chunk in missing_adjacent_class_ids.chunks(50) {
-        let classes = user
-            .search_classes(
-                pool,
-                QueryOptions {
-                    filters: vec![ParsedQueryParam {
-                        field: FilterField::Id,
-                        operator: SearchOperator::In { is_negated: false },
-                        value: chunk
-                            .iter()
-                            .map(i32::to_string)
-                            .collect::<Vec<_>>()
-                            .join(","),
-                    }],
-                    sort: vec![],
-                    limit: None,
-                    cursor: None,
-                },
-            )
-            .await?;
-        for class in classes {
-            class_names.insert(class.id, class.name);
+        if relation.to_hubuum_class_id != relation.from_hubuum_class_id
+            && object_class_ids
+                .binary_search(&relation.to_hubuum_class_id)
+                .is_ok()
+        {
+            class_relations_by_object_class
+                .entry(relation.to_hubuum_class_id)
+                .or_default()
+                .push(relation);
         }
     }
+    ensure_class_name_ids(pool, &relation_class_ids, class_names).await?;
 
     for object in objects_by_id.values() {
-        if let Some(class_relations) = relations_by_class_id.get(&object.hubuum_class_id) {
-            for relation in class_relations {
-                class_relations_by_pair.insert(
-                    relation_pair_key(relation.from_hubuum_class_id, relation.to_hubuum_class_id),
-                    relation.clone(),
-                );
-                let adjacent_class_id = if relation.from_hubuum_class_id == object.hubuum_class_id {
-                    relation.to_hubuum_class_id
-                } else {
-                    relation.from_hubuum_class_id
-                };
+        let Some(class_relations) = class_relations_by_object_class.get(&object.hubuum_class_id)
+        else {
+            continue;
+        };
+        for relation in class_relations {
+            class_relations_by_pair.insert(
+                relation_pair_key(relation.from_hubuum_class_id, relation.to_hubuum_class_id),
+                relation.clone(),
+            );
+            let adjacent_class_id = if relation.from_hubuum_class_id == object.hubuum_class_id {
+                relation.to_hubuum_class_id
+            } else {
+                relation.from_hubuum_class_id
+            };
 
-                let alias = relation_alias_for_viewer(
-                    &relation,
-                    object.hubuum_class_id,
-                    adjacent_class_id,
-                    class_names,
-                )?;
-                let alias_owner_map = alias_owners.get_mut(&object.id).ok_or_else(|| {
-                    ApiError::InternalServerError("Missing alias ownership state".to_string())
-                })?;
-                if let Some(existing_class_id) = alias_owner_map.get(&alias)
-                    && *existing_class_id != adjacent_class_id
-                {
-                    return Err(ApiError::BadRequest(format!(
-                        "Relation alias collision for object '{}' on alias '{}'",
-                        object.name, alias
-                    )));
-                }
-                alias_owner_map.insert(alias.clone(), adjacent_class_id);
-                aliases_by_object_id
-                    .get_mut(&object.id)
-                    .ok_or_else(|| {
-                        ApiError::InternalServerError("Missing alias grouping state".to_string())
-                    })?
-                    .entry(alias)
-                    .or_default();
+            let alias = relation_alias_for_viewer(
+                relation,
+                object.hubuum_class_id,
+                adjacent_class_id,
+                class_names,
+            )?;
+            let alias_owner_map = alias_owners.get_mut(&object.id).ok_or_else(|| {
+                ApiError::InternalServerError("Missing alias ownership state".to_string())
+            })?;
+            if let Some(existing_class_id) = alias_owner_map.get(&alias)
+                && *existing_class_id != adjacent_class_id
+            {
+                return Err(ApiError::BadRequest(format!(
+                    "Relation alias collision for object '{}' on alias '{}'",
+                    object.name, alias
+                )));
             }
+            alias_owner_map.insert(alias.clone(), adjacent_class_id);
+            aliases_by_object_id
+                .get_mut(&object.id)
+                .ok_or_else(|| {
+                    ApiError::InternalServerError("Missing alias grouping state".to_string())
+                })?
+                .entry(alias)
+                .or_default();
         }
     }
 
     Ok(())
+}
+
+async fn ensure_class_name_ids(
+    pool: &DbPool,
+    class_ids: &[i32],
+    class_names: &mut BTreeMap<i32, String>,
+) -> Result<(), ApiError> {
+    let mut missing_ids = class_ids
+        .iter()
+        .copied()
+        .filter(|class_id| !class_names.contains_key(class_id))
+        .collect::<Vec<_>>();
+    missing_ids.sort_unstable();
+    missing_ids.dedup();
+
+    if missing_ids.is_empty() {
+        return Ok(());
+    }
+
+    for (class_id, class_name) in load_class_names(pool, &missing_ids).await? {
+        class_names.insert(class_id, class_name);
+    }
+
+    for class_id in missing_ids {
+        if !class_names.contains_key(&class_id) {
+            return Err(ApiError::NotFound(format!("Class {class_id} not found")));
+        }
+    }
+
+    Ok(())
+}
+
+async fn load_class_names(
+    pool: &DbPool,
+    class_ids: &[i32],
+) -> Result<Vec<(i32, String)>, ApiError> {
+    use crate::schema::hubuumclass::dsl::{hubuumclass, id, name};
+
+    if class_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let class_ids = class_ids.to_vec();
+    with_connection(pool, |conn| {
+        hubuumclass
+            .filter(id.eq_any(class_ids))
+            .select((id, name))
+            .load::<(i32, String)>(conn)
+    })
+}
+
+async fn load_class_relations_touching_classes(
+    pool: &DbPool,
+    class_ids: &[i32],
+) -> Result<Vec<HubuumClassRelation>, ApiError> {
+    use crate::schema::hubuumclass_relation::dsl::{
+        from_hubuum_class_id, hubuumclass_relation, to_hubuum_class_id,
+    };
+
+    if class_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let class_ids = class_ids.to_vec();
+    with_connection(pool, |conn| {
+        hubuumclass_relation
+            .filter(from_hubuum_class_id.eq_any(&class_ids))
+            .or_filter(to_hubuum_class_id.eq_any(&class_ids))
+            .load::<HubuumClassRelation>(conn)
+    })
 }
 
 fn add_bidirectional_alias_edge(
@@ -1914,6 +1929,12 @@ fn max_hydrated_template_objects() -> usize {
     get_config()
         .map(|config| config.report_template_max_objects)
         .unwrap_or(DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS)
+}
+
+fn max_active_report_tasks_per_user() -> usize {
+    get_config()
+        .map(|config| config.report_max_active_tasks_per_user)
+        .unwrap_or(DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER)
 }
 
 fn configured_report_max_output_bytes() -> usize {

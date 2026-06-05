@@ -50,6 +50,7 @@ Authentication:
 - the response body is a generic `TaskResponse`
 - the response includes `Location: /api/v1/tasks/{id}`
 - `Idempotency-Key` is supported with the same reuse/conflict semantics as imports
+- if the submitting user already has too many active report tasks, it returns `429 Too Many Requests`
 
 Use:
 
@@ -358,15 +359,18 @@ Relevant env vars are documented centrally in [Quick Start](quick_start.md):
 
 - `HUBUUM_REPORT_OUTPUT_RETENTION_HOURS`
 - `HUBUUM_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS`
+- `HUBUUM_REPORT_MAX_ACTIVE_TASKS_PER_USER`
 - `HUBUUM_REPORT_TEMPLATE_RECURSION_LIMIT`
 - `HUBUUM_REPORT_TEMPLATE_FUEL`
 - `HUBUUM_REPORT_TEMPLATE_MAX_OBJECTS`
+- `HUBUUM_REPORT_MAX_OUTPUT_BYTES`
 - `HUBUUM_REPORT_STAGE_TIMEOUT_MS`
 
 ## Cost controls
 
 - `limits.max_items` caps rows returned from the scoped query
 - `limits.max_output_bytes` caps the rendered response size up to the server maximum
+- `HUBUUM_REPORT_MAX_ACTIVE_TASKS_PER_USER` caps active queued/validating/running report tasks per submitting user
 - if the result set is truncated, `meta.truncated` is set to `true`
 
 ## Response headers
