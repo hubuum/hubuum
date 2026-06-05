@@ -5469,6 +5469,16 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Too many active report tasks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
