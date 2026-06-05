@@ -1,5 +1,7 @@
 use std::cell::RefCell;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use minijinja::value::Value;
@@ -7,7 +9,6 @@ use minijinja::{
     AutoEscape, Environment, Error as MiniJinjaError, ErrorKind as MiniJinjaErrorKind, State,
     UndefinedBehavior, escape_formatter,
 };
-use sha2::{Digest, Sha256};
 
 use crate::config::get_config;
 use crate::errors::ApiError;
@@ -18,10 +19,17 @@ const TEMPLATE_ENV_CACHE_MAX_ENTRIES: usize = 128;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct TemplateEnvCacheKey {
     namespace_id: i32,
-    namespace_signature: String,
+    namespace_signature: NamespaceTemplateSignature,
     template_name: String,
     content_type: ReportContentType,
     missing_data_policy: ReportMissingDataPolicy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct NamespaceTemplateSignature {
+    template_count: usize,
+    max_updated_at_micros: i64,
+    template_hash: u64,
 }
 
 struct CachedTemplateEnvironment {
@@ -135,26 +143,37 @@ fn template_env_cache()
     TEMPLATE_ENV_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-fn namespace_signature(namespace_id: i32, namespace_templates: &[ReportTemplate]) -> String {
+fn namespace_signature(
+    namespace_id: i32,
+    namespace_templates: &[ReportTemplate],
+) -> NamespaceTemplateSignature {
     let mut templates = namespace_templates
         .iter()
         .filter(|template| template.namespace_id == namespace_id)
         .map(|template| {
-            let template_hash = Sha256::digest(template.template.as_bytes())
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>();
-            format!(
-                "{}:{}:{}:{}",
+            (
                 template.id,
                 template.updated_at.and_utc().timestamp_micros(),
-                template.name,
-                template_hash
+                template.name.as_str(),
+                template.template.as_str(),
             )
         })
         .collect::<Vec<_>>();
-    templates.sort();
-    templates.join("|")
+    templates.sort_unstable();
+
+    let max_updated_at_micros = templates
+        .iter()
+        .map(|(_, updated_at_micros, _, _)| *updated_at_micros)
+        .max()
+        .unwrap_or_default();
+    let mut hasher = DefaultHasher::new();
+    templates.hash(&mut hasher);
+
+    NamespaceTemplateSignature {
+        template_count: templates.len(),
+        max_updated_at_micros,
+        template_hash: hasher.finish(),
+    }
 }
 
 fn build_environment(
