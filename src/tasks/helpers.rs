@@ -134,39 +134,6 @@ pub(super) fn identifier_namespace(namespace: &NamespaceResolution) -> String {
     namespace.name.clone()
 }
 
-#[cfg(test)]
-mod tests {
-    use actix_web::http::header::{HeaderMap, HeaderName, HeaderValue};
-
-    use super::idempotency_key_from_headers;
-
-    #[test]
-    fn idempotency_key_from_headers_rejects_non_ascii_values() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            HeaderName::from_static("idempotency-key"),
-            HeaderValue::from_bytes(b"valid-prefix-\xff").unwrap(),
-        );
-
-        let error = idempotency_key_from_headers(&headers).unwrap_err();
-
-        assert!(error.to_string().contains("Idempotency-Key"));
-    }
-
-    #[test]
-    fn idempotency_key_from_headers_returns_valid_value() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            HeaderName::from_static("idempotency-key"),
-            HeaderValue::from_static("same-task"),
-        );
-
-        let key = idempotency_key_from_headers(&headers).unwrap();
-
-        assert_eq!(key.as_deref(), Some("same-task"));
-    }
-}
-
 pub(super) fn namespace_to_resolution(namespace: Namespace) -> NamespaceResolution {
     NamespaceResolution {
         id: namespace.id,
@@ -223,5 +190,38 @@ pub(super) fn normalize_pair(left: i32, right: i32) -> (i32, i32) {
         (left, right)
     } else {
         (right, left)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use actix_web::http::header::{HeaderMap, HeaderName, HeaderValue};
+
+    use super::idempotency_key_from_headers;
+
+    #[test]
+    fn idempotency_key_from_headers_rejects_non_ascii_values() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("idempotency-key"),
+            HeaderValue::from_bytes(b"valid-prefix-\xff").unwrap(),
+        );
+
+        let error = idempotency_key_from_headers(&headers).unwrap_err();
+
+        assert!(error.to_string().contains("Idempotency-Key"));
+    }
+
+    #[test]
+    fn idempotency_key_from_headers_returns_valid_value() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("idempotency-key"),
+            HeaderValue::from_static("same-task"),
+        );
+
+        let key = idempotency_key_from_headers(&headers).unwrap();
+
+        assert_eq!(key.as_deref(), Some("same-task"));
     }
 }
