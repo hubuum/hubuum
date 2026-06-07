@@ -355,6 +355,19 @@ async fn resolve_template(
 }
 
 fn validate_report_submission(runtime: &ReportRuntime) -> Result<(), ApiError> {
+    if runtime.report.relation_context.is_some()
+        && runtime
+            .report
+            .include
+            .as_ref()
+            .and_then(|include| include.related_objects.as_ref())
+            .is_some_and(|related_objects| !related_objects.is_empty())
+    {
+        return Err(ApiError::BadRequest(
+            "include.related_objects cannot be combined with relation_context".to_string(),
+        ));
+    }
+
     let mut query_options = prepare_query_options(&runtime.report)?;
     let _ = resolve_relation_hydration_plan(runtime, &mut query_options)?;
     Ok(())
@@ -851,7 +864,7 @@ fn required_template(
 
 fn render_report_task_output(output: ReportTaskOutputRecord) -> Result<HttpResponse, ApiError> {
     let content_type = ReportContentType::from_mime(&output.content_type)?;
-    let meta: ReportMeta = serde_json::from_value(output.meta_json)?;
+    let _meta: ReportMeta = serde_json::from_value(output.meta_json)?;
     let warnings: Vec<ReportWarning> = serde_json::from_value(output.warnings_json)?;
     let warning_count = warnings.len();
     let truncated = output.truncated;
@@ -873,7 +886,7 @@ fn render_report_task_output(output: ReportTaskOutputRecord) -> Result<HttpRespo
         ReportContentType::TextPlain | ReportContentType::TextHtml | ReportContentType::TextCsv => {
             let mut response = HttpResponse::build(StatusCode::OK);
             response.content_type(content_type.as_mime());
-            for (key, value) in report_headers(warning_count, meta.truncated) {
+            for (key, value) in report_headers(warning_count, truncated) {
                 response.insert_header((key, value));
             }
             Ok(response.body(output.text_output.ok_or_else(|| {
@@ -2346,12 +2359,25 @@ fn enforce_text_output_limit(rendered: &str, report: &ReportRequest) -> Result<(
 
 #[cfg(test)]
 mod tests {
-    use crate::models::{ReportLimits, ReportRequest, ReportScope, ReportScopeKind};
+    use std::collections::HashMap;
+
+    use crate::models::{
+        ReportContentType, ReportInclude, ReportIncludeRelatedObject, ReportLimits, ReportMeta,
+        ReportMissingDataPolicy, ReportRelationContext, ReportRequest, ReportScope,
+        ReportScopeKind, ReportTaskOutputRecord, ReportTemplate,
+    };
 
     use super::{
-        HydrationBudget, inferred_relation_alias, normalize_alias_segment, pluralize_alias,
-        validate_report_limits,
+        HydrationBudget, REPORT_TRUNCATED_HEADER, ReportRuntime, inferred_relation_alias,
+        normalize_alias_segment, pluralize_alias, render_report_task_output,
+        validate_report_limits, validate_report_submission,
     };
+
+    fn test_timestamp() -> chrono::NaiveDateTime {
+        chrono::DateTime::from_timestamp(1_700_000_000, 0)
+            .unwrap()
+            .naive_utc()
+    }
 
     fn report_with_limits(limits: ReportLimits) -> ReportRequest {
         ReportRequest {
@@ -2366,6 +2392,79 @@ mod tests {
             limits: Some(limits),
             include: None,
             relation_context: None,
+        }
+    }
+
+    fn templated_report_with_include(
+        related_objects: HashMap<String, ReportIncludeRelatedObject>,
+    ) -> ReportRequest {
+        ReportRequest {
+            scope: ReportScope {
+                kind: ReportScopeKind::ObjectsInClass,
+                class_id: Some(1),
+                object_id: None,
+            },
+            query: None,
+            output: None,
+            missing_data_policy: None,
+            limits: None,
+            include: Some(ReportInclude {
+                related_objects: Some(related_objects),
+            }),
+            relation_context: Some(ReportRelationContext { depth: Some(1) }),
+        }
+    }
+
+    fn report_runtime(report: ReportRequest) -> ReportRuntime {
+        ReportRuntime {
+            report,
+            content_type: ReportContentType::TextPlain,
+            missing_data_policy: ReportMissingDataPolicy::Strict,
+            template: Some(ReportTemplate {
+                id: 1,
+                namespace_id: 1,
+                name: "summary".to_string(),
+                description: String::new(),
+                content_type: ReportContentType::TextPlain,
+                template: "{{ items|length }}".to_string(),
+                created_at: test_timestamp(),
+                updated_at: test_timestamp(),
+            }),
+            namespace_templates: Vec::new(),
+        }
+    }
+
+    fn report_output_record(
+        meta_truncated: bool,
+        output_truncated: bool,
+    ) -> ReportTaskOutputRecord {
+        ReportTaskOutputRecord {
+            id: 1,
+            task_id: 1,
+            template_name: Some("summary".to_string()),
+            content_type: ReportContentType::TextPlain.as_mime().to_string(),
+            json_output: None,
+            text_output: Some("ok".to_string()),
+            meta_json: serde_json::to_value(ReportMeta {
+                count: 1,
+                truncated: meta_truncated,
+                scope: ReportScope {
+                    kind: ReportScopeKind::ObjectsInClass,
+                    class_id: Some(1),
+                    object_id: None,
+                },
+                content_type: ReportContentType::TextPlain,
+            })
+            .unwrap(),
+            warnings_json: serde_json::json!([]),
+            warning_count: 0,
+            truncated: output_truncated,
+            output_expires_at: test_timestamp(),
+            total_duration_ms: 0,
+            query_duration_ms: 0,
+            hydration_duration_ms: 0,
+            render_duration_ms: 0,
+            created_at: test_timestamp(),
         }
     }
 
@@ -2390,6 +2489,52 @@ mod tests {
         assert_eq!(inferred_relation_alias("Person"), "persons");
         assert_eq!(inferred_relation_alias("Access Policy"), "access_policies");
         assert_eq!(inferred_relation_alias("Person async"), "person_asyncs");
+    }
+
+    #[test]
+    fn rejects_relation_context_with_related_object_includes() {
+        let mut related_objects = HashMap::new();
+        related_objects.insert(
+            "owners".to_string(),
+            ReportIncludeRelatedObject {
+                class_id: 2,
+                class_relation_id: None,
+                direction: None,
+                sort: None,
+                max_depth: None,
+                limit: None,
+            },
+        );
+        let runtime = report_runtime(templated_report_with_include(related_objects));
+
+        let error = validate_report_submission(&runtime).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "include.related_objects cannot be combined with relation_context"
+        );
+    }
+
+    #[test]
+    fn allows_relation_context_with_empty_related_object_includes() {
+        let runtime = report_runtime(templated_report_with_include(HashMap::new()));
+
+        validate_report_submission(&runtime).unwrap();
+    }
+
+    #[test]
+    fn text_report_output_headers_use_persisted_truncated_column() {
+        let response = render_report_task_output(report_output_record(false, true)).unwrap();
+
+        assert_eq!(
+            response
+                .headers()
+                .get(REPORT_TRUNCATED_HEADER)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "true"
+        );
     }
 
     #[test]
