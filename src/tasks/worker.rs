@@ -134,21 +134,27 @@ async fn maybe_cleanup_expired_report_outputs(pool: &DbPool) -> Result<(), ApiEr
     let cleanup_interval = get_config()
         .map(|config| config.report_output_cleanup_interval_seconds)
         .unwrap_or(300);
-    let should_run = {
+    let previous_last_run = {
         let mut state = cleanup_state().lock().map_err(|_| {
             ApiError::InternalServerError("Cleanup state lock poisoned".to_string())
         })?;
         match *state {
-            Some(last_run) if last_run.elapsed() < Duration::from_secs(cleanup_interval) => false,
-            _ => {
+            Some(last_run) if last_run.elapsed() < Duration::from_secs(cleanup_interval) => {
+                return Ok(());
+            }
+            previous_last_run => {
                 *state = Some(Instant::now());
-                true
+                previous_last_run
             }
         }
     };
 
-    if should_run {
-        purge_expired_report_outputs(pool).await?;
+    if let Err(error) = purge_expired_report_outputs(pool).await {
+        let mut state = cleanup_state().lock().map_err(|_| {
+            ApiError::InternalServerError("Cleanup state lock poisoned".to_string())
+        })?;
+        *state = previous_last_run;
+        return Err(error);
     }
 
     Ok(())
