@@ -18,7 +18,7 @@ actix-rt = "2"
 actix-service = "2"
 actix-web = { version = "4" }
 actix-http = { version = "3" }
-argon2 = { version = "0.5", features = ["std"] }
+argon2 = "0.6.0-rc.8"
 bytes = "1"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
