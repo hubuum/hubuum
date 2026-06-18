@@ -60,6 +60,8 @@ rustls = { version = "0.23", features = ["aws-lc-rs", "ring"], optional = true }
 openssl = { version = "0.10.80", optional = true }
 
 [dev-dependencies]
+criterion = "0.8.2"
+iai-callgrind = "0.16.1"
 regex = "1"
 rstest = "0.26"
 
@@ -93,3 +95,47 @@ test = false
 name = "hubuum-openapi"
 path = "src/bin/openapi.rs"
 test = false
+
+[[bench]]
+name = "parse_query_parameter_callgrind"
+harness = false
+
+[[bench]]
+name = "parse_integer_list_callgrind"
+harness = false
+
+[[bench]]
+name = "json_sql_filters_callgrind"
+harness = false
+
+[[bench]]
+name = "database_url_parsing_criterion"
+harness = false
+
+[[bench]]
+name = "object_validation_geo_callgrind"
+harness = false
+
+[[bench]]
+name = "object_validation_nested_callgrind"
+harness = false
+
+[[bench]]
+name = "search_operator_parsing_callgrind"
+harness = false
+
+[[bench]]
+name = "permissions_parsing_callgrind"
+harness = false
+
+[[bench]]
+name = "jsonb_type_inference_callgrind"
+harness = false
+
+[[bench]]
+name = "token_storage_hash_callgrind"
+harness = false
+
+[[bench]]
+name = "request_hash_callgrind"
+harness = false
