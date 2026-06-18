@@ -1,18 +1,21 @@
 use crate::api::openapi::{ApiErrorResponse, CountsResponse};
-use crate::config::get_config;
+use crate::config::{get_config, login_rate_limit_config};
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::extractors::AdminAccess;
+use crate::middlewares::rate_limit;
 use crate::models::class::total_class_count;
 use crate::models::namespace::total_namespace_count;
 use crate::models::object::{objects_per_class_count, total_object_count};
 use crate::utilities::response::json_response;
-use actix_web::{Responder, ResponseError, get, http::StatusCode, web};
+use actix_web::{Responder, ResponseError, delete, get, http::StatusCode, web};
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use diesel::QueryableByName;
 use diesel::RunQueryDsl;
 use diesel::sql_query;
 use diesel::sql_types::{BigInt, Nullable, Timestamp};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::debug;
 use utoipa::ToSchema;
 
@@ -254,4 +257,221 @@ pub async fn get_task_queue_state(
     };
 
     Ok(json_response(response, StatusCode::OK))
+}
+
+/// Effective login rate-limit configuration, echoed back in the admin state endpoint.
+#[derive(Serialize, Debug, ToSchema)]
+pub struct LoginRateLimitConfigResponse {
+    enabled: bool,
+    max_attempts: usize,
+    max_attempts_per_ip: usize,
+    max_attempts_per_subnet: usize,
+    window_seconds: u64,
+    backoff_base_seconds: u64,
+    backoff_max_seconds: u64,
+    subnet_prefix_v4: u8,
+    subnet_prefix_v6: u8,
+}
+
+/// One tracked rate-limit scope (a user+IP pair, an IP, or a subnet).
+#[derive(Serialize, Debug, ToSchema)]
+pub struct LoginRateLimitEntryResponse {
+    /// Opaque, URL-safe id; pass to `DELETE /meta/login-rate-limit/{id}` to release it.
+    id: String,
+    /// Scope kind: `user_ip`, `ip`, or `subnet`.
+    scope: String,
+    /// Human-readable identifier for the scope.
+    identifier: String,
+    /// Failed attempts currently within the sliding window.
+    attempts: usize,
+    /// Whether the scope is locked out right now.
+    locked: bool,
+    /// Remaining lockout time in seconds, if currently locked.
+    locked_for_seconds: Option<u64>,
+    /// Current exponential-backoff level.
+    lockout_level: u32,
+}
+
+#[derive(Serialize, Debug, ToSchema)]
+pub struct LoginRateLimitStateResponse {
+    config: LoginRateLimitConfigResponse,
+    /// Total number of tracked scopes.
+    tracked_entries: usize,
+    /// Number of scopes currently locked out.
+    locked_entries: usize,
+    /// The tracked scopes (filtered by the `include` query parameter).
+    entries: Vec<LoginRateLimitEntryResponse>,
+}
+
+#[derive(Serialize, Debug, ToSchema)]
+pub struct ReleaseRateLimitResponse {
+    released: bool,
+}
+
+#[derive(Serialize, Debug, ToSchema)]
+pub struct ClearRateLimitResponse {
+    cleared: usize,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct LoginRateLimitQuery {
+    /// `locked` (default) returns only locked scopes; `all` returns every tracked scope.
+    include: Option<String>,
+}
+
+/// Split a raw limiter key into its scope kind and human-readable identifier.
+fn scope_and_identifier(key: &str) -> (&'static str, String) {
+    if let Some(rest) = key.strip_prefix("u:") {
+        ("user_ip", rest.to_string())
+    } else if let Some(rest) = key.strip_prefix("i:") {
+        ("ip", rest.to_string())
+    } else if let Some(rest) = key.strip_prefix("s:") {
+        ("subnet", rest.to_string())
+    } else {
+        ("unknown", key.to_string())
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v0/meta/login-rate-limit",
+    tag = "meta",
+    security(("bearer_auth" = [])),
+    params(
+        ("include" = Option<String>, Query, description = "`locked` (default) or `all`")
+    ),
+    responses(
+        (status = 200, description = "Login rate-limit configuration and tracked scopes", body = LoginRateLimitStateResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse)
+    )
+)]
+#[get("login-rate-limit")]
+pub async fn get_login_rate_limit_state(
+    requestor: AdminAccess,
+    query: web::Query<LoginRateLimitQuery>,
+) -> Result<impl Responder, ApiError> {
+    let cfg = login_rate_limit_config();
+    let snapshots = rate_limit::snapshot().await;
+    let tracked_entries = snapshots.len();
+    let locked_entries = snapshots.iter().filter(|entry| entry.locked).count();
+
+    let include_all = query.include.as_deref() == Some("all");
+    let mut entries: Vec<LoginRateLimitEntryResponse> = snapshots
+        .into_iter()
+        .filter(|entry| include_all || entry.locked)
+        .map(|entry| {
+            let (scope, identifier) = scope_and_identifier(&entry.key);
+            LoginRateLimitEntryResponse {
+                id: URL_SAFE_NO_PAD.encode(&entry.key),
+                scope: scope.to_string(),
+                identifier,
+                attempts: entry.attempts,
+                locked: entry.locked,
+                locked_for_seconds: entry.locked_for.map(|remaining| remaining.as_secs()),
+                lockout_level: entry.lockout_level,
+            }
+        })
+        .collect();
+
+    // Locked scopes first (the actionable ones), then by identifier for stable output.
+    entries.sort_by(|a, b| {
+        b.locked
+            .cmp(&a.locked)
+            .then_with(|| a.identifier.cmp(&b.identifier))
+    });
+
+    debug!(
+        message = "Login rate-limit state requested",
+        requestor = requestor.user.id
+    );
+
+    let response = LoginRateLimitStateResponse {
+        config: LoginRateLimitConfigResponse {
+            enabled: cfg.enabled,
+            max_attempts: cfg.max_attempts,
+            max_attempts_per_ip: cfg.max_attempts_per_ip,
+            max_attempts_per_subnet: cfg.max_attempts_per_subnet,
+            window_seconds: cfg.window_seconds,
+            backoff_base_seconds: cfg.backoff_base_seconds,
+            backoff_max_seconds: cfg.backoff_max_seconds,
+            subnet_prefix_v4: cfg.subnet_prefix_v4,
+            subnet_prefix_v6: cfg.subnet_prefix_v6,
+        },
+        tracked_entries,
+        locked_entries,
+        entries,
+    };
+
+    Ok(json_response(response, StatusCode::OK))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v0/meta/login-rate-limit/{id}",
+    tag = "meta",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "Opaque entry id from the list endpoint")
+    ),
+    responses(
+        (status = 200, description = "Entry released", body = ReleaseRateLimitResponse),
+        (status = 400, description = "Invalid entry id", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 404, description = "Entry not found", body = ApiErrorResponse)
+    )
+)]
+#[delete("login-rate-limit/{id}")]
+pub async fn release_login_rate_limit_entry(
+    requestor: AdminAccess,
+    id: web::Path<String>,
+) -> Result<impl Responder, ApiError> {
+    let id = id.into_inner();
+    let key = URL_SAFE_NO_PAD
+        .decode(id.as_bytes())
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .ok_or_else(|| ApiError::BadRequest("Invalid rate-limit entry id".to_string()))?;
+
+    if !rate_limit::release_entry(&key).await {
+        return Err(ApiError::NotFound("Rate-limit entry not found".to_string()));
+    }
+
+    debug!(
+        message = "Login rate-limit entry released",
+        requestor = requestor.user.id
+    );
+
+    Ok(json_response(
+        ReleaseRateLimitResponse { released: true },
+        StatusCode::OK,
+    ))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v0/meta/login-rate-limit",
+    tag = "meta",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "All entries cleared", body = ClearRateLimitResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse)
+    )
+)]
+#[delete("login-rate-limit")]
+pub async fn clear_login_rate_limit(requestor: AdminAccess) -> Result<impl Responder, ApiError> {
+    let cleared = rate_limit::clear_all().await;
+
+    debug!(
+        message = "Login rate-limit state cleared",
+        requestor = requestor.user.id,
+        cleared
+    );
+
+    Ok(json_response(
+        ClearRateLimitResponse { cleared },
+        StatusCode::OK,
+    ))
 }

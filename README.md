@@ -108,6 +108,9 @@ exponentially (doubling from the backoff base up to the backoff maximum).
 Accurate throttling behind a reverse proxy depends on correct client-IP resolution; see
 [Resolving the Real Client IP Behind a Proxy](#resolving-the-real-client-ip-behind-a-proxy).
 
+For the full model (scopes, backoff, client-IP resolution, and the admin endpoints for
+inspecting and releasing throttled scopes), see [docs/login_rate_limiting.md](docs/login_rate_limiting.md).
+
 ### Token Hash Key
 
 - `HUBUUM_TOKEN_HASH_KEY` sets the server-side key used for deterministic token hashing at rest.

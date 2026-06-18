@@ -242,6 +242,71 @@ pub(crate) async fn clear_login_failures(username: &str, client_ip: Option<IpAdd
     LOGIN_ATTEMPTS.lock().await.remove(&key);
 }
 
+/// A point-in-time view of one tracked rate-limit scope, for the admin observability API.
+pub(crate) struct ScopeSnapshot {
+    /// Raw internal map key (e.g. `u:alice|1.2.3.4`, `i:1.2.3.4`, `s:1.2.3.0/24`).
+    pub key: String,
+    /// Failed attempts currently inside the sliding window.
+    pub attempts: usize,
+    /// Whether the scope is locked out right now.
+    pub locked: bool,
+    /// Remaining lockout time, if currently locked.
+    pub locked_for: Option<Duration>,
+    /// Current exponential-backoff level.
+    pub lockout_level: u32,
+}
+
+/// Snapshot every tracked scope for the admin API. Read-only: the live window count is
+/// computed without mutating state, and remaining lockout time is derived from the
+/// monotonic clock.
+pub(crate) async fn snapshot() -> Vec<ScopeSnapshot> {
+    let cfg = login_rate_limit_config();
+    let window = Duration::from_secs(cfg.window_seconds);
+    let now = Instant::now();
+    let guard = LOGIN_ATTEMPTS.lock().await;
+
+    guard
+        .iter()
+        .map(|(key, state)| {
+            let attempts = state
+                .attempts
+                .iter()
+                .filter(|at| now.duration_since(**at) <= window)
+                .count();
+            let locked_for = state
+                .locked_until
+                .filter(|until| now < *until)
+                .map(|until| until.duration_since(now));
+            ScopeSnapshot {
+                key: key.clone(),
+                attempts,
+                locked: locked_for.is_some(),
+                locked_for,
+                lockout_level: state.lockout_level,
+            }
+        })
+        .collect()
+}
+
+/// Release a single tracked scope by its raw key. Returns whether an entry was removed.
+pub(crate) async fn release_entry(key: &str) -> bool {
+    LOGIN_ATTEMPTS.lock().await.remove(key).is_some()
+}
+
+/// Clear all tracked scopes. Returns the number of entries removed.
+pub(crate) async fn clear_all() -> usize {
+    let mut guard = LOGIN_ATTEMPTS.lock().await;
+    let removed = guard.len();
+    guard.clear();
+    removed
+}
+
+/// Serializes tests that touch the process-global limiter state (auth login tests and the
+/// admin `/meta/login-rate-limit` tests) so they do not observe each other's failures.
+#[cfg(test)]
+pub(crate) static LOGIN_RATE_LIMIT_TEST_LOCK: LazyLock<Mutex<()>> =
+    LazyLock::new(|| Mutex::new(()));
+
 #[cfg(test)]
 pub(crate) async fn reset_login_rate_limit_for_tests() {
     LOGIN_ATTEMPTS.lock().await.clear();

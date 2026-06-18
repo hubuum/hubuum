@@ -81,6 +81,8 @@ Hubuum can be configured using environment variables or command-line arguments. 
 | `HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6` | `64` | IPv6 prefix length for per-subnet aggregation |
 | `HUBUUM_TOKEN_HASH_KEY` | *(generated per startup if unset)* | Key used for deterministic token hashing at rest |
 
+**Login rate-limit note**: These settings throttle failed logins across layered scopes with exponential backoff. For the full model, client-IP resolution behind proxies, and the admin endpoints for inspecting and releasing throttled scopes, see [login_rate_limiting.md](login_rate_limiting.md).
+
 **Token hash key note**: If `HUBUUM_TOKEN_HASH_KEY` is not set, Hubuum generates an ephemeral key on startup and logs a warning. Tokens issued before restart will be invalid after restart.
 
 ### TLS Configuration
