@@ -696,4 +696,33 @@ mod tests {
         let error = parse_unified_search_query("q=server&foo=bar").unwrap_err();
         assert_eq!(error.to_string(), "Invalid query parameter: 'foo'");
     }
+
+    #[test]
+    fn parse_with_limits_uses_default_when_absent() {
+        let parsed = parse_unified_search_query_with_limits("q=server", 25, 100).unwrap();
+        assert_eq!(parsed.limit_per_kind, 25);
+    }
+
+    #[test]
+    fn parse_with_limits_validates_against_provided_max() {
+        let parsed =
+            parse_unified_search_query_with_limits("q=server&limit_per_kind=50", 25, 100).unwrap();
+        assert_eq!(parsed.limit_per_kind, 50);
+
+        let error =
+            parse_unified_search_query_with_limits("q=server&limit_per_kind=101", 25, 100)
+                .unwrap_err();
+        assert_eq!(error.to_string(), "limit must be at most 100");
+    }
+
+    #[test]
+    fn cursor_round_trips_through_encode_and_decode() {
+        let token = UnifiedSearchCursorToken {
+            rank: 2,
+            name: "asset-001".to_string(),
+            id: 4242,
+        };
+        let encoded = encode_cursor(&token).unwrap();
+        assert_eq!(decode_cursor(&encoded).unwrap(), token);
+    }
 }

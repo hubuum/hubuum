@@ -657,4 +657,22 @@ mod tests {
             Some("(((users.email < 'b@example.com' OR users.email IS NULL)))".to_string())
         );
     }
+
+    #[test]
+    fn validate_page_limit_with_max_accepts_within_range() {
+        assert_eq!(validate_page_limit_with_max(10, 100).unwrap(), 10);
+        assert_eq!(validate_page_limit_with_max(100, 100).unwrap(), 100);
+    }
+
+    #[test]
+    fn validate_page_limit_with_max_rejects_zero() {
+        let error = validate_page_limit_with_max(0, 100).unwrap_err();
+        assert_eq!(error.to_string(), "limit must be greater than 0");
+    }
+
+    #[test]
+    fn validate_page_limit_with_max_rejects_above_maximum() {
+        let error = validate_page_limit_with_max(101, 100).unwrap_err();
+        assert_eq!(error.to_string(), "limit must be at most 100");
+    }
 }
