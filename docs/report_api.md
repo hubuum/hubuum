@@ -148,7 +148,7 @@ Report objects related to a root object:
 }
 ```
 
-`related_objects` first verifies that `object_id` belongs to `class_id`, then returns matching related objects. The returned items include the related object fields plus the relation `path`, so templates can render both the object data and how it was reached. The `depth` field is available for filtering and sorting through `query`, but is not included in the rendered item payload.
+`related_objects` first verifies that `object_id` belongs to `class_id`, then returns matching related objects. JSON output items include the related object fields plus the relation `path`. For templated output, the report is rooted at the source object: `items` is `[source]`, and relation-aware traversal is exposed through `source.related`, `source.reachable`, and `source.paths`. The `depth` field is available for filtering and sorting through `query`, but is not included in the rendered item payload.
 
 ### Including related objects
 

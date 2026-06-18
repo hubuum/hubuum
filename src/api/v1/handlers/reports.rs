@@ -35,7 +35,9 @@ use crate::models::{
     ReportTemplate, ReportTemplateID, ReportWarning, TaskKind, TaskRecord, TaskResponse, User,
 };
 use crate::pagination::page_limits_or_defaults;
-use crate::tasks::{ensure_task_worker_running, kick_task_worker, request_hash};
+use crate::tasks::{
+    ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
+};
 use crate::traits::{GroupMemberships, NamespaceAccessors, Search, SelfAccessors};
 use crate::utilities::reporting::render_template;
 use crate::utilities::response::{json_response, json_response_with_header};
@@ -200,11 +202,7 @@ pub async fn run_report(
     let report = report.into_inner();
     let payload = serde_json::to_value(&report)?;
     let hash = request_hash(&payload)?;
-    let idempotency_key = req
-        .headers()
-        .get("Idempotency-Key")
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_string);
+    let idempotency_key = idempotency_key_from_headers(req.headers())?;
 
     let runtime = prepare_report_runtime(&pool, &requestor.user, report).await?;
     validate_report_submission(&runtime)?;

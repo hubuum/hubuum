@@ -361,7 +361,7 @@ For data keys that contain dots, spaces, or punctuation, use bracket notation:
 
 ## Relation report example
 
-Relation scopes use the same template context. For `related_objects`, each item is a related object with its normal object fields plus a `path` array describing the relation traversal.
+Direct relation scopes use the normal `items` context. Templated `related_objects` reports are rooted at the requested source object: `items` contains that single hydrated source object, and `source` points to the same value.
 
 Example report request:
 
@@ -383,8 +383,8 @@ Example report request:
 Template:
 
 ```text
-Related objects for {{request.scope.object_id}}
-{% for item in items %}- {{ item.name }} path={{ item.path }} host={{ item.data.hostname }}
+Related objects for {{ source.name }}
+{% for item in source.reachable.rooms %}- {{ item.name }} path={{ item.path }}
 {% endfor %}
 ```
 
