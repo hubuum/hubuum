@@ -100,6 +100,25 @@ where
 }
 
 pub fn init_pool(database_url: &str, max_size: u32) -> DbPool {
+    // Read the optional pool-global statement timeout from config. This is
+    // intentionally pool-global: every connection handed out by this pool
+    // inherits it, so it bounds all DB work (reports, imports, admin commands,
+    // health/auth queries), not just report stages. 0 = disabled.
+    let statement_timeout_ms = crate::config::get_config()
+        .map(|config| config.db_statement_timeout_ms)
+        .unwrap_or(0);
+    init_pool_with_statement_timeout(database_url, max_size, statement_timeout_ms)
+}
+
+/// Build a pool with an explicit Postgres `statement_timeout` (in milliseconds)
+/// applied to every connection on acquisition. A value of 0 disables the
+/// timeout. Exposed so tests can exercise the customizer without mutating the
+/// global config.
+pub fn init_pool_with_statement_timeout(
+    database_url: &str,
+    max_size: u32,
+    statement_timeout_ms: u64,
+) -> DbPool {
     let database_url_components = DatabaseUrlComponents::new(database_url);
 
     match database_url_components {
@@ -121,12 +140,45 @@ pub fn init_pool(database_url: &str, max_size: u32) -> DbPool {
 
     let manager = ConnectionManager::<PgConnection>::new(database_url);
 
-    match Pool::builder().max_size(max_size).build(manager) {
+    let mut builder = Pool::builder().max_size(max_size);
+    if statement_timeout_ms > 0 {
+        builder = builder.connection_customizer(Box::new(StatementTimeoutCustomizer {
+            statement_timeout_ms,
+        }));
+    }
+
+    match builder.build(manager) {
         Ok(pool) => pool,
         Err(e) => fatal_error(
             &format!("Failed to create database pool: {}", e),
             EXIT_CODE_DATABASE_ERROR,
         ),
+    }
+}
+
+/// r2d2 connection customizer that applies a Postgres `statement_timeout` to
+/// each connection as it is acquired from the pool. Postgres cancels any
+/// statement exceeding this budget server-side and returns an error, which
+/// frees the (synchronous) connection - a genuine in-flight timeout, unlike a
+/// post-completion wall-clock check.
+#[derive(Debug)]
+struct StatementTimeoutCustomizer {
+    statement_timeout_ms: u64,
+}
+
+impl diesel::r2d2::CustomizeConnection<PgConnection, diesel::r2d2::Error>
+    for StatementTimeoutCustomizer
+{
+    fn on_acquire(&self, conn: &mut PgConnection) -> Result<(), diesel::r2d2::Error> {
+        use diesel::RunQueryDsl;
+        // `set_config(name, value, is_local=false)` sets the value for the
+        // session; a bare numeric string is interpreted as milliseconds. The
+        // value is bound rather than formatted into the SQL.
+        diesel::sql_query("SELECT set_config('statement_timeout', $1, false)")
+            .bind::<diesel::sql_types::Text, _>(self.statement_timeout_ms.to_string())
+            .execute(conn)
+            .map_err(diesel::r2d2::Error::QueryError)?;
+        Ok(())
     }
 }
 
@@ -160,6 +212,40 @@ mod tests {
         let pool_size = config.db_pool_size;
         let pool = init_pool(&database_url, pool_size);
         assert_eq!(pool.max_size(), pool_size);
+    }
+
+    #[test]
+    fn statement_timeout_cancels_slow_queries() {
+        let config = get_config().expect("Failed to load config for test");
+        let database_url = config.database_url.clone();
+
+        // A tiny timeout must cancel a query that sleeps past the budget...
+        let bounded = init_pool_with_statement_timeout(&database_url, 1, 50);
+        let mut conn = bounded.get().expect("failed to acquire bounded connection");
+        let slow = diesel::sql_query("SELECT pg_sleep(1)").execute(&mut conn);
+        assert!(
+            slow.is_err(),
+            "pg_sleep(1) should be cancelled by a 50ms statement_timeout"
+        );
+        drop(conn);
+
+        // ...while a fast query on a fresh checkout still succeeds, proving the
+        // connection was returned in a usable state.
+        let mut conn = bounded
+            .get()
+            .expect("failed to re-acquire bounded connection");
+        diesel::sql_query("SELECT 1")
+            .execute(&mut conn)
+            .expect("fast query should succeed under the timeout");
+
+        // With the timeout disabled (0), the same sleep completes.
+        let unbounded = init_pool_with_statement_timeout(&database_url, 1, 0);
+        let mut conn = unbounded
+            .get()
+            .expect("failed to acquire unbounded connection");
+        diesel::sql_query("SELECT pg_sleep(0.1)")
+            .execute(&mut conn)
+            .expect("pg_sleep should complete when statement_timeout is disabled");
     }
 
     #[test]

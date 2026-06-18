@@ -1,429 +1,555 @@
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, OnceLock, RwLock};
 
+use minijinja::value::Value;
+use minijinja::{
+    AutoEscape, Environment, Error as MiniJinjaError, ErrorKind as MiniJinjaErrorKind, State,
+    UndefinedBehavior, escape_formatter,
+};
+
+use crate::config::get_config;
 use crate::errors::ApiError;
-use crate::models::{ReportContentType, ReportMissingDataPolicy, ReportWarning};
+use crate::models::{ReportContentType, ReportMissingDataPolicy, ReportTemplate, ReportWarning};
 
-#[derive(Clone, Debug, PartialEq)]
-enum PathSegment {
-    Key(String),
-    Index(usize),
+const TEMPLATE_ENV_CACHE_MAX_ENTRIES: usize = 128;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct TemplateEnvCacheKey {
+    namespace_id: i32,
+    namespace_signature: NamespaceTemplateSignature,
+    template_name: String,
+    content_type: ReportContentType,
+    missing_data_policy: ReportMissingDataPolicy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct NamespaceTemplateSignature {
+    template_count: usize,
+    max_updated_at_micros: i64,
+    template_hash: u64,
+}
+
+struct CachedTemplateEnvironment {
+    env: Environment<'static>,
+    template_name: String,
+}
+
+static TEMPLATE_ENV_CACHE: OnceLock<
+    RwLock<HashMap<TemplateEnvCacheKey, Arc<CachedTemplateEnvironment>>>,
+> = OnceLock::new();
+
+#[derive(Debug, Default)]
+struct TemplateWarningCapture {
+    missing_value_keys: HashSet<(String, Option<String>)>,
+    warnings: Vec<ReportWarning>,
+}
+
+thread_local! {
+    static TEMPLATE_WARNING_CAPTURE: RefCell<Option<TemplateWarningCapture>> = const { RefCell::new(None) };
+}
+
+pub fn validate_template(
+    template_name: &str,
+    template_source: &str,
+    namespace_id: i32,
+    namespace_templates: &[ReportTemplate],
+    content_type: ReportContentType,
+) -> Result<(), ApiError> {
+    let env = build_environment(
+        template_name,
+        template_source,
+        namespace_id,
+        namespace_templates,
+        content_type,
+        ReportMissingDataPolicy::Omit,
+    )?;
+
+    env.env
+        .get_template(&env.template_name)
+        .map_err(|error| template_error("Template validation failed", error))?
+        .render(validation_context(content_type))
+        .map_err(|error| template_error("Template validation failed", error))?;
+
+    Ok(())
 }
 
 pub fn render_template(
-    template: &str,
+    template: &ReportTemplate,
+    namespace_templates: &[ReportTemplate],
     context: &serde_json::Value,
     content_type: ReportContentType,
     missing_data_policy: ReportMissingDataPolicy,
 ) -> Result<(String, Vec<ReportWarning>), ApiError> {
-    let mut warnings = Vec::new();
-    let rendered = render_section(
-        template,
-        context,
-        context,
+    let cache_key = TemplateEnvCacheKey {
+        namespace_id: template.namespace_id,
+        namespace_signature: namespace_signature(template.namespace_id, namespace_templates),
+        template_name: template.name.clone(),
         content_type,
         missing_data_policy,
-        &mut warnings,
-    )?;
-    Ok((rendered, warnings))
+    };
+
+    let cached = {
+        let cache = template_env_cache()
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        cache.get(&cache_key).cloned()
+    };
+
+    let env = match cached {
+        Some(env) => env,
+        None => {
+            let built = Arc::new(build_environment(
+                &template.name,
+                &template.template,
+                template.namespace_id,
+                namespace_templates,
+                content_type,
+                missing_data_policy,
+            )?);
+            let mut cache = template_env_cache()
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            cache.retain(|key, _| {
+                key.namespace_id != cache_key.namespace_id
+                    || key.namespace_signature == cache_key.namespace_signature
+            });
+            if cache.len() >= TEMPLATE_ENV_CACHE_MAX_ENTRIES
+                && let Some(eviction_key) = cache.keys().next().cloned()
+            {
+                cache.remove(&eviction_key);
+            }
+            cache.insert(cache_key, built.clone());
+            built
+        }
+    };
+
+    begin_template_warning_capture();
+    let rendered = env
+        .env
+        .get_template(&env.template_name)
+        .map_err(|error| template_error("Template lookup failed", error))?
+        .render(context)
+        .map_err(|error| template_error("Template render failed", error));
+    let warnings = finish_template_warning_capture();
+
+    Ok((rendered?, warnings))
 }
 
-fn render_section(
-    template: &str,
-    root: &serde_json::Value,
-    current: &serde_json::Value,
+fn template_env_cache()
+-> &'static RwLock<HashMap<TemplateEnvCacheKey, Arc<CachedTemplateEnvironment>>> {
+    TEMPLATE_ENV_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn namespace_signature(
+    namespace_id: i32,
+    namespace_templates: &[ReportTemplate],
+) -> NamespaceTemplateSignature {
+    let mut templates = namespace_templates
+        .iter()
+        .filter(|template| template.namespace_id == namespace_id)
+        .map(|template| {
+            (
+                template.id,
+                template.updated_at.and_utc().timestamp_micros(),
+                template.name.as_str(),
+                template.template.as_str(),
+            )
+        })
+        .collect::<Vec<_>>();
+    templates.sort_unstable();
+
+    let max_updated_at_micros = templates
+        .iter()
+        .map(|(_, updated_at_micros, _, _)| *updated_at_micros)
+        .max()
+        .unwrap_or_default();
+    let mut hasher = DefaultHasher::new();
+    templates.hash(&mut hasher);
+
+    NamespaceTemplateSignature {
+        template_count: templates.len(),
+        max_updated_at_micros,
+        template_hash: hasher.finish(),
+    }
+}
+
+fn build_environment(
+    template_name: &str,
+    template_source: &str,
+    namespace_id: i32,
+    namespace_templates: &[ReportTemplate],
     content_type: ReportContentType,
     missing_data_policy: ReportMissingDataPolicy,
-    warnings: &mut Vec<ReportWarning>,
-) -> Result<String, ApiError> {
-    let mut out = String::new();
-    let mut index = 0usize;
+) -> Result<CachedTemplateEnvironment, ApiError> {
+    let mut env = Environment::new();
+    let template_map = Arc::new(build_namespace_template_map(
+        namespace_id,
+        template_name,
+        template_source,
+        namespace_templates,
+    ));
 
-    while let Some(relative_start) = template[index..].find("{{") {
-        let start = index + relative_start;
-        out.push_str(&template[index..start]);
-
-        let end = template[start + 2..]
-            .find("}}")
-            .map(|offset| start + 2 + offset)
-            .ok_or_else(|| ApiError::BadRequest("Unterminated template tag".to_string()))?;
-
-        let tag = template[start + 2..end].trim();
-        if let Some(expr) = tag.strip_prefix("#each ") {
-            let block_start = end + 2;
-            let (inner, next_index) = extract_each_block(template, block_start)?;
-            let Some(value) = lookup_value(root, current, expr.trim())? else {
-                handle_missing_loop(expr.trim(), missing_data_policy, warnings)?;
-                index = next_index;
-                continue;
-            };
-
-            let Some(items) = value.as_array() else {
-                match missing_data_policy {
-                    ReportMissingDataPolicy::Strict => {
-                        return Err(ApiError::BadRequest(format!(
-                            "Template path '{}' is not iterable",
-                            expr.trim()
-                        )));
-                    }
-                    ReportMissingDataPolicy::Null | ReportMissingDataPolicy::Omit => {
-                        warnings.push(ReportWarning {
-                            code: "invalid_each_target".to_string(),
-                            message: format!(
-                                "Template path '{}' did not resolve to an array",
-                                expr.trim()
-                            ),
-                            path: Some(expr.trim().to_string()),
-                        });
-                        index = next_index;
-                        continue;
-                    }
-                }
-            };
-
-            for item in items {
-                out.push_str(&render_section(
-                    inner,
-                    root,
-                    item,
-                    content_type,
-                    missing_data_policy,
-                    warnings,
-                )?);
-            }
-            index = next_index;
-            continue;
+    env.set_keep_trailing_newline(true);
+    env.set_undefined_behavior(undefined_behavior(missing_data_policy));
+    let recursion_limit = get_config()
+        .map(|config| config.report_template_recursion_limit)
+        .unwrap_or(64);
+    env.set_recursion_limit(recursion_limit);
+    let fuel = get_config()
+        .map(|config| config.report_template_fuel)
+        .unwrap_or(50_000);
+    env.set_fuel(Some(fuel));
+    env.set_auto_escape_callback(move |_| match content_type {
+        ReportContentType::TextHtml => AutoEscape::Html,
+        _ => AutoEscape::None,
+    });
+    env.set_formatter(move |out, state, value| match missing_data_policy {
+        ReportMissingDataPolicy::Strict => escape_formatter(out, state, value),
+        ReportMissingDataPolicy::Omit => format_nullable_value(out, state, value, None),
+        ReportMissingDataPolicy::Null => format_nullable_value(out, state, value, Some("null")),
+    });
+    env.set_loader(move |name| {
+        if name.contains('/') || name.contains("::") {
+            return Ok(None);
         }
+        Ok(template_map.get(name).cloned())
+    });
+    register_curated_helpers(&mut env);
+    env.add_template_owned(template_name.to_string(), template_source.to_string())
+        .map_err(|error| template_error("Template load failed", error))?;
 
-        if tag == "/each" {
-            return Err(ApiError::BadRequest(
-                "Unexpected closing template tag '{{/each}}'".to_string(),
+    Ok(CachedTemplateEnvironment {
+        env,
+        template_name: template_name.to_string(),
+    })
+}
+
+fn build_namespace_template_map(
+    namespace_id: i32,
+    template_name: &str,
+    template_source: &str,
+    namespace_templates: &[ReportTemplate],
+) -> HashMap<String, String> {
+    let mut templates = namespace_templates
+        .iter()
+        .filter(|template| template.namespace_id == namespace_id)
+        .map(|template| (template.name.clone(), template.template.clone()))
+        .collect::<HashMap<_, _>>();
+    templates.insert(template_name.to_string(), template_source.to_string());
+    templates
+}
+
+fn validation_context(content_type: ReportContentType) -> serde_json::Value {
+    serde_json::json!({
+        "items": [],
+        "meta": {
+            "count": 0,
+            "truncated": false,
+            "scope": {
+                "kind": "objects_in_class",
+                "class_id": 0,
+                "object_id": 0,
+            },
+            "content_type": content_type.as_mime(),
+        },
+        "warnings": [],
+        "request": {
+            "scope": {
+                "kind": "objects_in_class",
+                "class_id": 0,
+                "object_id": 0,
+            },
+            "query": "",
+        },
+        "source": {
+            "id": 0,
+            "name": "",
+            "description": "",
+            "namespace_id": 0,
+            "hubuum_class_id": 0,
+            "data": {},
+            "path": [],
+            "path_objects": [],
+            "related": {},
+            "reachable": {},
+            "paths": {},
+        },
+    })
+}
+
+fn undefined_behavior(missing_data_policy: ReportMissingDataPolicy) -> UndefinedBehavior {
+    match missing_data_policy {
+        ReportMissingDataPolicy::Strict => UndefinedBehavior::Strict,
+        ReportMissingDataPolicy::Null | ReportMissingDataPolicy::Omit => {
+            UndefinedBehavior::Chainable
+        }
+    }
+}
+
+fn format_nullable_value(
+    out: &mut minijinja::Output,
+    state: &minijinja::State,
+    value: &Value,
+    replacement: Option<&str>,
+) -> Result<(), MiniJinjaError> {
+    if value.is_undefined() {
+        record_missing_value_warning(state, None);
+        if let Some(replacement) = replacement {
+            out.write_str(replacement)?;
+        }
+        return Ok(());
+    }
+
+    if value.is_none() {
+        if let Some(replacement) = replacement {
+            out.write_str(replacement)?;
+        }
+        return Ok(());
+    }
+
+    escape_formatter(out, state, value)
+}
+
+fn register_curated_helpers(env: &mut Environment<'static>) {
+    env.add_filter("csv_cell", csv_cell_filter);
+    env.add_filter("tojson", tojson_filter);
+    env.add_filter("default_if_empty", default_if_empty_filter);
+    env.add_filter("format_datetime", format_datetime_filter);
+    env.add_filter("join_nonempty", join_nonempty_filter);
+    env.add_function("coalesce", coalesce_function);
+}
+
+fn csv_cell_filter(value: Value) -> String {
+    let rendered = if value.is_none() || value.is_undefined() {
+        String::new()
+    } else {
+        value.to_string()
+    };
+    let guarded = if csv_cell_needs_formula_guard(&rendered) {
+        // Neutralize spreadsheet formula injection: Excel/Sheets/LibreOffice
+        // interpret a cell that begins with a formula trigger as a formula.
+        // Prefixing a single quote forces the cell to be treated as text.
+        format!("'{rendered}")
+    } else {
+        rendered
+    };
+    if guarded.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", guarded.replace('"', "\"\""))
+    } else {
+        guarded
+    }
+}
+
+/// Returns true when a CSV cell would be interpreted as a formula by a
+/// spreadsheet application and therefore must be neutralized.
+///
+/// Leading spaces and tabs are ignored by spreadsheets when deciding whether a
+/// cell is a formula, so we look past leading spaces/tabs for the trigger
+/// characters `=`, `+`, `-`, `@`. A cell that itself begins with a control
+/// character (tab, CR, LF) is also treated as dangerous.
+fn csv_cell_needs_formula_guard(rendered: &str) -> bool {
+    match rendered.chars().next() {
+        Some('\t' | '\r' | '\n') => true,
+        Some(_) => rendered
+            .trim_start_matches([' ', '\t'])
+            .starts_with(['=', '+', '-', '@']),
+        None => false,
+    }
+}
+
+fn tojson_filter(value: Value) -> Result<String, MiniJinjaError> {
+    serde_json::to_string(&value).map_err(|error| {
+        MiniJinjaError::new(
+            MiniJinjaErrorKind::InvalidOperation,
+            "unable to serialize template value as JSON",
+        )
+        .with_source(error)
+    })
+}
+
+fn default_if_empty_filter(state: &State<'_, '_>, value: Value, fallback: Value) -> Value {
+    if value.is_undefined() {
+        record_missing_value_warning(state, None);
+    }
+    if value_is_missing_or_empty(&value) {
+        fallback
+    } else {
+        value
+    }
+}
+
+fn format_datetime_filter(value: Value, format: Option<String>) -> Result<String, MiniJinjaError> {
+    let format = format.unwrap_or_else(|| "iso".to_string());
+    let raw = match value.as_str() {
+        Some(raw) if !raw.trim().is_empty() => raw.trim(),
+        _ if value.is_none() || value.is_undefined() => return Ok(String::new()),
+        _ => {
+            return Err(MiniJinjaError::new(
+                MiniJinjaErrorKind::InvalidOperation,
+                "format_datetime expects an RFC3339 or Hubuum timestamp string",
             ));
         }
+    };
 
-        let rendered = match lookup_value(root, current, tag)? {
-            Some(value) => stringify_value(value, content_type),
-            None => handle_missing_value(tag, missing_data_policy, warnings)?,
-        };
-        out.push_str(&rendered);
-        index = end + 2;
-    }
+    let parsed = parse_template_datetime(raw).ok_or_else(|| {
+        MiniJinjaError::new(
+            MiniJinjaErrorKind::InvalidOperation,
+            format!("Unable to parse '{raw}' as a supported datetime"),
+        )
+    })?;
 
-    out.push_str(&template[index..]);
-    Ok(out)
-}
-
-fn extract_each_block(template: &str, block_start: usize) -> Result<(&str, usize), ApiError> {
-    let mut cursor = block_start;
-    let mut depth = 1usize;
-
-    while let Some(relative_start) = template[cursor..].find("{{") {
-        let start = cursor + relative_start;
-        let end = template[start + 2..]
-            .find("}}")
-            .map(|offset| start + 2 + offset)
-            .ok_or_else(|| ApiError::BadRequest("Unterminated template tag".to_string()))?;
-        let tag = template[start + 2..end].trim();
-
-        if tag.starts_with("#each ") {
-            depth += 1;
-        } else if tag == "/each" {
-            depth -= 1;
-            if depth == 0 {
-                return Ok((&template[block_start..start], end + 2));
-            }
+    Ok(match format.as_str() {
+        "iso" => parsed.to_rfc3339(),
+        "date" => parsed.format("%Y-%m-%d").to_string(),
+        "datetime" => parsed.format("%Y-%m-%d %H:%M:%S").to_string(),
+        "time" => parsed.format("%H:%M:%S").to_string(),
+        other => {
+            return Err(MiniJinjaError::new(
+                MiniJinjaErrorKind::InvalidOperation,
+                format!("Unsupported datetime format '{other}'"),
+            ));
         }
-
-        cursor = end + 2;
-    }
-
-    Err(ApiError::BadRequest(
-        "Missing closing template tag '{{/each}}'".to_string(),
-    ))
+    })
 }
 
-fn lookup_value<'a>(
-    root: &'a serde_json::Value,
-    current: &'a serde_json::Value,
-    expr: &str,
-) -> Result<Option<&'a serde_json::Value>, ApiError> {
-    let expr = expr.trim();
-    if expr.is_empty() {
-        return Ok(None);
-    }
+fn join_nonempty_filter(value: Value, sep: Option<String>) -> Result<String, MiniJinjaError> {
+    let joiner = sep.unwrap_or_else(|| ", ".to_string());
+    let items = value.try_iter().map_err(|_| {
+        MiniJinjaError::new(
+            MiniJinjaErrorKind::InvalidOperation,
+            "join_nonempty expects a list-like value",
+        )
+    })?;
 
-    if expr == "this" {
-        return Ok(Some(current));
-    }
-
-    let candidates = candidate_paths(expr)?;
-    for (base, path) in candidates {
-        let value = match base.as_str() {
-            "root" => walk_path(root, &path),
-            "this" => walk_path(current, &path),
-            _ => None,
-        };
-
-        if value.is_some() {
-            return Ok(value);
-        }
-    }
-
-    Ok(None)
+    Ok(items
+        .filter(|item| !value_is_missing_or_empty(item))
+        .map(|item| item.to_string())
+        .filter(|item| !item.is_empty())
+        .collect::<Vec<_>>()
+        .join(&joiner))
 }
 
-fn candidate_paths(expr: &str) -> Result<Vec<(String, Vec<PathSegment>)>, ApiError> {
-    let mut parts = parse_path(expr)?;
-
-    if parts.is_empty() {
-        return Ok(Vec::new());
+fn coalesce_function(state: &State<'_, '_>, values: minijinja::value::Rest<Value>) -> Value {
+    if values.iter().any(Value::is_undefined) {
+        record_missing_value_warning(state, None);
     }
-
-    if matches!(parts.first(), Some(PathSegment::Key(base)) if base == "root" || base == "this") {
-        let PathSegment::Key(base) = parts.remove(0) else {
-            unreachable!("first path segment was matched as a key");
-        };
-        return Ok(vec![(base, parts)]);
-    }
-
-    Ok(vec![
-        ("this".to_string(), parts.clone()),
-        ("root".to_string(), parts),
-    ])
-}
-
-fn parse_path(expr: &str) -> Result<Vec<PathSegment>, ApiError> {
-    let chars = expr.chars().collect::<Vec<_>>();
-    let mut parts = Vec::new();
-    let mut index = 0usize;
-
-    while index < chars.len() {
-        match chars[index] {
-            '.' => {
-                index += 1;
-            }
-            '[' => {
-                let (segment, next_index) = parse_bracket_segment(&chars, index, expr)?;
-                parts.push(segment);
-                index = next_index;
-                let is_invalid_next = chars
-                    .get(index)
-                    .is_some_and(|next| *next != '.' && *next != '[');
-                if is_invalid_next {
-                    return Err(invalid_template_path(expr));
-                }
-            }
-            _ => {
-                let start = index;
-                while index < chars.len() && chars[index] != '.' && chars[index] != '[' {
-                    index += 1;
-                }
-                let key = chars[start..index].iter().collect::<String>();
-                if !key.is_empty() {
-                    parts.push(PathSegment::Key(key));
-                }
-            }
-        }
-    }
-
-    Ok(parts)
-}
-
-fn parse_bracket_segment(
-    chars: &[char],
-    start: usize,
-    expr: &str,
-) -> Result<(PathSegment, usize), ApiError> {
-    let mut index = start + 1;
-    while index < chars.len() && chars[index].is_whitespace() {
-        index += 1;
-    }
-
-    if index >= chars.len() {
-        return Err(invalid_template_path(expr));
-    }
-
-    if chars[index] == '"' || chars[index] == '\'' {
-        let quote = chars[index];
-        index += 1;
-        let mut key = String::new();
-        while index < chars.len() {
-            match chars[index] {
-                '\\' => {
-                    index += 1;
-                    if index >= chars.len() {
-                        return Err(invalid_template_path(expr));
-                    }
-                    key.push(chars[index]);
-                    index += 1;
-                }
-                ch if ch == quote => {
-                    index += 1;
-                    while index < chars.len() && chars[index].is_whitespace() {
-                        index += 1;
-                    }
-                    if chars.get(index) != Some(&']') {
-                        return Err(invalid_template_path(expr));
-                    }
-                    return Ok((PathSegment::Key(key), index + 1));
-                }
-                ch => {
-                    key.push(ch);
-                    index += 1;
-                }
-            }
-        }
-
-        return Err(invalid_template_path(expr));
-    }
-
-    let value_start = index;
-    while index < chars.len() && chars[index] != ']' {
-        index += 1;
-    }
-    if index >= chars.len() {
-        return Err(invalid_template_path(expr));
-    }
-
-    let value = chars[value_start..index]
+    values
         .iter()
-        .collect::<String>()
-        .trim()
-        .to_string();
-    if value.is_empty() {
-        return Err(invalid_template_path(expr));
-    }
-
-    let segment = value
-        .parse::<usize>()
-        .map(PathSegment::Index)
-        .unwrap_or(PathSegment::Key(value));
-    Ok((segment, index + 1))
+        .find(|value| !value_is_missing_or_empty(value))
+        .cloned()
+        .unwrap_or(Value::UNDEFINED)
 }
 
-fn invalid_template_path(expr: &str) -> ApiError {
-    ApiError::BadRequest(format!("Invalid template path syntax: '{expr}'"))
-}
-
-fn walk_path<'a>(
-    value: &'a serde_json::Value,
-    path: &[PathSegment],
-) -> Option<&'a serde_json::Value> {
-    let mut current = value;
-
-    for segment in path {
-        match (current, segment) {
-            (serde_json::Value::Object(map), PathSegment::Key(key)) => {
-                current = map.get(key)?;
-            }
-            (serde_json::Value::Array(items), PathSegment::Index(index)) => {
-                current = items.get(*index)?;
-            }
-            (serde_json::Value::Array(items), PathSegment::Key(key)) => {
-                let index = key.parse::<usize>().ok()?;
-                current = items.get(index)?;
-            }
-            _ => return None,
-        }
+fn value_is_missing_or_empty(value: &Value) -> bool {
+    if value.is_undefined() || value.is_none() {
+        return true;
     }
 
-    Some(current)
+    if let Some(text) = value.as_str() {
+        return text.is_empty();
+    }
+
+    matches!(value.len(), Some(0))
 }
 
-fn stringify_value(value: &serde_json::Value, content_type: ReportContentType) -> String {
-    match value {
-        serde_json::Value::Null => "null".to_string(),
-        serde_json::Value::Bool(boolean) => boolean.to_string(),
-        serde_json::Value::Number(number) => number.to_string(),
-        serde_json::Value::String(text) => match content_type {
-            ReportContentType::TextHtml => escape_html(text),
-            _ => text.clone(),
-        },
-        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-            let json = serde_json::to_string(value).unwrap_or_else(|_| "null".to_string());
-            match content_type {
-                ReportContentType::TextHtml => escape_html(&json),
-                _ => json,
-            }
-        }
-    }
+fn parse_template_datetime(raw: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    chrono::DateTime::parse_from_rfc3339(raw)
+        .ok()
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S")
+                .ok()
+                .and_then(|value| {
+                    chrono::FixedOffset::east_opt(0)
+                        .map(|offset| value.and_utc().with_timezone(&offset))
+                })
+        })
+        .or_else(|| {
+            chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d")
+                .ok()
+                .and_then(|value| value.and_hms_opt(0, 0, 0))
+                .and_then(|value| {
+                    chrono::FixedOffset::east_opt(0)
+                        .map(|offset| value.and_utc().with_timezone(&offset))
+                })
+        })
 }
 
-fn handle_missing_loop(
-    path: &str,
-    missing_data_policy: ReportMissingDataPolicy,
-    warnings: &mut Vec<ReportWarning>,
-) -> Result<(), ApiError> {
-    match missing_data_policy {
-        ReportMissingDataPolicy::Strict => Err(ApiError::BadRequest(format!(
-            "Template path '{}' did not resolve to an array",
-            path
-        ))),
-        ReportMissingDataPolicy::Null | ReportMissingDataPolicy::Omit => {
-            warnings.push(ReportWarning {
-                code: "missing_value".to_string(),
-                message: format!("Template path '{}' was not found", path),
-                path: Some(path.to_string()),
-            });
-            Ok(())
-        }
-    }
+fn template_error(prefix: &str, error: MiniJinjaError) -> ApiError {
+    ApiError::BadRequest(format!("{prefix}: {error}"))
 }
 
-fn handle_missing_value(
-    path: &str,
-    missing_data_policy: ReportMissingDataPolicy,
-    warnings: &mut Vec<ReportWarning>,
-) -> Result<String, ApiError> {
-    match missing_data_policy {
-        ReportMissingDataPolicy::Strict => Err(ApiError::BadRequest(format!(
-            "Template path '{}' was not found",
-            path
-        ))),
-        ReportMissingDataPolicy::Null => {
-            warnings.push(ReportWarning {
-                code: "missing_value".to_string(),
-                message: format!("Template path '{}' was not found", path),
-                path: Some(path.to_string()),
-            });
-            Ok("null".to_string())
-        }
-        ReportMissingDataPolicy::Omit => {
-            warnings.push(ReportWarning {
-                code: "missing_value".to_string(),
-                message: format!("Template path '{}' was not found", path),
-                path: Some(path.to_string()),
-            });
-            Ok(String::new())
-        }
-    }
+fn begin_template_warning_capture() {
+    TEMPLATE_WARNING_CAPTURE.with(|capture| {
+        *capture.borrow_mut() = Some(TemplateWarningCapture::default());
+    });
 }
 
-fn escape_html(input: &str) -> String {
-    let replacements = HashMap::from([
-        ('&', "&amp;"),
-        ('<', "&lt;"),
-        ('>', "&gt;"),
-        ('\"', "&quot;"),
-        ('\'', "&#39;"),
-    ]);
+fn finish_template_warning_capture() -> Vec<ReportWarning> {
+    TEMPLATE_WARNING_CAPTURE.with(|capture| {
+        capture
+            .borrow_mut()
+            .take()
+            .map(|capture| capture.warnings)
+            .unwrap_or_default()
+    })
+}
 
-    let mut escaped = String::with_capacity(input.len());
-    for ch in input.chars() {
-        if let Some(replacement) = replacements.get(&ch) {
-            escaped.push_str(replacement);
-        } else {
-            escaped.push(ch);
+fn record_missing_value_warning(state: &State<'_, '_>, path: Option<String>) {
+    TEMPLATE_WARNING_CAPTURE.with(|capture| {
+        let mut capture = capture.borrow_mut();
+        let Some(capture) = capture.as_mut() else {
+            return;
+        };
+        let template_name = state.name().to_string();
+        let key = (template_name.clone(), path.clone());
+        if capture.missing_value_keys.contains(&key) {
+            return;
         }
-    }
-    escaped
+        capture.missing_value_keys.insert(key);
+        capture.warnings.push(ReportWarning {
+            code: "template_missing_value".to_string(),
+            message: format!("Template '{template_name}' rendered one or more missing values"),
+            path,
+        });
+    });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn template(
+        id: i32,
+        namespace_id: i32,
+        name: &str,
+        content_type: ReportContentType,
+        source: &str,
+    ) -> ReportTemplate {
+        let now = chrono::Utc::now().naive_utc();
+        ReportTemplate {
+            id,
+            namespace_id,
+            name: name.to_string(),
+            description: "template".to_string(),
+            content_type,
+            template: source.to_string(),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
     #[test]
-    fn renders_each_blocks_and_nested_values() {
+    fn renders_jinja_loops_and_nested_values() {
+        let template = template(
+            1,
+            10,
+            "servers.txt",
+            ReportContentType::TextPlain,
+            "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}",
+        );
         let context = serde_json::json!({
             "items": [
                 {"name": "srv-01", "data": {"owner": "alice"}},
@@ -432,7 +558,8 @@ mod tests {
         });
 
         let (rendered, warnings) = render_template(
-            "{{#each items}}{{this.name}}={{this.data.owner}}\n{{/each}}",
+            &template,
+            &[],
             &context,
             ReportContentType::TextPlain,
             ReportMissingDataPolicy::Strict,
@@ -444,78 +571,75 @@ mod tests {
     }
 
     #[test]
-    fn renders_array_indexes_in_dotted_paths() {
-        let context = serde_json::json!({
-            "items": [
-                {"name": "srv-01", "data": {"tags": ["prod", "app"]}},
-            ]
-        });
-
-        let (rendered, warnings) = render_template(
-            "{{#each items}}{{this.name}}={{this.data.tags.0}}/{{this.data.tags[1]}}\n{{/each}}",
-            &context,
-            ReportContentType::TextPlain,
-            ReportMissingDataPolicy::Strict,
-        )
-        .unwrap();
-
-        assert_eq!(rendered, "srv-01=prod/app\n");
-        assert!(warnings.is_empty());
-    }
-
-    #[test]
-    fn renders_quoted_hash_keys_in_bracket_paths() {
-        let context = serde_json::json!({
-            "items": [
-                {
-                    "name": "srv-01",
-                    "data": {
-                        "owner.name": "alice",
-                        "service-list": [{"display name": "frontend"}]
-                    }
-                },
-            ]
-        });
-
-        let (rendered, warnings) = render_template(
-            "{{#each items}}{{this.data[\"owner.name\"]}}/{{this.data['service-list'][0]['display name']}}\n{{/each}}",
-            &context,
-            ReportContentType::TextPlain,
-            ReportMissingDataPolicy::Strict,
-        )
-        .unwrap();
-
-        assert_eq!(rendered, "alice/frontend\n");
-        assert!(warnings.is_empty());
-    }
-
-    #[test]
-    fn rejects_bare_path_segment_after_bracket_segment() {
-        let context = serde_json::json!({
-            "items": [{"data": [{"name": "srv-01"}]}]
-        });
-
-        let error = render_template(
-            "{{#each items}}{{this.data[0]name}}{{/each}}",
-            &context,
-            ReportContentType::TextPlain,
-            ReportMissingDataPolicy::Strict,
-        )
-        .unwrap_err();
-
-        assert!(
-            matches!(error, ApiError::BadRequest(message) if message == "Invalid template path syntax: 'this.data[0]name'")
+    fn csv_cell_neutralizes_formula_injection() {
+        // Leading formula triggers are prefixed with a quote so a spreadsheet
+        // treats the cell as text rather than evaluating it.
+        assert_eq!(
+            csv_cell_filter(Value::from("=HYPERLINK(\"http://evil\")")),
+            "\"'=HYPERLINK(\"\"http://evil\"\")\""
         );
+        assert_eq!(csv_cell_filter(Value::from("@SUM(A1:A9)")), "'@SUM(A1:A9)");
+        assert_eq!(csv_cell_filter(Value::from("+1+1")), "'+1+1");
+        assert_eq!(csv_cell_filter(Value::from("-2+3")), "'-2+3");
+        // Spreadsheets ignore leading spaces/tabs when detecting a formula.
+        assert_eq!(csv_cell_filter(Value::from("  =1+1")), "'  =1+1");
+        assert_eq!(csv_cell_filter(Value::from("\t=1+1")), "'\t=1+1");
+        // Leading control characters are dangerous on their own.
+        assert_eq!(csv_cell_filter(Value::from("\rdata")), "\"'\rdata\"");
+        // Ordinary values are left untouched (still RFC-4180 quoted as needed).
+        assert_eq!(csv_cell_filter(Value::from("plain value")), "plain value");
+        assert_eq!(csv_cell_filter(Value::from("a,b")), "\"a,b\"");
+        assert_eq!(csv_cell_filter(Value::from("3.14")), "3.14");
+    }
+
+    #[test]
+    fn supports_same_namespace_includes() {
+        let layout = template(
+            2,
+            10,
+            "layout.html",
+            ReportContentType::TextHtml,
+            "<ul>{% block body %}{% endblock %}</ul>",
+        );
+        let child = template(
+            3,
+            10,
+            "child.html",
+            ReportContentType::TextHtml,
+            "{% extends \"layout.html\" %}{% block body %}{% for item in items %}<li>{{ item.name }}</li>{% endfor %}{% endblock %}",
+        );
+        let context = serde_json::json!({
+            "items": [{"name": "srv-01"}]
+        });
+
+        let (rendered, _) = render_template(
+            &child,
+            &[layout],
+            &context,
+            ReportContentType::TextHtml,
+            ReportMissingDataPolicy::Strict,
+        )
+        .unwrap();
+
+        assert_eq!(rendered, "<ul><li>srv-01</li></ul>");
     }
 
     #[test]
     fn omits_missing_values_when_requested() {
+        let template = template(
+            4,
+            10,
+            "missing.txt",
+            ReportContentType::TextPlain,
+            "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}",
+        );
         let context = serde_json::json!({
             "items": [{"name": "srv-01"}]
         });
 
         let (rendered, warnings) = render_template(
-            "{{#each items}}{{this.name}}={{this.data.owner}}\n{{/each}}",
+            &template,
+            &[],
             &context,
             ReportContentType::TextPlain,
             ReportMissingDataPolicy::Omit,
@@ -524,6 +648,298 @@ mod tests {
 
         assert_eq!(rendered, "srv-01=\n");
         assert_eq!(warnings.len(), 1);
-        assert_eq!(warnings[0].code, "missing_value");
+        assert_eq!(warnings[0].code, "template_missing_value");
+        assert!(warnings[0].message.contains("missing.txt"));
+    }
+
+    #[test]
+    fn renders_null_for_missing_values_and_reports_warning() {
+        let template = template(
+            5,
+            10,
+            "missing-null.txt",
+            ReportContentType::TextPlain,
+            "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}",
+        );
+        let context = serde_json::json!({
+            "items": [{"name": "srv-01"}]
+        });
+
+        let (rendered, warnings) = render_template(
+            &template,
+            &[],
+            &context,
+            ReportContentType::TextPlain,
+            ReportMissingDataPolicy::Null,
+        )
+        .unwrap();
+
+        assert_eq!(rendered, "srv-01=null\n");
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].code, "template_missing_value");
+        assert!(warnings[0].message.contains("missing-null.txt"));
+    }
+
+    #[test]
+    fn autoescapes_html_but_not_plain_text() {
+        let html_template = template(
+            6,
+            10,
+            "escape.html",
+            ReportContentType::TextHtml,
+            "{{ items[0].name }}",
+        );
+        let text_template = template(
+            7,
+            10,
+            "escape.txt",
+            ReportContentType::TextPlain,
+            "{{ items[0].name }}",
+        );
+        let context = serde_json::json!({
+            "items": [{"name": "<b>srv&01</b>"}]
+        });
+
+        let (html, html_warnings) = render_template(
+            &html_template,
+            &[],
+            &context,
+            ReportContentType::TextHtml,
+            ReportMissingDataPolicy::Strict,
+        )
+        .unwrap();
+        let (text, text_warnings) = render_template(
+            &text_template,
+            &[],
+            &context,
+            ReportContentType::TextPlain,
+            ReportMissingDataPolicy::Strict,
+        )
+        .unwrap();
+
+        assert_eq!(html, "&lt;b&gt;srv&amp;01&lt;&#x2f;b&gt;");
+        assert_eq!(text, "<b>srv&01</b>");
+        assert!(html_warnings.is_empty());
+        assert!(text_warnings.is_empty());
+    }
+
+    #[test]
+    fn supports_same_namespace_imports() {
+        let macros = template(
+            8,
+            10,
+            "macros.txt",
+            ReportContentType::TextPlain,
+            "{% macro owner(item) %}{{ item.data.owner }}{% endmacro %}",
+        );
+        let child = template(
+            9,
+            10,
+            "child.txt",
+            ReportContentType::TextPlain,
+            "{% import \"macros.txt\" as macros %}{{ items[0].name }}={{ macros.owner(items[0]) }}",
+        );
+        let context = serde_json::json!({
+            "items": [{"name": "srv-01", "data": {"owner": "alice"}}]
+        });
+
+        let (rendered, warnings) = render_template(
+            &child,
+            &[macros],
+            &context,
+            ReportContentType::TextPlain,
+            ReportMissingDataPolicy::Strict,
+        )
+        .unwrap();
+
+        assert_eq!(rendered, "srv-01=alice");
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn missing_value_warning_identifies_composed_template_name() {
+        let partial = template(
+            15,
+            10,
+            "partial.owner.txt",
+            ReportContentType::TextPlain,
+            "{{ items[0].data.owner }}",
+        );
+        let report = template(
+            16,
+            10,
+            "report.hosts.txt",
+            ReportContentType::TextPlain,
+            "{% include \"partial.owner.txt\" %}",
+        );
+        let context = serde_json::json!({
+            "items": [{"name": "srv-01"}]
+        });
+
+        let (rendered, warnings) = render_template(
+            &report,
+            &[partial],
+            &context,
+            ReportContentType::TextPlain,
+            ReportMissingDataPolicy::Omit,
+        )
+        .unwrap();
+
+        assert_eq!(rendered, "");
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].message.contains("partial.owner.txt"));
+    }
+
+    #[test]
+    fn supports_curated_template_helpers() {
+        let template = template(
+            14,
+            10,
+            "helpers.txt",
+            ReportContentType::TextPlain,
+            "{{ items|join_nonempty(\" | \") }}\n{{ missing|default_if_empty(\"fallback\") }}\n{{ coalesce(missing, none, \"owner\") }}\n{{ when|format_datetime(\"date\") }}\n{{ csv|csv_cell }}\n{{ payload|tojson }}",
+        );
+        let context = serde_json::json!({
+            "items": ["alice", "", null, "bob"],
+            "when": "2026-03-30T10:15:23Z",
+            "csv": "alice,bob",
+            "payload": {"host": "srv-01", "enabled": true}
+        });
+
+        let (rendered, warnings) = render_template(
+            &template,
+            &[],
+            &context,
+            ReportContentType::TextPlain,
+            ReportMissingDataPolicy::Omit,
+        )
+        .unwrap();
+
+        assert_eq!(
+            rendered,
+            "alice | bob\nfallback\nowner\n2026-03-30\n\"alice,bob\"\n{\"enabled\":true,\"host\":\"srv-01\"}"
+        );
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].message.contains("helpers.txt"));
+    }
+
+    #[test]
+    fn rejects_cross_namespace_template_loading() {
+        let layout = template(
+            10,
+            20,
+            "layout.html",
+            ReportContentType::TextHtml,
+            "<ul>{% block body %}{% endblock %}</ul>",
+        );
+        let child = template(
+            11,
+            10,
+            "child.html",
+            ReportContentType::TextHtml,
+            "{% extends \"layout.html\" %}{% block body %}<li>{{ items[0].name }}</li>{% endblock %}",
+        );
+        let context = serde_json::json!({
+            "items": [{"name": "srv-01"}]
+        });
+
+        let error = render_template(
+            &child,
+            &[layout],
+            &context,
+            ReportContentType::TextHtml,
+            ReportMissingDataPolicy::Strict,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("template not found"));
+    }
+
+    #[test]
+    fn invalidates_cached_environment_when_templates_change() {
+        let child = template(
+            12,
+            10,
+            "child.html",
+            ReportContentType::TextHtml,
+            "{% extends \"layout.html\" %}{% block body %}<li>{{ items[0].name }}</li>{% endblock %}",
+        );
+        let mut layout_v1 = template(
+            13,
+            10,
+            "layout.html",
+            ReportContentType::TextHtml,
+            "<ul class=\"v1\">{% block body %}{% endblock %}</ul>",
+        );
+        let mut layout_v2 = layout_v1.clone();
+        layout_v2.template = "<ol class=\"v2\">{% block body %}{% endblock %}</ol>".to_string();
+        layout_v2.updated_at += chrono::Duration::seconds(1);
+        let context = serde_json::json!({
+            "items": [{"name": "srv-01"}]
+        });
+
+        let (first, _) = render_template(
+            &child,
+            &[layout_v1.clone()],
+            &context,
+            ReportContentType::TextHtml,
+            ReportMissingDataPolicy::Strict,
+        )
+        .unwrap();
+        layout_v1.updated_at += chrono::Duration::seconds(2);
+        let (second, _) = render_template(
+            &child,
+            &[layout_v2],
+            &context,
+            ReportContentType::TextHtml,
+            ReportMissingDataPolicy::Strict,
+        )
+        .unwrap();
+
+        assert_eq!(first, "<ul class=\"v1\"><li>srv-01</li></ul>");
+        assert_eq!(second, "<ol class=\"v2\"><li>srv-01</li></ol>");
+    }
+
+    #[test]
+    fn invalidates_cached_environment_when_template_body_changes_without_timestamp_change() {
+        let child = template(
+            17,
+            10,
+            "child.html",
+            ReportContentType::TextHtml,
+            "{% extends \"layout.html\" %}{% block body %}<li>{{ items[0].name }}</li>{% endblock %}",
+        );
+        let layout_v1 = template(
+            18,
+            10,
+            "layout.html",
+            ReportContentType::TextHtml,
+            "<ul class=\"v1\">{% block body %}{% endblock %}</ul>",
+        );
+        let mut layout_v2 = layout_v1.clone();
+        layout_v2.template = "<ol class=\"v2\">{% block body %}{% endblock %}</ol>".to_string();
+        let context = serde_json::json!({
+            "items": [{"name": "srv-01"}]
+        });
+
+        let (first, _) = render_template(
+            &child,
+            &[layout_v1],
+            &context,
+            ReportContentType::TextHtml,
+            ReportMissingDataPolicy::Strict,
+        )
+        .unwrap();
+        let (second, _) = render_template(
+            &child,
+            &[layout_v2],
+            &context,
+            ReportContentType::TextHtml,
+            ReportMissingDataPolicy::Strict,
+        )
+        .unwrap();
+
+        assert_eq!(first, "<ul class=\"v1\"><li>srv-01</li></ul>");
+        assert_eq!(second, "<ol class=\"v2\"><li>srv-01</li></ol>");
     }
 }

@@ -17,6 +17,15 @@ use crate::errors::ApiError;
 pub const DEFAULT_PAGE_LIMIT: usize = 100;
 pub const MAX_PAGE_LIMIT: usize = 250;
 pub const DEFAULT_TASK_POLL_INTERVAL_MS: u64 = 200;
+pub const DEFAULT_REPORT_OUTPUT_RETENTION_HOURS: i64 = 24 * 7;
+pub const DEFAULT_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS: u64 = 300;
+pub const DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER: usize = 100;
+pub const DEFAULT_REPORT_TEMPLATE_RECURSION_LIMIT: usize = 64;
+pub const DEFAULT_REPORT_TEMPLATE_FUEL: u64 = 50_000;
+pub const DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS: usize = 2_000;
+pub const DEFAULT_REPORT_MAX_OUTPUT_BYTES: usize = 262_144;
+pub const DEFAULT_REPORT_STAGE_TIMEOUT_MS: u64 = 10_000;
+pub const DEFAULT_DB_STATEMENT_TIMEOUT_MS: u64 = 0;
 pub const DEFAULT_TOKEN_LIFETIME_HOURS: i64 = 24;
 pub const DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS: usize = 5;
 pub const DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS: u64 = 300;
@@ -127,6 +136,91 @@ pub struct AppConfig {
     )]
     pub task_poll_interval_ms: u64,
 
+    /// How long successful stored report outputs remain available for refetch.
+    #[clap(
+        long,
+        env = "HUBUUM_REPORT_OUTPUT_RETENTION_HOURS",
+        default_value_t = DEFAULT_REPORT_OUTPUT_RETENTION_HOURS
+    )]
+    pub report_output_retention_hours: i64,
+
+    /// How often workers attempt cleanup of expired stored report outputs.
+    #[clap(
+        long,
+        env = "HUBUUM_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS",
+        default_value_t = DEFAULT_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS
+    )]
+    pub report_output_cleanup_interval_seconds: u64,
+
+    /// Maximum queued/validating/running report tasks one user may have at once.
+    #[clap(
+        long,
+        env = "HUBUUM_REPORT_MAX_ACTIVE_TASKS_PER_USER",
+        default_value_t = DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER
+    )]
+    pub report_max_active_tasks_per_user: usize,
+
+    /// MiniJinja recursion limit for report template rendering.
+    #[clap(
+        long,
+        env = "HUBUUM_REPORT_TEMPLATE_RECURSION_LIMIT",
+        default_value_t = DEFAULT_REPORT_TEMPLATE_RECURSION_LIMIT
+    )]
+    pub report_template_recursion_limit: usize,
+
+    /// MiniJinja fuel budget for report template rendering.
+    #[clap(
+        long,
+        env = "HUBUUM_REPORT_TEMPLATE_FUEL",
+        default_value_t = DEFAULT_REPORT_TEMPLATE_FUEL
+    )]
+    pub report_template_fuel: u64,
+
+    /// Maximum number of hydrated relation-aware template objects rendered for one report root.
+    #[clap(
+        long,
+        env = "HUBUUM_REPORT_TEMPLATE_MAX_OBJECTS",
+        default_value_t = DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS
+    )]
+    pub report_template_max_objects: usize,
+
+    /// Maximum rendered report output size accepted for storage or response.
+    #[clap(
+        long,
+        env = "HUBUUM_REPORT_MAX_OUTPUT_BYTES",
+        default_value_t = DEFAULT_REPORT_MAX_OUTPUT_BYTES
+    )]
+    pub report_max_output_bytes: usize,
+
+    /// Post-completion budget per report execution stage, in milliseconds.
+    ///
+    /// This is a *rejection* budget, not an in-flight interrupt: a report is
+    /// rejected only after a stage (query, hydration, render) has finished if it
+    /// exceeded this value. Real in-flight protection comes from minijinja
+    /// `report_template_fuel`, `report_template_max_objects`, the output byte
+    /// caps, and `db_statement_timeout_ms` (which actually cancels slow queries
+    /// server-side).
+    #[clap(
+        long,
+        env = "HUBUUM_REPORT_STAGE_TIMEOUT_MS",
+        default_value_t = DEFAULT_REPORT_STAGE_TIMEOUT_MS
+    )]
+    pub report_stage_timeout_ms: u64,
+
+    /// Pool-global Postgres `statement_timeout` in milliseconds (0 = disabled).
+    ///
+    /// Applied to every connection handed out by the pool, so it bounds *all* DB
+    /// work - reports, imports, admin commands, health/auth queries, and
+    /// migrations sharing the pool - not just report stages. Postgres cancels any
+    /// statement exceeding it server-side, which frees the connection (a genuine
+    /// in-flight timeout). Disabled by default to preserve existing behavior.
+    #[clap(
+        long,
+        env = "HUBUUM_DB_STATEMENT_TIMEOUT_MS",
+        default_value_t = DEFAULT_DB_STATEMENT_TIMEOUT_MS
+    )]
+    pub db_statement_timeout_ms: u64,
+
     /// Number of DB connections in the pool
     #[clap(long, env = "HUBUUM_DB_POOL_SIZE", default_value_t = 10)]
     pub db_pool_size: u32,
@@ -235,6 +329,54 @@ impl AppConfig {
         if self.task_poll_interval_ms == 0 {
             return Err(ApiError::BadRequest(
                 "task_poll_interval_ms must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.report_output_retention_hours <= 0 {
+            return Err(ApiError::BadRequest(
+                "report_output_retention_hours must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.report_output_cleanup_interval_seconds == 0 {
+            return Err(ApiError::BadRequest(
+                "report_output_cleanup_interval_seconds must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.report_max_active_tasks_per_user == 0 {
+            return Err(ApiError::BadRequest(
+                "report_max_active_tasks_per_user must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.report_template_recursion_limit == 0 {
+            return Err(ApiError::BadRequest(
+                "report_template_recursion_limit must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.report_template_fuel == 0 {
+            return Err(ApiError::BadRequest(
+                "report_template_fuel must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.report_template_max_objects == 0 {
+            return Err(ApiError::BadRequest(
+                "report_template_max_objects must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.report_max_output_bytes == 0 {
+            return Err(ApiError::BadRequest(
+                "report_max_output_bytes must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.report_stage_timeout_ms == 0 {
+            return Err(ApiError::BadRequest(
+                "report_stage_timeout_ms must be greater than 0".to_string(),
             ));
         }
 
@@ -432,6 +574,44 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_TASK_POLL_INTERVAL_MS),
+        report_output_retention_hours: env::var("HUBUUM_REPORT_OUTPUT_RETENTION_HOURS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_REPORT_OUTPUT_RETENTION_HOURS),
+        report_output_cleanup_interval_seconds: env::var(
+            "HUBUUM_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS",
+        )
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(DEFAULT_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS),
+        report_max_active_tasks_per_user: env::var("HUBUUM_REPORT_MAX_ACTIVE_TASKS_PER_USER")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER),
+        report_template_recursion_limit: env::var("HUBUUM_REPORT_TEMPLATE_RECURSION_LIMIT")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_REPORT_TEMPLATE_RECURSION_LIMIT),
+        report_template_fuel: env::var("HUBUUM_REPORT_TEMPLATE_FUEL")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_REPORT_TEMPLATE_FUEL),
+        report_template_max_objects: env::var("HUBUUM_REPORT_TEMPLATE_MAX_OBJECTS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS),
+        report_max_output_bytes: env::var("HUBUUM_REPORT_MAX_OUTPUT_BYTES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_REPORT_MAX_OUTPUT_BYTES),
+        report_stage_timeout_ms: env::var("HUBUUM_REPORT_STAGE_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_REPORT_STAGE_TIMEOUT_MS),
+        db_statement_timeout_ms: env::var("HUBUUM_DB_STATEMENT_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_DB_STATEMENT_TIMEOUT_MS),
         db_pool_size: env_or_default("HUBUUM_DB_POOL_SIZE", "2")
             .parse()
             .unwrap_or(5),
@@ -585,10 +765,12 @@ mod tests {
 
     use super::{
         AppConfig, DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS, DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS,
-        DEFAULT_PAGE_LIMIT, DEFAULT_TASK_POLL_INTERVAL_MS, DEFAULT_TOKEN_LIFETIME_HOURS,
-        MAX_PAGE_LIMIT, TEST_ENV_LOCK, TlsBackend, default_actix_workers, default_task_workers,
-        get_config_from_env, login_rate_limit_max_attempts, login_rate_limit_window_seconds,
-        token_hash_key_bytes, token_hash_key_is_ephemeral,
+        DEFAULT_PAGE_LIMIT, DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER,
+        DEFAULT_REPORT_MAX_OUTPUT_BYTES, DEFAULT_TASK_POLL_INTERVAL_MS,
+        DEFAULT_TOKEN_LIFETIME_HOURS, MAX_PAGE_LIMIT, TEST_ENV_LOCK, TlsBackend,
+        default_actix_workers, default_task_workers, get_config_from_env,
+        login_rate_limit_max_attempts, login_rate_limit_window_seconds, token_hash_key_bytes,
+        token_hash_key_is_ephemeral,
     };
 
     struct EnvVarGuard {
@@ -730,6 +912,92 @@ mod tests {
         assert_eq!(loaded.actix_workers, default_actix_workers());
         assert_eq!(loaded.task_workers, default_task_workers());
         assert_eq!(loaded.task_poll_interval_ms, DEFAULT_TASK_POLL_INTERVAL_MS);
+    }
+
+    #[test]
+    fn report_max_output_bytes_is_parsed_from_env() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_REPORT_MAX_OUTPUT_BYTES", Some("4096"));
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(parsed.report_max_output_bytes, 4096);
+        assert_eq!(loaded.report_max_output_bytes, 4096);
+    }
+
+    #[test]
+    fn report_max_output_bytes_defaults_when_env_var_is_unset() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_REPORT_MAX_OUTPUT_BYTES", None);
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(
+            parsed.report_max_output_bytes,
+            DEFAULT_REPORT_MAX_OUTPUT_BYTES
+        );
+        assert_eq!(
+            loaded.report_max_output_bytes,
+            DEFAULT_REPORT_MAX_OUTPUT_BYTES
+        );
+    }
+
+    #[test]
+    fn report_max_output_bytes_is_validated() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_REPORT_MAX_OUTPUT_BYTES", Some("0"));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "report_max_output_bytes must be greater than 0"
+        );
+    }
+
+    #[test]
+    fn report_max_active_tasks_per_user_is_parsed_from_env() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_REPORT_MAX_ACTIVE_TASKS_PER_USER", Some("7"));
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(parsed.report_max_active_tasks_per_user, 7);
+        assert_eq!(loaded.report_max_active_tasks_per_user, 7);
+    }
+
+    #[test]
+    fn report_max_active_tasks_per_user_defaults_when_env_var_is_unset() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_REPORT_MAX_ACTIVE_TASKS_PER_USER", None);
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(
+            parsed.report_max_active_tasks_per_user,
+            DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER
+        );
+        assert_eq!(
+            loaded.report_max_active_tasks_per_user,
+            DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER
+        );
+    }
+
+    #[test]
+    fn report_max_active_tasks_per_user_is_validated() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_REPORT_MAX_ACTIVE_TASKS_PER_USER", Some("0"));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "report_max_active_tasks_per_user must be greater than 0"
+        );
     }
 
     #[test]

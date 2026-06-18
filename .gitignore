@@ -1,5 +1,6 @@
 /target
 .env
+.env*.local
 *.pem
 /*.sql
 .claude

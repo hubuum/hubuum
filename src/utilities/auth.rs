@@ -4,7 +4,7 @@ use crate::models::token::Token;
 
 use argon2::{
     Argon2,
-    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng},
+    password_hash::{PasswordHasher, PasswordVerifier, phc::PasswordHash},
 };
 
 use rand::{RngExt, distr::Alphanumeric, rng};
@@ -14,10 +14,9 @@ use tracing::debug;
 
 /// Hash a plaintext password.
 pub fn hash_password(password: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();
     let password_hash = argon2
-        .hash_password(password.as_bytes(), &salt)
+        .hash_password(password.as_bytes())
         .map_err(|e| format!("Failed to hash password: {}", e))?
         .to_string();
 

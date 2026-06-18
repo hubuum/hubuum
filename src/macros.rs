@@ -170,100 +170,104 @@ macro_rules! numeric_search {
         if op_pre == Operator::IsNull {
             $crate::is_null_search!($base_query, $parsed_query_param, $operator, $diesel_field);
         } else {
+            let values = $parsed_query_param.value_as_integer()?;
 
-        let values = $parsed_query_param.value_as_integer()?;
-
-        if !$operator.is_applicable_to(DataType::NumericOrDate) {
-            return Err(ApiError::OperatorMismatch(format!(
-                "Operator '{:?}' is not applicable to field '{}'",
-                $operator, $parsed_query_param.field
-            )));
-        }
-
-        // The values shouldn't be empty at this point, but we can make sure.
-        if values.is_empty() {
-            return Err(ApiError::BadRequest(format!(
-                "Searching on field '{}' requires a value",
-                $parsed_query_param.field
-            )));
-        }
-
-        let max = values.iter().max().ok_or_else(|| {
-            ApiError::BadRequest(format!(
-                "Failed to determine max value for field '{}'",
-                $parsed_query_param.field
-            ))
-        })?;
-        let min = values.iter().min().ok_or_else(|| {
-            ApiError::BadRequest(format!(
-                "Failed to determine min value for field '{}'",
-                $parsed_query_param.field
-            ))
-        })?;
-
-        let (op, negated) = $operator.op_and_neg();
-
-        if op == Operator::Between && values.len() != 2 {
-            return Err(ApiError::OperatorMismatch(format!(
-                "Operator 'between' requires 2 values (min,max) for field '{:?}'",
-                $operator,
-            )));
-        }
-
-        // Sadly a sanity check. We want to use ranges and between for large sets,
-        // but diesel is making it hard to create an "or" block inside the query.
-        // Ie, we would ideally like to return a list of ints and a list of ranges
-        // and combine them along the lines of
-        // "WHERE field = any([1,3]) or (field BETWEEN 5 AND 7 OR field BETWEEN 11 AND 17)"
-        // while merging with the rest of the filters via AND.
-        if (op == Operator::Equals || op == Operator::In) && values.len() > 50 {
-            return Err(ApiError::OperatorMismatch(format!(
-                "Operator '{}' is limited to 50 values, got {} (use between?)",
-                op, values.len()
-            )));
-        }
-
-        match (op, negated) {
-            (Operator::Equals, false) | (Operator::In, false) => {
-                $base_query = $base_query.filter($diesel_field.eq_any(values.clone()))
-            }
-            (Operator::Equals, true) | (Operator::In, true) => {
-                $base_query = $base_query.filter(not($diesel_field.eq_any(values.clone())))
-            }
-            (Operator::Gt, false) => {
-                $base_query = $base_query.filter($diesel_field.gt(max.clone()))
-            }
-            (Operator::Gt, true) => $base_query = $base_query.filter($diesel_field.le(max.clone())),
-            (Operator::Gte, false) => {
-                $base_query = $base_query.filter($diesel_field.ge(max.clone()))
-            }
-            (Operator::Gte, true) => {
-                $base_query = $base_query.filter($diesel_field.lt(max.clone()))
-            }
-            (Operator::Lt, false) => {
-                $base_query = $base_query.filter($diesel_field.lt(min.clone()))
-            }
-            (Operator::Lt, true) => $base_query = $base_query.filter($diesel_field.ge(min.clone())),
-            (Operator::Lte, false) => {
-                $base_query = $base_query.filter($diesel_field.le(min.clone()))
-            }
-            (Operator::Lte, true) => {
-                $base_query = $base_query.filter($diesel_field.gt(min.clone()))
-            }
-            (Operator::Between, false) => {
-                $base_query = $base_query.filter($diesel_field.between(values[0], values[1]))
-            }
-            (Operator::Between, true) => {
-                $base_query = $base_query.filter(not($diesel_field.between(values[0], values[1])))
-            }
-            _ => {
+            if !$operator.is_applicable_to(DataType::NumericOrDate) {
                 return Err(ApiError::OperatorMismatch(format!(
-                    "Operator '{:?}' not implemented for field '{}' (type: numeric)",
+                    "Operator '{:?}' is not applicable to field '{}'",
                     $operator, $parsed_query_param.field
                 )));
             }
-        };
 
+            // The values shouldn't be empty at this point, but we can make sure.
+            if values.is_empty() {
+                return Err(ApiError::BadRequest(format!(
+                    "Searching on field '{}' requires a value",
+                    $parsed_query_param.field
+                )));
+            }
+
+            let max = values.iter().max().ok_or_else(|| {
+                ApiError::BadRequest(format!(
+                    "Failed to determine max value for field '{}'",
+                    $parsed_query_param.field
+                ))
+            })?;
+            let min = values.iter().min().ok_or_else(|| {
+                ApiError::BadRequest(format!(
+                    "Failed to determine min value for field '{}'",
+                    $parsed_query_param.field
+                ))
+            })?;
+
+            let (op, negated) = $operator.op_and_neg();
+
+            if op == Operator::Between && values.len() != 2 {
+                return Err(ApiError::OperatorMismatch(format!(
+                    "Operator 'between' requires 2 values (min,max) for field '{:?}'",
+                    $operator,
+                )));
+            }
+
+            // Sadly a sanity check. We want to use ranges and between for large sets,
+            // but diesel is making it hard to create an "or" block inside the query.
+            // Ie, we would ideally like to return a list of ints and a list of ranges
+            // and combine them along the lines of
+            // "WHERE field = any([1,3]) or (field BETWEEN 5 AND 7 OR field BETWEEN 11 AND 17)"
+            // while merging with the rest of the filters via AND.
+            if (op == Operator::Equals || op == Operator::In) && values.len() > 50 {
+                return Err(ApiError::OperatorMismatch(format!(
+                    "Operator '{}' is limited to 50 values, got {} (use between?)",
+                    op,
+                    values.len()
+                )));
+            }
+
+            match (op, negated) {
+                (Operator::Equals, false) | (Operator::In, false) => {
+                    $base_query = $base_query.filter($diesel_field.eq_any(values.clone()))
+                }
+                (Operator::Equals, true) | (Operator::In, true) => {
+                    $base_query = $base_query.filter(not($diesel_field.eq_any(values.clone())))
+                }
+                (Operator::Gt, false) => {
+                    $base_query = $base_query.filter($diesel_field.gt(max.clone()))
+                }
+                (Operator::Gt, true) => {
+                    $base_query = $base_query.filter($diesel_field.le(max.clone()))
+                }
+                (Operator::Gte, false) => {
+                    $base_query = $base_query.filter($diesel_field.ge(max.clone()))
+                }
+                (Operator::Gte, true) => {
+                    $base_query = $base_query.filter($diesel_field.lt(max.clone()))
+                }
+                (Operator::Lt, false) => {
+                    $base_query = $base_query.filter($diesel_field.lt(min.clone()))
+                }
+                (Operator::Lt, true) => {
+                    $base_query = $base_query.filter($diesel_field.ge(min.clone()))
+                }
+                (Operator::Lte, false) => {
+                    $base_query = $base_query.filter($diesel_field.le(min.clone()))
+                }
+                (Operator::Lte, true) => {
+                    $base_query = $base_query.filter($diesel_field.gt(min.clone()))
+                }
+                (Operator::Between, false) => {
+                    $base_query = $base_query.filter($diesel_field.between(values[0], values[1]))
+                }
+                (Operator::Between, true) => {
+                    $base_query =
+                        $base_query.filter(not($diesel_field.between(values[0], values[1])))
+                }
+                _ => {
+                    return Err(ApiError::OperatorMismatch(format!(
+                        "Operator '{:?}' not implemented for field '{}' (type: numeric)",
+                        $operator, $parsed_query_param.field
+                    )));
+                }
+            };
         } // end else (not IsNull)
     }};
 }
@@ -281,87 +285,90 @@ macro_rules! date_search {
         if op_pre == Operator::IsNull {
             $crate::is_null_search!($base_query, $parsed_query_param, $operator, $diesel_field);
         } else {
+            let values = $parsed_query_param.value_as_date()?;
 
-        let values = $parsed_query_param.value_as_date()?;
-
-        if !$operator.is_applicable_to(DataType::NumericOrDate) {
-            return Err(ApiError::OperatorMismatch(format!(
-                "Operator '{:?}' is not applicable to field '{}'",
-                $operator, $parsed_query_param.field
-            )));
-        }
-
-        // The values shouldn't be empty at this point, but we can make sure.
-        if values.is_empty() {
-            return Err(ApiError::BadRequest(format!(
-                "Searching on field '{}' requires a value",
-                $parsed_query_param.field
-            )));
-        }
-
-        let max = values.iter().max().ok_or_else(|| {
-            ApiError::BadRequest(format!(
-                "Failed to determine max value for field '{}'",
-                $parsed_query_param.field
-            ))
-        })?;
-        let min = values.iter().min().ok_or_else(|| {
-            ApiError::BadRequest(format!(
-                "Failed to determine min value for field '{}'",
-                $parsed_query_param.field
-            ))
-        })?;
-
-        let (op, negated) = $operator.op_and_neg();
-
-        if op == Operator::Between && values.len() != 2 {
-            return Err(ApiError::OperatorMismatch(format!(
-                "Operator 'between' requires 2 values (min,max) for field '{}'",
-                $parsed_query_param.field
-            )));
-        }
-
-        match (op, negated) {
-            (Operator::Equals, false) | (Operator::In, false) => {
-                $base_query = $base_query.filter($diesel_field.eq_any(values.clone()))
-            }
-            (Operator::Equals, true) | (Operator::In, true) => {
-                $base_query = $base_query.filter(not($diesel_field.eq_any(values.clone())))
-            }
-            (Operator::Gt, false) => {
-                $base_query = $base_query.filter($diesel_field.gt(max.clone()))
-            }
-            (Operator::Gt, true) => $base_query = $base_query.filter($diesel_field.le(max.clone())),
-            (Operator::Gte, false) => {
-                $base_query = $base_query.filter($diesel_field.ge(max.clone()))
-            }
-            (Operator::Gte, true) => {
-                $base_query = $base_query.filter($diesel_field.lt(max.clone()))
-            }
-            (Operator::Lt, false) => {
-                $base_query = $base_query.filter($diesel_field.lt(min.clone()))
-            }
-            (Operator::Lt, true) => $base_query = $base_query.filter($diesel_field.ge(min.clone())),
-            (Operator::Lte, false) => {
-                $base_query = $base_query.filter($diesel_field.le(min.clone()))
-            }
-            (Operator::Lte, true) => {
-                $base_query = $base_query.filter($diesel_field.gt(min.clone()))
-            }
-            (Operator::Between, false) => {
-                $base_query = $base_query.filter($diesel_field.between(values[0], values[1]))
-            }
-            (Operator::Between, true) => {
-                $base_query = $base_query.filter(not($diesel_field.between(values[0], values[1])))
-            }
-            _ => {
+            if !$operator.is_applicable_to(DataType::NumericOrDate) {
                 return Err(ApiError::OperatorMismatch(format!(
-                    "Operator '{:?}' not implemented for field '{}' (type: date)",
+                    "Operator '{:?}' is not applicable to field '{}'",
                     $operator, $parsed_query_param.field
                 )));
             }
-        };
 
+            // The values shouldn't be empty at this point, but we can make sure.
+            if values.is_empty() {
+                return Err(ApiError::BadRequest(format!(
+                    "Searching on field '{}' requires a value",
+                    $parsed_query_param.field
+                )));
+            }
+
+            let max = values.iter().max().ok_or_else(|| {
+                ApiError::BadRequest(format!(
+                    "Failed to determine max value for field '{}'",
+                    $parsed_query_param.field
+                ))
+            })?;
+            let min = values.iter().min().ok_or_else(|| {
+                ApiError::BadRequest(format!(
+                    "Failed to determine min value for field '{}'",
+                    $parsed_query_param.field
+                ))
+            })?;
+
+            let (op, negated) = $operator.op_and_neg();
+
+            if op == Operator::Between && values.len() != 2 {
+                return Err(ApiError::OperatorMismatch(format!(
+                    "Operator 'between' requires 2 values (min,max) for field '{}'",
+                    $parsed_query_param.field
+                )));
+            }
+
+            match (op, negated) {
+                (Operator::Equals, false) | (Operator::In, false) => {
+                    $base_query = $base_query.filter($diesel_field.eq_any(values.clone()))
+                }
+                (Operator::Equals, true) | (Operator::In, true) => {
+                    $base_query = $base_query.filter(not($diesel_field.eq_any(values.clone())))
+                }
+                (Operator::Gt, false) => {
+                    $base_query = $base_query.filter($diesel_field.gt(max.clone()))
+                }
+                (Operator::Gt, true) => {
+                    $base_query = $base_query.filter($diesel_field.le(max.clone()))
+                }
+                (Operator::Gte, false) => {
+                    $base_query = $base_query.filter($diesel_field.ge(max.clone()))
+                }
+                (Operator::Gte, true) => {
+                    $base_query = $base_query.filter($diesel_field.lt(max.clone()))
+                }
+                (Operator::Lt, false) => {
+                    $base_query = $base_query.filter($diesel_field.lt(min.clone()))
+                }
+                (Operator::Lt, true) => {
+                    $base_query = $base_query.filter($diesel_field.ge(min.clone()))
+                }
+                (Operator::Lte, false) => {
+                    $base_query = $base_query.filter($diesel_field.le(min.clone()))
+                }
+                (Operator::Lte, true) => {
+                    $base_query = $base_query.filter($diesel_field.gt(min.clone()))
+                }
+                (Operator::Between, false) => {
+                    $base_query = $base_query.filter($diesel_field.between(values[0], values[1]))
+                }
+                (Operator::Between, true) => {
+                    $base_query =
+                        $base_query.filter(not($diesel_field.between(values[0], values[1])))
+                }
+                _ => {
+                    return Err(ApiError::OperatorMismatch(format!(
+                        "Operator '{:?}' not implemented for field '{}' (type: date)",
+                        $operator, $parsed_query_param.field
+                    )));
+                }
+            };
         } // end else (not IsNull)
     }};
 }
@@ -379,45 +386,45 @@ macro_rules! array_search {
         if op_pre == Operator::IsNull {
             $crate::is_null_search!($base_query, $param, $operator, $diesel_field);
         } else {
+            let values = $param.value_as_integer()?;
 
-        let values = $param.value_as_integer()?;
-
-        if !$operator.is_applicable_to(DataType::Array) {
-            return Err(ApiError::OperatorMismatch(format!(
-                "Operator '{:?}' is not applicable to field '{}'",
-                $operator, $param.field
-            )));
-        }
-
-        // The values shouldn't be empty at this point, but we can make sure.
-        if values.is_empty() {
-            return Err(ApiError::BadRequest(format!(
-                "Searching on field '{}' requires a value",
-                $param.field
-            )));
-        }
-
-        let (op, negated) = $operator.op_and_neg();
-
-        match (op, negated) {
-            (Operator::Contains, false) => {
-                $base_query = $base_query.filter($diesel_field.contains(values))
-            }
-            (Operator::Contains, true) => {
-                $base_query = $base_query.filter(not($diesel_field.contains(values)))
-            }
-            (Operator::Equals, false) => $base_query = $base_query.filter($diesel_field.eq(values)),
-            (Operator::Equals, true) => {
-                $base_query = $base_query.filter(not($diesel_field.eq(values)))
-            }
-            _ => {
+            if !$operator.is_applicable_to(DataType::Array) {
                 return Err(ApiError::OperatorMismatch(format!(
-                    "Operator '{:?}' not implemented for field '{}' (type: array)",
+                    "Operator '{:?}' is not applicable to field '{}'",
                     $operator, $param.field
                 )));
             }
-        }
 
+            // The values shouldn't be empty at this point, but we can make sure.
+            if values.is_empty() {
+                return Err(ApiError::BadRequest(format!(
+                    "Searching on field '{}' requires a value",
+                    $param.field
+                )));
+            }
+
+            let (op, negated) = $operator.op_and_neg();
+
+            match (op, negated) {
+                (Operator::Contains, false) => {
+                    $base_query = $base_query.filter($diesel_field.contains(values))
+                }
+                (Operator::Contains, true) => {
+                    $base_query = $base_query.filter(not($diesel_field.contains(values)))
+                }
+                (Operator::Equals, false) => {
+                    $base_query = $base_query.filter($diesel_field.eq(values))
+                }
+                (Operator::Equals, true) => {
+                    $base_query = $base_query.filter(not($diesel_field.eq(values)))
+                }
+                _ => {
+                    return Err(ApiError::OperatorMismatch(format!(
+                        "Operator '{:?}' not implemented for field '{}' (type: array)",
+                        $operator, $param.field
+                    )));
+                }
+            }
         } // end else (not IsNull)
     }};
 }
@@ -435,100 +442,107 @@ macro_rules! string_search {
         if op_pre == Operator::IsNull {
             $crate::is_null_search!($base_query, $param, $operator, $diesel_field);
         } else {
+            let value = $param.value.clone();
 
-        let value = $param.value.clone();
-
-        if !$operator.is_applicable_to(DataType::String) {
-            return Err(ApiError::OperatorMismatch(format!(
-                "Operator '{:?}' is not applicable to field '{}'",
-                $operator, $param.field
-            )));
-        }
-
-        // The value shouldn't be empty at this point, but we can make sure.
-        if value.is_empty() {
-            return Err(ApiError::BadRequest(format!(
-                "Searching on field '{}' requires a value",
-                $param.field
-            )));
-        }
-
-        let (op, negated) = $operator.op_and_neg();
-
-        match (op, negated) {
-            (Operator::Equals, false) => $base_query = $base_query.filter($diesel_field.eq(value)),
-            (Operator::Equals, true) => {
-                $base_query = $base_query.filter(not($diesel_field.eq(value)))
-            }
-            (Operator::In, false) => {
-                let values: Vec<String> = value.split(',').map(|s| s.to_string()).collect();
-                $base_query = $base_query.filter($diesel_field.eq_any(values))
-            }
-            (Operator::In, true) => {
-                let values: Vec<String> = value.split(',').map(|s| s.to_string()).collect();
-                $base_query = $base_query.filter(not($diesel_field.eq_any(values)))
-            }
-            (Operator::IEquals, false) => {
-                $base_query = $base_query.filter($diesel_field.ilike(value))
-            }
-            (Operator::IEquals, true) => {
-                $base_query = $base_query.filter(not($diesel_field.ilike(value)))
-            }
-            (Operator::Contains, false) => {
-                $base_query = $base_query.filter($diesel_field.like(format!("%{}%", value)))
-            }
-            (Operator::Contains, true) => {
-                $base_query = $base_query.filter(not($diesel_field.like(format!("%{}%", value))))
-            }
-            (Operator::StartsWith, false) => {
-                $base_query = $base_query.filter($diesel_field.like(format!("{}%", value)))
-            }
-            (Operator::StartsWith, true) => {
-                $base_query = $base_query.filter(not($diesel_field.like(format!("{}%", value))))
-            }
-            (Operator::IStartsWith, false) => {
-                $base_query = $base_query.filter($diesel_field.ilike(format!("{}%", value)))
-            }
-            (Operator::IStartsWith, true) => {
-                $base_query = $base_query.filter(not($diesel_field.ilike(format!("{}%", value))))
-            }
-            (Operator::EndsWith, false) => {
-                $base_query = $base_query.filter($diesel_field.like(format!("%{}", value)))
-            }
-            (Operator::EndsWith, true) => {
-                $base_query = $base_query.filter(not($diesel_field.like(format!("%{}", value))))
-            }
-            (Operator::IContains, false) => {
-                $base_query = $base_query.filter($diesel_field.ilike(format!("%{}%", value)))
-            }
-            (Operator::IContains, true) => {
-                $base_query = $base_query.filter(not($diesel_field.ilike(format!("%{}%", value))))
-            }
-            (Operator::IEndsWith, false) => {
-                $base_query = $base_query.filter($diesel_field.ilike(format!("%{}", value)))
-            }
-            (Operator::IEndsWith, true) => {
-                $base_query = $base_query.filter(not($diesel_field.ilike(format!("%{}", value))))
-            }
-            (Operator::Like, false) => $base_query = $base_query.filter($diesel_field.like(value)),
-            (Operator::Like, true) => {
-                $base_query = $base_query.filter(not($diesel_field.like(value)))
-            }
-            (Operator::Regex, false) => {
-                $base_query = $base_query.filter($crate::macros::regex_match($diesel_field, value))
-            }
-            (Operator::Regex, true) => {
-                $base_query =
-                    $base_query.filter(not($crate::macros::regex_match($diesel_field, value)))
-            }
-            _ => {
+            if !$operator.is_applicable_to(DataType::String) {
                 return Err(ApiError::OperatorMismatch(format!(
-                    "Operator '{:?}' not implemented for field '{}' (type: string)",
+                    "Operator '{:?}' is not applicable to field '{}'",
                     $operator, $param.field
                 )));
             }
-        }
 
+            // The value shouldn't be empty at this point, but we can make sure.
+            if value.is_empty() {
+                return Err(ApiError::BadRequest(format!(
+                    "Searching on field '{}' requires a value",
+                    $param.field
+                )));
+            }
+
+            let (op, negated) = $operator.op_and_neg();
+
+            match (op, negated) {
+                (Operator::Equals, false) => {
+                    $base_query = $base_query.filter($diesel_field.eq(value))
+                }
+                (Operator::Equals, true) => {
+                    $base_query = $base_query.filter(not($diesel_field.eq(value)))
+                }
+                (Operator::In, false) => {
+                    let values: Vec<String> = value.split(',').map(|s| s.to_string()).collect();
+                    $base_query = $base_query.filter($diesel_field.eq_any(values))
+                }
+                (Operator::In, true) => {
+                    let values: Vec<String> = value.split(',').map(|s| s.to_string()).collect();
+                    $base_query = $base_query.filter(not($diesel_field.eq_any(values)))
+                }
+                (Operator::IEquals, false) => {
+                    $base_query = $base_query.filter($diesel_field.ilike(value))
+                }
+                (Operator::IEquals, true) => {
+                    $base_query = $base_query.filter(not($diesel_field.ilike(value)))
+                }
+                (Operator::Contains, false) => {
+                    $base_query = $base_query.filter($diesel_field.like(format!("%{}%", value)))
+                }
+                (Operator::Contains, true) => {
+                    $base_query =
+                        $base_query.filter(not($diesel_field.like(format!("%{}%", value))))
+                }
+                (Operator::StartsWith, false) => {
+                    $base_query = $base_query.filter($diesel_field.like(format!("{}%", value)))
+                }
+                (Operator::StartsWith, true) => {
+                    $base_query = $base_query.filter(not($diesel_field.like(format!("{}%", value))))
+                }
+                (Operator::IStartsWith, false) => {
+                    $base_query = $base_query.filter($diesel_field.ilike(format!("{}%", value)))
+                }
+                (Operator::IStartsWith, true) => {
+                    $base_query =
+                        $base_query.filter(not($diesel_field.ilike(format!("{}%", value))))
+                }
+                (Operator::EndsWith, false) => {
+                    $base_query = $base_query.filter($diesel_field.like(format!("%{}", value)))
+                }
+                (Operator::EndsWith, true) => {
+                    $base_query = $base_query.filter(not($diesel_field.like(format!("%{}", value))))
+                }
+                (Operator::IContains, false) => {
+                    $base_query = $base_query.filter($diesel_field.ilike(format!("%{}%", value)))
+                }
+                (Operator::IContains, true) => {
+                    $base_query =
+                        $base_query.filter(not($diesel_field.ilike(format!("%{}%", value))))
+                }
+                (Operator::IEndsWith, false) => {
+                    $base_query = $base_query.filter($diesel_field.ilike(format!("%{}", value)))
+                }
+                (Operator::IEndsWith, true) => {
+                    $base_query =
+                        $base_query.filter(not($diesel_field.ilike(format!("%{}", value))))
+                }
+                (Operator::Like, false) => {
+                    $base_query = $base_query.filter($diesel_field.like(value))
+                }
+                (Operator::Like, true) => {
+                    $base_query = $base_query.filter(not($diesel_field.like(value)))
+                }
+                (Operator::Regex, false) => {
+                    $base_query =
+                        $base_query.filter($crate::macros::regex_match($diesel_field, value))
+                }
+                (Operator::Regex, true) => {
+                    $base_query =
+                        $base_query.filter(not($crate::macros::regex_match($diesel_field, value)))
+                }
+                _ => {
+                    return Err(ApiError::OperatorMismatch(format!(
+                        "Operator '{:?}' not implemented for field '{}' (type: string)",
+                        $operator, $param.field
+                    )));
+                }
+            }
         } // end else (not IsNull)
     }};
 }
@@ -545,31 +559,31 @@ macro_rules! boolean_search {
         if op_pre == Operator::IsNull {
             $crate::is_null_search!($base_query, $param, $operator, $diesel_field);
         } else {
+            let value = $param.value_as_boolean()?;
 
-        let value = $param.value_as_boolean()?;
-
-        if !$operator.is_applicable_to(DataType::Boolean) {
-            return Err(ApiError::OperatorMismatch(format!(
-                "Operator '{:?}' is not applicable to field '{}'",
-                $operator, $param.field
-            )));
-        }
-
-        let (op, negated) = $operator.op_and_neg();
-
-        match (op, negated) {
-            (Operator::Equals, false) => $base_query = $base_query.filter($diesel_field.eq(value)),
-            (Operator::Equals, true) => {
-                $base_query = $base_query.filter(not($diesel_field.eq(value)))
-            }
-            _ => {
+            if !$operator.is_applicable_to(DataType::Boolean) {
                 return Err(ApiError::OperatorMismatch(format!(
-                    "Operator '{:?}' not implemented for field '{}' (type: boolean)",
+                    "Operator '{:?}' is not applicable to field '{}'",
                     $operator, $param.field
                 )));
             }
-        }
 
+            let (op, negated) = $operator.op_and_neg();
+
+            match (op, negated) {
+                (Operator::Equals, false) => {
+                    $base_query = $base_query.filter($diesel_field.eq(value))
+                }
+                (Operator::Equals, true) => {
+                    $base_query = $base_query.filter(not($diesel_field.eq(value)))
+                }
+                _ => {
+                    return Err(ApiError::OperatorMismatch(format!(
+                        "Operator '{:?}' not implemented for field '{}' (type: boolean)",
+                        $operator, $param.field
+                    )));
+                }
+            }
         } // end else (not IsNull)
     }};
 }
