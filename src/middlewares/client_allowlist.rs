@@ -1,19 +1,53 @@
 use actix_service::{Service, Transform};
 use actix_web::{
     Error, HttpRequest, dev::ServiceRequest, dev::ServiceResponse, error::ErrorForbidden,
+    http::header::HeaderMap,
 };
 use futures_util::future::{self, LocalBoxFuture, Ready};
+use ipnet::IpNet;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::Once;
 use std::task::{Context, Poll};
 use tracing::warn;
 
-use crate::config::ClientAllowlist;
+use crate::config::{AppConfig, ClientAllowlist};
+
+/// Policy for resolving the real client IP from a request that may have traversed
+/// reverse proxies.
+///
+/// Forwarded headers (`X-Forwarded-For`) are attacker-controllable, so they are only
+/// honored when `trust_headers` is set AND a trust mechanism is configured: either a
+/// `trusted_proxies` allowlist (preferred) or a `hops` count. The client IP is resolved
+/// from the *right* of the `[X-Forwarded-For..., peer]` hop chain, i.e. from the
+/// connection peer inward, which is the part an attacker cannot forge.
+#[derive(Clone, Debug, Default)]
+pub struct ProxyTrust {
+    pub trust_headers: bool,
+    pub trusted_proxies: Vec<IpNet>,
+    pub hops: usize,
+}
+
+impl ProxyTrust {
+    /// Use the connection peer address only; never trust forwarded headers.
+    pub fn peer_only() -> Self {
+        Self::default()
+    }
+
+    /// Build the policy from application configuration.
+    pub fn from_config(config: &AppConfig) -> Self {
+        Self {
+            trust_headers: config.trust_ip_headers,
+            trusted_proxies: config.trusted_proxies.nets().to_vec(),
+            hops: config.trusted_proxy_hops,
+        }
+    }
+}
 
 /// Middleware for enforcing client IP allowlist
 #[derive(Clone)]
 pub struct ClientAllowlistMiddleware {
     allowlist: ClientAllowlist,
-    trust_ip_headers: bool,
+    proxy_trust: ProxyTrust,
 }
 
 impl ClientAllowlistMiddleware {
@@ -21,14 +55,14 @@ impl ClientAllowlistMiddleware {
     pub fn new(allowlist: ClientAllowlist) -> Self {
         Self {
             allowlist,
-            trust_ip_headers: true,
+            proxy_trust: ProxyTrust::peer_only(),
         }
     }
 
-    pub fn new_with_trust(allowlist: ClientAllowlist, trust_ip_headers: bool) -> Self {
+    pub fn new_with_trust(allowlist: ClientAllowlist, proxy_trust: ProxyTrust) -> Self {
         Self {
             allowlist,
-            trust_ip_headers,
+            proxy_trust,
         }
     }
 }
@@ -49,7 +83,7 @@ where
         future::ready(Ok(ClientAllowlistMiddlewareService {
             service,
             allowlist: self.allowlist.clone(),
-            trust_ip_headers: self.trust_ip_headers,
+            proxy_trust: self.proxy_trust.clone(),
         }))
     }
 }
@@ -57,7 +91,7 @@ where
 pub struct ClientAllowlistMiddlewareService<S> {
     service: S,
     allowlist: ClientAllowlist,
-    trust_ip_headers: bool,
+    proxy_trust: ProxyTrust,
 }
 
 impl<S, B> Service<ServiceRequest> for ClientAllowlistMiddlewareService<S>
@@ -75,8 +109,7 @@ where
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let allowlist = self.allowlist.clone();
-        let trust = self.trust_ip_headers;
-        let client_ip = extract_client_ip(&req, trust);
+        let client_ip = extract_client_ip(&req, &self.proxy_trust);
         let fut = self.service.call(req);
 
         Box::pin(async move {
@@ -96,44 +129,113 @@ where
 }
 
 /// Extract the client IP from the request
-pub fn extract_client_ip(req: &ServiceRequest, trust_headers: bool) -> Option<IpAddr> {
-    extract_client_ip_parts(
-        req.peer_addr(),
-        req.connection_info().realip_remote_addr(),
-        trust_headers,
+pub fn extract_client_ip(req: &ServiceRequest, policy: &ProxyTrust) -> Option<IpAddr> {
+    resolve_client_ip(
+        req.peer_addr().map(|addr| addr.ip()),
+        &collect_forwarded_for(req.headers()),
+        policy,
     )
 }
 
 pub fn extract_client_ip_from_http_request(
     req: &HttpRequest,
-    trust_headers: bool,
+    policy: &ProxyTrust,
 ) -> Option<IpAddr> {
-    extract_client_ip_parts(
-        req.peer_addr(),
-        req.connection_info().realip_remote_addr(),
-        trust_headers,
+    resolve_client_ip(
+        req.peer_addr().map(|addr| addr.ip()),
+        &collect_forwarded_for(req.headers()),
+        policy,
     )
 }
 
-fn extract_client_ip_parts(
-    peer_addr: Option<SocketAddr>,
-    real_ip_remote_addr: Option<&str>,
-    trust_headers: bool,
-) -> Option<IpAddr> {
-    let header_ip = if trust_headers {
-        real_ip_remote_addr
-            .and_then(|raw| raw.split(',').next())
-            .and_then(|raw| {
-                raw.trim()
-                    .parse::<IpAddr>()
-                    .ok()
-                    .or_else(|| parse_socket(raw))
-            })
-    } else {
-        None
-    };
+/// Collect the ordered `X-Forwarded-For` chain as written by the proxies, left to right
+/// (claimed client first, closest proxy last). Unparseable tokens are dropped.
+fn collect_forwarded_for(headers: &HeaderMap) -> Vec<IpAddr> {
+    headers
+        .get_all("x-forwarded-for")
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .filter_map(parse_ip_token)
+        .collect()
+}
 
-    header_ip.or_else(|| peer_addr.map(|addr| addr.ip()))
+/// Resolve the trustworthy client IP from the hop chain.
+///
+/// The full chain ordered from most to least trustworthy is `[peer, xff reversed...]`:
+/// the connection peer is the only address we observe directly, and each forwarded entry
+/// further from it is more attacker-controllable. We therefore resolve from that
+/// trustworthy end:
+///
+/// * With a `trusted_proxies` allowlist, skip leading hops that are known proxies and
+///   take the first untrusted hop as the client.
+/// * Otherwise, with a `hops` count, skip that many proxy hops from the trustworthy end.
+/// * If headers are trusted but neither mechanism is configured, forwarded values cannot
+///   be trusted safely, so fall back to the peer address.
+fn resolve_client_ip(
+    peer: Option<IpAddr>,
+    forwarded_for: &[IpAddr],
+    policy: &ProxyTrust,
+) -> Option<IpAddr> {
+    if !policy.trust_headers {
+        return peer;
+    }
+
+    // Forwarded headers are only meaningful relative to the connection peer: it is the one
+    // hop we observe directly and the anchor from which trusted proxies are skipped. With
+    // no peer the entire chain is attacker-controlled, so fail closed.
+    let peer = peer?;
+
+    // Chain from most trustworthy (peer / closest proxy) to least (claimed client).
+    let mut chain: Vec<IpAddr> = Vec::with_capacity(forwarded_for.len() + 1);
+    chain.push(peer);
+    chain.extend(forwarded_for.iter().rev().copied());
+
+    if !policy.trusted_proxies.is_empty() {
+        if let Some(client) = chain
+            .iter()
+            .find(|ip| !ip_in_nets(**ip, &policy.trusted_proxies))
+        {
+            return Some(*client);
+        }
+        // Every hop is a trusted proxy; treat the furthest (claimed client) as client.
+        return chain.last().copied();
+    }
+
+    if policy.hops > 0 {
+        let index = policy.hops.min(chain.len() - 1);
+        return Some(chain[index]);
+    }
+
+    // trust_headers is set but no trust mechanism is configured: ignore forwarded
+    // headers and use the connection peer so spoofed values cannot take effect. This is
+    // a static misconfiguration, so warn once per process rather than on every request to
+    // avoid flooding logs under load.
+    static WARN_UNCONFIGURED_TRUST: Once = Once::new();
+    WARN_UNCONFIGURED_TRUST.call_once(|| {
+        warn!(
+            message = "trust_ip_headers is enabled but neither trusted_proxies nor trusted_proxy_hops is set; ignoring forwarded headers and using peer address"
+        );
+    });
+    Some(peer)
+}
+
+/// Whether the given IP falls inside any of the provided networks.
+fn ip_in_nets(ip: IpAddr, nets: &[IpNet]) -> bool {
+    nets.iter().any(|net| match (net, ip) {
+        (IpNet::V4(net), IpAddr::V4(addr)) => net.contains(&addr),
+        (IpNet::V6(net), IpAddr::V6(addr)) => net.contains(&addr),
+        _ => false,
+    })
+}
+
+/// Parse one forwarded-for token into an IP address, tolerating surrounding whitespace,
+/// `host:port` forms, and bracketed IPv6.
+fn parse_ip_token(raw: &str) -> Option<IpAddr> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    raw.parse::<IpAddr>().ok().or_else(|| parse_socket(raw))
 }
 
 /// Parse a socket address or IPv6 address with brackets
@@ -146,4 +248,129 @@ fn parse_socket(raw: &str) -> Option<IpAddr> {
         .split(']')
         .next()
         .and_then(|ip| ip.parse::<IpAddr>().ok())
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::*;
+    use std::str::FromStr;
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    fn xff(entries: &[&str]) -> Vec<IpAddr> {
+        entries.iter().map(|e| ip(e)).collect()
+    }
+
+    fn proxies(cidrs: &[&str]) -> Vec<IpNet> {
+        cidrs.iter().map(|c| IpNet::from_str(c).unwrap()).collect()
+    }
+
+    #[test]
+    fn peer_only_ignores_forwarded_headers() {
+        let policy = ProxyTrust::peer_only();
+        let client = resolve_client_ip(Some(ip("203.0.113.7")), &xff(&["10.0.0.42"]), &policy);
+        assert_eq!(client, Some(ip("203.0.113.7")));
+    }
+
+    #[test]
+    fn allowlist_skips_trusted_proxy_and_takes_client() {
+        let policy = ProxyTrust {
+            trust_headers: true,
+            trusted_proxies: proxies(&["203.0.113.0/24"]),
+            hops: 0,
+        };
+        // Peer is the trusted proxy; XFF claims the real client.
+        let client = resolve_client_ip(Some(ip("203.0.113.7")), &xff(&["198.51.100.9"]), &policy);
+        assert_eq!(client, Some(ip("198.51.100.9")));
+    }
+
+    #[test]
+    fn allowlist_rejects_spoofed_prepended_client() {
+        // Attacker sends "X-Forwarded-For: 9.9.9.9"; the trusted proxy appends the real
+        // peer, yielding chain [proxy, real_client, spoof]. The spoof must not win.
+        let policy = ProxyTrust {
+            trust_headers: true,
+            trusted_proxies: proxies(&["203.0.113.0/24"]),
+            hops: 0,
+        };
+        let client = resolve_client_ip(
+            Some(ip("203.0.113.7")),
+            &xff(&["9.9.9.9", "198.51.100.9"]),
+            &policy,
+        );
+        assert_eq!(client, Some(ip("198.51.100.9")));
+    }
+
+    #[test]
+    fn rotating_spoofed_xff_cannot_change_resolved_client() {
+        let policy = ProxyTrust {
+            trust_headers: true,
+            trusted_proxies: proxies(&["203.0.113.0/24"]),
+            hops: 0,
+        };
+        let a = resolve_client_ip(
+            Some(ip("203.0.113.7")),
+            &xff(&["1.2.3.4", "198.51.100.9"]),
+            &policy,
+        );
+        let b = resolve_client_ip(
+            Some(ip("203.0.113.7")),
+            &xff(&["5.6.7.8", "198.51.100.9"]),
+            &policy,
+        );
+        assert_eq!(a, b);
+        assert_eq!(a, Some(ip("198.51.100.9")));
+    }
+
+    #[test]
+    fn hop_count_skips_configured_hops_from_the_right() {
+        let policy = ProxyTrust {
+            trust_headers: true,
+            trusted_proxies: vec![],
+            hops: 1,
+        };
+        // chain = [peer, 198.51.100.9, spoof]; skip 1 hop -> 198.51.100.9
+        let client = resolve_client_ip(
+            Some(ip("203.0.113.7")),
+            &xff(&["9.9.9.9", "198.51.100.9"]),
+            &policy,
+        );
+        assert_eq!(client, Some(ip("198.51.100.9")));
+    }
+
+    #[test]
+    fn trust_enabled_with_no_peer_fails_closed() {
+        // Without a connection peer to anchor the chain, forwarded headers are fully
+        // attacker-controlled and must not resolve a client IP.
+        let policy = ProxyTrust {
+            trust_headers: true,
+            trusted_proxies: proxies(&["203.0.113.0/24"]),
+            hops: 0,
+        };
+        assert_eq!(
+            resolve_client_ip(None, &xff(&["198.51.100.9"]), &policy),
+            None
+        );
+    }
+
+    #[test]
+    fn trust_enabled_without_mechanism_falls_back_to_peer() {
+        let policy = ProxyTrust {
+            trust_headers: true,
+            trusted_proxies: vec![],
+            hops: 0,
+        };
+        let client = resolve_client_ip(Some(ip("203.0.113.7")), &xff(&["10.0.0.42"]), &policy);
+        assert_eq!(client, Some(ip("203.0.113.7")));
+    }
+
+    #[test]
+    fn parse_ip_token_handles_socket_and_bracketed_forms() {
+        assert_eq!(parse_ip_token(" 198.51.100.9 "), Some(ip("198.51.100.9")));
+        assert_eq!(parse_ip_token("198.51.100.9:443"), Some(ip("198.51.100.9")));
+        assert_eq!(parse_ip_token("[2001:db8::1]:443"), Some(ip("2001:db8::1")));
+        assert_eq!(parse_ip_token("not-an-ip"), None);
+    }
 }

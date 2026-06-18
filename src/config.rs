@@ -27,8 +27,16 @@ pub const DEFAULT_REPORT_MAX_OUTPUT_BYTES: usize = 262_144;
 pub const DEFAULT_REPORT_STAGE_TIMEOUT_MS: u64 = 10_000;
 pub const DEFAULT_DB_STATEMENT_TIMEOUT_MS: u64 = 0;
 pub const DEFAULT_TOKEN_LIFETIME_HOURS: i64 = 24;
+pub const DEFAULT_LOGIN_RATE_LIMIT_ENABLED: bool = true;
 pub const DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS: usize = 5;
+pub const DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP: usize = 20;
+pub const DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET: usize = 100;
 pub const DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS: u64 = 300;
+pub const DEFAULT_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS: u64 = 300;
+pub const DEFAULT_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS: u64 = 86_400;
+pub const DEFAULT_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V4: u8 = 24;
+pub const DEFAULT_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6: u8 = 64;
+pub const DEFAULT_TRUSTED_PROXY_HOPS: usize = 0;
 pub const DEFAULT_MAX_TRANSITIVE_DEPTH: i32 = 100;
 
 struct TokenHashKeyConfig {
@@ -233,7 +241,15 @@ pub struct AppConfig {
     )]
     pub token_lifetime_hours: i64,
 
-    /// Maximum failed login attempts allowed within the configured login rate-limit window.
+    /// Master switch for login rate limiting. When false, no login throttling is applied.
+    #[clap(
+        long,
+        env = "HUBUUM_LOGIN_RATE_LIMIT_ENABLED",
+        default_value_t = DEFAULT_LOGIN_RATE_LIMIT_ENABLED
+    )]
+    pub login_rate_limit_enabled: bool,
+
+    /// Maximum failed login attempts per (username, client IP) within the rate-limit window.
     #[clap(
         long,
         env = "HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS",
@@ -241,13 +257,67 @@ pub struct AppConfig {
     )]
     pub login_rate_limit_max_attempts: usize,
 
-    /// Login rate-limit window in seconds.
+    /// Maximum failed login attempts per client IP (across all usernames) within the
+    /// rate-limit window. Throttles password spraying from a single host. `0` disables
+    /// this scope.
+    #[clap(
+        long,
+        env = "HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP",
+        default_value_t = DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP
+    )]
+    pub login_rate_limit_max_attempts_per_ip: usize,
+
+    /// Maximum failed login attempts per client subnet within the rate-limit window.
+    /// Throttles distributed spraying from one network. `0` disables this scope.
+    #[clap(
+        long,
+        env = "HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET",
+        default_value_t = DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET
+    )]
+    pub login_rate_limit_max_attempts_per_subnet: usize,
+
+    /// Login rate-limit sliding window in seconds.
     #[clap(
         long,
         env = "HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS",
         default_value_t = DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS
     )]
     pub login_rate_limit_window_seconds: u64,
+
+    /// Base lockout duration (seconds) applied the first time a scope crosses its
+    /// threshold. Each subsequent lockout doubles, capped by the backoff maximum.
+    #[clap(
+        long,
+        env = "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS",
+        default_value_t = DEFAULT_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS
+    )]
+    pub login_rate_limit_backoff_base_seconds: u64,
+
+    /// Maximum lockout duration (seconds) for exponential login backoff.
+    #[clap(
+        long,
+        env = "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS",
+        default_value_t = DEFAULT_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS
+    )]
+    pub login_rate_limit_backoff_max_seconds: u64,
+
+    /// IPv4 prefix length used to aggregate client IPs into subnets for the per-subnet
+    /// failure budget.
+    #[clap(
+        long,
+        env = "HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V4",
+        default_value_t = DEFAULT_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V4
+    )]
+    pub login_rate_limit_subnet_prefix_v4: u8,
+
+    /// IPv6 prefix length used to aggregate client IPs into subnets for the per-subnet
+    /// failure budget.
+    #[clap(
+        long,
+        env = "HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6",
+        default_value_t = DEFAULT_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6
+    )]
+    pub login_rate_limit_subnet_prefix_v6: u8,
 
     /// Default number of items returned by cursor-paginated list endpoints
     #[clap(
@@ -299,9 +369,30 @@ pub struct AppConfig {
     )]
     pub tls_backend: Option<TlsBackend>,
 
-    /// Trust proxy IP headers (X-Forwarded-For/Forwarded). If false, use peer address only.
+    /// Trust proxy IP headers (X-Forwarded-For). If false, use peer address only.
+    ///
+    /// When true, the real client IP is resolved from the right of the
+    /// `[X-Forwarded-For..., peer]` hop chain using `trusted_proxies` (preferred) or
+    /// `trusted_proxy_hops`. If neither is configured, forwarded headers are ignored
+    /// and the peer address is used (forwarded values are never trusted blindly).
     #[clap(long, default_value = "false", env = "HUBUUM_TRUST_IP_HEADERS")]
     pub trust_ip_headers: bool,
+
+    /// Trusted reverse-proxy IPs/CIDRs. When `trust_ip_headers` is set, hops in this set
+    /// are skipped (from the connection peer inward) and the first untrusted hop is taken
+    /// as the client. Comma-separated; empty disables allowlist-based resolution.
+    #[clap(long, default_value = "", env = "HUBUUM_TRUSTED_PROXIES", value_parser = parse_trusted_proxies)]
+    pub trusted_proxies: TrustedProxies,
+
+    /// Number of trusted proxy hops in front of the server. Used only when
+    /// `trust_ip_headers` is set and `trusted_proxies` is empty: this many hops are
+    /// skipped from the right of the hop chain. `0` means do not trust forwarded headers.
+    #[clap(
+        long,
+        env = "HUBUUM_TRUSTED_PROXY_HOPS",
+        default_value_t = DEFAULT_TRUSTED_PROXY_HOPS
+    )]
+    pub trusted_proxy_hops: usize,
 
     /// Whitelist of client IPs or CIDRs ("*" allows all)
     #[clap(long, default_value = "127.0.0.1,::1", env = "HUBUUM_CLIENT_ALLOWLIST", value_parser = parse_client_allowlist)]
@@ -310,6 +401,10 @@ pub struct AppConfig {
 
 fn parse_client_allowlist(s: &str) -> Result<ClientAllowlist, String> {
     ClientAllowlist::from_str(s).map_err(|e| e.to_string())
+}
+
+fn parse_trusted_proxies(s: &str) -> Result<TrustedProxies, String> {
+    TrustedProxies::from_str(s).map_err(|e| e.to_string())
 }
 
 impl AppConfig {
@@ -404,6 +499,36 @@ impl AppConfig {
             ));
         }
 
+        if self.login_rate_limit_backoff_base_seconds == 0 {
+            return Err(ApiError::BadRequest(
+                "login_rate_limit_backoff_base_seconds must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.login_rate_limit_backoff_max_seconds < self.login_rate_limit_backoff_base_seconds {
+            return Err(ApiError::BadRequest(format!(
+                "login_rate_limit_backoff_max_seconds ({}) must be greater than or equal to login_rate_limit_backoff_base_seconds ({})",
+                self.login_rate_limit_backoff_max_seconds,
+                self.login_rate_limit_backoff_base_seconds
+            )));
+        }
+
+        if self.login_rate_limit_subnet_prefix_v4 == 0
+            || self.login_rate_limit_subnet_prefix_v4 > 32
+        {
+            return Err(ApiError::BadRequest(
+                "login_rate_limit_subnet_prefix_v4 must be between 1 and 32".to_string(),
+            ));
+        }
+
+        if self.login_rate_limit_subnet_prefix_v6 == 0
+            || self.login_rate_limit_subnet_prefix_v6 > 128
+        {
+            return Err(ApiError::BadRequest(
+                "login_rate_limit_subnet_prefix_v6 must be between 1 and 128".to_string(),
+            ));
+        }
+
         if self.max_transitive_depth <= 0 {
             return Err(ApiError::BadRequest(
                 "max_transitive_depth must be greater than 0".to_string(),
@@ -469,32 +594,66 @@ pub fn token_hash_key_is_ephemeral() -> bool {
     TOKEN_HASH_KEY_CONFIG.is_ephemeral
 }
 
-pub fn login_rate_limit_max_attempts() -> usize {
-    #[cfg(test)]
-    let attempts = get_config_from_env()
-        .map(|config| config.login_rate_limit_max_attempts)
-        .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS);
-
-    #[cfg(not(test))]
-    let attempts = get_config()
-        .map(|config| config.login_rate_limit_max_attempts)
-        .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS);
-
-    attempts
+/// Snapshot of all login rate-limit knobs, resolved once per check so a single request
+/// sees a consistent configuration.
+#[derive(Debug, Clone, Copy)]
+pub struct LoginRateLimitConfig {
+    pub enabled: bool,
+    pub max_attempts: usize,
+    pub max_attempts_per_ip: usize,
+    pub max_attempts_per_subnet: usize,
+    pub window_seconds: u64,
+    pub backoff_base_seconds: u64,
+    pub backoff_max_seconds: u64,
+    pub subnet_prefix_v4: u8,
+    pub subnet_prefix_v6: u8,
 }
 
-pub fn login_rate_limit_window_seconds() -> u64 {
+impl Default for LoginRateLimitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: DEFAULT_LOGIN_RATE_LIMIT_ENABLED,
+            max_attempts: DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS,
+            max_attempts_per_ip: DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP,
+            max_attempts_per_subnet: DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET,
+            window_seconds: DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+            backoff_base_seconds: DEFAULT_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS,
+            backoff_max_seconds: DEFAULT_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS,
+            subnet_prefix_v4: DEFAULT_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V4,
+            subnet_prefix_v6: DEFAULT_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6,
+        }
+    }
+}
+
+impl From<&AppConfig> for LoginRateLimitConfig {
+    fn from(config: &AppConfig) -> Self {
+        Self {
+            enabled: config.login_rate_limit_enabled,
+            max_attempts: config.login_rate_limit_max_attempts,
+            max_attempts_per_ip: config.login_rate_limit_max_attempts_per_ip,
+            max_attempts_per_subnet: config.login_rate_limit_max_attempts_per_subnet,
+            window_seconds: config.login_rate_limit_window_seconds,
+            backoff_base_seconds: config.login_rate_limit_backoff_base_seconds,
+            backoff_max_seconds: config.login_rate_limit_backoff_max_seconds,
+            subnet_prefix_v4: config.login_rate_limit_subnet_prefix_v4,
+            subnet_prefix_v6: config.login_rate_limit_subnet_prefix_v6,
+        }
+    }
+}
+
+/// Resolve the active login rate-limit configuration.
+pub fn login_rate_limit_config() -> LoginRateLimitConfig {
     #[cfg(test)]
-    let seconds = get_config_from_env()
-        .map(|config| config.login_rate_limit_window_seconds)
-        .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS);
+    let config = get_config_from_env()
+        .map(|config| LoginRateLimitConfig::from(&config))
+        .unwrap_or_default();
 
     #[cfg(not(test))]
-    let seconds = get_config()
-        .map(|config| config.login_rate_limit_window_seconds)
-        .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS);
+    let config = get_config()
+        .map(|config| LoginRateLimitConfig::from(&*config))
+        .unwrap_or_default();
 
-    seconds
+    config
 }
 
 #[cfg(not(test))]
@@ -553,6 +712,13 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .unwrap_or_else(|_| default.to_string())
             .parse()
             .unwrap_or_else(|e: ApiError| panic!("Invalid client allowlist in {key}: {e}"))
+    }
+
+    fn env_or_default_trusted_proxies(key: &str, default: &str) -> TrustedProxies {
+        env::var(key)
+            .unwrap_or_else(|_| default.to_string())
+            .parse()
+            .unwrap_or_else(|e: ApiError| panic!("Invalid trusted proxies in {key}: {e}"))
     }
 
     let config = AppConfig {
@@ -618,15 +784,54 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         token_lifetime_hours: env_or_default("HUBUUM_TOKEN_LIFETIME_HOURS", "24")
             .parse()
             .unwrap_or(DEFAULT_TOKEN_LIFETIME_HOURS),
+        login_rate_limit_enabled: env_or_default("HUBUUM_LOGIN_RATE_LIMIT_ENABLED", "true")
+            .parse()
+            .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_ENABLED),
         login_rate_limit_max_attempts: env_or_default("HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS", "5")
             .parse()
             .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS),
+        login_rate_limit_max_attempts_per_ip: env_or_default(
+            "HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP",
+            "20",
+        )
+        .parse()
+        .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP),
+        login_rate_limit_max_attempts_per_subnet: env_or_default(
+            "HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET",
+            "100",
+        )
+        .parse()
+        .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET),
         login_rate_limit_window_seconds: env_or_default(
             "HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS",
             "300",
         )
         .parse()
         .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS),
+        login_rate_limit_backoff_base_seconds: env_or_default(
+            "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS",
+            "300",
+        )
+        .parse()
+        .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS),
+        login_rate_limit_backoff_max_seconds: env_or_default(
+            "HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS",
+            "86400",
+        )
+        .parse()
+        .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS),
+        login_rate_limit_subnet_prefix_v4: env_or_default(
+            "HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V4",
+            "24",
+        )
+        .parse()
+        .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V4),
+        login_rate_limit_subnet_prefix_v6: env_or_default(
+            "HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6",
+            "64",
+        )
+        .parse()
+        .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6),
         default_page_limit: env_or_default("HUBUUM_DEFAULT_PAGE_LIMIT", "100")
             .parse()
             .unwrap_or(DEFAULT_PAGE_LIMIT),
@@ -644,6 +849,10 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         trust_ip_headers: env_or_default("HUBUUM_TRUST_IP_HEADERS", "false")
             .parse()
             .unwrap_or(false),
+        trusted_proxies: env_or_default_trusted_proxies("HUBUUM_TRUSTED_PROXIES", ""),
+        trusted_proxy_hops: env_or_default("HUBUUM_TRUSTED_PROXY_HOPS", "0")
+            .parse()
+            .unwrap_or(DEFAULT_TRUSTED_PROXY_HOPS),
         client_allowlist: env_or_default_client_allowlist(
             "HUBUUM_CLIENT_ALLOWLIST",
             "127.0.0.1,::1",
@@ -751,6 +960,58 @@ impl FromStr for ClientAllowlist {
     }
 }
 
+/// Trusted reverse-proxy networks used to resolve the real client IP from a forwarded
+/// hop chain. Unlike [`ClientAllowlist`], an empty set is valid and means "no trusted
+/// proxies configured".
+#[derive(Debug, Clone, Default)]
+pub struct TrustedProxies(Vec<IpNet>);
+
+impl TrustedProxies {
+    /// The configured trusted-proxy networks.
+    pub fn nets(&self) -> &[IpNet] {
+        &self.0
+    }
+}
+
+impl FromStr for TrustedProxies {
+    type Err = ApiError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let nets = s
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+            .map(ClientAllowlist::parse_net)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(TrustedProxies(nets))
+    }
+}
+
+impl Serialize for TrustedProxies {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let s = self
+            .0
+            .iter()
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        serializer.serialize_str(&s)
+    }
+}
+
+impl<'de> Deserialize<'de> for TrustedProxies {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        TrustedProxies::from_str(&s).map_err(serde::de::Error::custom)
+    }
+}
+
 #[cfg(test)]
 pub fn get_config() -> Result<AppConfig, ApiError> {
     let _lock = TEST_ENV_LOCK.lock().unwrap();
@@ -768,8 +1029,7 @@ mod tests {
         DEFAULT_PAGE_LIMIT, DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER,
         DEFAULT_REPORT_MAX_OUTPUT_BYTES, DEFAULT_TASK_POLL_INTERVAL_MS,
         DEFAULT_TOKEN_LIFETIME_HOURS, MAX_PAGE_LIMIT, TEST_ENV_LOCK, TlsBackend,
-        default_actix_workers, default_task_workers, get_config_from_env,
-        login_rate_limit_max_attempts, login_rate_limit_window_seconds, token_hash_key_bytes,
+        default_actix_workers, default_task_workers, get_config_from_env, token_hash_key_bytes,
         token_hash_key_is_ephemeral,
     };
 
@@ -1097,14 +1357,6 @@ mod tests {
             loaded.login_rate_limit_window_seconds,
             DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS
         );
-        assert_eq!(
-            login_rate_limit_max_attempts(),
-            DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS
-        );
-        assert_eq!(
-            login_rate_limit_window_seconds(),
-            DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS
-        );
     }
 
     #[test]
@@ -1119,5 +1371,100 @@ mod tests {
             error.to_string(),
             "login_rate_limit_max_attempts must be greater than 0"
         );
+    }
+
+    #[test]
+    fn extended_login_rate_limit_settings_are_parsed_from_env() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _enabled = EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_ENABLED", Some("false"));
+        let _per_ip = EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP", Some("33"));
+        let _per_subnet = EnvVarGuard::set(
+            "HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET",
+            Some("77"),
+        );
+        let _base = EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS", Some("60"));
+        let _max = EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS", Some("3600"));
+        let _v4 = EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V4", Some("16"));
+        let _v6 = EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6", Some("48"));
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        for config in [&parsed, &loaded] {
+            assert!(!config.login_rate_limit_enabled);
+            assert_eq!(config.login_rate_limit_max_attempts_per_ip, 33);
+            assert_eq!(config.login_rate_limit_max_attempts_per_subnet, 77);
+            assert_eq!(config.login_rate_limit_backoff_base_seconds, 60);
+            assert_eq!(config.login_rate_limit_backoff_max_seconds, 3600);
+            assert_eq!(config.login_rate_limit_subnet_prefix_v4, 16);
+            assert_eq!(config.login_rate_limit_subnet_prefix_v6, 48);
+        }
+    }
+
+    #[test]
+    fn per_scope_thresholds_may_be_zero_to_disable() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _per_ip = EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP", Some("0"));
+        let _per_subnet =
+            EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET", Some("0"));
+
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(loaded.login_rate_limit_max_attempts_per_ip, 0);
+        assert_eq!(loaded.login_rate_limit_max_attempts_per_subnet, 0);
+    }
+
+    #[test]
+    fn backoff_max_must_not_be_below_base() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _base = EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS", Some("600"));
+        let _max = EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS", Some("300"));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "login_rate_limit_backoff_max_seconds (300) must be greater than or equal to login_rate_limit_backoff_base_seconds (600)"
+        );
+    }
+
+    #[test]
+    fn subnet_prefixes_are_validated() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _v4 = EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V4", Some("33"));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "login_rate_limit_subnet_prefix_v4 must be between 1 and 32"
+        );
+    }
+
+    #[test]
+    fn trusted_proxies_parse_from_env() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _proxies = EnvVarGuard::set("HUBUUM_TRUSTED_PROXIES", Some("10.0.0.0/8, 192.168.1.1"));
+        let _hops = EnvVarGuard::set("HUBUUM_TRUSTED_PROXY_HOPS", Some("2"));
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        for config in [&parsed, &loaded] {
+            assert_eq!(config.trusted_proxies.nets().len(), 2);
+            assert_eq!(config.trusted_proxy_hops, 2);
+        }
+    }
+
+    #[test]
+    fn trusted_proxies_default_to_empty() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _proxies = EnvVarGuard::set("HUBUUM_TRUSTED_PROXIES", None);
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert!(parsed.trusted_proxies.nets().is_empty());
+        assert!(loaded.trusted_proxies.nets().is_empty());
     }
 }

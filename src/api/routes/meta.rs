@@ -4,5 +4,8 @@ use crate::api::handlers::meta as meta_handlers;
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(meta_handlers::get_db_state)
         .service(meta_handlers::get_object_and_class_count)
-        .service(meta_handlers::get_task_queue_state);
+        .service(meta_handlers::get_task_queue_state)
+        .service(meta_handlers::get_login_rate_limit_state)
+        .service(meta_handlers::release_login_rate_limit_entry)
+        .service(meta_handlers::clear_login_rate_limit);
 }

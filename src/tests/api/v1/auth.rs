@@ -3,15 +3,16 @@ mod tests {
     use crate::config::get_config;
     use crate::db::traits::ActiveTokens;
     use crate::db::{init_pool, with_connection};
-    use crate::middlewares::rate_limit::reset_login_rate_limit_for_tests;
+    use crate::middlewares::rate_limit::{
+        LOGIN_RATE_LIMIT_TEST_LOCK, reset_login_rate_limit_for_tests,
+    };
     use crate::models::user::LoginUser;
     use crate::tests::{create_test_admin, create_test_user};
     use crate::{api, assert_not_contains};
     use actix_web::http::header;
     use actix_web::{App, http::StatusCode, test, web, web::Data};
     use diesel::prelude::*;
-    use std::sync::LazyLock;
-    use tokio::sync::{Mutex, MutexGuard};
+    use tokio::sync::MutexGuard;
 
     const LOGIN_ENDPOINT: &str = "/api/v0/auth/login";
     const LOGOUT_ENDPOINT: &str = "/api/v0/auth/logout";
@@ -20,10 +21,8 @@ mod tests {
     const LOGOUT_SPECIFIC_TOKEN: &str = "/api/v0/auth/logout/token";
     const VALIDATE_TOKEN_ENDPOINT: &str = "/api/v0/auth/validate";
 
-    static AUTH_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-
     async fn lock_auth_test_state() -> MutexGuard<'static, ()> {
-        AUTH_TEST_LOCK.lock().await
+        LOGIN_RATE_LIMIT_TEST_LOCK.lock().await
     }
 
     #[actix_web::test]
@@ -466,7 +465,9 @@ mod tests {
         let _guard = lock_auth_test_state().await;
         reset_login_rate_limit_for_tests().await;
         let mut config = get_config().unwrap();
+        // Trust forwarded headers, but only behind the known proxy at 203.0.113.1.
         config.trust_ip_headers = true;
+        config.trusted_proxies = "203.0.113.1/32".parse().unwrap();
         let max_attempts = config.login_rate_limit_max_attempts;
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
@@ -484,6 +485,7 @@ mod tests {
             });
 
             let resp = test::TestRequest::post()
+                .peer_addr("203.0.113.1:9000".parse().unwrap())
                 .insert_header(("X-Forwarded-For", "198.51.100.10"))
                 .uri(LOGIN_ENDPOINT)
                 .set_json(&login_info)
@@ -493,12 +495,15 @@ mod tests {
             assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
         }
 
+        // The throttled bucket is keyed to the resolved client 198.51.100.10; a different
+        // genuine client behind the same proxy is not affected.
         let other_client_login = web::Form(LoginUser {
             username: "forwarded-ip-user".to_string(),
             password: "wrongpassword".to_string(),
         });
 
         let resp = test::TestRequest::post()
+            .peer_addr("203.0.113.1:9000".parse().unwrap())
             .insert_header(("X-Forwarded-For", "198.51.100.11"))
             .uri(LOGIN_ENDPOINT)
             .set_json(&other_client_login)
@@ -506,6 +511,114 @@ mod tests {
             .await;
 
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[actix_web::test]
+    async fn test_rotating_spoofed_forwarded_for_cannot_bypass_rate_limit() {
+        // Regression for GHSA-63j4-jh8h-chch (#2): an attacker connecting directly (not
+        // via a trusted proxy) rotates X-Forwarded-For on every request. The header must
+        // be ignored so all attempts collapse onto the peer's bucket and get throttled.
+        let _guard = lock_auth_test_state().await;
+        reset_login_rate_limit_for_tests().await;
+        let mut config = get_config().unwrap();
+        config.trust_ip_headers = true;
+        config.trusted_proxies = "203.0.113.1/32".parse().unwrap();
+        let max_attempts = config.login_rate_limit_max_attempts;
+        let pool = init_pool(&config.database_url, config.db_pool_size);
+        let app = test::init_service(
+            App::new()
+                .app_data(Data::new(config.clone()))
+                .app_data(Data::new(pool.clone()))
+                .configure(api::config),
+        )
+        .await;
+
+        for attempt in 0..max_attempts {
+            let login_info = web::Form(LoginUser {
+                username: "spoof-victim".to_string(),
+                password: "wrongpassword".to_string(),
+            });
+
+            let resp = test::TestRequest::post()
+                .peer_addr("198.51.100.66:40000".parse().unwrap())
+                .insert_header(("X-Forwarded-For", format!("10.0.0.{attempt}")))
+                .uri(LOGIN_ENDPOINT)
+                .set_json(&login_info)
+                .send_request(&app)
+                .await;
+
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        let login_info = web::Form(LoginUser {
+            username: "spoof-victim".to_string(),
+            password: "wrongpassword".to_string(),
+        });
+
+        let resp = test::TestRequest::post()
+            .peer_addr("198.51.100.66:40000".parse().unwrap())
+            .insert_header(("X-Forwarded-For", "10.0.0.250"))
+            .uri(LOGIN_ENDPOINT)
+            .set_json(&login_info)
+            .send_request(&app)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[actix_web::test]
+    async fn test_password_spray_across_usernames_is_throttled_per_ip() {
+        // Regression for GHSA-63j4-jh8h-chch (#1): spraying one password across many
+        // usernames from a single host leaves every (user, ip) bucket at one attempt, but
+        // the per-IP counter must still throttle the source.
+        let _guard = lock_auth_test_state().await;
+        reset_login_rate_limit_for_tests().await;
+        let mut config = get_config().unwrap();
+        config.trust_ip_headers = true;
+        config.trusted_proxies = "203.0.113.1/32".parse().unwrap();
+        let per_ip = config.login_rate_limit_max_attempts_per_ip;
+        let pool = init_pool(&config.database_url, config.db_pool_size);
+        let app = test::init_service(
+            App::new()
+                .app_data(Data::new(config.clone()))
+                .app_data(Data::new(pool.clone()))
+                .configure(api::config),
+        )
+        .await;
+
+        // Each distinct username keeps its own (user, ip) bucket at a single failure.
+        for attempt in 0..per_ip {
+            let login_info = web::Form(LoginUser {
+                username: format!("spray-user-{attempt}"),
+                password: "wrongpassword".to_string(),
+            });
+
+            let resp = test::TestRequest::post()
+                .peer_addr("203.0.113.1:9000".parse().unwrap())
+                .insert_header(("X-Forwarded-For", "198.51.100.50"))
+                .uri(LOGIN_ENDPOINT)
+                .set_json(&login_info)
+                .send_request(&app)
+                .await;
+
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        // A brand-new username from the same source IP is now throttled by the per-IP cap.
+        let login_info = web::Form(LoginUser {
+            username: "spray-user-final".to_string(),
+            password: "wrongpassword".to_string(),
+        });
+
+        let resp = test::TestRequest::post()
+            .peer_addr("203.0.113.1:9000".parse().unwrap())
+            .insert_header(("X-Forwarded-For", "198.51.100.50"))
+            .uri(LOGIN_ENDPOINT)
+            .set_json(&login_info)
+            .send_request(&app)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 
     #[actix_web::test]

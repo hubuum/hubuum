@@ -11,7 +11,7 @@ use std::time::Instant;
 use tracing::{Instrument, Level, info, span};
 use uuid::Uuid;
 
-use super::client_allowlist::extract_client_ip;
+use super::client_allowlist::{ProxyTrust, extract_client_ip};
 
 const CORRELATION_ID: HeaderName = HeaderName::from_static("x-correlation-id");
 const REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
@@ -19,7 +19,7 @@ const REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 // Middleware factory
 #[derive(Clone)]
 pub struct TracingMiddleware {
-    trust_ip_headers: bool,
+    proxy_trust: ProxyTrust,
 }
 
 impl Default for TracingMiddleware {
@@ -31,12 +31,12 @@ impl Default for TracingMiddleware {
 impl TracingMiddleware {
     pub fn new() -> Self {
         Self {
-            trust_ip_headers: true,
+            proxy_trust: ProxyTrust::peer_only(),
         }
     }
 
-    pub fn new_with_trust(trust_ip_headers: bool) -> Self {
-        Self { trust_ip_headers }
+    pub fn new_with_trust(proxy_trust: ProxyTrust) -> Self {
+        Self { proxy_trust }
     }
 }
 
@@ -55,14 +55,14 @@ where
     fn new_transform(&self, service: S) -> Self::Future {
         future::ready(Ok(TracingMiddlewareService {
             service,
-            trust_ip_headers: self.trust_ip_headers,
+            proxy_trust: self.proxy_trust.clone(),
         }))
     }
 }
 
 pub struct TracingMiddlewareService<S> {
     service: S,
-    trust_ip_headers: bool,
+    proxy_trust: ProxyTrust,
 }
 
 impl<S, B> Service<ServiceRequest> for TracingMiddlewareService<S>
@@ -92,7 +92,7 @@ where
 
         let method = req.method().to_string();
         let path = req.path().to_string();
-        let client_ip = extract_client_ip(&req, self.trust_ip_headers);
+        let client_ip = extract_client_ip(&req, &self.proxy_trust);
         let client_ip_s = client_ip.map(|ip| ip.to_string());
 
         let start_time = Instant::now();
