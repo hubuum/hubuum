@@ -143,9 +143,17 @@ user after verifying the cause).
 GET /api/v0/meta/login-rate-limit?include=locked
 ```
 
-The `include` query parameter is `locked` (default, only currently-locked scopes) or `all`
-(every tracked scope). The response contains the effective configuration, summary counts,
-and the matching scopes:
+Query parameters (all optional, and combinable):
+
+- `include` — `locked` (default, only currently-locked scopes) or `all` (every tracked
+  scope).
+- `scope` — restrict to one scope kind: `user_ip`, `ip`, or `subnet`.
+- `q` — case-insensitive substring match on the scope identifier (a username, IP, or
+  subnet). For example, `q=alice` or `q=198.51.100`.
+
+`tracked_entries` and `locked_entries` are totals across all scopes; `returned_entries` is
+the number of scopes left after the filters are applied. The response contains the effective
+configuration, those counts, and the matching scopes:
 
 ```jsonc
 {
@@ -157,6 +165,7 @@ and the matching scopes:
   },
   "tracked_entries": 42,
   "locked_entries": 3,
+  "returned_entries": 1,
   "entries": [
     {
       "id": "dTphbGljZXwxLjIuMy40",

@@ -295,11 +295,13 @@ pub struct LoginRateLimitEntryResponse {
 #[derive(Serialize, Debug, ToSchema)]
 pub struct LoginRateLimitStateResponse {
     config: LoginRateLimitConfigResponse,
-    /// Total number of tracked scopes.
+    /// Total number of tracked scopes (before filtering).
     tracked_entries: usize,
-    /// Number of scopes currently locked out.
+    /// Number of scopes currently locked out (before filtering).
     locked_entries: usize,
-    /// The tracked scopes (filtered by the `include` query parameter).
+    /// Number of scopes returned in `entries` after applying the query filters.
+    returned_entries: usize,
+    /// The tracked scopes matching the `include`, `scope`, and `q` query parameters.
     entries: Vec<LoginRateLimitEntryResponse>,
 }
 
@@ -317,6 +319,10 @@ pub struct ClearRateLimitResponse {
 pub struct LoginRateLimitQuery {
     /// `locked` (default) returns only locked scopes; `all` returns every tracked scope.
     include: Option<String>,
+    /// Restrict to a single scope kind: `user_ip`, `ip`, or `subnet`.
+    scope: Option<String>,
+    /// Case-insensitive substring match on the scope identifier (username or IP/subnet).
+    q: Option<String>,
 }
 
 /// Split a raw limiter key into its scope kind and human-readable identifier.
@@ -338,7 +344,9 @@ fn scope_and_identifier(key: &str) -> (&'static str, String) {
     tag = "meta",
     security(("bearer_auth" = [])),
     params(
-        ("include" = Option<String>, Query, description = "`locked` (default) or `all`")
+        ("include" = Option<String>, Query, description = "`locked` (default) or `all`"),
+        ("scope" = Option<String>, Query, description = "Filter by scope kind: `user_ip`, `ip`, or `subnet`"),
+        ("q" = Option<String>, Query, description = "Case-insensitive substring match on the scope identifier")
     ),
     responses(
         (status = 200, description = "Login rate-limit configuration and tracked scopes", body = LoginRateLimitStateResponse),
@@ -357,9 +365,11 @@ pub async fn get_login_rate_limit_state(
     let locked_entries = snapshots.iter().filter(|entry| entry.locked).count();
 
     let include_all = query.include.as_deref() == Some("all");
+    let scope_filter = query.scope.as_deref();
+    let needle = query.q.as_deref().map(str::to_ascii_lowercase);
+
     let mut entries: Vec<LoginRateLimitEntryResponse> = snapshots
         .into_iter()
-        .filter(|entry| include_all || entry.locked)
         .map(|entry| {
             let (scope, identifier) = scope_and_identifier(&entry.key);
             LoginRateLimitEntryResponse {
@@ -371,6 +381,13 @@ pub async fn get_login_rate_limit_state(
                 locked_for_seconds: entry.locked_for.map(|remaining| remaining.as_secs()),
                 lockout_level: entry.lockout_level,
             }
+        })
+        .filter(|entry| {
+            (include_all || entry.locked)
+                && scope_filter.is_none_or(|scope| entry.scope == scope)
+                && needle
+                    .as_deref()
+                    .is_none_or(|needle| entry.identifier.to_ascii_lowercase().contains(needle))
         })
         .collect();
 
@@ -400,6 +417,7 @@ pub async fn get_login_rate_limit_state(
         },
         tracked_entries,
         locked_entries,
+        returned_entries: entries.len(),
         entries,
     };
 

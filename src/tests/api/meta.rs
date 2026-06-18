@@ -165,6 +165,68 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
+    async fn test_login_rate_limit_filter_by_scope_and_query(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let _guard = LOGIN_RATE_LIMIT_TEST_LOCK.lock().await;
+        reset_login_rate_limit_for_tests().await;
+        let context = test_context;
+
+        // One failure seeds three scopes: user_ip, ip, and subnet.
+        record_login_failure("filter-alice", Some("203.0.113.77".parse().unwrap())).await;
+
+        // scope=user_ip with a username substring returns only the user_ip scope.
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{LOGIN_RATE_LIMIT_ENDPOINT}?include=all&scope=user_ip&q=filter-alice"),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let body: Value = test::read_body_json(resp).await;
+        let entries = body["entries"].as_array().unwrap();
+        assert_eq!(body["returned_entries"], entries.len() as u64);
+        assert!(!entries.is_empty());
+        assert!(entries.iter().all(|entry| {
+            entry["scope"] == "user_ip"
+                && entry["identifier"]
+                    .as_str()
+                    .unwrap()
+                    .contains("filter-alice")
+        }));
+
+        // scope=ip narrows to the IP scope.
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{LOGIN_RATE_LIMIT_ENDPOINT}?include=all&scope=ip"),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let body: Value = test::read_body_json(resp).await;
+        let entries = body["entries"].as_array().unwrap();
+        assert!(entries.iter().all(|entry| entry["scope"] == "ip"));
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry["identifier"] == "203.0.113.77")
+        );
+
+        // A non-matching query returns nothing.
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{LOGIN_RATE_LIMIT_ENDPOINT}?include=all&q=no-such-identifier"),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let body: Value = test::read_body_json(resp).await;
+        assert_eq!(body["returned_entries"], 0);
+        assert!(body["entries"].as_array().unwrap().is_empty());
+    }
+
+    #[rstest]
+    #[actix_web::test]
     async fn test_login_rate_limit_clear_all(#[future(awt)] test_context: TestContext) {
         let _guard = LOGIN_RATE_LIMIT_TEST_LOCK.lock().await;
         reset_login_rate_limit_for_tests().await;
