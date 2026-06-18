@@ -180,14 +180,15 @@ fn resolve_client_ip(
         return peer;
     }
 
+    // Forwarded headers are only meaningful relative to the connection peer: it is the one
+    // hop we observe directly and the anchor from which trusted proxies are skipped. With
+    // no peer the entire chain is attacker-controlled, so fail closed.
+    let peer = peer?;
+
     // Chain from most trustworthy (peer / closest proxy) to least (claimed client).
     let mut chain: Vec<IpAddr> = Vec::with_capacity(forwarded_for.len() + 1);
-    chain.extend(peer);
+    chain.push(peer);
     chain.extend(forwarded_for.iter().rev().copied());
-
-    if chain.is_empty() {
-        return None;
-    }
 
     if !policy.trusted_proxies.is_empty() {
         if let Some(client) = chain
@@ -215,7 +216,7 @@ fn resolve_client_ip(
             message = "trust_ip_headers is enabled but neither trusted_proxies nor trusted_proxy_hops is set; ignoring forwarded headers and using peer address"
         );
     });
-    peer
+    Some(peer)
 }
 
 /// Whether the given IP falls inside any of the provided networks.
@@ -337,6 +338,21 @@ mod resolve_tests {
             &policy,
         );
         assert_eq!(client, Some(ip("198.51.100.9")));
+    }
+
+    #[test]
+    fn trust_enabled_with_no_peer_fails_closed() {
+        // Without a connection peer to anchor the chain, forwarded headers are fully
+        // attacker-controlled and must not resolve a client IP.
+        let policy = ProxyTrust {
+            trust_headers: true,
+            trusted_proxies: proxies(&["203.0.113.0/24"]),
+            hops: 0,
+        };
+        assert_eq!(
+            resolve_client_ip(None, &xff(&["198.51.100.9"]), &policy),
+            None
+        );
     }
 
     #[test]

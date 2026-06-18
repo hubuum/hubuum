@@ -75,9 +75,18 @@ impl ScopeState {
         }
     }
 
-    /// Whether this entry still carries useful state and must not be evicted/pruned.
-    fn is_active(&self, now: Instant) -> bool {
-        !self.attempts.is_empty() || self.is_locked(now)
+    /// Whether this entry still carries useful state and must not be pruned. Besides live
+    /// attempts and active lockouts, an *expired* lockout is kept until its cool-off window
+    /// elapses, so pruning does not discard escalation that `reset_escalation_if_cooled_off`
+    /// would otherwise preserve (and reset only after a genuine cool-off).
+    fn is_active(&self, now: Instant, window: Duration) -> bool {
+        if !self.attempts.is_empty() || self.is_locked(now) {
+            return true;
+        }
+        match self.locked_until {
+            Some(until) => now.duration_since(until) < window,
+            None => false,
+        }
     }
 
     /// Most recent point of activity, counting an active lockout's expiry. Used to pick
@@ -163,7 +172,7 @@ fn prune_login_attempts_map(
 ) {
     attempts_by_key.retain(|_, state| {
         state.prune(now, window);
-        state.is_active(now)
+        state.is_active(now, window)
     });
 }
 
@@ -488,5 +497,36 @@ mod tests {
 
         assert!(!map.contains_key("expired"));
         assert!(map.contains_key("locked"));
+    }
+
+    #[test]
+    fn prune_map_retains_expired_lockouts_within_cooloff() {
+        let now = Instant::now();
+        let window = Duration::from_secs(300);
+        let mut map: HashMap<String, ScopeState> = HashMap::new();
+
+        // Lockout expired 10s ago: still inside the cool-off window, so its escalation
+        // level must survive pruning.
+        let mut cooling = ScopeState {
+            locked_until: Some(now - Duration::from_secs(10)),
+            lockout_level: 2,
+            ..ScopeState::default()
+        };
+        cooling.attempts.clear();
+        map.insert("cooling".to_string(), cooling);
+
+        // Lockout expired 400s ago: past the cool-off, eligible for pruning.
+        let cooled = ScopeState {
+            locked_until: Some(now - Duration::from_secs(400)),
+            lockout_level: 3,
+            ..ScopeState::default()
+        };
+        map.insert("cooled".to_string(), cooled);
+
+        prune_login_attempts_map(&mut map, now, window);
+
+        assert!(map.contains_key("cooling"));
+        assert_eq!(map["cooling"].lockout_level, 2);
+        assert!(!map.contains_key("cooled"));
     }
 }
