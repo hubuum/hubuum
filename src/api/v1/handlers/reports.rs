@@ -898,6 +898,14 @@ fn duration_to_millis_i32(duration: std::time::Duration) -> i32 {
     i32::try_from(duration.as_millis()).unwrap_or(i32::MAX)
 }
 
+/// Post-completion rejection guard for a report stage.
+///
+/// This is **not** an in-flight interrupt: it is called after a stage has already
+/// finished and rejects the report if the stage took longer than the configured
+/// budget. It bounds how long a stage is *accepted* to have taken, not how long
+/// it is *allowed to run*. In-flight protection comes from the MiniJinja fuel
+/// budget, `report_template_max_objects`, the output byte caps, and the
+/// pool-global `db_statement_timeout_ms` (which cancels slow queries server-side).
 fn enforce_report_stage_timeout(stage_start: Instant, stage_name: &str) -> Result<(), ApiError> {
     let stage_timeout_ms = get_config()
         .map(|config| config.report_stage_timeout_ms)

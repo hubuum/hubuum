@@ -328,10 +328,35 @@ fn csv_cell_filter(value: Value) -> String {
     } else {
         value.to_string()
     };
-    if rendered.contains([',', '"', '\n', '\r']) {
-        format!("\"{}\"", rendered.replace('"', "\"\""))
+    let guarded = if csv_cell_needs_formula_guard(&rendered) {
+        // Neutralize spreadsheet formula injection: Excel/Sheets/LibreOffice
+        // interpret a cell that begins with a formula trigger as a formula.
+        // Prefixing a single quote forces the cell to be treated as text.
+        format!("'{rendered}")
     } else {
         rendered
+    };
+    if guarded.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", guarded.replace('"', "\"\""))
+    } else {
+        guarded
+    }
+}
+
+/// Returns true when a CSV cell would be interpreted as a formula by a
+/// spreadsheet application and therefore must be neutralized.
+///
+/// Leading spaces and tabs are ignored by spreadsheets when deciding whether a
+/// cell is a formula, so we look past leading spaces/tabs for the trigger
+/// characters `=`, `+`, `-`, `@`. A cell that itself begins with a control
+/// character (tab, CR, LF) is also treated as dangerous.
+fn csv_cell_needs_formula_guard(rendered: &str) -> bool {
+    match rendered.chars().next() {
+        Some('\t' | '\r' | '\n') => true,
+        Some(_) => rendered
+            .trim_start_matches([' ', '\t'])
+            .starts_with(['=', '+', '-', '@']),
+        None => false,
     }
 }
 
@@ -543,6 +568,28 @@ mod tests {
 
         assert_eq!(rendered, "srv-01=alice\nsrv-02=bob\n");
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn csv_cell_neutralizes_formula_injection() {
+        // Leading formula triggers are prefixed with a quote so a spreadsheet
+        // treats the cell as text rather than evaluating it.
+        assert_eq!(
+            csv_cell_filter(Value::from("=HYPERLINK(\"http://evil\")")),
+            "\"'=HYPERLINK(\"\"http://evil\"\")\""
+        );
+        assert_eq!(csv_cell_filter(Value::from("@SUM(A1:A9)")), "'@SUM(A1:A9)");
+        assert_eq!(csv_cell_filter(Value::from("+1+1")), "'+1+1");
+        assert_eq!(csv_cell_filter(Value::from("-2+3")), "'-2+3");
+        // Spreadsheets ignore leading spaces/tabs when detecting a formula.
+        assert_eq!(csv_cell_filter(Value::from("  =1+1")), "'  =1+1");
+        assert_eq!(csv_cell_filter(Value::from("\t=1+1")), "'\t=1+1");
+        // Leading control characters are dangerous on their own.
+        assert_eq!(csv_cell_filter(Value::from("\rdata")), "\"'\rdata\"");
+        // Ordinary values are left untouched (still RFC-4180 quoted as needed).
+        assert_eq!(csv_cell_filter(Value::from("plain value")), "plain value");
+        assert_eq!(csv_cell_filter(Value::from("a,b")), "\"a,b\"");
+        assert_eq!(csv_cell_filter(Value::from("3.14")), "3.14");
     }
 
     #[test]

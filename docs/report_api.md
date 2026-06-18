@@ -352,6 +352,15 @@ enable `related.*` and `reachable.*`.
 - hydrated relation templates are limited to `depth <= 2`
 - the renderer enforces a recursion limit and a MiniJinja fuel budget
 - relation hydration enforces a maximum hydrated object count
+- `HUBUUM_REPORT_STAGE_TIMEOUT_MS` is a **post-completion rejection budget**, not
+  an in-flight interrupt: a report is rejected only *after* a stage (query,
+  hydration, render) finishes if that stage exceeded the budget. It bounds how
+  long a stage is *accepted* to have taken, not how long it is *allowed to run*.
+- to actually cancel slow in-flight queries server-side, set
+  `HUBUUM_DB_STATEMENT_TIMEOUT_MS` (0 = disabled). This is a **pool-global**
+  Postgres `statement_timeout`: it applies to every database query the service
+  makes, not only report stages, so choose a value that accommodates legitimate
+  long-running operations (e.g. large imports).
 - successful stored outputs get an `output_expires_at` timestamp at completion time
 - background task workers clean up expired stored outputs and append a `cleanup` task event
 
@@ -365,6 +374,7 @@ Relevant env vars are documented centrally in [Quick Start](quick_start.md):
 - `HUBUUM_REPORT_TEMPLATE_MAX_OBJECTS`
 - `HUBUUM_REPORT_MAX_OUTPUT_BYTES`
 - `HUBUUM_REPORT_STAGE_TIMEOUT_MS`
+- `HUBUUM_DB_STATEMENT_TIMEOUT_MS`
 
 ## Cost controls
 

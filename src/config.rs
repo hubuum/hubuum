@@ -25,6 +25,7 @@ pub const DEFAULT_REPORT_TEMPLATE_FUEL: u64 = 50_000;
 pub const DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS: usize = 2_000;
 pub const DEFAULT_REPORT_MAX_OUTPUT_BYTES: usize = 262_144;
 pub const DEFAULT_REPORT_STAGE_TIMEOUT_MS: u64 = 10_000;
+pub const DEFAULT_DB_STATEMENT_TIMEOUT_MS: u64 = 0;
 pub const DEFAULT_TOKEN_LIFETIME_HOURS: i64 = 24;
 pub const DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS: usize = 5;
 pub const DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS: u64 = 300;
@@ -191,13 +192,34 @@ pub struct AppConfig {
     )]
     pub report_max_output_bytes: usize,
 
-    /// Maximum allowed elapsed time per report execution stage.
+    /// Post-completion budget per report execution stage, in milliseconds.
+    ///
+    /// This is a *rejection* budget, not an in-flight interrupt: a report is
+    /// rejected only after a stage (query, hydration, render) has finished if it
+    /// exceeded this value. Real in-flight protection comes from minijinja
+    /// `report_template_fuel`, `report_template_max_objects`, the output byte
+    /// caps, and `db_statement_timeout_ms` (which actually cancels slow queries
+    /// server-side).
     #[clap(
         long,
         env = "HUBUUM_REPORT_STAGE_TIMEOUT_MS",
         default_value_t = DEFAULT_REPORT_STAGE_TIMEOUT_MS
     )]
     pub report_stage_timeout_ms: u64,
+
+    /// Pool-global Postgres `statement_timeout` in milliseconds (0 = disabled).
+    ///
+    /// Applied to every connection handed out by the pool, so it bounds *all* DB
+    /// work - reports, imports, admin commands, health/auth queries, and
+    /// migrations sharing the pool - not just report stages. Postgres cancels any
+    /// statement exceeding it server-side, which frees the connection (a genuine
+    /// in-flight timeout). Disabled by default to preserve existing behavior.
+    #[clap(
+        long,
+        env = "HUBUUM_DB_STATEMENT_TIMEOUT_MS",
+        default_value_t = DEFAULT_DB_STATEMENT_TIMEOUT_MS
+    )]
+    pub db_statement_timeout_ms: u64,
 
     /// Number of DB connections in the pool
     #[clap(long, env = "HUBUUM_DB_POOL_SIZE", default_value_t = 10)]
@@ -586,6 +608,10 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_REPORT_STAGE_TIMEOUT_MS),
+        db_statement_timeout_ms: env::var("HUBUUM_DB_STATEMENT_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_DB_STATEMENT_TIMEOUT_MS),
         db_pool_size: env_or_default("HUBUUM_DB_POOL_SIZE", "2")
             .parse()
             .unwrap_or(5),
