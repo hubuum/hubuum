@@ -75,3 +75,47 @@ To keep backend code navigable, large trait backends are split into focused modu
   `relations.rs`, `records.rs`, `permissions.rs`
 
 The `mod.rs` files in these folders re-export the public backend traits so existing imports (`crate::db::traits::user::*`, `crate::db::traits::namespace::*`) keep working.
+
+## Benchmarks
+
+Benchmarking runs in a separate GitHub workflow, `.github/workflows/benchmarks.yml`, via `terjekv/github-action-iai-callgrind`.
+
+### Local execution
+
+The benchmark targets are split one benchmark binary per file so CI can fan them out independently:
+
+```bash
+cargo bench --bench parse_query_parameter_callgrind
+cargo bench --bench parse_integer_list_callgrind
+cargo bench --bench json_sql_filters_callgrind
+cargo bench --bench search_operator_parsing_callgrind
+cargo bench --bench permissions_parsing_callgrind
+cargo bench --bench jsonb_type_inference_callgrind
+cargo bench --bench token_storage_hash_callgrind
+cargo bench --bench request_hash_callgrind
+cargo bench --bench unified_search_query_parsing_callgrind
+cargo bench --bench unified_search_cursor_callgrind
+cargo bench --bench object_validation_geo_callgrind
+cargo bench --bench object_validation_nested_callgrind
+cargo bench --bench database_url_parsing_criterion -- --noplot
+cargo bench --bench password_hashing_criterion -- --noplot
+```
+
+`iai-callgrind` requires `valgrind` to be installed locally.
+
+### CI behavior
+
+- The benchmark workflow runs both backends in one combined `backend: all` job, so PRs get a single consolidated benchmark report.
+- `iai-callgrind` remains the practical gating signal with a low regression threshold.
+- Criterion still runs in the same combined job, but uses a very high regression threshold so it reports timing changes without acting as a meaningful gate.
+- The current benchmark set is fully self-contained and does not require a database in CI.
+
+### Adding or modifying benchmarks
+
+- Put new benchmark entrypoints in `benches/`.
+- Keep each benchmark target in its own file so the benchmark workflow can fan out per bench binary.
+- Add a matching `[[bench]]` stanza in `Cargo.toml` with `harness = false`.
+- Include `callgrind` in the benchmark filename when it should be auto-discovered by the CI workflow.
+- Include `criterion` in the benchmark filename when it should be Criterion-only in CI autodiscovery.
+- Prefer deterministic library-level code paths such as parsers, query builders, and serialization helpers over handlers that require network or database setup.
+- Avoid code paths that read the global `CONFIG` (the clap-backed application configuration). Initialising it inside a benchmark binary panics on the harness's own CLI arguments (for example `--iai-run`). Where a function needs configuration values such as page limits, prefer a config-free entry point that takes them as parameters (see `parse_unified_search_query_with_limits` and `validate_page_limit_with_max`).
