@@ -139,3 +139,15 @@ harness = false
 [[bench]]
 name = "request_hash_callgrind"
 harness = false
+
+[[bench]]
+name = "unified_search_query_parsing_callgrind"
+harness = false
+
+[[bench]]
+name = "unified_search_cursor_callgrind"
+harness = false
+
+[[bench]]
+name = "password_hashing_criterion"
+harness = false

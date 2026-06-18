@@ -7,7 +7,7 @@ use utoipa::ToSchema;
 
 use crate::errors::ApiError;
 use crate::models::{HubuumClassExpanded, HubuumObject, Namespace, User};
-use crate::pagination::{page_limits, validate_page_limit};
+use crate::pagination::{page_limits, validate_page_limit_with_max};
 use crate::traits::{BackendContext, Search};
 use crate::utilities::extensions::CustomStringExtensions;
 
@@ -46,11 +46,15 @@ impl FromStr for UnifiedSearchKind {
     }
 }
 
+/// Opaque pagination cursor token for unified search. Serialized to a
+/// base64url payload by [`encode_cursor`] and recovered by [`decode_cursor`].
+/// Fields are public so the codec can be exercised directly (for example, in
+/// benchmarks).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-struct UnifiedSearchCursorToken {
-    rank: i32,
-    name: String,
-    id: i32,
+pub struct UnifiedSearchCursorToken {
+    pub rank: i32,
+    pub name: String,
+    pub id: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -220,7 +224,9 @@ impl UnifiedSearchQueryParts {
                 let parsed_limit = value.parse::<usize>().map_err(|error| {
                     ApiError::BadRequest(format!("bad limit_per_kind: {error}"))
                 })?;
-                self.limit_per_kind = Some(validate_page_limit(parsed_limit)?);
+                // Validation against the max limit is deferred to `build`, which
+                // receives the limits explicitly and keeps parsing config-free.
+                self.limit_per_kind = Some(parsed_limit);
             }
             "search_class_schema" => {
                 reject_duplicate(&self.search_class_schema, "search_class_schema")?;
@@ -252,13 +258,18 @@ impl UnifiedSearchQueryParts {
         Ok(())
     }
 
-    fn build(self) -> Result<UnifiedSearchQuery, ApiError> {
+    fn build(self, default_limit: usize, max_limit: usize) -> Result<UnifiedSearchQuery, ApiError> {
+        let limit_per_kind = match self.limit_per_kind {
+            Some(limit) => validate_page_limit_with_max(limit, max_limit)?,
+            None => default_limit,
+        };
+
         Ok(UnifiedSearchQuery {
             query: self
                 .query
                 .ok_or_else(|| ApiError::BadRequest("missing q".to_string()))?,
             kinds: self.kinds.unwrap_or_else(default_kinds),
-            limit_per_kind: self.limit_per_kind.unwrap_or(page_limits()?.0),
+            limit_per_kind,
             search_class_schema: self.search_class_schema.unwrap_or(false),
             search_object_data: self.search_object_data.unwrap_or(false),
             namespace_cursor: self.namespace_cursor,
@@ -269,6 +280,19 @@ impl UnifiedSearchQueryParts {
 }
 
 pub fn parse_unified_search_query(qs: &str) -> Result<UnifiedSearchQuery, ApiError> {
+    let (default_limit, max_limit) = page_limits()?;
+    parse_unified_search_query_with_limits(qs, default_limit, max_limit)
+}
+
+/// Config-free variant of [`parse_unified_search_query`]. The page limits are
+/// supplied by the caller instead of being read from the global configuration,
+/// which keeps the whole parse path free of global state (used by benchmarks and
+/// any caller that already holds the limits).
+pub fn parse_unified_search_query_with_limits(
+    qs: &str,
+    default_limit: usize,
+    max_limit: usize,
+) -> Result<UnifiedSearchQuery, ApiError> {
     let mut parts = UnifiedSearchQueryParts::default();
 
     for chunk in qs.split('&').filter(|chunk| !chunk.is_empty()) {
@@ -276,7 +300,7 @@ pub fn parse_unified_search_query(qs: &str) -> Result<UnifiedSearchQuery, ApiErr
         parts.apply(key, value)?;
     }
 
-    parts.build()
+    parts.build(default_limit, max_limit)
 }
 
 fn default_kinds() -> BTreeSet<UnifiedSearchKind> {
@@ -287,14 +311,16 @@ fn default_kinds() -> BTreeSet<UnifiedSearchKind> {
     ])
 }
 
-fn encode_cursor(token: &UnifiedSearchCursorToken) -> Result<String, ApiError> {
+/// Serialize a unified-search cursor token to its base64url wire form.
+pub fn encode_cursor(token: &UnifiedSearchCursorToken) -> Result<String, ApiError> {
     let bytes = serde_json::to_vec(token).map_err(|error| {
         ApiError::InternalServerError(format!("Failed to encode search cursor: {error}"))
     })?;
     Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
 }
 
-fn decode_cursor(cursor: &str) -> Result<UnifiedSearchCursorToken, ApiError> {
+/// Recover a unified-search cursor token from its base64url wire form.
+pub fn decode_cursor(cursor: &str) -> Result<UnifiedSearchCursorToken, ApiError> {
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(cursor)
         .map_err(|error| ApiError::BadRequest(format!("Invalid search cursor: {error}")))?;

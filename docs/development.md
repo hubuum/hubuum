@@ -93,9 +93,12 @@ cargo bench --bench permissions_parsing_callgrind
 cargo bench --bench jsonb_type_inference_callgrind
 cargo bench --bench token_storage_hash_callgrind
 cargo bench --bench request_hash_callgrind
+cargo bench --bench unified_search_query_parsing_callgrind
+cargo bench --bench unified_search_cursor_callgrind
 cargo bench --bench object_validation_geo_callgrind
 cargo bench --bench object_validation_nested_callgrind
 cargo bench --bench database_url_parsing_criterion -- --noplot
+cargo bench --bench password_hashing_criterion -- --noplot
 ```
 
 `iai-callgrind` requires `valgrind` to be installed locally.
@@ -115,3 +118,4 @@ cargo bench --bench database_url_parsing_criterion -- --noplot
 - Include `callgrind` in the benchmark filename when it should be auto-discovered by the CI workflow.
 - Include `criterion` in the benchmark filename when it should be Criterion-only in CI autodiscovery.
 - Prefer deterministic library-level code paths such as parsers, query builders, and serialization helpers over handlers that require network or database setup.
+- Avoid code paths that read the global `CONFIG` (the clap-backed application configuration). Initialising it inside a benchmark binary panics on the harness's own CLI arguments (for example `--iai-run`). Where a function needs configuration values such as page limits, prefer a config-free entry point that takes them as parameters (see `parse_unified_search_query_with_limits` and `validate_page_limit_with_max`).
