@@ -48,6 +48,33 @@ impl ScopeState {
         self.attempts.clear();
     }
 
+    /// Forget escalation once a prior lockout has expired and the scope has then stayed
+    /// quiet for a full cool-off (the window). Backoff therefore reflects only sustained,
+    /// recent abuse: an attacker resuming immediately after a lockout keeps escalating,
+    /// while a scope that goes idle resets to the base lockout. The expired lock marker is
+    /// retained until then so the cool-off can be measured.
+    fn reset_escalation_if_cooled_off(&mut self, now: Instant, window: Duration) {
+        if let Some(until) = self.locked_until
+            && now >= until
+            && now.duration_since(until) >= window
+        {
+            self.locked_until = None;
+            self.lockout_level = 0;
+        }
+    }
+
+    /// Record a failed attempt: prune the window, reset escalation after a genuine
+    /// cool-off, append the attempt, and lock out if the threshold is reached.
+    fn register_failure(&mut self, now: Instant, threshold: usize, cfg: &LoginRateLimitConfig) {
+        let window = Duration::from_secs(cfg.window_seconds);
+        self.prune(now, window);
+        self.reset_escalation_if_cooled_off(now, window);
+        self.attempts.push_back(now);
+        if self.attempts.len() >= threshold {
+            self.trigger_lockout(now, cfg);
+        }
+    }
+
     /// Whether this entry still carries useful state and must not be evicted/pruned.
     fn is_active(&self, now: Instant) -> bool {
         !self.attempts.is_empty() || self.is_locked(now)
@@ -203,11 +230,7 @@ pub(crate) async fn record_login_failure(username: &str, client_ip: Option<IpAdd
         }
 
         let state = guard.entry(key).or_default();
-        state.prune(now, window);
-        state.attempts.push_back(now);
-        if state.attempts.len() >= threshold {
-            state.trigger_lockout(now, &cfg);
-        }
+        state.register_failure(now, threshold, &cfg);
     }
 }
 
@@ -293,6 +316,38 @@ mod tests {
 
         assert_eq!(state.lockout_level, 2);
         assert!(second > first);
+    }
+
+    #[test]
+    fn backoff_escalates_when_sustained_but_resets_after_cooloff() {
+        let config = cfg();
+        let window = Duration::from_secs(config.window_seconds);
+        let t0 = Instant::now();
+        let mut state = ScopeState::default();
+
+        // First episode: reach the threshold -> lockout level 1.
+        for _ in 0..config.max_attempts {
+            state.register_failure(t0, config.max_attempts, &config);
+        }
+        assert_eq!(state.lockout_level, 1);
+
+        // Sustained: resume just after the lockout expires (within the cool-off) -> the
+        // escalation persists and the next lockout is level 2.
+        let resume = state.locked_until.unwrap() + Duration::from_secs(1);
+        for _ in 0..config.max_attempts {
+            state.register_failure(resume, config.max_attempts, &config);
+        }
+        assert_eq!(
+            state.lockout_level, 2,
+            "sustained abuse must keep escalating"
+        );
+
+        // Cool-off: stay quiet past expiry + a full window -> escalation resets.
+        let cooled = state.locked_until.unwrap() + window + Duration::from_secs(1);
+        state.register_failure(cooled, config.max_attempts, &config);
+        assert_eq!(state.lockout_level, 0, "a genuine cool-off resets backoff");
+        assert!(state.locked_until.is_none());
+        assert_eq!(state.attempts.len(), 1);
     }
 
     #[test]

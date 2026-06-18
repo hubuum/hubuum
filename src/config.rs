@@ -714,6 +714,13 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .unwrap_or_else(|e: ApiError| panic!("Invalid client allowlist in {key}: {e}"))
     }
 
+    fn env_or_default_trusted_proxies(key: &str, default: &str) -> TrustedProxies {
+        env::var(key)
+            .unwrap_or_else(|_| default.to_string())
+            .parse()
+            .unwrap_or_else(|e: ApiError| panic!("Invalid trusted proxies in {key}: {e}"))
+    }
+
     let config = AppConfig {
         bind_ip: env_or_default("HUBUUM_BIND_IP", "127.0.0.1"),
         port: env_or_default("HUBUUM_BIND_PORT", "8080")
@@ -842,9 +849,7 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         trust_ip_headers: env_or_default("HUBUUM_TRUST_IP_HEADERS", "false")
             .parse()
             .unwrap_or(false),
-        trusted_proxies: env_or_default("HUBUUM_TRUSTED_PROXIES", "")
-            .parse()
-            .unwrap_or_default(),
+        trusted_proxies: env_or_default_trusted_proxies("HUBUUM_TRUSTED_PROXIES", ""),
         trusted_proxy_hops: env_or_default("HUBUUM_TRUSTED_PROXY_HOPS", "0")
             .parse()
             .unwrap_or(DEFAULT_TRUSTED_PROXY_HOPS),

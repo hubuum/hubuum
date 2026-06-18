@@ -6,6 +6,7 @@ use actix_web::{
 use futures_util::future::{self, LocalBoxFuture, Ready};
 use ipnet::IpNet;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::Once;
 use std::task::{Context, Poll};
 use tracing::warn;
 
@@ -205,10 +206,15 @@ fn resolve_client_ip(
     }
 
     // trust_headers is set but no trust mechanism is configured: ignore forwarded
-    // headers and use the connection peer so spoofed values cannot take effect.
-    warn!(
-        message = "trust_ip_headers is enabled but neither trusted_proxies nor trusted_proxy_hops is set; ignoring forwarded headers and using peer address"
-    );
+    // headers and use the connection peer so spoofed values cannot take effect. This is
+    // a static misconfiguration, so warn once per process rather than on every request to
+    // avoid flooding logs under load.
+    static WARN_UNCONFIGURED_TRUST: Once = Once::new();
+    WARN_UNCONFIGURED_TRUST.call_once(|| {
+        warn!(
+            message = "trust_ip_headers is enabled but neither trusted_proxies nor trusted_proxy_hops is set; ignoring forwarded headers and using peer address"
+        );
+    });
     peer
 }
 
