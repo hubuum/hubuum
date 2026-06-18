@@ -1,13 +1,23 @@
 #[cfg(test)]
 mod tests {
     use actix_web::{App, HttpResponse, test, web};
+    use ipnet::IpNet;
     use std::str::FromStr;
 
     use crate::config::ClientAllowlist;
-    use crate::middlewares::ClientAllowlistMiddleware;
+    use crate::middlewares::{ClientAllowlistMiddleware, ProxyTrust};
 
     async fn ok_handler() -> HttpResponse {
         HttpResponse::Ok().finish()
+    }
+
+    /// Trust forwarded headers behind a single trusted reverse proxy at `203.0.113.1`.
+    fn trusts_proxy() -> ProxyTrust {
+        ProxyTrust {
+            trust_headers: true,
+            trusted_proxies: vec![IpNet::from_str("203.0.113.1/32").unwrap()],
+            hops: 0,
+        }
     }
 
     #[actix_web::test]
@@ -16,7 +26,7 @@ mod tests {
             App::new()
                 .wrap(ClientAllowlistMiddleware::new_with_trust(
                     ClientAllowlist::from_str("10.0.0.0/24").unwrap(),
-                    true,
+                    trusts_proxy(),
                 ))
                 .route("/", web::get().to(ok_handler)),
         )
@@ -24,6 +34,7 @@ mod tests {
 
         let req = test::TestRequest::get()
             .uri("/")
+            .peer_addr("203.0.113.1:8000".parse().unwrap())
             .insert_header(("x-forwarded-for", "10.0.0.42"))
             .to_request();
 
@@ -37,7 +48,7 @@ mod tests {
             App::new()
                 .wrap(ClientAllowlistMiddleware::new_with_trust(
                     ClientAllowlist::from_str("10.0.0.0/24").unwrap(),
-                    true,
+                    trusts_proxy(),
                 ))
                 .route("/", web::get().to(ok_handler)),
         )
@@ -45,6 +56,7 @@ mod tests {
 
         let req = test::TestRequest::get()
             .uri("/")
+            .peer_addr("203.0.113.1:8000".parse().unwrap())
             .insert_header(("x-forwarded-for", "192.168.1.10"))
             .to_request();
 
@@ -58,12 +70,14 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn test_allows_ipv6_in_range() {
+    async fn test_spoofed_forwarded_for_cannot_bypass_allowlist() {
+        // An attacker connecting directly (peer not a trusted proxy) cannot smuggle an
+        // allowlisted IP through X-Forwarded-For.
         let app = test::init_service(
             App::new()
                 .wrap(ClientAllowlistMiddleware::new_with_trust(
-                    ClientAllowlist::from_str("2001:db8::/32").unwrap(),
-                    true,
+                    ClientAllowlist::from_str("10.0.0.0/24").unwrap(),
+                    trusts_proxy(),
                 ))
                 .route("/", web::get().to(ok_handler)),
         )
@@ -71,6 +85,33 @@ mod tests {
 
         let req = test::TestRequest::get()
             .uri("/")
+            .peer_addr("198.51.100.66:9000".parse().unwrap())
+            .insert_header(("x-forwarded-for", "10.0.0.42"))
+            .to_request();
+
+        let resp = test::try_call_service(&app, req).await;
+        assert!(resp.is_err());
+        assert_eq!(
+            resp.unwrap_err().error_response().status(),
+            actix_web::http::StatusCode::FORBIDDEN
+        );
+    }
+
+    #[actix_web::test]
+    async fn test_allows_ipv6_in_range() {
+        let app = test::init_service(
+            App::new()
+                .wrap(ClientAllowlistMiddleware::new_with_trust(
+                    ClientAllowlist::from_str("2001:db8::/32").unwrap(),
+                    trusts_proxy(),
+                ))
+                .route("/", web::get().to(ok_handler)),
+        )
+        .await;
+
+        let req = test::TestRequest::get()
+            .uri("/")
+            .peer_addr("203.0.113.1:8000".parse().unwrap())
             .insert_header(("x-forwarded-for", "2001:db8::1"))
             .to_request();
 
@@ -84,14 +125,16 @@ mod tests {
             App::new()
                 .wrap(ClientAllowlistMiddleware::new_with_trust(
                     ClientAllowlist::from_str("10.0.0.0/24").unwrap(),
-                    false,
+                    ProxyTrust::peer_only(),
                 ))
                 .route("/", web::get().to(ok_handler)),
         )
         .await;
 
+        // Peer is outside the allowlist; the forwarded header must be ignored.
         let req = test::TestRequest::get()
             .uri("/")
+            .peer_addr("192.168.1.5:9000".parse().unwrap())
             .insert_header(("x-forwarded-for", "10.0.0.42"))
             .to_request();
 
@@ -105,7 +148,7 @@ mod tests {
             App::new()
                 .wrap(ClientAllowlistMiddleware::new_with_trust(
                     ClientAllowlist::from_str("*").unwrap(),
-                    true,
+                    ProxyTrust::peer_only(),
                 ))
                 .route("/", web::get().to(ok_handler)),
         )
@@ -113,7 +156,7 @@ mod tests {
 
         let req = test::TestRequest::get()
             .uri("/")
-            .insert_header(("x-forwarded-for", "192.168.1.100"))
+            .peer_addr("192.168.1.100:9000".parse().unwrap())
             .to_request();
 
         let resp = test::call_service(&app, req).await;

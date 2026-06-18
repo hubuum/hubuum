@@ -67,14 +67,46 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/iam/users
 - For local/dev container setups, `HUBUUM_CLIENT_ALLOWLIST=*` is common.
 - For production, prefer explicit CIDRs/IPs instead of `*`.
 
+### Resolving the Real Client IP Behind a Proxy
+
+The client IP used for the allowlist, request logging, and login rate limiting is
+resolved from the right of the `[X-Forwarded-For..., peer]` hop chain, so attacker-supplied
+`X-Forwarded-For` values cannot be spoofed. Configure trust explicitly:
+
+- `HUBUUM_TRUST_IP_HEADERS=true` is the master switch for honoring `X-Forwarded-For`.
+- `HUBUUM_TRUSTED_PROXIES` (preferred): comma-separated proxy IPs/CIDRs. Hops in this set
+  are skipped from the connection peer inward, and the first untrusted hop is taken as the
+  client (e.g. `HUBUUM_TRUSTED_PROXIES=10.0.0.0/8,192.168.0.0/16`).
+- `HUBUUM_TRUSTED_PROXY_HOPS` (fallback when no allowlist is set): the number of proxy
+  hops in front of the server to skip from the right of the chain.
+- If `HUBUUM_TRUST_IP_HEADERS=true` but neither of the above is set, forwarded headers are
+  **ignored** and the connection peer address is used (forwarded values are never trusted
+  blindly).
+
 ### Token Lifetime
 
 - `HUBUUM_TOKEN_LIFETIME_HOURS` controls bearer token lifetime and defaults to `24`.
 
 ### Login Rate Limiting
 
-- `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS` controls max failed login attempts per window and defaults to `5`.
-- `HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS` controls the login rate-limit window in seconds and defaults to `300`.
+Login throttling is layered across three scopes - per `(username, IP)`, per IP, and per
+subnet - so that single-account brute force, password spraying across many usernames from
+one host, and distributed spraying from one network are all throttled. When a scope crosses
+its threshold within the window it is locked out, and repeated lockouts back off
+exponentially (doubling from the backoff base up to the backoff maximum).
+
+- `HUBUUM_LOGIN_RATE_LIMIT_ENABLED` master switch for login throttling; defaults to `true`.
+- `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS` max failed attempts per `(username, IP)` per window; defaults to `5`.
+- `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP` max failed attempts per client IP per window; defaults to `20` (`0` disables this scope).
+- `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET` max failed attempts per client subnet per window; defaults to `100` (`0` disables this scope).
+- `HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS` sliding window in seconds; defaults to `300`.
+- `HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS` first lockout duration in seconds; defaults to `300`.
+- `HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS` maximum lockout duration in seconds; defaults to `86400`.
+- `HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V4` IPv4 prefix length for subnet aggregation; defaults to `24`.
+- `HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6` IPv6 prefix length for subnet aggregation; defaults to `64`.
+
+Accurate throttling behind a reverse proxy depends on correct client-IP resolution; see
+[Resolving the Real Client IP Behind a Proxy](#resolving-the-real-client-ip-behind-a-proxy).
 
 ### Token Hash Key
 

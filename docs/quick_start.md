@@ -18,9 +18,13 @@ Hubuum can be configured using environment variables or command-line arguments. 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
 | `HUBUUM_CLIENT_ALLOWLIST` | `127.0.0.1,::1` | Comma-separated list of allowed client IPs or CIDRs (e.g., `10.0.0.0/24,2001:db8::/32`) |
-| `HUBUUM_TRUST_IP_HEADERS` | `false` | Whether to trust `X-Forwarded-For` and `Forwarded-For` headers for client IP detection |
+| `HUBUUM_TRUST_IP_HEADERS` | `false` | Master switch for trusting the `X-Forwarded-For` header when resolving the client IP |
+| `HUBUUM_TRUSTED_PROXIES` | *(empty)* | Comma-separated trusted reverse-proxy IPs/CIDRs. Skipped from the connection peer inward; the first untrusted hop is the client |
+| `HUBUUM_TRUSTED_PROXY_HOPS` | `0` | Number of proxy hops to skip from the right of the chain; used only when `HUBUUM_TRUSTED_PROXIES` is empty |
 
 **Container note**: The default `HUBUUM_CLIENT_ALLOWLIST=127.0.0.1,::1` is loopback-only. In containerized setups, clients commonly arrive from bridge/network IPs, not loopback. For local/dev containers, set `HUBUUM_CLIENT_ALLOWLIST=*`. For production, prefer explicit CIDRs/IP ranges.
+
+**Proxy note**: The client IP is resolved from the right of the `[X-Forwarded-For..., peer]` hop chain, so spoofed `X-Forwarded-For` values cannot take effect. When `HUBUUM_TRUST_IP_HEADERS=true`, configure `HUBUUM_TRUSTED_PROXIES` (preferred) or `HUBUUM_TRUSTED_PROXY_HOPS`. If neither is set, forwarded headers are ignored and the peer address is used.
 
 ### Database Configuration
 
@@ -66,8 +70,15 @@ Hubuum can be configured using environment variables or command-line arguments. 
 | -------- | ------- | ----------- |
 | `HUBUUM_ADMIN_GROUPNAME` | `admin` | Name of the admin group |
 | `HUBUUM_TOKEN_LIFETIME_HOURS` | `24` | Token lifetime in hours |
-| `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS` | `5` | Max failed login attempts per rate-limit window |
-| `HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS` | `300` | Login rate-limit window in seconds |
+| `HUBUUM_LOGIN_RATE_LIMIT_ENABLED` | `true` | Master switch for login throttling |
+| `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS` | `5` | Max failed attempts per `(username, IP)` per window |
+| `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP` | `20` | Max failed attempts per client IP per window (`0` disables) |
+| `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET` | `100` | Max failed attempts per client subnet per window (`0` disables) |
+| `HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS` | `300` | Login rate-limit sliding window in seconds |
+| `HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS` | `300` | First lockout duration; doubles on repeated lockouts |
+| `HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS` | `86400` | Maximum lockout duration for exponential backoff |
+| `HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V4` | `24` | IPv4 prefix length for per-subnet aggregation |
+| `HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6` | `64` | IPv6 prefix length for per-subnet aggregation |
 | `HUBUUM_TOKEN_HASH_KEY` | *(generated per startup if unset)* | Key used for deterministic token hashing at rest |
 
 **Token hash key note**: If `HUBUUM_TOKEN_HASH_KEY` is not set, Hubuum generates an ephemeral key on startup and logs a warning. Tokens issued before restart will be invalid after restart.

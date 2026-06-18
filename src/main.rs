@@ -102,17 +102,17 @@ async fn main() -> std::io::Result<()> {
     ensure_task_worker_running(pool.clone());
 
     let client_allowlist = config.client_allowlist.clone();
-    let trust_ip_headers = config.trust_ip_headers;
+    let proxy_trust = middlewares::ProxyTrust::from_config(&config);
     let app_config = config.clone();
 
     let server = HttpServer::new(move || {
         let app = App::new()
             .wrap(middlewares::ClientAllowlistMiddleware::new_with_trust(
                 client_allowlist.clone(),
-                trust_ip_headers,
+                proxy_trust.clone(),
             ))
             .wrap(middlewares::TracingMiddleware::new_with_trust(
-                trust_ip_headers,
+                proxy_trust.clone(),
             ))
             .wrap(Logger::default())
             .app_data(Data::new(app_config.clone()))
