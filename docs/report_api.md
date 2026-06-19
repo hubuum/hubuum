@@ -212,6 +212,14 @@ For `related_objects` templates, pass the runtime root object:
 The template stores the scope, class, include settings, relation context, content type, and default
 query/limits/policy. Runtime `query` replaces the template's default query when supplied.
 
+Executable templates support every report scope kind:
+
+- `objects_in_class` and `related_objects` are bound to a single class and require the template's `class_id`.
+- `namespaces`, `classes`, `class_relations`, and `object_relations` are class-agnostic and must not set `class_id`.
+
+`object_id` is only accepted at run time for `related_objects` templates; supplying it for any other scope
+is rejected with `400 Bad Request`.
+
 ## Output selection
 
 The server determines the output format at submission time based on the endpoint:

@@ -13,9 +13,99 @@ use minijinja::{
 
 use crate::config::get_config;
 use crate::errors::ApiError;
-use crate::models::{ReportContentType, ReportMissingDataPolicy, ReportTemplate, ReportWarning};
+use crate::models::{
+    ReportContentType, ReportInclude, ReportIncludeRelatedObject, ReportMissingDataPolicy,
+    ReportTemplate, ReportWarning,
+};
 
 const TEMPLATE_ENV_CACHE_MAX_ENTRIES: usize = 128;
+
+/// Bounds for `include.related_objects` hydration. Shared by ad-hoc report requests
+/// (`POST /api/v1/reports`) and stored executable report templates so the two paths
+/// cannot drift apart.
+pub const RELATED_INCLUDE_DEFAULT_MAX_DEPTH: i32 = 1;
+pub const RELATED_INCLUDE_MAX_DEPTH_LIMIT: i32 = 10;
+pub const RELATED_INCLUDE_DEFAULT_LIMIT: i32 = 1;
+pub const RELATED_INCLUDE_MAX_LIMIT: i32 = 50;
+pub const RELATED_INCLUDE_MAX_ALIASES: usize = 8;
+
+/// Validate the `include.related_objects` block (alias count, alias syntax, and per-alias
+/// option bounds). The caller is responsible for any scope-specific rules (e.g. that
+/// `include` is only valid for `objects_in_class`).
+pub fn validate_related_objects_include(include: &ReportInclude) -> Result<(), ApiError> {
+    let Some(related_objects) = &include.related_objects else {
+        return Ok(());
+    };
+
+    if related_objects.len() > RELATED_INCLUDE_MAX_ALIASES {
+        return Err(ApiError::BadRequest(format!(
+            "include.related_objects supports at most {RELATED_INCLUDE_MAX_ALIASES} aliases"
+        )));
+    }
+
+    for (alias, include) in related_objects {
+        validate_related_include_alias(alias)?;
+        validate_related_include_options(alias, include)?;
+    }
+
+    Ok(())
+}
+
+fn validate_related_include_alias(alias: &str) -> Result<(), ApiError> {
+    let mut chars = alias.chars();
+    let Some(first) = chars.next() else {
+        return Err(ApiError::BadRequest(
+            "include.related_objects aliases must not be empty".to_string(),
+        ));
+    };
+
+    if !(first == '_' || first.is_ascii_alphabetic())
+        || !chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    {
+        return Err(ApiError::BadRequest(format!(
+            "Invalid include.related_objects alias '{alias}'; expected [A-Za-z_][A-Za-z0-9_]*"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_related_include_options(
+    alias: &str,
+    include: &ReportIncludeRelatedObject,
+) -> Result<(), ApiError> {
+    if include.class_id <= 0 {
+        return Err(ApiError::BadRequest(format!(
+            "include.related_objects.{alias}.class_id must be greater than 0"
+        )));
+    }
+
+    if let Some(class_relation_id) = include.class_relation_id
+        && class_relation_id <= 0
+    {
+        return Err(ApiError::BadRequest(format!(
+            "include.related_objects.{alias}.class_relation_id must be greater than 0"
+        )));
+    }
+
+    let max_depth = include
+        .max_depth
+        .unwrap_or(RELATED_INCLUDE_DEFAULT_MAX_DEPTH);
+    if !(1..=RELATED_INCLUDE_MAX_DEPTH_LIMIT).contains(&max_depth) {
+        return Err(ApiError::BadRequest(format!(
+            "include.related_objects.{alias}.max_depth must be between 1 and {RELATED_INCLUDE_MAX_DEPTH_LIMIT}"
+        )));
+    }
+
+    let limit = include.limit.unwrap_or(RELATED_INCLUDE_DEFAULT_LIMIT);
+    if !(1..=RELATED_INCLUDE_MAX_LIMIT).contains(&limit) {
+        return Err(ApiError::BadRequest(format!(
+            "include.related_objects.{alias}.limit must be between 1 and {RELATED_INCLUDE_MAX_LIMIT}"
+        )));
+    }
+
+    Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct TemplateEnvCacheKey {

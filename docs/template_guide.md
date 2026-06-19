@@ -734,6 +734,9 @@ host,room,person
 
 - Stored templates support only `text/plain`, `text/html`, and `text/csv`
 - `application/json` does not use stored templates; submit JSON reports with `POST /api/v1/reports`
+- Executable report templates support every scope kind (`namespaces`, `classes`, `objects_in_class`,
+  `class_relations`, `object_relations`, `related_objects`); `class_id` is set only for
+  `objects_in_class` and `related_objects`, and `include`/`relation_context` apply only to those scopes
 - Template loading for `include`/`import`/`extends` is limited to the same namespace
 - HTML templates are autoescaped; plain text and CSV templates should use `tojson` or `csv_cell`
   when embedding JSON- or CSV-sensitive values

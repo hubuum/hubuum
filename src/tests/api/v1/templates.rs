@@ -783,6 +783,108 @@ mod tests {
     }
 
     #[actix_web::test]
+    async fn test_report_template_rejects_class_id_for_collection_scope() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let namespace = create_namespace(&pool, "collection_scope_class_id").await;
+        let class = NewHubuumClass {
+            name: "collection-scope-class".to_string(),
+            namespace_id: namespace.id,
+            json_schema: None,
+            validate_schema: Some(false),
+            description: "class".to_string(),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        let payload = NewReportTemplate {
+            namespace_id: namespace.id,
+            name: "report.namespaces-with-class".to_string(),
+            description: "invalid collection report".to_string(),
+            content_type: ReportContentType::TextPlain,
+            template: "{% for item in items %}{{ item.name }}{% endfor %}".to_string(),
+            kind: ReportTemplateKind::Report,
+            scope_kind: Some(ReportScopeKind::Namespaces),
+            class_id: Some(class.id),
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
+        };
+
+        let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
+        assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+
+        namespace.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_template_list_can_filter_by_kind() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let namespace = create_namespace(&pool, "kind_filter").await;
+
+        let class = NewHubuumClass {
+            name: "kind-filter-class".to_string(),
+            namespace_id: namespace.id,
+            json_schema: None,
+            validate_schema: Some(false),
+            description: "class for kind filtering".to_string(),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        let fragment = new_template_payload(namespace.id, "partial.kind-fragment");
+        let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &fragment).await;
+        assert_response_status(resp, StatusCode::CREATED).await;
+
+        let report = NewReportTemplate {
+            namespace_id: namespace.id,
+            name: "report.kind-report".to_string(),
+            description: "report template".to_string(),
+            content_type: ReportContentType::TextPlain,
+            template: "{% for item in items %}{{ item.name }}{% endfor %}".to_string(),
+            kind: ReportTemplateKind::Report,
+            scope_kind: Some(ReportScopeKind::ObjectsInClass),
+            class_id: Some(class.id),
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
+        };
+        let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &report).await;
+        assert_response_status(resp, StatusCode::CREATED).await;
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{TEMPLATES_ENDPOINT}?namespace_id={}&kind=report", namespace.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let reports: Vec<ReportTemplate> = test::read_body_json(resp).await;
+        assert_eq!(reports.len(), 1);
+        assert!(reports.iter().all(|t| t.kind == ReportTemplateKind::Report));
+        assert_eq!(reports[0].name, "report.kind-report");
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{TEMPLATES_ENDPOINT}?namespace_id={}&kind=fragment", namespace.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let fragments: Vec<ReportTemplate> = test::read_body_json(resp).await;
+        assert_eq!(fragments.len(), 1);
+        assert!(fragments.iter().all(|t| t.kind == ReportTemplateKind::Fragment));
+        assert_eq!(fragments[0].name, "partial.kind-fragment");
+
+        namespace.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
     async fn test_template_update_content_requires_update_permission() {
         let (pool, admin_token, _normal_token) = setup_pool_and_tokens().await;
         let namespace = create_namespace(&pool, "update_content_forbidden").await;

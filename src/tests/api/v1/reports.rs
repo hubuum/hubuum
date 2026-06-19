@@ -447,6 +447,404 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
+    async fn test_run_related_objects_template_requires_object_id(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "report_run_requires_object").await;
+        let class = classes[0].clone();
+        let template_id = create_template(
+            &context.pool,
+            class.namespace_id,
+            class.id,
+            ReportScopeKind::RelatedObjects,
+            "needs-object-id",
+            ReportContentType::TextPlain,
+            "{% for item in items %}{{ item.name }}{% endfor %}",
+        )
+        .await;
+
+        let resp = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/templates/{template_id}/reports"),
+            &serde_json::json!({}),
+            vec![],
+        )
+        .await;
+        assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_run_objects_in_class_template_rejects_object_id(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "report_run_rejects_object").await;
+        let class = classes[0].clone();
+        let template_id = create_template(
+            &context.pool,
+            class.namespace_id,
+            class.id,
+            ReportScopeKind::ObjectsInClass,
+            "rejects-object-id",
+            ReportContentType::TextPlain,
+            "{% for item in items %}{{ item.name }}{% endfor %}",
+        )
+        .await;
+
+        let resp = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/templates/{template_id}/reports"),
+            &serde_json::json!({ "object_id": 1 }),
+            vec![],
+        )
+        .await;
+        assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_run_template_uses_default_query_and_runtime_override(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "report_run_default_query").await;
+        let class = classes[0].clone();
+        let _ = create_report_objects(&context.pool, &class).await;
+
+        // Template carries a default query that selects only the "app" host.
+        let template = crate::models::report_template::create_report_template(
+            &context.pool,
+            NewReportTemplate {
+                namespace_id: class.namespace_id,
+                name: "report.default-query".to_string(),
+                description: "default query report".to_string(),
+                content_type: ReportContentType::TextPlain,
+                template: "{% for item in items %}{{ item.name }}\n{% endfor %}".to_string(),
+                kind: ReportTemplateKind::Report,
+                scope_kind: Some(ReportScopeKind::ObjectsInClass),
+                class_id: Some(class.id),
+                default_query: Some("name__contains=app-&sort=name".to_string()),
+                include: None,
+                relation_context: None,
+                default_missing_data_policy: None,
+                default_limits: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // An empty run body falls back to the template's default query.
+        let resp = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/templates/{}/reports", template.id),
+            &serde_json::json!({}),
+            vec![],
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(resp).await;
+        let _ = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+        let output = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/reports/{}/output", task.id),
+        )
+        .await;
+        let output = assert_response_status(output, StatusCode::OK).await;
+        let body = String::from_utf8(test::read_body(output).await.to_vec()).unwrap();
+        assert_eq!(body, "report-app-01\n");
+
+        // A runtime query overrides the template default entirely.
+        let resp = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/templates/{}/reports", template.id),
+            &serde_json::json!({ "query": "name__contains=db-&sort=name" }),
+            vec![],
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(resp).await;
+        let _ = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+        let output = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/reports/{}/output", task.id),
+        )
+        .await;
+        let output = assert_response_status(output, StatusCode::OK).await;
+        let body = String::from_utf8(test::read_body(output).await.to_vec()).unwrap();
+        assert_eq!(body, "report-db-01\n");
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_run_template_csv_output_end_to_end(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "report_run_csv").await;
+        let class = classes[0].clone();
+        let _ = create_report_objects(&context.pool, &class).await;
+        let template_id = create_template(
+            &context.pool,
+            class.namespace_id,
+            class.id,
+            ReportScopeKind::ObjectsInClass,
+            "report.csv",
+            ReportContentType::TextCsv,
+            "host,owner\n{% for item in items %}{{ item.name|csv_cell }},{{ item.data.owner|csv_cell }}\n{% endfor %}",
+        )
+        .await;
+
+        let resp = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/templates/{template_id}/reports"),
+            &serde_json::json!({ "query": "sort=name" }),
+            vec![],
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(resp).await;
+        let _ = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+
+        let output = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/reports/{}/output", task.id),
+        )
+        .await;
+        let output = assert_response_status(output, StatusCode::OK).await;
+        let content_type = header_value(&output, header::CONTENT_TYPE.as_str()).unwrap_or_default();
+        assert!(
+            content_type.starts_with("text/csv"),
+            "expected text/csv output, got {content_type}"
+        );
+        let body = String::from_utf8(test::read_body(output).await.to_vec()).unwrap();
+        assert_eq!(body, "host,owner\nreport-app-01,alice\nreport-db-01,bob\n");
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_run_namespaces_scope_template(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "report_ns_scope").await;
+        let namespace_name = classes.namespace.namespace.name.clone();
+
+        let template = crate::models::report_template::create_report_template(
+            &context.pool,
+            NewReportTemplate {
+                namespace_id: classes[0].namespace_id,
+                name: "report.namespaces".to_string(),
+                description: "namespace listing".to_string(),
+                content_type: ReportContentType::TextPlain,
+                template: "{% for item in items %}{{ item.name }}\n{% endfor %}".to_string(),
+                kind: ReportTemplateKind::Report,
+                scope_kind: Some(ReportScopeKind::Namespaces),
+                class_id: None,
+                default_query: Some(format!("name__equals={namespace_name}")),
+                include: None,
+                relation_context: None,
+                default_missing_data_policy: None,
+                default_limits: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let resp = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/templates/{}/reports", template.id),
+            &serde_json::json!({}),
+            vec![],
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(resp).await;
+        let _ = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+        let output = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/reports/{}/output", task.id),
+        )
+        .await;
+        let output = assert_response_status(output, StatusCode::OK).await;
+        let body = String::from_utf8(test::read_body(output).await.to_vec()).unwrap();
+        assert_eq!(body, format!("{namespace_name}\n"));
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_run_classes_scope_template(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "report_cls_scope").await;
+
+        let template = crate::models::report_template::create_report_template(
+            &context.pool,
+            NewReportTemplate {
+                namespace_id: classes[0].namespace_id,
+                name: "report.classes".to_string(),
+                description: "class listing".to_string(),
+                content_type: ReportContentType::TextPlain,
+                template: "{% for item in items %}{{ item.name }}\n{% endfor %}".to_string(),
+                kind: ReportTemplateKind::Report,
+                scope_kind: Some(ReportScopeKind::Classes),
+                class_id: None,
+                default_query: Some("name__contains=report_cls_scope_api_class_&sort=name".to_string()),
+                include: None,
+                relation_context: None,
+                default_missing_data_policy: None,
+                default_limits: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let resp = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/templates/{}/reports", template.id),
+            &serde_json::json!({}),
+            vec![],
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(resp).await;
+        let _ = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+        let output = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/reports/{}/output", task.id),
+        )
+        .await;
+        let output = assert_response_status(output, StatusCode::OK).await;
+        let body = String::from_utf8(test::read_body(output).await.to_vec()).unwrap();
+        let lines: Vec<&str> = body.lines().collect();
+        assert_eq!(lines.len(), classes.len());
+        assert!(body.contains(&classes[0].name));
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_run_class_relations_scope_template(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "report_rel_scope").await;
+        let relation = create_class_relation(&context.pool, classes[0].id, classes[1].id).await;
+
+        let template = crate::models::report_template::create_report_template(
+            &context.pool,
+            NewReportTemplate {
+                namespace_id: classes[0].namespace_id,
+                name: "report.class-relations".to_string(),
+                description: "class relation listing".to_string(),
+                content_type: ReportContentType::TextPlain,
+                template:
+                    "{% for item in items %}[{{ item.from_hubuum_class_id }}->{{ item.to_hubuum_class_id }}]{% endfor %}"
+                        .to_string(),
+                kind: ReportTemplateKind::Report,
+                scope_kind: Some(ReportScopeKind::ClassRelations),
+                class_id: None,
+                default_query: None,
+                include: None,
+                relation_context: None,
+                default_missing_data_policy: None,
+                default_limits: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let resp = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/templates/{}/reports", template.id),
+            &serde_json::json!({ "limits": { "max_items": 1000 } }),
+            vec![],
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(resp).await;
+        let _ = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+        let output = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/reports/{}/output", task.id),
+        )
+        .await;
+        let output = assert_response_status(output, StatusCode::OK).await;
+        let body = String::from_utf8(test::read_body(output).await.to_vec()).unwrap();
+        assert!(
+            body.contains(&format!(
+                "[{}->{}]",
+                relation.from_hubuum_class_id, relation.to_hubuum_class_id
+            )),
+            "expected relation marker in output, got: {body}"
+        );
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_run_collection_scope_template_rejects_object_id(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "report_collection_object_id").await;
+
+        let template = crate::models::report_template::create_report_template(
+            &context.pool,
+            NewReportTemplate {
+                namespace_id: classes[0].namespace_id,
+                name: "report.namespaces-no-object".to_string(),
+                description: "namespace listing".to_string(),
+                content_type: ReportContentType::TextPlain,
+                template: "{% for item in items %}{{ item.name }}{% endfor %}".to_string(),
+                kind: ReportTemplateKind::Report,
+                scope_kind: Some(ReportScopeKind::Namespaces),
+                class_id: None,
+                default_query: None,
+                include: None,
+                relation_context: None,
+                default_missing_data_policy: None,
+                default_limits: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let resp = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/templates/{}/reports", template.id),
+            &serde_json::json!({ "object_id": 1 }),
+            vec![],
+        )
+        .await;
+        assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
     async fn test_report_output_counts_template_missing_value_warnings(
         #[future(awt)] test_context: TestContext,
     ) {

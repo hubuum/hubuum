@@ -164,12 +164,17 @@
         UNIQUE (namespace_id, name),
         CHECK (content_type IN ('text/plain', 'text/html', 'text/csv')),
         CHECK (kind IN ('report', 'fragment')),
-        CHECK (scope_kind IS NULL OR scope_kind IN ('objects_in_class', 'related_objects')),
+        CHECK (scope_kind IS NULL OR scope_kind IN (
+            'namespaces', 'classes', 'objects_in_class',
+            'class_relations', 'object_relations', 'related_objects'
+        )),
         CHECK (default_missing_data_policy IS NULL OR default_missing_data_policy IN ('strict', 'null', 'omit')),
         CHECK (
             (kind = 'fragment' AND scope_kind IS NULL AND class_id IS NULL)
             OR
-            (kind = 'report' AND scope_kind IS NOT NULL AND class_id IS NOT NULL)
+            (kind = 'report' AND scope_kind IN ('objects_in_class', 'related_objects') AND class_id IS NOT NULL)
+            OR
+            (kind = 'report' AND scope_kind IN ('namespaces', 'classes', 'class_relations', 'object_relations') AND class_id IS NULL)
         )
     );
 

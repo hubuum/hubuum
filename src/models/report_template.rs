@@ -8,22 +8,16 @@ use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, QueryOptions, SortParam, parse_query_parameter};
 use crate::models::{
-    Namespace, NamespaceID, ReportContentType, ReportInclude, ReportIncludeRelatedObject,
-    ReportLimits, ReportMissingDataPolicy, ReportRelationContext, ReportScopeKind,
+    Namespace, NamespaceID, ReportContentType, ReportInclude, ReportLimits,
+    ReportMissingDataPolicy, ReportRelationContext, ReportScopeKind,
 };
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
 use crate::schema::report_templates;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter, NamespaceAdapter};
-use crate::utilities::reporting::validate_template;
+use crate::utilities::reporting::{validate_related_objects_include, validate_template};
 use crate::{date_search, numeric_search, string_search};
-
-const RELATED_INCLUDE_DEFAULT_MAX_DEPTH: i32 = 1;
-const RELATED_INCLUDE_MAX_DEPTH_LIMIT: i32 = 10;
-const RELATED_INCLUDE_DEFAULT_LIMIT: i32 = 1;
-const RELATED_INCLUDE_MAX_LIMIT: i32 = 50;
-const RELATED_INCLUDE_MAX_ALIASES: usize = 8;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -473,23 +467,29 @@ async fn validate_report_profile(
             let scope_kind = scope_kind
                 .ok_or_else(|| ApiError::BadRequest("Report templates require scope_kind".into()))
                 .and_then(ReportScopeKind::from_str)?;
-            if !matches!(
-                scope_kind,
-                ReportScopeKind::ObjectsInClass | ReportScopeKind::RelatedObjects
-            ) {
-                return Err(ApiError::BadRequest(
-                    "Report templates only support objects_in_class and related_objects scopes"
-                        .to_string(),
-                ));
+
+            // `objects_in_class` and `related_objects` are scoped to a single class and
+            // require `class_id`; the collection scopes (`namespaces`, `classes`,
+            // `class_relations`, `object_relations`) are class-agnostic and must not set it.
+            if scope_kind.requires_class_id() {
+                let class_id = class_id.ok_or_else(|| {
+                    ApiError::BadRequest(format!(
+                        "Report templates with scope '{}' require class_id",
+                        scope_kind.as_str()
+                    ))
+                })?;
+                if class_id <= 0 {
+                    return Err(ApiError::BadRequest(
+                        "Report template class_id must be greater than 0".to_string(),
+                    ));
+                }
+                ensure_template_class_in_namespace(pool, target_namespace_id, class_id).await?;
+            } else if class_id.is_some() {
+                return Err(ApiError::BadRequest(format!(
+                    "Report templates with scope '{}' must not set class_id",
+                    scope_kind.as_str()
+                )));
             }
-            let class_id = class_id
-                .ok_or_else(|| ApiError::BadRequest("Report templates require class_id".into()))?;
-            if class_id <= 0 {
-                return Err(ApiError::BadRequest(
-                    "Report template class_id must be greater than 0".to_string(),
-                ));
-            }
-            ensure_template_class_in_namespace(pool, target_namespace_id, class_id).await?;
 
             if let Some(query) = default_query {
                 parse_query_parameter(query)?;
@@ -498,6 +498,18 @@ async fn validate_report_profile(
             if include.is_some() && scope_kind != ReportScopeKind::ObjectsInClass {
                 return Err(ApiError::BadRequest(
                     "include is only supported for objects_in_class report templates".to_string(),
+                ));
+            }
+
+            if relation_context.is_some()
+                && !matches!(
+                    scope_kind,
+                    ReportScopeKind::ObjectsInClass | ReportScopeKind::RelatedObjects
+                )
+            {
+                return Err(ApiError::BadRequest(
+                    "relation_context is only supported for objects_in_class and related_objects report templates"
+                        .to_string(),
                 ));
             }
         }
@@ -511,7 +523,7 @@ async fn validate_report_profile(
 
     if let Some(include) = include {
         let include: ReportInclude = serde_json::from_value(include.clone())?;
-        validate_template_include(&include)?;
+        validate_related_objects_include(&include)?;
     }
     if let Some(relation_context) = relation_context {
         let context: ReportRelationContext = serde_json::from_value(relation_context.clone())?;
@@ -528,81 +540,6 @@ async fn validate_report_profile(
     }
     if let Some(limits) = default_limits {
         let _limits: ReportLimits = serde_json::from_value(limits.clone())?;
-    }
-
-    Ok(())
-}
-
-fn validate_template_include(include: &ReportInclude) -> Result<(), ApiError> {
-    let Some(related_objects) = &include.related_objects else {
-        return Ok(());
-    };
-
-    if related_objects.len() > RELATED_INCLUDE_MAX_ALIASES {
-        return Err(ApiError::BadRequest(format!(
-            "include.related_objects supports at most {RELATED_INCLUDE_MAX_ALIASES} aliases"
-        )));
-    }
-
-    for (alias, include) in related_objects {
-        validate_related_include_alias(alias)?;
-        validate_related_include_options(alias, include)?;
-    }
-
-    Ok(())
-}
-
-fn validate_related_include_alias(alias: &str) -> Result<(), ApiError> {
-    let mut chars = alias.chars();
-    let Some(first) = chars.next() else {
-        return Err(ApiError::BadRequest(
-            "include.related_objects aliases must not be empty".to_string(),
-        ));
-    };
-
-    if !(first == '_' || first.is_ascii_alphabetic())
-        || !chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-    {
-        return Err(ApiError::BadRequest(format!(
-            "Invalid include.related_objects alias '{alias}'; expected [A-Za-z_][A-Za-z0-9_]*"
-        )));
-    }
-
-    Ok(())
-}
-
-fn validate_related_include_options(
-    alias: &str,
-    include: &ReportIncludeRelatedObject,
-) -> Result<(), ApiError> {
-    if include.class_id <= 0 {
-        return Err(ApiError::BadRequest(format!(
-            "include.related_objects.{alias}.class_id must be greater than 0"
-        )));
-    }
-
-    if let Some(class_relation_id) = include.class_relation_id
-        && class_relation_id <= 0
-    {
-        return Err(ApiError::BadRequest(format!(
-            "include.related_objects.{alias}.class_relation_id must be greater than 0"
-        )));
-    }
-
-    let max_depth = include
-        .max_depth
-        .unwrap_or(RELATED_INCLUDE_DEFAULT_MAX_DEPTH);
-    if !(1..=RELATED_INCLUDE_MAX_DEPTH_LIMIT).contains(&max_depth) {
-        return Err(ApiError::BadRequest(format!(
-            "include.related_objects.{alias}.max_depth must be between 1 and {RELATED_INCLUDE_MAX_DEPTH_LIMIT}"
-        )));
-    }
-
-    let limit = include.limit.unwrap_or(RELATED_INCLUDE_DEFAULT_LIMIT);
-    if !(1..=RELATED_INCLUDE_MAX_LIMIT).contains(&limit) {
-        return Err(ApiError::BadRequest(format!(
-            "include.related_objects.{alias}.limit must be between 1 and {RELATED_INCLUDE_MAX_LIMIT}"
-        )));
     }
 
     Ok(())
@@ -697,7 +634,8 @@ fn build_report_template_query<'a>(
     query_options: &'a QueryOptions,
 ) -> Result<crate::schema::report_templates::BoxedQuery<'a, diesel::pg::Pg>, ApiError> {
     use crate::schema::report_templates::dsl::{
-        created_at, description, id, name, namespace_id, report_templates, updated_at,
+        class_id, created_at, description, id, kind, name, namespace_id, report_templates,
+        updated_at,
     };
 
     if allowed_namespace_ids.is_empty() {
@@ -719,6 +657,8 @@ fn build_report_template_query<'a>(
             FilterField::Namespaces | FilterField::NamespaceId => {
                 numeric_search!(query, param, operator, namespace_id)
             }
+            FilterField::Kind => string_search!(query, param, operator, kind),
+            FilterField::ClassId => numeric_search!(query, param, operator, class_id),
             FilterField::CreatedAt => date_search!(query, param, operator, created_at),
             FilterField::UpdatedAt => date_search!(query, param, operator, updated_at),
             _ => {

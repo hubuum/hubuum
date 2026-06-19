@@ -241,6 +241,13 @@ impl ReportScopeKind {
             ReportScopeKind::RelatedObjects => "related_objects",
         }
     }
+
+    /// Whether this scope targets a single class and therefore needs a `class_id`.
+    /// The collection scopes (`namespaces`, `classes`, `class_relations`,
+    /// `object_relations`) are class-agnostic.
+    pub fn requires_class_id(self) -> bool {
+        matches!(self, Self::ObjectsInClass | Self::RelatedObjects)
+    }
 }
 
 impl FromStr for ReportScopeKind {

@@ -29,8 +29,8 @@ use crate::models::search::{
 use crate::models::{
     HubuumClassID, HubuumClassRelation, HubuumObject, HubuumObjectID, HubuumObjectRelation,
     HubuumObjectWithPath, NamespaceID, NewReportTaskOutputRecord, NewTaskEventRecord, Permissions,
-    ReportContentType, ReportIncludeRelatedDirection, ReportIncludeRelatedObject,
-    ReportIncludeRelatedQuery, ReportIncludeRelatedSort, ReportJsonResponse, ReportMeta,
+    ReportContentType, ReportIncludeRelatedDirection, ReportIncludeRelatedQuery,
+    ReportIncludeRelatedSort, ReportJsonResponse, ReportMeta,
     ReportMissingDataPolicy, ReportRequest, ReportScope, ReportScopeKind, ReportTaskOutputRecord,
     ReportTemplate, ReportTemplateID, ReportWarning, TaskKind, TaskRecord, TaskResponse, User,
 };
@@ -39,7 +39,10 @@ use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
 use crate::traits::{GroupMemberships, NamespaceAccessors, Search, SelfAccessors};
-use crate::utilities::reporting::render_template;
+use crate::utilities::reporting::{
+    RELATED_INCLUDE_DEFAULT_LIMIT, RELATED_INCLUDE_DEFAULT_MAX_DEPTH, render_template,
+    validate_related_objects_include,
+};
 use crate::utilities::response::{json_response, json_response_with_header};
 
 use super::check_if_object_in_class;
@@ -62,11 +65,6 @@ struct ReportArtifact {
 
 const REPORT_WARNINGS_HEADER: &str = "X-Hubuum-Report-Warnings";
 const REPORT_TRUNCATED_HEADER: &str = "X-Hubuum-Report-Truncated";
-const RELATED_INCLUDE_DEFAULT_MAX_DEPTH: i32 = 1;
-const RELATED_INCLUDE_MAX_DEPTH_LIMIT: i32 = 10;
-const RELATED_INCLUDE_DEFAULT_LIMIT: i32 = 1;
-const RELATED_INCLUDE_MAX_LIMIT: i32 = 50;
-const RELATED_INCLUDE_MAX_ALIASES: usize = 8;
 
 struct ReportRuntime {
     report: ReportRequest,
@@ -238,25 +236,19 @@ pub(crate) async fn submit_report_task(
     user: &User,
     req: HttpRequest,
     report: ReportRequest,
-    template_id: Option<i32>,
+    template: Option<ReportTemplate>,
 ) -> Result<TaskRecord, ApiError> {
     ensure_task_worker_running(pool.clone());
 
     let task_payload = StoredReportTaskPayload {
         report,
-        template_id,
+        template_id: template.as_ref().map(|template| template.id),
     };
     let payload = serde_json::to_value(&task_payload)?;
     let hash = request_hash(&payload)?;
     let idempotency_key = idempotency_key_from_headers(req.headers())?;
 
-    let runtime = prepare_report_runtime(
-        pool,
-        user,
-        task_payload.report.clone(),
-        task_payload.template_id,
-    )
-    .await?;
+    let runtime = prepare_report_runtime(pool, task_payload.report.clone(), template).await?;
     validate_report_submission(&runtime)?;
     let task_payload = runtime_to_task_payload(&runtime)?;
 
@@ -339,14 +331,12 @@ pub async fn get_report_output(
 
 async fn prepare_report_runtime(
     pool: &DbPool,
-    user: &User,
     report: ReportRequest,
-    template_id: Option<i32>,
+    template: Option<ReportTemplate>,
 ) -> Result<ReportRuntime, ApiError> {
     report.scope.validate()?;
     validate_report_include(&report)?;
 
-    let template = resolve_template(pool, user, template_id).await?;
     let namespace_templates = match &template {
         Some(template) => {
             crate::models::report_template::report_templates_in_namespace(
@@ -507,7 +497,8 @@ pub(crate) async fn execute_report_task(
         .clone()
         .ok_or_else(|| ApiError::BadRequest("Report task payload is missing".to_string()))?;
     let payload: StoredReportTaskPayload = serde_json::from_value(payload)?;
-    let runtime = prepare_report_runtime(pool, user, payload.report, payload.template_id).await?;
+    let template = resolve_template(pool, user, payload.template_id).await?;
+    let runtime = prepare_report_runtime(pool, payload.report, template).await?;
     validate_report_submission(&runtime)?;
     let total_start = Instant::now();
     let mut timings = ReportExecutionTimings::default();
@@ -725,74 +716,7 @@ fn validate_report_include(report: &ReportRequest) -> Result<(), ApiError> {
         ));
     }
 
-    if related_objects.len() > RELATED_INCLUDE_MAX_ALIASES {
-        return Err(ApiError::BadRequest(format!(
-            "include.related_objects supports at most {RELATED_INCLUDE_MAX_ALIASES} aliases"
-        )));
-    }
-
-    for (alias, include) in related_objects {
-        validate_related_include_alias(alias)?;
-        validate_related_include_options(alias, include)?;
-    }
-
-    Ok(())
-}
-
-fn validate_related_include_alias(alias: &str) -> Result<(), ApiError> {
-    let mut chars = alias.chars();
-    let Some(first) = chars.next() else {
-        return Err(ApiError::BadRequest(
-            "include.related_objects aliases must not be empty".to_string(),
-        ));
-    };
-
-    if !(first == '_' || first.is_ascii_alphabetic())
-        || !chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-    {
-        return Err(ApiError::BadRequest(format!(
-            "Invalid include.related_objects alias '{alias}'; expected [A-Za-z_][A-Za-z0-9_]*"
-        )));
-    }
-
-    Ok(())
-}
-
-fn validate_related_include_options(
-    alias: &str,
-    include: &ReportIncludeRelatedObject,
-) -> Result<(), ApiError> {
-    if include.class_id <= 0 {
-        return Err(ApiError::BadRequest(format!(
-            "include.related_objects.{alias}.class_id must be greater than 0"
-        )));
-    }
-
-    if let Some(class_relation_id) = include.class_relation_id
-        && class_relation_id <= 0
-    {
-        return Err(ApiError::BadRequest(format!(
-            "include.related_objects.{alias}.class_relation_id must be greater than 0"
-        )));
-    }
-
-    let max_depth = include
-        .max_depth
-        .unwrap_or(RELATED_INCLUDE_DEFAULT_MAX_DEPTH);
-    if !(1..=RELATED_INCLUDE_MAX_DEPTH_LIMIT).contains(&max_depth) {
-        return Err(ApiError::BadRequest(format!(
-            "include.related_objects.{alias}.max_depth must be between 1 and {RELATED_INCLUDE_MAX_DEPTH_LIMIT}"
-        )));
-    }
-
-    let limit = include.limit.unwrap_or(RELATED_INCLUDE_DEFAULT_LIMIT);
-    if !(1..=RELATED_INCLUDE_MAX_LIMIT).contains(&limit) {
-        return Err(ApiError::BadRequest(format!(
-            "include.related_objects.{alias}.limit must be between 1 and {RELATED_INCLUDE_MAX_LIMIT}"
-        )));
-    }
-
-    Ok(())
+    validate_related_objects_include(include)
 }
 
 fn add_truncation_warning(warnings: &mut Vec<ReportWarning>, truncated: bool) {
