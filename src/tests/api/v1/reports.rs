@@ -1355,4 +1355,269 @@ mod tests {
 
         namespace.cleanup().await.unwrap();
     }
+
+    // Pins the include path's `sort` option, which the unified SQL builder now threads through
+    // GraphWalkRanking::ByTargetClass. Rooms are created so that creation order (and id order)
+    // differs from name order, so `name` and `created_at` produce distinct, unambiguous orderings.
+    #[rstest]
+    #[actix_web::test]
+    async fn test_report_include_related_objects_respects_sort_order(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let namespace = context.namespace_fixture("report_include_sort").await;
+        let host_class = create_named_class(
+            &context.pool,
+            namespace.namespace.id,
+            &context.scoped_name("SortHost"),
+        )
+        .await;
+        let room_class = create_named_class(
+            &context.pool,
+            namespace.namespace.id,
+            &context.scoped_name("SortRoom"),
+        )
+        .await;
+        let host = NewHubuumObject {
+            name: "sort-host".to_string(),
+            description: "host".to_string(),
+            namespace_id: namespace.namespace.id,
+            hubuum_class_id: host_class.id,
+            data: serde_json::json!({}),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        // Creation/id order: zulu, alpha, mike. Name order: alpha, mike, zulu.
+        let mut rooms = Vec::new();
+        for name in ["room-zulu", "room-alpha", "room-mike"] {
+            rooms.push(
+                NewHubuumObject {
+                    name: name.to_string(),
+                    description: "room".to_string(),
+                    namespace_id: namespace.namespace.id,
+                    hubuum_class_id: room_class.id,
+                    data: serde_json::json!({}),
+                }
+                .save(&context.pool)
+                .await
+                .unwrap(),
+            );
+        }
+
+        let class_relation =
+            create_class_relation(&context.pool, host_class.id, room_class.id).await;
+        for room in &rooms {
+            let _ =
+                create_object_relation(&context.pool, host.id, room.id, class_relation.id).await;
+        }
+
+        async fn related_room_names(
+            context: &TestContext,
+            host_class_id: i32,
+            room_class_id: i32,
+            class_relation_id: i32,
+            sort: &str,
+        ) -> Vec<String> {
+            let body = serde_json::json!({
+                "scope": { "kind": "objects_in_class", "class_id": host_class_id },
+                "query": "name=sort-host",
+                "include": {
+                    "related_objects": {
+                        "rooms": {
+                            "class_id": room_class_id,
+                            "class_relation_id": class_relation_id,
+                            "direction": "outgoing",
+                            "sort": sort,
+                            "max_depth": 1,
+                            "limit": 10
+                        }
+                    }
+                }
+            });
+            let resp = post_request_with_headers(
+                &context.pool,
+                &context.admin_token,
+                REPORTS_ENDPOINT,
+                &body,
+                vec![],
+            )
+            .await;
+            let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+            let task: TaskResponse = test::read_body_json(resp).await;
+            let _ = wait_for_task(context, task.id, &[TaskStatus::Succeeded]).await;
+            let output = get_request(
+                &context.pool,
+                &context.admin_token,
+                &format!("/api/v1/reports/{}/output", task.id),
+            )
+            .await;
+            let output = assert_response_status(output, StatusCode::OK).await;
+            let report: ReportJsonResponse = test::read_body_json(output).await;
+            report.items[0]["related"]["rooms"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|room| room["name"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>()
+        }
+
+        assert_eq!(
+            related_room_names(
+                &context,
+                host_class.id,
+                room_class.id,
+                class_relation.id,
+                "name"
+            )
+            .await,
+            vec!["room-alpha", "room-mike", "room-zulu"]
+        );
+        assert_eq!(
+            related_room_names(
+                &context,
+                host_class.id,
+                room_class.id,
+                class_relation.id,
+                "created_at"
+            )
+            .await,
+            vec!["room-zulu", "room-alpha", "room-mike"]
+        );
+
+        namespace.cleanup().await.unwrap();
+    }
+
+    // Ignored benchmark: prints hydration_duration_ms for templated ObjectsInClass reports at
+    // increasing root counts, so the O(N)->O(1) round-trip change can be observed empirically.
+    // Run with: source .env && ./run_tests.sh bench_objects_in_class_hydration_scaling -- --ignored --nocapture
+    #[rstest]
+    #[actix_web::test]
+    #[ignore]
+    async fn bench_objects_in_class_hydration_scaling(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let namespace = context.namespace_fixture("report_hydration_bench").await;
+        let host_class = create_named_class(
+            &context.pool,
+            namespace.namespace.id,
+            &context.scoped_name("BenchHost"),
+        )
+        .await;
+        let room_class = create_named_class(
+            &context.pool,
+            namespace.namespace.id,
+            &context.scoped_name("BenchRoom"),
+        )
+        .await;
+        let class_relation = NewHubuumClassRelation {
+            from_hubuum_class_id: host_class.id,
+            to_hubuum_class_id: room_class.id,
+            forward_template_alias: Some("rooms".to_string()),
+            reverse_template_alias: Some("hosts".to_string()),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+        let template_id = create_template(
+            &context.pool,
+            namespace.namespace.id,
+            "bench-template",
+            ReportContentType::TextPlain,
+            "{% for host in items %}{{ host.name }}:{% for room in host.related.rooms %}{{ room.name }},{% endfor %};{% endfor %}",
+        )
+        .await;
+
+        let mut created_hosts = 0usize;
+        let mut results: Vec<(usize, i64, i64)> = Vec::new();
+
+        for target in [10usize, 50, 100, 200] {
+            // Each host gets two related rooms so hydration has real per-root work.
+            for index in created_hosts..target {
+                let host = NewHubuumObject {
+                    name: format!("bench-host-{index:04}"),
+                    description: "host".to_string(),
+                    namespace_id: namespace.namespace.id,
+                    hubuum_class_id: host_class.id,
+                    data: serde_json::json!({}),
+                }
+                .save(&context.pool)
+                .await
+                .unwrap();
+                for room_index in 0..2 {
+                    let room = NewHubuumObject {
+                        name: format!("bench-room-{index:04}-{room_index}"),
+                        description: "room".to_string(),
+                        namespace_id: namespace.namespace.id,
+                        hubuum_class_id: room_class.id,
+                        data: serde_json::json!({}),
+                    }
+                    .save(&context.pool)
+                    .await
+                    .unwrap();
+                    let _ =
+                        create_object_relation(&context.pool, host.id, room.id, class_relation.id)
+                            .await;
+                }
+            }
+            created_hosts = target;
+
+            let body = ReportRequest {
+                scope: ReportScope {
+                    kind: ReportScopeKind::ObjectsInClass,
+                    class_id: Some(host_class.id),
+                    object_id: None,
+                },
+                query: None,
+                output: Some(crate::models::ReportOutputRequest {
+                    template_id: Some(template_id),
+                }),
+                missing_data_policy: None,
+                limits: None,
+                include: None,
+                relation_context: Some(ReportRelationContext { depth: Some(1) }),
+            };
+
+            let resp = post_request_with_headers(
+                &context.pool,
+                &context.admin_token,
+                REPORTS_ENDPOINT,
+                &body,
+                vec![],
+            )
+            .await;
+            let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+            let task: TaskResponse = test::read_body_json(resp).await;
+            let _ = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+
+            let events_resp = get_request(
+                &context.pool,
+                &context.admin_token,
+                &format!("/api/v1/tasks/{}/events", task.id),
+            )
+            .await;
+            let events_resp = assert_response_status(events_resp, StatusCode::OK).await;
+            let events: Vec<TaskEventResponse> = test::read_body_json(events_resp).await;
+            let timing = events
+                .iter()
+                .rev()
+                .find_map(|event| event.data.as_ref())
+                .expect("a report event carrying timing data");
+            let hydration_ms = timing["hydration_duration_ms"].as_i64().unwrap_or(-1);
+            let total_ms = timing["total_duration_ms"].as_i64().unwrap_or(-1);
+            results.push((target, hydration_ms, total_ms));
+        }
+
+        println!("\n=== ObjectsInClass hydration scaling ===");
+        println!(
+            "{:>6} | {:>14} | {:>10}",
+            "roots", "hydration_ms", "total_ms"
+        );
+        for (roots, hydration_ms, total_ms) in &results {
+            println!("{roots:>6} | {hydration_ms:>14} | {total_ms:>10}");
+        }
+        println!();
+
+        namespace.cleanup().await.unwrap();
+    }
 }
