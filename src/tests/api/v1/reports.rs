@@ -1248,7 +1248,9 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let namespace = context.namespace_fixture("report_multiroot_hydration").await;
+        let namespace = context
+            .namespace_fixture("report_multiroot_hydration")
+            .await;
         let host_class = create_named_class(
             &context.pool,
             namespace.namespace.id,
@@ -1297,10 +1299,10 @@ mod tests {
         .await
         .unwrap();
 
-        let _ =
-            create_object_relation(&context.pool, host_a.id, room_a.id, host_room_relation.id).await;
-        let _ =
-            create_object_relation(&context.pool, host_b.id, room_b.id, host_room_relation.id).await;
+        let _ = create_object_relation(&context.pool, host_a.id, room_a.id, host_room_relation.id)
+            .await;
+        let _ = create_object_relation(&context.pool, host_b.id, room_b.id, host_room_relation.id)
+            .await;
 
         let template_id = create_template(
             &context.pool,

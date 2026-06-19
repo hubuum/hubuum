@@ -1270,7 +1270,9 @@ async fn hydrate_related_root(
     let mut all_objects = BTreeMap::<i32, HubuumObjectWithPath>::new();
     all_objects.insert(source.id, source.clone());
     for object in &related_objects {
-        all_objects.entry(object.id).or_insert_with(|| object.clone());
+        all_objects
+            .entry(object.id)
+            .or_insert_with(|| object.clone());
     }
     let class_metadata = load_hydration_class_metadata(pool, &all_objects).await?;
 
@@ -1306,7 +1308,8 @@ async fn load_hydration_class_metadata(
     object_class_ids.sort_unstable();
     object_class_ids.dedup();
 
-    let mut class_relations = load_class_relations_touching_classes(pool, &object_class_ids).await?;
+    let mut class_relations =
+        load_class_relations_touching_classes(pool, &object_class_ids).await?;
     class_relations.sort_by_key(|relation| relation.id);
 
     let mut class_relations_by_object_class = BTreeMap::<i32, Vec<HubuumClassRelation>>::new();
@@ -2496,8 +2499,7 @@ mod tests {
         let mut budget = HydrationBudget::new(2);
         budget.count_object().unwrap();
         budget.count_object().unwrap(); // hydrated=2, remaining=0
-        let err =
-            take_related_within_budget(&budget, vec![test_object_with_path(10)]).unwrap_err();
+        let err = take_related_within_budget(&budget, vec![test_object_with_path(10)]).unwrap_err();
         match err {
             ApiError::BadRequest(message) => {
                 assert_eq!(message, "Hydrated template object limit exceeded (2 >= 2)")

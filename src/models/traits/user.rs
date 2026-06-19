@@ -4,8 +4,7 @@ use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, SortPar
 use crate::models::{
     ClassGraphRow, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
     HubuumObjectRelation, Namespace, Permissions, RelatedObjectForRootRow, RelatedObjectGraphRow,
-    RelatedObjectIncludeRow,
-    ReportIncludeRelatedQuery, UnifiedSearchSpec, User, UserID,
+    RelatedObjectIncludeRow, ReportIncludeRelatedQuery, UnifiedSearchSpec, User, UserID,
 };
 
 use crate::db::DbPool;
