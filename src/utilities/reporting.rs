@@ -58,6 +58,27 @@ pub fn validate_template(
     namespace_templates: &[ReportTemplate],
     content_type: ReportContentType,
 ) -> Result<(), ApiError> {
+    let (recursion_limit, fuel) = template_limits_from_config();
+    validate_template_with_limits(
+        template_name,
+        template_source,
+        namespace_id,
+        namespace_templates,
+        content_type,
+        recursion_limit,
+        fuel,
+    )
+}
+
+pub fn validate_template_with_limits(
+    template_name: &str,
+    template_source: &str,
+    namespace_id: i32,
+    namespace_templates: &[ReportTemplate],
+    content_type: ReportContentType,
+    recursion_limit: usize,
+    fuel: u64,
+) -> Result<(), ApiError> {
     let env = build_environment(
         template_name,
         template_source,
@@ -65,6 +86,8 @@ pub fn validate_template(
         namespace_templates,
         content_type,
         ReportMissingDataPolicy::Omit,
+        recursion_limit,
+        fuel,
     )?;
 
     env.env
@@ -84,6 +107,7 @@ pub fn render_template(
     missing_data_policy: ReportMissingDataPolicy,
     max_output_bytes: usize,
 ) -> Result<(String, Vec<ReportWarning>), ApiError> {
+    let (recursion_limit, fuel) = template_limits_from_config();
     let cache_key = TemplateEnvCacheKey {
         namespace_id: template.namespace_id,
         namespace_signature: namespace_signature(template.namespace_id, namespace_templates),
@@ -109,6 +133,8 @@ pub fn render_template(
                 namespace_templates,
                 content_type,
                 missing_data_policy,
+                recursion_limit,
+                fuel,
             )?);
             let mut cache = template_env_cache()
                 .write()
@@ -197,6 +223,8 @@ fn build_environment(
     namespace_templates: &[ReportTemplate],
     content_type: ReportContentType,
     missing_data_policy: ReportMissingDataPolicy,
+    recursion_limit: usize,
+    fuel: u64,
 ) -> Result<CachedTemplateEnvironment, ApiError> {
     let mut env = Environment::new();
     let template_map = Arc::new(build_namespace_template_map(
@@ -208,13 +236,7 @@ fn build_environment(
 
     env.set_keep_trailing_newline(true);
     env.set_undefined_behavior(undefined_behavior(missing_data_policy));
-    let recursion_limit = get_config()
-        .map(|config| config.report_template_recursion_limit)
-        .unwrap_or(64);
     env.set_recursion_limit(recursion_limit);
-    let fuel = get_config()
-        .map(|config| config.report_template_fuel)
-        .unwrap_or(50_000);
     env.set_fuel(Some(fuel));
     env.set_auto_escape_callback(move |_| match content_type {
         ReportContentType::TextHtml => AutoEscape::Html,
@@ -239,6 +261,20 @@ fn build_environment(
         env,
         template_name: template_name.to_string(),
     })
+}
+
+fn template_limits_from_config() -> (usize, u64) {
+    get_config()
+        .map(|config| {
+            (
+                config.report_template_recursion_limit,
+                config.report_template_fuel,
+            )
+        })
+        .unwrap_or((
+            crate::config::DEFAULT_REPORT_TEMPLATE_RECURSION_LIMIT,
+            crate::config::DEFAULT_REPORT_TEMPLATE_FUEL,
+        ))
 }
 
 fn build_namespace_template_map(
