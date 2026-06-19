@@ -7,7 +7,7 @@ use crate::errors::ApiError;
 
 use crate::models::{
     HubuumObjectRelation, HubuumObjectRelationID, HubuumObjectWithPath, NewHubuumObjectRelation,
-    ObjectGraphRow, RelatedObjectGraphRow, RelatedObjectIncludeRow,
+    ObjectGraphRow, RelatedObjectForRootRow, RelatedObjectGraphRow, RelatedObjectIncludeRow,
 };
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter};
@@ -88,6 +88,22 @@ impl RelatedObjectGraphRow {
 }
 
 impl RelatedObjectIncludeRow {
+    pub fn to_descendant_object_with_path(&self) -> HubuumObjectWithPath {
+        HubuumObjectWithPath {
+            id: self.descendant_object_id,
+            name: self.descendant_name.clone(),
+            namespace_id: self.descendant_namespace_id,
+            hubuum_class_id: self.descendant_class_id,
+            data: self.descendant_data.clone(),
+            description: self.descendant_description.clone(),
+            created_at: self.descendant_created_at,
+            updated_at: self.descendant_updated_at,
+            path: self.path.clone(),
+        }
+    }
+}
+
+impl RelatedObjectForRootRow {
     pub fn to_descendant_object_with_path(&self) -> HubuumObjectWithPath {
         HubuumObjectWithPath {
             id: self.descendant_object_id,
