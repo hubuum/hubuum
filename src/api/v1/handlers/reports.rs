@@ -169,6 +169,26 @@ impl HydrationBudget {
     }
 }
 
+// Reproduces the per-root capacity check the old per-root query path applied:
+// `remaining_related_capacity()` reserves one slot for the root, the query fetched
+// `cap + 1` rows, and a root over `cap` errored with the fetched count (`cap + 1`).
+// Roots are processed in `items` order so the shared budget shrinks exactly as before.
+fn take_related_within_budget(
+    budget: &HydrationBudget,
+    mut related: Vec<HubuumObjectWithPath>,
+) -> Result<Vec<HubuumObjectWithPath>, ApiError> {
+    let max_related_objects = budget.remaining_related_capacity()?;
+    related.truncate(max_related_objects.saturating_add(1));
+    if related.len() > max_related_objects {
+        return Err(ApiError::BadRequest(format!(
+            "Hydrated template object limit exceeded ({} related objects > {} remaining related capacity)",
+            related.len(),
+            max_related_objects
+        )));
+    }
+    Ok(related)
+}
+
 #[derive(Debug, Clone)]
 struct ReachableTemplateTarget {
     target_id: i32,
@@ -2408,13 +2428,81 @@ mod tests {
     use super::{
         HydrationBudget, LimitedStringWriter, REPORT_TRUNCATED_HEADER, ReportRuntime,
         inferred_relation_alias, normalize_alias_segment, pluralize_alias,
-        render_report_task_output, validate_report_limits, validate_report_submission,
+        render_report_task_output, take_related_within_budget, validate_report_limits,
+        validate_report_submission,
     };
+    use crate::errors::ApiError;
 
     fn test_timestamp() -> chrono::NaiveDateTime {
         chrono::DateTime::from_timestamp(1_700_000_000, 0)
             .unwrap()
             .naive_utc()
+    }
+
+    fn test_object_with_path(id: i32) -> crate::models::HubuumObjectWithPath {
+        crate::models::HubuumObjectWithPath {
+            id,
+            name: format!("object-{id}"),
+            namespace_id: 1,
+            hubuum_class_id: 1,
+            data: serde_json::json!({}),
+            description: String::new(),
+            created_at: test_timestamp(),
+            updated_at: test_timestamp(),
+            path: vec![id],
+        }
+    }
+
+    #[test]
+    fn take_related_within_budget_allows_within_capacity() {
+        let mut budget = HydrationBudget::new(5);
+        budget.count_object().unwrap(); // hydrated=1, remaining=4, cap=3
+        let kept = take_related_within_budget(
+            &budget,
+            vec![test_object_with_path(10), test_object_with_path(11)],
+        )
+        .unwrap();
+        assert_eq!(kept.len(), 2);
+    }
+
+    #[test]
+    fn take_related_within_budget_errors_when_second_root_exceeds_remaining() {
+        let mut budget = HydrationBudget::new(5);
+        // Simulate the first root consuming three objects.
+        budget.count_object().unwrap();
+        budget.count_object().unwrap();
+        budget.count_object().unwrap(); // hydrated=3, remaining=2, cap=1
+        let err = take_related_within_budget(
+            &budget,
+            vec![
+                test_object_with_path(10),
+                test_object_with_path(11),
+                test_object_with_path(12),
+            ],
+        )
+        .unwrap_err();
+        match err {
+            ApiError::BadRequest(message) => assert_eq!(
+                message,
+                "Hydrated template object limit exceeded (2 related objects > 1 remaining related capacity)"
+            ),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn take_related_within_budget_errors_when_exhausted() {
+        let mut budget = HydrationBudget::new(2);
+        budget.count_object().unwrap();
+        budget.count_object().unwrap(); // hydrated=2, remaining=0
+        let err =
+            take_related_within_budget(&budget, vec![test_object_with_path(10)]).unwrap_err();
+        match err {
+            ApiError::BadRequest(message) => {
+                assert_eq!(message, "Hydrated template object limit exceeded (2 >= 2)")
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]
