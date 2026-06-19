@@ -86,8 +86,10 @@ pub fn validate_template_with_limits(
         namespace_templates,
         content_type,
         ReportMissingDataPolicy::Omit,
-        recursion_limit,
-        fuel,
+        TemplateLimits {
+            recursion_limit,
+            fuel,
+        },
     )?;
 
     env.env
@@ -133,8 +135,10 @@ pub fn render_template(
                 namespace_templates,
                 content_type,
                 missing_data_policy,
-                recursion_limit,
-                fuel,
+                TemplateLimits {
+                    recursion_limit,
+                    fuel,
+                },
             )?);
             let mut cache = template_env_cache()
                 .write()
@@ -216,6 +220,12 @@ fn namespace_signature(
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct TemplateLimits {
+    recursion_limit: usize,
+    fuel: u64,
+}
+
 fn build_environment(
     template_name: &str,
     template_source: &str,
@@ -223,9 +233,12 @@ fn build_environment(
     namespace_templates: &[ReportTemplate],
     content_type: ReportContentType,
     missing_data_policy: ReportMissingDataPolicy,
-    recursion_limit: usize,
-    fuel: u64,
+    limits: TemplateLimits,
 ) -> Result<CachedTemplateEnvironment, ApiError> {
+    let TemplateLimits {
+        recursion_limit,
+        fuel,
+    } = limits;
     let mut env = Environment::new();
     let template_map = Arc::new(build_namespace_template_map(
         namespace_id,
