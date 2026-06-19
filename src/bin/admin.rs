@@ -7,7 +7,11 @@ use tracing_subscriber::{
     filter::EnvFilter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
 };
 
-use hubuum::db::{DbPool, init_pool, with_connection};
+use hubuum::config::{
+    DEFAULT_DB_STATEMENT_TIMEOUT_MS, DEFAULT_REPORT_TEMPLATE_FUEL,
+    DEFAULT_REPORT_TEMPLATE_RECURSION_LIMIT,
+};
+use hubuum::db::{DbPool, init_pool_with_statement_timeout, with_connection};
 use hubuum::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
 use hubuum::logger;
 use hubuum::models::report_template::{list_all_report_templates, report_templates_in_namespace};
@@ -15,7 +19,7 @@ use hubuum::models::{ReportTaskOutputRecord, User};
 use hubuum::schema::report_task_outputs::dsl::report_task_outputs;
 use hubuum::utilities::auth::generate_random_password;
 use hubuum::utilities::is_valid_log_level;
-use hubuum::utilities::reporting::validate_template;
+use hubuum::utilities::reporting::validate_template_with_limits;
 
 #[derive(Parser)]
 #[command(
@@ -41,6 +45,30 @@ struct AdminCli {
     #[arg(long, env = "HUBUUM_DATABASE_URL")]
     database_url: Option<String>,
 
+    /// Pool-global Postgres statement_timeout in milliseconds (0 disables it)
+    #[arg(
+        long,
+        env = "HUBUUM_DB_STATEMENT_TIMEOUT_MS",
+        default_value_t = DEFAULT_DB_STATEMENT_TIMEOUT_MS
+    )]
+    db_statement_timeout_ms: u64,
+
+    /// MiniJinja recursion limit for report template validation
+    #[arg(
+        long,
+        env = "HUBUUM_REPORT_TEMPLATE_RECURSION_LIMIT",
+        default_value_t = DEFAULT_REPORT_TEMPLATE_RECURSION_LIMIT
+    )]
+    report_template_recursion_limit: usize,
+
+    /// MiniJinja fuel budget for report template validation
+    #[arg(
+        long,
+        env = "HUBUUM_REPORT_TEMPLATE_FUEL",
+        default_value_t = DEFAULT_REPORT_TEMPLATE_FUEL
+    )]
+    report_template_fuel: u64,
+
     /// Log level
     /// Possible values: trace, debug, info, warn, error
     #[arg(long, env = "HUBUUM_LOG_LEVEL", default_value = "info")]
@@ -62,12 +90,18 @@ async fn main() -> Result<(), ApiError> {
     });
 
     // Initialize database connection
-    let pool = init_pool(&database_url, 1);
+    let pool =
+        init_pool_with_statement_timeout(&database_url, 1, admin_cli.db_statement_timeout_ms);
 
     if let Some(username) = admin_cli.reset_password {
         reset_password(pool, &username).await?;
     } else if admin_cli.audit_templates {
-        audit_templates(pool).await?;
+        audit_templates(
+            pool,
+            admin_cli.report_template_recursion_limit,
+            admin_cli.report_template_fuel,
+        )
+        .await?;
     } else if admin_cli.report_template_health {
         report_template_health(pool).await?;
     } else {
@@ -85,19 +119,25 @@ async fn reset_password(pool: DbPool, username: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
-async fn audit_templates(pool: DbPool) -> Result<(), ApiError> {
+async fn audit_templates(
+    pool: DbPool,
+    report_template_recursion_limit: usize,
+    report_template_fuel: u64,
+) -> Result<(), ApiError> {
     let templates = list_all_report_templates(&pool).await?;
     let mut failures = Vec::new();
 
     for template in templates {
         let namespace_templates =
             report_templates_in_namespace(&pool, template.namespace_id, Some(template.id)).await?;
-        if let Err(error) = validate_template(
+        if let Err(error) = validate_template_with_limits(
             &template.name,
             &template.template,
             template.namespace_id,
             &namespace_templates,
             template.content_type,
+            report_template_recursion_limit,
+            report_template_fuel,
         ) {
             failures.push((template.namespace_id, template.name, error.to_string()));
         }
