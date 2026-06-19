@@ -705,7 +705,9 @@ mod tests {
                 kind: ReportTemplateKind::Report,
                 scope_kind: Some(ReportScopeKind::Classes),
                 class_id: None,
-                default_query: Some("name__contains=report_cls_scope_api_class_&sort=name".to_string()),
+                default_query: Some(
+                    "name__contains=report_cls_scope_api_class_&sort=name".to_string(),
+                ),
                 include: None,
                 relation_context: None,
                 default_missing_data_policy: None,

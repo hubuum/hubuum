@@ -783,6 +783,62 @@ mod tests {
     }
 
     #[actix_web::test]
+    async fn test_patch_report_template_class_scope_to_collection_scope() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let namespace = create_namespace(&pool, "patch_scope_change").await;
+        let class = NewHubuumClass {
+            name: "patch-scope-class".to_string(),
+            namespace_id: namespace.id,
+            json_schema: None,
+            validate_schema: Some(false),
+            description: "class".to_string(),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        // Start as an objects_in_class report bound to a class.
+        let create_payload = NewReportTemplate {
+            namespace_id: namespace.id,
+            name: "report.scope-change".to_string(),
+            description: "scope change report".to_string(),
+            content_type: ReportContentType::TextPlain,
+            template: "{% for item in items %}{{ item.name }}{% endfor %}".to_string(),
+            kind: ReportTemplateKind::Report,
+            scope_kind: Some(ReportScopeKind::ObjectsInClass),
+            class_id: Some(class.id),
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
+        };
+        let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &create_payload).await;
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let created: ReportTemplate = test::read_body_json(resp).await;
+
+        // PATCH to a collection scope without clearing class_id explicitly; the carried-forward
+        // class_id must be dropped rather than rejected.
+        let patch = UpdateReportTemplate {
+            scope_kind: Some(ReportScopeKind::Namespaces),
+            ..empty_update_template_payload()
+        };
+        let resp = patch_request(
+            &pool,
+            &admin_token,
+            &format!("{TEMPLATES_ENDPOINT}/{}", created.id),
+            &patch,
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let patched: ReportTemplate = test::read_body_json(resp).await;
+        assert_eq!(patched.scope_kind, Some(ReportScopeKind::Namespaces));
+        assert_eq!(patched.class_id, None);
+
+        namespace.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
     async fn test_report_template_rejects_class_id_for_collection_scope() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
         let namespace = create_namespace(&pool, "collection_scope_class_id").await;
@@ -860,7 +916,10 @@ mod tests {
         let resp = get_request(
             &pool,
             &admin_token,
-            &format!("{TEMPLATES_ENDPOINT}?namespace_id={}&kind=report", namespace.id),
+            &format!(
+                "{TEMPLATES_ENDPOINT}?namespace_id={}&kind=report",
+                namespace.id
+            ),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
@@ -872,13 +931,20 @@ mod tests {
         let resp = get_request(
             &pool,
             &admin_token,
-            &format!("{TEMPLATES_ENDPOINT}?namespace_id={}&kind=fragment", namespace.id),
+            &format!(
+                "{TEMPLATES_ENDPOINT}?namespace_id={}&kind=fragment",
+                namespace.id
+            ),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let fragments: Vec<ReportTemplate> = test::read_body_json(resp).await;
         assert_eq!(fragments.len(), 1);
-        assert!(fragments.iter().all(|t| t.kind == ReportTemplateKind::Fragment));
+        assert!(
+            fragments
+                .iter()
+                .all(|t| t.kind == ReportTemplateKind::Fragment)
+        );
         assert_eq!(fragments[0].name, "partial.kind-fragment");
 
         namespace.delete(&pool).await.unwrap();

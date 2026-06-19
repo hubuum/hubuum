@@ -201,9 +201,14 @@ pub async fn run_template_report(
     );
 
     let report = report_request_from_template(&template, run)?;
-    let task =
-        crate::api::v1::handlers::reports::submit_report_task(&pool, &user, req, report, Some(template))
-            .await?;
+    let task = crate::api::v1::handlers::reports::submit_report_task(
+        &pool,
+        &user,
+        req,
+        report,
+        Some(template),
+    )
+    .await?;
     let response = task.to_response()?;
     let mut headers = std::collections::HashMap::new();
     headers.insert("Location".to_string(), format!("/api/v1/tasks/{}", task.id));

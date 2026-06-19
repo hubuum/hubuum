@@ -30,9 +30,9 @@ use crate::models::{
     HubuumClassID, HubuumClassRelation, HubuumObject, HubuumObjectID, HubuumObjectRelation,
     HubuumObjectWithPath, NamespaceID, NewReportTaskOutputRecord, NewTaskEventRecord, Permissions,
     ReportContentType, ReportIncludeRelatedDirection, ReportIncludeRelatedQuery,
-    ReportIncludeRelatedSort, ReportJsonResponse, ReportMeta,
-    ReportMissingDataPolicy, ReportRequest, ReportScope, ReportScopeKind, ReportTaskOutputRecord,
-    ReportTemplate, ReportTemplateID, ReportWarning, TaskKind, TaskRecord, TaskResponse, User,
+    ReportIncludeRelatedSort, ReportJsonResponse, ReportMeta, ReportMissingDataPolicy,
+    ReportRequest, ReportScope, ReportScopeKind, ReportTaskOutputRecord, ReportTemplate,
+    ReportTemplateID, ReportWarning, TaskKind, TaskRecord, TaskResponse, User,
 };
 use crate::pagination::page_limits_or_defaults;
 use crate::tasks::{
