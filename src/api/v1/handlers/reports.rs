@@ -1123,7 +1123,6 @@ async fn build_template_items(
         return Ok((items.to_vec(), None));
     }
 
-    let mut class_names = BTreeMap::new();
     let mut hydration_budget = HydrationBudget::new(max_hydrated_template_objects());
 
     match runtime.report.scope.kind {
@@ -1133,18 +1132,86 @@ async fn build_template_items(
                 .cloned()
                 .map(serde_json::from_value::<HubuumObject>)
                 .collect::<Result<Vec<_>, _>>()?;
-            let mut hydrated_items = Vec::with_capacity(roots.len());
+            if roots.is_empty() {
+                return Ok((Vec::new(), None));
+            }
 
-            for root in roots {
-                let hydrated = hydrate_objects_in_class_root(
+            let root_ids = roots.iter().map(|root| root.id).collect::<Vec<_>>();
+            let per_root_cap = i32::try_from(max_hydrated_template_objects()).unwrap_or(i32::MAX);
+            let related_rows = user
+                .bidirectionally_related_objects_for_roots(
                     pool,
-                    user,
-                    &root,
+                    &root_ids,
                     relation_hydration.depth_limit,
-                    &mut class_names,
-                    &mut hydration_budget,
+                    per_root_cap,
                 )
                 .await?;
+
+            // Descendants grouped per root, preserving the query's per-root ordering.
+            let mut related_by_root: BTreeMap<i32, Vec<HubuumObjectWithPath>> =
+                root_ids.iter().map(|id| (*id, Vec::new())).collect();
+            for row in &related_rows {
+                if let Some(list) = related_by_root.get_mut(&row.root_object_id) {
+                    list.push(row.to_descendant_object_with_path());
+                }
+            }
+
+            // One relations fetch over the union of all roots + descendants.
+            let mut all_object_ids = root_ids.clone();
+            for row in &related_rows {
+                all_object_ids.push(row.descendant_object_id);
+            }
+            all_object_ids.sort_unstable();
+            all_object_ids.dedup();
+            let all_relations = user
+                .search_object_relations_between_ids(pool, &all_object_ids)
+                .await?;
+
+            // One class-metadata fetch over every object in the report.
+            let mut all_objects = BTreeMap::<i32, HubuumObjectWithPath>::new();
+            for root in &roots {
+                let root_with_path = object_with_root_path(root);
+                all_objects.insert(root_with_path.id, root_with_path);
+            }
+            for row in &related_rows {
+                let object = row.to_descendant_object_with_path();
+                all_objects.entry(object.id).or_insert(object);
+            }
+            let class_metadata = load_hydration_class_metadata(pool, &all_objects).await?;
+
+            let mut hydrated_items = Vec::with_capacity(roots.len());
+            for root in &roots {
+                let root_with_path = object_with_root_path(root);
+                let related = related_by_root.remove(&root.id).unwrap_or_default();
+                let related = take_related_within_budget(&hydration_budget, related)?;
+
+                let mut neighborhood_ids = related
+                    .iter()
+                    .map(|object| object.id)
+                    .collect::<std::collections::HashSet<_>>();
+                neighborhood_ids.insert(root.id);
+                let relations = all_relations
+                    .iter()
+                    .filter(|relation| {
+                        neighborhood_ids.contains(&relation.from_hubuum_object_id)
+                            && neighborhood_ids.contains(&relation.to_hubuum_object_id)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+
+                let neighborhood = build_object_neighborhood(
+                    root_with_path.clone(),
+                    related,
+                    relations,
+                    &class_metadata,
+                )?;
+                let hydrated = hydrate_object(
+                    &neighborhood,
+                    root_with_path.id,
+                    vec![root_with_path.id],
+                    relation_hydration.depth_limit,
+                    &mut hydration_budget,
+                )?;
                 hydrated_items.push(serde_json::to_value(hydrated)?);
             }
 
@@ -1166,7 +1233,6 @@ async fn build_template_items(
                 source,
                 related_objects,
                 relation_hydration.depth_limit,
-                &mut class_names,
                 &mut hydration_budget,
             )
             .await?;
@@ -1177,53 +1243,12 @@ async fn build_template_items(
     }
 }
 
-async fn hydrate_objects_in_class_root(
-    pool: &DbPool,
-    user: &crate::models::User,
-    root: &HubuumObject,
-    depth_limit: i32,
-    class_names: &mut BTreeMap<i32, String>,
-    hydration_budget: &mut HydrationBudget,
-) -> Result<HydratedTemplateObject, ApiError> {
-    let root_with_path = object_with_root_path(root);
-    let related_objects = load_related_objects_for_root(
-        pool,
-        user,
-        root.id,
-        depth_limit,
-        hydration_budget.remaining_related_capacity()?,
-    )
-    .await?;
-    let object_ids = std::iter::once(root.id)
-        .chain(related_objects.iter().map(|object| object.id))
-        .collect::<Vec<_>>();
-    let relations = user
-        .search_object_relations_between_ids(pool, &object_ids)
-        .await?;
-    let neighborhood = build_object_neighborhood(
-        pool,
-        root_with_path.clone(),
-        related_objects,
-        relations,
-        class_names,
-    )
-    .await?;
-    hydrate_object(
-        &neighborhood,
-        root_with_path.id,
-        vec![root_with_path.id],
-        depth_limit,
-        hydration_budget,
-    )
-}
-
 async fn hydrate_related_root(
     pool: &DbPool,
     user: &crate::models::User,
     source: HubuumObjectWithPath,
     related_objects: Vec<HubuumObjectWithPath>,
     depth_limit: i32,
-    class_names: &mut BTreeMap<i32, String>,
     hydration_budget: &mut HydrationBudget,
 ) -> Result<HydratedTemplateObject, ApiError> {
     let max_related_objects = hydration_budget.remaining_related_capacity()?;
@@ -1241,14 +1266,16 @@ async fn hydrate_related_root(
     let relations = user
         .search_object_relations_between_ids(pool, &object_ids)
         .await?;
-    let neighborhood = build_object_neighborhood(
-        pool,
-        source.clone(),
-        related_objects,
-        relations,
-        class_names,
-    )
-    .await?;
+
+    let mut all_objects = BTreeMap::<i32, HubuumObjectWithPath>::new();
+    all_objects.insert(source.id, source.clone());
+    for object in &related_objects {
+        all_objects.entry(object.id).or_insert_with(|| object.clone());
+    }
+    let class_metadata = load_hydration_class_metadata(pool, &all_objects).await?;
+
+    let neighborhood =
+        build_object_neighborhood(source.clone(), related_objects, relations, &class_metadata)?;
     hydrate_object(
         &neighborhood,
         source.id,
@@ -1258,48 +1285,70 @@ async fn hydrate_related_root(
     )
 }
 
-async fn load_related_objects_for_root(
-    pool: &DbPool,
-    user: &crate::models::User,
-    root_object_id: i32,
-    depth_limit: i32,
-    max_related_objects: usize,
-) -> Result<Vec<HubuumObjectWithPath>, ApiError> {
-    let query_limit = max_related_objects.saturating_add(1);
-    let query_options = QueryOptions {
-        filters: vec![ParsedQueryParam::new(
-            "depth",
-            Some(SearchOperator::Lte { is_negated: false }),
-            &depth_limit.to_string(),
-        )?],
-        sort: Vec::new(),
-        limit: Some(query_limit),
-        cursor: None,
-    };
-    let related_objects = user
-        .search_objects_related_to(pool, HubuumObjectID(root_object_id), query_options)
-        .await?
-        .into_iter()
-        .map(|relation| relation.to_descendant_object_with_path())
-        .collect::<Vec<_>>();
-
-    if related_objects.len() > max_related_objects {
-        return Err(ApiError::BadRequest(format!(
-            "Hydrated template object limit exceeded ({} related objects > {} remaining related capacity)",
-            related_objects.len(),
-            max_related_objects
-        )));
-    }
-
-    Ok(related_objects)
+struct HydrationClassMetadata {
+    class_names: BTreeMap<i32, String>,
+    class_relations_by_object_class: BTreeMap<i32, Vec<HubuumClassRelation>>,
 }
 
-async fn build_object_neighborhood(
+// One-shot replacement for the per-root ensure_class_names + seed_alias DB work.
+// Loads every class relation touching any object class once (sorted by id so the
+// normalized-pair last-write-wins is deterministic), and primes class names for both
+// object classes AND every relation endpoint class (the adjacent class name is needed
+// by relation_alias_for_viewer even when no object of that class is in a neighborhood).
+async fn load_hydration_class_metadata(
     pool: &DbPool,
+    objects_by_id: &BTreeMap<i32, HubuumObjectWithPath>,
+) -> Result<HydrationClassMetadata, ApiError> {
+    let mut object_class_ids = objects_by_id
+        .values()
+        .map(|object| object.hubuum_class_id)
+        .collect::<Vec<_>>();
+    object_class_ids.sort_unstable();
+    object_class_ids.dedup();
+
+    let mut class_relations = load_class_relations_touching_classes(pool, &object_class_ids).await?;
+    class_relations.sort_by_key(|relation| relation.id);
+
+    let mut class_relations_by_object_class = BTreeMap::<i32, Vec<HubuumClassRelation>>::new();
+    let mut name_ids = object_class_ids.clone();
+    for relation in &class_relations {
+        name_ids.push(relation.from_hubuum_class_id);
+        name_ids.push(relation.to_hubuum_class_id);
+        if object_class_ids
+            .binary_search(&relation.from_hubuum_class_id)
+            .is_ok()
+        {
+            class_relations_by_object_class
+                .entry(relation.from_hubuum_class_id)
+                .or_default()
+                .push(relation.clone());
+        }
+        if relation.to_hubuum_class_id != relation.from_hubuum_class_id
+            && object_class_ids
+                .binary_search(&relation.to_hubuum_class_id)
+                .is_ok()
+        {
+            class_relations_by_object_class
+                .entry(relation.to_hubuum_class_id)
+                .or_default()
+                .push(relation.clone());
+        }
+    }
+
+    let mut class_names = BTreeMap::new();
+    ensure_class_name_ids(pool, &name_ids, &mut class_names).await?;
+
+    Ok(HydrationClassMetadata {
+        class_names,
+        class_relations_by_object_class,
+    })
+}
+
+fn build_object_neighborhood(
     root: HubuumObjectWithPath,
     related_objects: Vec<HubuumObjectWithPath>,
     relations: Vec<HubuumObjectRelation>,
-    class_names: &mut BTreeMap<i32, String>,
+    class_metadata: &HydrationClassMetadata,
 ) -> Result<ObjectNeighborhood, ApiError> {
     let mut objects_by_id = BTreeMap::new();
     objects_by_id.insert(root.id, root);
@@ -1307,7 +1356,7 @@ async fn build_object_neighborhood(
         objects_by_id.insert(object.id, object);
     }
 
-    ensure_class_names(pool, &objects_by_id, class_names).await?;
+    let class_names = &class_metadata.class_names;
 
     let mut aliases_by_object_id = objects_by_id
         .keys()
@@ -1319,15 +1368,14 @@ async fn build_object_neighborhood(
         .collect::<BTreeMap<_, _>>();
     let mut class_relations_by_pair = BTreeMap::new();
 
-    seed_alias_buckets_from_class_relations(
-        pool,
+    seed_alias_buckets(
         &objects_by_id,
         &mut aliases_by_object_id,
         &mut alias_owners,
         &mut class_relations_by_pair,
+        &class_metadata.class_relations_by_object_class,
         class_names,
-    )
-    .await?;
+    )?;
 
     for relation in relations {
         add_bidirectional_alias_edge(
@@ -1372,61 +1420,14 @@ async fn build_object_neighborhood(
     })
 }
 
-async fn ensure_class_names(
-    pool: &DbPool,
-    objects_by_id: &BTreeMap<i32, HubuumObjectWithPath>,
-    class_names: &mut BTreeMap<i32, String>,
-) -> Result<(), ApiError> {
-    let class_ids = objects_by_id
-        .values()
-        .map(|object| object.hubuum_class_id)
-        .collect::<Vec<_>>();
-    ensure_class_name_ids(pool, &class_ids, class_names).await
-}
-
-async fn seed_alias_buckets_from_class_relations(
-    pool: &DbPool,
+fn seed_alias_buckets(
     objects_by_id: &BTreeMap<i32, HubuumObjectWithPath>,
     aliases_by_object_id: &mut BTreeMap<i32, BTreeMap<String, Vec<i32>>>,
     alias_owners: &mut BTreeMap<i32, BTreeMap<String, i32>>,
     class_relations_by_pair: &mut BTreeMap<(i32, i32), crate::models::HubuumClassRelation>,
-    class_names: &mut BTreeMap<i32, String>,
+    class_relations_by_object_class: &BTreeMap<i32, Vec<HubuumClassRelation>>,
+    class_names: &BTreeMap<i32, String>,
 ) -> Result<(), ApiError> {
-    let mut object_class_ids = objects_by_id
-        .values()
-        .map(|object| object.hubuum_class_id)
-        .collect::<Vec<_>>();
-    object_class_ids.sort_unstable();
-    object_class_ids.dedup();
-
-    let class_relations = load_class_relations_touching_classes(pool, &object_class_ids).await?;
-    let mut class_relations_by_object_class = BTreeMap::<i32, Vec<HubuumClassRelation>>::new();
-    let mut relation_class_ids = Vec::with_capacity(class_relations.len().saturating_mul(2));
-    for relation in class_relations {
-        relation_class_ids.push(relation.from_hubuum_class_id);
-        relation_class_ids.push(relation.to_hubuum_class_id);
-        if object_class_ids
-            .binary_search(&relation.from_hubuum_class_id)
-            .is_ok()
-        {
-            class_relations_by_object_class
-                .entry(relation.from_hubuum_class_id)
-                .or_default()
-                .push(relation.clone());
-        }
-        if relation.to_hubuum_class_id != relation.from_hubuum_class_id
-            && object_class_ids
-                .binary_search(&relation.to_hubuum_class_id)
-                .is_ok()
-        {
-            class_relations_by_object_class
-                .entry(relation.to_hubuum_class_id)
-                .or_default()
-                .push(relation);
-        }
-    }
-    ensure_class_name_ids(pool, &relation_class_ids, class_names).await?;
-
     for object in objects_by_id.values() {
         let Some(class_relations) = class_relations_by_object_class.get(&object.hubuum_class_id)
         else {
