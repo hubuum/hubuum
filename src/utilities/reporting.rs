@@ -629,6 +629,7 @@ fn record_missing_value_warning(state: &State<'_, '_>, path: Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{ReportScopeKind, ReportTemplateKind};
 
     #[test]
     fn limited_string_writer_accumulates_under_limit() {
@@ -662,6 +663,14 @@ mod tests {
             description: "template".to_string(),
             content_type,
             template: source.to_string(),
+            kind: ReportTemplateKind::Report,
+            scope_kind: Some(ReportScopeKind::ObjectsInClass),
+            class_id: Some(1),
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
             created_at: now,
             updated_at: now,
         }

@@ -47,6 +47,7 @@ use super::check_if_object_in_class;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredReportTaskPayload {
     report: ReportRequest,
+    template_id: Option<i32>,
 }
 
 struct ReportArtifact {
@@ -217,25 +218,8 @@ pub async fn run_report(
     req: HttpRequest,
     report: web::Json<ReportRequest>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.get_ref().clone());
-
     let report = report.into_inner();
-    let payload = serde_json::to_value(&report)?;
-    let hash = request_hash(&payload)?;
-    let idempotency_key = idempotency_key_from_headers(req.headers())?;
-
-    let runtime = prepare_report_runtime(&pool, &requestor.user, report).await?;
-    validate_report_submission(&runtime)?;
-    let task_payload = runtime_to_task_payload(&runtime)?;
-
-    let task = find_or_create_report_task(
-        &pool,
-        requestor.user.id,
-        idempotency_key,
-        serde_json::to_value(task_payload)?,
-        hash,
-    )
-    .await?;
+    let task = submit_report_task(&pool, &requestor.user, req, report, None).await?;
 
     let response = task.to_response()?;
     let mut headers = HashMap::new();
@@ -247,6 +231,43 @@ pub async fn run_report(
         StatusCode::ACCEPTED,
         Some(headers),
     ))
+}
+
+pub(crate) async fn submit_report_task(
+    pool: &DbPool,
+    user: &User,
+    req: HttpRequest,
+    report: ReportRequest,
+    template_id: Option<i32>,
+) -> Result<TaskRecord, ApiError> {
+    ensure_task_worker_running(pool.clone());
+
+    let task_payload = StoredReportTaskPayload {
+        report,
+        template_id,
+    };
+    let payload = serde_json::to_value(&task_payload)?;
+    let hash = request_hash(&payload)?;
+    let idempotency_key = idempotency_key_from_headers(req.headers())?;
+
+    let runtime = prepare_report_runtime(
+        pool,
+        user,
+        task_payload.report.clone(),
+        task_payload.template_id,
+    )
+    .await?;
+    validate_report_submission(&runtime)?;
+    let task_payload = runtime_to_task_payload(&runtime)?;
+
+    find_or_create_report_task(
+        pool,
+        user.id,
+        idempotency_key,
+        serde_json::to_value(task_payload)?,
+        hash,
+    )
+    .await
 }
 
 #[utoipa::path(
@@ -320,11 +341,12 @@ async fn prepare_report_runtime(
     pool: &DbPool,
     user: &User,
     report: ReportRequest,
+    template_id: Option<i32>,
 ) -> Result<ReportRuntime, ApiError> {
     report.scope.validate()?;
     validate_report_include(&report)?;
 
-    let template = resolve_template(pool, user, &report).await?;
+    let template = resolve_template(pool, user, template_id).await?;
     let namespace_templates = match &template {
         Some(template) => {
             crate::models::report_template::report_templates_in_namespace(
@@ -355,9 +377,9 @@ async fn prepare_report_runtime(
 async fn resolve_template(
     pool: &DbPool,
     user: &crate::models::User,
-    report: &ReportRequest,
+    template_id: Option<i32>,
 ) -> Result<Option<ReportTemplate>, ApiError> {
-    let Some(template_id) = report.output.as_ref().and_then(|output| output.template_id) else {
+    let Some(template_id) = template_id else {
         return Ok(None);
     };
 
@@ -395,6 +417,7 @@ fn runtime_to_task_payload(runtime: &ReportRuntime) -> Result<StoredReportTaskPa
     validate_report_submission(runtime)?;
     Ok(StoredReportTaskPayload {
         report: runtime.report.clone(),
+        template_id: runtime.template.as_ref().map(|template| template.id),
     })
 }
 
@@ -484,7 +507,7 @@ pub(crate) async fn execute_report_task(
         .clone()
         .ok_or_else(|| ApiError::BadRequest("Report task payload is missing".to_string()))?;
     let payload: StoredReportTaskPayload = serde_json::from_value(payload)?;
-    let runtime = prepare_report_runtime(pool, user, payload.report).await?;
+    let runtime = prepare_report_runtime(pool, user, payload.report, payload.template_id).await?;
     validate_report_submission(&runtime)?;
     let total_start = Instant::now();
     let mut timings = ReportExecutionTimings::default();
@@ -802,7 +825,6 @@ fn build_json_report_artifact(
     execution: ReportExecution,
     timings: ReportExecutionTimings,
 ) -> Result<ReportArtifact, ApiError> {
-    ensure_json_output_has_no_template_id(&runtime.report)?;
     let response = ReportJsonResponse {
         items: execution.items,
         meta: execution.meta.clone(),
@@ -857,29 +879,13 @@ fn build_text_report_artifact(
     })
 }
 
-fn ensure_json_output_has_no_template_id(report: &ReportRequest) -> Result<(), ApiError> {
-    if report
-        .output
-        .as_ref()
-        .and_then(|output| output.template_id)
-        .is_some()
-    {
-        return Err(ApiError::BadRequest(
-            "Template references are only supported for text/plain, text/html, and text/csv output"
-                .to_string(),
-        ));
-    }
-
-    Ok(())
-}
-
 fn required_template(
     runtime: &ReportRuntime,
     content_type: ReportContentType,
 ) -> Result<&ReportTemplate, ApiError> {
     runtime.template.as_ref().ok_or_else(|| {
         ApiError::BadRequest(format!(
-            "Output type '{}' requires output.template_id",
+            "Output type '{}' requires running an executable report template",
             content_type.as_mime()
         ))
     })
@@ -2381,7 +2387,7 @@ mod tests {
     use crate::models::{
         ReportContentType, ReportInclude, ReportIncludeRelatedObject, ReportLimits, ReportMeta,
         ReportMissingDataPolicy, ReportRelationContext, ReportRequest, ReportScope,
-        ReportScopeKind, ReportTaskOutputRecord, ReportTemplate,
+        ReportScopeKind, ReportTaskOutputRecord, ReportTemplate, ReportTemplateKind,
     };
 
     use super::{
@@ -2470,7 +2476,6 @@ mod tests {
                 object_id: None,
             },
             query: None,
-            output: None,
             missing_data_policy: None,
             limits: Some(limits),
             include: None,
@@ -2488,7 +2493,6 @@ mod tests {
                 object_id: None,
             },
             query: None,
-            output: None,
             missing_data_policy: None,
             limits: None,
             include: Some(ReportInclude {
@@ -2510,6 +2514,14 @@ mod tests {
                 description: String::new(),
                 content_type: ReportContentType::TextPlain,
                 template: "{{ items|length }}".to_string(),
+                kind: ReportTemplateKind::Report,
+                scope_kind: Some(ReportScopeKind::ObjectsInClass),
+                class_id: Some(1),
+                default_query: None,
+                include: None,
+                relation_context: None,
+                default_missing_data_policy: None,
+                default_limits: None,
                 created_at: test_timestamp(),
                 updated_at: test_timestamp(),
             }),

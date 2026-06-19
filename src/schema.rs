@@ -157,6 +157,14 @@ diesel::table! {
         description -> Varchar,
         content_type -> Varchar,
         template -> Text,
+        kind -> Varchar,
+        scope_kind -> Nullable<Varchar>,
+        class_id -> Nullable<Int4>,
+        default_query -> Nullable<Text>,
+        include -> Nullable<Jsonb>,
+        relation_context -> Nullable<Jsonb>,
+        default_missing_data_policy -> Nullable<Varchar>,
+        default_limits -> Nullable<Jsonb>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
     }
@@ -233,6 +241,7 @@ diesel::joinable!(import_task_results -> tasks (task_id));
 diesel::joinable!(permissions -> groups (group_id));
 diesel::joinable!(permissions -> namespaces (namespace_id));
 diesel::joinable!(report_task_outputs -> tasks (task_id));
+diesel::joinable!(report_templates -> hubuumclass (class_id));
 diesel::joinable!(report_templates -> namespaces (namespace_id));
 diesel::joinable!(task_events -> tasks (task_id));
 diesel::joinable!(tokens -> users (user_id));

@@ -13,13 +13,13 @@ use crate::models::{
     NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation,
     NewNamespaceWithAssignee, NewReportTemplate, NewUser, ObjectKey, ObjectsByClass, Permission,
     Permissions, RelatedClassGraph, RelatedObjectGraph, ReportContentType, ReportJsonResponse,
-    ReportLimits, ReportMeta, ReportMissingDataPolicy, ReportOutputRequest, ReportRequest,
-    ReportScope, ReportScopeKind, ReportTaskDetails, ReportTemplate, ReportTemplateID,
-    ReportWarning, TaskDetails, TaskEventResponse, TaskKind, TaskLinks, TaskProgress, TaskResponse,
-    TaskStatus, UnifiedSearchBatchResponse, UnifiedSearchDoneEvent, UnifiedSearchErrorEvent,
-    UnifiedSearchKind, UnifiedSearchResponse, UnifiedSearchStartedEvent, UpdateGroup,
-    UpdateHubuumClass, UpdateHubuumObject, UpdateNamespace, UpdateReportTemplate, UpdateUser, User,
-    UserToken, UserTokenMetadata,
+    ReportLimits, ReportMeta, ReportMissingDataPolicy, ReportRequest, ReportScope, ReportScopeKind,
+    ReportTaskDetails, ReportTemplate, ReportTemplateID, ReportTemplateKind,
+    ReportTemplateRunRequest, ReportWarning, TaskDetails, TaskEventResponse, TaskKind, TaskLinks,
+    TaskProgress, TaskResponse, TaskStatus, UnifiedSearchBatchResponse, UnifiedSearchDoneEvent,
+    UnifiedSearchErrorEvent, UnifiedSearchKind, UnifiedSearchResponse, UnifiedSearchStartedEvent,
+    UpdateGroup, UpdateHubuumClass, UpdateHubuumObject, UpdateNamespace, UpdateReportTemplate,
+    UpdateUser, User, UserToken, UserTokenMetadata,
 };
 use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER, page_limits_or_defaults};
 use actix_web::{HttpResponse, Responder};
@@ -104,6 +104,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         templates::get_templates,
         templates::create_template,
         templates::get_template,
+        templates::run_template_report,
         templates::patch_template,
         templates::delete_template,
         classes::get_classes,
@@ -204,7 +205,6 @@ use utoipa::{Modify, OpenApi, ToSchema};
             ReportScopeKind,
             ReportScope,
             ReportContentType,
-            ReportOutputRequest,
             ReportMissingDataPolicy,
             ReportLimits,
             ReportRequest,
@@ -218,7 +218,9 @@ use utoipa::{Modify, OpenApi, ToSchema};
             UnifiedSearchDoneEvent,
             UnifiedSearchErrorEvent,
             ReportTemplateID,
+            ReportTemplateKind,
             ReportTemplate,
+            ReportTemplateRunRequest,
             NewReportTemplate,
             UpdateReportTemplate
         )
@@ -699,6 +701,7 @@ mod tests {
             "/api/v1/tasks/{task_id}/events",
             "/api/v1/templates",
             "/api/v1/templates/{template_id}",
+            "/api/v1/templates/{template_id}/reports",
             "/api/v1/relations/classes",
             "/api/v1/relations/classes/{relation_id}",
             "/api/v1/relations/objects",
@@ -745,6 +748,10 @@ mod tests {
                 .is_some()
         );
         assert!(json.pointer("/paths/~1api~1v1~1templates/get").is_some());
+        assert!(
+            json.pointer("/paths/~1api~1v1~1templates~1{template_id}~1reports/post")
+                .is_some()
+        );
         assert!(
             json.pointer("/paths/~1api~1v1~1relations~1objects/post")
                 .is_some()

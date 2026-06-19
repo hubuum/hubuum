@@ -13,8 +13,8 @@ mod tests {
         HubuumClass, HubuumClassRelation, HubuumObjectRelation, NewHubuumClass,
         NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewReportTemplate,
         NewTaskRecord, ReportContentType, ReportJsonResponse, ReportLimits, ReportRelationContext,
-        ReportRequest, ReportScope, ReportScopeKind, TaskEventResponse, TaskKind, TaskResponse,
-        TaskStatus, UpdateReportTemplate,
+        ReportRequest, ReportScope, ReportScopeKind, ReportTemplateKind, TaskEventResponse, TaskKind,
+        TaskResponse, TaskStatus, UpdateReportTemplate,
     };
     use crate::tests::api::v1::classes::tests::{cleanup, create_test_classes};
     use crate::tests::api_operations::{get_request, post_request_with_headers};
@@ -141,6 +141,8 @@ mod tests {
     async fn create_template(
         pool: &crate::db::DbPool,
         namespace_id: i32,
+        class_id: i32,
+        scope_kind: ReportScopeKind,
         name: &str,
         content_type: ReportContentType,
         template: &str,
@@ -153,12 +155,37 @@ mod tests {
                 description: "report template".to_string(),
                 content_type,
                 template: template.to_string(),
+                kind: ReportTemplateKind::Report,
+                scope_kind: Some(scope_kind),
+                class_id: Some(class_id),
+                default_query: None,
+                include: None,
+                relation_context: None,
+                default_missing_data_policy: None,
+                default_limits: None,
             },
         )
         .await
         .unwrap();
 
         template.id
+    }
+
+    fn empty_update_template_payload() -> UpdateReportTemplate {
+        UpdateReportTemplate {
+            namespace_id: None,
+            name: None,
+            description: None,
+            template: None,
+            kind: None,
+            scope_kind: None,
+            class_id: None,
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
+        }
     }
 
     #[rstest]
@@ -178,7 +205,6 @@ mod tests {
                 object_id: None,
             },
             query: Some("name__contains=report-&sort=name".to_string()),
-            output: None,
             missing_data_policy: None,
             limits: None,
             include: None,
@@ -345,6 +371,8 @@ mod tests {
         let template_id = create_template(
             &context.pool,
             class.namespace_id,
+            class.id,
+            ReportScopeKind::ObjectsInClass,
             "stable-template",
             ReportContentType::TextPlain,
             "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}",
@@ -352,20 +380,13 @@ mod tests {
         .await;
 
         let body = serde_json::json!({
-            "scope": {
-                "kind": "objects_in_class",
-                "class_id": class.id
-            },
-            "query": "name__contains=report-&sort=name",
-            "output": {
-                "template_id": template_id
-            }
+            "query": "name__contains=report-&sort=name"
         });
 
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            REPORTS_ENDPOINT,
+            &format!("/api/v1/templates/{template_id}/reports"),
             &body,
             vec![],
         )
@@ -393,6 +414,7 @@ mod tests {
                 name: None,
                 description: None,
                 template: Some("changed output".to_string()),
+                ..empty_update_template_payload()
             },
         )
         .await
@@ -435,32 +457,23 @@ mod tests {
         let template_id = create_template(
             &context.pool,
             class.namespace_id,
+            class.id,
+            ReportScopeKind::ObjectsInClass,
             "warning-template",
             ReportContentType::TextPlain,
             "{% for item in items %}{{ item.name }}={{ item.data.primary_contact }}\n{% endfor %}",
         )
         .await;
 
-        let body = ReportRequest {
-            scope: ReportScope {
-                kind: ReportScopeKind::ObjectsInClass,
-                class_id: Some(class.id),
-                object_id: None,
-            },
-            query: Some("sort=name".to_string()),
-            output: Some(crate::models::ReportOutputRequest {
-                template_id: Some(template_id),
-            }),
-            missing_data_policy: Some(crate::models::ReportMissingDataPolicy::Omit),
-            limits: None,
-            include: None,
-            relation_context: None,
-        };
+        let body = serde_json::json!({
+            "query": "sort=name",
+            "missing_data_policy": "omit"
+        });
 
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            REPORTS_ENDPOINT,
+            &format!("/api/v1/templates/{template_id}/reports"),
             &body,
             vec![],
         )
@@ -527,7 +540,6 @@ mod tests {
                 object_id: None,
             },
             query: Some("sort=name".to_string()),
-            output: None,
             missing_data_policy: None,
             limits: None,
             include: None,
@@ -606,7 +618,6 @@ mod tests {
                 object_id: None,
             },
             query: Some("sort=name".to_string()),
-            output: None,
             missing_data_policy: None,
             limits: None,
             include: None,
@@ -684,26 +695,20 @@ mod tests {
         let template_id = create_template(
             &context.pool,
             class.namespace_id,
+            class.id,
+            ReportScopeKind::ObjectsInClass,
             "restricted-template",
             ReportContentType::TextPlain,
             "{{ items|length }}",
         )
         .await;
 
-        let body = serde_json::json!({
-            "scope": {
-                "kind": "objects_in_class",
-                "class_id": class.id
-            },
-            "output": {
-                "template_id": template_id
-            }
-        });
+        let body = serde_json::json!({});
 
         let resp = post_request_with_headers(
             &context.pool,
             &context.normal_token,
-            REPORTS_ENDPOINT,
+            &format!("/api/v1/templates/{template_id}/reports"),
             &body,
             vec![],
         )
@@ -730,7 +735,6 @@ mod tests {
                 object_id: None,
             },
             query: Some("sort=name".to_string()),
-            output: None,
             missing_data_policy: None,
             limits: None,
             include: None,
@@ -859,32 +863,22 @@ mod tests {
         let template_id = create_template(
             &context.pool,
             namespace.namespace.id,
+            host_class.id,
+            ReportScopeKind::RelatedObjects,
             "reachable-template",
             ReportContentType::TextPlain,
             "{% for host in items %}Host: {{ host.name }} {% for person in host.reachable.persons %}{{ person.name }}{% endfor %}{% endfor %}",
         )
         .await;
 
-        let body = ReportRequest {
-            scope: ReportScope {
-                kind: ReportScopeKind::RelatedObjects,
-                class_id: Some(host_class.id),
-                object_id: Some(host.id),
-            },
-            query: None,
-            output: Some(crate::models::ReportOutputRequest {
-                template_id: Some(template_id),
-            }),
-            missing_data_policy: None,
-            limits: None,
-            include: None,
-            relation_context: None,
-        };
+        let body = serde_json::json!({
+            "object_id": host.id
+        });
 
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            REPORTS_ENDPOINT,
+            &format!("/api/v1/templates/{template_id}/reports"),
             &body,
             vec![],
         )
@@ -1027,32 +1021,22 @@ mod tests {
         let template_id = create_template(
             &context.pool,
             namespace.namespace.id,
+            host_class.id,
+            ReportScopeKind::RelatedObjects,
             "paths-template",
             ReportContentType::TextPlain,
             "{% for host in items %}rooms={% for room in host.related.rooms %}{{ room.name }} {% endfor %}|reachable={% for person in host.reachable.persons %}{{ person.name }} {% endfor %}|paths={% for person in host.paths.persons %}[{{ person.name }} via {{ person.path_objects[1].name }}]{% endfor %}{% endfor %}",
         )
         .await;
 
-        let body = ReportRequest {
-            scope: ReportScope {
-                kind: ReportScopeKind::RelatedObjects,
-                class_id: Some(host_class.id),
-                object_id: Some(host.id),
-            },
-            query: None,
-            output: Some(crate::models::ReportOutputRequest {
-                template_id: Some(template_id),
-            }),
-            missing_data_policy: None,
-            limits: None,
-            include: None,
-            relation_context: None,
-        };
+        let body = serde_json::json!({
+            "object_id": host.id
+        });
 
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            REPORTS_ENDPOINT,
+            &format!("/api/v1/templates/{template_id}/reports"),
             &body,
             vec![],
         )
@@ -1092,32 +1076,22 @@ mod tests {
         let template_id = create_template(
             &context.pool,
             class.namespace_id,
+            class.id,
+            ReportScopeKind::ObjectsInClass,
             "cleanup-template",
             ReportContentType::TextPlain,
             "{% for item in items %}{{ item.name }}\n{% endfor %}",
         )
         .await;
 
-        let body = ReportRequest {
-            scope: ReportScope {
-                kind: ReportScopeKind::ObjectsInClass,
-                class_id: Some(class.id),
-                object_id: None,
-            },
-            query: Some("sort=name".to_string()),
-            output: Some(crate::models::ReportOutputRequest {
-                template_id: Some(template_id),
-            }),
-            missing_data_policy: None,
-            limits: None,
-            include: None,
-            relation_context: None,
-        };
+        let body = serde_json::json!({
+            "query": "sort=name"
+        });
 
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            REPORTS_ENDPOINT,
+            &format!("/api/v1/templates/{template_id}/reports"),
             &body,
             vec![],
         )

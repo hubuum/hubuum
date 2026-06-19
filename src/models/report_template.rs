@@ -1,11 +1,16 @@
+use std::str::FromStr;
+
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
-use crate::models::search::{FilterField, QueryOptions, SortParam};
-use crate::models::{Namespace, NamespaceID, ReportContentType};
+use crate::models::search::{FilterField, QueryOptions, SortParam, parse_query_parameter};
+use crate::models::{
+    Namespace, NamespaceID, ReportContentType, ReportInclude, ReportIncludeRelatedObject,
+    ReportLimits, ReportMissingDataPolicy, ReportRelationContext, ReportScopeKind,
+};
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
@@ -13,6 +18,42 @@ use crate::schema::report_templates;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter, NamespaceAdapter};
 use crate::utilities::reporting::validate_template;
 use crate::{date_search, numeric_search, string_search};
+
+const RELATED_INCLUDE_DEFAULT_MAX_DEPTH: i32 = 1;
+const RELATED_INCLUDE_MAX_DEPTH_LIMIT: i32 = 10;
+const RELATED_INCLUDE_DEFAULT_LIMIT: i32 = 1;
+const RELATED_INCLUDE_MAX_LIMIT: i32 = 50;
+const RELATED_INCLUDE_MAX_ALIASES: usize = 8;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportTemplateKind {
+    Report,
+    Fragment,
+}
+
+impl ReportTemplateKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Report => "report",
+            Self::Fragment => "fragment",
+        }
+    }
+}
+
+impl FromStr for ReportTemplateKind {
+    type Err = ApiError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "report" => Ok(Self::Report),
+            "fragment" => Ok(Self::Fragment),
+            _ => Err(ApiError::BadRequest(format!(
+                "Unsupported report template kind: '{value}'"
+            ))),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = report_templates)]
@@ -23,6 +64,14 @@ struct ReportTemplateRow {
     description: String,
     content_type: String,
     template: String,
+    kind: String,
+    scope_kind: Option<String>,
+    class_id: Option<i32>,
+    default_query: Option<String>,
+    include: Option<serde_json::Value>,
+    relation_context: Option<serde_json::Value>,
+    default_missing_data_policy: Option<String>,
+    default_limits: Option<serde_json::Value>,
     created_at: chrono::NaiveDateTime,
     updated_at: chrono::NaiveDateTime,
 }
@@ -36,6 +85,14 @@ pub struct ReportTemplate {
     pub description: String,
     pub content_type: ReportContentType,
     pub template: String,
+    pub kind: ReportTemplateKind,
+    pub scope_kind: Option<ReportScopeKind>,
+    pub class_id: Option<i32>,
+    pub default_query: Option<String>,
+    pub include: Option<ReportInclude>,
+    pub relation_context: Option<ReportRelationContext>,
+    pub default_missing_data_policy: Option<ReportMissingDataPolicy>,
+    pub default_limits: Option<ReportLimits>,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
 }
@@ -51,6 +108,14 @@ pub struct NewReportTemplate {
     pub description: String,
     pub content_type: ReportContentType,
     pub template: String,
+    pub kind: ReportTemplateKind,
+    pub scope_kind: Option<ReportScopeKind>,
+    pub class_id: Option<i32>,
+    pub default_query: Option<String>,
+    pub include: Option<ReportInclude>,
+    pub relation_context: Option<ReportRelationContext>,
+    pub default_missing_data_policy: Option<ReportMissingDataPolicy>,
+    pub default_limits: Option<ReportLimits>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -60,6 +125,14 @@ pub struct UpdateReportTemplate {
     pub name: Option<String>,
     pub description: Option<String>,
     pub template: Option<String>,
+    pub kind: Option<ReportTemplateKind>,
+    pub scope_kind: Option<ReportScopeKind>,
+    pub class_id: Option<i32>,
+    pub default_query: Option<String>,
+    pub include: Option<ReportInclude>,
+    pub relation_context: Option<ReportRelationContext>,
+    pub default_missing_data_policy: Option<ReportMissingDataPolicy>,
+    pub default_limits: Option<ReportLimits>,
 }
 
 #[derive(Debug, Clone, Insertable)]
@@ -70,15 +143,31 @@ struct NewReportTemplateRow {
     description: String,
     content_type: String,
     template: String,
+    kind: String,
+    scope_kind: Option<String>,
+    class_id: Option<i32>,
+    default_query: Option<String>,
+    include: Option<serde_json::Value>,
+    relation_context: Option<serde_json::Value>,
+    default_missing_data_policy: Option<String>,
+    default_limits: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, AsChangeset, Default)]
+#[derive(Debug, Clone, AsChangeset)]
 #[diesel(table_name = report_templates)]
 struct UpdateReportTemplateRow {
     namespace_id: Option<i32>,
     name: Option<String>,
     description: Option<String>,
     template: Option<String>,
+    kind: Option<String>,
+    scope_kind: Option<Option<String>>,
+    class_id: Option<Option<i32>>,
+    default_query: Option<Option<String>>,
+    include: Option<Option<serde_json::Value>>,
+    relation_context: Option<Option<serde_json::Value>>,
+    default_missing_data_policy: Option<Option<String>>,
+    default_limits: Option<Option<serde_json::Value>>,
 }
 
 impl TryFrom<ReportTemplateRow> for ReportTemplate {
@@ -92,6 +181,22 @@ impl TryFrom<ReportTemplateRow> for ReportTemplate {
             description: row.description,
             content_type: ReportContentType::from_mime(&row.content_type)?,
             template: row.template,
+            kind: ReportTemplateKind::from_str(&row.kind)?,
+            scope_kind: row
+                .scope_kind
+                .as_deref()
+                .map(ReportScopeKind::from_str)
+                .transpose()?,
+            class_id: row.class_id,
+            default_query: row.default_query,
+            include: from_optional_json(row.include)?,
+            relation_context: from_optional_json(row.relation_context)?,
+            default_missing_data_policy: row
+                .default_missing_data_policy
+                .as_deref()
+                .map(ReportMissingDataPolicy::from_str)
+                .transpose()?,
+            default_limits: from_optional_json(row.default_limits)?,
             created_at: row.created_at,
             updated_at: row.updated_at,
         })
@@ -99,7 +204,7 @@ impl TryFrom<ReportTemplateRow> for ReportTemplate {
 }
 
 impl NewReportTemplate {
-    fn validate(self) -> Result<NewReportTemplateRow, ApiError> {
+    fn into_row(self) -> Result<NewReportTemplateRow, ApiError> {
         let content_type = self.content_type.ensure_template_output()?.as_mime();
 
         Ok(NewReportTemplateRow {
@@ -108,25 +213,34 @@ impl NewReportTemplate {
             description: self.description,
             content_type: content_type.to_string(),
             template: self.template,
+            kind: self.kind.as_str().to_string(),
+            scope_kind: self.scope_kind.map(|scope| scope.as_str().to_string()),
+            class_id: self.class_id,
+            default_query: self.default_query,
+            include: to_optional_json(self.include)?,
+            relation_context: to_optional_json(self.relation_context)?,
+            default_missing_data_policy: self
+                .default_missing_data_policy
+                .map(|policy| policy.as_str().to_string()),
+            default_limits: to_optional_json(self.default_limits)?,
         })
     }
 }
 
 impl UpdateReportTemplate {
-    fn as_changeset(&self) -> UpdateReportTemplateRow {
-        UpdateReportTemplateRow {
-            namespace_id: self.namespace_id,
-            name: self.name.clone(),
-            description: self.description.clone(),
-            template: self.template.clone(),
-        }
-    }
-
     fn is_empty(&self) -> bool {
         self.namespace_id.is_none()
             && self.name.is_none()
             && self.description.is_none()
             && self.template.is_none()
+            && self.kind.is_none()
+            && self.scope_kind.is_none()
+            && self.class_id.is_none()
+            && self.default_query.is_none()
+            && self.include.is_none()
+            && self.relation_context.is_none()
+            && self.default_missing_data_policy.is_none()
+            && self.default_limits.is_none()
     }
 }
 
@@ -148,8 +262,21 @@ pub async fn create_report_template(
 ) -> Result<ReportTemplate, ApiError> {
     use crate::schema::report_templates::dsl::report_templates;
 
-    let new_row = template.validate()?;
+    let new_row = template.into_row()?;
     ensure_template_name_is_available(pool, new_row.namespace_id, &new_row.name, None).await?;
+    validate_report_profile(
+        pool,
+        new_row.namespace_id,
+        ReportTemplateKind::from_str(&new_row.kind)?,
+        new_row.scope_kind.as_deref(),
+        new_row.class_id,
+        new_row.default_query.as_deref(),
+        new_row.include.as_ref(),
+        new_row.relation_context.as_ref(),
+        new_row.default_missing_data_policy.as_deref(),
+        new_row.default_limits.as_ref(),
+    )
+    .await?;
     let namespace_templates =
         report_templates_in_namespace(pool, new_row.namespace_id, None).await?;
     validate_template(
@@ -185,18 +312,67 @@ pub async fn update_report_template(
         return current_row.try_into();
     }
 
-    let target_namespace_id = update.namespace_id.unwrap_or(current_row.namespace_id);
-    let target_name = update
-        .name
+    let current = ReportTemplate::try_from(current_row.clone())?;
+    let target_namespace_id = update.namespace_id.unwrap_or(current.namespace_id);
+    let target_name = update.name.clone().unwrap_or_else(|| current.name.clone());
+    let target_description = update
+        .description
         .clone()
-        .unwrap_or_else(|| current_row.name.clone());
+        .unwrap_or_else(|| current.description.clone());
     let target_template = update
         .template
         .clone()
-        .unwrap_or_else(|| current_row.template.clone());
+        .unwrap_or_else(|| current.template.clone());
+    let target_kind = update.kind.unwrap_or(current.kind);
+
+    if target_kind == ReportTemplateKind::Fragment && update_report_fields_present(&update) {
+        return Err(ApiError::BadRequest(
+            "Fragment templates cannot define report execution metadata".to_string(),
+        ));
+    }
+
+    let (
+        target_scope_kind,
+        target_class_id,
+        target_default_query,
+        target_include,
+        target_relation_context,
+        target_default_missing_data_policy,
+        target_default_limits,
+    ) = if target_kind == ReportTemplateKind::Fragment {
+        (None, None, None, None, None, None, None)
+    } else {
+        (
+            update.scope_kind.or(current.scope_kind),
+            update.class_id.or(current.class_id),
+            update.default_query.clone().or(current.default_query),
+            update.include.clone().or(current.include),
+            update.relation_context.clone().or(current.relation_context),
+            update
+                .default_missing_data_policy
+                .or(current.default_missing_data_policy),
+            update.default_limits.clone().or(current.default_limits),
+        )
+    };
 
     ensure_template_name_is_available(pool, target_namespace_id, &target_name, Some(template_id))
         .await?;
+    let include_json = to_optional_json(target_include)?;
+    let relation_context_json = to_optional_json(target_relation_context)?;
+    let default_limits_json = to_optional_json(target_default_limits)?;
+    validate_report_profile(
+        pool,
+        target_namespace_id,
+        target_kind,
+        target_scope_kind.map(ReportScopeKind::as_str),
+        target_class_id,
+        target_default_query.as_deref(),
+        include_json.as_ref(),
+        relation_context_json.as_ref(),
+        target_default_missing_data_policy.map(ReportMissingDataPolicy::as_str),
+        default_limits_json.as_ref(),
+    )
+    .await?;
     let namespace_templates =
         report_templates_in_namespace(pool, target_namespace_id, Some(template_id)).await?;
     validate_template(
@@ -204,10 +380,25 @@ pub async fn update_report_template(
         &target_template,
         target_namespace_id,
         &namespace_templates,
-        ReportContentType::from_mime(&current_row.content_type)?,
+        current.content_type,
     )?;
 
-    let changeset = update.as_changeset();
+    let changeset = UpdateReportTemplateRow {
+        namespace_id: Some(target_namespace_id),
+        name: Some(target_name),
+        description: Some(target_description),
+        template: Some(target_template),
+        kind: Some(target_kind.as_str().to_string()),
+        scope_kind: Some(target_scope_kind.map(|scope| scope.as_str().to_string())),
+        class_id: Some(target_class_id),
+        default_query: Some(target_default_query),
+        include: Some(include_json),
+        relation_context: Some(relation_context_json),
+        default_missing_data_policy: Some(
+            target_default_missing_data_policy.map(|policy| policy.as_str().to_string()),
+        ),
+        default_limits: Some(default_limits_json),
+    };
     let row = with_connection(pool, |conn| {
         diesel::update(report_templates.filter(id.eq(template_id)))
             .set(&changeset)
@@ -256,6 +447,220 @@ pub async fn list_all_report_templates(pool: &DbPool) -> Result<Vec<ReportTempla
     })?;
 
     rows.into_iter().map(TryInto::try_into).collect()
+}
+
+async fn validate_report_profile(
+    pool: &DbPool,
+    target_namespace_id: i32,
+    kind: ReportTemplateKind,
+    scope_kind: Option<&str>,
+    class_id: Option<i32>,
+    default_query: Option<&str>,
+    include: Option<&serde_json::Value>,
+    relation_context: Option<&serde_json::Value>,
+    default_missing_data_policy: Option<&str>,
+    default_limits: Option<&serde_json::Value>,
+) -> Result<(), ApiError> {
+    match kind {
+        ReportTemplateKind::Fragment => {
+            if scope_kind.is_some() || class_id.is_some() {
+                return Err(ApiError::BadRequest(
+                    "Fragment templates cannot define report execution metadata".to_string(),
+                ));
+            }
+        }
+        ReportTemplateKind::Report => {
+            let scope_kind = scope_kind
+                .ok_or_else(|| ApiError::BadRequest("Report templates require scope_kind".into()))
+                .and_then(ReportScopeKind::from_str)?;
+            if !matches!(
+                scope_kind,
+                ReportScopeKind::ObjectsInClass | ReportScopeKind::RelatedObjects
+            ) {
+                return Err(ApiError::BadRequest(
+                    "Report templates only support objects_in_class and related_objects scopes"
+                        .to_string(),
+                ));
+            }
+            let class_id = class_id
+                .ok_or_else(|| ApiError::BadRequest("Report templates require class_id".into()))?;
+            if class_id <= 0 {
+                return Err(ApiError::BadRequest(
+                    "Report template class_id must be greater than 0".to_string(),
+                ));
+            }
+            ensure_template_class_in_namespace(pool, target_namespace_id, class_id).await?;
+
+            if let Some(query) = default_query {
+                parse_query_parameter(query)?;
+            }
+
+            if include.is_some() && scope_kind != ReportScopeKind::ObjectsInClass {
+                return Err(ApiError::BadRequest(
+                    "include is only supported for objects_in_class report templates".to_string(),
+                ));
+            }
+        }
+    }
+
+    if include.is_some() && relation_context.is_some() {
+        return Err(ApiError::BadRequest(
+            "include cannot be combined with relation_context".to_string(),
+        ));
+    }
+
+    if let Some(include) = include {
+        let include: ReportInclude = serde_json::from_value(include.clone())?;
+        validate_template_include(&include)?;
+    }
+    if let Some(relation_context) = relation_context {
+        let context: ReportRelationContext = serde_json::from_value(relation_context.clone())?;
+        if let Some(depth) = context.depth
+            && !(1..=2).contains(&depth)
+        {
+            return Err(ApiError::BadRequest(
+                "Templated relation hydration only supports depth 1 or 2".to_string(),
+            ));
+        }
+    }
+    if let Some(policy) = default_missing_data_policy {
+        ReportMissingDataPolicy::from_str(policy)?;
+    }
+    if let Some(limits) = default_limits {
+        let _limits: ReportLimits = serde_json::from_value(limits.clone())?;
+    }
+
+    Ok(())
+}
+
+fn validate_template_include(include: &ReportInclude) -> Result<(), ApiError> {
+    let Some(related_objects) = &include.related_objects else {
+        return Ok(());
+    };
+
+    if related_objects.len() > RELATED_INCLUDE_MAX_ALIASES {
+        return Err(ApiError::BadRequest(format!(
+            "include.related_objects supports at most {RELATED_INCLUDE_MAX_ALIASES} aliases"
+        )));
+    }
+
+    for (alias, include) in related_objects {
+        validate_related_include_alias(alias)?;
+        validate_related_include_options(alias, include)?;
+    }
+
+    Ok(())
+}
+
+fn validate_related_include_alias(alias: &str) -> Result<(), ApiError> {
+    let mut chars = alias.chars();
+    let Some(first) = chars.next() else {
+        return Err(ApiError::BadRequest(
+            "include.related_objects aliases must not be empty".to_string(),
+        ));
+    };
+
+    if !(first == '_' || first.is_ascii_alphabetic())
+        || !chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    {
+        return Err(ApiError::BadRequest(format!(
+            "Invalid include.related_objects alias '{alias}'; expected [A-Za-z_][A-Za-z0-9_]*"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_related_include_options(
+    alias: &str,
+    include: &ReportIncludeRelatedObject,
+) -> Result<(), ApiError> {
+    if include.class_id <= 0 {
+        return Err(ApiError::BadRequest(format!(
+            "include.related_objects.{alias}.class_id must be greater than 0"
+        )));
+    }
+
+    if let Some(class_relation_id) = include.class_relation_id
+        && class_relation_id <= 0
+    {
+        return Err(ApiError::BadRequest(format!(
+            "include.related_objects.{alias}.class_relation_id must be greater than 0"
+        )));
+    }
+
+    let max_depth = include
+        .max_depth
+        .unwrap_or(RELATED_INCLUDE_DEFAULT_MAX_DEPTH);
+    if !(1..=RELATED_INCLUDE_MAX_DEPTH_LIMIT).contains(&max_depth) {
+        return Err(ApiError::BadRequest(format!(
+            "include.related_objects.{alias}.max_depth must be between 1 and {RELATED_INCLUDE_MAX_DEPTH_LIMIT}"
+        )));
+    }
+
+    let limit = include.limit.unwrap_or(RELATED_INCLUDE_DEFAULT_LIMIT);
+    if !(1..=RELATED_INCLUDE_MAX_LIMIT).contains(&limit) {
+        return Err(ApiError::BadRequest(format!(
+            "include.related_objects.{alias}.limit must be between 1 and {RELATED_INCLUDE_MAX_LIMIT}"
+        )));
+    }
+
+    Ok(())
+}
+
+async fn ensure_template_class_in_namespace(
+    pool: &DbPool,
+    target_namespace_id: i32,
+    target_class_id: i32,
+) -> Result<(), ApiError> {
+    use crate::schema::hubuumclass::dsl::{hubuumclass, id, namespace_id};
+
+    let class_namespace_id = with_connection(pool, |conn| {
+        hubuumclass
+            .filter(id.eq(target_class_id))
+            .select(namespace_id)
+            .first::<i32>(conn)
+            .optional()
+    })?
+    .ok_or_else(|| ApiError::NotFound(format!("Class {target_class_id} not found")))?;
+
+    if class_namespace_id != target_namespace_id {
+        return Err(ApiError::BadRequest(format!(
+            "Report template class {target_class_id} belongs to namespace {class_namespace_id}, not template namespace {target_namespace_id}"
+        )));
+    }
+
+    Ok(())
+}
+
+fn update_report_fields_present(update: &UpdateReportTemplate) -> bool {
+    update.scope_kind.is_some()
+        || update.class_id.is_some()
+        || update.default_query.is_some()
+        || update.include.is_some()
+        || update.relation_context.is_some()
+        || update.default_missing_data_policy.is_some()
+        || update.default_limits.is_some()
+}
+
+fn to_optional_json<T>(value: Option<T>) -> Result<Option<serde_json::Value>, ApiError>
+where
+    T: Serialize,
+{
+    value
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(Into::into)
+}
+
+fn from_optional_json<T>(value: Option<serde_json::Value>) -> Result<Option<T>, ApiError>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    value
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(Into::into)
 }
 
 async fn ensure_template_name_is_available(
@@ -507,6 +912,17 @@ fn report_template_example() -> ReportTemplate {
         content_type: ReportContentType::TextPlain,
         template: "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}"
             .to_string(),
+        kind: ReportTemplateKind::Report,
+        scope_kind: Some(ReportScopeKind::ObjectsInClass),
+        class_id: Some(42),
+        default_query: Some("sort=name".to_string()),
+        include: None,
+        relation_context: None,
+        default_missing_data_policy: Some(ReportMissingDataPolicy::Strict),
+        default_limits: Some(ReportLimits {
+            max_items: Some(100),
+            max_output_bytes: Some(262_144),
+        }),
         created_at: example_timestamp,
         updated_at: example_timestamp,
     }
@@ -521,6 +937,17 @@ fn new_report_template_example() -> NewReportTemplate {
         content_type: ReportContentType::TextPlain,
         template: "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}"
             .to_string(),
+        kind: ReportTemplateKind::Report,
+        scope_kind: Some(ReportScopeKind::ObjectsInClass),
+        class_id: Some(42),
+        default_query: Some("sort=name".to_string()),
+        include: None,
+        relation_context: None,
+        default_missing_data_policy: Some(ReportMissingDataPolicy::Strict),
+        default_limits: Some(ReportLimits {
+            max_items: Some(100),
+            max_output_bytes: Some(262_144),
+        }),
     }
 }
 
@@ -531,5 +958,13 @@ fn update_report_template_example() -> UpdateReportTemplate {
         name: Some("owner-report-v2".to_string()),
         description: Some("Updated template description".to_string()),
         template: Some("{% for item in items %}{{ item.name }}\n{% endfor %}".to_string()),
+        kind: None,
+        scope_kind: None,
+        class_id: None,
+        default_query: Some("sort=name.desc".to_string()),
+        include: None,
+        relation_context: None,
+        default_missing_data_policy: None,
+        default_limits: None,
     }
 }

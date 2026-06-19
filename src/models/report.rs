@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -120,13 +121,6 @@ impl ReportContentType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
-#[schema(example = openapi_examples::report_output_example)]
-#[serde(deny_unknown_fields)]
-pub struct ReportOutputRequest {
-    pub template_id: Option<i32>,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReportMissingDataPolicy {
@@ -195,7 +189,6 @@ pub struct ReportRelationContext {
 pub struct ReportRequest {
     pub scope: ReportScope,
     pub query: Option<String>,
-    pub output: Option<ReportOutputRequest>,
     pub missing_data_policy: Option<ReportMissingDataPolicy>,
     pub limits: Option<ReportLimits>,
     pub include: Option<ReportInclude>,
@@ -227,6 +220,16 @@ pub struct ReportJsonResponse {
     pub warnings: Vec<ReportWarning>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[schema(example = openapi_examples::report_template_run_request_example)]
+#[serde(deny_unknown_fields)]
+pub struct ReportTemplateRunRequest {
+    pub query: Option<String>,
+    pub object_id: Option<i32>,
+    pub missing_data_policy: Option<ReportMissingDataPolicy>,
+    pub limits: Option<ReportLimits>,
+}
+
 impl ReportScopeKind {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -236,6 +239,49 @@ impl ReportScopeKind {
             ReportScopeKind::ClassRelations => "class_relations",
             ReportScopeKind::ObjectRelations => "object_relations",
             ReportScopeKind::RelatedObjects => "related_objects",
+        }
+    }
+}
+
+impl FromStr for ReportScopeKind {
+    type Err = ApiError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "namespaces" => Ok(Self::Namespaces),
+            "classes" => Ok(Self::Classes),
+            "objects_in_class" => Ok(Self::ObjectsInClass),
+            "class_relations" => Ok(Self::ClassRelations),
+            "object_relations" => Ok(Self::ObjectRelations),
+            "related_objects" => Ok(Self::RelatedObjects),
+            _ => Err(ApiError::BadRequest(format!(
+                "Unsupported report scope kind: '{value}'"
+            ))),
+        }
+    }
+}
+
+impl ReportMissingDataPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Strict => "strict",
+            Self::Null => "null",
+            Self::Omit => "omit",
+        }
+    }
+}
+
+impl FromStr for ReportMissingDataPolicy {
+    type Err = ApiError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "strict" => Ok(Self::Strict),
+            "null" => Ok(Self::Null),
+            "omit" => Ok(Self::Omit),
+            _ => Err(ApiError::BadRequest(format!(
+                "Unsupported report missing data policy: '{value}'"
+            ))),
         }
     }
 }
@@ -254,12 +300,6 @@ mod openapi_examples {
         }
     }
 
-    pub(super) fn report_output_example() -> ReportOutputRequest {
-        ReportOutputRequest {
-            template_id: Some(12),
-        }
-    }
-
     pub(super) fn report_limits_example() -> ReportLimits {
         ReportLimits {
             max_items: Some(100),
@@ -271,7 +311,6 @@ mod openapi_examples {
         ReportRequest {
             scope: report_scope_example(),
             query: Some("name__icontains=server&sort=name".to_string()),
-            output: Some(report_output_example()),
             missing_data_policy: Some(ReportMissingDataPolicy::Strict),
             limits: Some(report_limits_example()),
             include: None,
@@ -308,6 +347,15 @@ mod openapi_examples {
             ],
             meta: report_meta_example(),
             warnings: vec![],
+        }
+    }
+
+    pub(super) fn report_template_run_request_example() -> ReportTemplateRunRequest {
+        ReportTemplateRunRequest {
+            query: Some("name__icontains=server&sort=name".to_string()),
+            object_id: None,
+            missing_data_policy: Some(ReportMissingDataPolicy::Strict),
+            limits: Some(report_limits_example()),
         }
     }
 }

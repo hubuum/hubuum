@@ -1,4 +1,4 @@
-use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, routes, web};
+use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 use tracing::{debug, info};
 
 use crate::api::openapi::ApiErrorResponse;
@@ -9,12 +9,15 @@ use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    NamespaceID, NewReportTemplate, Permissions, ReportTemplate, ReportTemplateID,
+    NamespaceID, NewReportTemplate, Permissions, ReportScope, ReportScopeKind, ReportTemplate,
+    ReportTemplateID, ReportTemplateKind, ReportTemplateRunRequest, TaskResponse,
     UpdateReportTemplate,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::traits::NamespaceAccessors;
-use crate::utilities::response::{json_response, json_response_created, paginated_json_response};
+use crate::utilities::response::{
+    json_response, json_response_created, json_response_with_header, paginated_json_response,
+};
 
 #[utoipa::path(
     post,
@@ -149,6 +152,124 @@ pub async fn get_template(
     );
 
     Ok(json_response(template, StatusCode::OK))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/templates/{template_id}/reports",
+    tag = "templates",
+    security(("bearer_auth" = [])),
+    params(
+        ("template_id" = i32, Path, description = "Executable report template ID")
+    ),
+    request_body = ReportTemplateRunRequest,
+    responses(
+        (status = 202, description = "Report task accepted", body = TaskResponse),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 404, description = "Template not found", body = ApiErrorResponse),
+        (status = 409, description = "Conflict", body = ApiErrorResponse),
+        (status = 429, description = "Too many active report tasks", body = ApiErrorResponse)
+    )
+)]
+#[post("/{template_id}/reports")]
+pub async fn run_template_report(
+    pool: web::Data<DbPool>,
+    requestor: UserAccess,
+    req: HttpRequest,
+    template_id: web::Path<ReportTemplateID>,
+    run: web::Json<ReportTemplateRunRequest>,
+) -> Result<impl Responder, ApiError> {
+    let user = requestor.user;
+    let template_id = template_id.into_inner().0;
+    let run = run.into_inner();
+
+    debug!(
+        message = "Report template execution requested",
+        user_id = user.id,
+        template_id = template_id
+    );
+
+    let template = crate::models::report_template::report_template(&pool, template_id).await?;
+
+    can!(
+        &pool,
+        user.clone(),
+        [Permissions::ReadTemplate],
+        NamespaceID(template.namespace_id)
+    );
+
+    let report = report_request_from_template(&template, run)?;
+    let task = crate::api::v1::handlers::reports::submit_report_task(
+        &pool,
+        &user,
+        req,
+        report,
+        Some(template.id),
+    )
+    .await?;
+    let response = task.to_response()?;
+    let mut headers = std::collections::HashMap::new();
+    headers.insert("Location".to_string(), format!("/api/v1/tasks/{}", task.id));
+
+    Ok(json_response_with_header(
+        response,
+        StatusCode::ACCEPTED,
+        Some(headers),
+    ))
+}
+
+fn report_request_from_template(
+    template: &ReportTemplate,
+    run: ReportTemplateRunRequest,
+) -> Result<crate::models::ReportRequest, ApiError> {
+    if template.kind != ReportTemplateKind::Report {
+        return Err(ApiError::BadRequest(
+            "Only report templates can be executed".to_string(),
+        ));
+    }
+
+    let scope_kind = template.scope_kind.ok_or_else(|| {
+        ApiError::BadRequest("Executable report template is missing scope_kind".to_string())
+    })?;
+    let class_id = template.class_id.ok_or_else(|| {
+        ApiError::BadRequest("Executable report template is missing class_id".to_string())
+    })?;
+
+    let object_id = match scope_kind {
+        ReportScopeKind::ObjectsInClass => {
+            if run.object_id.is_some() {
+                return Err(ApiError::BadRequest(
+                    "object_id is not accepted for objects_in_class report templates".to_string(),
+                ));
+            }
+            None
+        }
+        ReportScopeKind::RelatedObjects => Some(run.object_id.ok_or_else(|| {
+            ApiError::BadRequest("related_objects report templates require object_id".to_string())
+        })?),
+        _ => {
+            return Err(ApiError::BadRequest(
+                "Executable report template has an unsupported scope_kind".to_string(),
+            ));
+        }
+    };
+
+    Ok(crate::models::ReportRequest {
+        scope: ReportScope {
+            kind: scope_kind,
+            class_id: Some(class_id),
+            object_id,
+        },
+        query: run.query.or_else(|| template.default_query.clone()),
+        missing_data_policy: run
+            .missing_data_policy
+            .or(template.default_missing_data_policy),
+        limits: run.limits.or_else(|| template.default_limits.clone()),
+        include: template.include.clone(),
+        relation_context: template.relation_context.clone(),
+    })
 }
 
 #[utoipa::path(
