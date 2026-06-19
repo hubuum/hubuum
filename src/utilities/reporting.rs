@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+use std::io::{self, Write};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use minijinja::value::Value;
@@ -101,6 +102,51 @@ pub fn validate_template_with_limits(
     Ok(())
 }
 
+// Size-bounded sink for streaming a template render: minijinja's render_captured_to writes into
+// this as it evaluates, so an oversized text/html/csv report aborts at the byte budget instead of
+// being fully materialized before the 413. The JSON output path has an analogous LimitedJsonWriter.
+struct LimitedStringWriter {
+    max_bytes: usize,
+    buffer: Vec<u8>,
+    exceeded: bool,
+}
+
+impl LimitedStringWriter {
+    fn new(max_bytes: usize) -> Self {
+        Self {
+            max_bytes,
+            buffer: Vec::new(),
+            exceeded: false,
+        }
+    }
+
+    fn exceeded(&self) -> bool {
+        self.exceeded
+    }
+
+    fn into_string(self) -> Result<String, ApiError> {
+        String::from_utf8(self.buffer).map_err(|error| {
+            ApiError::InternalServerError(format!("Rendered report was not valid UTF-8: {error}"))
+        })
+    }
+}
+
+impl Write for LimitedStringWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.buffer.len().saturating_add(buf.len()) > self.max_bytes {
+            self.exceeded = true;
+            return Err(io::Error::other("template output limit exceeded"));
+        }
+
+        self.buffer.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 pub fn render_template(
     template: &ReportTemplate,
     namespace_templates: &[ReportTemplate],
@@ -158,7 +204,7 @@ pub fn render_template(
     };
 
     begin_template_warning_capture();
-    let mut writer = crate::api::v1::handlers::reports::LimitedStringWriter::new(max_output_bytes);
+    let mut writer = LimitedStringWriter::new(max_output_bytes);
     let lookup = env.env.get_template(&env.template_name);
     let render_result = match lookup {
         Ok(template) => template.render_captured_to(context, &mut writer),
@@ -583,6 +629,23 @@ fn record_missing_value_warning(state: &State<'_, '_>, path: Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn limited_string_writer_accumulates_under_limit() {
+        let mut writer = LimitedStringWriter::new(16);
+        writer.write_all(b"hello ").unwrap();
+        writer.write_all(b"world").unwrap();
+        assert!(!writer.exceeded());
+        assert_eq!(writer.into_string().unwrap(), "hello world");
+    }
+
+    #[test]
+    fn limited_string_writer_aborts_over_limit() {
+        let mut writer = LimitedStringWriter::new(4);
+        let err = writer.write_all(b"toolong").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::Other);
+        assert!(writer.exceeded());
+    }
 
     fn template(
         id: i32,

@@ -2374,51 +2374,6 @@ impl Write for LimitedJsonWriter {
     }
 }
 
-// Mirror of LimitedJsonWriter for template output: minijinja render_to_write streams into
-// this sink so an oversized text/html/csv report aborts at the byte budget instead of being
-// fully materialized before the 413.
-pub(crate) struct LimitedStringWriter {
-    max_bytes: usize,
-    buffer: Vec<u8>,
-    exceeded: bool,
-}
-
-impl LimitedStringWriter {
-    pub(crate) fn new(max_bytes: usize) -> Self {
-        Self {
-            max_bytes,
-            buffer: Vec::new(),
-            exceeded: false,
-        }
-    }
-
-    pub(crate) fn exceeded(&self) -> bool {
-        self.exceeded
-    }
-
-    pub(crate) fn into_string(self) -> Result<String, ApiError> {
-        String::from_utf8(self.buffer).map_err(|error| {
-            ApiError::InternalServerError(format!("Rendered report was not valid UTF-8: {error}"))
-        })
-    }
-}
-
-impl Write for LimitedStringWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if self.buffer.len().saturating_add(buf.len()) > self.max_bytes {
-            self.exceeded = true;
-            return Err(io::Error::other("template output limit exceeded"));
-        }
-
-        self.buffer.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -2430,10 +2385,9 @@ mod tests {
     };
 
     use super::{
-        HydrationBudget, LimitedStringWriter, REPORT_TRUNCATED_HEADER, ReportRuntime,
-        inferred_relation_alias, normalize_alias_segment, pluralize_alias,
-        render_report_task_output, take_related_within_budget, validate_report_limits,
-        validate_report_submission,
+        HydrationBudget, REPORT_TRUNCATED_HEADER, ReportRuntime, inferred_relation_alias,
+        normalize_alias_segment, pluralize_alias, render_report_task_output,
+        take_related_within_budget, validate_report_limits, validate_report_submission,
     };
     use crate::errors::ApiError;
 
@@ -2506,25 +2460,6 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
-    }
-
-    #[test]
-    fn limited_string_writer_accumulates_under_limit() {
-        use std::io::Write;
-        let mut writer = LimitedStringWriter::new(16);
-        writer.write_all(b"hello ").unwrap();
-        writer.write_all(b"world").unwrap();
-        assert!(!writer.exceeded());
-        assert_eq!(writer.into_string().unwrap(), "hello world");
-    }
-
-    #[test]
-    fn limited_string_writer_aborts_over_limit() {
-        use std::io::Write;
-        let mut writer = LimitedStringWriter::new(4);
-        let err = writer.write_all(b"toolong").unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::Other);
-        assert!(writer.exceeded());
     }
 
     fn report_with_limits(limits: ReportLimits) -> ReportRequest {
