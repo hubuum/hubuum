@@ -53,9 +53,14 @@ bidirectionally_related_objects_for_roots(pool, root_ids, max_depth, per_root_ca
 2. One `search_object_relations_between_ids` over the **union** of all roots + all descendants.
    Slice per-root at neighborhood-build time (relations are global facts; each neighborhood only
    includes edges between objects in its own id set).
-3. One `load_class_relations_touching_classes` over the union of all object classes; one
-   class-name prime over the union of all class ids. Build the shared
-   `class_relations_by_object_class` lookup once.
+3. One `load_class_relations_touching_classes` over the union of all object classes; build the
+   shared `class_relations_by_object_class` lookup once. One class-name prime over the union of
+   **(a)** `object.hubuum_class_id` for every root + descendant **and (b)** both endpoints
+   (`from_hubuum_class_id`, `to_hubuum_class_id`) of every loaded `HubuumClassRelation`. Endpoint
+   (b) is required because `relation_alias_for_viewer` can need the adjacent class name even when
+   no object of that adjacent class is present in the current neighborhood — today
+   `seed_alias_buckets_from_class_relations` ensures this via its `relation_class_ids` prime, and
+   the refactor must preserve it.
 4. Per root, **in `items` order**, build the neighborhood from in-memory slices (no DB) and run
    `hydrate_object` consuming the **shared, sequential** `HydrationBudget`. Sequential hydration
    keeps budget cap semantics (root-order consumption, identical consumption counts) unchanged.
