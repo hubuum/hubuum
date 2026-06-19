@@ -1241,4 +1241,116 @@ mod tests {
 
         cleanup(&classes).await;
     }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_report_objects_in_class_hydration_keys_per_root(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let namespace = context.namespace_fixture("report_multiroot_hydration").await;
+        let host_class = create_named_class(
+            &context.pool,
+            namespace.namespace.id,
+            &context.scoped_name("MultiHost"),
+        )
+        .await;
+        let room_class = create_named_class(
+            &context.pool,
+            namespace.namespace.id,
+            &context.scoped_name("MultiRoom"),
+        )
+        .await;
+
+        let make_object = |name: &str, class_id: i32| NewHubuumObject {
+            name: name.to_string(),
+            description: "obj".to_string(),
+            namespace_id: namespace.namespace.id,
+            hubuum_class_id: class_id,
+            data: serde_json::json!({}),
+        };
+
+        let host_a = make_object("host-a", host_class.id)
+            .save(&context.pool)
+            .await
+            .unwrap();
+        let host_b = make_object("host-b", host_class.id)
+            .save(&context.pool)
+            .await
+            .unwrap();
+        let room_a = make_object("room-a", room_class.id)
+            .save(&context.pool)
+            .await
+            .unwrap();
+        let room_b = make_object("room-b", room_class.id)
+            .save(&context.pool)
+            .await
+            .unwrap();
+
+        let host_room_relation = NewHubuumClassRelation {
+            from_hubuum_class_id: host_class.id,
+            to_hubuum_class_id: room_class.id,
+            forward_template_alias: Some("rooms".to_string()),
+            reverse_template_alias: Some("hosts".to_string()),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let _ =
+            create_object_relation(&context.pool, host_a.id, room_a.id, host_room_relation.id).await;
+        let _ =
+            create_object_relation(&context.pool, host_b.id, room_b.id, host_room_relation.id).await;
+
+        let template_id = create_template(
+            &context.pool,
+            namespace.namespace.id,
+            "multiroot-template",
+            ReportContentType::TextPlain,
+            "{% for host in items %}{{ host.name }}:{% for room in host.related.rooms %}{{ room.name }},{% endfor %};{% endfor %}",
+        )
+        .await;
+
+        let body = ReportRequest {
+            scope: ReportScope {
+                kind: ReportScopeKind::ObjectsInClass,
+                class_id: Some(host_class.id),
+                object_id: None,
+            },
+            query: Some("sort=name".to_string()),
+            output: Some(crate::models::ReportOutputRequest {
+                template_id: Some(template_id),
+            }),
+            missing_data_policy: None,
+            limits: None,
+            include: None,
+            relation_context: Some(ReportRelationContext { depth: Some(1) }),
+        };
+
+        let resp = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            REPORTS_ENDPOINT,
+            &body,
+            vec![],
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(resp).await;
+        let _ = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+
+        let output = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/reports/{}/output", task.id),
+        )
+        .await;
+        let output = assert_response_status(output, StatusCode::OK).await;
+        let rendered = String::from_utf8(test::read_body(output).await.to_vec()).unwrap();
+
+        // Each host shows only its own room — no cross-root leakage from the batched fetch.
+        assert_eq!(rendered, "host-a:room-a,;host-b:room-b,;");
+
+        namespace.cleanup().await.unwrap();
+    }
 }
