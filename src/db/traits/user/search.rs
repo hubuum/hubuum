@@ -1659,122 +1659,21 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             return Ok(Vec::new());
         }
 
-        let mut bind_variables = Vec::<SQLValue>::new();
-        let root_array_sql = sql_integer_array(root_object_ids, &mut bind_variables);
-        let namespace_array_sql = sql_integer_array(&namespace_ids, &mut bind_variables);
-
-        let object_edges_sql = related_include_object_edges_sql(
-            include.direction,
-            include.class_relation_id,
-            &mut bind_variables,
-        );
-        let related_order_sql = related_include_order_sql(include.sort);
-
-        bind_variables.push(SQLValue::Integer(include.max_depth));
-        bind_variables.push(SQLValue::Integer(include.max_depth));
-        bind_variables.push(SQLValue::Integer(include.class_id));
-        bind_variables.push(SQLValue::Integer(include.limit));
-
-        let spec = RawSqlQuerySpec {
-            sql: format!(
-                r#"
-WITH RECURSIVE
-root_objects AS (
-    SELECT unnest({root_array_sql}) AS root_object_id
-),
-valid_namespaces AS (
-    SELECT unnest({namespace_array_sql}) AS namespace_id
-),
-object_edges AS (
-{object_edges_sql}
-),
-graph_walk AS (
-    SELECT
-        root_objects.root_object_id,
-        root_objects.root_object_id AS ancestor_object_id,
-        object_edges.target_object_id AS descendant_object_id,
-        1 AS depth,
-        ARRAY[root_objects.root_object_id, object_edges.target_object_id] AS path
-    FROM root_objects
-    JOIN object_edges
-      ON object_edges.source_object_id = root_objects.root_object_id
-    JOIN hubuumobject target_object
-      ON target_object.id = object_edges.target_object_id
-    WHERE ? >= 1
-      AND target_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
-
-    UNION ALL
-
-    SELECT
-        graph_walk.root_object_id,
-        graph_walk.ancestor_object_id,
-        object_edges.target_object_id AS descendant_object_id,
-        graph_walk.depth + 1,
-        graph_walk.path || object_edges.target_object_id
-    FROM graph_walk
-    JOIN object_edges
-      ON object_edges.source_object_id = graph_walk.descendant_object_id
-    JOIN hubuumobject target_object
-      ON target_object.id = object_edges.target_object_id
-    WHERE NOT (object_edges.target_object_id = ANY(graph_walk.path))
-      AND graph_walk.depth < ?
-      AND target_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
-),
-deduped_walk AS (
-    SELECT DISTINCT ON (root_object_id, descendant_object_id)
-        root_object_id,
-        ancestor_object_id,
-        descendant_object_id,
-        depth,
-        path
-    FROM graph_walk
-    ORDER BY root_object_id ASC, descendant_object_id ASC, depth ASC, path ASC
-),
-ranked_walk AS (
-    SELECT
-        deduped_walk.*,
-        row_number() OVER (
-            PARTITION BY deduped_walk.root_object_id
-            ORDER BY {related_order_sql}
-        ) AS related_rank
-    FROM deduped_walk
-    JOIN hubuumobject target_object
-      ON target_object.id = deduped_walk.descendant_object_id
-    WHERE target_object.hubuum_class_id = ?
-)
-SELECT
-    ranked_walk.root_object_id,
-    source_object.id AS ancestor_object_id,
-    target_object.id AS descendant_object_id,
-    ranked_walk.depth,
-    ranked_walk.path,
-    source_object.name AS ancestor_name,
-    target_object.name AS descendant_name,
-    source_object.namespace_id AS ancestor_namespace_id,
-    target_object.namespace_id AS descendant_namespace_id,
-    source_object.hubuum_class_id AS ancestor_class_id,
-    target_object.hubuum_class_id AS descendant_class_id,
-    source_object.description AS ancestor_description,
-    target_object.description AS descendant_description,
-    source_object.data AS ancestor_data,
-    target_object.data AS descendant_data,
-    source_object.created_at AS ancestor_created_at,
-    target_object.created_at AS descendant_created_at,
-    source_object.updated_at AS ancestor_updated_at,
-    target_object.updated_at AS descendant_updated_at
-FROM ranked_walk
-JOIN hubuumobject source_object
-  ON source_object.id = ranked_walk.ancestor_object_id
-JOIN hubuumobject target_object
-  ON target_object.id = ranked_walk.descendant_object_id
-WHERE ranked_walk.related_rank <= ?
-  AND source_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
-  AND target_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
-ORDER BY ranked_walk.root_object_id ASC, ranked_walk.related_rank ASC
-"#
-            ),
-            bind_variables,
-        };
+        let spec = build_root_graph_walk_query(RootGraphWalkSpec {
+            root_object_ids,
+            namespace_ids: &namespace_ids,
+            max_depth: include.max_depth,
+            per_root_limit: include.limit,
+            edges: GraphWalkEdges::Directional {
+                direction: include.direction,
+                class_relation_id: include.class_relation_id,
+            },
+            ranking: GraphWalkRanking::ByTargetClass {
+                class_id: include.class_id,
+                sort: include.sort,
+            },
+            projection: GraphWalkProjection::AncestorAndDescendant,
+        });
 
         let query = bind_raw_sql_query!(spec.clone());
         debug!(
@@ -1839,102 +1738,15 @@ ORDER BY ranked_walk.root_object_id ASC, ranked_walk.related_rank ASC
             return Ok(Vec::new());
         }
 
-        let mut bind_variables = Vec::<SQLValue>::new();
-        let root_array_sql = sql_integer_array(root_object_ids, &mut bind_variables);
-        let namespace_array_sql = sql_integer_array(&namespace_ids, &mut bind_variables);
-        bind_variables.push(SQLValue::Integer(max_depth));
-        bind_variables.push(SQLValue::Integer(max_depth));
-        bind_variables.push(SQLValue::Integer(per_root_cap));
-
-        let spec = RawSqlQuerySpec {
-            sql: format!(
-                r#"
-WITH RECURSIVE
-root_objects AS (
-    SELECT unnest({root_array_sql}) AS root_object_id
-),
-valid_namespaces AS (
-    SELECT unnest({namespace_array_sql}) AS namespace_id
-),
-object_edges AS (
-    SELECT from_hubuum_object_id AS source_object_id, to_hubuum_object_id AS target_object_id
-    FROM hubuumobject_relation
-
-    UNION ALL
-
-    SELECT to_hubuum_object_id AS source_object_id, from_hubuum_object_id AS target_object_id
-    FROM hubuumobject_relation
-),
-graph_walk AS (
-    SELECT
-        root_objects.root_object_id,
-        object_edges.target_object_id AS descendant_object_id,
-        1 AS depth,
-        ARRAY[root_objects.root_object_id, object_edges.target_object_id] AS path
-    FROM root_objects
-    JOIN object_edges
-      ON object_edges.source_object_id = root_objects.root_object_id
-    JOIN hubuumobject target_object
-      ON target_object.id = object_edges.target_object_id
-    WHERE ? >= 1
-      AND target_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
-
-    UNION ALL
-
-    SELECT
-        graph_walk.root_object_id,
-        object_edges.target_object_id AS descendant_object_id,
-        graph_walk.depth + 1,
-        graph_walk.path || object_edges.target_object_id
-    FROM graph_walk
-    JOIN object_edges
-      ON object_edges.source_object_id = graph_walk.descendant_object_id
-    JOIN hubuumobject target_object
-      ON target_object.id = object_edges.target_object_id
-    WHERE NOT (object_edges.target_object_id = ANY(graph_walk.path))
-      AND graph_walk.depth < ?
-      AND target_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
-),
-deduped_walk AS (
-    SELECT DISTINCT ON (root_object_id, descendant_object_id)
-        root_object_id,
-        descendant_object_id,
-        depth,
-        path
-    FROM graph_walk
-    ORDER BY root_object_id ASC, descendant_object_id ASC, depth ASC, path ASC
-),
-ranked_walk AS (
-    SELECT
-        deduped_walk.*,
-        row_number() OVER (
-            PARTITION BY root_object_id
-            ORDER BY descendant_object_id ASC, depth ASC, path ASC
-        ) AS related_rank
-    FROM deduped_walk
-)
-SELECT
-    ranked_walk.root_object_id,
-    target_object.id AS descendant_object_id,
-    ranked_walk.depth,
-    ranked_walk.path,
-    target_object.name AS descendant_name,
-    target_object.namespace_id AS descendant_namespace_id,
-    target_object.hubuum_class_id AS descendant_class_id,
-    target_object.description AS descendant_description,
-    target_object.data AS descendant_data,
-    target_object.created_at AS descendant_created_at,
-    target_object.updated_at AS descendant_updated_at
-FROM ranked_walk
-JOIN hubuumobject target_object
-  ON target_object.id = ranked_walk.descendant_object_id
-WHERE ranked_walk.related_rank <= ?
-  AND target_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
-ORDER BY ranked_walk.root_object_id ASC, ranked_walk.related_rank ASC
-"#
-            ),
-            bind_variables,
-        };
+        let spec = build_root_graph_walk_query(RootGraphWalkSpec {
+            root_object_ids,
+            namespace_ids: &namespace_ids,
+            max_depth,
+            per_root_limit: per_root_cap,
+            edges: GraphWalkEdges::Bidirectional,
+            ranking: GraphWalkRanking::ByDescendant,
+            projection: GraphWalkProjection::DescendantOnly,
+        });
 
         let query = bind_raw_sql_query!(spec.clone());
         debug!(
@@ -2026,6 +1838,229 @@ fn related_include_order_sql(sort: ReportIncludeRelatedSort) -> &'static str {
         ReportIncludeRelatedSort::CreatedAt => {
             "target_object.created_at ASC, target_object.id ASC, deduped_walk.path ASC"
         }
+    }
+}
+
+/// Edge set for a per-root recursive object-graph walk.
+enum GraphWalkEdges {
+    /// Both relation directions, unfiltered — used by templated relation hydration.
+    Bidirectional,
+    /// Direction- and (optionally) class-relation-filtered — used by the report include path.
+    Directional {
+        direction: ReportIncludeRelatedDirection,
+        class_relation_id: Option<i32>,
+    },
+}
+
+/// How descendants are ranked within each root partition (drives the per-root cap).
+enum GraphWalkRanking {
+    /// Stable order by descendant id — hydration needs determinism, not a sort option.
+    ByDescendant,
+    /// Restrict to a target class and order by the include sort option.
+    ByTargetClass {
+        class_id: i32,
+        sort: ReportIncludeRelatedSort,
+    },
+}
+
+/// Columns emitted by the final SELECT.
+enum GraphWalkProjection {
+    /// Descendant object only (templated hydration).
+    DescendantOnly,
+    /// Both the root (ancestor) and descendant objects (include path).
+    AncestorAndDescendant,
+}
+
+/// Parameters for [`build_root_graph_walk_query`]. One builder owns the full SQL and, crucially,
+/// the bind-variable ordering shared by both batched per-root graph queries.
+struct RootGraphWalkSpec<'a> {
+    root_object_ids: &'a [i32],
+    namespace_ids: &'a [i32],
+    max_depth: i32,
+    per_root_limit: i32,
+    edges: GraphWalkEdges,
+    ranking: GraphWalkRanking,
+    projection: GraphWalkProjection,
+}
+
+fn bidirectional_object_edges_sql() -> &'static str {
+    r#"    SELECT from_hubuum_object_id AS source_object_id, to_hubuum_object_id AS target_object_id
+    FROM hubuumobject_relation
+
+    UNION ALL
+
+    SELECT to_hubuum_object_id AS source_object_id, from_hubuum_object_id AS target_object_id
+    FROM hubuumobject_relation"#
+}
+
+/// Builds the recursive per-root object-graph walk shared by `related_objects_for_roots`
+/// (include path) and `bidirectionally_related_objects_for_roots` (templated hydration).
+///
+/// The `root_objects`/`valid_namespaces`/`graph_walk`/`deduped_walk` CTEs are identical for both
+/// callers; only the edge set, the per-root ranking, and the final projection differ. Bind order
+/// is fixed here: root ids, namespace ids, (edge class-relation filter), max_depth ×2,
+/// (target class id), per_root_limit.
+fn build_root_graph_walk_query(spec: RootGraphWalkSpec) -> RawSqlQuerySpec {
+    let mut bind_variables = Vec::<SQLValue>::new();
+    let root_array_sql = sql_integer_array(spec.root_object_ids, &mut bind_variables);
+    let namespace_array_sql = sql_integer_array(spec.namespace_ids, &mut bind_variables);
+
+    let object_edges_sql = match spec.edges {
+        GraphWalkEdges::Bidirectional => bidirectional_object_edges_sql().to_string(),
+        GraphWalkEdges::Directional {
+            direction,
+            class_relation_id,
+        } => related_include_object_edges_sql(direction, class_relation_id, &mut bind_variables),
+    };
+
+    bind_variables.push(SQLValue::Integer(spec.max_depth));
+    bind_variables.push(SQLValue::Integer(spec.max_depth));
+
+    let ranked_walk_sql = match spec.ranking {
+        GraphWalkRanking::ByDescendant => r#"    SELECT
+        deduped_walk.*,
+        row_number() OVER (
+            PARTITION BY root_object_id
+            ORDER BY descendant_object_id ASC, depth ASC, path ASC
+        ) AS related_rank
+    FROM deduped_walk"#
+            .to_string(),
+        GraphWalkRanking::ByTargetClass { class_id, sort } => {
+            let related_order_sql = related_include_order_sql(sort);
+            bind_variables.push(SQLValue::Integer(class_id));
+            format!(
+                r#"    SELECT
+        deduped_walk.*,
+        row_number() OVER (
+            PARTITION BY deduped_walk.root_object_id
+            ORDER BY {related_order_sql}
+        ) AS related_rank
+    FROM deduped_walk
+    JOIN hubuumobject target_object
+      ON target_object.id = deduped_walk.descendant_object_id
+    WHERE target_object.hubuum_class_id = ?"#
+            )
+        }
+    };
+
+    bind_variables.push(SQLValue::Integer(spec.per_root_limit));
+
+    let final_select_sql = match spec.projection {
+        GraphWalkProjection::DescendantOnly => r#"SELECT
+    ranked_walk.root_object_id,
+    target_object.id AS descendant_object_id,
+    ranked_walk.depth,
+    ranked_walk.path,
+    target_object.name AS descendant_name,
+    target_object.namespace_id AS descendant_namespace_id,
+    target_object.hubuum_class_id AS descendant_class_id,
+    target_object.description AS descendant_description,
+    target_object.data AS descendant_data,
+    target_object.created_at AS descendant_created_at,
+    target_object.updated_at AS descendant_updated_at
+FROM ranked_walk
+JOIN hubuumobject target_object
+  ON target_object.id = ranked_walk.descendant_object_id
+WHERE ranked_walk.related_rank <= ?
+  AND target_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
+ORDER BY ranked_walk.root_object_id ASC, ranked_walk.related_rank ASC"#
+            .to_string(),
+        GraphWalkProjection::AncestorAndDescendant => r#"SELECT
+    ranked_walk.root_object_id,
+    source_object.id AS ancestor_object_id,
+    target_object.id AS descendant_object_id,
+    ranked_walk.depth,
+    ranked_walk.path,
+    source_object.name AS ancestor_name,
+    target_object.name AS descendant_name,
+    source_object.namespace_id AS ancestor_namespace_id,
+    target_object.namespace_id AS descendant_namespace_id,
+    source_object.hubuum_class_id AS ancestor_class_id,
+    target_object.hubuum_class_id AS descendant_class_id,
+    source_object.description AS ancestor_description,
+    target_object.description AS descendant_description,
+    source_object.data AS ancestor_data,
+    target_object.data AS descendant_data,
+    source_object.created_at AS ancestor_created_at,
+    target_object.created_at AS descendant_created_at,
+    source_object.updated_at AS ancestor_updated_at,
+    target_object.updated_at AS descendant_updated_at
+FROM ranked_walk
+JOIN hubuumobject source_object
+  ON source_object.id = ranked_walk.ancestor_object_id
+JOIN hubuumobject target_object
+  ON target_object.id = ranked_walk.descendant_object_id
+WHERE ranked_walk.related_rank <= ?
+  AND source_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
+  AND target_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
+ORDER BY ranked_walk.root_object_id ASC, ranked_walk.related_rank ASC"#
+            .to_string(),
+    };
+
+    let sql = format!(
+        r#"
+WITH RECURSIVE
+root_objects AS (
+    SELECT unnest({root_array_sql}) AS root_object_id
+),
+valid_namespaces AS (
+    SELECT unnest({namespace_array_sql}) AS namespace_id
+),
+object_edges AS (
+{object_edges_sql}
+),
+graph_walk AS (
+    SELECT
+        root_objects.root_object_id,
+        root_objects.root_object_id AS ancestor_object_id,
+        object_edges.target_object_id AS descendant_object_id,
+        1 AS depth,
+        ARRAY[root_objects.root_object_id, object_edges.target_object_id] AS path
+    FROM root_objects
+    JOIN object_edges
+      ON object_edges.source_object_id = root_objects.root_object_id
+    JOIN hubuumobject target_object
+      ON target_object.id = object_edges.target_object_id
+    WHERE ? >= 1
+      AND target_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
+
+    UNION ALL
+
+    SELECT
+        graph_walk.root_object_id,
+        graph_walk.ancestor_object_id,
+        object_edges.target_object_id AS descendant_object_id,
+        graph_walk.depth + 1,
+        graph_walk.path || object_edges.target_object_id
+    FROM graph_walk
+    JOIN object_edges
+      ON object_edges.source_object_id = graph_walk.descendant_object_id
+    JOIN hubuumobject target_object
+      ON target_object.id = object_edges.target_object_id
+    WHERE NOT (object_edges.target_object_id = ANY(graph_walk.path))
+      AND graph_walk.depth < ?
+      AND target_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
+),
+deduped_walk AS (
+    SELECT DISTINCT ON (root_object_id, descendant_object_id)
+        root_object_id,
+        ancestor_object_id,
+        descendant_object_id,
+        depth,
+        path
+    FROM graph_walk
+    ORDER BY root_object_id ASC, descendant_object_id ASC, depth ASC, path ASC
+),
+ranked_walk AS (
+{ranked_walk_sql}
+)
+{final_select_sql}
+"#
+    );
+
+    RawSqlQuerySpec {
+        sql,
+        bind_variables,
     }
 }
 
