@@ -82,6 +82,7 @@ pub fn render_template(
     context: &serde_json::Value,
     content_type: ReportContentType,
     missing_data_policy: ReportMissingDataPolicy,
+    max_output_bytes: usize,
 ) -> Result<(String, Vec<ReportWarning>), ApiError> {
     let cache_key = TemplateEnvCacheKey {
         namespace_id: template.namespace_id,
@@ -127,15 +128,28 @@ pub fn render_template(
     };
 
     begin_template_warning_capture();
-    let rendered = env
-        .env
-        .get_template(&env.template_name)
-        .map_err(|error| template_error("Template lookup failed", error))?
-        .render(context)
-        .map_err(|error| template_error("Template render failed", error));
+    let mut writer = crate::api::v1::handlers::reports::LimitedStringWriter::new(max_output_bytes);
+    let lookup = env.env.get_template(&env.template_name);
+    let render_result = match lookup {
+        Ok(template) => template.render_captured_to(context, &mut writer),
+        Err(error) => {
+            let _ = finish_template_warning_capture();
+            return Err(template_error("Template lookup failed", error));
+        }
+    };
     let warnings = finish_template_warning_capture();
 
-    Ok((rendered?, warnings))
+    match render_result {
+        Ok(_captured) => Ok((writer.into_string()?, warnings)),
+        Err(error) => {
+            if writer.exceeded() {
+                return Err(ApiError::PayloadTooLarge(format!(
+                    "Rendered report exceeded max_output_bytes (> {max_output_bytes})"
+                )));
+            }
+            Err(template_error("Template render failed", error))
+        }
+    }
 }
 
 fn template_env_cache()
@@ -563,6 +577,7 @@ mod tests {
             &context,
             ReportContentType::TextPlain,
             ReportMissingDataPolicy::Strict,
+            usize::MAX,
         )
         .unwrap();
 
@@ -618,6 +633,7 @@ mod tests {
             &context,
             ReportContentType::TextHtml,
             ReportMissingDataPolicy::Strict,
+            usize::MAX,
         )
         .unwrap();
 
@@ -643,6 +659,7 @@ mod tests {
             &context,
             ReportContentType::TextPlain,
             ReportMissingDataPolicy::Omit,
+            usize::MAX,
         )
         .unwrap();
 
@@ -671,6 +688,7 @@ mod tests {
             &context,
             ReportContentType::TextPlain,
             ReportMissingDataPolicy::Null,
+            usize::MAX,
         )
         .unwrap();
 
@@ -706,6 +724,7 @@ mod tests {
             &context,
             ReportContentType::TextHtml,
             ReportMissingDataPolicy::Strict,
+            usize::MAX,
         )
         .unwrap();
         let (text, text_warnings) = render_template(
@@ -714,6 +733,7 @@ mod tests {
             &context,
             ReportContentType::TextPlain,
             ReportMissingDataPolicy::Strict,
+            usize::MAX,
         )
         .unwrap();
 
@@ -749,6 +769,7 @@ mod tests {
             &context,
             ReportContentType::TextPlain,
             ReportMissingDataPolicy::Strict,
+            usize::MAX,
         )
         .unwrap();
 
@@ -782,6 +803,7 @@ mod tests {
             &context,
             ReportContentType::TextPlain,
             ReportMissingDataPolicy::Omit,
+            usize::MAX,
         )
         .unwrap();
 
@@ -812,6 +834,7 @@ mod tests {
             &context,
             ReportContentType::TextPlain,
             ReportMissingDataPolicy::Omit,
+            usize::MAX,
         )
         .unwrap();
 
@@ -849,6 +872,7 @@ mod tests {
             &context,
             ReportContentType::TextHtml,
             ReportMissingDataPolicy::Strict,
+            usize::MAX,
         )
         .unwrap_err();
 
@@ -884,6 +908,7 @@ mod tests {
             &context,
             ReportContentType::TextHtml,
             ReportMissingDataPolicy::Strict,
+            usize::MAX,
         )
         .unwrap();
         layout_v1.updated_at += chrono::Duration::seconds(2);
@@ -893,6 +918,7 @@ mod tests {
             &context,
             ReportContentType::TextHtml,
             ReportMissingDataPolicy::Strict,
+            usize::MAX,
         )
         .unwrap();
 
@@ -928,6 +954,7 @@ mod tests {
             &context,
             ReportContentType::TextHtml,
             ReportMissingDataPolicy::Strict,
+            usize::MAX,
         )
         .unwrap();
         let (second, _) = render_template(
@@ -936,6 +963,7 @@ mod tests {
             &context,
             ReportContentType::TextHtml,
             ReportMissingDataPolicy::Strict,
+            usize::MAX,
         )
         .unwrap();
 

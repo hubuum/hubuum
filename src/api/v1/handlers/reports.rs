@@ -809,17 +809,22 @@ fn build_text_report_artifact(
 ) -> Result<ReportArtifact, ApiError> {
     let template = required_template(runtime, runtime.content_type)?;
     let context = report_template_context(&runtime.report, &execution);
+    let max_output_bytes = runtime
+        .report
+        .limits
+        .as_ref()
+        .and_then(|limits| limits.max_output_bytes)
+        .unwrap_or_else(configured_report_max_output_bytes);
     let (rendered, template_warnings) = render_template(
         template,
         &runtime.namespace_templates,
         &context,
         runtime.content_type,
         runtime.missing_data_policy,
+        max_output_bytes,
     )?;
     let mut warnings = execution.warnings;
     warnings.extend(template_warnings);
-
-    enforce_text_output_limit(&rendered, &runtime.report)?;
 
     Ok(ReportArtifact {
         content_type: runtime.content_type,
@@ -2388,24 +2393,6 @@ impl Write for LimitedStringWriter {
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
-}
-
-fn enforce_text_output_limit(rendered: &str, report: &ReportRequest) -> Result<(), ApiError> {
-    let max_output_bytes = report
-        .limits
-        .as_ref()
-        .and_then(|limits| limits.max_output_bytes)
-        .unwrap_or_else(configured_report_max_output_bytes);
-
-    if rendered.len() > max_output_bytes {
-        return Err(ApiError::PayloadTooLarge(format!(
-            "Rendered report exceeded max_output_bytes ({} > {})",
-            rendered.len(),
-            max_output_bytes
-        )));
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
