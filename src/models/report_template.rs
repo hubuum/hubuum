@@ -122,11 +122,58 @@ pub struct UpdateReportTemplate {
     pub kind: Option<ReportTemplateKind>,
     pub scope_kind: Option<ReportScopeKind>,
     pub class_id: Option<i32>,
-    pub default_query: Option<String>,
-    pub include: Option<ReportInclude>,
-    pub relation_context: Option<ReportRelationContext>,
-    pub default_missing_data_policy: Option<ReportMissingDataPolicy>,
-    pub default_limits: Option<ReportLimits>,
+    // The nullable report-profile fields use double `Option` so a PATCH can distinguish an
+    // omitted field (outer `None` — keep the current value) from an explicit JSON `null`
+    // (`Some(None)` — clear the value). A plain `Option` collapses both to `None`.
+    // `deserialize_double_option` makes serde populate the outer `Some` only when the key is
+    // present, and `skip_serializing_if` keeps omitted fields out of serialized payloads so the
+    // distinction survives a serialize/deserialize round-trip (e.g. in tests and examples).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_double_option"
+    )]
+    #[schema(value_type = Option<String>)]
+    pub default_query: Option<Option<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_double_option"
+    )]
+    #[schema(value_type = Option<ReportInclude>)]
+    pub include: Option<Option<ReportInclude>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_double_option"
+    )]
+    #[schema(value_type = Option<ReportRelationContext>)]
+    pub relation_context: Option<Option<ReportRelationContext>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_double_option"
+    )]
+    #[schema(value_type = Option<ReportMissingDataPolicy>)]
+    pub default_missing_data_policy: Option<Option<ReportMissingDataPolicy>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_double_option"
+    )]
+    #[schema(value_type = Option<ReportLimits>)]
+    pub default_limits: Option<Option<ReportLimits>>,
+}
+
+/// Deserialize a tri-state PATCH field. serde only invokes a field's `deserialize_with` when the
+/// key is present, so this wraps the inner `Option<T>` (which captures `null` vs a value) in an
+/// outer `Some`, leaving an omitted key as the `default` outer `None`.
+fn deserialize_double_option<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Some(Option::<T>::deserialize(deserializer)?))
 }
 
 #[derive(Debug, Clone, Insertable)]
@@ -360,27 +407,24 @@ pub async fn update_report_template(
         } else {
             update.class_id
         };
-        let target_include = if scope_allows_include {
-            update.include.clone().or(current.include)
-        } else {
-            update.include.clone()
-        };
-        let target_relation_context = if scope_allows_relation_context {
-            update.relation_context.clone().or(current.relation_context)
-        } else {
-            update.relation_context.clone()
-        };
+        let target_include =
+            resolve_gated_patch(update.include, current.include, scope_allows_include);
+        let target_relation_context = resolve_gated_patch(
+            update.relation_context,
+            current.relation_context,
+            scope_allows_relation_context,
+        );
 
         (
             target_scope_kind,
             target_class_id,
-            update.default_query.clone().or(current.default_query),
+            update.default_query.unwrap_or(current.default_query),
             target_include,
             target_relation_context,
             update
                 .default_missing_data_policy
-                .or(current.default_missing_data_policy),
-            update.default_limits.clone().or(current.default_limits),
+                .unwrap_or(current.default_missing_data_policy),
+            update.default_limits.unwrap_or(current.default_limits),
         )
     };
 
@@ -613,6 +657,26 @@ fn update_report_fields_present(update: &UpdateReportTemplate) -> bool {
         || update.relation_context.is_some()
         || update.default_missing_data_policy.is_some()
         || update.default_limits.is_some()
+}
+
+/// Resolve a tri-state PATCH field whose validity depends on the target scope.
+/// When the scope `allowed`s the field, this behaves like a normal tri-state resolve
+/// (absent keeps current, `Some(None)` clears, `Some(Some)` sets). When the scope forbids
+/// it, a carried-forward current value is dropped, but an explicitly supplied value is kept
+/// so `validate_report_profile` can reject it (matching the create path).
+fn resolve_gated_patch<T>(
+    update: Option<Option<T>>,
+    current: Option<T>,
+    allowed: bool,
+) -> Option<T> {
+    if allowed {
+        update.unwrap_or(current)
+    } else {
+        match update {
+            Some(Some(value)) => Some(value),
+            _ => None,
+        }
+    }
 }
 
 fn to_optional_json<T>(value: Option<T>) -> Result<Option<serde_json::Value>, ApiError>
@@ -936,7 +1000,7 @@ fn update_report_template_example() -> UpdateReportTemplate {
         kind: None,
         scope_kind: None,
         class_id: None,
-        default_query: Some("sort=name.desc".to_string()),
+        default_query: Some(Some("sort=name.desc".to_string())),
         include: None,
         relation_context: None,
         default_missing_data_policy: None,

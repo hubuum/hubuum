@@ -4,8 +4,8 @@ mod tests {
 
     use crate::models::{
         Namespace, NewHubuumClass, NewNamespaceWithAssignee, NewReportTemplate, Permissions,
-        PermissionsList, ReportContentType, ReportScopeKind, ReportTemplate, ReportTemplateKind,
-        UpdateReportTemplate,
+        PermissionsList, ReportContentType, ReportLimits, ReportMissingDataPolicy, ReportScopeKind,
+        ReportTemplate, ReportTemplateKind, UpdateReportTemplate,
     };
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_paginated_collection_total_count, assert_response_status};
@@ -834,6 +834,85 @@ mod tests {
         let patched: ReportTemplate = test::read_body_json(resp).await;
         assert_eq!(patched.scope_kind, Some(ReportScopeKind::Namespaces));
         assert_eq!(patched.class_id, None);
+
+        namespace.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_patch_report_template_clears_nullable_defaults() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let namespace = create_namespace(&pool, "patch_clear_defaults").await;
+        let class = NewHubuumClass {
+            name: "patch-clear-class".to_string(),
+            namespace_id: namespace.id,
+            json_schema: None,
+            validate_schema: Some(false),
+            description: "class".to_string(),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        let created = crate::models::report_template::create_report_template(
+            &pool,
+            NewReportTemplate {
+                namespace_id: namespace.id,
+                name: "report.clear-defaults".to_string(),
+                description: "clear defaults report".to_string(),
+                content_type: ReportContentType::TextPlain,
+                template: "{% for item in items %}{{ item.name }}{% endfor %}".to_string(),
+                kind: ReportTemplateKind::Report,
+                scope_kind: Some(ReportScopeKind::ObjectsInClass),
+                class_id: Some(class.id),
+                default_query: Some("sort=name".to_string()),
+                include: None,
+                relation_context: None,
+                default_missing_data_policy: Some(ReportMissingDataPolicy::Strict),
+                default_limits: Some(ReportLimits {
+                    max_items: Some(100),
+                    max_output_bytes: Some(262_144),
+                }),
+            },
+        )
+        .await
+        .unwrap();
+
+        // An unrelated PATCH that omits the default fields must leave them untouched.
+        let resp = patch_request(
+            &pool,
+            &admin_token,
+            &format!("{TEMPLATES_ENDPOINT}/{}", created.id),
+            &serde_json::json!({ "description": "still has defaults" }),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let patched: ReportTemplate = test::read_body_json(resp).await;
+        assert_eq!(patched.default_query.as_deref(), Some("sort=name"));
+        assert_eq!(
+            patched.default_missing_data_policy,
+            Some(ReportMissingDataPolicy::Strict)
+        );
+        assert!(patched.default_limits.is_some());
+
+        // Explicit JSON null clears the nullable defaults while keeping the scope intact.
+        let resp = patch_request(
+            &pool,
+            &admin_token,
+            &format!("{TEMPLATES_ENDPOINT}/{}", created.id),
+            &serde_json::json!({
+                "default_query": null,
+                "default_missing_data_policy": null,
+                "default_limits": null
+            }),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let patched: ReportTemplate = test::read_body_json(resp).await;
+        assert_eq!(patched.default_query, None);
+        assert_eq!(patched.default_missing_data_policy, None);
+        assert_eq!(patched.default_limits, None);
+        assert_eq!(patched.scope_kind, Some(ReportScopeKind::ObjectsInClass));
+        assert_eq!(patched.class_id, Some(class.id));
 
         namespace.delete(&pool).await.unwrap();
     }
