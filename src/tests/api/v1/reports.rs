@@ -12,9 +12,9 @@ mod tests {
     use crate::models::{
         HubuumClass, HubuumClassRelation, HubuumObjectRelation, NewHubuumClass,
         NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewReportTemplate,
-        NewTaskRecord, ReportContentType, ReportJsonResponse, ReportRequest, ReportScope,
-        ReportScopeKind, TaskEventResponse, TaskKind, TaskResponse, TaskStatus,
-        UpdateReportTemplate,
+        NewTaskRecord, ReportContentType, ReportJsonResponse, ReportLimits, ReportRelationContext,
+        ReportRequest, ReportScope, ReportScopeKind, TaskEventResponse, TaskKind, TaskResponse,
+        TaskStatus, UpdateReportTemplate,
     };
     use crate::tests::api::v1::classes::tests::{cleanup, create_test_classes};
     use crate::tests::api_operations::{get_request, post_request_with_headers};
@@ -1179,6 +1179,64 @@ mod tests {
             events
                 .iter()
                 .any(|event| event.event_type == "cleanup" && event.message.contains("cleaned up"))
+        );
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_report_text_output_exceeding_max_bytes_fails(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "report_text_limit").await;
+        let class = classes[0].clone();
+        let _ = create_report_objects(&context.pool, &class).await;
+        let template_id = create_template(
+            &context.pool,
+            class.namespace_id,
+            "oversized-template",
+            ReportContentType::TextPlain,
+            "{% for item in items %}{{ item.name }} has a description of {{ item.description }} and lives forever\n{% endfor %}",
+        )
+        .await;
+
+        let body = ReportRequest {
+            scope: ReportScope {
+                kind: ReportScopeKind::ObjectsInClass,
+                class_id: Some(class.id),
+                object_id: None,
+            },
+            query: None,
+            output: Some(crate::models::ReportOutputRequest {
+                template_id: Some(template_id),
+            }),
+            missing_data_policy: None,
+            limits: Some(ReportLimits {
+                max_items: None,
+                max_output_bytes: Some(8),
+            }),
+            include: None,
+            relation_context: None,
+        };
+
+        let resp = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            REPORTS_ENDPOINT,
+            &body,
+            vec![],
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(resp).await;
+        let task = wait_for_task(&context, task.id, &[TaskStatus::Failed]).await;
+
+        let summary = task.summary.unwrap_or_default();
+        assert!(
+            summary.contains("Payload too large") && summary.contains("(> 8)"),
+            "unexpected summary: {summary}"
         );
 
         cleanup(&classes).await;
