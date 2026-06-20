@@ -129,15 +129,26 @@ fn decode_query_parameter_pairs(qs: &str) -> Result<Vec<(String, String)>, ApiEr
 }
 
 fn decode_query_component(raw: &str, chunk: &str, component: &str) -> Result<String, ApiError> {
-    let form_encoded = raw.replace('+', " ");
-    percent_encoding::percent_decode(form_encoded.as_bytes())
-        .decode_utf8()
-        .map(|value| value.to_string())
-        .map_err(|e| {
-            ApiError::BadRequest(format!(
-                "Invalid query parameter: '{chunk}', invalid {component}: {e}",
-            ))
-        })
+    // `percent_decode().decode_utf8()` returns a borrowing Cow when there are no
+    // `%` escapes, so the common case allocates at most once via `into_owned()`.
+    // Only the `+` -> space pre-pass needs its own allocation, so skip it when
+    // there is no `+` to avoid the unconditional `replace` allocation.
+    let decoded = if raw.contains('+') {
+        let form_encoded = raw.replace('+', " ");
+        percent_encoding::percent_decode(form_encoded.as_bytes())
+            .decode_utf8()
+            .map(|value| value.into_owned())
+    } else {
+        percent_encoding::percent_decode(raw.as_bytes())
+            .decode_utf8()
+            .map(|value| value.into_owned())
+    };
+
+    decoded.map_err(|e| {
+        ApiError::BadRequest(format!(
+            "Invalid query parameter: '{chunk}', invalid {component}: {e}",
+        ))
+    })
 }
 
 fn parse_single_filter(key: &str, value: &str) -> Result<ParsedQueryParam, ApiError> {
