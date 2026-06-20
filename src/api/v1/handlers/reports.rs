@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::time::Instant;
 
 use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, post, web};
-use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -13,25 +12,23 @@ use crate::config::{
     DEFAULT_REPORT_OUTPUT_RETENTION_HOURS, DEFAULT_REPORT_STAGE_TIMEOUT_MS,
     DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS, get_config,
 };
+use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
-use crate::db::traits::task::{
-    TaskBackend, TaskCreateRequest, TaskStateUpdate, append_task_event,
-    create_report_task_with_active_limit, find_task_by_idempotency,
-};
-use crate::db::{DbPool, with_connection};
+use crate::db::traits::task::{TaskBackend, TaskCreateRequest, TaskStateUpdate};
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::{
     FilterField, ParsedQueryParam, QueryOptions, SearchOperator, parse_query_parameter,
 };
 use crate::models::{
-    HubuumClassID, HubuumClassRelation, HubuumObject, HubuumObjectID, HubuumObjectRelation,
-    HubuumObjectWithPath, NamespaceID, NewReportTaskOutputRecord, NewTaskEventRecord, Permissions,
-    RELATED_INCLUDE_DEFAULT_LIMIT, RELATED_INCLUDE_DEFAULT_MAX_DEPTH, ReportContentType,
-    ReportIncludeRelatedDirection, ReportIncludeRelatedQuery, ReportIncludeRelatedSort,
-    ReportJsonResponse, ReportMeta, ReportMissingDataPolicy, ReportRequest, ReportScope,
-    ReportScopeKind, ReportTaskOutputRecord, ReportTemplate, ReportTemplateID, ReportWarning,
-    TaskID, TaskKind, TaskRecord, TaskResponse, User,
+    ClassIdSet, HubuumClassID, HubuumClassRelation, HubuumObject, HubuumObjectID,
+    HubuumObjectRelation, HubuumObjectWithPath, NamespaceID, NamespaceReportTemplates,
+    NewReportTaskOutputRecord, NewTaskEventRecord, Permissions, RELATED_INCLUDE_DEFAULT_LIMIT,
+    RELATED_INCLUDE_DEFAULT_MAX_DEPTH, ReportContentType, ReportIncludeRelatedDirection,
+    ReportIncludeRelatedQuery, ReportIncludeRelatedSort, ReportJsonResponse, ReportMeta,
+    ReportMissingDataPolicy, ReportRequest, ReportScope, ReportScopeKind, ReportTaskOutputRecord,
+    ReportTemplate, ReportTemplateID, ReportWarning, TaskID, TaskKind, TaskRecord, TaskResponse,
+    User,
 };
 use crate::pagination::page_limits_or_defaults;
 use crate::tasks::{
@@ -341,12 +338,9 @@ async fn prepare_report_runtime(
 
     let namespace_templates = match &template {
         Some(template) => {
-            crate::models::report_template::report_templates_in_namespace(
-                pool,
-                template.namespace_id,
-                None,
-            )
-            .await?
+            NamespaceID(template.namespace_id)
+                .report_templates(pool, None)
+                .await?
         }
         None => Vec::new(),
     };
@@ -427,7 +421,7 @@ async fn find_or_create_report_task(
     };
 
     if let Some(key) = idempotency_key.as_deref()
-        && let Some(existing) = find_task_by_idempotency(pool, submitted_by, key).await?
+        && let Some(existing) = TaskRecord::find_by_idempotency(pool, submitted_by, key).await?
     {
         if matches_request(&existing) {
             return Ok(existing);
@@ -438,24 +432,22 @@ async fn find_or_create_report_task(
         )));
     }
 
-    match create_report_task_with_active_limit(
-        pool,
-        TaskCreateRequest {
-            kind: TaskKind::Report,
-            submitted_by,
-            idempotency_key: idempotency_key.clone(),
-            request_hash: Some(request_hash_value),
-            request_payload: payload,
-            total_items: 1,
-        },
-        max_active_report_tasks_per_user(),
-    )
+    match (TaskCreateRequest {
+        kind: TaskKind::Report,
+        submitted_by,
+        idempotency_key: idempotency_key.clone(),
+        request_hash: Some(request_hash_value),
+        request_payload: payload,
+        total_items: 1,
+    })
+    .create_with_active_report_limit(pool, max_active_report_tasks_per_user())
     .await
     {
         Ok(task) => Ok(task),
         Err(ApiError::Conflict(_)) => {
             if let Some(key) = idempotency_key.as_deref()
-                && let Some(existing) = find_task_by_idempotency(pool, submitted_by, key).await?
+                && let Some(existing) =
+                    TaskRecord::find_by_idempotency(pool, submitted_by, key).await?
                 && matches_request(&existing)
             {
                 return Ok(existing);
@@ -485,15 +477,13 @@ pub(crate) async fn execute_report_task(
     let total_start = Instant::now();
     let mut timings = ReportExecutionTimings::default();
 
-    append_task_event(
-        pool,
-        NewTaskEventRecord {
-            task_id: task.id,
-            event_type: "running".to_string(),
-            message: "Report execution started".to_string(),
-            data: None,
-        },
-    )
+    NewTaskEventRecord {
+        task_id: task.id,
+        event_type: "running".to_string(),
+        message: "Report execution started".to_string(),
+        data: None,
+    }
+    .append(pool)
     .await?;
     task.update_state(
         pool,
@@ -509,18 +499,16 @@ pub(crate) async fn execute_report_task(
     )
     .await?;
 
-    append_task_event(
-        pool,
-        NewTaskEventRecord {
-            task_id: task.id,
-            event_type: "running".to_string(),
-            message: "Query execution started".to_string(),
-            data: Some(serde_json::json!({
-                "scope": runtime.report.scope.kind.as_str(),
-                "content_type": runtime.content_type.as_mime(),
-            })),
-        },
-    )
+    NewTaskEventRecord {
+        task_id: task.id,
+        event_type: "running".to_string(),
+        message: "Query execution started".to_string(),
+        data: Some(serde_json::json!({
+            "scope": runtime.report.scope.kind.as_str(),
+            "content_type": runtime.content_type.as_mime(),
+        })),
+    }
+    .append(pool)
     .await?;
 
     let mut query_options = prepare_query_options(&runtime.report)?;
@@ -537,19 +525,17 @@ pub(crate) async fn execute_report_task(
         .as_ref()
         .is_some_and(|plan| plan.enabled_for_scope)
     {
-        append_task_event(
-            pool,
-            NewTaskEventRecord {
-                task_id: task.id,
-                event_type: "running".to_string(),
-                message: "Hydrating relation-aware template context".to_string(),
-                data: relation_hydration.as_ref().map(|plan| {
-                    serde_json::json!({
-                        "depth_limit": plan.depth_limit,
-                    })
-                }),
-            },
-        )
+        NewTaskEventRecord {
+            task_id: task.id,
+            event_type: "running".to_string(),
+            message: "Hydrating relation-aware template context".to_string(),
+            data: relation_hydration.as_ref().map(|plan| {
+                serde_json::json!({
+                    "depth_limit": plan.depth_limit,
+                })
+            }),
+        }
+        .append(pool)
         .await?;
     }
 
@@ -584,15 +570,13 @@ pub(crate) async fn execute_report_task(
         source,
     };
 
-    append_task_event(
-        pool,
-        NewTaskEventRecord {
-            task_id: task.id,
-            event_type: "running".to_string(),
-            message: "Rendering report output".to_string(),
-            data: None,
-        },
-    )
+    NewTaskEventRecord {
+        task_id: task.id,
+        event_type: "running".to_string(),
+        message: "Rendering report output".to_string(),
+        data: None,
+    }
+    .append(pool)
     .await?;
 
     let render_start = Instant::now();
@@ -607,15 +591,13 @@ pub(crate) async fn execute_report_task(
         ..artifact
     };
 
-    append_task_event(
-        pool,
-        NewTaskEventRecord {
-            task_id: task.id,
-            event_type: "running".to_string(),
-            message: "Persisting report output".to_string(),
-            data: None,
-        },
-    )
+    NewTaskEventRecord {
+        task_id: task.id,
+        event_type: "running".to_string(),
+        message: "Persisting report output".to_string(),
+        data: None,
+    }
+    .append(pool)
     .await?;
 
     task.finalize_report_with_output(
@@ -1211,23 +1193,19 @@ async fn load_hydration_class_metadata(
     pool: &DbPool,
     objects_by_id: &BTreeMap<i32, HubuumObjectWithPath>,
 ) -> Result<HydrationClassMetadata, ApiError> {
-    let mut object_class_ids = objects_by_id
-        .values()
-        .map(|object| object.hubuum_class_id)
-        .collect::<Vec<_>>();
-    object_class_ids.sort_unstable();
-    object_class_ids.dedup();
+    let object_class_ids =
+        ClassIdSet::new(objects_by_id.values().map(|object| object.hubuum_class_id))?;
 
-    let mut class_relations =
-        load_class_relations_touching_classes(pool, &object_class_ids).await?;
+    let mut class_relations = object_class_ids.load_relations_touching(pool).await?;
     class_relations.sort_by_key(|relation| relation.id);
 
     let mut class_relations_by_object_class = BTreeMap::<i32, Vec<HubuumClassRelation>>::new();
-    let mut name_ids = object_class_ids.clone();
+    let mut name_ids = object_class_ids.as_slice().to_vec();
     for relation in &class_relations {
         name_ids.push(relation.from_hubuum_class_id);
         name_ids.push(relation.to_hubuum_class_id);
         if object_class_ids
+            .as_slice()
             .binary_search(&relation.from_hubuum_class_id)
             .is_ok()
         {
@@ -1238,6 +1216,7 @@ async fn load_hydration_class_metadata(
         }
         if relation.to_hubuum_class_id != relation.from_hubuum_class_id
             && object_class_ids
+                .as_slice()
                 .binary_search(&relation.to_hubuum_class_id)
                 .is_ok()
         {
@@ -1393,69 +1372,28 @@ async fn ensure_class_name_ids(
     class_ids: &[i32],
     class_names: &mut BTreeMap<i32, String>,
 ) -> Result<(), ApiError> {
-    let mut missing_ids = class_ids
-        .iter()
-        .copied()
-        .filter(|class_id| !class_names.contains_key(class_id))
-        .collect::<Vec<_>>();
-    missing_ids.sort_unstable();
-    missing_ids.dedup();
+    let missing = ClassIdSet::new(
+        class_ids
+            .iter()
+            .copied()
+            .filter(|class_id| !class_names.contains_key(class_id)),
+    )?;
 
-    if missing_ids.is_empty() {
+    if missing.is_empty() {
         return Ok(());
     }
 
-    for (class_id, class_name) in load_class_names(pool, &missing_ids).await? {
+    for (class_id, class_name) in missing.load_names(pool).await? {
         class_names.insert(class_id, class_name);
     }
 
-    for class_id in missing_ids {
-        if !class_names.contains_key(&class_id) {
+    for class_id in missing.as_slice() {
+        if !class_names.contains_key(class_id) {
             return Err(ApiError::NotFound(format!("Class {class_id} not found")));
         }
     }
 
     Ok(())
-}
-
-async fn load_class_names(
-    pool: &DbPool,
-    class_ids: &[i32],
-) -> Result<Vec<(i32, String)>, ApiError> {
-    use crate::schema::hubuumclass::dsl::{hubuumclass, id, name};
-
-    if class_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let class_ids = class_ids.to_vec();
-    with_connection(pool, |conn| {
-        hubuumclass
-            .filter(id.eq_any(class_ids))
-            .select((id, name))
-            .load::<(i32, String)>(conn)
-    })
-}
-
-async fn load_class_relations_touching_classes(
-    pool: &DbPool,
-    class_ids: &[i32],
-) -> Result<Vec<HubuumClassRelation>, ApiError> {
-    use crate::schema::hubuumclass_relation::dsl::{
-        from_hubuum_class_id, hubuumclass_relation, to_hubuum_class_id,
-    };
-
-    if class_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let class_ids = class_ids.to_vec();
-    with_connection(pool, |conn| {
-        hubuumclass_relation
-            .filter(from_hubuum_class_id.eq_any(&class_ids))
-            .or_filter(to_hubuum_class_id.eq_any(&class_ids))
-            .load::<HubuumClassRelation>(conn)
-    })
 }
 
 fn add_bidirectional_alias_edge(

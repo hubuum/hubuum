@@ -18,7 +18,7 @@ use super::types::{
     PlanningFailure, PlanningState, RuntimeState, WorkerLoopAction,
 };
 use super::worker::{background_worker_action, mark_claimed_task_failed, process_one_task};
-use crate::db::traits::task::{TaskBackend, create_task_record, insert_import_results};
+use crate::db::traits::task::{TaskBackend, insert_import_results};
 use crate::db::traits::task_import::{create_class_db, create_object_db};
 use crate::db::with_connection;
 use crate::errors::ApiError;
@@ -292,8 +292,7 @@ fn test_execute_import_strict_preserves_underlying_error_variant() {
 #[test]
 fn test_process_one_task_marks_claimed_task_failed_when_execution_setup_errors() {
     let context = block_on(TestContext::new());
-    let task = block_on(create_task_record(
-        &context.pool,
+    let task = block_on(
         NewTaskRecord {
             kind: TaskKind::Import.as_str().to_string(),
             status: TaskStatus::Queued.as_str().to_string(),
@@ -309,8 +308,9 @@ fn test_process_one_task_marks_claimed_task_failed_when_execution_setup_errors()
             request_redacted_at: None,
             started_at: None,
             finished_at: None,
-        },
-    ))
+        }
+        .create(&context.pool),
+    )
     .unwrap();
 
     let earliest = NaiveDate::from_ymd_opt(2000, 1, 1)
@@ -1265,8 +1265,7 @@ fn test_best_effort_execution_only_aborts_for_matching_policy_failures() {
 #[test]
 fn test_process_one_task_report_failure_marks_single_failed_item() {
     let context = block_on(TestContext::new());
-    let task = block_on(create_task_record(
-        &context.pool,
+    let task = block_on(
         NewTaskRecord {
             kind: TaskKind::Report.as_str().to_string(),
             status: TaskStatus::Queued.as_str().to_string(),
@@ -1282,8 +1281,9 @@ fn test_process_one_task_report_failure_marks_single_failed_item() {
             request_redacted_at: None,
             started_at: None,
             finished_at: None,
-        },
-    ))
+        }
+        .create(&context.pool),
+    )
     .unwrap();
 
     let earliest = NaiveDate::from_ymd_opt(2000, 1, 1)
@@ -1318,8 +1318,7 @@ fn test_process_one_task_report_failure_marks_single_failed_item() {
 #[test]
 fn test_mark_claimed_task_failed_uses_recorded_result_counts() {
     let context = block_on(TestContext::new());
-    let task = block_on(create_task_record(
-        &context.pool,
+    let task = block_on(
         NewTaskRecord {
             kind: TaskKind::Import.as_str().to_string(),
             status: TaskStatus::Queued.as_str().to_string(),
@@ -1335,8 +1334,9 @@ fn test_mark_claimed_task_failed_uses_recorded_result_counts() {
             request_redacted_at: None,
             started_at: None,
             finished_at: None,
-        },
-    ))
+        }
+        .create(&context.pool),
+    )
     .unwrap();
 
     block_on(insert_import_results(
@@ -1382,8 +1382,7 @@ fn test_mark_claimed_task_failed_uses_recorded_result_counts() {
 #[test]
 fn test_count_import_results_summary_counts_success_and_failure_rows() {
     let context = block_on(TestContext::new());
-    let task = block_on(create_task_record(
-        &context.pool,
+    let task = block_on(
         NewTaskRecord {
             kind: TaskKind::Import.as_str().to_string(),
             status: TaskStatus::Queued.as_str().to_string(),
@@ -1399,8 +1398,9 @@ fn test_count_import_results_summary_counts_success_and_failure_rows() {
             request_redacted_at: None,
             started_at: None,
             finished_at: None,
-        },
-    ))
+        }
+        .create(&context.pool),
+    )
     .unwrap();
 
     block_on(insert_import_results(

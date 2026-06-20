@@ -8,7 +8,7 @@ mod tests {
     use rstest::rstest;
     use std::time::Duration;
 
-    use crate::db::traits::task::{create_task_record, purge_expired_report_outputs};
+    use crate::db::traits::task::purge_expired_report_outputs;
     use crate::models::{
         HubuumClass, HubuumClassRelation, HubuumObjectRelation, NewHubuumClass,
         NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewReportTemplate,
@@ -969,25 +969,23 @@ mod tests {
     ) {
         let context = test_context;
         let report_key = context.scoped_name("foreign-task-idempotency");
-        let report_task = create_task_record(
-            &context.pool,
-            NewTaskRecord {
-                kind: TaskKind::Import.as_str().to_string(),
-                status: TaskStatus::Queued.as_str().to_string(),
-                submitted_by: Some(context.admin_user.id),
-                idempotency_key: Some(report_key.clone()),
-                request_hash: Some(context.scoped_name("foreign-task-hash")),
-                request_payload: None,
-                summary: None,
-                total_items: 1,
-                processed_items: 0,
-                success_items: 0,
-                failed_items: 0,
-                request_redacted_at: None,
-                started_at: None,
-                finished_at: None,
-            },
-        )
+        let report_task = NewTaskRecord {
+            kind: TaskKind::Import.as_str().to_string(),
+            status: TaskStatus::Queued.as_str().to_string(),
+            submitted_by: Some(context.admin_user.id),
+            idempotency_key: Some(report_key.clone()),
+            request_hash: Some(context.scoped_name("foreign-task-hash")),
+            request_payload: None,
+            summary: None,
+            total_items: 1,
+            processed_items: 0,
+            success_items: 0,
+            failed_items: 0,
+            request_redacted_at: None,
+            started_at: None,
+            finished_at: None,
+        }
+        .create(&context.pool)
         .await
         .unwrap();
 

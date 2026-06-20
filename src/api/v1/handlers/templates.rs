@@ -101,12 +101,8 @@ pub async fn get_templates(
             .collect::<Vec<_>>();
 
     let (templates, total_count) =
-        crate::models::report_template::list_report_templates_with_total_count(
-            &pool,
-            &allowed_namespace_ids,
-            &search_params,
-        )
-        .await?;
+        ReportTemplate::list_with_total_count(&pool, &allowed_namespace_ids, &search_params)
+            .await?;
 
     paginated_json_response(templates, total_count, StatusCode::OK, &params)
 }

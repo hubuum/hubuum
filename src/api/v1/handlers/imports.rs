@@ -4,9 +4,7 @@ use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, web};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
-use crate::db::traits::task::{
-    TaskBackend, TaskCreateRequest, create_generic_task, find_task_by_idempotency,
-};
+use crate::db::traits::task::{TaskBackend, TaskCreateRequest};
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::parse_query_parameter;
@@ -37,7 +35,7 @@ async fn find_or_create_import_task(
     };
 
     if let Some(key) = idempotency_key.as_deref()
-        && let Some(existing) = find_task_by_idempotency(pool, submitted_by, key).await?
+        && let Some(existing) = TaskRecord::find_by_idempotency(pool, submitted_by, key).await?
     {
         if matches_request(&existing) {
             return Ok(existing);
@@ -50,23 +48,22 @@ async fn find_or_create_import_task(
 
     let create_idempotency_key = idempotency_key.clone();
 
-    match create_generic_task(
-        pool,
-        TaskCreateRequest {
-            kind: TaskKind::Import,
-            submitted_by,
-            idempotency_key: create_idempotency_key,
-            request_hash: Some(request_hash),
-            request_payload: payload,
-            total_items,
-        },
-    )
+    match (TaskCreateRequest {
+        kind: TaskKind::Import,
+        submitted_by,
+        idempotency_key: create_idempotency_key,
+        request_hash: Some(request_hash),
+        request_payload: payload,
+        total_items,
+    })
+    .create_generic(pool)
     .await
     {
         Ok(task) => Ok(task),
         Err(ApiError::Conflict(_)) => {
             if let Some(key) = idempotency_key.as_deref()
-                && let Some(existing) = find_task_by_idempotency(pool, submitted_by, key).await?
+                && let Some(existing) =
+                    TaskRecord::find_by_idempotency(pool, submitted_by, key).await?
                 && matches_request(&existing)
             {
                 return Ok(existing);

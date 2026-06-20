@@ -20,7 +20,8 @@ use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
 use crate::schema::report_templates;
-use crate::traits::accessors::{IdAccessor, InstanceAdapter, NamespaceAdapter};
+use crate::traits::BackendContext;
+use crate::traits::accessors::{IdAccessor, InstanceAdapter, NamespaceAccessors, NamespaceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 use crate::utilities::reporting::validate_template;
 
@@ -388,7 +389,75 @@ impl ReportTemplate {
             relation_context: self.relation_context.clone(),
         })
     }
+
+    /// The other report templates sharing this template's namespace (this template excluded).
+    #[allow(dead_code)]
+    pub async fn namespace_siblings(&self, pool: &DbPool) -> Result<Vec<ReportTemplate>, ApiError> {
+        self.report_templates(pool, Some(self.id)).await
+    }
+
+    /// Every report template across all namespaces.
+    #[allow(dead_code)]
+    pub async fn list_all(pool: &DbPool) -> Result<Vec<ReportTemplate>, ApiError> {
+        let rows = backend::load_all_rows(pool).await?;
+
+        rows.into_iter().map(TryInto::try_into).collect()
+    }
+
+    /// List report templates (sorted/paginated per `query_options`) together with the total count
+    /// matching the filters, scoped to the namespaces the caller may see.
+    pub async fn list_with_total_count(
+        pool: &DbPool,
+        allowed_namespace_ids: &[i32],
+        query_options: &QueryOptions,
+    ) -> Result<(Vec<ReportTemplate>, i64), ApiError> {
+        if allowed_namespace_ids.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
+
+        let (rows, total_count) =
+            backend::list_rows_with_total_count(pool, allowed_namespace_ids, query_options).await?;
+
+        let items = rows
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok((items, total_count))
+    }
 }
+
+/// List the report templates in a value's namespace. Available on anything that resolves to a
+/// namespace via [`NamespaceAccessors`] — `NamespaceID`, `Namespace`, `ReportTemplate`, classes,
+/// objects, and so on. For id-only types whose namespace must be looked up (e.g.
+/// `ReportTemplateID`) this performs that lookup before listing.
+///
+/// Defined here, rather than in `models::namespace`, so the namespace layer stays unaware of report
+/// templates: the dependency points from this feature module to the core accessor trait.
+pub trait NamespaceReportTemplates: NamespaceAccessors {
+    /// The report templates in this value's namespace, optionally excluding one template id (so a
+    /// template's own row is not treated as a sibling when validating its body against the set).
+    async fn report_templates<C>(
+        &self,
+        backend: &C,
+        exclude_template_id: Option<i32>,
+    ) -> Result<Vec<ReportTemplate>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        let namespace_id = self.namespace_id(backend).await?;
+        let rows = crate::db::traits::report_template::load_rows_in_namespace(
+            backend.db_pool(),
+            namespace_id,
+            exclude_template_id,
+        )
+        .await?;
+
+        rows.into_iter().map(TryInto::try_into).collect()
+    }
+}
+
+impl<T: NamespaceAccessors> NamespaceReportTemplates for T {}
 
 impl SaveAdapter for NewReportTemplate {
     type Output = ReportTemplate;
@@ -411,8 +480,9 @@ impl SaveAdapter for NewReportTemplate {
             },
         )
         .await?;
-        let namespace_templates =
-            report_templates_in_namespace(pool, new_row.namespace_id, None).await?;
+        let namespace_templates = NamespaceID(new_row.namespace_id)
+            .report_templates(pool, None)
+            .await?;
         validate_template(
             &new_row.name,
             &new_row.template,
@@ -501,8 +571,9 @@ async fn apply_report_template_update(
         },
     )
     .await?;
-    let namespace_templates =
-        report_templates_in_namespace(pool, target_namespace_id, Some(template_id)).await?;
+    let namespace_templates = NamespaceID(target_namespace_id)
+        .report_templates(pool, Some(template_id))
+        .await?;
     validate_template(
         &target_name,
         &target_template,
@@ -613,24 +684,6 @@ impl DeleteAdapter for ReportTemplateID {
     async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
         self.delete_report_template_record(pool).await
     }
-}
-
-pub async fn report_templates_in_namespace(
-    pool: &DbPool,
-    target_namespace_id: i32,
-    exclude_template_id: Option<i32>,
-) -> Result<Vec<ReportTemplate>, ApiError> {
-    let rows =
-        backend::load_rows_in_namespace(pool, target_namespace_id, exclude_template_id).await?;
-
-    rows.into_iter().map(TryInto::try_into).collect()
-}
-
-#[allow(dead_code)]
-pub async fn list_all_report_templates(pool: &DbPool) -> Result<Vec<ReportTemplate>, ApiError> {
-    let rows = backend::load_all_rows(pool).await?;
-
-    rows.into_iter().map(TryInto::try_into).collect()
 }
 
 /// Borrowed view of the report-execution metadata validated together. Bundled so
@@ -852,26 +905,6 @@ async fn ensure_template_name_is_available(
     }
 
     Ok(())
-}
-
-pub async fn list_report_templates_with_total_count(
-    pool: &DbPool,
-    allowed_namespace_ids: &[i32],
-    query_options: &QueryOptions,
-) -> Result<(Vec<ReportTemplate>, i64), ApiError> {
-    if allowed_namespace_ids.is_empty() {
-        return Ok((Vec::new(), 0));
-    }
-
-    let (rows, total_count) =
-        backend::list_rows_with_total_count(pool, allowed_namespace_ids, query_options).await?;
-
-    let items = rows
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok((items, total_count))
 }
 
 impl IdAccessor for ReportTemplate {

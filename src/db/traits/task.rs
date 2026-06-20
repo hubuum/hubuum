@@ -386,33 +386,36 @@ pub trait TaskBackend: TaskIdentifier {
 impl<T: TaskIdentifier + ?Sized> TaskBackend for T {}
 
 #[cfg(test)]
-pub async fn create_task_record(
-    pool: &DbPool,
-    new_task: NewTaskRecord,
-) -> Result<TaskRecord, ApiError> {
-    use crate::schema::tasks::dsl::tasks;
+impl NewTaskRecord {
+    /// Insert this new task row and return the persisted record.
+    pub async fn create(self, pool: &DbPool) -> Result<TaskRecord, ApiError> {
+        use crate::schema::tasks::dsl::tasks;
 
-    with_connection(pool, |conn| {
-        diesel::insert_into(tasks)
-            .values(&new_task)
-            .get_result::<TaskRecord>(conn)
-    })
+        with_connection(pool, |conn| {
+            diesel::insert_into(tasks)
+                .values(&self)
+                .get_result::<TaskRecord>(conn)
+        })
+    }
 }
 
-pub async fn find_task_by_idempotency(
-    pool: &DbPool,
-    submitter_id: i32,
-    key: &str,
-) -> Result<Option<TaskRecord>, ApiError> {
-    use crate::schema::tasks::dsl::{idempotency_key, submitted_by, tasks};
+impl TaskRecord {
+    /// Find the task submitted by `submitter_id` carrying the given idempotency key, if any.
+    pub async fn find_by_idempotency(
+        pool: &DbPool,
+        submitter_id: i32,
+        key: &str,
+    ) -> Result<Option<TaskRecord>, ApiError> {
+        use crate::schema::tasks::dsl::{idempotency_key, submitted_by, tasks};
 
-    with_connection(pool, |conn| {
-        tasks
-            .filter(submitted_by.eq(Some(submitter_id)))
-            .filter(idempotency_key.eq(key))
-            .first::<TaskRecord>(conn)
-            .optional()
-    })
+        with_connection(pool, |conn| {
+            tasks
+                .filter(submitted_by.eq(Some(submitter_id)))
+                .filter(idempotency_key.eq(key))
+                .first::<TaskRecord>(conn)
+                .optional()
+        })
+    }
 }
 
 fn build_task_query<'a>(
@@ -545,17 +548,17 @@ fn decode_history_cursor_id(query_options: &QueryOptions) -> Result<Option<i32>,
     }
 }
 
-pub async fn append_task_event(
-    pool: &DbPool,
-    event: NewTaskEventRecord,
-) -> Result<TaskEventRecord, ApiError> {
-    use crate::schema::task_events::dsl::task_events;
+impl NewTaskEventRecord {
+    /// Append this event to its task's history and return the persisted event.
+    pub async fn append(self, pool: &DbPool) -> Result<TaskEventRecord, ApiError> {
+        use crate::schema::task_events::dsl::task_events;
 
-    with_connection(pool, |conn| {
-        diesel::insert_into(task_events)
-            .values(&event)
-            .get_result::<TaskEventRecord>(conn)
-    })
+        with_connection(pool, |conn| {
+            diesel::insert_into(task_events)
+                .values(&self)
+                .get_result::<TaskEventRecord>(conn)
+        })
+    }
 }
 
 pub async fn insert_import_results(
@@ -628,47 +631,51 @@ pub async fn claim_next_queued_task(pool: &DbPool) -> Result<Option<TaskRecord>,
     Ok(record)
 }
 
-pub async fn create_generic_task(
-    pool: &DbPool,
-    request: TaskCreateRequest,
-) -> Result<TaskRecord, ApiError> {
-    let task = with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
-        insert_queued_task_with_event(conn, request)
-    })?;
+impl TaskCreateRequest {
+    /// Queue this task (with its initial "queued" event) in a single transaction.
+    pub async fn create_generic(self, pool: &DbPool) -> Result<TaskRecord, ApiError> {
+        let task = with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
+            insert_queued_task_with_event(conn, self)
+        })?;
 
-    log_task_queued(&task);
+        log_task_queued(&task);
 
-    Ok(task)
-}
-
-pub async fn create_report_task_with_active_limit(
-    pool: &DbPool,
-    request: TaskCreateRequest,
-    max_active_report_tasks: usize,
-) -> Result<TaskRecord, ApiError> {
-    if request.kind != TaskKind::Report {
-        return Err(ApiError::BadRequest(
-            "create_report_task_with_active_limit only accepts report tasks".to_string(),
-        ));
+        Ok(task)
     }
 
-    let max_active_report_tasks = i64::try_from(max_active_report_tasks).unwrap_or(i64::MAX);
-    let submitter_id = request.submitted_by;
-    let task = with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
-        acquire_report_task_capacity_lock(conn, submitter_id)?;
-        let active_count = count_active_report_tasks_for_user_in_transaction(conn, submitter_id)?;
-        if active_count >= max_active_report_tasks {
-            return Err(ApiError::TooManyRequests(format!(
-                "Too many active report tasks for user ({active_count} >= {max_active_report_tasks}); wait for queued or running reports to finish"
-            )));
+    /// Queue this report task, rejecting it with `429` if the submitter already has
+    /// `max_active_report_tasks` queued/validating/running reports. Capacity is checked under a
+    /// per-user advisory lock so concurrent submissions cannot race past the limit.
+    pub async fn create_with_active_report_limit(
+        self,
+        pool: &DbPool,
+        max_active_report_tasks: usize,
+    ) -> Result<TaskRecord, ApiError> {
+        if self.kind != TaskKind::Report {
+            return Err(ApiError::BadRequest(
+                "create_with_active_report_limit only accepts report tasks".to_string(),
+            ));
         }
 
-        insert_queued_task_with_event(conn, request)
-    })?;
+        let max_active_report_tasks = i64::try_from(max_active_report_tasks).unwrap_or(i64::MAX);
+        let submitter_id = self.submitted_by;
+        let task = with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
+            acquire_report_task_capacity_lock(conn, submitter_id)?;
+            let active_count =
+                count_active_report_tasks_for_user_in_transaction(conn, submitter_id)?;
+            if active_count >= max_active_report_tasks {
+                return Err(ApiError::TooManyRequests(format!(
+                    "Too many active report tasks for user ({active_count} >= {max_active_report_tasks}); wait for queued or running reports to finish"
+                )));
+            }
 
-    log_task_queued(&task);
+            insert_queued_task_with_event(conn, self)
+        })?;
 
-    Ok(task)
+        log_task_queued(&task);
+
+        Ok(task)
+    }
 }
 
 fn insert_queued_task_with_event(
@@ -771,10 +778,7 @@ mod tests {
     use std::sync::mpsc;
     use std::thread;
 
-    use super::{
-        TaskBackend, TaskCreateRequest, claim_next_queued_task,
-        create_report_task_with_active_limit, create_task_record,
-    };
+    use super::{TaskBackend, TaskCreateRequest, claim_next_queued_task};
     use crate::db::traits::user::DeleteUserRecord;
     use crate::db::with_transaction;
     use crate::errors::ApiError;
@@ -789,8 +793,7 @@ mod tests {
         let claim_prefix = context.scoped_name("claim");
 
         for index in 0..3 {
-            let task = block_on(create_task_record(
-                &context.pool,
+            let task = block_on(
                 NewTaskRecord {
                     kind: TaskKind::Import.as_str().to_string(),
                     status: TaskStatus::Queued.as_str().to_string(),
@@ -806,8 +809,9 @@ mod tests {
                     request_redacted_at: None,
                     started_at: None,
                     finished_at: None,
-                },
-            ))
+                }
+                .create(&context.pool),
+            )
             .unwrap();
             created_ids.push(task.id);
         }
@@ -872,8 +876,7 @@ mod tests {
     fn test_task_history_survives_user_deletion() {
         let context = block_on(TestContext::new());
         let task_owner = block_on(create_test_user(&context.pool));
-        let task = block_on(create_task_record(
-            &context.pool,
+        let task = block_on(
             NewTaskRecord {
                 kind: TaskKind::Import.as_str().to_string(),
                 status: TaskStatus::Succeeded.as_str().to_string(),
@@ -889,8 +892,9 @@ mod tests {
                 request_redacted_at: None,
                 started_at: None,
                 finished_at: None,
-            },
-        ))
+            }
+            .create(&context.pool),
+        )
         .unwrap();
 
         block_on(task_owner.delete_user_record(&context.pool)).unwrap();
@@ -902,8 +906,7 @@ mod tests {
     #[test]
     fn test_report_task_active_limit_blocks_new_work_for_same_user() {
         let context = block_on(TestContext::new());
-        let first = block_on(create_report_task_with_active_limit(
-            &context.pool,
+        let first = block_on(
             TaskCreateRequest {
                 kind: TaskKind::Report,
                 submitted_by: context.admin_user.id,
@@ -911,15 +914,14 @@ mod tests {
                 request_hash: Some(context.scoped_name("report-cap-first-hash")),
                 request_payload: serde_json::json!({"report": "first"}),
                 total_items: 1,
-            },
-            1,
-        ))
+            }
+            .create_with_active_report_limit(&context.pool, 1),
+        )
         .unwrap();
 
         assert_eq!(first.status, TaskStatus::Queued.as_str());
 
-        let error = block_on(create_report_task_with_active_limit(
-            &context.pool,
+        let error = block_on(
             TaskCreateRequest {
                 kind: TaskKind::Report,
                 submitted_by: context.admin_user.id,
@@ -927,9 +929,9 @@ mod tests {
                 request_hash: Some(context.scoped_name("report-cap-second-hash")),
                 request_payload: serde_json::json!({"report": "second"}),
                 total_items: 1,
-            },
-            1,
-        ))
+            }
+            .create_with_active_report_limit(&context.pool, 1),
+        )
         .unwrap_err();
 
         match error {

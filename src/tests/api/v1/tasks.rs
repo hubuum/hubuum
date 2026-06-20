@@ -4,7 +4,6 @@ mod tests {
     use chrono::Utc;
     use rstest::rstest;
 
-    use crate::db::traits::task::create_task_record;
     use crate::models::{NewTaskRecord, TaskKind, TaskResponse, TaskStatus};
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::tests::api_operations::get_request;
@@ -22,25 +21,23 @@ mod tests {
         status: TaskStatus,
         label: &str,
     ) -> i32 {
-        let task = create_task_record(
-            &context.pool,
-            NewTaskRecord {
-                kind: kind.as_str().to_string(),
-                status: status.as_str().to_string(),
-                submitted_by: Some(submitted_by),
-                idempotency_key: None,
-                request_hash: None,
-                request_payload: None,
-                summary: Some(context.scoped_name(label)),
-                total_items: 0,
-                processed_items: 0,
-                success_items: 0,
-                failed_items: 0,
-                request_redacted_at: Some(Utc::now().naive_utc()),
-                started_at: Some(Utc::now().naive_utc()),
-                finished_at: Some(Utc::now().naive_utc()),
-            },
-        )
+        let task = NewTaskRecord {
+            kind: kind.as_str().to_string(),
+            status: status.as_str().to_string(),
+            submitted_by: Some(submitted_by),
+            idempotency_key: None,
+            request_hash: None,
+            request_payload: None,
+            summary: Some(context.scoped_name(label)),
+            total_items: 0,
+            processed_items: 0,
+            success_items: 0,
+            failed_items: 0,
+            request_redacted_at: Some(Utc::now().naive_utc()),
+            started_at: Some(Utc::now().naive_utc()),
+            finished_at: Some(Utc::now().naive_utc()),
+        }
+        .create(&context.pool)
         .await
         .unwrap();
 
