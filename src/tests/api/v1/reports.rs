@@ -1577,7 +1577,14 @@ mod tests {
         let task: TaskResponse = test::read_body_json(resp).await;
         let _ = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
 
-        let backdated_expiry = chrono::Utc::now().naive_utc() - chrono::Duration::hours(1);
+        // Fixed, whole-second timestamp in the past: deterministically expired and round-trips
+        // through Postgres' microsecond-resolution `timestamp` column without precision loss.
+        // (A `now()`-derived value carries nanosecond precision on Linux that the column
+        // truncates, which would break the exact-equality assertions below.)
+        let backdated_expiry = chrono::NaiveDate::from_ymd_opt(2000, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
         crate::db::with_connection(&context.pool, |conn| {
             use crate::schema::report_task_outputs::dsl::{
                 output_expires_at, report_task_outputs, task_id,
