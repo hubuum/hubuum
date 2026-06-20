@@ -24,6 +24,13 @@ mod tests {
     use crate::traits::{CanSave, CanUpdate};
     const REPORTS_ENDPOINT: &str = "/api/v1/reports";
 
+    /// Serializes only the two tests that contend over the process-wide set of expired report
+    /// outputs: one runs the global `purge_expired_report_outputs`, the other needs its expired
+    /// row to survive until it has queried it. They cannot safely interleave; every other test in
+    /// the suite remains free to run in parallel.
+    static EXPIRED_OUTPUT_PURGE_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+        std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
     async fn wait_for_task(
         context: &TestContext,
         task_id: i32,
@@ -1482,6 +1489,10 @@ mod tests {
         let task: TaskResponse = test::read_body_json(resp).await;
         let _ = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
 
+        // Hold the purge lock from here: the global purge below must not race the expired-output
+        // test, which relies on its own expired row surviving.
+        let _purge_guard = EXPIRED_OUTPUT_PURGE_LOCK.lock().await;
+
         crate::db::with_connection(&context.pool, |conn| {
             use crate::schema::report_task_outputs::dsl::{
                 output_expires_at, report_task_outputs, task_id,
@@ -1496,8 +1507,14 @@ mod tests {
         })
         .unwrap();
 
+        // The purge is process-wide; assert it cleaned *our* task rather than asserting it cleaned
+        // nothing else, so other suites' expired rows can't make this brittle.
         let cleaned = purge_expired_report_outputs(&context.pool).await.unwrap();
-        assert_eq!(cleaned, vec![task.id]);
+        assert!(
+            cleaned.contains(&task.id),
+            "expected purge to include task {}, got {cleaned:?}",
+            task.id
+        );
 
         let projection = get_request(
             &context.pool,
@@ -1576,6 +1593,10 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
         let task: TaskResponse = test::read_body_json(resp).await;
         let _ = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+
+        // Hold the purge lock so the cleanup test's global purge cannot delete our expired row
+        // out from under the assertions below.
+        let _purge_guard = EXPIRED_OUTPUT_PURGE_LOCK.lock().await;
 
         // Fixed, whole-second timestamp in the past: deterministically expired and round-trips
         // through Postgres' microsecond-resolution `timestamp` column without precision loss.
