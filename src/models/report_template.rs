@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::db::DbPool;
-use crate::db::traits::report_template as backend;
+use crate::db::traits::report_template::{
+    self as backend, DeleteReportTemplateRecord, LoadReportTemplateRecord,
+    ReportTemplateNamespaceLookup, SaveReportTemplateRecord, UpdateReportTemplateRecord,
+};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, QueryOptions, SortParam, parse_query_parameter};
 use crate::models::{
@@ -107,6 +110,11 @@ impl ReportTemplateID {
             )));
         }
         Ok(Self(id))
+    }
+
+    /// The underlying id. Use at persistence boundaries that still operate on the raw `i32`.
+    pub fn id(self) -> i32 {
+        self.0
     }
 }
 
@@ -412,7 +420,7 @@ impl SaveAdapter for NewReportTemplate {
             &namespace_templates,
             ReportContentType::from_mime(&new_row.content_type)?,
         )?;
-        let row = backend::insert_row(pool, &new_row).await?;
+        let row = new_row.save_report_template_record(pool).await?;
 
         row.try_into()
     }
@@ -426,16 +434,18 @@ impl UpdateAdapter for UpdateReportTemplate {
         pool: &DbPool,
         entry_id: i32,
     ) -> Result<ReportTemplate, ApiError> {
-        update_report_template_record(pool, entry_id, self.clone()).await
+        apply_report_template_update(pool, entry_id, self.clone()).await
     }
 }
 
-async fn update_report_template_record(
+async fn apply_report_template_update(
     pool: &DbPool,
     template_id: i32,
     update: UpdateReportTemplate,
 ) -> Result<ReportTemplate, ApiError> {
-    let current_row = backend::load_row(pool, template_id).await?;
+    let current_row = ReportTemplateID::new(template_id)?
+        .load_report_template_record(pool)
+        .await?;
 
     if update.is_empty() {
         return current_row.try_into();
@@ -517,7 +527,9 @@ async fn update_report_template_record(
         ),
         default_limits: Some(default_limits_json),
     };
-    let row = backend::update_row(pool, template_id, &changeset).await?;
+    let row = changeset
+        .update_report_template_record(pool, template_id)
+        .await?;
 
     row.try_into()
 }
@@ -599,7 +611,7 @@ fn resolve_report_profile(
 
 impl DeleteAdapter for ReportTemplateID {
     async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
-        backend::delete_row(pool, self.0).await
+        self.delete_report_template_record(pool).await
     }
 }
 
@@ -882,7 +894,7 @@ impl IdAccessor for ReportTemplateID {
 
 impl InstanceAdapter<ReportTemplate> for ReportTemplateID {
     async fn instance_adapter(&self, pool: &DbPool) -> Result<ReportTemplate, ApiError> {
-        backend::load_row(pool, self.0).await?.try_into()
+        self.load_report_template_record(pool).await?.try_into()
     }
 }
 
@@ -904,7 +916,7 @@ impl NamespaceAdapter for ReportTemplateID {
     }
 
     async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<i32, ApiError> {
-        backend::namespace_id_for(pool, self.0).await
+        self.lookup_report_template_namespace_id(pool).await
     }
 }
 

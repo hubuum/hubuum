@@ -2,71 +2,126 @@
 //!
 //! All Diesel/Postgres query construction for `report_templates` lives here so the model layer
 //! (`crate::models::report_template`) stays thin and free of backend details, mirroring the other
-//! entities under `src/db/traits/`. These functions operate on the row types defined alongside the
-//! domain type; the model owns the domain<->row conversions and all validation.
+//! entities under `src/db/traits/`. Instance-scoped CRUD is exposed as self-methods via the record
+//! traits below (matching `LoadClassRecord` and friends); collection, search, cross-table, and
+//! aggregate queries — which have no single owning instance — stay free functions, as elsewhere in
+//! this module. The model owns the domain<->row conversions and all validation.
 
 use diesel::prelude::*;
 
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::report_template::{
-    NewReportTemplateRow, ReportTemplate, ReportTemplateRow, UpdateReportTemplateRow,
+    NewReportTemplateRow, ReportTemplate, ReportTemplateID, ReportTemplateRow,
+    UpdateReportTemplateRow,
 };
 use crate::models::search::{FilterField, QueryOptions};
 use crate::{date_search, numeric_search, string_search};
 
-/// Insert a new report-template row and return the persisted row.
-pub(crate) async fn insert_row(
-    pool: &DbPool,
-    new_row: &NewReportTemplateRow,
-) -> Result<ReportTemplateRow, ApiError> {
-    use crate::schema::report_templates::dsl::report_templates;
-
-    with_connection(pool, |conn| {
-        diesel::insert_into(report_templates)
-            .values(new_row)
-            .get_result::<ReportTemplateRow>(conn)
-    })
+/// Load the report-template row identified by this id.
+pub(crate) trait LoadReportTemplateRecord {
+    async fn load_report_template_record(
+        &self,
+        pool: &DbPool,
+    ) -> Result<ReportTemplateRow, ApiError>;
 }
 
-/// Load a single report-template row by id.
-pub(crate) async fn load_row(
-    pool: &DbPool,
-    template_id: i32,
-) -> Result<ReportTemplateRow, ApiError> {
-    use crate::schema::report_templates::dsl::{id, report_templates};
+impl LoadReportTemplateRecord for ReportTemplateID {
+    async fn load_report_template_record(
+        &self,
+        pool: &DbPool,
+    ) -> Result<ReportTemplateRow, ApiError> {
+        use crate::schema::report_templates::dsl::{id, report_templates};
 
-    with_connection(pool, |conn| {
-        report_templates
-            .filter(id.eq(template_id))
-            .first::<ReportTemplateRow>(conn)
-    })
+        with_connection(pool, |conn| {
+            report_templates
+                .filter(id.eq(self.id()))
+                .first::<ReportTemplateRow>(conn)
+        })
+    }
 }
 
-/// Apply a changeset to the report-template row with the given id and return the updated row.
-pub(crate) async fn update_row(
-    pool: &DbPool,
-    template_id: i32,
-    changeset: &UpdateReportTemplateRow,
-) -> Result<ReportTemplateRow, ApiError> {
-    use crate::schema::report_templates::dsl::{id, report_templates};
-
-    with_connection(pool, |conn| {
-        diesel::update(report_templates.filter(id.eq(template_id)))
-            .set(changeset)
-            .get_result::<ReportTemplateRow>(conn)
-    })
+/// Insert this new report-template row and return the persisted row.
+pub(crate) trait SaveReportTemplateRecord {
+    async fn save_report_template_record(
+        &self,
+        pool: &DbPool,
+    ) -> Result<ReportTemplateRow, ApiError>;
 }
 
-/// Delete the report-template row with the given id.
-pub(crate) async fn delete_row(pool: &DbPool, template_id: i32) -> Result<(), ApiError> {
-    use crate::schema::report_templates::dsl::{id, report_templates};
+impl SaveReportTemplateRecord for NewReportTemplateRow {
+    async fn save_report_template_record(
+        &self,
+        pool: &DbPool,
+    ) -> Result<ReportTemplateRow, ApiError> {
+        use crate::schema::report_templates::dsl::report_templates;
 
-    with_connection(pool, |conn| {
-        diesel::delete(report_templates.filter(id.eq(template_id))).execute(conn)
-    })?;
+        with_connection(pool, |conn| {
+            diesel::insert_into(report_templates)
+                .values(self)
+                .get_result::<ReportTemplateRow>(conn)
+        })
+    }
+}
 
-    Ok(())
+/// Apply this changeset to the report-template row with the given id and return the updated row.
+pub(crate) trait UpdateReportTemplateRecord {
+    async fn update_report_template_record(
+        &self,
+        pool: &DbPool,
+        template_id: i32,
+    ) -> Result<ReportTemplateRow, ApiError>;
+}
+
+impl UpdateReportTemplateRecord for UpdateReportTemplateRow {
+    async fn update_report_template_record(
+        &self,
+        pool: &DbPool,
+        template_id: i32,
+    ) -> Result<ReportTemplateRow, ApiError> {
+        use crate::schema::report_templates::dsl::{id, report_templates};
+
+        with_connection(pool, |conn| {
+            diesel::update(report_templates.filter(id.eq(template_id)))
+                .set(self)
+                .get_result::<ReportTemplateRow>(conn)
+        })
+    }
+}
+
+/// Delete the report-template row identified by this id.
+pub(crate) trait DeleteReportTemplateRecord {
+    async fn delete_report_template_record(&self, pool: &DbPool) -> Result<(), ApiError>;
+}
+
+impl DeleteReportTemplateRecord for ReportTemplateID {
+    async fn delete_report_template_record(&self, pool: &DbPool) -> Result<(), ApiError> {
+        use crate::schema::report_templates::dsl::{id, report_templates};
+
+        with_connection(pool, |conn| {
+            diesel::delete(report_templates.filter(id.eq(self.id()))).execute(conn)
+        })?;
+
+        Ok(())
+    }
+}
+
+/// Look up the namespace id of the report template identified by this id.
+pub(crate) trait ReportTemplateNamespaceLookup {
+    async fn lookup_report_template_namespace_id(&self, pool: &DbPool) -> Result<i32, ApiError>;
+}
+
+impl ReportTemplateNamespaceLookup for ReportTemplateID {
+    async fn lookup_report_template_namespace_id(&self, pool: &DbPool) -> Result<i32, ApiError> {
+        use crate::schema::report_templates::dsl::{id, namespace_id, report_templates};
+
+        with_connection(pool, |conn| {
+            report_templates
+                .filter(id.eq(self.id()))
+                .select(namespace_id)
+                .first::<i32>(conn)
+        })
+    }
 }
 
 /// Load all report-template rows in a namespace, optionally excluding one template id.
@@ -134,18 +189,6 @@ pub(crate) async fn class_namespace_id(
             .select(namespace_id)
             .first::<i32>(conn)
             .optional()
-    })
-}
-
-/// The namespace id of the report template with the given id.
-pub(crate) async fn namespace_id_for(pool: &DbPool, template_id: i32) -> Result<i32, ApiError> {
-    use crate::schema::report_templates::dsl::{id, namespace_id, report_templates};
-
-    with_connection(pool, |conn| {
-        report_templates
-            .filter(id.eq(template_id))
-            .select(namespace_id)
-            .first::<i32>(conn)
     })
 }
 
