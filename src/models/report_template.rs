@@ -4,7 +4,8 @@ use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::{DbPool, with_connection};
+use crate::db::DbPool;
+use crate::db::traits::report_template as backend;
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, QueryOptions, SortParam, parse_query_parameter};
 use crate::models::{
@@ -19,7 +20,6 @@ use crate::schema::report_templates;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter, NamespaceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 use crate::utilities::reporting::validate_template;
-use crate::{date_search, numeric_search, string_search};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -53,7 +53,7 @@ impl FromStr for ReportTemplateKind {
 
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = report_templates)]
-struct ReportTemplateRow {
+pub(crate) struct ReportTemplateRow {
     id: i32,
     namespace_id: i32,
     name: String,
@@ -204,7 +204,7 @@ where
 
 #[derive(Debug, Clone, Insertable)]
 #[diesel(table_name = report_templates)]
-struct NewReportTemplateRow {
+pub(crate) struct NewReportTemplateRow {
     namespace_id: i32,
     name: String,
     description: String,
@@ -222,7 +222,7 @@ struct NewReportTemplateRow {
 
 #[derive(Debug, Clone, AsChangeset)]
 #[diesel(table_name = report_templates)]
-struct UpdateReportTemplateRow {
+pub(crate) struct UpdateReportTemplateRow {
     namespace_id: Option<i32>,
     name: Option<String>,
     description: Option<String>,
@@ -386,8 +386,6 @@ impl SaveAdapter for NewReportTemplate {
     type Output = ReportTemplate;
 
     async fn save_adapter(&self, pool: &DbPool) -> Result<ReportTemplate, ApiError> {
-        use crate::schema::report_templates::dsl::report_templates;
-
         let new_row = self.clone().into_row()?;
         ensure_template_name_is_available(pool, new_row.namespace_id, &new_row.name, None).await?;
         validate_report_profile(
@@ -414,11 +412,7 @@ impl SaveAdapter for NewReportTemplate {
             &namespace_templates,
             ReportContentType::from_mime(&new_row.content_type)?,
         )?;
-        let row = with_connection(pool, |conn| {
-            diesel::insert_into(report_templates)
-                .values(&new_row)
-                .get_result::<ReportTemplateRow>(conn)
-        })?;
+        let row = backend::insert_row(pool, &new_row).await?;
 
         row.try_into()
     }
@@ -441,13 +435,7 @@ async fn update_report_template_record(
     template_id: i32,
     update: UpdateReportTemplate,
 ) -> Result<ReportTemplate, ApiError> {
-    use crate::schema::report_templates::dsl::{id, report_templates};
-
-    let current_row = with_connection(pool, |conn| {
-        report_templates
-            .filter(id.eq(template_id))
-            .first::<ReportTemplateRow>(conn)
-    })?;
+    let current_row = backend::load_row(pool, template_id).await?;
 
     if update.is_empty() {
         return current_row.try_into();
@@ -529,11 +517,7 @@ async fn update_report_template_record(
         ),
         default_limits: Some(default_limits_json),
     };
-    let row = with_connection(pool, |conn| {
-        diesel::update(report_templates.filter(id.eq(template_id)))
-            .set(&changeset)
-            .get_result::<ReportTemplateRow>(conn)
-    })?;
+    let row = backend::update_row(pool, template_id, &changeset).await?;
 
     row.try_into()
 }
@@ -615,13 +599,7 @@ fn resolve_report_profile(
 
 impl DeleteAdapter for ReportTemplateID {
     async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
-        use crate::schema::report_templates::dsl::{id, report_templates};
-
-        with_connection(pool, |conn| {
-            diesel::delete(report_templates.filter(id.eq(self.0))).execute(conn)
-        })?;
-
-        Ok(())
+        backend::delete_row(pool, self.0).await
     }
 }
 
@@ -630,28 +608,15 @@ pub async fn report_templates_in_namespace(
     target_namespace_id: i32,
     exclude_template_id: Option<i32>,
 ) -> Result<Vec<ReportTemplate>, ApiError> {
-    use crate::schema::report_templates::dsl::{id, namespace_id, report_templates};
-
-    let rows = with_connection(pool, |conn| {
-        let mut query = report_templates
-            .into_boxed()
-            .filter(namespace_id.eq(target_namespace_id));
-        if let Some(exclude_template_id) = exclude_template_id {
-            query = query.filter(id.ne(exclude_template_id));
-        }
-        query.load::<ReportTemplateRow>(conn)
-    })?;
+    let rows =
+        backend::load_rows_in_namespace(pool, target_namespace_id, exclude_template_id).await?;
 
     rows.into_iter().map(TryInto::try_into).collect()
 }
 
 #[allow(dead_code)]
 pub async fn list_all_report_templates(pool: &DbPool) -> Result<Vec<ReportTemplate>, ApiError> {
-    use crate::schema::report_templates::dsl::report_templates;
-
-    let rows = with_connection(pool, |conn| {
-        report_templates.load::<ReportTemplateRow>(conn)
-    })?;
+    let rows = backend::load_all_rows(pool).await?;
 
     rows.into_iter().map(TryInto::try_into).collect()
 }
@@ -794,16 +759,9 @@ async fn ensure_template_class_in_namespace(
     target_namespace_id: i32,
     target_class_id: i32,
 ) -> Result<(), ApiError> {
-    use crate::schema::hubuumclass::dsl::{hubuumclass, id, namespace_id};
-
-    let class_namespace_id = with_connection(pool, |conn| {
-        hubuumclass
-            .filter(id.eq(target_class_id))
-            .select(namespace_id)
-            .first::<i32>(conn)
-            .optional()
-    })?
-    .ok_or_else(|| ApiError::NotFound(format!("Class {target_class_id} not found")))?;
+    let class_namespace_id = backend::class_namespace_id(pool, target_class_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Class {target_class_id} not found")))?;
 
     if class_namespace_id != target_namespace_id {
         return Err(ApiError::BadRequest(format!(
@@ -870,20 +828,11 @@ async fn ensure_template_name_is_available(
     target_name: &str,
     exclude_template_id: Option<i32>,
 ) -> Result<(), ApiError> {
-    use crate::schema::report_templates::dsl::{id, name, namespace_id, report_templates};
+    let conflict =
+        backend::name_conflict_exists(pool, target_namespace_id, target_name, exclude_template_id)
+            .await?;
 
-    let existing_name_conflict = with_connection(pool, |conn| {
-        let mut query = report_templates
-            .into_boxed()
-            .filter(namespace_id.eq(target_namespace_id))
-            .filter(name.eq(target_name));
-        if let Some(exclude_template_id) = exclude_template_id {
-            query = query.filter(id.ne(exclude_template_id));
-        }
-        query.first::<ReportTemplateRow>(conn).optional()
-    })?;
-
-    if existing_name_conflict.is_some() {
+    if conflict {
         return Err(ApiError::Conflict(format!(
             "Template name '{}' already exists in namespace {}",
             target_name, target_namespace_id
@@ -891,50 +840,6 @@ async fn ensure_template_name_is_available(
     }
 
     Ok(())
-}
-
-fn build_report_template_query<'a>(
-    allowed_namespace_ids: &'a [i32],
-    query_options: &'a QueryOptions,
-) -> Result<crate::schema::report_templates::BoxedQuery<'a, diesel::pg::Pg>, ApiError> {
-    use crate::schema::report_templates::dsl::{
-        class_id, created_at, description, id, kind, name, namespace_id, report_templates,
-        updated_at,
-    };
-
-    if allowed_namespace_ids.is_empty() {
-        return Ok(report_templates
-            .into_boxed()
-            .filter(namespace_id.eq_any(allowed_namespace_ids)));
-    }
-
-    let mut query = report_templates
-        .into_boxed()
-        .filter(namespace_id.eq_any(allowed_namespace_ids));
-
-    for param in &query_options.filters {
-        let operator = param.operator.clone();
-        match param.field {
-            FilterField::Id => numeric_search!(query, param, operator, id),
-            FilterField::Name => string_search!(query, param, operator, name),
-            FilterField::Description => string_search!(query, param, operator, description),
-            FilterField::Namespaces | FilterField::NamespaceId => {
-                numeric_search!(query, param, operator, namespace_id)
-            }
-            FilterField::Kind => string_search!(query, param, operator, kind),
-            FilterField::ClassId => numeric_search!(query, param, operator, class_id),
-            FilterField::CreatedAt => date_search!(query, param, operator, created_at),
-            FilterField::UpdatedAt => date_search!(query, param, operator, updated_at),
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' isn't searchable (or does not exist) for report templates",
-                    param.field
-                )));
-            }
-        }
-    }
-
-    Ok(query)
 }
 
 pub async fn list_report_templates_with_total_count(
@@ -946,12 +851,8 @@ pub async fn list_report_templates_with_total_count(
         return Ok((Vec::new(), 0));
     }
 
-    let query = build_report_template_query(allowed_namespace_ids, query_options)?;
-    let total_count = with_connection(pool, |conn| query.count().get_result::<i64>(conn))?;
-
-    let mut query = build_report_template_query(allowed_namespace_ids, query_options)?;
-    crate::apply_query_options!(query, query_options, ReportTemplate);
-    let rows = with_connection(pool, |conn| query.load::<ReportTemplateRow>(conn))?;
+    let (rows, total_count) =
+        backend::list_rows_with_total_count(pool, allowed_namespace_ids, query_options).await?;
 
     let items = rows
         .into_iter()
@@ -981,15 +882,7 @@ impl IdAccessor for ReportTemplateID {
 
 impl InstanceAdapter<ReportTemplate> for ReportTemplateID {
     async fn instance_adapter(&self, pool: &DbPool) -> Result<ReportTemplate, ApiError> {
-        use crate::schema::report_templates::dsl::{id, report_templates};
-
-        let row = with_connection(pool, |conn| {
-            report_templates
-                .filter(id.eq(self.0))
-                .first::<ReportTemplateRow>(conn)
-        })?;
-
-        row.try_into()
+        backend::load_row(pool, self.0).await?.try_into()
     }
 }
 
@@ -1011,14 +904,7 @@ impl NamespaceAdapter for ReportTemplateID {
     }
 
     async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<i32, ApiError> {
-        use crate::schema::report_templates::dsl::{id, namespace_id, report_templates};
-
-        with_connection(pool, |conn| {
-            report_templates
-                .filter(id.eq(self.0))
-                .select(namespace_id)
-                .first::<i32>(conn)
-        })
+        backend::namespace_id_for(pool, self.0).await
     }
 }
 

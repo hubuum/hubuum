@@ -1,0 +1,213 @@
+//! Backend persistence for report templates.
+//!
+//! All Diesel/Postgres query construction for `report_templates` lives here so the model layer
+//! (`crate::models::report_template`) stays thin and free of backend details, mirroring the other
+//! entities under `src/db/traits/`. These functions operate on the row types defined alongside the
+//! domain type; the model owns the domain<->row conversions and all validation.
+
+use diesel::prelude::*;
+
+use crate::db::{DbPool, with_connection};
+use crate::errors::ApiError;
+use crate::models::report_template::{
+    NewReportTemplateRow, ReportTemplate, ReportTemplateRow, UpdateReportTemplateRow,
+};
+use crate::models::search::{FilterField, QueryOptions};
+use crate::{date_search, numeric_search, string_search};
+
+/// Insert a new report-template row and return the persisted row.
+pub(crate) async fn insert_row(
+    pool: &DbPool,
+    new_row: &NewReportTemplateRow,
+) -> Result<ReportTemplateRow, ApiError> {
+    use crate::schema::report_templates::dsl::report_templates;
+
+    with_connection(pool, |conn| {
+        diesel::insert_into(report_templates)
+            .values(new_row)
+            .get_result::<ReportTemplateRow>(conn)
+    })
+}
+
+/// Load a single report-template row by id.
+pub(crate) async fn load_row(
+    pool: &DbPool,
+    template_id: i32,
+) -> Result<ReportTemplateRow, ApiError> {
+    use crate::schema::report_templates::dsl::{id, report_templates};
+
+    with_connection(pool, |conn| {
+        report_templates
+            .filter(id.eq(template_id))
+            .first::<ReportTemplateRow>(conn)
+    })
+}
+
+/// Apply a changeset to the report-template row with the given id and return the updated row.
+pub(crate) async fn update_row(
+    pool: &DbPool,
+    template_id: i32,
+    changeset: &UpdateReportTemplateRow,
+) -> Result<ReportTemplateRow, ApiError> {
+    use crate::schema::report_templates::dsl::{id, report_templates};
+
+    with_connection(pool, |conn| {
+        diesel::update(report_templates.filter(id.eq(template_id)))
+            .set(changeset)
+            .get_result::<ReportTemplateRow>(conn)
+    })
+}
+
+/// Delete the report-template row with the given id.
+pub(crate) async fn delete_row(pool: &DbPool, template_id: i32) -> Result<(), ApiError> {
+    use crate::schema::report_templates::dsl::{id, report_templates};
+
+    with_connection(pool, |conn| {
+        diesel::delete(report_templates.filter(id.eq(template_id))).execute(conn)
+    })?;
+
+    Ok(())
+}
+
+/// Load all report-template rows in a namespace, optionally excluding one template id.
+pub(crate) async fn load_rows_in_namespace(
+    pool: &DbPool,
+    target_namespace_id: i32,
+    exclude_template_id: Option<i32>,
+) -> Result<Vec<ReportTemplateRow>, ApiError> {
+    use crate::schema::report_templates::dsl::{id, namespace_id, report_templates};
+
+    with_connection(pool, |conn| {
+        let mut query = report_templates
+            .into_boxed()
+            .filter(namespace_id.eq(target_namespace_id));
+        if let Some(exclude_template_id) = exclude_template_id {
+            query = query.filter(id.ne(exclude_template_id));
+        }
+        query.load::<ReportTemplateRow>(conn)
+    })
+}
+
+/// Load every report-template row.
+pub(crate) async fn load_all_rows(pool: &DbPool) -> Result<Vec<ReportTemplateRow>, ApiError> {
+    use crate::schema::report_templates::dsl::report_templates;
+
+    with_connection(pool, |conn| {
+        report_templates.load::<ReportTemplateRow>(conn)
+    })
+}
+
+/// Whether a template with `target_name` already exists in the namespace, optionally ignoring one
+/// template id (used so an update does not conflict with itself).
+pub(crate) async fn name_conflict_exists(
+    pool: &DbPool,
+    target_namespace_id: i32,
+    target_name: &str,
+    exclude_template_id: Option<i32>,
+) -> Result<bool, ApiError> {
+    use crate::schema::report_templates::dsl::{id, name, namespace_id, report_templates};
+
+    let existing = with_connection(pool, |conn| {
+        let mut query = report_templates
+            .into_boxed()
+            .filter(namespace_id.eq(target_namespace_id))
+            .filter(name.eq(target_name));
+        if let Some(exclude_template_id) = exclude_template_id {
+            query = query.filter(id.ne(exclude_template_id));
+        }
+        query.first::<ReportTemplateRow>(conn).optional()
+    })?;
+
+    Ok(existing.is_some())
+}
+
+/// The namespace a class belongs to, or `None` if the class does not exist.
+pub(crate) async fn class_namespace_id(
+    pool: &DbPool,
+    target_class_id: i32,
+) -> Result<Option<i32>, ApiError> {
+    use crate::schema::hubuumclass::dsl::{hubuumclass, id, namespace_id};
+
+    with_connection(pool, |conn| {
+        hubuumclass
+            .filter(id.eq(target_class_id))
+            .select(namespace_id)
+            .first::<i32>(conn)
+            .optional()
+    })
+}
+
+/// The namespace id of the report template with the given id.
+pub(crate) async fn namespace_id_for(pool: &DbPool, template_id: i32) -> Result<i32, ApiError> {
+    use crate::schema::report_templates::dsl::{id, namespace_id, report_templates};
+
+    with_connection(pool, |conn| {
+        report_templates
+            .filter(id.eq(template_id))
+            .select(namespace_id)
+            .first::<i32>(conn)
+    })
+}
+
+/// Build the filtered (but unsorted, unpaginated) query for listing report templates within the
+/// namespaces the caller may see.
+fn build_list_query<'a>(
+    allowed_namespace_ids: &'a [i32],
+    query_options: &'a QueryOptions,
+) -> Result<crate::schema::report_templates::BoxedQuery<'a, diesel::pg::Pg>, ApiError> {
+    use crate::schema::report_templates::dsl::{
+        class_id, created_at, description, id, kind, name, namespace_id, report_templates,
+        updated_at,
+    };
+
+    if allowed_namespace_ids.is_empty() {
+        return Ok(report_templates
+            .into_boxed()
+            .filter(namespace_id.eq_any(allowed_namespace_ids)));
+    }
+
+    let mut query = report_templates
+        .into_boxed()
+        .filter(namespace_id.eq_any(allowed_namespace_ids));
+
+    for param in &query_options.filters {
+        let operator = param.operator.clone();
+        match param.field {
+            FilterField::Id => numeric_search!(query, param, operator, id),
+            FilterField::Name => string_search!(query, param, operator, name),
+            FilterField::Description => string_search!(query, param, operator, description),
+            FilterField::Namespaces | FilterField::NamespaceId => {
+                numeric_search!(query, param, operator, namespace_id)
+            }
+            FilterField::Kind => string_search!(query, param, operator, kind),
+            FilterField::ClassId => numeric_search!(query, param, operator, class_id),
+            FilterField::CreatedAt => date_search!(query, param, operator, created_at),
+            FilterField::UpdatedAt => date_search!(query, param, operator, updated_at),
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' isn't searchable (or does not exist) for report templates",
+                    param.field
+                )));
+            }
+        }
+    }
+
+    Ok(query)
+}
+
+/// List report-template rows (sorted/paginated per `query_options`) together with the total count
+/// matching the filters, scoped to the namespaces the caller may see.
+pub(crate) async fn list_rows_with_total_count(
+    pool: &DbPool,
+    allowed_namespace_ids: &[i32],
+    query_options: &QueryOptions,
+) -> Result<(Vec<ReportTemplateRow>, i64), ApiError> {
+    let query = build_list_query(allowed_namespace_ids, query_options)?;
+    let total_count = with_connection(pool, |conn| query.count().get_result::<i64>(conn))?;
+
+    let mut query = build_list_query(allowed_namespace_ids, query_options)?;
+    crate::apply_query_options!(query, query_options, ReportTemplate);
+    let rows = with_connection(pool, |conn| query.load::<ReportTemplateRow>(conn))?;
+
+    Ok((rows, total_count))
+}
