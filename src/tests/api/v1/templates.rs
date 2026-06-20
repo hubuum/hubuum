@@ -3,8 +3,9 @@ mod tests {
     use actix_web::{http::StatusCode, test};
 
     use crate::models::{
-        Namespace, NewNamespaceWithAssignee, NewReportTemplate, Permissions, PermissionsList,
-        ReportContentType, ReportTemplate, UpdateReportTemplate,
+        Namespace, NewHubuumClass, NewNamespaceWithAssignee, NewReportTemplate, Permissions,
+        PermissionsList, ReportContentType, ReportLimits, ReportMissingDataPolicy, ReportScopeKind,
+        ReportTemplate, ReportTemplateKind, UpdateReportTemplate,
     };
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_paginated_collection_total_count, assert_response_status};
@@ -35,6 +36,14 @@ mod tests {
             description: "template description".to_string(),
             content_type: ReportContentType::TextPlain,
             template: "{% for item in items %}{{ item.name }}\n{% endfor %}".to_string(),
+            kind: ReportTemplateKind::Fragment,
+            scope_kind: None,
+            class_id: None,
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
         }
     }
 
@@ -49,6 +58,31 @@ mod tests {
             description: "template description".to_string(),
             content_type,
             template: "{% for item in items %}{{ item.name }}\n{% endfor %}".to_string(),
+            kind: ReportTemplateKind::Fragment,
+            scope_kind: None,
+            class_id: None,
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
+        }
+    }
+
+    fn empty_update_template_payload() -> UpdateReportTemplate {
+        UpdateReportTemplate {
+            namespace_id: None,
+            name: None,
+            description: None,
+            template: None,
+            kind: None,
+            scope_kind: None,
+            class_id: None,
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
         }
     }
 
@@ -83,6 +117,7 @@ mod tests {
             template: Some(
                 "{% for item in items %}{{ item.name }}={{ item.id }}\n{% endfor %}".to_string(),
             ),
+            ..empty_update_template_payload()
         };
         let resp = patch_request(
             &pool,
@@ -208,6 +243,14 @@ mod tests {
             description: "legacy syntax".to_string(),
             content_type: ReportContentType::TextPlain,
             template: "{{#each items}}{{this.name}}\\n{{/each}}".to_string(),
+            kind: ReportTemplateKind::Fragment,
+            scope_kind: None,
+            class_id: None,
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
         };
 
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
@@ -227,6 +270,14 @@ mod tests {
             description: "layout".to_string(),
             content_type: ReportContentType::TextHtml,
             template: "<ul>{% block body %}{% endblock %}</ul>".to_string(),
+            kind: ReportTemplateKind::Fragment,
+            scope_kind: None,
+            class_id: None,
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
         };
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &layout).await;
         assert_response_status(resp, StatusCode::CREATED).await;
@@ -239,6 +290,14 @@ mod tests {
             template:
                 "{% extends \"layout.html\" %}{% block body %}<li>{{ items[0].name }}</li>{% endblock %}"
                     .to_string(),
+            kind: ReportTemplateKind::Fragment,
+            scope_kind: None,
+            class_id: None,
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
         };
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &child).await;
         assert_response_status(resp, StatusCode::CREATED).await;
@@ -257,6 +316,14 @@ mod tests {
             description: "helper coverage".to_string(),
             content_type: ReportContentType::TextPlain,
             template: "{{ csv|csv_cell }} {{ payload|tojson }} {{ coalesce(primary, fallback, \"owner\") }} {{ values|join_nonempty(\"; \") }} {{ when|format_datetime(\"date\") }}".to_string(),
+            kind: ReportTemplateKind::Fragment,
+            scope_kind: None,
+            class_id: None,
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
         };
 
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
@@ -277,6 +344,14 @@ mod tests {
             description: "layout".to_string(),
             content_type: ReportContentType::TextHtml,
             template: "<ul>{% block body %}{% endblock %}</ul>".to_string(),
+            kind: ReportTemplateKind::Fragment,
+            scope_kind: None,
+            class_id: None,
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
         };
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &layout).await;
         assert_response_status(resp, StatusCode::CREATED).await;
@@ -289,6 +364,14 @@ mod tests {
             template:
                 "{% extends \"layout.html\" %}{% block body %}<li>{{ items[0].name }}</li>{% endblock %}"
                     .to_string(),
+            kind: ReportTemplateKind::Fragment,
+            scope_kind: None,
+            class_id: None,
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
         };
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &child).await;
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
@@ -327,6 +410,7 @@ mod tests {
             name: None,
             description: None,
             template: None,
+            ..empty_update_template_payload()
         };
 
         let resp = patch_request(
@@ -383,6 +467,7 @@ mod tests {
             name: None,
             description: None,
             template: None,
+            ..empty_update_template_payload()
         };
 
         let resp = patch_request(
@@ -434,6 +519,7 @@ mod tests {
             name: Some(created_a.name),
             description: None,
             template: None,
+            ..empty_update_template_payload()
         };
 
         let resp = patch_request(
@@ -478,6 +564,7 @@ mod tests {
             name: None,
             description: None,
             template: None,
+            ..empty_update_template_payload()
         };
 
         let resp = patch_request(
@@ -635,6 +722,312 @@ mod tests {
     }
 
     #[actix_web::test]
+    async fn test_fragment_template_cannot_be_executed() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let namespace = create_namespace(&pool, "fragment_execution").await;
+
+        let payload = new_template_payload(namespace.id, "partial.not-executable");
+        let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let created: ReportTemplate = test::read_body_json(resp).await;
+
+        let resp = post_request(
+            &pool,
+            &admin_token,
+            &format!("{TEMPLATES_ENDPOINT}/{}/reports", created.id),
+            &serde_json::json!({}),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+
+        namespace.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_report_template_rejects_class_in_another_namespace() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let template_namespace = create_namespace(&pool, "report_class_template_ns").await;
+        let class_namespace = create_namespace(&pool, "report_class_target_ns").await;
+        let class = NewHubuumClass {
+            name: "foreign-template-class".to_string(),
+            namespace_id: class_namespace.id,
+            json_schema: None,
+            validate_schema: Some(false),
+            description: "foreign class".to_string(),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        let payload = NewReportTemplate {
+            namespace_id: template_namespace.id,
+            name: "report.foreign-class".to_string(),
+            description: "bad report template".to_string(),
+            content_type: ReportContentType::TextPlain,
+            template: "{{ items|length }}".to_string(),
+            kind: ReportTemplateKind::Report,
+            scope_kind: Some(ReportScopeKind::ObjectsInClass),
+            class_id: Some(class.id),
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
+        };
+
+        let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
+        assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+
+        template_namespace.delete(&pool).await.unwrap();
+        class_namespace.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_patch_report_template_class_scope_to_collection_scope() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let namespace = create_namespace(&pool, "patch_scope_change").await;
+        let class = NewHubuumClass {
+            name: "patch-scope-class".to_string(),
+            namespace_id: namespace.id,
+            json_schema: None,
+            validate_schema: Some(false),
+            description: "class".to_string(),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        // Start as an objects_in_class report bound to a class.
+        let create_payload = NewReportTemplate {
+            namespace_id: namespace.id,
+            name: "report.scope-change".to_string(),
+            description: "scope change report".to_string(),
+            content_type: ReportContentType::TextPlain,
+            template: "{% for item in items %}{{ item.name }}{% endfor %}".to_string(),
+            kind: ReportTemplateKind::Report,
+            scope_kind: Some(ReportScopeKind::ObjectsInClass),
+            class_id: Some(class.id),
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
+        };
+        let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &create_payload).await;
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let created: ReportTemplate = test::read_body_json(resp).await;
+
+        // PATCH to a collection scope without clearing class_id explicitly; the carried-forward
+        // class_id must be dropped rather than rejected.
+        let patch = UpdateReportTemplate {
+            scope_kind: Some(ReportScopeKind::Namespaces),
+            ..empty_update_template_payload()
+        };
+        let resp = patch_request(
+            &pool,
+            &admin_token,
+            &format!("{TEMPLATES_ENDPOINT}/{}", created.id),
+            &patch,
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let patched: ReportTemplate = test::read_body_json(resp).await;
+        assert_eq!(patched.scope_kind, Some(ReportScopeKind::Namespaces));
+        assert_eq!(patched.class_id, None);
+
+        namespace.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_patch_report_template_clears_nullable_defaults() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let namespace = create_namespace(&pool, "patch_clear_defaults").await;
+        let class = NewHubuumClass {
+            name: "patch-clear-class".to_string(),
+            namespace_id: namespace.id,
+            json_schema: None,
+            validate_schema: Some(false),
+            description: "class".to_string(),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        let created = NewReportTemplate {
+            namespace_id: namespace.id,
+            name: "report.clear-defaults".to_string(),
+            description: "clear defaults report".to_string(),
+            content_type: ReportContentType::TextPlain,
+            template: "{% for item in items %}{{ item.name }}{% endfor %}".to_string(),
+            kind: ReportTemplateKind::Report,
+            scope_kind: Some(ReportScopeKind::ObjectsInClass),
+            class_id: Some(class.id),
+            default_query: Some("sort=name".to_string()),
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: Some(ReportMissingDataPolicy::Strict),
+            default_limits: Some(ReportLimits {
+                max_items: Some(100),
+                max_output_bytes: Some(262_144),
+            }),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        // An unrelated PATCH that omits the default fields must leave them untouched.
+        let resp = patch_request(
+            &pool,
+            &admin_token,
+            &format!("{TEMPLATES_ENDPOINT}/{}", created.id),
+            &serde_json::json!({ "description": "still has defaults" }),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let patched: ReportTemplate = test::read_body_json(resp).await;
+        assert_eq!(patched.default_query.as_deref(), Some("sort=name"));
+        assert_eq!(
+            patched.default_missing_data_policy,
+            Some(ReportMissingDataPolicy::Strict)
+        );
+        assert!(patched.default_limits.is_some());
+
+        // Explicit JSON null clears the nullable defaults while keeping the scope intact.
+        let resp = patch_request(
+            &pool,
+            &admin_token,
+            &format!("{TEMPLATES_ENDPOINT}/{}", created.id),
+            &serde_json::json!({
+                "default_query": null,
+                "default_missing_data_policy": null,
+                "default_limits": null
+            }),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let patched: ReportTemplate = test::read_body_json(resp).await;
+        assert_eq!(patched.default_query, None);
+        assert_eq!(patched.default_missing_data_policy, None);
+        assert_eq!(patched.default_limits, None);
+        assert_eq!(patched.scope_kind, Some(ReportScopeKind::ObjectsInClass));
+        assert_eq!(patched.class_id, Some(class.id));
+
+        namespace.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_report_template_rejects_class_id_for_collection_scope() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let namespace = create_namespace(&pool, "collection_scope_class_id").await;
+        let class = NewHubuumClass {
+            name: "collection-scope-class".to_string(),
+            namespace_id: namespace.id,
+            json_schema: None,
+            validate_schema: Some(false),
+            description: "class".to_string(),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        let payload = NewReportTemplate {
+            namespace_id: namespace.id,
+            name: "report.namespaces-with-class".to_string(),
+            description: "invalid collection report".to_string(),
+            content_type: ReportContentType::TextPlain,
+            template: "{% for item in items %}{{ item.name }}{% endfor %}".to_string(),
+            kind: ReportTemplateKind::Report,
+            scope_kind: Some(ReportScopeKind::Namespaces),
+            class_id: Some(class.id),
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
+        };
+
+        let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
+        assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+
+        namespace.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_template_list_can_filter_by_kind() {
+        let (pool, admin_token, _) = setup_pool_and_tokens().await;
+        let namespace = create_namespace(&pool, "kind_filter").await;
+
+        let class = NewHubuumClass {
+            name: "kind-filter-class".to_string(),
+            namespace_id: namespace.id,
+            json_schema: None,
+            validate_schema: Some(false),
+            description: "class for kind filtering".to_string(),
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        let fragment = new_template_payload(namespace.id, "partial.kind-fragment");
+        let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &fragment).await;
+        assert_response_status(resp, StatusCode::CREATED).await;
+
+        let report = NewReportTemplate {
+            namespace_id: namespace.id,
+            name: "report.kind-report".to_string(),
+            description: "report template".to_string(),
+            content_type: ReportContentType::TextPlain,
+            template: "{% for item in items %}{{ item.name }}{% endfor %}".to_string(),
+            kind: ReportTemplateKind::Report,
+            scope_kind: Some(ReportScopeKind::ObjectsInClass),
+            class_id: Some(class.id),
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
+        };
+        let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &report).await;
+        assert_response_status(resp, StatusCode::CREATED).await;
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!(
+                "{TEMPLATES_ENDPOINT}?namespace_id={}&kind=report",
+                namespace.id
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let reports: Vec<ReportTemplate> = test::read_body_json(resp).await;
+        assert_eq!(reports.len(), 1);
+        assert!(reports.iter().all(|t| t.kind == ReportTemplateKind::Report));
+        assert_eq!(reports[0].name, "report.kind-report");
+
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!(
+                "{TEMPLATES_ENDPOINT}?namespace_id={}&kind=fragment",
+                namespace.id
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let fragments: Vec<ReportTemplate> = test::read_body_json(resp).await;
+        assert_eq!(fragments.len(), 1);
+        assert!(
+            fragments
+                .iter()
+                .all(|t| t.kind == ReportTemplateKind::Fragment)
+        );
+        assert_eq!(fragments[0].name, "partial.kind-fragment");
+
+        namespace.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
     async fn test_template_update_content_requires_update_permission() {
         let (pool, admin_token, _normal_token) = setup_pool_and_tokens().await;
         let namespace = create_namespace(&pool, "update_content_forbidden").await;
@@ -664,6 +1057,7 @@ mod tests {
             name: None,
             description: Some("updated description".to_string()),
             template: None,
+            ..empty_update_template_payload()
         };
 
         let resp = patch_request(

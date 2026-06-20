@@ -4,7 +4,7 @@ use crate::db::traits::GetClass;
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::{
-    HubuumClass, HubuumClassID, HubuumClassRelation, HubuumClassRelationID, Namespace,
+    ClassIdSet, HubuumClass, HubuumClassID, HubuumClassRelation, HubuumClassRelationID, Namespace,
     NewHubuumClass, NewHubuumClassRelation, UpdateHubuumClass,
 };
 
@@ -202,4 +202,46 @@ pub async fn total_class_count_from_backend(pool: &DbPool) -> Result<i64, ApiErr
     use crate::schema::hubuumclass::dsl::*;
 
     with_connection(pool, |conn| hubuumclass.count().get_result::<i64>(conn))
+}
+
+impl ClassIdSet {
+    /// Load the `(id, name)` pairs for the classes in this set. Ids without a matching row are
+    /// simply absent from the result; callers that require completeness must check themselves.
+    pub(crate) async fn load_names(&self, pool: &DbPool) -> Result<Vec<(i32, String)>, ApiError> {
+        use crate::schema::hubuumclass::dsl::{hubuumclass, id, name};
+
+        if self.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let ids = self.as_slice().to_vec();
+        with_connection(pool, |conn| {
+            hubuumclass
+                .filter(id.eq_any(ids))
+                .select((id, name))
+                .load::<(i32, String)>(conn)
+        })
+    }
+
+    /// Load every class relation that touches a class in this set as either endpoint.
+    pub(crate) async fn load_relations_touching(
+        &self,
+        pool: &DbPool,
+    ) -> Result<Vec<HubuumClassRelation>, ApiError> {
+        use crate::schema::hubuumclass_relation::dsl::{
+            from_hubuum_class_id, hubuumclass_relation, to_hubuum_class_id,
+        };
+
+        if self.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let ids = self.as_slice().to_vec();
+        with_connection(pool, |conn| {
+            hubuumclass_relation
+                .filter(from_hubuum_class_id.eq_any(&ids))
+                .or_filter(to_hubuum_class_id.eq_any(&ids))
+                .load::<HubuumClassRelation>(conn)
+        })
+    }
 }

@@ -55,7 +55,10 @@ pub fn validate_page_limit(limit: usize) -> Result<usize, ApiError> {
 /// explicitly instead of reading it from the global configuration. Useful where
 /// the caller already holds the limits, or wants to avoid touching global config
 /// (for example, benchmarks).
-pub fn validate_page_limit_with_max(limit: usize, max_page_limit: usize) -> Result<usize, ApiError> {
+pub fn validate_page_limit_with_max(
+    limit: usize,
+    max_page_limit: usize,
+) -> Result<usize, ApiError> {
     if limit == 0 {
         return Err(ApiError::BadRequest(
             "limit must be greater than 0".to_string(),

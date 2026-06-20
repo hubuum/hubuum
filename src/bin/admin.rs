@@ -14,8 +14,7 @@ use hubuum::config::{
 use hubuum::db::{DbPool, init_pool_with_statement_timeout, with_connection};
 use hubuum::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
 use hubuum::logger;
-use hubuum::models::report_template::{list_all_report_templates, report_templates_in_namespace};
-use hubuum::models::{ReportTaskOutputRecord, User};
+use hubuum::models::{ReportTaskOutputRecord, ReportTemplate, User};
 use hubuum::schema::report_task_outputs::dsl::report_task_outputs;
 use hubuum::utilities::auth::generate_random_password;
 use hubuum::utilities::is_valid_log_level;
@@ -124,12 +123,11 @@ async fn audit_templates(
     report_template_recursion_limit: usize,
     report_template_fuel: u64,
 ) -> Result<(), ApiError> {
-    let templates = list_all_report_templates(&pool).await?;
+    let templates = ReportTemplate::list_all(&pool).await?;
     let mut failures = Vec::new();
 
     for template in templates {
-        let namespace_templates =
-            report_templates_in_namespace(&pool, template.namespace_id, Some(template.id)).await?;
+        let namespace_templates = template.namespace_siblings(&pool).await?;
         if let Err(error) = validate_template_with_limits(
             &template.name,
             &template.template,

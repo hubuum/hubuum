@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -120,13 +121,6 @@ impl ReportContentType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
-#[schema(example = openapi_examples::report_output_example)]
-#[serde(deny_unknown_fields)]
-pub struct ReportOutputRequest {
-    pub template_id: Option<i32>,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReportMissingDataPolicy {
@@ -183,6 +177,91 @@ pub struct ReportInclude {
     pub related_objects: Option<HashMap<String, ReportIncludeRelatedObject>>,
 }
 
+/// Bounds for `include.related_objects` hydration, shared by ad-hoc report requests
+/// (`POST /api/v1/reports`) and stored executable report templates so the two paths cannot drift.
+pub const RELATED_INCLUDE_DEFAULT_MAX_DEPTH: i32 = 1;
+pub const RELATED_INCLUDE_MAX_DEPTH_LIMIT: i32 = 10;
+pub const RELATED_INCLUDE_DEFAULT_LIMIT: i32 = 1;
+pub const RELATED_INCLUDE_MAX_LIMIT: i32 = 50;
+pub const RELATED_INCLUDE_MAX_ALIASES: usize = 8;
+
+impl ReportInclude {
+    /// Validate the `related_objects` block: alias count, alias syntax, and per-alias option
+    /// bounds. Callers enforce scope-specific rules (e.g. that `include` is only valid for
+    /// `objects_in_class`).
+    pub fn validate_related_objects(&self) -> Result<(), ApiError> {
+        let Some(related_objects) = &self.related_objects else {
+            return Ok(());
+        };
+
+        if related_objects.len() > RELATED_INCLUDE_MAX_ALIASES {
+            return Err(ApiError::BadRequest(format!(
+                "include.related_objects supports at most {RELATED_INCLUDE_MAX_ALIASES} aliases"
+            )));
+        }
+
+        for (alias, include) in related_objects {
+            validate_related_include_alias(alias)?;
+            include.validate(alias)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl ReportIncludeRelatedObject {
+    fn validate(&self, alias: &str) -> Result<(), ApiError> {
+        if self.class_id <= 0 {
+            return Err(ApiError::BadRequest(format!(
+                "include.related_objects.{alias}.class_id must be greater than 0"
+            )));
+        }
+
+        if let Some(class_relation_id) = self.class_relation_id
+            && class_relation_id <= 0
+        {
+            return Err(ApiError::BadRequest(format!(
+                "include.related_objects.{alias}.class_relation_id must be greater than 0"
+            )));
+        }
+
+        let max_depth = self.max_depth.unwrap_or(RELATED_INCLUDE_DEFAULT_MAX_DEPTH);
+        if !(1..=RELATED_INCLUDE_MAX_DEPTH_LIMIT).contains(&max_depth) {
+            return Err(ApiError::BadRequest(format!(
+                "include.related_objects.{alias}.max_depth must be between 1 and {RELATED_INCLUDE_MAX_DEPTH_LIMIT}"
+            )));
+        }
+
+        let limit = self.limit.unwrap_or(RELATED_INCLUDE_DEFAULT_LIMIT);
+        if !(1..=RELATED_INCLUDE_MAX_LIMIT).contains(&limit) {
+            return Err(ApiError::BadRequest(format!(
+                "include.related_objects.{alias}.limit must be between 1 and {RELATED_INCLUDE_MAX_LIMIT}"
+            )));
+        }
+
+        Ok(())
+    }
+}
+
+fn validate_related_include_alias(alias: &str) -> Result<(), ApiError> {
+    let mut chars = alias.chars();
+    let Some(first) = chars.next() else {
+        return Err(ApiError::BadRequest(
+            "include.related_objects aliases must not be empty".to_string(),
+        ));
+    };
+
+    if !(first == '_' || first.is_ascii_alphabetic())
+        || !chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    {
+        return Err(ApiError::BadRequest(format!(
+            "Invalid include.related_objects alias '{alias}'; expected [A-Za-z_][A-Za-z0-9_]*"
+        )));
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[schema(example = openapi_examples::report_relation_context_example)]
 #[serde(deny_unknown_fields)]
@@ -195,7 +274,6 @@ pub struct ReportRelationContext {
 pub struct ReportRequest {
     pub scope: ReportScope,
     pub query: Option<String>,
-    pub output: Option<ReportOutputRequest>,
     pub missing_data_policy: Option<ReportMissingDataPolicy>,
     pub limits: Option<ReportLimits>,
     pub include: Option<ReportInclude>,
@@ -227,6 +305,16 @@ pub struct ReportJsonResponse {
     pub warnings: Vec<ReportWarning>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[schema(example = openapi_examples::report_template_run_request_example)]
+#[serde(deny_unknown_fields)]
+pub struct ReportTemplateRunRequest {
+    pub query: Option<String>,
+    pub object_id: Option<i32>,
+    pub missing_data_policy: Option<ReportMissingDataPolicy>,
+    pub limits: Option<ReportLimits>,
+}
+
 impl ReportScopeKind {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -236,6 +324,56 @@ impl ReportScopeKind {
             ReportScopeKind::ClassRelations => "class_relations",
             ReportScopeKind::ObjectRelations => "object_relations",
             ReportScopeKind::RelatedObjects => "related_objects",
+        }
+    }
+
+    /// Whether this scope targets a single class and therefore needs a `class_id`.
+    /// The collection scopes (`namespaces`, `classes`, `class_relations`,
+    /// `object_relations`) are class-agnostic.
+    pub fn requires_class_id(self) -> bool {
+        matches!(self, Self::ObjectsInClass | Self::RelatedObjects)
+    }
+}
+
+impl FromStr for ReportScopeKind {
+    type Err = ApiError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "namespaces" => Ok(Self::Namespaces),
+            "classes" => Ok(Self::Classes),
+            "objects_in_class" => Ok(Self::ObjectsInClass),
+            "class_relations" => Ok(Self::ClassRelations),
+            "object_relations" => Ok(Self::ObjectRelations),
+            "related_objects" => Ok(Self::RelatedObjects),
+            _ => Err(ApiError::BadRequest(format!(
+                "Unsupported report scope kind: '{value}'"
+            ))),
+        }
+    }
+}
+
+impl ReportMissingDataPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Strict => "strict",
+            Self::Null => "null",
+            Self::Omit => "omit",
+        }
+    }
+}
+
+impl FromStr for ReportMissingDataPolicy {
+    type Err = ApiError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "strict" => Ok(Self::Strict),
+            "null" => Ok(Self::Null),
+            "omit" => Ok(Self::Omit),
+            _ => Err(ApiError::BadRequest(format!(
+                "Unsupported report missing data policy: '{value}'"
+            ))),
         }
     }
 }
@@ -254,12 +392,6 @@ mod openapi_examples {
         }
     }
 
-    pub(super) fn report_output_example() -> ReportOutputRequest {
-        ReportOutputRequest {
-            template_id: Some(12),
-        }
-    }
-
     pub(super) fn report_limits_example() -> ReportLimits {
         ReportLimits {
             max_items: Some(100),
@@ -271,7 +403,6 @@ mod openapi_examples {
         ReportRequest {
             scope: report_scope_example(),
             query: Some("name__icontains=server&sort=name".to_string()),
-            output: Some(report_output_example()),
             missing_data_policy: Some(ReportMissingDataPolicy::Strict),
             limits: Some(report_limits_example()),
             include: None,
@@ -308,6 +439,15 @@ mod openapi_examples {
             ],
             meta: report_meta_example(),
             warnings: vec![],
+        }
+    }
+
+    pub(super) fn report_template_run_request_example() -> ReportTemplateRunRequest {
+        ReportTemplateRunRequest {
+            query: Some("name__icontains=server&sort=name".to_string()),
+            object_id: None,
+            missing_data_policy: Some(ReportMissingDataPolicy::Strict),
+            limits: Some(report_limits_example()),
         }
     }
 }

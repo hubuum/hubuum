@@ -2,9 +2,7 @@ use std::time::Instant;
 
 use tracing::{Instrument, error, info, info_span, warn};
 
-use crate::db::traits::task::{
-    TaskStateUpdate, append_task_event, finalize_task_terminal_state, update_task_state,
-};
+use crate::db::traits::task::{TaskBackend, TaskStateUpdate};
 use crate::db::{DbPool, with_transaction};
 use crate::errors::ApiError;
 use crate::models::{
@@ -131,29 +129,26 @@ pub(super) async fn execute_import_task(
             planning_time = ?planning_time
         );
 
-        append_task_event(
-            pool,
-            NewTaskEventRecord {
-                task_id: task.id,
-                event_type: "running".to_string(),
-                message: if request.dry_run() {
-                    "Import dry run planned successfully".to_string()
-                } else if failures.is_empty() {
-                    "Import execution started".to_string()
-                } else {
-                    format!(
-                        "Import execution started with {} planned failure(s)",
-                        failures.len()
-                    )
-                },
-                data: None,
+        NewTaskEventRecord {
+            task_id: task.id,
+            event_type: "running".to_string(),
+            message: if request.dry_run() {
+                "Import dry run planned successfully".to_string()
+            } else if failures.is_empty() {
+                "Import execution started".to_string()
+            } else {
+                format!(
+                    "Import execution started with {} planned failure(s)",
+                    failures.len()
+                )
             },
-        )
+            data: None,
+        }
+        .append(pool)
         .await?;
 
-        update_task_state(
+        task.update_state(
             pool,
-            task.id,
             TaskStateUpdate {
                 status: TaskStatus::Running,
                 summary: None,
@@ -265,9 +260,8 @@ async fn finalize_task(
     task: &TaskRecord,
     terminal: TerminalTaskUpdate,
 ) -> Result<(), ApiError> {
-    finalize_task_terminal_state(
+    task.finalize_terminal(
         pool,
-        task.id,
         TaskStateUpdate {
             status: terminal.status,
             summary: Some(terminal.summary.clone()),

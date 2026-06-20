@@ -5,6 +5,7 @@ The report API executes an authorized Hubuum query server-side through the gener
 Endpoints:
 
 - `POST /api/v1/reports`
+- `POST /api/v1/templates/{template_id}/reports`
 - `GET /api/v1/reports/{task_id}`
 - `GET /api/v1/reports/{task_id}/output`
 
@@ -21,9 +22,6 @@ Authentication:
     "class_id": 42
   },
   "query": "name__contains=server&sort=name",
-  "output": {
-    "template_id": 12
-  },
   "include": {
     "related_objects": {
       "room": {
@@ -44,7 +42,7 @@ Authentication:
 }
 ```
 
-`POST /api/v1/reports` is asynchronous and mirrors `POST /api/v1/imports`:
+`POST /api/v1/reports` is asynchronous, returns JSON output, and mirrors `POST /api/v1/imports`:
 
 - it returns `202 Accepted`
 - the response body is a generic `TaskResponse`
@@ -173,9 +171,6 @@ Report objects related to a root object:
       }
     }
   },
-  "output": {
-    "template_id": 12
-  }
 }
 ```
 
@@ -190,12 +185,47 @@ Each key under `include.related_objects` is an alias. The alias must match `[A-Z
 
 `max_depth` defaults to `1` and must be between `1` and `10`. `limit` defaults to `1` and must be between `1` and `50`; it is applied per root object and per alias. Missing related objects render as an empty array, so `item.related.room` is always present in templates when the alias was requested.
 
+## Template execution
+
+Text, HTML, and CSV reports are executed from executable report templates:
+
+```json
+{
+  "query": "name__contains=server&sort=name",
+  "missing_data_policy": "strict",
+  "limits": {
+    "max_items": 100,
+    "max_output_bytes": 262144
+  }
+}
+```
+
+For `related_objects` templates, pass the runtime root object:
+
+```json
+{
+  "object_id": 101,
+  "query": "depth__lte=2&to_classes=91&sort=path"
+}
+```
+
+The template stores the scope, class, include settings, relation context, content type, and default
+query/limits/policy. Runtime `query` replaces the template's default query when supplied.
+
+Executable templates support every report scope kind:
+
+- `objects_in_class` and `related_objects` are bound to a single class and require the template's `class_id`.
+- `namespaces`, `classes`, `class_relations`, and `object_relations` are class-agnostic and must not set `class_id`.
+
+`object_id` is only accepted at run time for `related_objects` templates; supplying it for any other scope
+is rejected with `400 Bad Request`.
+
 ## Output selection
 
-The server determines the output format at submission time based on:
+The server determines the output format at submission time based on the endpoint:
 
-1. If `output.template_id` is provided, the stored template's `content_type` is used
-2. Otherwise, it defaults to `application/json`
+1. `POST /api/v1/reports` returns `application/json`
+2. `POST /api/v1/templates/{template_id}/reports` returns the template's stored `content_type`
 
 Supported output types:
 
@@ -232,7 +262,8 @@ Supported output types:
 
 ## Template output
 
-`text/plain`, `text/html`, and `text/csv` outputs require referencing a stored template via `output.template_id`.
+`text/plain`, `text/html`, and `text/csv` outputs require running an executable stored template with
+`POST /api/v1/templates/{template_id}/reports`.
 
 For concrete template examples and example context data, see [template_guide.md](template_guide.md).
 

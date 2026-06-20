@@ -419,6 +419,205 @@
         ]
       }
     },
+    "/api/v0/meta/login-rate-limit": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "Get Api V0 Meta Login Rate Limit",
+        "description": "Auto-generated documentation for GET /api/v0/meta/login-rate-limit.",
+        "operationId": "getApiV0MetaLoginRateLimit",
+        "parameters": [
+          {
+            "name": "include",
+            "in": "query",
+            "description": "`locked` (default) or `all`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "Filter by scope kind: `user_ip`, `ip`, or `subnet`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Case-insensitive substring match on the scope identifier",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Login rate-limit configuration and tracked scopes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginRateLimitStateResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "Delete Api V0 Meta Login Rate Limit",
+        "description": "Auto-generated documentation for DELETE /api/v0/meta/login-rate-limit.",
+        "operationId": "deleteApiV0MetaLoginRateLimit",
+        "responses": {
+          "200": {
+            "description": "All entries cleared",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClearRateLimitResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v0/meta/login-rate-limit/{id}": {
+      "delete": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "Delete Api V0 Meta Login Rate Limit By Id",
+        "description": "Auto-generated documentation for DELETE /api/v0/meta/login-rate-limit/{id}.",
+        "operationId": "deleteApiV0MetaLoginRateLimitById",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Opaque entry id from the list endpoint",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Entry released",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseRateLimitResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid entry id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Entry not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v0/meta/tasks": {
       "get": {
         "tags": [
@@ -6514,6 +6713,115 @@
           }
         ]
       }
+    },
+    "/api/v1/templates/{template_id}/reports": {
+      "post": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "Post Api V1 Templates By Template Id Reports",
+        "description": "Auto-generated documentation for POST /api/v1/templates/{template_id}/reports.",
+        "operationId": "postApiV1TemplatesByTemplateIdReports",
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Executable report template ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportTemplateRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Report task accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Template not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many active report tasks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -6561,6 +6869,18 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "ClearRateLimitResponse": {
+        "type": "object",
+        "required": [
+          "cleared"
+        ],
+        "properties": {
+          "cleared": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },
@@ -7436,6 +7756,150 @@
           }
         }
       },
+      "LoginRateLimitConfigResponse": {
+        "type": "object",
+        "description": "Effective login rate-limit configuration, echoed back in the admin state endpoint.",
+        "required": [
+          "enabled",
+          "max_attempts",
+          "max_attempts_per_ip",
+          "max_attempts_per_subnet",
+          "window_seconds",
+          "backoff_base_seconds",
+          "backoff_max_seconds",
+          "subnet_prefix_v4",
+          "subnet_prefix_v6"
+        ],
+        "properties": {
+          "backoff_base_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "backoff_max_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "max_attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_attempts_per_ip": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_attempts_per_subnet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "subnet_prefix_v4": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "subnet_prefix_v6": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "window_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "LoginRateLimitEntryResponse": {
+        "type": "object",
+        "description": "One tracked rate-limit scope (a user+IP pair, an IP, or a subnet).",
+        "required": [
+          "id",
+          "scope",
+          "identifier",
+          "attempts",
+          "locked",
+          "lockout_level"
+        ],
+        "properties": {
+          "attempts": {
+            "type": "integer",
+            "description": "Failed attempts currently within the sliding window.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "Opaque, URL-safe id; pass to `DELETE /meta/login-rate-limit/{id}` to release it."
+          },
+          "identifier": {
+            "type": "string",
+            "description": "Human-readable identifier for the scope."
+          },
+          "locked": {
+            "type": "boolean",
+            "description": "Whether the scope is locked out right now."
+          },
+          "locked_for_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Remaining lockout time in seconds, if currently locked.",
+            "minimum": 0
+          },
+          "lockout_level": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Current exponential-backoff level.",
+            "minimum": 0
+          },
+          "scope": {
+            "type": "string",
+            "description": "Scope kind: `user_ip`, `ip`, or `subnet`."
+          }
+        }
+      },
+      "LoginRateLimitStateResponse": {
+        "type": "object",
+        "required": [
+          "config",
+          "tracked_entries",
+          "locked_entries",
+          "returned_entries",
+          "entries"
+        ],
+        "properties": {
+          "config": {
+            "$ref": "#/components/schemas/LoginRateLimitConfigResponse"
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LoginRateLimitEntryResponse"
+            },
+            "description": "The tracked scopes matching the `include`, `scope`, and `q` query parameters."
+          },
+          "locked_entries": {
+            "type": "integer",
+            "description": "Number of scopes currently locked out (before filtering).",
+            "minimum": 0
+          },
+          "returned_entries": {
+            "type": "integer",
+            "description": "Number of scopes returned in `entries` after applying the query filters.",
+            "minimum": 0
+          },
+          "tracked_entries": {
+            "type": "integer",
+            "description": "Total number of tracked scopes (before filtering).",
+            "minimum": 0
+          }
+        }
+      },
       "LoginResponse": {
         "type": "object",
         "required": [
@@ -7753,14 +8217,61 @@
           "name",
           "description",
           "content_type",
-          "template"
+          "template",
+          "kind"
         ],
         "properties": {
+          "class_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
           "content_type": {
             "$ref": "#/components/schemas/ReportContentType"
           },
+          "default_limits": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportLimits"
+              }
+            ]
+          },
+          "default_missing_data_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportMissingDataPolicy"
+              }
+            ]
+          },
+          "default_query": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "description": {
             "type": "string"
+          },
+          "include": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportInclude"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ReportTemplateKind"
           },
           "name": {
             "type": "string"
@@ -7769,15 +8280,46 @@
             "type": "integer",
             "format": "int32"
           },
+          "relation_context": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportRelationContext"
+              }
+            ]
+          },
+          "scope_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportScopeKind"
+              }
+            ]
+          },
           "template": {
             "type": "string"
           }
         },
         "example": {
+          "class_id": 42,
           "content_type": "text/plain",
+          "default_limits": {
+            "max_items": 100,
+            "max_output_bytes": 262144
+          },
+          "default_missing_data_policy": "strict",
+          "default_query": "sort=name",
           "description": "Template for owner listing",
+          "include": null,
+          "kind": "report",
           "name": "owner-report",
           "namespace_id": 7,
+          "relation_context": null,
+          "scope_kind": "objects_in_class",
           "template": "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}"
         }
       },
@@ -8051,6 +8593,17 @@
           }
         }
       },
+      "ReleaseRateLimitResponse": {
+        "type": "object",
+        "required": [
+          "released"
+        ],
+        "properties": {
+          "released": {
+            "type": "boolean"
+          }
+        }
+      },
       "ReportContentType": {
         "type": "string",
         "enum": [
@@ -8257,22 +8810,6 @@
           "omit"
         ]
       },
-      "ReportOutputRequest": {
-        "type": "object",
-        "properties": {
-          "template_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          }
-        },
-        "additionalProperties": false,
-        "example": {
-          "template_id": 12
-        }
-      },
       "ReportRelationContext": {
         "type": "object",
         "properties": {
@@ -8325,16 +8862,6 @@
               }
             ]
           },
-          "output": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportOutputRequest"
-              }
-            ]
-          },
           "query": {
             "type": [
               "string",
@@ -8362,9 +8889,6 @@
             "max_output_bytes": 262144
           },
           "missing_data_policy": "strict",
-          "output": {
-            "template_id": 12
-          },
           "query": "name__icontains=server&sort=name",
           "relation_context": null,
           "scope": {
@@ -8471,16 +8995,50 @@
           "description",
           "content_type",
           "template",
+          "kind",
           "created_at",
           "updated_at"
         ],
         "properties": {
+          "class_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
           "content_type": {
             "$ref": "#/components/schemas/ReportContentType"
           },
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "default_limits": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportLimits"
+              }
+            ]
+          },
+          "default_missing_data_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportMissingDataPolicy"
+              }
+            ]
+          },
+          "default_query": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "description": {
             "type": "string"
@@ -8489,12 +9047,45 @@
             "type": "integer",
             "format": "int32"
           },
+          "include": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportInclude"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ReportTemplateKind"
+          },
           "name": {
             "type": "string"
           },
           "namespace_id": {
             "type": "integer",
             "format": "int32"
+          },
+          "relation_context": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportRelationContext"
+              }
+            ]
+          },
+          "scope_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportScopeKind"
+              }
+            ]
           },
           "template": {
             "type": "string"
@@ -8505,12 +9096,23 @@
           }
         },
         "example": {
+          "class_id": 42,
           "content_type": "text/plain",
           "created_at": "2026-03-06T12:00:00",
+          "default_limits": {
+            "max_items": 100,
+            "max_output_bytes": 262144
+          },
+          "default_missing_data_policy": "strict",
+          "default_query": "sort=name",
           "description": "Template for owner listing",
           "id": 1,
+          "include": null,
+          "kind": "report",
           "name": "owner-report",
           "namespace_id": 7,
+          "relation_context": null,
+          "scope_kind": "objects_in_class",
           "template": "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}",
           "updated_at": "2026-03-06T12:00:00"
         }
@@ -8518,6 +9120,61 @@
       "ReportTemplateID": {
         "type": "integer",
         "format": "int32"
+      },
+      "ReportTemplateKind": {
+        "type": "string",
+        "enum": [
+          "report",
+          "fragment"
+        ]
+      },
+      "ReportTemplateRunRequest": {
+        "type": "object",
+        "properties": {
+          "limits": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportLimits"
+              }
+            ]
+          },
+          "missing_data_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportMissingDataPolicy"
+              }
+            ]
+          },
+          "object_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "query": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "limits": {
+            "max_items": 100,
+            "max_output_bytes": 262144
+          },
+          "missing_data_policy": "strict",
+          "object_id": null,
+          "query": "name__icontains=server&sort=name"
+        }
       },
       "ReportWarning": {
         "type": "object",
@@ -9142,10 +9799,63 @@
       "UpdateReportTemplate": {
         "type": "object",
         "properties": {
+          "class_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "default_limits": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportLimits"
+              }
+            ]
+          },
+          "default_missing_data_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportMissingDataPolicy"
+              }
+            ]
+          },
+          "default_query": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "description": {
             "type": [
               "string",
               "null"
+            ]
+          },
+          "include": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportInclude"
+              }
+            ]
+          },
+          "kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportTemplateKind"
+              }
             ]
           },
           "name": {
@@ -9161,6 +9871,26 @@
             ],
             "format": "int32"
           },
+          "relation_context": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportRelationContext"
+              }
+            ]
+          },
+          "scope_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportScopeKind"
+              }
+            ]
+          },
           "template": {
             "type": [
               "string",
@@ -9169,9 +9899,13 @@
           }
         },
         "example": {
+          "class_id": null,
+          "default_query": "sort=name.desc",
           "description": "Updated template description",
+          "kind": null,
           "name": "owner-report-v2",
           "namespace_id": 9,
+          "scope_kind": null,
           "template": "{% for item in items %}{{ item.name }}\n{% endfor %}"
         }
       },

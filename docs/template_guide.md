@@ -2,8 +2,8 @@
 
 Stored report templates format stored report output from the async report API.
 
-Use templates when you want `text/plain`, `text/html`, or `text/csv` output from a stored definition in `POST /api/v1/templates`.
-Submit the report request with `POST /api/v1/reports`, then fetch the rendered result from
+Use executable templates when you want `text/plain`, `text/html`, or `text/csv` output from a stored definition in `POST /api/v1/templates`.
+Run the template with `POST /api/v1/templates/{template_id}/reports`, then fetch the rendered result from
 `GET /api/v1/reports/{task_id}/output`.
 
 See also:
@@ -59,27 +59,36 @@ Assume you have a class called `server` with objects like these:
 ]
 ```
 
-If you run a report over that class:
+If you create an executable template for that class:
 
 ```json
 {
-  "scope": {
-    "kind": "objects_in_class",
-    "class_id": 42
-  },
-  "query": "name__contains=srv-&sort=name",
-  "output": {
-    "template_id": 12
-  },
-  "missing_data_policy": "strict",
-  "limits": {
+  "namespace_id": 7,
+  "name": "report.servers",
+  "description": "Server owner report",
+  "content_type": "text/plain",
+  "template": "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}",
+  "kind": "report",
+  "scope_kind": "objects_in_class",
+  "class_id": 42,
+  "default_query": "name__contains=srv-&sort=name",
+  "default_missing_data_policy": "strict",
+  "default_limits": {
     "max_items": 100,
     "max_output_bytes": 262144
   }
 }
 ```
 
-then `items` contains those objects, so templates can reference fields like:
+and run it:
+
+```json
+{
+  "query": "name__contains=srv-&sort=name"
+}
+```
+
+then `items` contains the matching objects, so templates can reference fields like:
 
 - `{{ item.name }}`
 - `{{ item.description }}`
@@ -363,20 +372,28 @@ For data keys that contain dots, spaces, or punctuation, use bracket notation:
 
 Direct relation scopes use the normal `items` context. Templated `related_objects` reports are rooted at the requested source object: `items` contains that single hydrated source object, and `source` points to the same value.
 
-Example report request:
+Example executable template:
 
 ```json
 {
-  "scope": {
-    "kind": "related_objects",
-    "class_id": 42,
-    "object_id": 101
-  },
-  "query": "depth__lte=2&to_classes=91&sort=path",
-  "output": {
-    "template_id": 12
-  },
-  "missing_data_policy": "strict"
+  "namespace_id": 7,
+  "name": "report.host-related",
+  "description": "Related host report",
+  "content_type": "text/plain",
+  "template": "Related objects for {{ source.name }}",
+  "kind": "report",
+  "scope_kind": "related_objects",
+  "class_id": 42,
+  "default_query": "depth__lte=2&to_classes=91&sort=path",
+  "default_missing_data_policy": "strict"
+}
+```
+
+Run it with:
+
+```json
+{
+  "object_id": 101
 }
 ```
 
@@ -394,15 +411,19 @@ For direct relation reports, `class_relations` items contain fields such as `fro
 
 `objects_in_class` reports can add bounded related-object arrays to each item with `include.related_objects`. Use this when the report is centered on one class but the template needs nearby objects, such as a host's room.
 
-Example report request:
+Example executable template:
 
 ```json
 {
-  "scope": {
-    "kind": "objects_in_class",
-    "class_id": 42
-  },
-  "query": "name__equals=nommo",
+  "namespace_id": 7,
+  "name": "report.host-room",
+  "description": "Host room report",
+  "content_type": "text/plain",
+  "template": "{% for item in items %}{{ item.name }}{% endfor %}",
+  "kind": "report",
+  "scope_kind": "objects_in_class",
+  "class_id": 42,
+  "default_query": "name__equals=nommo",
   "include": {
     "related_objects": {
       "room": {
@@ -415,10 +436,7 @@ Example report request:
       }
     }
   },
-  "output": {
-    "template_id": 12
-  },
-  "missing_data_policy": "strict"
+  "default_missing_data_policy": "strict"
 }
 ```
 
@@ -715,7 +733,10 @@ host,room,person
 ## Limits and constraints
 
 - Stored templates support only `text/plain`, `text/html`, and `text/csv`
-- `application/json` does not use stored templates
+- `application/json` does not use stored templates; submit JSON reports with `POST /api/v1/reports`
+- Executable report templates support every scope kind (`namespaces`, `classes`, `objects_in_class`,
+  `class_relations`, `object_relations`, `related_objects`); `class_id` is set only for
+  `objects_in_class` and `related_objects`, and `include`/`relation_context` apply only to those scopes
 - Template loading for `include`/`import`/`extends` is limited to the same namespace
 - HTML templates are autoescaped; plain text and CSV templates should use `tojson` or `csv_cell`
   when embedding JSON- or CSV-sensitive values
@@ -759,25 +780,18 @@ Current behavior:
 
 ## Typical workflow
 
-1. Create a stored template with `POST /api/v1/templates`
-2. Reference that template with `output.template_id` in `POST /api/v1/reports`
+1. Create an executable stored template with `POST /api/v1/templates`
+2. Run that template with `POST /api/v1/templates/{template_id}/reports`
 3. Read the returned `TaskResponse`, wait for completion, then fetch the rendered result from `GET /api/v1/reports/{task_id}/output`
 
-Example report request using a stored template:
+Example template run request:
 
 ```json
 {
-  "scope": {
-    "kind": "objects_in_class",
-    "class_id": 42
-  },
   "query": "name__contains=srv-&sort=name",
-  "output": {
-    "template_id": 12
-  },
   "missing_data_policy": "omit",
-  "relation_context": {
-    "depth": 2
+  "limits": {
+    "max_items": 100
   }
 }
 ```

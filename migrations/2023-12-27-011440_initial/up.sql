@@ -151,10 +151,31 @@
         description VARCHAR NOT NULL,
         content_type VARCHAR NOT NULL,
         template TEXT NOT NULL,
+        kind VARCHAR NOT NULL,
+        scope_kind VARCHAR,
+        class_id INT REFERENCES hubuumclass (id) ON DELETE CASCADE,
+        default_query TEXT,
+        include JSONB,
+        relation_context JSONB,
+        default_missing_data_policy VARCHAR,
+        default_limits JSONB,
         created_at TIMESTAMP NOT NULL DEFAULT now(),
         updated_at TIMESTAMP NOT NULL DEFAULT now(),
         UNIQUE (namespace_id, name),
-        CHECK (content_type IN ('text/plain', 'text/html', 'text/csv'))
+        CHECK (content_type IN ('text/plain', 'text/html', 'text/csv')),
+        CHECK (kind IN ('report', 'fragment')),
+        CHECK (scope_kind IS NULL OR scope_kind IN (
+            'namespaces', 'classes', 'objects_in_class',
+            'class_relations', 'object_relations', 'related_objects'
+        )),
+        CHECK (default_missing_data_policy IS NULL OR default_missing_data_policy IN ('strict', 'null', 'omit')),
+        CHECK (
+            (kind = 'fragment' AND scope_kind IS NULL AND class_id IS NULL)
+            OR
+            (kind = 'report' AND scope_kind IN ('objects_in_class', 'related_objects') AND class_id IS NOT NULL)
+            OR
+            (kind = 'report' AND scope_kind IN ('namespaces', 'classes', 'class_relations', 'object_relations') AND class_id IS NULL)
+        )
     );
 
     DROP TABLE IF EXISTS tasks CASCADE;

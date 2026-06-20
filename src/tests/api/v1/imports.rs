@@ -8,7 +8,6 @@ mod tests {
     use rstest::rstest;
     use std::time::Duration;
 
-    use crate::db::traits::task::create_task_record;
     use crate::db::with_connection;
     use crate::models::{
         GroupKey, ImportAtomicity, ImportClassInput, ImportCollisionPolicy, ImportGraph,
@@ -234,25 +233,23 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let task = create_task_record(
-            &context.pool,
-            NewTaskRecord {
-                kind: TaskKind::Report.as_str().to_string(),
-                status: TaskStatus::Succeeded.as_str().to_string(),
-                submitted_by: Some(context.admin_user.id),
-                idempotency_key: None,
-                request_hash: None,
-                request_payload: None,
-                summary: Some("Synthetic report task".to_string()),
-                total_items: 0,
-                processed_items: 0,
-                success_items: 0,
-                failed_items: 0,
-                request_redacted_at: Some(Utc::now().naive_utc()),
-                started_at: Some(Utc::now().naive_utc()),
-                finished_at: Some(Utc::now().naive_utc()),
-            },
-        )
+        let task = NewTaskRecord {
+            kind: TaskKind::Report.as_str().to_string(),
+            status: TaskStatus::Succeeded.as_str().to_string(),
+            submitted_by: Some(context.admin_user.id),
+            idempotency_key: None,
+            request_hash: None,
+            request_payload: None,
+            summary: Some("Synthetic report task".to_string()),
+            total_items: 0,
+            processed_items: 0,
+            success_items: 0,
+            failed_items: 0,
+            request_redacted_at: Some(Utc::now().naive_utc()),
+            started_at: Some(Utc::now().naive_utc()),
+            finished_at: Some(Utc::now().naive_utc()),
+        }
+        .create(&context.pool)
         .await
         .unwrap();
 
@@ -400,25 +397,23 @@ mod tests {
     ) {
         let context = test_context;
         let report_key = context.scoped_name("report-task-idempotency");
-        let report_task = create_task_record(
-            &context.pool,
-            NewTaskRecord {
-                kind: TaskKind::Report.as_str().to_string(),
-                status: TaskStatus::Queued.as_str().to_string(),
-                submitted_by: Some(context.admin_user.id),
-                idempotency_key: Some(report_key.clone()),
-                request_hash: Some(context.scoped_name("report-task-hash")),
-                request_payload: None,
-                summary: None,
-                total_items: 0,
-                processed_items: 0,
-                success_items: 0,
-                failed_items: 0,
-                request_redacted_at: None,
-                started_at: None,
-                finished_at: None,
-            },
-        )
+        let report_task = NewTaskRecord {
+            kind: TaskKind::Report.as_str().to_string(),
+            status: TaskStatus::Queued.as_str().to_string(),
+            submitted_by: Some(context.admin_user.id),
+            idempotency_key: Some(report_key.clone()),
+            request_hash: Some(context.scoped_name("report-task-hash")),
+            request_payload: None,
+            summary: None,
+            total_items: 0,
+            processed_items: 0,
+            success_items: 0,
+            failed_items: 0,
+            request_redacted_at: None,
+            started_at: None,
+            finished_at: None,
+        }
+        .create(&context.pool)
         .await
         .unwrap();
 

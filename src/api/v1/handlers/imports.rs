@@ -4,45 +4,21 @@ use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, web};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
-use crate::db::traits::task::{
-    TaskCreateRequest, create_generic_task, find_task_by_idempotency, find_task_record,
-    list_import_results_with_total_count,
-};
+use crate::db::traits::task::{TaskBackend, TaskCreateRequest};
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    CURRENT_IMPORT_VERSION, ImportRequest, ImportTaskResultResponse, TaskKind, TaskRecord,
-    TaskResponse, User,
+    CURRENT_IMPORT_VERSION, ImportRequest, ImportTaskResultResponse, TaskID, TaskKind, TaskRecord,
+    TaskResponse,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
-use crate::traits::GroupMemberships;
 use crate::utilities::response::{
     json_response, json_response_with_header, paginated_json_response,
 };
-
-async fn load_authorized_import_task(
-    pool: &DbPool,
-    requestor: &User,
-    task_id: i32,
-) -> Result<TaskRecord, ApiError> {
-    let task = find_task_record(pool, task_id).await?;
-    if task.kind != TaskKind::Import.as_str() {
-        return Err(ApiError::NotFound(format!(
-            "Import task {} not found",
-            task_id
-        )));
-    }
-    if task.submitted_by == Some(requestor.id) || requestor.is_admin(pool).await? {
-        Ok(task)
-    } else {
-        // Return 404 instead of 403 to hide existence of task from unauthorized users
-        Err(ApiError::NotFound("Import task not found".to_string()))
-    }
-}
 
 async fn find_or_create_import_task(
     pool: &DbPool,
@@ -59,7 +35,7 @@ async fn find_or_create_import_task(
     };
 
     if let Some(key) = idempotency_key.as_deref()
-        && let Some(existing) = find_task_by_idempotency(pool, submitted_by, key).await?
+        && let Some(existing) = TaskRecord::find_by_idempotency(pool, submitted_by, key).await?
     {
         if matches_request(&existing) {
             return Ok(existing);
@@ -72,23 +48,22 @@ async fn find_or_create_import_task(
 
     let create_idempotency_key = idempotency_key.clone();
 
-    match create_generic_task(
-        pool,
-        TaskCreateRequest {
-            kind: TaskKind::Import,
-            submitted_by,
-            idempotency_key: create_idempotency_key,
-            request_hash: Some(request_hash),
-            request_payload: payload,
-            total_items,
-        },
-    )
+    match (TaskCreateRequest {
+        kind: TaskKind::Import,
+        submitted_by,
+        idempotency_key: create_idempotency_key,
+        request_hash: Some(request_hash),
+        request_payload: payload,
+        total_items,
+    })
+    .create_generic(pool)
     .await
     {
         Ok(task) => Ok(task),
         Err(ApiError::Conflict(_)) => {
             if let Some(key) = idempotency_key.as_deref()
-                && let Some(existing) = find_task_by_idempotency(pool, submitted_by, key).await?
+                && let Some(existing) =
+                    TaskRecord::find_by_idempotency(pool, submitted_by, key).await?
                 && matches_request(&existing)
             {
                 return Ok(existing);
@@ -176,10 +151,13 @@ pub async fn create_import(
 pub async fn get_import(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
-    task_id: web::Path<i32>,
+    task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
-    let task = load_authorized_import_task(&pool, &requestor.user, task_id.into_inner()).await?;
+    let task = task_id
+        .into_inner()
+        .load_authorized_import(&pool, &requestor.user)
+        .await?;
     Ok(json_response(task.to_response()?, StatusCode::OK))
 }
 
@@ -203,15 +181,18 @@ pub async fn get_import_results(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
     req: HttpRequest,
-    task_id: web::Path<i32>,
+    task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
     let task_id = task_id.into_inner();
-    load_authorized_import_task(&pool, &requestor.user, task_id).await?;
+    task_id
+        .load_authorized_import(&pool, &requestor.user)
+        .await?;
     let params = parse_query_parameter(req.query_string())?;
     let search_params = prepare_db_pagination::<ImportTaskResultResponse>(&params)?;
-    let (results, total_count) =
-        list_import_results_with_total_count(&pool, task_id, &search_params).await?;
+    let (results, total_count) = task_id
+        .list_import_results_with_total_count(&pool, &search_params)
+        .await?;
     let results = results
         .into_iter()
         .map(ImportTaskResultResponse::from)

@@ -67,6 +67,39 @@ pub struct HubuumClassWithPath {
 #[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
 pub struct HubuumClassID(pub i32);
 
+/// A normalized set of class ids: deduplicated, sorted ascending, and guaranteed positive.
+///
+/// Construct via [`ClassIdSet::new`]; the inner vec stays private so the "sorted, deduped,
+/// positive" invariant holds for every consumer — including callers that `binary_search` the
+/// set and rely on the ordering. Bulk class-keyed backend lookups hang off this type (see
+/// `crate::db::traits::class`).
+#[derive(Debug, Clone)]
+pub(crate) struct ClassIdSet(Vec<i32>);
+
+impl ClassIdSet {
+    /// Normalize an iterator of class ids into a set, rejecting non-positive ids.
+    pub(crate) fn new(ids: impl IntoIterator<Item = i32>) -> Result<Self, ApiError> {
+        let mut ids = ids.into_iter().collect::<Vec<_>>();
+        if ids.iter().any(|class_id| *class_id <= 0) {
+            return Err(ApiError::BadRequest(
+                "class ids must be greater than 0".to_string(),
+            ));
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        Ok(Self(ids))
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The normalized ids, sorted ascending and deduplicated.
+    pub(crate) fn as_slice(&self) -> &[i32] {
+        &self.0
+    }
+}
+
 pub async fn total_class_count<C>(backend: &C) -> Result<i64, ApiError>
 where
     C: BackendContext + ?Sized,

@@ -1,9 +1,7 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::io::{self, Write};
 use std::time::Instant;
 
 use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, post, web};
-use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -14,32 +12,30 @@ use crate::config::{
     DEFAULT_REPORT_OUTPUT_RETENTION_HOURS, DEFAULT_REPORT_STAGE_TIMEOUT_MS,
     DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS, get_config,
 };
+use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
-use crate::db::traits::task::{
-    TaskCreateRequest, TaskStateUpdate, append_task_event, create_report_task_with_active_limit,
-    finalize_report_task_with_output, find_report_task_output, find_report_task_output_summary,
-    find_task_by_idempotency, find_task_record, update_task_state,
-};
-use crate::db::{DbPool, with_connection};
+use crate::db::traits::task::{TaskBackend, TaskCreateRequest, TaskStateUpdate};
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::{
     FilterField, ParsedQueryParam, QueryOptions, SearchOperator, parse_query_parameter,
 };
 use crate::models::{
-    HubuumClassID, HubuumClassRelation, HubuumObject, HubuumObjectID, HubuumObjectRelation,
-    HubuumObjectWithPath, NamespaceID, NewReportTaskOutputRecord, NewTaskEventRecord, Permissions,
-    ReportContentType, ReportIncludeRelatedDirection, ReportIncludeRelatedObject,
+    ClassIdSet, HubuumClassID, HubuumClassRelation, HubuumObject, HubuumObjectID,
+    HubuumObjectRelation, HubuumObjectWithPath, NamespaceID, NamespaceReportTemplates,
+    NewReportTaskOutputRecord, NewTaskEventRecord, Permissions, RELATED_INCLUDE_DEFAULT_LIMIT,
+    RELATED_INCLUDE_DEFAULT_MAX_DEPTH, ReportContentType, ReportIncludeRelatedDirection,
     ReportIncludeRelatedQuery, ReportIncludeRelatedSort, ReportJsonResponse, ReportMeta,
     ReportMissingDataPolicy, ReportRequest, ReportScope, ReportScopeKind, ReportTaskOutputRecord,
-    ReportTemplate, ReportTemplateID, ReportWarning, TaskKind, TaskRecord, TaskResponse, User,
+    ReportTemplate, ReportTemplateID, ReportWarning, TaskID, TaskKind, TaskRecord, TaskResponse,
+    User,
 };
 use crate::pagination::page_limits_or_defaults;
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
-use crate::traits::{GroupMemberships, NamespaceAccessors, Search, SelfAccessors};
-use crate::utilities::reporting::render_template;
+use crate::traits::{NamespaceAccessors, Search, SelfAccessors};
+use crate::utilities::reporting::{SizeLimitedWriter, render_template};
 use crate::utilities::response::{json_response, json_response_with_header};
 
 use super::check_if_object_in_class;
@@ -47,6 +43,7 @@ use super::check_if_object_in_class;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredReportTaskPayload {
     report: ReportRequest,
+    template_id: Option<i32>,
 }
 
 struct ReportArtifact {
@@ -61,11 +58,6 @@ struct ReportArtifact {
 
 const REPORT_WARNINGS_HEADER: &str = "X-Hubuum-Report-Warnings";
 const REPORT_TRUNCATED_HEADER: &str = "X-Hubuum-Report-Truncated";
-const RELATED_INCLUDE_DEFAULT_MAX_DEPTH: i32 = 1;
-const RELATED_INCLUDE_MAX_DEPTH_LIMIT: i32 = 10;
-const RELATED_INCLUDE_DEFAULT_LIMIT: i32 = 1;
-const RELATED_INCLUDE_MAX_LIMIT: i32 = 50;
-const RELATED_INCLUDE_MAX_ALIASES: usize = 8;
 
 struct ReportRuntime {
     report: ReportRequest,
@@ -217,25 +209,8 @@ pub async fn run_report(
     req: HttpRequest,
     report: web::Json<ReportRequest>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.get_ref().clone());
-
     let report = report.into_inner();
-    let payload = serde_json::to_value(&report)?;
-    let hash = request_hash(&payload)?;
-    let idempotency_key = idempotency_key_from_headers(req.headers())?;
-
-    let runtime = prepare_report_runtime(&pool, &requestor.user, report).await?;
-    validate_report_submission(&runtime)?;
-    let task_payload = runtime_to_task_payload(&runtime)?;
-
-    let task = find_or_create_report_task(
-        &pool,
-        requestor.user.id,
-        idempotency_key,
-        serde_json::to_value(task_payload)?,
-        hash,
-    )
-    .await?;
+    let task = submit_report_task(&pool, &requestor.user, req, report, None).await?;
 
     let response = task.to_response()?;
     let mut headers = HashMap::new();
@@ -247,6 +222,37 @@ pub async fn run_report(
         StatusCode::ACCEPTED,
         Some(headers),
     ))
+}
+
+pub(crate) async fn submit_report_task(
+    pool: &DbPool,
+    user: &User,
+    req: HttpRequest,
+    report: ReportRequest,
+    template: Option<ReportTemplate>,
+) -> Result<TaskRecord, ApiError> {
+    ensure_task_worker_running(pool.clone());
+
+    let task_payload = StoredReportTaskPayload {
+        report,
+        template_id: template.as_ref().map(|template| template.id),
+    };
+    let payload = serde_json::to_value(&task_payload)?;
+    let hash = request_hash(&payload)?;
+    let idempotency_key = idempotency_key_from_headers(req.headers())?;
+
+    let runtime = prepare_report_runtime(pool, task_payload.report.clone(), template).await?;
+    validate_report_submission(&runtime)?;
+    let task_payload = runtime_to_task_payload(&runtime)?;
+
+    find_or_create_report_task(
+        pool,
+        user.id,
+        idempotency_key,
+        serde_json::to_value(task_payload)?,
+        hash,
+    )
+    .await
 }
 
 #[utoipa::path(
@@ -267,11 +273,14 @@ pub async fn run_report(
 pub async fn get_report(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
-    task_id: web::Path<i32>,
+    task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
-    let task = load_authorized_report_task(&pool, &requestor.user, task_id.into_inner()).await?;
-    let output = find_report_task_output_summary(&pool, task.id).await?;
+    let task = task_id
+        .into_inner()
+        .load_authorized_report(&pool, &requestor.user)
+        .await?;
+    let output = task.find_report_output_summary(&pool).await?;
     Ok(json_response(
         task.to_response_with_report_output(output.as_ref())?,
         StatusCode::OK,
@@ -305,12 +314,15 @@ pub async fn get_report(
 pub async fn get_report_output(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
-    task_id: web::Path<i32>,
+    task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
     let task_id = task_id.into_inner();
-    load_authorized_report_task(&pool, &requestor.user, task_id).await?;
-    let output = find_report_task_output(&pool, task_id)
+    task_id
+        .load_authorized_report(&pool, &requestor.user)
+        .await?;
+    let output = task_id
+        .find_report_output(&pool)
         .await?
         .ok_or_else(|| ApiError::NotFound("Report output not found".to_string()))?;
     render_report_task_output(output)
@@ -318,21 +330,17 @@ pub async fn get_report_output(
 
 async fn prepare_report_runtime(
     pool: &DbPool,
-    user: &User,
     report: ReportRequest,
+    template: Option<ReportTemplate>,
 ) -> Result<ReportRuntime, ApiError> {
     report.scope.validate()?;
     validate_report_include(&report)?;
 
-    let template = resolve_template(pool, user, &report).await?;
     let namespace_templates = match &template {
         Some(template) => {
-            crate::models::report_template::report_templates_in_namespace(
-                pool,
-                template.namespace_id,
-                None,
-            )
-            .await?
+            NamespaceID(template.namespace_id)
+                .report_templates(pool, None)
+                .await?
         }
         None => Vec::new(),
     };
@@ -355,13 +363,13 @@ async fn prepare_report_runtime(
 async fn resolve_template(
     pool: &DbPool,
     user: &crate::models::User,
-    report: &ReportRequest,
+    template_id: Option<i32>,
 ) -> Result<Option<ReportTemplate>, ApiError> {
-    let Some(template_id) = report.output.as_ref().and_then(|output| output.template_id) else {
+    let Some(template_id) = template_id else {
         return Ok(None);
     };
 
-    let template = ReportTemplateID(template_id).instance(pool).await?;
+    let template = ReportTemplateID::new(template_id)?.instance(pool).await?;
     can!(
         pool,
         user.clone(),
@@ -395,6 +403,7 @@ fn runtime_to_task_payload(runtime: &ReportRuntime) -> Result<StoredReportTaskPa
     validate_report_submission(runtime)?;
     Ok(StoredReportTaskPayload {
         report: runtime.report.clone(),
+        template_id: runtime.template.as_ref().map(|template| template.id),
     })
 }
 
@@ -412,7 +421,7 @@ async fn find_or_create_report_task(
     };
 
     if let Some(key) = idempotency_key.as_deref()
-        && let Some(existing) = find_task_by_idempotency(pool, submitted_by, key).await?
+        && let Some(existing) = TaskRecord::find_by_idempotency(pool, submitted_by, key).await?
     {
         if matches_request(&existing) {
             return Ok(existing);
@@ -423,24 +432,22 @@ async fn find_or_create_report_task(
         )));
     }
 
-    match create_report_task_with_active_limit(
-        pool,
-        TaskCreateRequest {
-            kind: TaskKind::Report,
-            submitted_by,
-            idempotency_key: idempotency_key.clone(),
-            request_hash: Some(request_hash_value),
-            request_payload: payload,
-            total_items: 1,
-        },
-        max_active_report_tasks_per_user(),
-    )
+    match (TaskCreateRequest {
+        kind: TaskKind::Report,
+        submitted_by,
+        idempotency_key: idempotency_key.clone(),
+        request_hash: Some(request_hash_value),
+        request_payload: payload,
+        total_items: 1,
+    })
+    .create_with_active_report_limit(pool, max_active_report_tasks_per_user())
     .await
     {
         Ok(task) => Ok(task),
         Err(ApiError::Conflict(_)) => {
             if let Some(key) = idempotency_key.as_deref()
-                && let Some(existing) = find_task_by_idempotency(pool, submitted_by, key).await?
+                && let Some(existing) =
+                    TaskRecord::find_by_idempotency(pool, submitted_by, key).await?
                 && matches_request(&existing)
             {
                 return Ok(existing);
@@ -454,26 +461,6 @@ async fn find_or_create_report_task(
     }
 }
 
-async fn load_authorized_report_task(
-    pool: &DbPool,
-    requestor: &User,
-    task_id: i32,
-) -> Result<TaskRecord, ApiError> {
-    let is_admin = requestor.is_admin(pool).await?;
-    let task = find_task_record(pool, task_id).await?;
-    if task.kind != TaskKind::Report.as_str() {
-        return Err(ApiError::NotFound(format!(
-            "Report task {} not found",
-            task_id
-        )));
-    }
-    if task.submitted_by == Some(requestor.id) || is_admin {
-        Ok(task)
-    } else {
-        Err(ApiError::NotFound("Report task not found".to_string()))
-    }
-}
-
 pub(crate) async fn execute_report_task(
     pool: &DbPool,
     task: &TaskRecord,
@@ -484,24 +471,22 @@ pub(crate) async fn execute_report_task(
         .clone()
         .ok_or_else(|| ApiError::BadRequest("Report task payload is missing".to_string()))?;
     let payload: StoredReportTaskPayload = serde_json::from_value(payload)?;
-    let runtime = prepare_report_runtime(pool, user, payload.report).await?;
+    let template = resolve_template(pool, user, payload.template_id).await?;
+    let runtime = prepare_report_runtime(pool, payload.report, template).await?;
     validate_report_submission(&runtime)?;
     let total_start = Instant::now();
     let mut timings = ReportExecutionTimings::default();
 
-    append_task_event(
-        pool,
-        NewTaskEventRecord {
-            task_id: task.id,
-            event_type: "running".to_string(),
-            message: "Report execution started".to_string(),
-            data: None,
-        },
-    )
+    NewTaskEventRecord {
+        task_id: task.id,
+        event_type: "running".to_string(),
+        message: "Report execution started".to_string(),
+        data: None,
+    }
+    .append(pool)
     .await?;
-    update_task_state(
+    task.update_state(
         pool,
-        task.id,
         TaskStateUpdate {
             status: crate::models::TaskStatus::Running,
             summary: None,
@@ -514,18 +499,16 @@ pub(crate) async fn execute_report_task(
     )
     .await?;
 
-    append_task_event(
-        pool,
-        NewTaskEventRecord {
-            task_id: task.id,
-            event_type: "running".to_string(),
-            message: "Query execution started".to_string(),
-            data: Some(serde_json::json!({
-                "scope": runtime.report.scope.kind.as_str(),
-                "content_type": runtime.content_type.as_mime(),
-            })),
-        },
-    )
+    NewTaskEventRecord {
+        task_id: task.id,
+        event_type: "running".to_string(),
+        message: "Query execution started".to_string(),
+        data: Some(serde_json::json!({
+            "scope": runtime.report.scope.kind.as_str(),
+            "content_type": runtime.content_type.as_mime(),
+        })),
+    }
+    .append(pool)
     .await?;
 
     let mut query_options = prepare_query_options(&runtime.report)?;
@@ -542,19 +525,17 @@ pub(crate) async fn execute_report_task(
         .as_ref()
         .is_some_and(|plan| plan.enabled_for_scope)
     {
-        append_task_event(
-            pool,
-            NewTaskEventRecord {
-                task_id: task.id,
-                event_type: "running".to_string(),
-                message: "Hydrating relation-aware template context".to_string(),
-                data: relation_hydration.as_ref().map(|plan| {
-                    serde_json::json!({
-                        "depth_limit": plan.depth_limit,
-                    })
-                }),
-            },
-        )
+        NewTaskEventRecord {
+            task_id: task.id,
+            event_type: "running".to_string(),
+            message: "Hydrating relation-aware template context".to_string(),
+            data: relation_hydration.as_ref().map(|plan| {
+                serde_json::json!({
+                    "depth_limit": plan.depth_limit,
+                })
+            }),
+        }
+        .append(pool)
         .await?;
     }
 
@@ -589,15 +570,13 @@ pub(crate) async fn execute_report_task(
         source,
     };
 
-    append_task_event(
-        pool,
-        NewTaskEventRecord {
-            task_id: task.id,
-            event_type: "running".to_string(),
-            message: "Rendering report output".to_string(),
-            data: None,
-        },
-    )
+    NewTaskEventRecord {
+        task_id: task.id,
+        event_type: "running".to_string(),
+        message: "Rendering report output".to_string(),
+        data: None,
+    }
+    .append(pool)
     .await?;
 
     let render_start = Instant::now();
@@ -612,20 +591,17 @@ pub(crate) async fn execute_report_task(
         ..artifact
     };
 
-    append_task_event(
-        pool,
-        NewTaskEventRecord {
-            task_id: task.id,
-            event_type: "running".to_string(),
-            message: "Persisting report output".to_string(),
-            data: None,
-        },
-    )
+    NewTaskEventRecord {
+        task_id: task.id,
+        event_type: "running".to_string(),
+        message: "Persisting report output".to_string(),
+        data: None,
+    }
+    .append(pool)
     .await?;
 
-    finalize_report_task_with_output(
+    task.finalize_report_with_output(
         pool,
-        task.id,
         TaskStateUpdate {
             status: crate::models::TaskStatus::Succeeded,
             summary: Some("Report completed successfully".to_string()),
@@ -702,74 +678,7 @@ fn validate_report_include(report: &ReportRequest) -> Result<(), ApiError> {
         ));
     }
 
-    if related_objects.len() > RELATED_INCLUDE_MAX_ALIASES {
-        return Err(ApiError::BadRequest(format!(
-            "include.related_objects supports at most {RELATED_INCLUDE_MAX_ALIASES} aliases"
-        )));
-    }
-
-    for (alias, include) in related_objects {
-        validate_related_include_alias(alias)?;
-        validate_related_include_options(alias, include)?;
-    }
-
-    Ok(())
-}
-
-fn validate_related_include_alias(alias: &str) -> Result<(), ApiError> {
-    let mut chars = alias.chars();
-    let Some(first) = chars.next() else {
-        return Err(ApiError::BadRequest(
-            "include.related_objects aliases must not be empty".to_string(),
-        ));
-    };
-
-    if !(first == '_' || first.is_ascii_alphabetic())
-        || !chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-    {
-        return Err(ApiError::BadRequest(format!(
-            "Invalid include.related_objects alias '{alias}'; expected [A-Za-z_][A-Za-z0-9_]*"
-        )));
-    }
-
-    Ok(())
-}
-
-fn validate_related_include_options(
-    alias: &str,
-    include: &ReportIncludeRelatedObject,
-) -> Result<(), ApiError> {
-    if include.class_id <= 0 {
-        return Err(ApiError::BadRequest(format!(
-            "include.related_objects.{alias}.class_id must be greater than 0"
-        )));
-    }
-
-    if let Some(class_relation_id) = include.class_relation_id
-        && class_relation_id <= 0
-    {
-        return Err(ApiError::BadRequest(format!(
-            "include.related_objects.{alias}.class_relation_id must be greater than 0"
-        )));
-    }
-
-    let max_depth = include
-        .max_depth
-        .unwrap_or(RELATED_INCLUDE_DEFAULT_MAX_DEPTH);
-    if !(1..=RELATED_INCLUDE_MAX_DEPTH_LIMIT).contains(&max_depth) {
-        return Err(ApiError::BadRequest(format!(
-            "include.related_objects.{alias}.max_depth must be between 1 and {RELATED_INCLUDE_MAX_DEPTH_LIMIT}"
-        )));
-    }
-
-    let limit = include.limit.unwrap_or(RELATED_INCLUDE_DEFAULT_LIMIT);
-    if !(1..=RELATED_INCLUDE_MAX_LIMIT).contains(&limit) {
-        return Err(ApiError::BadRequest(format!(
-            "include.related_objects.{alias}.limit must be between 1 and {RELATED_INCLUDE_MAX_LIMIT}"
-        )));
-    }
-
-    Ok(())
+    include.validate_related_objects()
 }
 
 fn add_truncation_warning(warnings: &mut Vec<ReportWarning>, truncated: bool) {
@@ -802,7 +711,6 @@ fn build_json_report_artifact(
     execution: ReportExecution,
     timings: ReportExecutionTimings,
 ) -> Result<ReportArtifact, ApiError> {
-    ensure_json_output_has_no_template_id(&runtime.report)?;
     let response = ReportJsonResponse {
         items: execution.items,
         meta: execution.meta.clone(),
@@ -857,29 +765,13 @@ fn build_text_report_artifact(
     })
 }
 
-fn ensure_json_output_has_no_template_id(report: &ReportRequest) -> Result<(), ApiError> {
-    if report
-        .output
-        .as_ref()
-        .and_then(|output| output.template_id)
-        .is_some()
-    {
-        return Err(ApiError::BadRequest(
-            "Template references are only supported for text/plain, text/html, and text/csv output"
-                .to_string(),
-        ));
-    }
-
-    Ok(())
-}
-
 fn required_template(
     runtime: &ReportRuntime,
     content_type: ReportContentType,
 ) -> Result<&ReportTemplate, ApiError> {
     runtime.template.as_ref().ok_or_else(|| {
         ApiError::BadRequest(format!(
-            "Output type '{}' requires output.template_id",
+            "Output type '{}' requires running an executable report template",
             content_type.as_mime()
         ))
     })
@@ -1301,23 +1193,19 @@ async fn load_hydration_class_metadata(
     pool: &DbPool,
     objects_by_id: &BTreeMap<i32, HubuumObjectWithPath>,
 ) -> Result<HydrationClassMetadata, ApiError> {
-    let mut object_class_ids = objects_by_id
-        .values()
-        .map(|object| object.hubuum_class_id)
-        .collect::<Vec<_>>();
-    object_class_ids.sort_unstable();
-    object_class_ids.dedup();
+    let object_class_ids =
+        ClassIdSet::new(objects_by_id.values().map(|object| object.hubuum_class_id))?;
 
-    let mut class_relations =
-        load_class_relations_touching_classes(pool, &object_class_ids).await?;
+    let mut class_relations = object_class_ids.load_relations_touching(pool).await?;
     class_relations.sort_by_key(|relation| relation.id);
 
     let mut class_relations_by_object_class = BTreeMap::<i32, Vec<HubuumClassRelation>>::new();
-    let mut name_ids = object_class_ids.clone();
+    let mut name_ids = object_class_ids.as_slice().to_vec();
     for relation in &class_relations {
         name_ids.push(relation.from_hubuum_class_id);
         name_ids.push(relation.to_hubuum_class_id);
         if object_class_ids
+            .as_slice()
             .binary_search(&relation.from_hubuum_class_id)
             .is_ok()
         {
@@ -1328,6 +1216,7 @@ async fn load_hydration_class_metadata(
         }
         if relation.to_hubuum_class_id != relation.from_hubuum_class_id
             && object_class_ids
+                .as_slice()
                 .binary_search(&relation.to_hubuum_class_id)
                 .is_ok()
         {
@@ -1483,69 +1372,28 @@ async fn ensure_class_name_ids(
     class_ids: &[i32],
     class_names: &mut BTreeMap<i32, String>,
 ) -> Result<(), ApiError> {
-    let mut missing_ids = class_ids
-        .iter()
-        .copied()
-        .filter(|class_id| !class_names.contains_key(class_id))
-        .collect::<Vec<_>>();
-    missing_ids.sort_unstable();
-    missing_ids.dedup();
+    let missing = ClassIdSet::new(
+        class_ids
+            .iter()
+            .copied()
+            .filter(|class_id| !class_names.contains_key(class_id)),
+    )?;
 
-    if missing_ids.is_empty() {
+    if missing.is_empty() {
         return Ok(());
     }
 
-    for (class_id, class_name) in load_class_names(pool, &missing_ids).await? {
+    for (class_id, class_name) in missing.load_names(pool).await? {
         class_names.insert(class_id, class_name);
     }
 
-    for class_id in missing_ids {
-        if !class_names.contains_key(&class_id) {
+    for class_id in missing.as_slice() {
+        if !class_names.contains_key(class_id) {
             return Err(ApiError::NotFound(format!("Class {class_id} not found")));
         }
     }
 
     Ok(())
-}
-
-async fn load_class_names(
-    pool: &DbPool,
-    class_ids: &[i32],
-) -> Result<Vec<(i32, String)>, ApiError> {
-    use crate::schema::hubuumclass::dsl::{hubuumclass, id, name};
-
-    if class_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let class_ids = class_ids.to_vec();
-    with_connection(pool, |conn| {
-        hubuumclass
-            .filter(id.eq_any(class_ids))
-            .select((id, name))
-            .load::<(i32, String)>(conn)
-    })
-}
-
-async fn load_class_relations_touching_classes(
-    pool: &DbPool,
-    class_ids: &[i32],
-) -> Result<Vec<HubuumClassRelation>, ApiError> {
-    use crate::schema::hubuumclass_relation::dsl::{
-        from_hubuum_class_id, hubuumclass_relation, to_hubuum_class_id,
-    };
-
-    if class_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let class_ids = class_ids.to_vec();
-    with_connection(pool, |conn| {
-        hubuumclass_relation
-            .filter(from_hubuum_class_id.eq_any(&class_ids))
-            .or_filter(to_hubuum_class_id.eq_any(&class_ids))
-            .load::<HubuumClassRelation>(conn)
-    })
 }
 
 fn add_bidirectional_alias_edge(
@@ -2319,7 +2167,7 @@ fn enforce_json_output_limit(
         .and_then(|limits| limits.max_output_bytes)
         .unwrap_or_else(configured_report_max_output_bytes);
 
-    let mut writer = LimitedJsonWriter::new(max_output_bytes);
+    let mut writer = SizeLimitedWriter::new(max_output_bytes);
     if let Err(error) = serde_json::to_writer(&mut writer, response) {
         if writer.exceeded() {
             return Err(ApiError::PayloadTooLarge(format!(
@@ -2335,45 +2183,6 @@ fn enforce_json_output_limit(
     Ok(())
 }
 
-// This exists only for output-size enforcement: serde_json::to_vec would allocate
-// the whole response before we can reject an oversized report, while to_writer can
-// stop as soon as the configured byte budget is crossed.
-struct LimitedJsonWriter {
-    max_bytes: usize,
-    written: usize,
-    exceeded: bool,
-}
-
-impl LimitedJsonWriter {
-    fn new(max_bytes: usize) -> Self {
-        Self {
-            max_bytes,
-            written: 0,
-            exceeded: false,
-        }
-    }
-
-    fn exceeded(&self) -> bool {
-        self.exceeded
-    }
-}
-
-impl Write for LimitedJsonWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if self.written.saturating_add(buf.len()) > self.max_bytes {
-            self.exceeded = true;
-            return Err(io::Error::other("json output limit exceeded"));
-        }
-
-        self.written += buf.len();
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -2381,7 +2190,7 @@ mod tests {
     use crate::models::{
         ReportContentType, ReportInclude, ReportIncludeRelatedObject, ReportLimits, ReportMeta,
         ReportMissingDataPolicy, ReportRelationContext, ReportRequest, ReportScope,
-        ReportScopeKind, ReportTaskOutputRecord, ReportTemplate,
+        ReportScopeKind, ReportTaskOutputRecord, ReportTemplate, ReportTemplateKind,
     };
 
     use super::{
@@ -2470,7 +2279,6 @@ mod tests {
                 object_id: None,
             },
             query: None,
-            output: None,
             missing_data_policy: None,
             limits: Some(limits),
             include: None,
@@ -2488,7 +2296,6 @@ mod tests {
                 object_id: None,
             },
             query: None,
-            output: None,
             missing_data_policy: None,
             limits: None,
             include: Some(ReportInclude {
@@ -2510,6 +2317,14 @@ mod tests {
                 description: String::new(),
                 content_type: ReportContentType::TextPlain,
                 template: "{{ items|length }}".to_string(),
+                kind: ReportTemplateKind::Report,
+                scope_kind: Some(ReportScopeKind::ObjectsInClass),
+                class_id: Some(1),
+                default_query: None,
+                include: None,
+                relation_context: None,
+                default_missing_data_policy: None,
+                default_limits: None,
                 created_at: test_timestamp(),
                 updated_at: test_timestamp(),
             }),

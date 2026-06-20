@@ -102,17 +102,20 @@ pub fn validate_template_with_limits(
     Ok(())
 }
 
-// Size-bounded sink for streaming a template render: minijinja's render_captured_to writes into
-// this as it evaluates, so an oversized text/html/csv report aborts at the byte budget instead of
-// being fully materialized before the 413. The JSON output path has an analogous LimitedJsonWriter.
-struct LimitedStringWriter {
+/// Size-bounded `Write` sink shared by both report output paths. minijinja's
+/// `render_captured_to` (text/html/csv) and `serde_json::to_writer` (JSON) both write into this as
+/// they produce bytes, so an oversized report aborts at the configured byte budget instead of being
+/// fully materialized before the 413. Memory stays bounded by `max_bytes` because writing stops at
+/// the cap. The JSON size check ignores the captured bytes; the template path keeps them via
+/// `into_string`.
+pub struct SizeLimitedWriter {
     max_bytes: usize,
     buffer: Vec<u8>,
     exceeded: bool,
 }
 
-impl LimitedStringWriter {
-    fn new(max_bytes: usize) -> Self {
+impl SizeLimitedWriter {
+    pub fn new(max_bytes: usize) -> Self {
         Self {
             max_bytes,
             buffer: Vec::new(),
@@ -120,22 +123,22 @@ impl LimitedStringWriter {
         }
     }
 
-    fn exceeded(&self) -> bool {
+    pub fn exceeded(&self) -> bool {
         self.exceeded
     }
 
-    fn into_string(self) -> Result<String, ApiError> {
+    pub fn into_string(self) -> Result<String, ApiError> {
         String::from_utf8(self.buffer).map_err(|error| {
             ApiError::InternalServerError(format!("Rendered report was not valid UTF-8: {error}"))
         })
     }
 }
 
-impl Write for LimitedStringWriter {
+impl Write for SizeLimitedWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.buffer.len().saturating_add(buf.len()) > self.max_bytes {
             self.exceeded = true;
-            return Err(io::Error::other("template output limit exceeded"));
+            return Err(io::Error::other("report output limit exceeded"));
         }
 
         self.buffer.extend_from_slice(buf);
@@ -204,7 +207,7 @@ pub fn render_template(
     };
 
     begin_template_warning_capture();
-    let mut writer = LimitedStringWriter::new(max_output_bytes);
+    let mut writer = SizeLimitedWriter::new(max_output_bytes);
     let lookup = env.env.get_template(&env.template_name);
     let render_result = match lookup {
         Ok(template) => template.render_captured_to(context, &mut writer),
@@ -266,6 +269,8 @@ fn namespace_signature(
     }
 }
 
+/// Recursion and fuel bounds for a MiniJinja environment, bundled so `build_environment`
+/// stays within a sensible argument count.
 #[derive(Debug, Clone, Copy)]
 struct TemplateLimits {
     recursion_limit: usize,
@@ -281,10 +286,6 @@ fn build_environment(
     missing_data_policy: ReportMissingDataPolicy,
     limits: TemplateLimits,
 ) -> Result<CachedTemplateEnvironment, ApiError> {
-    let TemplateLimits {
-        recursion_limit,
-        fuel,
-    } = limits;
     let mut env = Environment::new();
     let template_map = Arc::new(build_namespace_template_map(
         namespace_id,
@@ -295,8 +296,8 @@ fn build_environment(
 
     env.set_keep_trailing_newline(true);
     env.set_undefined_behavior(undefined_behavior(missing_data_policy));
-    env.set_recursion_limit(recursion_limit);
-    env.set_fuel(Some(fuel));
+    env.set_recursion_limit(limits.recursion_limit);
+    env.set_fuel(Some(limits.fuel));
     env.set_auto_escape_callback(move |_| match content_type {
         ReportContentType::TextHtml => AutoEscape::Html,
         _ => AutoEscape::None,
@@ -629,10 +630,11 @@ fn record_missing_value_warning(state: &State<'_, '_>, path: Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{ReportScopeKind, ReportTemplateKind};
 
     #[test]
     fn limited_string_writer_accumulates_under_limit() {
-        let mut writer = LimitedStringWriter::new(16);
+        let mut writer = SizeLimitedWriter::new(16);
         writer.write_all(b"hello ").unwrap();
         writer.write_all(b"world").unwrap();
         assert!(!writer.exceeded());
@@ -641,7 +643,7 @@ mod tests {
 
     #[test]
     fn limited_string_writer_aborts_over_limit() {
-        let mut writer = LimitedStringWriter::new(4);
+        let mut writer = SizeLimitedWriter::new(4);
         let err = writer.write_all(b"toolong").unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::Other);
         assert!(writer.exceeded());
@@ -662,6 +664,14 @@ mod tests {
             description: "template".to_string(),
             content_type,
             template: source.to_string(),
+            kind: ReportTemplateKind::Report,
+            scope_kind: Some(ReportScopeKind::ObjectsInClass),
+            class_id: Some(1),
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
             created_at: now,
             updated_at: now,
         }

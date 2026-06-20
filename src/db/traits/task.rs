@@ -12,7 +12,7 @@ use crate::models::search::QueryOptions;
 use crate::models::{
     ImportTaskResultRecord, NewImportTaskResultRecord, NewReportTaskOutputRecord,
     NewTaskEventRecord, NewTaskRecord, ReportTaskOutputRecord, ReportTaskOutputSummaryRecord,
-    TaskEventRecord, TaskKind, TaskRecord, TaskResponse, TaskResultCounts, TaskStatus,
+    TaskEventRecord, TaskID, TaskKind, TaskRecord, TaskResponse, TaskResultCounts, TaskStatus,
 };
 use crate::pagination::{CursorValue, decode_cursor_values, page_limits_or_defaults};
 
@@ -41,42 +41,381 @@ struct AdvisoryLockRow {
     locked: bool,
 }
 
+/// Anything that can name a task for a backend query: a [`TaskID`] from a request path or an
+/// already-loaded [`TaskRecord`] (and references to either). The required `task_id` resolves the
+/// raw id at the persistence boundary so it never leaks into the domain.
+pub trait TaskIdentifier {
+    fn task_id(&self) -> i32;
+}
+
+impl TaskIdentifier for TaskID {
+    fn task_id(&self) -> i32 {
+        self.id()
+    }
+}
+
+impl TaskIdentifier for TaskRecord {
+    fn task_id(&self) -> i32 {
+        self.id
+    }
+}
+
+impl<T: TaskIdentifier + ?Sized> TaskIdentifier for &T {
+    fn task_id(&self) -> i32 {
+        (**self).task_id()
+    }
+}
+
+/// Single-task backend persistence, as self-methods on any [`TaskIdentifier`]. Callers write
+/// `task.find_record(pool)` / `task.update_state(pool, ..)` rather than passing a bare id to a free
+/// function; all Diesel query construction stays here in the backend layer.
+pub trait TaskBackend: TaskIdentifier {
+    async fn find_record(&self, pool: &DbPool) -> Result<TaskRecord, ApiError> {
+        use crate::schema::tasks::dsl::{id, tasks};
+
+        let task_id_value = self.task_id();
+        with_connection(pool, |conn| {
+            tasks.filter(id.eq(task_id_value)).first::<TaskRecord>(conn)
+        })
+    }
+
+    async fn list_events_with_total_count(
+        &self,
+        pool: &DbPool,
+        query_options: &QueryOptions,
+    ) -> Result<(Vec<TaskEventRecord>, i64), ApiError> {
+        use crate::schema::task_events::dsl::{id, task_events, task_id};
+
+        let task_id_value = self.task_id();
+        let limit = query_options
+            .limit
+            .unwrap_or(page_limits_or_defaults().0.saturating_add(1));
+        let descending = query_options
+            .sort
+            .first()
+            .map(|sort| sort.descending)
+            .unwrap_or(false);
+        let cursor_id = decode_history_cursor_id(query_options)?;
+
+        let total_count = with_connection(pool, |conn| {
+            task_events
+                .filter(task_id.eq(task_id_value))
+                .count()
+                .get_result::<i64>(conn)
+        })?;
+
+        let items = with_connection(pool, |conn| {
+            let mut query = task_events.filter(task_id.eq(task_id_value)).into_boxed();
+            if let Some(cursor_id) = cursor_id {
+                query = if descending {
+                    query.filter(id.lt(cursor_id))
+                } else {
+                    query.filter(id.gt(cursor_id))
+                };
+            }
+
+            if descending {
+                query
+                    .order(id.desc())
+                    .limit(limit as i64)
+                    .load::<TaskEventRecord>(conn)
+            } else {
+                query
+                    .order(id.asc())
+                    .limit(limit as i64)
+                    .load::<TaskEventRecord>(conn)
+            }
+        })?;
+
+        Ok((items, total_count))
+    }
+
+    async fn list_import_results_with_total_count(
+        &self,
+        pool: &DbPool,
+        query_options: &QueryOptions,
+    ) -> Result<(Vec<ImportTaskResultRecord>, i64), ApiError> {
+        use crate::schema::import_task_results::dsl::{id, import_task_results, task_id};
+
+        let task_id_value = self.task_id();
+        let limit = query_options
+            .limit
+            .unwrap_or(page_limits_or_defaults().0.saturating_add(1));
+        let descending = query_options
+            .sort
+            .first()
+            .map(|sort| sort.descending)
+            .unwrap_or(false);
+        let cursor_id = decode_history_cursor_id(query_options)?;
+
+        let total_count = with_connection(pool, |conn| {
+            import_task_results
+                .filter(task_id.eq(task_id_value))
+                .count()
+                .get_result::<i64>(conn)
+        })?;
+
+        let items = with_connection(pool, |conn| {
+            let mut query = import_task_results
+                .filter(task_id.eq(task_id_value))
+                .into_boxed();
+            if let Some(cursor_id) = cursor_id {
+                query = if descending {
+                    query.filter(id.lt(cursor_id))
+                } else {
+                    query.filter(id.gt(cursor_id))
+                };
+            }
+
+            if descending {
+                query
+                    .order(id.desc())
+                    .limit(limit as i64)
+                    .load::<ImportTaskResultRecord>(conn)
+            } else {
+                query
+                    .order(id.asc())
+                    .limit(limit as i64)
+                    .load::<ImportTaskResultRecord>(conn)
+            }
+        })?;
+
+        Ok((items, total_count))
+    }
+
+    async fn find_report_output(
+        &self,
+        pool: &DbPool,
+    ) -> Result<Option<ReportTaskOutputRecord>, ApiError> {
+        use crate::schema::report_task_outputs::dsl::{
+            output_expires_at, report_task_outputs, task_id,
+        };
+
+        let task_id_value = self.task_id();
+        let now = Utc::now().naive_utc();
+        with_connection(pool, |conn| {
+            report_task_outputs
+                .filter(task_id.eq(task_id_value))
+                .filter(output_expires_at.gt(now))
+                .first::<ReportTaskOutputRecord>(conn)
+                .optional()
+        })
+    }
+
+    async fn find_report_output_summary(
+        &self,
+        pool: &DbPool,
+    ) -> Result<Option<ReportTaskOutputSummaryRecord>, ApiError> {
+        use crate::schema::report_task_outputs::dsl::{
+            output_expires_at, report_task_outputs, task_id,
+        };
+
+        let task_id_value = self.task_id();
+        let now = Utc::now().naive_utc();
+        with_connection(pool, |conn| {
+            report_task_outputs
+                .filter(task_id.eq(task_id_value))
+                .filter(output_expires_at.gt(now))
+                .select(ReportTaskOutputSummaryRecord::as_select())
+                .first(conn)
+                .optional()
+        })
+    }
+
+    async fn count_import_results(&self, pool: &DbPool) -> Result<TaskResultCounts, ApiError> {
+        use crate::schema::import_task_results::dsl::{import_task_results, outcome, task_id};
+
+        let task_id_value = self.task_id();
+        with_connection(pool, |conn| -> Result<TaskResultCounts, ApiError> {
+            let processed = import_task_results
+                .filter(task_id.eq(task_id_value))
+                .count()
+                .get_result::<i64>(conn)?;
+            let failed = import_task_results
+                .filter(task_id.eq(task_id_value))
+                .filter(outcome.eq("failed"))
+                .count()
+                .get_result::<i64>(conn)?;
+            TaskResultCounts::new(processed, processed - failed, failed)
+        })
+    }
+
+    async fn update_state(
+        &self,
+        pool: &DbPool,
+        update: TaskStateUpdate,
+    ) -> Result<TaskRecord, ApiError> {
+        use crate::schema::tasks::dsl::{
+            failed_items, finished_at, id, processed_items, started_at, status, success_items,
+            summary, tasks, updated_at,
+        };
+
+        let task_id_value = self.task_id();
+        let now = Utc::now().naive_utc();
+        let record = with_connection(pool, |conn| {
+            diesel::update(tasks.filter(id.eq(task_id_value)))
+                .set((
+                    status.eq(update.status.as_str()),
+                    summary.eq(update.summary),
+                    processed_items.eq(update.processed_items),
+                    success_items.eq(update.success_items),
+                    failed_items.eq(update.failed_items),
+                    started_at.eq(update.started_at),
+                    finished_at.eq(update.finished_at),
+                    updated_at.eq(now),
+                ))
+                .get_result::<TaskRecord>(conn)
+        })?;
+
+        info!(
+            message = "Task state updated",
+            task_id = record.id,
+            task_kind = record.kind.as_str(),
+            status = record.status.as_str(),
+            processed_items = record.processed_items,
+            success_items = record.success_items,
+            failed_items = record.failed_items
+        );
+
+        Ok(record)
+    }
+
+    async fn finalize_terminal(
+        &self,
+        pool: &DbPool,
+        update: TaskStateUpdate,
+        event: NewTaskEventRecord,
+    ) -> Result<TaskRecord, ApiError> {
+        use crate::schema::task_events::dsl::task_events;
+        use crate::schema::tasks::dsl::{
+            failed_items, finished_at, id, processed_items, request_payload, request_redacted_at,
+            started_at, status, success_items, summary, tasks, updated_at,
+        };
+
+        let task_id_value = self.task_id();
+        let record = with_transaction(pool, |conn| {
+            let event_record = diesel::insert_into(task_events)
+                .values(event)
+                .get_result::<TaskEventRecord>(conn)?;
+
+            diesel::update(tasks.filter(id.eq(task_id_value)))
+                .set((
+                    status.eq(update.status.as_str()),
+                    summary.eq(update.summary),
+                    processed_items.eq(update.processed_items),
+                    success_items.eq(update.success_items),
+                    failed_items.eq(update.failed_items),
+                    started_at.eq(update.started_at),
+                    finished_at.eq(Some(event_record.created_at)),
+                    request_payload.eq::<Option<serde_json::Value>>(None),
+                    request_redacted_at.eq(event_record.created_at),
+                    updated_at.eq(event_record.created_at),
+                ))
+                .get_result::<TaskRecord>(conn)
+        })?;
+
+        info!(
+            message = "Task reached terminal state",
+            task_id = record.id,
+            task_kind = record.kind.as_str(),
+            status = record.status.as_str(),
+            processed_items = record.processed_items,
+            success_items = record.success_items,
+            failed_items = record.failed_items,
+            summary = record.summary.as_deref()
+        );
+
+        Ok(record)
+    }
+
+    async fn finalize_report_with_output(
+        &self,
+        pool: &DbPool,
+        update: TaskStateUpdate,
+        event: NewTaskEventRecord,
+        output: NewReportTaskOutputRecord,
+    ) -> Result<TaskRecord, ApiError> {
+        use crate::schema::report_task_outputs::dsl::report_task_outputs;
+        use crate::schema::task_events::dsl::task_events;
+        use crate::schema::tasks::dsl::{
+            failed_items, finished_at, id, processed_items, request_payload, request_redacted_at,
+            started_at, status, success_items, summary, tasks, updated_at,
+        };
+
+        let task_id_value = self.task_id();
+        let record = with_transaction(pool, |conn| {
+            diesel::insert_into(report_task_outputs)
+                .values(output)
+                .execute(conn)?;
+
+            let event_record = diesel::insert_into(task_events)
+                .values(event)
+                .get_result::<TaskEventRecord>(conn)?;
+
+            diesel::update(tasks.filter(id.eq(task_id_value)))
+                .set((
+                    status.eq(update.status.as_str()),
+                    summary.eq(update.summary),
+                    processed_items.eq(update.processed_items),
+                    success_items.eq(update.success_items),
+                    failed_items.eq(update.failed_items),
+                    started_at.eq(update.started_at),
+                    finished_at.eq(Some(event_record.created_at)),
+                    request_payload.eq::<Option<serde_json::Value>>(None),
+                    request_redacted_at.eq(event_record.created_at),
+                    updated_at.eq(event_record.created_at),
+                ))
+                .get_result::<TaskRecord>(conn)
+        })?;
+
+        info!(
+            message = "Report task output stored and task finalized",
+            task_id = record.id,
+            task_kind = record.kind.as_str(),
+            status = record.status.as_str(),
+            processed_items = record.processed_items,
+            success_items = record.success_items,
+            failed_items = record.failed_items,
+            summary = record.summary.as_deref()
+        );
+
+        Ok(record)
+    }
+}
+
+impl<T: TaskIdentifier + ?Sized> TaskBackend for T {}
+
 #[cfg(test)]
-pub async fn create_task_record(
-    pool: &DbPool,
-    new_task: NewTaskRecord,
-) -> Result<TaskRecord, ApiError> {
-    use crate::schema::tasks::dsl::tasks;
+impl NewTaskRecord {
+    /// Insert this new task row and return the persisted record.
+    pub async fn create(self, pool: &DbPool) -> Result<TaskRecord, ApiError> {
+        use crate::schema::tasks::dsl::tasks;
 
-    with_connection(pool, |conn| {
-        diesel::insert_into(tasks)
-            .values(&new_task)
-            .get_result::<TaskRecord>(conn)
-    })
+        with_connection(pool, |conn| {
+            diesel::insert_into(tasks)
+                .values(&self)
+                .get_result::<TaskRecord>(conn)
+        })
+    }
 }
 
-pub async fn find_task_record(pool: &DbPool, task_id: i32) -> Result<TaskRecord, ApiError> {
-    use crate::schema::tasks::dsl::{id, tasks};
+impl TaskRecord {
+    /// Find the task submitted by `submitter_id` carrying the given idempotency key, if any.
+    pub async fn find_by_idempotency(
+        pool: &DbPool,
+        submitter_id: i32,
+        key: &str,
+    ) -> Result<Option<TaskRecord>, ApiError> {
+        use crate::schema::tasks::dsl::{idempotency_key, submitted_by, tasks};
 
-    with_connection(pool, |conn| {
-        tasks.filter(id.eq(task_id)).first::<TaskRecord>(conn)
-    })
-}
-
-pub async fn find_task_by_idempotency(
-    pool: &DbPool,
-    submitter_id: i32,
-    key: &str,
-) -> Result<Option<TaskRecord>, ApiError> {
-    use crate::schema::tasks::dsl::{idempotency_key, submitted_by, tasks};
-
-    with_connection(pool, |conn| {
-        tasks
-            .filter(submitted_by.eq(Some(submitter_id)))
-            .filter(idempotency_key.eq(key))
-            .first::<TaskRecord>(conn)
-            .optional()
-    })
+        with_connection(pool, |conn| {
+            tasks
+                .filter(submitted_by.eq(Some(submitter_id)))
+                .filter(idempotency_key.eq(key))
+                .first::<TaskRecord>(conn)
+                .optional()
+        })
+    }
 }
 
 fn build_task_query<'a>(
@@ -123,145 +462,6 @@ pub async fn list_tasks_with_total_count(
     })?;
 
     Ok((items, total_count))
-}
-
-pub async fn list_task_events_with_total_count(
-    pool: &DbPool,
-    task_id_value: i32,
-    query_options: &QueryOptions,
-) -> Result<(Vec<TaskEventRecord>, i64), ApiError> {
-    use crate::schema::task_events::dsl::{id, task_events, task_id};
-
-    let limit = query_options
-        .limit
-        .unwrap_or(page_limits_or_defaults().0.saturating_add(1));
-    let descending = query_options
-        .sort
-        .first()
-        .map(|sort| sort.descending)
-        .unwrap_or(false);
-    let cursor_id = decode_history_cursor_id(query_options)?;
-
-    let total_count = with_connection(pool, |conn| {
-        task_events
-            .filter(task_id.eq(task_id_value))
-            .count()
-            .get_result::<i64>(conn)
-    })?;
-
-    let items = with_connection(pool, |conn| {
-        let mut query = task_events.filter(task_id.eq(task_id_value)).into_boxed();
-        if let Some(cursor_id) = cursor_id {
-            query = if descending {
-                query.filter(id.lt(cursor_id))
-            } else {
-                query.filter(id.gt(cursor_id))
-            };
-        }
-
-        if descending {
-            query
-                .order(id.desc())
-                .limit(limit as i64)
-                .load::<TaskEventRecord>(conn)
-        } else {
-            query
-                .order(id.asc())
-                .limit(limit as i64)
-                .load::<TaskEventRecord>(conn)
-        }
-    })?;
-
-    Ok((items, total_count))
-}
-
-pub async fn list_import_results_with_total_count(
-    pool: &DbPool,
-    task_id_value: i32,
-    query_options: &QueryOptions,
-) -> Result<(Vec<ImportTaskResultRecord>, i64), ApiError> {
-    use crate::schema::import_task_results::dsl::{id, import_task_results, task_id};
-
-    let limit = query_options
-        .limit
-        .unwrap_or(page_limits_or_defaults().0.saturating_add(1));
-    let descending = query_options
-        .sort
-        .first()
-        .map(|sort| sort.descending)
-        .unwrap_or(false);
-    let cursor_id = decode_history_cursor_id(query_options)?;
-
-    let total_count = with_connection(pool, |conn| {
-        import_task_results
-            .filter(task_id.eq(task_id_value))
-            .count()
-            .get_result::<i64>(conn)
-    })?;
-
-    let items = with_connection(pool, |conn| {
-        let mut query = import_task_results
-            .filter(task_id.eq(task_id_value))
-            .into_boxed();
-        if let Some(cursor_id) = cursor_id {
-            query = if descending {
-                query.filter(id.lt(cursor_id))
-            } else {
-                query.filter(id.gt(cursor_id))
-            };
-        }
-
-        if descending {
-            query
-                .order(id.desc())
-                .limit(limit as i64)
-                .load::<ImportTaskResultRecord>(conn)
-        } else {
-            query
-                .order(id.asc())
-                .limit(limit as i64)
-                .load::<ImportTaskResultRecord>(conn)
-        }
-    })?;
-
-    Ok((items, total_count))
-}
-
-pub async fn find_report_task_output(
-    pool: &DbPool,
-    task_id_value: i32,
-) -> Result<Option<ReportTaskOutputRecord>, ApiError> {
-    use crate::schema::report_task_outputs::dsl::{
-        output_expires_at, report_task_outputs, task_id,
-    };
-
-    let now = Utc::now().naive_utc();
-    with_connection(pool, |conn| {
-        report_task_outputs
-            .filter(task_id.eq(task_id_value))
-            .filter(output_expires_at.gt(now))
-            .first::<ReportTaskOutputRecord>(conn)
-            .optional()
-    })
-}
-
-pub async fn find_report_task_output_summary(
-    pool: &DbPool,
-    task_id_value: i32,
-) -> Result<Option<ReportTaskOutputSummaryRecord>, ApiError> {
-    use crate::schema::report_task_outputs::dsl::{
-        output_expires_at, report_task_outputs, task_id,
-    };
-
-    let now = Utc::now().naive_utc();
-    with_connection(pool, |conn| {
-        report_task_outputs
-            .filter(task_id.eq(task_id_value))
-            .filter(output_expires_at.gt(now))
-            .select(ReportTaskOutputSummaryRecord::as_select())
-            .first(conn)
-            .optional()
-    })
 }
 
 pub async fn list_report_task_output_summaries(
@@ -332,26 +532,6 @@ pub async fn purge_expired_report_outputs(pool: &DbPool) -> Result<Vec<i32>, Api
     Ok(expired_task_ids)
 }
 
-pub async fn count_import_results_summary(
-    pool: &DbPool,
-    task_id_value: i32,
-) -> Result<TaskResultCounts, ApiError> {
-    use crate::schema::import_task_results::dsl::{import_task_results, outcome, task_id};
-
-    with_connection(pool, |conn| -> Result<TaskResultCounts, ApiError> {
-        let processed = import_task_results
-            .filter(task_id.eq(task_id_value))
-            .count()
-            .get_result::<i64>(conn)?;
-        let failed = import_task_results
-            .filter(task_id.eq(task_id_value))
-            .filter(outcome.eq("failed"))
-            .count()
-            .get_result::<i64>(conn)?;
-        TaskResultCounts::new(processed, processed - failed, failed)
-    })
-}
-
 fn decode_history_cursor_id(query_options: &QueryOptions) -> Result<Option<i32>, ApiError> {
     let Some(cursor) = &query_options.cursor else {
         return Ok(None);
@@ -368,17 +548,17 @@ fn decode_history_cursor_id(query_options: &QueryOptions) -> Result<Option<i32>,
     }
 }
 
-pub async fn append_task_event(
-    pool: &DbPool,
-    event: NewTaskEventRecord,
-) -> Result<TaskEventRecord, ApiError> {
-    use crate::schema::task_events::dsl::task_events;
+impl NewTaskEventRecord {
+    /// Append this event to its task's history and return the persisted event.
+    pub async fn append(self, pool: &DbPool) -> Result<TaskEventRecord, ApiError> {
+        use crate::schema::task_events::dsl::task_events;
 
-    with_connection(pool, |conn| {
-        diesel::insert_into(task_events)
-            .values(&event)
-            .get_result::<TaskEventRecord>(conn)
-    })
+        with_connection(pool, |conn| {
+            diesel::insert_into(task_events)
+                .values(&self)
+                .get_result::<TaskEventRecord>(conn)
+        })
+    }
 }
 
 pub async fn insert_import_results(
@@ -396,145 +576,6 @@ pub async fn insert_import_results(
             .values(entries)
             .execute(conn)
     })
-}
-
-pub async fn update_task_state(
-    pool: &DbPool,
-    task_id_value: i32,
-    update: TaskStateUpdate,
-) -> Result<TaskRecord, ApiError> {
-    use crate::schema::tasks::dsl::{
-        failed_items, finished_at, id, processed_items, started_at, status, success_items, summary,
-        tasks, updated_at,
-    };
-
-    let now = Utc::now().naive_utc();
-    let record = with_connection(pool, |conn| {
-        diesel::update(tasks.filter(id.eq(task_id_value)))
-            .set((
-                status.eq(update.status.as_str()),
-                summary.eq(update.summary),
-                processed_items.eq(update.processed_items),
-                success_items.eq(update.success_items),
-                failed_items.eq(update.failed_items),
-                started_at.eq(update.started_at),
-                finished_at.eq(update.finished_at),
-                updated_at.eq(now),
-            ))
-            .get_result::<TaskRecord>(conn)
-    })?;
-
-    info!(
-        message = "Task state updated",
-        task_id = record.id,
-        task_kind = record.kind.as_str(),
-        status = record.status.as_str(),
-        processed_items = record.processed_items,
-        success_items = record.success_items,
-        failed_items = record.failed_items
-    );
-
-    Ok(record)
-}
-
-pub async fn finalize_task_terminal_state(
-    pool: &DbPool,
-    task_id_value: i32,
-    update: TaskStateUpdate,
-    event: NewTaskEventRecord,
-) -> Result<TaskRecord, ApiError> {
-    use crate::schema::task_events::dsl::task_events;
-    use crate::schema::tasks::dsl::{
-        failed_items, finished_at, id, processed_items, request_payload, request_redacted_at,
-        started_at, status, success_items, summary, tasks, updated_at,
-    };
-
-    let record = with_transaction(pool, |conn| {
-        let event_record = diesel::insert_into(task_events)
-            .values(event)
-            .get_result::<TaskEventRecord>(conn)?;
-
-        diesel::update(tasks.filter(id.eq(task_id_value)))
-            .set((
-                status.eq(update.status.as_str()),
-                summary.eq(update.summary),
-                processed_items.eq(update.processed_items),
-                success_items.eq(update.success_items),
-                failed_items.eq(update.failed_items),
-                started_at.eq(update.started_at),
-                finished_at.eq(Some(event_record.created_at)),
-                request_payload.eq::<Option<serde_json::Value>>(None),
-                request_redacted_at.eq(event_record.created_at),
-                updated_at.eq(event_record.created_at),
-            ))
-            .get_result::<TaskRecord>(conn)
-    })?;
-
-    info!(
-        message = "Task reached terminal state",
-        task_id = record.id,
-        task_kind = record.kind.as_str(),
-        status = record.status.as_str(),
-        processed_items = record.processed_items,
-        success_items = record.success_items,
-        failed_items = record.failed_items,
-        summary = record.summary.as_deref()
-    );
-
-    Ok(record)
-}
-
-pub async fn finalize_report_task_with_output(
-    pool: &DbPool,
-    task_id_value: i32,
-    update: TaskStateUpdate,
-    event: NewTaskEventRecord,
-    output: NewReportTaskOutputRecord,
-) -> Result<TaskRecord, ApiError> {
-    use crate::schema::report_task_outputs::dsl::report_task_outputs;
-    use crate::schema::task_events::dsl::task_events;
-    use crate::schema::tasks::dsl::{
-        failed_items, finished_at, id, processed_items, request_payload, request_redacted_at,
-        started_at, status, success_items, summary, tasks, updated_at,
-    };
-
-    let record = with_transaction(pool, |conn| {
-        diesel::insert_into(report_task_outputs)
-            .values(output)
-            .execute(conn)?;
-
-        let event_record = diesel::insert_into(task_events)
-            .values(event)
-            .get_result::<TaskEventRecord>(conn)?;
-
-        diesel::update(tasks.filter(id.eq(task_id_value)))
-            .set((
-                status.eq(update.status.as_str()),
-                summary.eq(update.summary),
-                processed_items.eq(update.processed_items),
-                success_items.eq(update.success_items),
-                failed_items.eq(update.failed_items),
-                started_at.eq(update.started_at),
-                finished_at.eq(Some(event_record.created_at)),
-                request_payload.eq::<Option<serde_json::Value>>(None),
-                request_redacted_at.eq(event_record.created_at),
-                updated_at.eq(event_record.created_at),
-            ))
-            .get_result::<TaskRecord>(conn)
-    })?;
-
-    info!(
-        message = "Report task output stored and task finalized",
-        task_id = record.id,
-        task_kind = record.kind.as_str(),
-        status = record.status.as_str(),
-        processed_items = record.processed_items,
-        success_items = record.success_items,
-        failed_items = record.failed_items,
-        summary = record.summary.as_deref()
-    );
-
-    Ok(record)
 }
 
 pub async fn claim_next_queued_task(pool: &DbPool) -> Result<Option<TaskRecord>, ApiError> {
@@ -590,47 +631,51 @@ pub async fn claim_next_queued_task(pool: &DbPool) -> Result<Option<TaskRecord>,
     Ok(record)
 }
 
-pub async fn create_generic_task(
-    pool: &DbPool,
-    request: TaskCreateRequest,
-) -> Result<TaskRecord, ApiError> {
-    let task = with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
-        insert_queued_task_with_event(conn, request)
-    })?;
+impl TaskCreateRequest {
+    /// Queue this task (with its initial "queued" event) in a single transaction.
+    pub async fn create_generic(self, pool: &DbPool) -> Result<TaskRecord, ApiError> {
+        let task = with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
+            insert_queued_task_with_event(conn, self)
+        })?;
 
-    log_task_queued(&task);
+        log_task_queued(&task);
 
-    Ok(task)
-}
-
-pub async fn create_report_task_with_active_limit(
-    pool: &DbPool,
-    request: TaskCreateRequest,
-    max_active_report_tasks: usize,
-) -> Result<TaskRecord, ApiError> {
-    if request.kind != TaskKind::Report {
-        return Err(ApiError::BadRequest(
-            "create_report_task_with_active_limit only accepts report tasks".to_string(),
-        ));
+        Ok(task)
     }
 
-    let max_active_report_tasks = i64::try_from(max_active_report_tasks).unwrap_or(i64::MAX);
-    let submitter_id = request.submitted_by;
-    let task = with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
-        acquire_report_task_capacity_lock(conn, submitter_id)?;
-        let active_count = count_active_report_tasks_for_user_in_transaction(conn, submitter_id)?;
-        if active_count >= max_active_report_tasks {
-            return Err(ApiError::TooManyRequests(format!(
-                "Too many active report tasks for user ({active_count} >= {max_active_report_tasks}); wait for queued or running reports to finish"
-            )));
+    /// Queue this report task, rejecting it with `429` if the submitter already has
+    /// `max_active_report_tasks` queued/validating/running reports. Capacity is checked under a
+    /// per-user advisory lock so concurrent submissions cannot race past the limit.
+    pub async fn create_with_active_report_limit(
+        self,
+        pool: &DbPool,
+        max_active_report_tasks: usize,
+    ) -> Result<TaskRecord, ApiError> {
+        if self.kind != TaskKind::Report {
+            return Err(ApiError::BadRequest(
+                "create_with_active_report_limit only accepts report tasks".to_string(),
+            ));
         }
 
-        insert_queued_task_with_event(conn, request)
-    })?;
+        let max_active_report_tasks = i64::try_from(max_active_report_tasks).unwrap_or(i64::MAX);
+        let submitter_id = self.submitted_by;
+        let task = with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
+            acquire_report_task_capacity_lock(conn, submitter_id)?;
+            let active_count =
+                count_active_report_tasks_for_user_in_transaction(conn, submitter_id)?;
+            if active_count >= max_active_report_tasks {
+                return Err(ApiError::TooManyRequests(format!(
+                    "Too many active report tasks for user ({active_count} >= {max_active_report_tasks}); wait for queued or running reports to finish"
+                )));
+            }
 
-    log_task_queued(&task);
+            insert_queued_task_with_event(conn, self)
+        })?;
 
-    Ok(task)
+        log_task_queued(&task);
+
+        Ok(task)
+    }
 }
 
 fn insert_queued_task_with_event(
@@ -733,15 +778,12 @@ mod tests {
     use std::sync::mpsc;
     use std::thread;
 
-    use super::{
-        TaskCreateRequest, claim_next_queued_task, create_report_task_with_active_limit,
-        create_task_record, find_task_record, list_task_events_with_total_count,
-    };
+    use super::{TaskBackend, TaskCreateRequest, claim_next_queued_task};
     use crate::db::traits::user::DeleteUserRecord;
     use crate::db::with_transaction;
     use crate::errors::ApiError;
     use crate::models::search::QueryOptions;
-    use crate::models::{NewTaskRecord, TaskKind, TaskStatus};
+    use crate::models::{NewTaskRecord, TaskID, TaskKind, TaskStatus};
     use crate::tests::{TestContext, create_test_user};
 
     #[test]
@@ -751,8 +793,7 @@ mod tests {
         let claim_prefix = context.scoped_name("claim");
 
         for index in 0..3 {
-            let task = block_on(create_task_record(
-                &context.pool,
+            let task = block_on(
                 NewTaskRecord {
                     kind: TaskKind::Import.as_str().to_string(),
                     status: TaskStatus::Queued.as_str().to_string(),
@@ -768,8 +809,9 @@ mod tests {
                     request_redacted_at: None,
                     started_at: None,
                     finished_at: None,
-                },
-            ))
+                }
+                .create(&context.pool),
+            )
             .unwrap();
             created_ids.push(task.id);
         }
@@ -807,16 +849,19 @@ mod tests {
         assert_ne!(claimed.unwrap(), locked_id);
         assert!(created_ids.contains(&locked_id));
 
-        let (claimed_events, _) = block_on(list_task_events_with_total_count(
-            &context.pool,
-            claimed.unwrap(),
-            &QueryOptions {
-                filters: Vec::new(),
-                sort: Vec::new(),
-                limit: None,
-                cursor: None,
-            },
-        ))
+        let (claimed_events, _) = block_on(
+            TaskID::new(claimed.unwrap())
+                .unwrap()
+                .list_events_with_total_count(
+                    &context.pool,
+                    &QueryOptions {
+                        filters: Vec::new(),
+                        sort: Vec::new(),
+                        limit: None,
+                        cursor: None,
+                    },
+                ),
+        )
         .unwrap();
         assert_eq!(
             claimed_events
@@ -831,8 +876,7 @@ mod tests {
     fn test_task_history_survives_user_deletion() {
         let context = block_on(TestContext::new());
         let task_owner = block_on(create_test_user(&context.pool));
-        let task = block_on(create_task_record(
-            &context.pool,
+        let task = block_on(
             NewTaskRecord {
                 kind: TaskKind::Import.as_str().to_string(),
                 status: TaskStatus::Succeeded.as_str().to_string(),
@@ -848,21 +892,21 @@ mod tests {
                 request_redacted_at: None,
                 started_at: None,
                 finished_at: None,
-            },
-        ))
+            }
+            .create(&context.pool),
+        )
         .unwrap();
 
         block_on(task_owner.delete_user_record(&context.pool)).unwrap();
 
-        let stored = block_on(find_task_record(&context.pool, task.id)).unwrap();
+        let stored = block_on(task.find_record(&context.pool)).unwrap();
         assert_eq!(stored.submitted_by, None);
     }
 
     #[test]
     fn test_report_task_active_limit_blocks_new_work_for_same_user() {
         let context = block_on(TestContext::new());
-        let first = block_on(create_report_task_with_active_limit(
-            &context.pool,
+        let first = block_on(
             TaskCreateRequest {
                 kind: TaskKind::Report,
                 submitted_by: context.admin_user.id,
@@ -870,15 +914,14 @@ mod tests {
                 request_hash: Some(context.scoped_name("report-cap-first-hash")),
                 request_payload: serde_json::json!({"report": "first"}),
                 total_items: 1,
-            },
-            1,
-        ))
+            }
+            .create_with_active_report_limit(&context.pool, 1),
+        )
         .unwrap();
 
         assert_eq!(first.status, TaskStatus::Queued.as_str());
 
-        let error = block_on(create_report_task_with_active_limit(
-            &context.pool,
+        let error = block_on(
             TaskCreateRequest {
                 kind: TaskKind::Report,
                 submitted_by: context.admin_user.id,
@@ -886,9 +929,9 @@ mod tests {
                 request_hash: Some(context.scoped_name("report-cap-second-hash")),
                 request_payload: serde_json::json!({"report": "second"}),
                 total_items: 1,
-            },
-            1,
-        ))
+            }
+            .create_with_active_report_limit(&context.pool, 1),
+        )
         .unwrap_err();
 
         match error {

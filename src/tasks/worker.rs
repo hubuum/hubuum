@@ -10,8 +10,7 @@ use crate::api::v1::handlers::reports::execute_report_task;
 use crate::config::{DEFAULT_TASK_POLL_INTERVAL_MS, get_config};
 use crate::db::DbPool;
 use crate::db::traits::task::{
-    TaskStateUpdate, claim_next_queued_task, count_import_results_summary,
-    finalize_task_terminal_state, purge_expired_report_outputs,
+    TaskBackend, TaskStateUpdate, claim_next_queued_task, purge_expired_report_outputs,
 };
 use crate::errors::ApiError;
 use crate::models::{
@@ -191,7 +190,7 @@ pub(super) async fn mark_claimed_task_failed(
 ) -> Result<(), ApiError> {
     let summary = sanitize_error_for_storage(err);
     let counts = match TaskKind::from_db(&task.kind)? {
-        TaskKind::Import => count_import_results_summary(pool, task.id).await?,
+        TaskKind::Import => task.count_import_results(pool).await?,
         TaskKind::Report => TaskResultCounts::new(1, 0, 1)?,
         _ => TaskResultCounts::default(),
     };
@@ -207,9 +206,8 @@ pub(super) async fn mark_claimed_task_failed(
         error = %err
     );
 
-    finalize_task_terminal_state(
+    task.finalize_terminal(
         pool,
-        task.id,
         TaskStateUpdate {
             status: TaskStatus::Failed,
             summary: Some(summary.clone()),
