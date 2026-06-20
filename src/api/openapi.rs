@@ -19,7 +19,7 @@ use crate::models::{
     TaskProgress, TaskResponse, TaskStatus, UnifiedSearchBatchResponse, UnifiedSearchDoneEvent,
     UnifiedSearchErrorEvent, UnifiedSearchKind, UnifiedSearchResponse, UnifiedSearchStartedEvent,
     UpdateGroup, UpdateHubuumClass, UpdateHubuumObject, UpdateNamespace, UpdateReportTemplate,
-    UpdateUser, User, UserToken, UserTokenMetadata,
+    UpdateUser, UserResponse, UserToken, UserTokenMetadata,
 };
 use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER, page_limits_or_defaults};
 use actix_web::{HttpResponse, Responder};
@@ -144,7 +144,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             meta::ReleaseRateLimitResponse,
             meta::ClearRateLimitResponse,
             ObjectsByClass,
-            User,
+            UserResponse,
             NewUser,
             UpdateUser,
             LoginUser,

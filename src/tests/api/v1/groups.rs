@@ -4,7 +4,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::models::group::{Group, NewGroup, UpdateGroup};
-    use crate::models::user::{NewUser, User};
+    use crate::models::user::{NewUser, User, UserResponse};
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
@@ -223,7 +223,7 @@ mod tests {
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
 
-        let members: Vec<User> = test::read_body_json(resp).await;
+        let members: Vec<UserResponse> = test::read_body_json(resp).await;
         assert_eq!(members.len(), 1);
         assert_eq!(members[0].id, user.id);
 
@@ -243,7 +243,7 @@ mod tests {
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
 
-        let members: Vec<User> = test::read_body_json(resp).await;
+        let members: Vec<UserResponse> = test::read_body_json(resp).await;
         assert_eq!(members.len(), 0);
 
         user.delete(&context.pool).await.unwrap();
@@ -292,7 +292,7 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let first_group_members: Vec<User> = test::read_body_json(resp).await;
+        let first_group_members: Vec<UserResponse> = test::read_body_json(resp).await;
         assert_eq!(first_group_members.len(), 0);
 
         let resp = get_request(
@@ -302,7 +302,7 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let second_group_members: Vec<User> = test::read_body_json(resp).await;
+        let second_group_members: Vec<UserResponse> = test::read_body_json(resp).await;
         assert_eq!(second_group_members.len(), 1);
         assert_eq!(second_group_members[0].id, user.id);
 
@@ -466,7 +466,7 @@ mod tests {
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
-        let members: Vec<User> = test::read_body_json(resp).await;
+        let members: Vec<UserResponse> = test::read_body_json(resp).await;
 
         assert_eq!(members.len(), 1);
         assert!(next_cursor.is_some());
@@ -483,7 +483,7 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let members: Vec<User> = test::read_body_json(resp).await;
+        let members: Vec<UserResponse> = test::read_body_json(resp).await;
         assert_eq!(members.len(), 1);
     }
 
@@ -525,7 +525,7 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let members: Vec<User> = test::read_body_json(resp).await;
+        let members: Vec<UserResponse> = test::read_body_json(resp).await;
 
         assert_eq!(members.len(), 1);
         assert_eq!(members[0].id, matching_user.id);

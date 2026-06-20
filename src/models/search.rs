@@ -119,20 +119,36 @@ fn decode_query_parameter_pairs(qs: &str) -> Result<Vec<(String, String)>, ApiEr
             )));
         }
 
-        let key = parts[0].to_string();
-        let value = match percent_encoding::percent_decode(parts[1].as_bytes()).decode_utf8() {
-            Ok(value) => value.to_string(),
-            Err(e) => {
-                return Err(ApiError::BadRequest(format!(
-                    "Invalid query parameter: '{chunk}', invalid value: {e}",
-                )));
-            }
-        };
+        let key = decode_query_component(parts[0], chunk, "key")?;
+        let value = decode_query_component(parts[1], chunk, "value")?;
 
         pairs.push((key, value));
     }
 
     Ok(pairs)
+}
+
+fn decode_query_component(raw: &str, chunk: &str, component: &str) -> Result<String, ApiError> {
+    // `percent_decode().decode_utf8()` returns a borrowing Cow when there are no
+    // `%` escapes, so the common case allocates at most once via `into_owned()`.
+    // Only the `+` -> space pre-pass needs its own allocation, so skip it when
+    // there is no `+` to avoid the unconditional `replace` allocation.
+    let decoded = if raw.contains('+') {
+        let form_encoded = raw.replace('+', " ");
+        percent_encoding::percent_decode(form_encoded.as_bytes())
+            .decode_utf8()
+            .map(|value| value.into_owned())
+    } else {
+        percent_encoding::percent_decode(raw.as_bytes())
+            .decode_utf8()
+            .map(|value| value.into_owned())
+    };
+
+    decoded.map_err(|e| {
+        ApiError::BadRequest(format!(
+            "Invalid query parameter: '{chunk}', invalid {component}: {e}",
+        ))
+    })
 }
 
 fn parse_single_filter(key: &str, value: &str) -> Result<ParsedQueryParam, ApiError> {
@@ -2679,6 +2695,19 @@ mod test {
             SearchOperator::Equals { is_negated: false }
         );
         assert_eq!(query_options.filters[0].value, "alpha");
+    }
+
+    #[test]
+    fn test_parse_query_parameter_decodes_keys_values_and_plus() {
+        let query_options = parse_query_parameter("name%5F%5Fcontains=alpha+beta").unwrap();
+
+        assert_eq!(query_options.filters.len(), 1);
+        assert_eq!(query_options.filters[0].field, FilterField::Name);
+        assert_eq!(
+            query_options.filters[0].operator,
+            SearchOperator::Contains { is_negated: false }
+        );
+        assert_eq!(query_options.filters[0].value, "alpha beta");
     }
 
     // Covers docs/querying.md "Negation" (`not_` works with `between`).

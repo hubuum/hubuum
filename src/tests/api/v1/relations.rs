@@ -480,6 +480,35 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
+    async fn test_related_class_graph_enforces_limit(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "related_class_graph_limit").await;
+        let _ = create_relation(&context.pool, &classes[0], &classes[1]).await;
+        let _ = create_relation(&context.pool, &classes[1], &classes[2]).await;
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{}?limit=1", related_class_graph_endpoint(classes[0].id)),
+        )
+        .await;
+        let _ = assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{}?limit=2", related_class_graph_endpoint(classes[0].id)),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let graph: RelatedClassGraph = test::read_body_json(resp).await;
+        assert_eq!(graph.classes.len(), 3);
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
     async fn test_related_classes_cursor_pagination_with_path_sort(
         #[future(awt)] test_context: TestContext,
     ) {

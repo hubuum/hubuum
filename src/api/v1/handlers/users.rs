@@ -1,9 +1,9 @@
 use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::extractors::{AdminAccess, AdminOrSelfAccess, UserAccess};
+use crate::extractors::{AdminAccess, AdminOrSelfAccess};
 use crate::models::search::parse_query_parameter;
-use crate::models::user::{NewUser, UpdateUser, UserID};
+use crate::models::user::{NewUser, UpdateUser, UserID, UserResponse};
 use crate::models::{Group, User, UserToken, UserTokenMetadata};
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::utilities::response::{
@@ -19,9 +19,10 @@ use tracing::debug;
     tag = "users",
     security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "Users matching optional query filters", body = [User]),
+        (status = 200, description = "Users matching optional query filters", body = [UserResponse]),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
-        (status = 401, description = "Unauthorized", body = ApiErrorResponse)
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse)
     )
 )]
 #[routes]
@@ -29,7 +30,7 @@ use tracing::debug;
 #[get("/")]
 pub async fn get_users(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: AdminAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = requestor.user;
@@ -48,7 +49,9 @@ pub async fn get_users(
     let search_params = prepare_db_pagination::<User>(&params)?;
     let result = user.search_users(&pool, search_params).await?;
 
-    paginated_json_response(result, total_count, StatusCode::OK, &params)
+    paginated_json_mapped_response(result, total_count, StatusCode::OK, &params, |users| {
+        users.into_iter().map(UserResponse::from).collect()
+    })
 }
 
 #[utoipa::path(
@@ -58,7 +61,7 @@ pub async fn get_users(
     security(("bearer_auth" = [])),
     request_body = NewUser,
     responses(
-        (status = 201, description = "User created", body = User),
+        (status = 201, description = "User created", body = UserResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 409, description = "Conflict", body = ApiErrorResponse)
@@ -81,7 +84,7 @@ pub async fn create_user(
     let user = new_user.into_inner().save(&pool).await?;
 
     Ok(json_response_created(
-        &user,
+        UserResponse::from(&user),
         format!("/api/v1/iam/users/{}", user.id).as_str(),
     ))
 }
@@ -139,8 +142,9 @@ pub async fn get_user_tokens(
         ("user_id" = i32, Path, description = "User ID")
     ),
     responses(
-        (status = 200, description = "User", body = User),
+        (status = 200, description = "User", body = UserResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
         (status = 404, description = "User not found", body = ApiErrorResponse)
     )
 )]
@@ -148,7 +152,7 @@ pub async fn get_user_tokens(
 pub async fn get_user(
     pool: web::Data<DbPool>,
     user_id: web::Path<UserID>,
-    requestor: UserAccess,
+    requestor: AdminOrSelfAccess,
 ) -> Result<impl Responder, ApiError> {
     let user = user_id.into_inner().user(&pool).await?;
     debug!(
@@ -157,7 +161,7 @@ pub async fn get_user(
         requestor = requestor.user.id
     );
 
-    Ok(json_response(user, StatusCode::OK))
+    Ok(json_response(UserResponse::from(user), StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -208,7 +212,7 @@ pub async fn get_user_groups(
     ),
     request_body = UpdateUser,
     responses(
-        (status = 200, description = "Updated user", body = User),
+        (status = 200, description = "Updated user", body = UserResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "User not found", body = ApiErrorResponse)
@@ -228,12 +232,8 @@ pub async fn update_user(
         requestor = requestor.user.id
     );
 
-    let user = updated_user
-        .into_inner()
-        .hash_password()?
-        .save(user.id, &pool)
-        .await?;
-    Ok(json_response(user, StatusCode::OK))
+    let user = updated_user.into_inner().save(user.id, &pool).await?;
+    Ok(json_response(UserResponse::from(user), StatusCode::OK))
 }
 
 #[utoipa::path(

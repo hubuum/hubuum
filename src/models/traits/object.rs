@@ -117,6 +117,7 @@ impl UpdateAdapter for UpdateHubuumObject {
         pool: &DbPool,
         object_id: i32,
     ) -> Result<Self::Output, ApiError> {
+        (self, object_id).validate_object_record(pool).await?;
         self.update_object_record(pool, object_id).await
     }
 }

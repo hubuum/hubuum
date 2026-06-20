@@ -10,6 +10,7 @@ mod models;
 mod pagination;
 mod schema;
 mod tasks;
+#[cfg(test)]
 mod tests;
 mod tls;
 mod traits;

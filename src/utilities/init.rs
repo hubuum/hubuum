@@ -43,9 +43,16 @@ pub async fn init(pool: DbPool) -> InitResult {
     }
 
     debug!(message = "No users or groups found. Creating default admin user and group.");
+    let admin_groupname = crate::config::get_config()
+        .map(|config| config.admin_groupname.clone())
+        .map_err(|e| {
+            let err_msg = format!("Failed to load config during initialization: {}", e);
+            error!(message = &err_msg);
+            err_msg
+        })?;
 
     let adm_group = match (NewGroup {
-        groupname: "admin".to_string(),
+        groupname: admin_groupname,
         description: Some("Default admin group.".to_string()),
     }
     .save(&pool))

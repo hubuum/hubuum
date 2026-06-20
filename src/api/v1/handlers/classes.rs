@@ -9,7 +9,9 @@ use crate::db::traits::{ClassRelation, ObjectRelationMemberships, UserPermission
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::traits::{ExpandNamespace, ToHubuumObjects};
-use crate::pagination::{count_query_options, prepare_db_pagination};
+use crate::pagination::{
+    count_query_options, page_limits, prepare_db_pagination, validate_page_limit,
+};
 use crate::utilities::response::{
     json_response, json_response_created, paginated_json_mapped_response, paginated_json_response,
 };
@@ -96,6 +98,80 @@ fn parse_related_objects_query(
             ignore_self_class: ignore_self_class.unwrap_or(true),
         },
     ))
+}
+
+fn ensure_new_object_matches_path_class(
+    object: &NewHubuumObject,
+    class: &HubuumClass,
+) -> Result<(), ApiError> {
+    if object.hubuum_class_id != class.id {
+        return Err(ApiError::BadRequest(format!(
+            "Object hubuum_class_id {} does not match path class_id {}",
+            object.hubuum_class_id, class.id
+        )));
+    }
+
+    if object.namespace_id != class.namespace_id {
+        return Err(ApiError::BadRequest(format!(
+            "Object namespace_id {} does not match class namespace_id {}",
+            object.namespace_id, class.namespace_id
+        )));
+    }
+
+    Ok(())
+}
+
+fn ensure_object_update_stays_in_path_class(
+    update: &UpdateHubuumObject,
+    object: &HubuumObject,
+) -> Result<(), ApiError> {
+    if let Some(class_id) = update.hubuum_class_id
+        && class_id != object.hubuum_class_id
+    {
+        return Err(ApiError::BadRequest(
+            "Object class cannot be changed through a class-scoped object endpoint".to_string(),
+        ));
+    }
+
+    if let Some(namespace_id) = update.namespace_id
+        && namespace_id != object.namespace_id
+    {
+        return Err(ApiError::BadRequest(
+            "Object namespace cannot be changed through a class-scoped object endpoint".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn prepare_graph_query_options(
+    mut params: QueryOptions,
+) -> Result<(QueryOptions, usize), ApiError> {
+    if params.cursor.is_some() {
+        return Err(ApiError::BadRequest(
+            "Graph endpoint does not support cursor".to_string(),
+        ));
+    }
+
+    let (default_limit, _) = page_limits()?;
+    let limit = validate_page_limit(params.limit.unwrap_or(default_limit))?;
+    params.limit = Some(limit + 1);
+
+    Ok((params, limit))
+}
+
+fn ensure_graph_result_within_limit<T>(
+    items: &[T],
+    limit: usize,
+    resource_name: &str,
+) -> Result<(), ApiError> {
+    if items.len() > limit {
+        return Err(ApiError::BadRequest(format!(
+            "Graph contains more than {limit} related {resource_name}; narrow the query or increase limit"
+        )));
+    }
+
+    Ok(())
 }
 
 // GET /api/v1/classes, list all classes the user may see.
@@ -253,6 +329,17 @@ async fn update_class(
 
     let class = class_id.instance(&pool).await?;
     can!(&pool, user, [Permissions::UpdateClass], class);
+
+    if let Some(target_namespace_id) = class_data.namespace_id
+        && target_namespace_id != class.namespace_id
+    {
+        can!(
+            &pool,
+            user,
+            [Permissions::CreateClass],
+            NamespaceID(target_namespace_id)
+        );
+    }
 
     let class = class_data
         .update(&pool, class.id)
@@ -618,17 +705,14 @@ async fn get_related_class_graph(
 ) -> Result<impl Responder, ApiError> {
     let user = requestor.user;
     let class_id = class_id.into_inner();
-    let params = parse_query_parameter(req.query_string())?;
-    if params.limit.is_some() || params.cursor.is_some() {
-        return Err(ApiError::BadRequest(
-            "Graph endpoint does not support limit or cursor".to_string(),
-        ));
-    }
+    let (params, graph_limit) =
+        prepare_graph_query_options(parse_query_parameter(req.query_string())?)?;
     let class = class_id.instance(&pool).await?;
     can!(&pool, user, [Permissions::ReadClass], class);
 
     let root_class = class_with_root_path(&class);
     let connected_classes = user.search_classes_related_to(&pool, class, params).await?;
+    ensure_graph_result_within_limit(&connected_classes, graph_limit, "classes")?;
     let mut classes = Vec::with_capacity(connected_classes.len() + 1);
     classes.push(root_class);
     classes.extend(connected_classes.to_descendant_classes_with_path());
@@ -733,13 +817,15 @@ async fn create_object_in_class(
         object_data = object_data.name,
     );
 
-    can!(&pool, user, [Permissions::CreateObject], class_id);
+    let class = class_id.instance(&pool).await?;
+    can!(&pool, user, [Permissions::CreateObject], class);
+    ensure_new_object_matches_path_class(&object_data, &class)?;
 
     let object = object_data.save(&pool).await?;
 
     Ok(json_response_created(
         &object,
-        &format!("/api/v1/classes/{}/{}", class_id.id(), object.id()),
+        &format!("/api/v1/classes/{}/{}", class.id, object.id()),
     ))
 }
 
@@ -774,10 +860,7 @@ async fn get_object_in_class(
         object_id = object_id.id()
     );
 
-    // Can you read objects in a class you can't read? Hm.
-    // let class = class_id.instance(&pool).await?;
-    // check_permissions!(class.namespace_id, pool, user, Permissions::ReadClass);
-
+    check_if_object_in_class(&pool, &class_id, &object_id).await?;
     let object = object_id.instance(&pool).await?;
     can!(&pool, user, [Permissions::ReadObject], object);
 
@@ -819,8 +902,10 @@ async fn patch_object_in_class(
         object_id = object_id.id()
     );
 
+    check_if_object_in_class(&pool, &class_id, &object_id).await?;
     let object = object_id.instance(&pool).await?;
     can!(&pool, user, [Permissions::UpdateObject], object);
+    ensure_object_update_stays_in_path_class(&object_data, &object)?;
 
     let object = object_data.update(&pool, object.id).await?;
     Ok(json_response(object, StatusCode::OK))
@@ -857,6 +942,7 @@ async fn delete_object_in_class(
         object_id = object_id.id()
     );
 
+    check_if_object_in_class(&pool, &class_id, &object_id).await?;
     let object = object_id.instance(&pool).await?;
     can!(&pool, user, [Permissions::DeleteObject], object);
 
@@ -1018,13 +1104,8 @@ async fn get_related_object_graph(
 ) -> Result<impl Responder, ApiError> {
     let user = requestor.user;
     let (class_id, object_id) = paths.into_inner();
-    let params = parse_query_parameter(req.query_string())?;
-
-    if params.limit.is_some() || params.cursor.is_some() {
-        return Err(ApiError::BadRequest(
-            "Graph endpoint does not support limit or cursor".to_string(),
-        ));
-    }
+    let (params, graph_limit) =
+        prepare_graph_query_options(parse_query_parameter(req.query_string())?)?;
 
     check_if_object_in_class(&pool, &class_id, &object_id).await?;
     let object = object_id.instance(&pool).await?;
@@ -1042,6 +1123,7 @@ async fn get_related_object_graph(
     let connected_objects = user
         .search_objects_related_to(&pool, object, params)
         .await?;
+    ensure_graph_result_within_limit(&connected_objects, graph_limit, "objects")?;
     let mut objects = Vec::with_capacity(connected_objects.len() + 1);
     objects.push(root_object);
     objects.extend(connected_objects.to_descendant_objects_with_path());

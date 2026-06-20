@@ -6,8 +6,8 @@ use tracing::error;
 pub trait CustomStringExtensions {
     /// ## Check if the value is a valid json key for hubuum
     ///
-    /// We support only lowercase alphanumeric characters and underscores, as
-    /// well as the comma character for nested keys. No spaces are allowed.
+    /// We support only ASCII alphanumeric characters, underscores, `$`, and
+    /// comma separators for nested keys. No spaces are allowed.
     ///
     /// ### Returns
     ///
@@ -78,7 +78,7 @@ impl<T: AsRef<str>> CustomStringExtensions for T {
     fn is_valid_jsonb_search_key(&self) -> bool {
         self.as_ref()
             .chars()
-            .all(|c| c.is_alphanumeric() || c == '_' || c == ',' || c == '$')
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ',' || c == '$')
     }
 
     fn as_integer(&self) -> Result<Vec<i32>, ApiError> {

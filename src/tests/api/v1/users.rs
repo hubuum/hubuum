@@ -2,7 +2,7 @@
 mod tests {
     use crate::db::traits::ActiveTokens;
     use crate::models::group::NewGroup;
-    use crate::models::user::{NewUser, UpdateUser, User};
+    use crate::models::user::{LoginUser, NewUser, UpdateUser, User, UserID, UserResponse};
     use crate::models::{Group, Token, UserTokenMetadata};
     use crate::pagination::NEXT_CURSOR_HEADER;
     use actix_web::{http::StatusCode, test};
@@ -15,6 +15,14 @@ mod tests {
     use crate::tests::{TestContext, create_test_admin, create_test_user, test_context};
 
     const USERS_ENDPOINT: &str = "/api/v1/iam/users";
+
+    fn assert_user_response_matches(user: &User, response: &UserResponse) {
+        assert_eq!(response.id, user.id);
+        assert_eq!(response.username, user.username);
+        assert_eq!(response.email, user.email);
+        assert_eq!(response.created_at, user.created_at);
+        assert_eq!(response.updated_at, user.updated_at);
+    }
 
     async fn check_show_user(
         context: &TestContext,
@@ -36,9 +44,12 @@ mod tests {
         .await;
         let resp = assert_response_status(resp, expected_status).await;
 
-        if resp.status() == expected_status {
-            let returned_user: User = test::read_body_json(resp).await;
-            assert_eq!(target, &returned_user);
+        if expected_status == StatusCode::OK {
+            let body = test::read_body(resp).await;
+            let returned_value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert!(returned_value.get("password").is_none());
+            let returned_user: UserResponse = serde_json::from_value(returned_value).unwrap();
+            assert_user_response_matches(target, &returned_user);
         }
     }
 
@@ -72,7 +83,13 @@ mod tests {
 
         // The format here is (target, requester, expected_status).
         check_show_user(&context, &test_user, &test_user, StatusCode::OK).await;
-        check_show_user(&context, &test_admin_user, &test_user, StatusCode::OK).await;
+        check_show_user(
+            &context,
+            &test_admin_user,
+            &test_user,
+            StatusCode::FORBIDDEN,
+        )
+        .await;
         check_show_user(&context, &test_user, &test_admin_user, StatusCode::OK).await;
 
         // Tokens are admin_or_self. Note that the format is (target, requester, expected_status).
@@ -119,11 +136,14 @@ mod tests {
 
         let headers = resp.headers().clone();
         let created_user_url = headers.get("Location").unwrap().to_str().unwrap();
-        let created_user_from_create: User = test::read_body_json(resp).await;
+        let body = test::read_body(resp).await;
+        let created_value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(created_value.get("password").is_none());
+        let created_user_from_create: UserResponse = serde_json::from_value(created_value).unwrap();
 
         let resp = get_request(&context.pool, &context.admin_token, created_user_url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let created_user_from_get: User = test::read_body_json(resp).await;
+        let created_user_from_get: UserResponse = test::read_body_json(resp).await;
 
         assert_eq!(created_user_from_create, created_user_from_get);
 
@@ -177,11 +197,31 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let patched_user: User = test::read_body_json(resp).await;
+        let body = test::read_body(resp).await;
+        let patched_value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(patched_value.get("password").is_none());
+        let patched_user: UserResponse = serde_json::from_value(patched_value).unwrap();
 
         assert_eq!(patched_user.username, test_user.username);
-        assert_ne!(patched_user.password, test_user.password);
         assert_eq!(patched_user.email, test_user.email);
+
+        let stored_user = UserID(test_user.id).user(&context.pool).await.unwrap();
+        assert_ne!(stored_user.password, test_user.password);
+        LoginUser {
+            username: test_user.username,
+            password: "newpassword".to_string(),
+        }
+        .login(&context.pool)
+        .await
+        .unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_list_users_requires_admin(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let resp = get_request(&context.pool, &context.normal_token, USERS_ENDPOINT).await;
+        let _ = assert_response_status(resp, StatusCode::FORBIDDEN).await;
     }
 
     #[rstest]
@@ -214,7 +254,7 @@ mod tests {
         let url = format!("{USERS_ENDPOINT}?username__contains={prefix}&sort={sort_order}");
         let resp = get_request(&context.pool, &context.admin_token, &url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let users: Vec<User> = test::read_body_json(resp).await;
+        let users: Vec<UserResponse> = test::read_body_json(resp).await;
 
         assert_eq!(users.len(), created_users.len());
         assert_eq!(users[0].id, created_users[expected_order[0]].id);
@@ -251,7 +291,7 @@ mod tests {
         let url = format!("{USERS_ENDPOINT}?username__contains={prefix}&sort=id&limit={limit}");
         let resp = get_request(&context.pool, &context.admin_token, &url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let users: Vec<User> = test::read_body_json(resp).await;
+        let users: Vec<UserResponse> = test::read_body_json(resp).await;
 
         assert_eq!(users.len(), limit);
 
@@ -288,7 +328,7 @@ mod tests {
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
-        let users: Vec<User> = test::read_body_json(resp).await;
+        let users: Vec<UserResponse> = test::read_body_json(resp).await;
 
         assert_eq!(users.len(), 2);
         assert!(next_cursor.is_some());
@@ -304,7 +344,7 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let users: Vec<User> = test::read_body_json(resp).await;
+        let users: Vec<UserResponse> = test::read_body_json(resp).await;
         assert!(!users.is_empty());
 
         for user in created_users {
