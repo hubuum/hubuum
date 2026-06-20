@@ -11,8 +11,9 @@ use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
 use crate::models::{
     ImportTaskResultRecord, NewImportTaskResultRecord, NewReportTaskOutputRecord,
-    NewTaskEventRecord, NewTaskRecord, ReportTaskOutputRecord, ReportTaskOutputSummaryRecord,
-    TaskEventRecord, TaskID, TaskKind, TaskRecord, TaskResponse, TaskResultCounts, TaskStatus,
+    NewTaskEventRecord, NewTaskRecord, ReportOutputLookup, ReportTaskOutputRecord,
+    ReportTaskOutputSummaryRecord, TaskEventRecord, TaskID, TaskKind, TaskRecord, TaskResponse,
+    TaskResultCounts, TaskStatus,
 };
 use crate::pagination::{CursorValue, decode_cursor_values, page_limits_or_defaults};
 
@@ -186,39 +187,51 @@ pub trait TaskBackend: TaskIdentifier {
     async fn find_report_output(
         &self,
         pool: &DbPool,
-    ) -> Result<Option<ReportTaskOutputRecord>, ApiError> {
-        use crate::schema::report_task_outputs::dsl::{
-            output_expires_at, report_task_outputs, task_id,
-        };
+    ) -> Result<ReportOutputLookup<ReportTaskOutputRecord>, ApiError> {
+        use crate::schema::report_task_outputs::dsl::{report_task_outputs, task_id};
 
         let task_id_value = self.task_id();
         let now = Utc::now().naive_utc();
-        with_connection(pool, |conn| {
+        // Fetch without the expiry filter so an expired-but-present row is reported as `Expired`
+        // (410) rather than silently looking like a row that never existed (404).
+        let record = with_connection(pool, |conn| {
             report_task_outputs
                 .filter(task_id.eq(task_id_value))
-                .filter(output_expires_at.gt(now))
                 .first::<ReportTaskOutputRecord>(conn)
                 .optional()
+        })?;
+
+        Ok(match record {
+            Some(record) if record.output_expires_at > now => ReportOutputLookup::Available(record),
+            Some(record) => ReportOutputLookup::Expired {
+                expires_at: record.output_expires_at,
+            },
+            None => ReportOutputLookup::Missing,
         })
     }
 
     async fn find_report_output_summary(
         &self,
         pool: &DbPool,
-    ) -> Result<Option<ReportTaskOutputSummaryRecord>, ApiError> {
-        use crate::schema::report_task_outputs::dsl::{
-            output_expires_at, report_task_outputs, task_id,
-        };
+    ) -> Result<ReportOutputLookup<ReportTaskOutputSummaryRecord>, ApiError> {
+        use crate::schema::report_task_outputs::dsl::{report_task_outputs, task_id};
 
         let task_id_value = self.task_id();
         let now = Utc::now().naive_utc();
-        with_connection(pool, |conn| {
+        let record = with_connection(pool, |conn| {
             report_task_outputs
                 .filter(task_id.eq(task_id_value))
-                .filter(output_expires_at.gt(now))
                 .select(ReportTaskOutputSummaryRecord::as_select())
-                .first(conn)
+                .first::<ReportTaskOutputSummaryRecord>(conn)
                 .optional()
+        })?;
+
+        Ok(match record {
+            Some(record) if record.output_expires_at > now => ReportOutputLookup::Available(record),
+            Some(record) => ReportOutputLookup::Expired {
+                expires_at: record.output_expires_at,
+            },
+            None => ReportOutputLookup::Missing,
         })
     }
 
@@ -335,7 +348,9 @@ pub trait TaskBackend: TaskIdentifier {
         event: NewTaskEventRecord,
         output: NewReportTaskOutputRecord,
     ) -> Result<TaskRecord, ApiError> {
-        use crate::schema::report_task_outputs::dsl::report_task_outputs;
+        use crate::schema::report_task_outputs::dsl::{
+            report_task_outputs, task_id as report_output_task_id,
+        };
         use crate::schema::task_events::dsl::task_events;
         use crate::schema::tasks::dsl::{
             failed_items, finished_at, id, processed_items, request_payload, request_redacted_at,
@@ -344,8 +359,13 @@ pub trait TaskBackend: TaskIdentifier {
 
         let task_id_value = self.task_id();
         let record = with_transaction(pool, |conn| {
+            // Idempotent so a future requeue / manual re-claim that re-finalizes the same task
+            // cannot trip the `report_task_outputs.task_id` UNIQUE constraint and roll back the
+            // transaction, which would otherwise leave the task stuck mid-flight.
             diesel::insert_into(report_task_outputs)
                 .values(output)
+                .on_conflict(report_output_task_id)
+                .do_nothing()
                 .execute(conn)?;
 
             let event_record = diesel::insert_into(task_events)

@@ -26,9 +26,9 @@ use crate::models::{
     NewReportTaskOutputRecord, NewTaskEventRecord, Permissions, RELATED_INCLUDE_DEFAULT_LIMIT,
     RELATED_INCLUDE_DEFAULT_MAX_DEPTH, ReportContentType, ReportIncludeRelatedDirection,
     ReportIncludeRelatedQuery, ReportIncludeRelatedSort, ReportJsonResponse, ReportMeta,
-    ReportMissingDataPolicy, ReportRequest, ReportScope, ReportScopeKind, ReportTaskOutputRecord,
-    ReportTemplate, ReportTemplateID, ReportWarning, TaskID, TaskKind, TaskRecord, TaskResponse,
-    User,
+    ReportMissingDataPolicy, ReportOutputLookup, ReportRequest, ReportScope, ReportScopeKind,
+    ReportTaskOutputRecord, ReportTemplate, ReportTemplateID, ReportWarning, TaskID, TaskKind,
+    TaskRecord, TaskResponse, User,
 };
 use crate::pagination::page_limits_or_defaults;
 use crate::tasks::{
@@ -307,7 +307,8 @@ pub async fn get_report(
             )
         ),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 404, description = "Report output not found", body = ApiErrorResponse)
+        (status = 404, description = "Report output not found", body = ApiErrorResponse),
+        (status = 410, description = "Report output expired", body = ApiErrorResponse)
     )
 )]
 #[get("/{task_id}/output")]
@@ -321,11 +322,15 @@ pub async fn get_report_output(
     task_id
         .load_authorized_report(&pool, &requestor.user)
         .await?;
-    let output = task_id
-        .find_report_output(&pool)
-        .await?
-        .ok_or_else(|| ApiError::NotFound("Report output not found".to_string()))?;
-    render_report_task_output(output)
+    match task_id.find_report_output(&pool).await? {
+        ReportOutputLookup::Available(output) => render_report_task_output(output),
+        ReportOutputLookup::Expired { expires_at } => Err(ApiError::Gone(format!(
+            "Report output expired at {expires_at} UTC"
+        ))),
+        ReportOutputLookup::Missing => {
+            Err(ApiError::NotFound("Report output not found".to_string()))
+        }
+    }
 }
 
 async fn prepare_report_runtime(

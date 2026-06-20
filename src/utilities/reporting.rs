@@ -3,8 +3,10 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
+use std::num::NonZeroUsize;
 use std::sync::{Arc, OnceLock, RwLock};
 
+use lru::LruCache;
 use minijinja::value::Value;
 use minijinja::{
     AutoEscape, Environment, Error as MiniJinjaError, ErrorKind as MiniJinjaErrorKind, State,
@@ -39,7 +41,7 @@ struct CachedTemplateEnvironment {
 }
 
 static TEMPLATE_ENV_CACHE: OnceLock<
-    RwLock<HashMap<TemplateEnvCacheKey, Arc<CachedTemplateEnvironment>>>,
+    RwLock<LruCache<TemplateEnvCacheKey, Arc<CachedTemplateEnvironment>>>,
 > = OnceLock::new();
 
 #[derive(Debug, Default)]
@@ -168,8 +170,10 @@ pub fn render_template(
     };
 
     let cached = {
-        let cache = template_env_cache()
-            .read()
+        // `LruCache::get` updates recency, so the read path needs a write lock. Cheap at this
+        // cache size and keeps eviction honest about what was most recently used.
+        let mut cache = template_env_cache()
+            .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         cache.get(&cache_key).cloned()
     };
@@ -192,16 +196,20 @@ pub fn render_template(
             let mut cache = template_env_cache()
                 .write()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            cache.retain(|key, _| {
-                key.namespace_id != cache_key.namespace_id
-                    || key.namespace_signature == cache_key.namespace_signature
-            });
-            if cache.len() >= TEMPLATE_ENV_CACHE_MAX_ENTRIES
-                && let Some(eviction_key) = cache.keys().next().cloned()
-            {
-                cache.remove(&eviction_key);
+            // Drop now-stale environments for this namespace (templates changed) before inserting.
+            let stale_keys = cache
+                .iter()
+                .filter(|(key, _)| {
+                    key.namespace_id == cache_key.namespace_id
+                        && key.namespace_signature != cache_key.namespace_signature
+                })
+                .map(|(key, _)| key.clone())
+                .collect::<Vec<_>>();
+            for key in stale_keys {
+                cache.pop(&key);
             }
-            cache.insert(cache_key, built.clone());
+            // `put` evicts the least-recently-used entry when the cache is at capacity.
+            cache.put(cache_key, built.clone());
             built
         }
     };
@@ -232,8 +240,12 @@ pub fn render_template(
 }
 
 fn template_env_cache()
--> &'static RwLock<HashMap<TemplateEnvCacheKey, Arc<CachedTemplateEnvironment>>> {
-    TEMPLATE_ENV_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+-> &'static RwLock<LruCache<TemplateEnvCacheKey, Arc<CachedTemplateEnvironment>>> {
+    TEMPLATE_ENV_CACHE.get_or_init(|| {
+        let capacity = NonZeroUsize::new(TEMPLATE_ENV_CACHE_MAX_ENTRIES)
+            .expect("TEMPLATE_ENV_CACHE_MAX_ENTRIES must be non-zero");
+        RwLock::new(LruCache::new(capacity))
+    })
 }
 
 fn namespace_signature(

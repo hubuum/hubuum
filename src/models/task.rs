@@ -267,6 +267,9 @@ pub struct ImportTaskDetails {
 pub struct ReportTaskDetails {
     pub output_url: String,
     pub output_available: bool,
+    /// True when output was produced but has since passed its retention window. Distinguishes an
+    /// expired report from one that was never generated (both have `output_available = false`).
+    pub output_expired: bool,
     pub output_expires_at: Option<NaiveDateTime>,
     pub template_name: Option<String>,
     pub output_content_type: Option<String>,
@@ -360,6 +363,31 @@ pub struct NewReportTaskOutputRecord {
     pub render_duration_ms: i32,
 }
 
+/// Outcome of looking up a report task's stored output.
+///
+/// Retention can lapse before the cleanup job purges the row, so a present-but-expired output is
+/// distinct from one that never existed. Callers map `Expired` to `410 Gone` and `Missing` to
+/// `404 Not Found` rather than collapsing both into a 404 that looks like data loss.
+#[derive(Debug, Clone)]
+pub enum ReportOutputLookup<T> {
+    Available(T),
+    Expired { expires_at: NaiveDateTime },
+    Missing,
+}
+
+impl<T> ReportOutputLookup<T> {
+    /// Borrow the contained value, mirroring `Option::as_ref`.
+    pub fn as_ref(&self) -> ReportOutputLookup<&T> {
+        match self {
+            ReportOutputLookup::Available(value) => ReportOutputLookup::Available(value),
+            ReportOutputLookup::Expired { expires_at } => ReportOutputLookup::Expired {
+                expires_at: *expires_at,
+            },
+            ReportOutputLookup::Missing => ReportOutputLookup::Missing,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = report_task_outputs)]
 #[allow(dead_code)]
@@ -380,12 +408,12 @@ pub struct ReportTaskOutputSummaryRecord {
 
 impl TaskRecord {
     pub fn to_response(&self) -> Result<TaskResponse, ApiError> {
-        self.to_response_with_report_output(None)
+        self.to_response_with_report_output(ReportOutputLookup::Missing)
     }
 
     pub fn to_response_with_report_output(
         &self,
-        report_output_summary: Option<&ReportTaskOutputSummaryRecord>,
+        report_output: ReportOutputLookup<&ReportTaskOutputSummaryRecord>,
     ) -> Result<TaskResponse, ApiError> {
         let kind = TaskKind::from_db(&self.kind)?;
         let status = TaskStatus::from_db(&self.status)?;
@@ -402,22 +430,26 @@ impl TaskRecord {
                 report: None,
             }),
             TaskKind::Report => report_output_url.clone().map(|output_url| {
-                let output_summary = report_output_summary.cloned();
+                let (output_summary, output_expired, expired_expires_at) = match report_output {
+                    ReportOutputLookup::Available(summary) => (Some(summary), false, None),
+                    ReportOutputLookup::Expired { expires_at } => (None, true, Some(expires_at)),
+                    ReportOutputLookup::Missing => (None, false, None),
+                };
                 TaskDetails {
                     import: None,
                     report: Some(ReportTaskDetails {
                         output_url,
                         output_available: output_summary.is_some(),
+                        output_expired,
                         output_expires_at: output_summary
-                            .as_ref()
-                            .map(|summary| summary.output_expires_at),
+                            .map(|summary| summary.output_expires_at)
+                            .or(expired_expires_at),
                         template_name: output_summary
-                            .as_ref()
                             .and_then(|summary| summary.template_name.clone()),
-                        output_content_type: report_output_summary
+                        output_content_type: output_summary
                             .map(|summary| summary.content_type.clone()),
-                        warning_count: report_output_summary.map(|summary| summary.warning_count),
-                        truncated: report_output_summary.map(|summary| summary.truncated),
+                        warning_count: output_summary.map(|summary| summary.warning_count),
+                        truncated: output_summary.map(|summary| summary.truncated),
                     }),
                 }
             }),

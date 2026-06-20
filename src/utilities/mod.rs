@@ -1,3 +1,4 @@
+pub mod aliases;
 pub mod auth;
 pub mod db;
 pub mod extensions;
