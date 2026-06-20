@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+use std::io::{self, Write};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use minijinja::value::Value;
@@ -86,8 +87,10 @@ pub fn validate_template_with_limits(
         namespace_templates,
         content_type,
         ReportMissingDataPolicy::Omit,
-        recursion_limit,
-        fuel,
+        TemplateLimits {
+            recursion_limit,
+            fuel,
+        },
     )?;
 
     env.env
@@ -99,12 +102,58 @@ pub fn validate_template_with_limits(
     Ok(())
 }
 
+// Size-bounded sink for streaming a template render: minijinja's render_captured_to writes into
+// this as it evaluates, so an oversized text/html/csv report aborts at the byte budget instead of
+// being fully materialized before the 413. The JSON output path has an analogous LimitedJsonWriter.
+struct LimitedStringWriter {
+    max_bytes: usize,
+    buffer: Vec<u8>,
+    exceeded: bool,
+}
+
+impl LimitedStringWriter {
+    fn new(max_bytes: usize) -> Self {
+        Self {
+            max_bytes,
+            buffer: Vec::new(),
+            exceeded: false,
+        }
+    }
+
+    fn exceeded(&self) -> bool {
+        self.exceeded
+    }
+
+    fn into_string(self) -> Result<String, ApiError> {
+        String::from_utf8(self.buffer).map_err(|error| {
+            ApiError::InternalServerError(format!("Rendered report was not valid UTF-8: {error}"))
+        })
+    }
+}
+
+impl Write for LimitedStringWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.buffer.len().saturating_add(buf.len()) > self.max_bytes {
+            self.exceeded = true;
+            return Err(io::Error::other("template output limit exceeded"));
+        }
+
+        self.buffer.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 pub fn render_template(
     template: &ReportTemplate,
     namespace_templates: &[ReportTemplate],
     context: &serde_json::Value,
     content_type: ReportContentType,
     missing_data_policy: ReportMissingDataPolicy,
+    max_output_bytes: usize,
 ) -> Result<(String, Vec<ReportWarning>), ApiError> {
     let (recursion_limit, fuel) = template_limits_from_config();
     let cache_key = TemplateEnvCacheKey {
@@ -132,8 +181,10 @@ pub fn render_template(
                 namespace_templates,
                 content_type,
                 missing_data_policy,
-                recursion_limit,
-                fuel,
+                TemplateLimits {
+                    recursion_limit,
+                    fuel,
+                },
             )?);
             let mut cache = template_env_cache()
                 .write()
@@ -153,15 +204,28 @@ pub fn render_template(
     };
 
     begin_template_warning_capture();
-    let rendered = env
-        .env
-        .get_template(&env.template_name)
-        .map_err(|error| template_error("Template lookup failed", error))?
-        .render(context)
-        .map_err(|error| template_error("Template render failed", error));
+    let mut writer = LimitedStringWriter::new(max_output_bytes);
+    let lookup = env.env.get_template(&env.template_name);
+    let render_result = match lookup {
+        Ok(template) => template.render_captured_to(context, &mut writer),
+        Err(error) => {
+            let _ = finish_template_warning_capture();
+            return Err(template_error("Template lookup failed", error));
+        }
+    };
     let warnings = finish_template_warning_capture();
 
-    Ok((rendered?, warnings))
+    match render_result {
+        Ok(_captured) => Ok((writer.into_string()?, warnings)),
+        Err(error) => {
+            if writer.exceeded() {
+                return Err(ApiError::PayloadTooLarge(format!(
+                    "Rendered report exceeded max_output_bytes (> {max_output_bytes})"
+                )));
+            }
+            Err(template_error("Template render failed", error))
+        }
+    }
 }
 
 fn template_env_cache()
@@ -202,6 +266,12 @@ fn namespace_signature(
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct TemplateLimits {
+    recursion_limit: usize,
+    fuel: u64,
+}
+
 fn build_environment(
     template_name: &str,
     template_source: &str,
@@ -209,9 +279,12 @@ fn build_environment(
     namespace_templates: &[ReportTemplate],
     content_type: ReportContentType,
     missing_data_policy: ReportMissingDataPolicy,
-    recursion_limit: usize,
-    fuel: u64,
+    limits: TemplateLimits,
 ) -> Result<CachedTemplateEnvironment, ApiError> {
+    let TemplateLimits {
+        recursion_limit,
+        fuel,
+    } = limits;
     let mut env = Environment::new();
     let template_map = Arc::new(build_namespace_template_map(
         namespace_id,
@@ -557,6 +630,23 @@ fn record_missing_value_warning(state: &State<'_, '_>, path: Option<String>) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn limited_string_writer_accumulates_under_limit() {
+        let mut writer = LimitedStringWriter::new(16);
+        writer.write_all(b"hello ").unwrap();
+        writer.write_all(b"world").unwrap();
+        assert!(!writer.exceeded());
+        assert_eq!(writer.into_string().unwrap(), "hello world");
+    }
+
+    #[test]
+    fn limited_string_writer_aborts_over_limit() {
+        let mut writer = LimitedStringWriter::new(4);
+        let err = writer.write_all(b"toolong").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::Other);
+        assert!(writer.exceeded());
+    }
+
     fn template(
         id: i32,
         namespace_id: i32,
@@ -599,6 +689,7 @@ mod tests {
             &context,
             ReportContentType::TextPlain,
             ReportMissingDataPolicy::Strict,
+            usize::MAX,
         )
         .unwrap();
 
@@ -654,6 +745,7 @@ mod tests {
             &context,
             ReportContentType::TextHtml,
             ReportMissingDataPolicy::Strict,
+            usize::MAX,
         )
         .unwrap();
 
@@ -679,6 +771,7 @@ mod tests {
             &context,
             ReportContentType::TextPlain,
             ReportMissingDataPolicy::Omit,
+            usize::MAX,
         )
         .unwrap();
 
@@ -707,6 +800,7 @@ mod tests {
             &context,
             ReportContentType::TextPlain,
             ReportMissingDataPolicy::Null,
+            usize::MAX,
         )
         .unwrap();
 
@@ -742,6 +836,7 @@ mod tests {
             &context,
             ReportContentType::TextHtml,
             ReportMissingDataPolicy::Strict,
+            usize::MAX,
         )
         .unwrap();
         let (text, text_warnings) = render_template(
@@ -750,6 +845,7 @@ mod tests {
             &context,
             ReportContentType::TextPlain,
             ReportMissingDataPolicy::Strict,
+            usize::MAX,
         )
         .unwrap();
 
@@ -785,6 +881,7 @@ mod tests {
             &context,
             ReportContentType::TextPlain,
             ReportMissingDataPolicy::Strict,
+            usize::MAX,
         )
         .unwrap();
 
@@ -818,6 +915,7 @@ mod tests {
             &context,
             ReportContentType::TextPlain,
             ReportMissingDataPolicy::Omit,
+            usize::MAX,
         )
         .unwrap();
 
@@ -848,6 +946,7 @@ mod tests {
             &context,
             ReportContentType::TextPlain,
             ReportMissingDataPolicy::Omit,
+            usize::MAX,
         )
         .unwrap();
 
@@ -885,6 +984,7 @@ mod tests {
             &context,
             ReportContentType::TextHtml,
             ReportMissingDataPolicy::Strict,
+            usize::MAX,
         )
         .unwrap_err();
 
@@ -920,6 +1020,7 @@ mod tests {
             &context,
             ReportContentType::TextHtml,
             ReportMissingDataPolicy::Strict,
+            usize::MAX,
         )
         .unwrap();
         layout_v1.updated_at += chrono::Duration::seconds(2);
@@ -929,6 +1030,7 @@ mod tests {
             &context,
             ReportContentType::TextHtml,
             ReportMissingDataPolicy::Strict,
+            usize::MAX,
         )
         .unwrap();
 
@@ -964,6 +1066,7 @@ mod tests {
             &context,
             ReportContentType::TextHtml,
             ReportMissingDataPolicy::Strict,
+            usize::MAX,
         )
         .unwrap();
         let (second, _) = render_template(
@@ -972,6 +1075,7 @@ mod tests {
             &context,
             ReportContentType::TextHtml,
             ReportMissingDataPolicy::Strict,
+            usize::MAX,
         )
         .unwrap();
 

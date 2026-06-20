@@ -3,8 +3,8 @@ use std::iter::IntoIterator;
 use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, SortParam};
 use crate::models::{
     ClassGraphRow, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
-    HubuumObjectRelation, Namespace, Permissions, RelatedObjectGraphRow, RelatedObjectIncludeRow,
-    ReportIncludeRelatedQuery, UnifiedSearchSpec, User, UserID,
+    HubuumObjectRelation, Namespace, Permissions, RelatedObjectForRootRow, RelatedObjectGraphRow,
+    RelatedObjectIncludeRow, ReportIncludeRelatedQuery, UnifiedSearchSpec, User, UserID,
 };
 
 use crate::db::DbPool;
@@ -237,6 +237,25 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
     {
         self.related_objects_for_roots_from_backend(backend.db_pool(), root_object_ids, include)
             .await
+    }
+
+    async fn bidirectionally_related_objects_for_roots<C>(
+        &self,
+        backend: &C,
+        root_object_ids: &[i32],
+        max_depth: i32,
+        per_root_cap: i32,
+    ) -> Result<Vec<RelatedObjectForRootRow>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.bidirectionally_related_objects_for_roots_from_backend(
+            backend.db_pool(),
+            root_object_ids,
+            max_depth,
+            per_root_cap,
+        )
+        .await
     }
 
     async fn object_relations_touching_page<C, O>(
