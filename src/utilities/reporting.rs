@@ -373,10 +373,6 @@ fn build_environment(
     missing_data_policy: ReportMissingDataPolicy,
     limits: TemplateLimits,
 ) -> Result<CachedTemplateEnvironment, ApiError> {
-    let TemplateLimits {
-        recursion_limit,
-        fuel,
-    } = limits;
     let mut env = Environment::new();
     let template_map = Arc::new(build_namespace_template_map(
         namespace_id,

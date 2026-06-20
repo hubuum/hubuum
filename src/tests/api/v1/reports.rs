@@ -12,8 +12,8 @@ mod tests {
     use crate::models::{
         HubuumClass, HubuumClassRelation, HubuumObjectRelation, NewHubuumClass,
         NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewReportTemplate,
-        NewTaskRecord, ReportContentType, ReportJsonResponse, ReportLimits, ReportRelationContext,
-        ReportRequest, ReportScope, ReportScopeKind, ReportTemplateKind, TaskEventResponse, TaskKind,
+        NewTaskRecord, ReportContentType, ReportJsonResponse, ReportRelationContext, ReportRequest,
+        ReportScope, ReportScopeKind, ReportTemplateKind, TaskEventResponse, TaskKind,
         TaskResponse, TaskStatus, UpdateReportTemplate,
     };
     use crate::tests::api::v1::classes::tests::{cleanup, create_test_classes};
@@ -1570,36 +1570,19 @@ mod tests {
         let template_id = create_template(
             &context.pool,
             class.namespace_id,
+            class.id,
+            ReportScopeKind::ObjectsInClass,
             "oversized-template",
             ReportContentType::TextPlain,
             "{% for item in items %}{{ item.name }} has a description of {{ item.description }} and lives forever\n{% endfor %}",
         )
         .await;
 
-        let body = ReportRequest {
-            scope: ReportScope {
-                kind: ReportScopeKind::ObjectsInClass,
-                class_id: Some(class.id),
-                object_id: None,
-            },
-            query: None,
-            output: Some(crate::models::ReportOutputRequest {
-                template_id: Some(template_id),
-            }),
-            missing_data_policy: None,
-            limits: Some(ReportLimits {
-                max_items: None,
-                max_output_bytes: Some(8),
-            }),
-            include: None,
-            relation_context: None,
-        };
-
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            REPORTS_ENDPOINT,
-            &body,
+            &format!("/api/v1/templates/{template_id}/reports"),
+            &serde_json::json!({ "limits": { "max_output_bytes": 8 } }),
             vec![],
         )
         .await;
@@ -1678,36 +1661,32 @@ mod tests {
         let _ = create_object_relation(&context.pool, host_b.id, room_b.id, host_room_relation.id)
             .await;
 
-        let template_id = create_template(
+        let template = crate::models::report_template::create_report_template(
             &context.pool,
-            namespace.namespace.id,
-            "multiroot-template",
-            ReportContentType::TextPlain,
-            "{% for host in items %}{{ host.name }}:{% for room in host.related.rooms %}{{ room.name }},{% endfor %};{% endfor %}",
-        )
-        .await;
-
-        let body = ReportRequest {
-            scope: ReportScope {
-                kind: ReportScopeKind::ObjectsInClass,
+            NewReportTemplate {
+                namespace_id: namespace.namespace.id,
+                name: "multiroot-template".to_string(),
+                description: "report template".to_string(),
+                content_type: ReportContentType::TextPlain,
+                template: "{% for host in items %}{{ host.name }}:{% for room in host.related.rooms %}{{ room.name }},{% endfor %};{% endfor %}".to_string(),
+                kind: ReportTemplateKind::Report,
+                scope_kind: Some(ReportScopeKind::ObjectsInClass),
                 class_id: Some(host_class.id),
-                object_id: None,
+                default_query: Some("sort=name".to_string()),
+                include: None,
+                relation_context: Some(ReportRelationContext { depth: Some(1) }),
+                default_missing_data_policy: None,
+                default_limits: None,
             },
-            query: Some("sort=name".to_string()),
-            output: Some(crate::models::ReportOutputRequest {
-                template_id: Some(template_id),
-            }),
-            missing_data_policy: None,
-            limits: None,
-            include: None,
-            relation_context: Some(ReportRelationContext { depth: Some(1) }),
-        };
+        )
+        .await
+        .unwrap();
 
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            REPORTS_ENDPOINT,
-            &body,
+            &format!("/api/v1/templates/{}/reports", template.id),
+            &serde_json::json!({}),
             vec![],
         )
         .await;
@@ -1893,14 +1872,26 @@ mod tests {
         .save(&context.pool)
         .await
         .unwrap();
-        let template_id = create_template(
+        let template = crate::models::report_template::create_report_template(
             &context.pool,
-            namespace.namespace.id,
-            "bench-template",
-            ReportContentType::TextPlain,
-            "{% for host in items %}{{ host.name }}:{% for room in host.related.rooms %}{{ room.name }},{% endfor %};{% endfor %}",
+            NewReportTemplate {
+                namespace_id: namespace.namespace.id,
+                name: "bench-template".to_string(),
+                description: "report template".to_string(),
+                content_type: ReportContentType::TextPlain,
+                template: "{% for host in items %}{{ host.name }}:{% for room in host.related.rooms %}{{ room.name }},{% endfor %};{% endfor %}".to_string(),
+                kind: ReportTemplateKind::Report,
+                scope_kind: Some(ReportScopeKind::ObjectsInClass),
+                class_id: Some(host_class.id),
+                default_query: None,
+                include: None,
+                relation_context: Some(ReportRelationContext { depth: Some(1) }),
+                default_missing_data_policy: None,
+                default_limits: None,
+            },
         )
-        .await;
+        .await
+        .unwrap();
 
         let mut created_hosts = 0usize;
         let mut results: Vec<(usize, i64, i64)> = Vec::new();
@@ -1936,27 +1927,11 @@ mod tests {
             }
             created_hosts = target;
 
-            let body = ReportRequest {
-                scope: ReportScope {
-                    kind: ReportScopeKind::ObjectsInClass,
-                    class_id: Some(host_class.id),
-                    object_id: None,
-                },
-                query: None,
-                output: Some(crate::models::ReportOutputRequest {
-                    template_id: Some(template_id),
-                }),
-                missing_data_policy: None,
-                limits: None,
-                include: None,
-                relation_context: Some(ReportRelationContext { depth: Some(1) }),
-            };
-
             let resp = post_request_with_headers(
                 &context.pool,
                 &context.admin_token,
-                REPORTS_ENDPOINT,
-                &body,
+                &format!("/api/v1/templates/{}/reports", template.id),
+                &serde_json::json!({}),
                 vec![],
             )
             .await;
