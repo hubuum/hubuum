@@ -9,14 +9,15 @@ use crate::errors::ApiError;
 use crate::models::search::{FilterField, QueryOptions, SortParam, parse_query_parameter};
 use crate::models::{
     Namespace, NamespaceID, ReportContentType, ReportInclude, ReportLimits,
-    ReportMissingDataPolicy, ReportRelationContext, ReportScopeKind,
+    ReportMissingDataPolicy, ReportRelationContext, ReportRequest, ReportScope, ReportScopeKind,
+    ReportTemplateRunRequest,
 };
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
 use crate::schema::report_templates;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter, NamespaceAdapter};
-use crate::utilities::reporting::{validate_related_objects_include, validate_template};
+use crate::utilities::reporting::validate_template;
 use crate::{date_search, numeric_search, string_search};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -285,6 +286,77 @@ impl UpdateReportTemplate {
     }
 }
 
+impl ReportTemplate {
+    /// Build the report request to execute this template for a given run. Validates that the
+    /// template is an executable report and that the run's `object_id` matches the template scope:
+    /// `related_objects` requires one, the other scopes reject one, and `class_id` comes from the
+    /// template for the class-bound scopes. Runtime values override the template defaults.
+    pub fn build_report_request(
+        &self,
+        run: ReportTemplateRunRequest,
+    ) -> Result<ReportRequest, ApiError> {
+        if self.kind != ReportTemplateKind::Report {
+            return Err(ApiError::BadRequest(
+                "Only report templates can be executed".to_string(),
+            ));
+        }
+
+        let scope_kind = self.scope_kind.ok_or_else(|| {
+            ApiError::BadRequest("Executable report template is missing scope_kind".to_string())
+        })?;
+
+        let template_class_id = || {
+            self.class_id.ok_or_else(|| {
+                ApiError::BadRequest("Executable report template is missing class_id".to_string())
+            })
+        };
+        let reject_object_id = || {
+            if run.object_id.is_some() {
+                return Err(ApiError::BadRequest(format!(
+                    "object_id is not accepted for {} report templates",
+                    scope_kind.as_str()
+                )));
+            }
+            Ok(())
+        };
+
+        let (class_id, object_id) = match scope_kind {
+            ReportScopeKind::ObjectsInClass => {
+                reject_object_id()?;
+                (Some(template_class_id()?), None)
+            }
+            ReportScopeKind::RelatedObjects => {
+                let object_id = run.object_id.ok_or_else(|| {
+                    ApiError::BadRequest(
+                        "related_objects report templates require object_id".to_string(),
+                    )
+                })?;
+                (Some(template_class_id()?), Some(object_id))
+            }
+            ReportScopeKind::Namespaces
+            | ReportScopeKind::Classes
+            | ReportScopeKind::ClassRelations
+            | ReportScopeKind::ObjectRelations => {
+                reject_object_id()?;
+                (None, None)
+            }
+        };
+
+        Ok(ReportRequest {
+            scope: ReportScope {
+                kind: scope_kind,
+                class_id,
+                object_id,
+            },
+            query: run.query.or_else(|| self.default_query.clone()),
+            missing_data_policy: run.missing_data_policy.or(self.default_missing_data_policy),
+            limits: run.limits.or_else(|| self.default_limits.clone()),
+            include: self.include.clone(),
+            relation_context: self.relation_context.clone(),
+        })
+    }
+}
+
 pub async fn report_template(pool: &DbPool, template_id: i32) -> Result<ReportTemplate, ApiError> {
     use crate::schema::report_templates::dsl::{id, report_templates};
 
@@ -374,61 +446,15 @@ pub async fn update_report_template(
         ));
     }
 
-    let (
-        target_scope_kind,
-        target_class_id,
-        target_default_query,
-        target_include,
-        target_relation_context,
-        target_default_missing_data_policy,
-        target_default_limits,
-    ) = if target_kind == ReportTemplateKind::Fragment {
-        (None, None, None, None, None, None, None)
-    } else {
-        let target_scope_kind = update.scope_kind.or(current.scope_kind);
-
-        // Reconcile scope-dependent fields against the *target* scope. Without this,
-        // `update.field.or(current.field)` would carry forward a class_id/include/
-        // relation_context that the new scope forbids, making it impossible to PATCH an
-        // objects_in_class template into a collection scope. Carried-forward values are
-        // dropped when the target scope cannot hold them; an explicitly supplied
-        // incompatible value still falls through to validate_report_profile, which rejects
-        // it (matching the create path). This mirrors how switching to a fragment clears
-        // report metadata.
-        let scope_allows_class = target_scope_kind
-            .map(ReportScopeKind::requires_class_id)
-            .unwrap_or(false);
-        let scope_allows_include = target_scope_kind == Some(ReportScopeKind::ObjectsInClass);
-        let scope_allows_relation_context = matches!(
-            target_scope_kind,
-            Some(ReportScopeKind::ObjectsInClass) | Some(ReportScopeKind::RelatedObjects)
-        );
-
-        let target_class_id = if scope_allows_class {
-            update.class_id.or(current.class_id)
-        } else {
-            update.class_id
-        };
-        let target_include =
-            resolve_gated_patch(update.include, current.include, scope_allows_include);
-        let target_relation_context = resolve_gated_patch(
-            update.relation_context,
-            current.relation_context,
-            scope_allows_relation_context,
-        );
-
-        (
-            target_scope_kind,
-            target_class_id,
-            update.default_query.unwrap_or(current.default_query),
-            target_include,
-            target_relation_context,
-            update
-                .default_missing_data_policy
-                .unwrap_or(current.default_missing_data_policy),
-            update.default_limits.unwrap_or(current.default_limits),
-        )
-    };
+    let ResolvedReportProfile {
+        scope_kind: target_scope_kind,
+        class_id: target_class_id,
+        default_query: target_default_query,
+        include: target_include,
+        relation_context: target_relation_context,
+        default_missing_data_policy: target_default_missing_data_policy,
+        default_limits: target_default_limits,
+    } = resolve_report_profile(target_kind, update, &current);
 
     ensure_template_name_is_available(pool, target_namespace_id, &target_name, Some(template_id))
         .await?;
@@ -484,6 +510,81 @@ pub async fn update_report_template(
     })?;
 
     row.try_into()
+}
+
+/// The report-execution metadata resolved for an update, after applying the patch over the current
+/// template and reconciling fields against the target scope.
+struct ResolvedReportProfile {
+    scope_kind: Option<ReportScopeKind>,
+    class_id: Option<i32>,
+    default_query: Option<String>,
+    include: Option<ReportInclude>,
+    relation_context: Option<ReportRelationContext>,
+    default_missing_data_policy: Option<ReportMissingDataPolicy>,
+    default_limits: Option<ReportLimits>,
+}
+
+/// Resolve the target report-execution metadata for an update. A fragment clears everything.
+/// Otherwise each field is the patch value falling back to the current value, except that fields the
+/// target scope cannot hold (class_id/include/relation_context for the collection scopes, include
+/// for the non-`objects_in_class` scopes) drop their carried-forward value. An explicitly supplied
+/// incompatible value is preserved so `validate_report_profile` rejects it, matching the create path.
+fn resolve_report_profile(
+    target_kind: ReportTemplateKind,
+    update: UpdateReportTemplate,
+    current: &ReportTemplate,
+) -> ResolvedReportProfile {
+    if target_kind == ReportTemplateKind::Fragment {
+        return ResolvedReportProfile {
+            scope_kind: None,
+            class_id: None,
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
+        };
+    }
+
+    let scope_kind = update.scope_kind.or(current.scope_kind);
+    let scope_allows_class = scope_kind
+        .map(ReportScopeKind::requires_class_id)
+        .unwrap_or(false);
+    let scope_allows_include = scope_kind == Some(ReportScopeKind::ObjectsInClass);
+    let scope_allows_relation_context = matches!(
+        scope_kind,
+        Some(ReportScopeKind::ObjectsInClass) | Some(ReportScopeKind::RelatedObjects)
+    );
+
+    let class_id = if scope_allows_class {
+        update.class_id.or(current.class_id)
+    } else {
+        update.class_id
+    };
+
+    ResolvedReportProfile {
+        scope_kind,
+        class_id,
+        default_query: update
+            .default_query
+            .unwrap_or_else(|| current.default_query.clone()),
+        include: resolve_gated_patch(
+            update.include,
+            current.include.clone(),
+            scope_allows_include,
+        ),
+        relation_context: resolve_gated_patch(
+            update.relation_context,
+            current.relation_context.clone(),
+            scope_allows_relation_context,
+        ),
+        default_missing_data_policy: update
+            .default_missing_data_policy
+            .unwrap_or(current.default_missing_data_policy),
+        default_limits: update
+            .default_limits
+            .unwrap_or_else(|| current.default_limits.clone()),
+    }
 }
 
 pub async fn delete_report_template(pool: &DbPool, template_id: i32) -> Result<(), ApiError> {
@@ -547,88 +648,100 @@ async fn validate_report_profile(
     target_namespace_id: i32,
     profile: ReportProfileRef<'_>,
 ) -> Result<(), ApiError> {
-    let ReportProfileRef {
-        kind,
-        scope_kind,
-        class_id,
-        default_query,
-        include,
-        relation_context,
-        default_missing_data_policy,
-        default_limits,
-    } = profile;
-
-    match kind {
-        ReportTemplateKind::Fragment => {
-            if scope_kind.is_some() || class_id.is_some() {
-                return Err(ApiError::BadRequest(
-                    "Fragment templates cannot define report execution metadata".to_string(),
-                ));
-            }
-        }
+    match profile.kind {
+        ReportTemplateKind::Fragment => validate_fragment_metadata(&profile)?,
         ReportTemplateKind::Report => {
-            let scope_kind = scope_kind
-                .ok_or_else(|| ApiError::BadRequest("Report templates require scope_kind".into()))
-                .and_then(ReportScopeKind::from_str)?;
-
-            // `objects_in_class` and `related_objects` are scoped to a single class and
-            // require `class_id`; the collection scopes (`namespaces`, `classes`,
-            // `class_relations`, `object_relations`) are class-agnostic and must not set it.
-            if scope_kind.requires_class_id() {
-                let class_id = class_id.ok_or_else(|| {
-                    ApiError::BadRequest(format!(
-                        "Report templates with scope '{}' require class_id",
-                        scope_kind.as_str()
-                    ))
-                })?;
-                if class_id <= 0 {
-                    return Err(ApiError::BadRequest(
-                        "Report template class_id must be greater than 0".to_string(),
-                    ));
-                }
-                ensure_template_class_in_namespace(pool, target_namespace_id, class_id).await?;
-            } else if class_id.is_some() {
-                return Err(ApiError::BadRequest(format!(
-                    "Report templates with scope '{}' must not set class_id",
-                    scope_kind.as_str()
-                )));
-            }
-
-            if let Some(query) = default_query {
-                parse_query_parameter(query)?;
-            }
-
-            if include.is_some() && scope_kind != ReportScopeKind::ObjectsInClass {
-                return Err(ApiError::BadRequest(
-                    "include is only supported for objects_in_class report templates".to_string(),
-                ));
-            }
-
-            if relation_context.is_some()
-                && !matches!(
-                    scope_kind,
-                    ReportScopeKind::ObjectsInClass | ReportScopeKind::RelatedObjects
-                )
-            {
-                return Err(ApiError::BadRequest(
-                    "relation_context is only supported for objects_in_class and related_objects report templates"
-                        .to_string(),
-                ));
-            }
+            validate_report_scope_metadata(pool, target_namespace_id, &profile).await?
         }
     }
 
-    if include.is_some() && relation_context.is_some() {
+    validate_common_profile_fields(&profile)
+}
+
+/// Fragments are reusable partials with no execution metadata.
+fn validate_fragment_metadata(profile: &ReportProfileRef<'_>) -> Result<(), ApiError> {
+    if profile.scope_kind.is_some() || profile.class_id.is_some() {
+        return Err(ApiError::BadRequest(
+            "Fragment templates cannot define report execution metadata".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+/// Validate the scope/class binding of an executable report template.
+async fn validate_report_scope_metadata(
+    pool: &DbPool,
+    target_namespace_id: i32,
+    profile: &ReportProfileRef<'_>,
+) -> Result<(), ApiError> {
+    let scope_kind = profile
+        .scope_kind
+        .ok_or_else(|| ApiError::BadRequest("Report templates require scope_kind".into()))
+        .and_then(ReportScopeKind::from_str)?;
+
+    // `objects_in_class` and `related_objects` are scoped to a single class and require
+    // `class_id`; the collection scopes (`namespaces`, `classes`, `class_relations`,
+    // `object_relations`) are class-agnostic and must not set it.
+    if scope_kind.requires_class_id() {
+        let class_id = profile.class_id.ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "Report templates with scope '{}' require class_id",
+                scope_kind.as_str()
+            ))
+        })?;
+        if class_id <= 0 {
+            return Err(ApiError::BadRequest(
+                "Report template class_id must be greater than 0".to_string(),
+            ));
+        }
+        ensure_template_class_in_namespace(pool, target_namespace_id, class_id).await?;
+    } else if profile.class_id.is_some() {
+        return Err(ApiError::BadRequest(format!(
+            "Report templates with scope '{}' must not set class_id",
+            scope_kind.as_str()
+        )));
+    }
+
+    if let Some(query) = profile.default_query {
+        parse_query_parameter(query)?;
+    }
+
+    if profile.include.is_some() && scope_kind != ReportScopeKind::ObjectsInClass {
+        return Err(ApiError::BadRequest(
+            "include is only supported for objects_in_class report templates".to_string(),
+        ));
+    }
+
+    if profile.relation_context.is_some()
+        && !matches!(
+            scope_kind,
+            ReportScopeKind::ObjectsInClass | ReportScopeKind::RelatedObjects
+        )
+    {
+        return Err(ApiError::BadRequest(
+            "relation_context is only supported for objects_in_class and related_objects report templates"
+                .to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+/// Validate the profile fields whose rules are the same for every kind/scope: the
+/// include/relation_context exclusivity and the shape of each optional blob.
+fn validate_common_profile_fields(profile: &ReportProfileRef<'_>) -> Result<(), ApiError> {
+    if profile.include.is_some() && profile.relation_context.is_some() {
         return Err(ApiError::BadRequest(
             "include cannot be combined with relation_context".to_string(),
         ));
     }
 
-    if let Some(include) = include {
+    if let Some(include) = profile.include {
         let include: ReportInclude = serde_json::from_value(include.clone())?;
-        validate_related_objects_include(&include)?;
+        include.validate_related_objects()?;
     }
-    if let Some(relation_context) = relation_context {
+    if let Some(relation_context) = profile.relation_context {
         let context: ReportRelationContext = serde_json::from_value(relation_context.clone())?;
         if let Some(depth) = context.depth
             && !(1..=2).contains(&depth)
@@ -638,10 +751,10 @@ async fn validate_report_profile(
             ));
         }
     }
-    if let Some(policy) = default_missing_data_policy {
+    if let Some(policy) = profile.default_missing_data_policy {
         ReportMissingDataPolicy::from_str(policy)?;
     }
-    if let Some(limits) = default_limits {
+    if let Some(limits) = profile.default_limits {
         let _limits: ReportLimits = serde_json::from_value(limits.clone())?;
     }
 

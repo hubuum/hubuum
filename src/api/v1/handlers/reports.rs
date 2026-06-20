@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::io::{self, Write};
 use std::time::Instant;
 
 use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, post, web};
@@ -29,20 +28,18 @@ use crate::models::search::{
 use crate::models::{
     HubuumClassID, HubuumClassRelation, HubuumObject, HubuumObjectID, HubuumObjectRelation,
     HubuumObjectWithPath, NamespaceID, NewReportTaskOutputRecord, NewTaskEventRecord, Permissions,
-    ReportContentType, ReportIncludeRelatedDirection, ReportIncludeRelatedQuery,
-    ReportIncludeRelatedSort, ReportJsonResponse, ReportMeta, ReportMissingDataPolicy,
-    ReportRequest, ReportScope, ReportScopeKind, ReportTaskOutputRecord, ReportTemplate,
-    ReportTemplateID, ReportWarning, TaskKind, TaskRecord, TaskResponse, User,
+    RELATED_INCLUDE_DEFAULT_LIMIT, RELATED_INCLUDE_DEFAULT_MAX_DEPTH, ReportContentType,
+    ReportIncludeRelatedDirection, ReportIncludeRelatedQuery, ReportIncludeRelatedSort,
+    ReportJsonResponse, ReportMeta, ReportMissingDataPolicy, ReportRequest, ReportScope,
+    ReportScopeKind, ReportTaskOutputRecord, ReportTemplate, ReportTemplateID, ReportWarning,
+    TaskKind, TaskRecord, TaskResponse, User,
 };
 use crate::pagination::page_limits_or_defaults;
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
 use crate::traits::{GroupMemberships, NamespaceAccessors, Search, SelfAccessors};
-use crate::utilities::reporting::{
-    RELATED_INCLUDE_DEFAULT_LIMIT, RELATED_INCLUDE_DEFAULT_MAX_DEPTH, render_template,
-    validate_related_objects_include,
-};
+use crate::utilities::reporting::{SizeLimitedWriter, render_template};
 use crate::utilities::response::{json_response, json_response_with_header};
 
 use super::check_if_object_in_class;
@@ -716,7 +713,7 @@ fn validate_report_include(report: &ReportRequest) -> Result<(), ApiError> {
         ));
     }
 
-    validate_related_objects_include(include)
+    include.validate_related_objects()
 }
 
 fn add_truncation_warning(warnings: &mut Vec<ReportWarning>, truncated: bool) {
@@ -2249,7 +2246,7 @@ fn enforce_json_output_limit(
         .and_then(|limits| limits.max_output_bytes)
         .unwrap_or_else(configured_report_max_output_bytes);
 
-    let mut writer = LimitedJsonWriter::new(max_output_bytes);
+    let mut writer = SizeLimitedWriter::new(max_output_bytes);
     if let Err(error) = serde_json::to_writer(&mut writer, response) {
         if writer.exceeded() {
             return Err(ApiError::PayloadTooLarge(format!(
@@ -2263,45 +2260,6 @@ fn enforce_json_output_limit(
     }
 
     Ok(())
-}
-
-// This exists only for output-size enforcement: serde_json::to_vec would allocate
-// the whole response before we can reject an oversized report, while to_writer can
-// stop as soon as the configured byte budget is crossed.
-struct LimitedJsonWriter {
-    max_bytes: usize,
-    written: usize,
-    exceeded: bool,
-}
-
-impl LimitedJsonWriter {
-    fn new(max_bytes: usize) -> Self {
-        Self {
-            max_bytes,
-            written: 0,
-            exceeded: false,
-        }
-    }
-
-    fn exceeded(&self) -> bool {
-        self.exceeded
-    }
-}
-
-impl Write for LimitedJsonWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if self.written.saturating_add(buf.len()) > self.max_bytes {
-            self.exceeded = true;
-            return Err(io::Error::other("json output limit exceeded"));
-        }
-
-        self.written += buf.len();
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
 }
 
 #[cfg(test)]

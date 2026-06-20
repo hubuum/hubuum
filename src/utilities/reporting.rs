@@ -13,99 +13,9 @@ use minijinja::{
 
 use crate::config::get_config;
 use crate::errors::ApiError;
-use crate::models::{
-    ReportContentType, ReportInclude, ReportIncludeRelatedObject, ReportMissingDataPolicy,
-    ReportTemplate, ReportWarning,
-};
+use crate::models::{ReportContentType, ReportMissingDataPolicy, ReportTemplate, ReportWarning};
 
 const TEMPLATE_ENV_CACHE_MAX_ENTRIES: usize = 128;
-
-/// Bounds for `include.related_objects` hydration. Shared by ad-hoc report requests
-/// (`POST /api/v1/reports`) and stored executable report templates so the two paths
-/// cannot drift apart.
-pub const RELATED_INCLUDE_DEFAULT_MAX_DEPTH: i32 = 1;
-pub const RELATED_INCLUDE_MAX_DEPTH_LIMIT: i32 = 10;
-pub const RELATED_INCLUDE_DEFAULT_LIMIT: i32 = 1;
-pub const RELATED_INCLUDE_MAX_LIMIT: i32 = 50;
-pub const RELATED_INCLUDE_MAX_ALIASES: usize = 8;
-
-/// Validate the `include.related_objects` block (alias count, alias syntax, and per-alias
-/// option bounds). The caller is responsible for any scope-specific rules (e.g. that
-/// `include` is only valid for `objects_in_class`).
-pub fn validate_related_objects_include(include: &ReportInclude) -> Result<(), ApiError> {
-    let Some(related_objects) = &include.related_objects else {
-        return Ok(());
-    };
-
-    if related_objects.len() > RELATED_INCLUDE_MAX_ALIASES {
-        return Err(ApiError::BadRequest(format!(
-            "include.related_objects supports at most {RELATED_INCLUDE_MAX_ALIASES} aliases"
-        )));
-    }
-
-    for (alias, include) in related_objects {
-        validate_related_include_alias(alias)?;
-        validate_related_include_options(alias, include)?;
-    }
-
-    Ok(())
-}
-
-fn validate_related_include_alias(alias: &str) -> Result<(), ApiError> {
-    let mut chars = alias.chars();
-    let Some(first) = chars.next() else {
-        return Err(ApiError::BadRequest(
-            "include.related_objects aliases must not be empty".to_string(),
-        ));
-    };
-
-    if !(first == '_' || first.is_ascii_alphabetic())
-        || !chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-    {
-        return Err(ApiError::BadRequest(format!(
-            "Invalid include.related_objects alias '{alias}'; expected [A-Za-z_][A-Za-z0-9_]*"
-        )));
-    }
-
-    Ok(())
-}
-
-fn validate_related_include_options(
-    alias: &str,
-    include: &ReportIncludeRelatedObject,
-) -> Result<(), ApiError> {
-    if include.class_id <= 0 {
-        return Err(ApiError::BadRequest(format!(
-            "include.related_objects.{alias}.class_id must be greater than 0"
-        )));
-    }
-
-    if let Some(class_relation_id) = include.class_relation_id
-        && class_relation_id <= 0
-    {
-        return Err(ApiError::BadRequest(format!(
-            "include.related_objects.{alias}.class_relation_id must be greater than 0"
-        )));
-    }
-
-    let max_depth = include
-        .max_depth
-        .unwrap_or(RELATED_INCLUDE_DEFAULT_MAX_DEPTH);
-    if !(1..=RELATED_INCLUDE_MAX_DEPTH_LIMIT).contains(&max_depth) {
-        return Err(ApiError::BadRequest(format!(
-            "include.related_objects.{alias}.max_depth must be between 1 and {RELATED_INCLUDE_MAX_DEPTH_LIMIT}"
-        )));
-    }
-
-    let limit = include.limit.unwrap_or(RELATED_INCLUDE_DEFAULT_LIMIT);
-    if !(1..=RELATED_INCLUDE_MAX_LIMIT).contains(&limit) {
-        return Err(ApiError::BadRequest(format!(
-            "include.related_objects.{alias}.limit must be between 1 and {RELATED_INCLUDE_MAX_LIMIT}"
-        )));
-    }
-
-    Ok(())
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct TemplateEnvCacheKey {
@@ -192,17 +102,20 @@ pub fn validate_template_with_limits(
     Ok(())
 }
 
-// Size-bounded sink for streaming a template render: minijinja's render_captured_to writes into
-// this as it evaluates, so an oversized text/html/csv report aborts at the byte budget instead of
-// being fully materialized before the 413. The JSON output path has an analogous LimitedJsonWriter.
-struct LimitedStringWriter {
+/// Size-bounded `Write` sink shared by both report output paths. minijinja's
+/// `render_captured_to` (text/html/csv) and `serde_json::to_writer` (JSON) both write into this as
+/// they produce bytes, so an oversized report aborts at the configured byte budget instead of being
+/// fully materialized before the 413. Memory stays bounded by `max_bytes` because writing stops at
+/// the cap. The JSON size check ignores the captured bytes; the template path keeps them via
+/// `into_string`.
+pub struct SizeLimitedWriter {
     max_bytes: usize,
     buffer: Vec<u8>,
     exceeded: bool,
 }
 
-impl LimitedStringWriter {
-    fn new(max_bytes: usize) -> Self {
+impl SizeLimitedWriter {
+    pub fn new(max_bytes: usize) -> Self {
         Self {
             max_bytes,
             buffer: Vec::new(),
@@ -210,22 +123,22 @@ impl LimitedStringWriter {
         }
     }
 
-    fn exceeded(&self) -> bool {
+    pub fn exceeded(&self) -> bool {
         self.exceeded
     }
 
-    fn into_string(self) -> Result<String, ApiError> {
+    pub fn into_string(self) -> Result<String, ApiError> {
         String::from_utf8(self.buffer).map_err(|error| {
             ApiError::InternalServerError(format!("Rendered report was not valid UTF-8: {error}"))
         })
     }
 }
 
-impl Write for LimitedStringWriter {
+impl Write for SizeLimitedWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.buffer.len().saturating_add(buf.len()) > self.max_bytes {
             self.exceeded = true;
-            return Err(io::Error::other("template output limit exceeded"));
+            return Err(io::Error::other("report output limit exceeded"));
         }
 
         self.buffer.extend_from_slice(buf);
@@ -294,7 +207,7 @@ pub fn render_template(
     };
 
     begin_template_warning_capture();
-    let mut writer = LimitedStringWriter::new(max_output_bytes);
+    let mut writer = SizeLimitedWriter::new(max_output_bytes);
     let lookup = env.env.get_template(&env.template_name);
     let render_result = match lookup {
         Ok(template) => template.render_captured_to(context, &mut writer),
@@ -721,7 +634,7 @@ mod tests {
 
     #[test]
     fn limited_string_writer_accumulates_under_limit() {
-        let mut writer = LimitedStringWriter::new(16);
+        let mut writer = SizeLimitedWriter::new(16);
         writer.write_all(b"hello ").unwrap();
         writer.write_all(b"world").unwrap();
         assert!(!writer.exceeded());
@@ -730,7 +643,7 @@ mod tests {
 
     #[test]
     fn limited_string_writer_aborts_over_limit() {
-        let mut writer = LimitedStringWriter::new(4);
+        let mut writer = SizeLimitedWriter::new(4);
         let err = writer.write_all(b"toolong").unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::Other);
         assert!(writer.exceeded());

@@ -177,6 +177,91 @@ pub struct ReportInclude {
     pub related_objects: Option<HashMap<String, ReportIncludeRelatedObject>>,
 }
 
+/// Bounds for `include.related_objects` hydration, shared by ad-hoc report requests
+/// (`POST /api/v1/reports`) and stored executable report templates so the two paths cannot drift.
+pub const RELATED_INCLUDE_DEFAULT_MAX_DEPTH: i32 = 1;
+pub const RELATED_INCLUDE_MAX_DEPTH_LIMIT: i32 = 10;
+pub const RELATED_INCLUDE_DEFAULT_LIMIT: i32 = 1;
+pub const RELATED_INCLUDE_MAX_LIMIT: i32 = 50;
+pub const RELATED_INCLUDE_MAX_ALIASES: usize = 8;
+
+impl ReportInclude {
+    /// Validate the `related_objects` block: alias count, alias syntax, and per-alias option
+    /// bounds. Callers enforce scope-specific rules (e.g. that `include` is only valid for
+    /// `objects_in_class`).
+    pub fn validate_related_objects(&self) -> Result<(), ApiError> {
+        let Some(related_objects) = &self.related_objects else {
+            return Ok(());
+        };
+
+        if related_objects.len() > RELATED_INCLUDE_MAX_ALIASES {
+            return Err(ApiError::BadRequest(format!(
+                "include.related_objects supports at most {RELATED_INCLUDE_MAX_ALIASES} aliases"
+            )));
+        }
+
+        for (alias, include) in related_objects {
+            validate_related_include_alias(alias)?;
+            include.validate(alias)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl ReportIncludeRelatedObject {
+    fn validate(&self, alias: &str) -> Result<(), ApiError> {
+        if self.class_id <= 0 {
+            return Err(ApiError::BadRequest(format!(
+                "include.related_objects.{alias}.class_id must be greater than 0"
+            )));
+        }
+
+        if let Some(class_relation_id) = self.class_relation_id
+            && class_relation_id <= 0
+        {
+            return Err(ApiError::BadRequest(format!(
+                "include.related_objects.{alias}.class_relation_id must be greater than 0"
+            )));
+        }
+
+        let max_depth = self.max_depth.unwrap_or(RELATED_INCLUDE_DEFAULT_MAX_DEPTH);
+        if !(1..=RELATED_INCLUDE_MAX_DEPTH_LIMIT).contains(&max_depth) {
+            return Err(ApiError::BadRequest(format!(
+                "include.related_objects.{alias}.max_depth must be between 1 and {RELATED_INCLUDE_MAX_DEPTH_LIMIT}"
+            )));
+        }
+
+        let limit = self.limit.unwrap_or(RELATED_INCLUDE_DEFAULT_LIMIT);
+        if !(1..=RELATED_INCLUDE_MAX_LIMIT).contains(&limit) {
+            return Err(ApiError::BadRequest(format!(
+                "include.related_objects.{alias}.limit must be between 1 and {RELATED_INCLUDE_MAX_LIMIT}"
+            )));
+        }
+
+        Ok(())
+    }
+}
+
+fn validate_related_include_alias(alias: &str) -> Result<(), ApiError> {
+    let mut chars = alias.chars();
+    let Some(first) = chars.next() else {
+        return Err(ApiError::BadRequest(
+            "include.related_objects aliases must not be empty".to_string(),
+        ));
+    };
+
+    if !(first == '_' || first.is_ascii_alphabetic())
+        || !chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    {
+        return Err(ApiError::BadRequest(format!(
+            "Invalid include.related_objects alias '{alias}'; expected [A-Za-z_][A-Za-z0-9_]*"
+        )));
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[schema(example = openapi_examples::report_relation_context_example)]
 #[serde(deny_unknown_fields)]

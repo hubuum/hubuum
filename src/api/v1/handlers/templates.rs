@@ -9,9 +9,8 @@ use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    NamespaceID, NewReportTemplate, Permissions, ReportScope, ReportScopeKind, ReportTemplate,
-    ReportTemplateID, ReportTemplateKind, ReportTemplateRunRequest, TaskResponse,
-    UpdateReportTemplate,
+    NamespaceID, NewReportTemplate, Permissions, ReportTemplate, ReportTemplateID,
+    ReportTemplateRunRequest, TaskResponse, UpdateReportTemplate,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::traits::NamespaceAccessors;
@@ -200,7 +199,7 @@ pub async fn run_template_report(
         NamespaceID(template.namespace_id)
     );
 
-    let report = report_request_from_template(&template, run)?;
+    let report = template.build_report_request(run)?;
     let task = crate::api::v1::handlers::reports::submit_report_task(
         &pool,
         &user,
@@ -218,73 +217,6 @@ pub async fn run_template_report(
         StatusCode::ACCEPTED,
         Some(headers),
     ))
-}
-
-fn report_request_from_template(
-    template: &ReportTemplate,
-    run: ReportTemplateRunRequest,
-) -> Result<crate::models::ReportRequest, ApiError> {
-    if template.kind != ReportTemplateKind::Report {
-        return Err(ApiError::BadRequest(
-            "Only report templates can be executed".to_string(),
-        ));
-    }
-
-    let scope_kind = template.scope_kind.ok_or_else(|| {
-        ApiError::BadRequest("Executable report template is missing scope_kind".to_string())
-    })?;
-
-    let template_class_id = || {
-        template.class_id.ok_or_else(|| {
-            ApiError::BadRequest("Executable report template is missing class_id".to_string())
-        })
-    };
-    let reject_object_id = || {
-        if run.object_id.is_some() {
-            return Err(ApiError::BadRequest(format!(
-                "object_id is not accepted for {} report templates",
-                scope_kind.as_str()
-            )));
-        }
-        Ok(())
-    };
-
-    let (class_id, object_id) = match scope_kind {
-        ReportScopeKind::ObjectsInClass => {
-            reject_object_id()?;
-            (Some(template_class_id()?), None)
-        }
-        ReportScopeKind::RelatedObjects => {
-            let object_id = run.object_id.ok_or_else(|| {
-                ApiError::BadRequest(
-                    "related_objects report templates require object_id".to_string(),
-                )
-            })?;
-            (Some(template_class_id()?), Some(object_id))
-        }
-        ReportScopeKind::Namespaces
-        | ReportScopeKind::Classes
-        | ReportScopeKind::ClassRelations
-        | ReportScopeKind::ObjectRelations => {
-            reject_object_id()?;
-            (None, None)
-        }
-    };
-
-    Ok(crate::models::ReportRequest {
-        scope: ReportScope {
-            kind: scope_kind,
-            class_id,
-            object_id,
-        },
-        query: run.query.or_else(|| template.default_query.clone()),
-        missing_data_policy: run
-            .missing_data_policy
-            .or(template.default_missing_data_policy),
-        limits: run.limits.or_else(|| template.default_limits.clone()),
-        include: template.include.clone(),
-        relation_context: template.relation_context.clone(),
-    })
 }
 
 #[utoipa::path(
