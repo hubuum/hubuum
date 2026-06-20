@@ -1,5 +1,5 @@
 use hubuum::models::NewHubuumObject;
-use hubuum::tests::constants::{get_schema, SchemaType};
+use hubuum::tests::constants::{SchemaType, get_schema};
 use hubuum::traits::ValidateAgainstSchema;
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use std::hint::black_box;

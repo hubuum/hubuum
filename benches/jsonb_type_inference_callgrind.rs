@@ -1,4 +1,4 @@
-use hubuum::models::search::{get_jsonb_field_type_from_value_and_operator, Operator};
+use hubuum::models::search::{Operator, get_jsonb_field_type_from_value_and_operator};
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use std::hint::black_box;
 
