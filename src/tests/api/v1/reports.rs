@@ -1615,6 +1615,30 @@ mod tests {
         assert!(details.output_expired);
         assert_eq!(details.output_expires_at, Some(backdated_expiry));
 
+        // The batch task-list endpoint must classify expiry the same way as the single-task
+        // endpoints, not silently drop the expired row. Filtering by this test's (unique) admin
+        // keeps the result isolated under parallel execution.
+        let list_resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "/api/v1/tasks?submitted_by={}&kind=report&limit=50",
+                context.admin_user.id
+            ),
+        )
+        .await;
+        let list_resp = assert_response_status(list_resp, StatusCode::OK).await;
+        let listed: Vec<TaskResponse> = test::read_body_json(list_resp).await;
+        let listed_details = listed
+            .iter()
+            .find(|entry| entry.id == task.id)
+            .and_then(|entry| entry.details.as_ref())
+            .and_then(|details| details.report.as_ref())
+            .expect("expired report task present in task list with report details");
+        assert!(!listed_details.output_available);
+        assert!(listed_details.output_expired);
+        assert_eq!(listed_details.output_expires_at, Some(backdated_expiry));
+
         cleanup(&classes).await;
     }
 

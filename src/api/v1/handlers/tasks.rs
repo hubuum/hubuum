@@ -129,13 +129,19 @@ pub async fn get_tasks(
         .into_iter()
         .map(|output| (output.task_id, output))
         .collect::<std::collections::HashMap<_, _>>();
+    let now = chrono::Utc::now().naive_utc();
     let tasks = tasks
         .into_iter()
         .map(|task| {
-            // The batch summary query already excludes expired rows, so a missing entry here is
-            // simply "no current output" rather than an expired one.
+            // Classify each summary the same way the single-task lookups do, so `output_expired`
+            // is reported consistently here as on GET /tasks/{id} and GET /reports/{id}.
             let report_output = match report_outputs.get(&task.id) {
-                Some(summary) => ReportOutputLookup::Available(summary),
+                Some(summary) if summary.output_expires_at > now => {
+                    ReportOutputLookup::Available(summary)
+                }
+                Some(summary) => ReportOutputLookup::Expired {
+                    expires_at: summary.output_expires_at,
+                },
                 None => ReportOutputLookup::Missing,
             };
             task.to_response_with_report_output(report_output)
