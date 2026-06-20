@@ -419,6 +419,190 @@ mod tests {
     }
 
     #[rstest]
+    #[actix_web::test]
+    async fn create_object_in_class_rejects_body_class_mismatch(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "create_object_body_class_mismatch").await;
+        let path_class = &classes[0];
+        let body_class = &classes[1];
+
+        let object = NewHubuumObject {
+            namespace_id: body_class.namespace_id,
+            hubuum_class_id: body_class.id,
+            data: serde_json::json!({"test": "data"}),
+            name: "test create object mismatch".to_string(),
+            description: "test create object mismatch".to_string(),
+        };
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{}/{}/", OBJECT_ENDPOINT, path_class.id),
+            &object,
+        )
+        .await;
+        let _ = assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn object_in_class_routes_require_matching_path_class(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "object_path_class_mismatch").await;
+        let owning_class = &classes[0];
+        let other_class = &classes[1];
+
+        let object = NewHubuumObject {
+            namespace_id: owning_class.namespace_id,
+            hubuum_class_id: owning_class.id,
+            data: serde_json::json!({"test": "data"}),
+            name: "test object path class mismatch".to_string(),
+            description: "test object path class mismatch".to_string(),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let wrong_path = object_in_class_endpoint(other_class.id, object.id);
+        let resp = get_request(&context.pool, &context.admin_token, &wrong_path).await;
+        let _ = assert_response_status(resp, StatusCode::NOT_FOUND).await;
+
+        let updated_object = UpdateHubuumObject {
+            namespace_id: None,
+            hubuum_class_id: None,
+            data: None,
+            name: Some("should not update".to_string()),
+            description: None,
+        };
+        let resp = patch_request(
+            &context.pool,
+            &context.admin_token,
+            &wrong_path,
+            &updated_object,
+        )
+        .await;
+        let _ = assert_response_status(resp, StatusCode::NOT_FOUND).await;
+
+        let resp = delete_request(&context.pool, &context.admin_token, &wrong_path).await;
+        let _ = assert_response_status(resp, StatusCode::NOT_FOUND).await;
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &object_in_class_endpoint(owning_class.id, object.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let object_after_requests: HubuumObject = test::read_body_json(resp).await;
+        assert_eq!(object_after_requests.name, object.name);
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn patch_object_in_class_rejects_class_or_namespace_move(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "patch_object_move_rejected").await;
+        let owning_class = &classes[0];
+        let other_class = &classes[1];
+
+        let object = NewHubuumObject {
+            namespace_id: owning_class.namespace_id,
+            hubuum_class_id: owning_class.id,
+            data: serde_json::json!({"test": "data"}),
+            name: "test object move rejected".to_string(),
+            description: "test object move rejected".to_string(),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let updated_object = UpdateHubuumObject {
+            namespace_id: None,
+            hubuum_class_id: Some(other_class.id),
+            data: None,
+            name: None,
+            description: None,
+        };
+        let resp = patch_request(
+            &context.pool,
+            &context.admin_token,
+            &object_in_class_endpoint(owning_class.id, object.id),
+            &updated_object,
+        )
+        .await;
+        let _ = assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn patch_object_in_class_validates_schema(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let namespace = context
+            .namespace_fixture("patch_object_schema_validation")
+            .await;
+        let class = NewHubuumClass {
+            namespace_id: namespace.namespace.id,
+            name: "patch object schema validation".to_string(),
+            description: "patch object schema validation".to_string(),
+            json_schema: Some(get_schema(SchemaType::Geo).clone()),
+            validate_schema: Some(true),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+        let object = NewHubuumObject {
+            namespace_id: namespace.namespace.id,
+            hubuum_class_id: class.id,
+            data: serde_json::json!({"latitude": 59.9, "longitude": 10.7}),
+            name: "valid geo object".to_string(),
+            description: "valid geo object".to_string(),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let updated_object = UpdateHubuumObject {
+            namespace_id: None,
+            hubuum_class_id: None,
+            data: Some(serde_json::json!({"latitude": "north", "longitude": 10.7})),
+            name: None,
+            description: None,
+        };
+        let resp = patch_request(
+            &context.pool,
+            &context.admin_token,
+            &object_in_class_endpoint(class.id, object.id),
+            &updated_object,
+        )
+        .await;
+        let _ = assert_response_status(resp, StatusCode::NOT_ACCEPTABLE).await;
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &object_in_class_endpoint(class.id, object.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let object_after_patch: HubuumObject = test::read_body_json(resp).await;
+        assert_eq!(object_after_patch.data, object.data);
+
+        namespace.cleanup().await.unwrap();
+    }
+
+    #[rstest]
     #[actix_rt::test]
     async fn get_objects_in_class(#[future(awt)] test_context: TestContext) {
         let context = test_context;

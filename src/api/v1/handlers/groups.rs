@@ -4,9 +4,11 @@ use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, UserAccess};
 use crate::models::group::{GroupID, NewGroup, UpdateGroup};
 use crate::models::search::parse_query_parameter;
-use crate::models::{Group, User, UserID};
+use crate::models::{Group, User, UserID, UserResponse};
 use crate::pagination::{count_query_options, prepare_db_pagination};
-use crate::utilities::response::{json_response, json_response_created, paginated_json_response};
+use crate::utilities::response::{
+    json_response, json_response_created, paginated_json_mapped_response, paginated_json_response,
+};
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -200,7 +202,7 @@ pub async fn delete_group(
         ("group_id" = i32, Path, description = "Group ID")
     ),
     responses(
-        (status = 200, description = "Members of group", body = [User]),
+        (status = 200, description = "Members of group", body = [UserResponse]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Group not found", body = ApiErrorResponse)
     )
@@ -227,7 +229,9 @@ pub async fn get_group_members(
     let search_params = prepare_db_pagination::<User>(&params)?;
     let members = group.members_paginated(&pool, &search_params).await?;
 
-    paginated_json_response(members, total_count, StatusCode::OK, &params)
+    paginated_json_mapped_response(members, total_count, StatusCode::OK, &params, |users| {
+        users.into_iter().map(UserResponse::from).collect()
+    })
 }
 
 #[utoipa::path(

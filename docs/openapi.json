@@ -2996,7 +2996,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/User"
+                    "$ref": "#/components/schemas/UserResponse"
                   }
                 }
               }
@@ -3211,7 +3211,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/User"
+                    "$ref": "#/components/schemas/UserResponse"
                   }
                 }
               }
@@ -3229,6 +3229,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
             "content": {
               "application/json": {
                 "schema": {
@@ -3267,7 +3277,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/User"
+                  "$ref": "#/components/schemas/UserResponse"
                 }
               }
             }
@@ -3336,13 +3346,23 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/User"
+                  "$ref": "#/components/schemas/UserResponse"
                 }
               }
             }
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
             "content": {
               "application/json": {
                 "schema": {
@@ -3453,7 +3473,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/User"
+                  "$ref": "#/components/schemas/UserResponse"
                 }
               }
             }
@@ -8325,7 +8345,7 @@
       },
       "NewUser": {
         "type": "object",
-        "description": "Struct to create a new user.\n\nThe password is expected to be hashed\nbefore being passed to the database.",
+        "description": "Struct to create a new user.\n\nThe password is expected to be plaintext.",
         "required": [
           "username",
           "password"
@@ -9911,7 +9931,7 @@
       },
       "UpdateUser": {
         "type": "object",
-        "description": "Struct to update a user.\n\nThe password, if present, is expected to be hashed\nbefore being passed to the database.",
+        "description": "Struct to update a user.\n\nThe password, if present, is expected to be plaintext.",
         "properties": {
           "email": {
             "type": [
@@ -9938,12 +9958,11 @@
           "username": "alice"
         }
       },
-      "User": {
+      "UserResponse": {
         "type": "object",
         "required": [
           "id",
           "username",
-          "password",
           "created_at",
           "updated_at"
         ],
@@ -9961,9 +9980,6 @@
           "id": {
             "type": "integer",
             "format": "int32"
-          },
-          "password": {
-            "type": "string"
           },
           "updated_at": {
             "type": "string",

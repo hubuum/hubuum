@@ -536,9 +536,14 @@ pub async fn ensure_normal_user(pool: &DbPool) -> User {
 
 pub async fn ensure_admin_group(pool: &DbPool) -> Group {
     use crate::schema::groups::dsl::*;
+    let admin_groupname = get_config()
+        .map(|config| config.admin_groupname.clone())
+        .unwrap_or_else(|_| "admin".to_string());
 
     let result = with_connection(pool, |conn| {
-        groups.filter(groupname.eq("admin")).first::<Group>(conn)
+        groups
+            .filter(groupname.eq(&admin_groupname))
+            .first::<Group>(conn)
     });
 
     if let Ok(group) = result {
@@ -546,7 +551,7 @@ pub async fn ensure_admin_group(pool: &DbPool) -> Group {
     }
 
     let result = NewGroup {
-        groupname: "admin".to_string(),
+        groupname: admin_groupname.clone(),
         description: Some("Admin group".to_string()),
     }
     .save(pool)
@@ -556,7 +561,9 @@ pub async fn ensure_admin_group(pool: &DbPool) -> Group {
         match e {
             ApiError::Conflict(_) => {
                 return with_connection(pool, |conn| {
-                    groups.filter(groupname.eq("admin")).first::<Group>(conn)
+                    groups
+                        .filter(groupname.eq(&admin_groupname))
+                        .first::<Group>(conn)
                 })
                 .expect("Failed to fetch user after conflict");
             }

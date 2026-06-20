@@ -108,23 +108,19 @@ where
     }
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
-        let allowlist = self.allowlist.clone();
         let client_ip = extract_client_ip(&req, &self.proxy_trust);
-        let fut = self.service.call(req);
 
-        Box::pin(async move {
-            match client_ip {
-                Some(ip) if allowlist.allows(ip) => fut.await,
-                Some(ip) => {
-                    warn!(message = "Rejected request from disallowed IP", client_ip = %ip);
-                    Err(ErrorForbidden("Client not allowed"))
-                }
-                None => {
-                    warn!(message = "Rejected request with missing client IP");
-                    Err(ErrorForbidden("Client not allowed"))
-                }
+        match client_ip {
+            Some(ip) if self.allowlist.allows(ip) => Box::pin(self.service.call(req)),
+            Some(ip) => {
+                warn!(message = "Rejected request from disallowed IP", client_ip = %ip);
+                Box::pin(async { Err(ErrorForbidden("Client not allowed")) })
             }
-        })
+            None => {
+                warn!(message = "Rejected request with missing client IP");
+                Box::pin(async { Err(ErrorForbidden("Client not allowed")) })
+            }
+        }
     }
 }
 

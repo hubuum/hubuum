@@ -6,50 +6,17 @@ use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
 use diesel::r2d2::PooledConnection;
 
-use std::time::Duration;
-use tracing::{debug, error, warn};
+use tracing::debug;
 
 use crate::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, EXIT_CODE_DATABASE_ERROR, fatal_error};
 use crate::utilities::db::DatabaseUrlComponents;
 
 pub type DbPool = Pool<ConnectionManager<PgConnection>>;
 
-const MAX_RETRIES: u32 = 3;
-const RETRY_DELAY: Duration = Duration::from_millis(100);
-
 fn acquire_connection(
     pool: &DbPool,
 ) -> Result<PooledConnection<ConnectionManager<PgConnection>>, ApiError> {
-    let mut last_error = None;
-
-    for attempt in 1..=MAX_RETRIES {
-        match pool.get() {
-            Ok(conn) => return Ok(conn),
-            Err(e) => {
-                warn!(
-                    "Failed to get database connection (attempt {}): {}",
-                    attempt, e
-                );
-                last_error = Some(e);
-                if attempt < MAX_RETRIES {
-                    std::thread::sleep(RETRY_DELAY);
-                }
-            }
-        }
-    }
-
-    error!(
-        "Failed to get database connection after {} attempts",
-        MAX_RETRIES
-    );
-    // last_error should always be Some since we iterate at least once,
-    // but we handle it defensively with a fallback message
-    match last_error {
-        Some(e) => Err(ApiError::from(e)),
-        None => Err(ApiError::DbConnectionError(
-            "Failed to establish database connection after retries".to_string(),
-        )),
-    }
+    pool.get().map_err(ApiError::from)
 }
 
 /// Run database work on a single pooled connection without starting an explicit transaction.

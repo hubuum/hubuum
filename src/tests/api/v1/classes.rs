@@ -1,7 +1,9 @@
 #[cfg(test)]
 pub mod tests {
-    use crate::models::{HubuumClassExpanded, NamespaceID, NewHubuumClass};
-    use crate::traits::CanSave;
+    use crate::models::{
+        HubuumClassExpanded, NamespaceID, NewHubuumClass, Permissions, PermissionsList,
+    };
+    use crate::traits::{CanSave, PermissionController};
     use actix_web::{http::StatusCode, test};
 
     use rstest::rstest;
@@ -10,7 +12,9 @@ pub mod tests {
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::constants::{SchemaType, get_schema};
-    use crate::tests::{ClassFixture, TestContext, create_class_fixture, test_context};
+    use crate::tests::{
+        ClassFixture, TestContext, create_class_fixture, create_test_group, test_context,
+    };
     use crate::{assert_contains_all, assert_contains_same_ids};
 
     const CLASSES_ENDPOINT: &str = "/api/v1/classes";
@@ -430,6 +434,80 @@ pub mod tests {
             created_class.json_schema
         );
         assert!(!updated_class_from_patch.validate_schema);
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_api_classes_patch_requires_target_namespace_permission(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        use crate::models::UpdateHubuumClass;
+
+        let context = test_context;
+        let source = context
+            .scope
+            .namespace_fixture("api_patch_class_move_source")
+            .await;
+        let target = context
+            .scope
+            .namespace_fixture("api_patch_class_move_target")
+            .await;
+        let group = create_test_group(&context.pool).await;
+        group
+            .add_member(&context.pool, &context.normal_user)
+            .await
+            .unwrap();
+        source
+            .namespace
+            .grant(
+                &context.pool,
+                group.id,
+                PermissionsList::new([Permissions::UpdateClass]),
+            )
+            .await
+            .unwrap();
+
+        let created_class = NewHubuumClass {
+            name: "api_patch_class_move".to_string(),
+            description: "api_patch_class_move".to_string(),
+            namespace_id: source.namespace.id,
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let update_class = UpdateHubuumClass {
+            name: None,
+            namespace_id: Some(target.namespace.id),
+            json_schema: None,
+            validate_schema: None,
+            description: None,
+        };
+        let url = format!("{}/{}", CLASSES_ENDPOINT, created_class.id);
+
+        let resp = patch_request(&context.pool, &context.normal_token, &url, &update_class).await;
+        let _ = assert_response_status(resp, StatusCode::FORBIDDEN).await;
+
+        target
+            .namespace
+            .grant(
+                &context.pool,
+                group.id,
+                PermissionsList::new([Permissions::CreateClass]),
+            )
+            .await
+            .unwrap();
+
+        let resp = patch_request(&context.pool, &context.normal_token, &url, &update_class).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let updated_class: HubuumClassExpanded = test::read_body_json(resp).await;
+        assert_eq!(updated_class.namespace.id, target.namespace.id);
+
+        source.cleanup().await.unwrap();
+        target.cleanup().await.unwrap();
+        group.delete(&context.pool).await.unwrap();
     }
 
     #[rstest]

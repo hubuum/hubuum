@@ -18,10 +18,44 @@ use tracing::{error, warn};
 pub struct User {
     pub id: i32,
     pub username: String,
+    #[serde(skip_serializing)]
     pub password: String,
     pub email: Option<String>,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, ToSchema)]
+pub struct UserResponse {
+    pub id: i32,
+    pub username: String,
+    pub email: Option<String>,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+}
+
+impl From<User> for UserResponse {
+    fn from(user: User) -> Self {
+        Self {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            created_at: user.created_at,
+            updated_at: user.updated_at,
+        }
+    }
+}
+
+impl From<&User> for UserResponse {
+    fn from(user: &User) -> Self {
+        Self {
+            id: user.id,
+            username: user.username.clone(),
+            email: user.email.clone(),
+            created_at: user.created_at,
+            updated_at: user.updated_at,
+        }
+    }
 }
 
 impl User {
@@ -74,8 +108,7 @@ impl User {
 
 /// Struct to update a user.
 ///
-/// The password, if present, is expected to be hashed
-/// before being passed to the database.
+/// The password, if present, is expected to be plaintext.
 #[derive(AsChangeset, Deserialize, Serialize, Clone, ToSchema)]
 #[schema(example = update_user_example)]
 #[diesel(table_name = users)]
@@ -112,8 +145,7 @@ impl UpdateUser {
 
 /// Struct to create a new user.
 ///
-/// The password is expected to be hashed
-/// before being passed to the database.
+/// The password is expected to be plaintext.
 #[derive(Serialize, Deserialize, Insertable, Debug, ToSchema)]
 #[schema(example = new_user_example)]
 #[diesel(table_name = users)]
@@ -142,13 +174,11 @@ impl NewUser {
     }
 
     pub fn hash_password(mut self) -> Result<Self, ApiError> {
-        if !self.password.starts_with("$argon2") {
-            match crate::utilities::auth::hash_password(&self.password) {
-                Ok(hashed_password) => {
-                    self.password = hashed_password;
-                }
-                Err(e) => return Err(ApiError::HashError(format!("Failed to hash password: {e}"))),
+        match crate::utilities::auth::hash_password(&self.password) {
+            Ok(hashed_password) => {
+                self.password = hashed_password;
             }
+            Err(e) => return Err(ApiError::HashError(format!("Failed to hash password: {e}"))),
         }
         Ok(self)
     }

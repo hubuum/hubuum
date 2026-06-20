@@ -35,6 +35,7 @@ async fn test_endpoint_access() {
 
     let normal_user = crate::tests::create_test_user(&pool).await;
     let admin_user = crate::tests::create_test_admin(&pool).await;
+    let normal_user_endpoint = &format!("/api/v1/iam/users/{}", normal_user.id);
     let admin_user_endpoint = &format!("/api/v1/iam/users/{}", admin_user.id);
 
     let endpoints = vec![
@@ -56,8 +57,9 @@ async fn test_endpoint_access() {
         ),
         ("/api/v0/meta/db", Method::GET, AccessLevel::Admin, None),
         ("/api/v0/meta/counts", Method::GET, AccessLevel::Admin, None),
-        ("/api/v1/iam/users", Method::GET, AccessLevel::User, None),
-        (admin_user_endpoint, Method::GET, AccessLevel::User, None),
+        ("/api/v1/iam/users", Method::GET, AccessLevel::Admin, None),
+        (normal_user_endpoint, Method::GET, AccessLevel::User, None),
+        (admin_user_endpoint, Method::GET, AccessLevel::Admin, None),
         ("/api/v1/namespaces", Method::GET, AccessLevel::User, None),
     ];
 
