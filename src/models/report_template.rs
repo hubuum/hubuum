@@ -308,14 +308,16 @@ pub async fn create_report_template(
     validate_report_profile(
         pool,
         new_row.namespace_id,
-        ReportTemplateKind::from_str(&new_row.kind)?,
-        new_row.scope_kind.as_deref(),
-        new_row.class_id,
-        new_row.default_query.as_deref(),
-        new_row.include.as_ref(),
-        new_row.relation_context.as_ref(),
-        new_row.default_missing_data_policy.as_deref(),
-        new_row.default_limits.as_ref(),
+        ReportProfileRef {
+            kind: ReportTemplateKind::from_str(&new_row.kind)?,
+            scope_kind: new_row.scope_kind.as_deref(),
+            class_id: new_row.class_id,
+            default_query: new_row.default_query.as_deref(),
+            include: new_row.include.as_ref(),
+            relation_context: new_row.relation_context.as_ref(),
+            default_missing_data_policy: new_row.default_missing_data_policy.as_deref(),
+            default_limits: new_row.default_limits.as_ref(),
+        },
     )
     .await?;
     let namespace_templates =
@@ -436,14 +438,17 @@ pub async fn update_report_template(
     validate_report_profile(
         pool,
         target_namespace_id,
-        target_kind,
-        target_scope_kind.map(ReportScopeKind::as_str),
-        target_class_id,
-        target_default_query.as_deref(),
-        include_json.as_ref(),
-        relation_context_json.as_ref(),
-        target_default_missing_data_policy.map(ReportMissingDataPolicy::as_str),
-        default_limits_json.as_ref(),
+        ReportProfileRef {
+            kind: target_kind,
+            scope_kind: target_scope_kind.map(ReportScopeKind::as_str),
+            class_id: target_class_id,
+            default_query: target_default_query.as_deref(),
+            include: include_json.as_ref(),
+            relation_context: relation_context_json.as_ref(),
+            default_missing_data_policy: target_default_missing_data_policy
+                .map(ReportMissingDataPolicy::as_str),
+            default_limits: default_limits_json.as_ref(),
+        },
     )
     .await?;
     let namespace_templates =
@@ -522,18 +527,37 @@ pub async fn list_all_report_templates(pool: &DbPool) -> Result<Vec<ReportTempla
     rows.into_iter().map(TryInto::try_into).collect()
 }
 
+/// Borrowed view of the report-execution metadata validated together. Bundled so
+/// `validate_report_profile` stays within a sensible argument count and both the create and
+/// update paths share one shape.
+#[derive(Debug, Clone, Copy)]
+struct ReportProfileRef<'a> {
+    kind: ReportTemplateKind,
+    scope_kind: Option<&'a str>,
+    class_id: Option<i32>,
+    default_query: Option<&'a str>,
+    include: Option<&'a serde_json::Value>,
+    relation_context: Option<&'a serde_json::Value>,
+    default_missing_data_policy: Option<&'a str>,
+    default_limits: Option<&'a serde_json::Value>,
+}
+
 async fn validate_report_profile(
     pool: &DbPool,
     target_namespace_id: i32,
-    kind: ReportTemplateKind,
-    scope_kind: Option<&str>,
-    class_id: Option<i32>,
-    default_query: Option<&str>,
-    include: Option<&serde_json::Value>,
-    relation_context: Option<&serde_json::Value>,
-    default_missing_data_policy: Option<&str>,
-    default_limits: Option<&serde_json::Value>,
+    profile: ReportProfileRef<'_>,
 ) -> Result<(), ApiError> {
+    let ReportProfileRef {
+        kind,
+        scope_kind,
+        class_id,
+        default_query,
+        include,
+        relation_context,
+        default_missing_data_policy,
+        default_limits,
+    } = profile;
+
     match kind {
         ReportTemplateKind::Fragment => {
             if scope_kind.is_some() || class_id.is_some() {

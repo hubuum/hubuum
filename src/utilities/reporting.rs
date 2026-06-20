@@ -356,6 +356,8 @@ fn namespace_signature(
     }
 }
 
+/// Recursion and fuel bounds for a MiniJinja environment, bundled so `build_environment`
+/// stays within a sensible argument count.
 #[derive(Debug, Clone, Copy)]
 struct TemplateLimits {
     recursion_limit: usize,
@@ -385,8 +387,8 @@ fn build_environment(
 
     env.set_keep_trailing_newline(true);
     env.set_undefined_behavior(undefined_behavior(missing_data_policy));
-    env.set_recursion_limit(recursion_limit);
-    env.set_fuel(Some(fuel));
+    env.set_recursion_limit(limits.recursion_limit);
+    env.set_fuel(Some(limits.fuel));
     env.set_auto_escape_callback(move |_| match content_type {
         ReportContentType::TextHtml => AutoEscape::Html,
         _ => AutoEscape::None,
