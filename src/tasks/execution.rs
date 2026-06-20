@@ -2,9 +2,7 @@ use std::time::Instant;
 
 use tracing::{Instrument, error, info, info_span, warn};
 
-use crate::db::traits::task::{
-    TaskStateUpdate, append_task_event, finalize_task_terminal_state, update_task_state,
-};
+use crate::db::traits::task::{TaskBackend, TaskStateUpdate, append_task_event};
 use crate::db::{DbPool, with_transaction};
 use crate::errors::ApiError;
 use crate::models::{
@@ -151,9 +149,8 @@ pub(super) async fn execute_import_task(
         )
         .await?;
 
-        update_task_state(
+        task.update_state(
             pool,
-            task.id,
             TaskStateUpdate {
                 status: TaskStatus::Running,
                 summary: None,
@@ -265,9 +262,8 @@ async fn finalize_task(
     task: &TaskRecord,
     terminal: TerminalTaskUpdate,
 ) -> Result<(), ApiError> {
-    finalize_task_terminal_state(
+    task.finalize_terminal(
         pool,
-        task.id,
         TaskStateUpdate {
             status: terminal.status,
             summary: Some(terminal.summary.clone()),

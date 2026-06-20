@@ -4,6 +4,7 @@ pub mod namespace;
 pub mod object;
 pub mod object_relation;
 pub mod output;
+pub mod task;
 pub mod user;
 
 #[allow(unused_imports)]

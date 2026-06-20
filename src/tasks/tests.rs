@@ -18,10 +18,7 @@ use super::types::{
     PlanningFailure, PlanningState, RuntimeState, WorkerLoopAction,
 };
 use super::worker::{background_worker_action, mark_claimed_task_failed, process_one_task};
-use crate::db::traits::task::{
-    count_import_results_summary, create_task_record, find_task_record, insert_import_results,
-    list_task_events_with_total_count,
-};
+use crate::db::traits::task::{TaskBackend, create_task_record, insert_import_results};
 use crate::db::traits::task_import::{create_class_db, create_object_db};
 use crate::db::with_connection;
 use crate::errors::ApiError;
@@ -330,14 +327,13 @@ fn test_process_one_task_marks_claimed_task_failed_when_execution_setup_errors()
     for _ in 0..20 {
         let _ = block_on(process_one_task(&context.pool)).unwrap();
 
-        let stored = block_on(find_task_record(&context.pool, task.id)).unwrap();
+        let stored = block_on(task.find_record(&context.pool)).unwrap();
         if stored.status == TaskStatus::Failed.as_str() {
             assert!(stored.finished_at.is_some());
             assert!(stored.request_redacted_at.is_some());
 
-            let (events, _) = block_on(list_task_events_with_total_count(
+            let (events, _) = block_on(task.list_events_with_total_count(
                 &context.pool,
-                task.id,
                 &crate::models::search::QueryOptions {
                     filters: Vec::new(),
                     sort: Vec::new(),
@@ -356,7 +352,7 @@ fn test_process_one_task_marks_claimed_task_failed_when_execution_setup_errors()
         }
     }
 
-    let stored = block_on(find_task_record(&context.pool, task.id)).unwrap();
+    let stored = block_on(task.find_record(&context.pool)).unwrap();
     panic!(
         "Task {} did not reach failed state after repeated processing attempts; current status: {}",
         task.id, stored.status
@@ -1303,7 +1299,7 @@ fn test_process_one_task_report_failure_marks_single_failed_item() {
 
     for _ in 0..20 {
         let _ = block_on(process_one_task(&context.pool)).unwrap();
-        let stored = block_on(find_task_record(&context.pool, task.id)).unwrap();
+        let stored = block_on(task.find_record(&context.pool)).unwrap();
         if stored.status == TaskStatus::Failed.as_str() {
             assert_eq!(stored.total_items, 0);
             assert_eq!(stored.processed_items, 1);
@@ -1312,7 +1308,7 @@ fn test_process_one_task_report_failure_marks_single_failed_item() {
         }
     }
 
-    let stored = block_on(find_task_record(&context.pool, task.id)).unwrap();
+    let stored = block_on(task.find_record(&context.pool)).unwrap();
     panic!(
         "Task {} did not reach failed state after repeated processing attempts; current status: {}",
         task.id, stored.status
@@ -1377,7 +1373,7 @@ fn test_mark_claimed_task_failed_uses_recorded_result_counts() {
     ))
     .unwrap();
 
-    let stored = block_on(find_task_record(&context.pool, task.id)).unwrap();
+    let stored = block_on(task.find_record(&context.pool)).unwrap();
     assert_eq!(stored.processed_items, 2);
     assert_eq!(stored.success_items, 1);
     assert_eq!(stored.failed_items, 1);
@@ -1444,7 +1440,7 @@ fn test_count_import_results_summary_counts_success_and_failure_rows() {
     ))
     .unwrap();
 
-    let counts = block_on(count_import_results_summary(&context.pool, task.id)).unwrap();
+    let counts = block_on(task.count_import_results(&context.pool)).unwrap();
 
     assert_eq!(counts.processed, 3);
     assert_eq!(counts.success, 2);

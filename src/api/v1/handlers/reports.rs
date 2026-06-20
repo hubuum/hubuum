@@ -15,9 +15,8 @@ use crate::config::{
 };
 use crate::db::traits::UserPermissions;
 use crate::db::traits::task::{
-    TaskCreateRequest, TaskStateUpdate, append_task_event, create_report_task_with_active_limit,
-    finalize_report_task_with_output, find_report_task_output, find_report_task_output_summary,
-    find_task_by_idempotency, find_task_record, update_task_state,
+    TaskBackend, TaskCreateRequest, TaskStateUpdate, append_task_event,
+    create_report_task_with_active_limit, find_task_by_idempotency,
 };
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
@@ -38,7 +37,7 @@ use crate::pagination::page_limits_or_defaults;
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
-use crate::traits::{GroupMemberships, NamespaceAccessors, Search, SelfAccessors};
+use crate::traits::{NamespaceAccessors, Search, SelfAccessors};
 use crate::utilities::reporting::{SizeLimitedWriter, render_template};
 use crate::utilities::response::{json_response, json_response_with_header};
 
@@ -280,9 +279,11 @@ pub async fn get_report(
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
-    let task =
-        load_authorized_report_task(&pool, &requestor.user, task_id.into_inner().id()).await?;
-    let output = find_report_task_output_summary(&pool, task.id).await?;
+    let task = task_id
+        .into_inner()
+        .load_authorized_report(&pool, &requestor.user)
+        .await?;
+    let output = task.find_report_output_summary(&pool).await?;
     Ok(json_response(
         task.to_response_with_report_output(output.as_ref())?,
         StatusCode::OK,
@@ -319,9 +320,12 @@ pub async fn get_report_output(
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
-    let task_id = task_id.into_inner().id();
-    load_authorized_report_task(&pool, &requestor.user, task_id).await?;
-    let output = find_report_task_output(&pool, task_id)
+    let task_id = task_id.into_inner();
+    task_id
+        .load_authorized_report(&pool, &requestor.user)
+        .await?;
+    let output = task_id
+        .find_report_output(&pool)
         .await?
         .ok_or_else(|| ApiError::NotFound("Report output not found".to_string()))?;
     render_report_task_output(output)
@@ -465,26 +469,6 @@ async fn find_or_create_report_task(
     }
 }
 
-async fn load_authorized_report_task(
-    pool: &DbPool,
-    requestor: &User,
-    task_id: i32,
-) -> Result<TaskRecord, ApiError> {
-    let is_admin = requestor.is_admin(pool).await?;
-    let task = find_task_record(pool, task_id).await?;
-    if task.kind != TaskKind::Report.as_str() {
-        return Err(ApiError::NotFound(format!(
-            "Report task {} not found",
-            task_id
-        )));
-    }
-    if task.submitted_by == Some(requestor.id) || is_admin {
-        Ok(task)
-    } else {
-        Err(ApiError::NotFound("Report task not found".to_string()))
-    }
-}
-
 pub(crate) async fn execute_report_task(
     pool: &DbPool,
     task: &TaskRecord,
@@ -511,9 +495,8 @@ pub(crate) async fn execute_report_task(
         },
     )
     .await?;
-    update_task_state(
+    task.update_state(
         pool,
-        task.id,
         TaskStateUpdate {
             status: crate::models::TaskStatus::Running,
             summary: None,
@@ -635,9 +618,8 @@ pub(crate) async fn execute_report_task(
     )
     .await?;
 
-    finalize_report_task_with_output(
+    task.finalize_report_with_output(
         pool,
-        task.id,
         TaskStateUpdate {
             status: crate::models::TaskStatus::Succeeded,
             summary: Some("Report completed successfully".to_string()),

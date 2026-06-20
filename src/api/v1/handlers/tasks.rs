@@ -3,15 +3,12 @@ use actix_web::{HttpRequest, Responder, get, http::StatusCode, routes, web};
 use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
 use crate::db::traits::task::{
-    find_report_task_output_summary, find_task_record, list_report_task_output_summaries,
-    list_task_events_with_total_count, list_tasks_with_total_count,
+    TaskBackend, list_report_task_output_summaries, list_tasks_with_total_count,
 };
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::parse_query_parameter_with_passthrough;
-use crate::models::{
-    TaskEventResponse, TaskID, TaskKind, TaskRecord, TaskResponse, TaskStatus, User,
-};
+use crate::models::{TaskEventResponse, TaskID, TaskKind, TaskResponse, TaskStatus};
 use crate::pagination::prepare_db_pagination;
 use crate::tasks::ensure_task_worker_running;
 use crate::traits::GroupMemberships;
@@ -73,21 +70,6 @@ fn parse_task_list_query(
             submitted_by,
         },
     ))
-}
-
-async fn load_authorized_task(
-    pool: &DbPool,
-    requestor: &User,
-    task_id: i32,
-) -> Result<TaskRecord, ApiError> {
-    let is_admin = requestor.is_admin(pool).await?;
-    let task = find_task_record(pool, task_id).await?;
-    if task.submitted_by == Some(requestor.id) || is_admin {
-        Ok(task)
-    } else {
-        // Return 404 instead of 403 to hide existence of task from unauthorized users
-        Err(ApiError::NotFound("Task not found".to_string()))
-    }
 }
 
 #[utoipa::path(
@@ -175,9 +157,12 @@ pub async fn get_task(
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
-    let task = load_authorized_task(&pool, &requestor.user, task_id.into_inner().id()).await?;
+    let task = task_id
+        .into_inner()
+        .load_authorized(&pool, &requestor.user)
+        .await?;
     let report_output = if task.kind == TaskKind::Report.as_str() {
-        find_report_task_output_summary(&pool, task.id).await?
+        task.find_report_output_summary(&pool).await?
     } else {
         None
     };
@@ -210,12 +195,13 @@ pub async fn get_task_events(
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
-    let task_id = task_id.into_inner().id();
-    load_authorized_task(&pool, &requestor.user, task_id).await?;
+    let task_id = task_id.into_inner();
+    task_id.load_authorized(&pool, &requestor.user).await?;
     let (params, _) = parse_query_parameter_with_passthrough(req.query_string(), &[])?;
     let search_params = prepare_db_pagination::<TaskEventResponse>(&params)?;
-    let (events, total_count) =
-        list_task_events_with_total_count(&pool, task_id, &search_params).await?;
+    let (events, total_count) = task_id
+        .list_events_with_total_count(&pool, &search_params)
+        .await?;
     let events = events
         .into_iter()
         .map(TaskEventResponse::from)
