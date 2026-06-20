@@ -17,6 +17,7 @@ use crate::pagination::{
 };
 use crate::schema::report_templates;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter, NamespaceAdapter};
+use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 use crate::utilities::reporting::validate_template;
 use crate::{date_search, numeric_search, string_search};
 
@@ -92,8 +93,32 @@ pub struct ReportTemplate {
     pub updated_at: chrono::NaiveDateTime,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
-pub struct ReportTemplateID(pub i32);
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, ToSchema)]
+pub struct ReportTemplateID(i32);
+
+impl ReportTemplateID {
+    /// Validating constructor: report-template ids are positive integers. Constructing through
+    /// `new` (and the `Deserialize` impl, which routes through it) means an invalid id is rejected
+    /// at the edge with a clear `400` rather than surfacing later as a confusing lookup miss.
+    pub fn new(id: i32) -> Result<Self, ApiError> {
+        if id <= 0 {
+            return Err(ApiError::BadRequest(format!(
+                "Invalid report template id '{id}': must be a positive integer"
+            )));
+        }
+        Ok(Self(id))
+    }
+}
+
+impl<'de> Deserialize<'de> for ReportTemplateID {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let id = i32::deserialize(deserializer)?;
+        ReportTemplateID::new(id).map_err(serde::de::Error::custom)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[schema(example = new_report_template_example)]
@@ -357,60 +382,61 @@ impl ReportTemplate {
     }
 }
 
-pub async fn report_template(pool: &DbPool, template_id: i32) -> Result<ReportTemplate, ApiError> {
-    use crate::schema::report_templates::dsl::{id, report_templates};
+impl SaveAdapter for NewReportTemplate {
+    type Output = ReportTemplate;
 
-    let row = with_connection(pool, |conn| {
-        report_templates
-            .filter(id.eq(template_id))
-            .first::<ReportTemplateRow>(conn)
-    })?;
+    async fn save_adapter(&self, pool: &DbPool) -> Result<ReportTemplate, ApiError> {
+        use crate::schema::report_templates::dsl::report_templates;
 
-    row.try_into()
+        let new_row = self.clone().into_row()?;
+        ensure_template_name_is_available(pool, new_row.namespace_id, &new_row.name, None).await?;
+        validate_report_profile(
+            pool,
+            new_row.namespace_id,
+            ReportProfileRef {
+                kind: ReportTemplateKind::from_str(&new_row.kind)?,
+                scope_kind: new_row.scope_kind.as_deref(),
+                class_id: new_row.class_id,
+                default_query: new_row.default_query.as_deref(),
+                include: new_row.include.as_ref(),
+                relation_context: new_row.relation_context.as_ref(),
+                default_missing_data_policy: new_row.default_missing_data_policy.as_deref(),
+                default_limits: new_row.default_limits.as_ref(),
+            },
+        )
+        .await?;
+        let namespace_templates =
+            report_templates_in_namespace(pool, new_row.namespace_id, None).await?;
+        validate_template(
+            &new_row.name,
+            &new_row.template,
+            new_row.namespace_id,
+            &namespace_templates,
+            ReportContentType::from_mime(&new_row.content_type)?,
+        )?;
+        let row = with_connection(pool, |conn| {
+            diesel::insert_into(report_templates)
+                .values(&new_row)
+                .get_result::<ReportTemplateRow>(conn)
+        })?;
+
+        row.try_into()
+    }
 }
 
-pub async fn create_report_template(
-    pool: &DbPool,
-    template: NewReportTemplate,
-) -> Result<ReportTemplate, ApiError> {
-    use crate::schema::report_templates::dsl::report_templates;
+impl UpdateAdapter for UpdateReportTemplate {
+    type Output = ReportTemplate;
 
-    let new_row = template.into_row()?;
-    ensure_template_name_is_available(pool, new_row.namespace_id, &new_row.name, None).await?;
-    validate_report_profile(
-        pool,
-        new_row.namespace_id,
-        ReportProfileRef {
-            kind: ReportTemplateKind::from_str(&new_row.kind)?,
-            scope_kind: new_row.scope_kind.as_deref(),
-            class_id: new_row.class_id,
-            default_query: new_row.default_query.as_deref(),
-            include: new_row.include.as_ref(),
-            relation_context: new_row.relation_context.as_ref(),
-            default_missing_data_policy: new_row.default_missing_data_policy.as_deref(),
-            default_limits: new_row.default_limits.as_ref(),
-        },
-    )
-    .await?;
-    let namespace_templates =
-        report_templates_in_namespace(pool, new_row.namespace_id, None).await?;
-    validate_template(
-        &new_row.name,
-        &new_row.template,
-        new_row.namespace_id,
-        &namespace_templates,
-        ReportContentType::from_mime(&new_row.content_type)?,
-    )?;
-    let row = with_connection(pool, |conn| {
-        diesel::insert_into(report_templates)
-            .values(&new_row)
-            .get_result::<ReportTemplateRow>(conn)
-    })?;
-
-    row.try_into()
+    async fn update_adapter(
+        &self,
+        pool: &DbPool,
+        entry_id: i32,
+    ) -> Result<ReportTemplate, ApiError> {
+        update_report_template_record(pool, entry_id, self.clone()).await
+    }
 }
 
-pub async fn update_report_template(
+async fn update_report_template_record(
     pool: &DbPool,
     template_id: i32,
     update: UpdateReportTemplate,
@@ -587,14 +613,16 @@ fn resolve_report_profile(
     }
 }
 
-pub async fn delete_report_template(pool: &DbPool, template_id: i32) -> Result<(), ApiError> {
-    use crate::schema::report_templates::dsl::{id, report_templates};
+impl DeleteAdapter for ReportTemplateID {
+    async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
+        use crate::schema::report_templates::dsl::{id, report_templates};
 
-    with_connection(pool, |conn| {
-        diesel::delete(report_templates.filter(id.eq(template_id))).execute(conn)
-    })?;
+        with_connection(pool, |conn| {
+            diesel::delete(report_templates.filter(id.eq(self.0))).execute(conn)
+        })?;
 
-    Ok(())
+        Ok(())
+    }
 }
 
 pub async fn report_templates_in_namespace(
@@ -953,7 +981,15 @@ impl IdAccessor for ReportTemplateID {
 
 impl InstanceAdapter<ReportTemplate> for ReportTemplateID {
     async fn instance_adapter(&self, pool: &DbPool) -> Result<ReportTemplate, ApiError> {
-        report_template(pool, self.0).await
+        use crate::schema::report_templates::dsl::{id, report_templates};
+
+        let row = with_connection(pool, |conn| {
+            report_templates
+                .filter(id.eq(self.0))
+                .first::<ReportTemplateRow>(conn)
+        })?;
+
+        row.try_into()
     }
 }
 

@@ -853,27 +853,25 @@ mod tests {
         .await
         .unwrap();
 
-        let created = crate::models::report_template::create_report_template(
-            &pool,
-            NewReportTemplate {
-                namespace_id: namespace.id,
-                name: "report.clear-defaults".to_string(),
-                description: "clear defaults report".to_string(),
-                content_type: ReportContentType::TextPlain,
-                template: "{% for item in items %}{{ item.name }}{% endfor %}".to_string(),
-                kind: ReportTemplateKind::Report,
-                scope_kind: Some(ReportScopeKind::ObjectsInClass),
-                class_id: Some(class.id),
-                default_query: Some("sort=name".to_string()),
-                include: None,
-                relation_context: None,
-                default_missing_data_policy: Some(ReportMissingDataPolicy::Strict),
-                default_limits: Some(ReportLimits {
-                    max_items: Some(100),
-                    max_output_bytes: Some(262_144),
-                }),
-            },
-        )
+        let created = NewReportTemplate {
+            namespace_id: namespace.id,
+            name: "report.clear-defaults".to_string(),
+            description: "clear defaults report".to_string(),
+            content_type: ReportContentType::TextPlain,
+            template: "{% for item in items %}{{ item.name }}{% endfor %}".to_string(),
+            kind: ReportTemplateKind::Report,
+            scope_kind: Some(ReportScopeKind::ObjectsInClass),
+            class_id: Some(class.id),
+            default_query: Some("sort=name".to_string()),
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: Some(ReportMissingDataPolicy::Strict),
+            default_limits: Some(ReportLimits {
+                max_items: Some(100),
+                max_output_bytes: Some(262_144),
+            }),
+        }
+        .save(&pool)
         .await
         .unwrap();
 

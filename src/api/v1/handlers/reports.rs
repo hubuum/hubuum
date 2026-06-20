@@ -370,7 +370,7 @@ async fn resolve_template(
         return Ok(None);
     };
 
-    let template = ReportTemplateID(template_id).instance(pool).await?;
+    let template = ReportTemplateID::new(template_id)?.instance(pool).await?;
     can!(
         pool,
         user.clone(),

@@ -20,7 +20,7 @@ mod tests {
     use crate::tests::api_operations::{get_request, post_request_with_headers};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{TestContext, create_test_user, test_context};
-    use crate::traits::CanSave;
+    use crate::traits::{CanSave, CanUpdate};
     const REPORTS_ENDPOINT: &str = "/api/v1/reports";
 
     async fn wait_for_task(
@@ -147,24 +147,22 @@ mod tests {
         content_type: ReportContentType,
         template: &str,
     ) -> i32 {
-        let template = crate::models::report_template::create_report_template(
-            pool,
-            NewReportTemplate {
-                namespace_id,
-                name: name.to_string(),
-                description: "report template".to_string(),
-                content_type,
-                template: template.to_string(),
-                kind: ReportTemplateKind::Report,
-                scope_kind: Some(scope_kind),
-                class_id: Some(class_id),
-                default_query: None,
-                include: None,
-                relation_context: None,
-                default_missing_data_policy: None,
-                default_limits: None,
-            },
-        )
+        let template = NewReportTemplate {
+            namespace_id,
+            name: name.to_string(),
+            description: "report template".to_string(),
+            content_type,
+            template: template.to_string(),
+            kind: ReportTemplateKind::Report,
+            scope_kind: Some(scope_kind),
+            class_id: Some(class_id),
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
+        }
+        .save(pool)
         .await
         .unwrap();
 
@@ -406,17 +404,14 @@ mod tests {
         let first_body = String::from_utf8(test::read_body(first_output).await.to_vec()).unwrap();
         assert_eq!(first_body, "report-app-01=alice\nreport-db-01=bob\n");
 
-        crate::models::report_template::update_report_template(
-            &context.pool,
-            template_id,
-            UpdateReportTemplate {
-                namespace_id: None,
-                name: None,
-                description: None,
-                template: Some("changed output".to_string()),
-                ..empty_update_template_payload()
-            },
-        )
+        UpdateReportTemplate {
+            namespace_id: None,
+            name: None,
+            description: None,
+            template: Some("changed output".to_string()),
+            ..empty_update_template_payload()
+        }
+        .update(&context.pool, template_id)
         .await
         .unwrap();
 
@@ -520,24 +515,22 @@ mod tests {
         let _ = create_report_objects(&context.pool, &class).await;
 
         // Template carries a default query that selects only the "app" host.
-        let template = crate::models::report_template::create_report_template(
-            &context.pool,
-            NewReportTemplate {
-                namespace_id: class.namespace_id,
-                name: "report.default-query".to_string(),
-                description: "default query report".to_string(),
-                content_type: ReportContentType::TextPlain,
-                template: "{% for item in items %}{{ item.name }}\n{% endfor %}".to_string(),
-                kind: ReportTemplateKind::Report,
-                scope_kind: Some(ReportScopeKind::ObjectsInClass),
-                class_id: Some(class.id),
-                default_query: Some("name__contains=app-&sort=name".to_string()),
-                include: None,
-                relation_context: None,
-                default_missing_data_policy: None,
-                default_limits: None,
-            },
-        )
+        let template = NewReportTemplate {
+            namespace_id: class.namespace_id,
+            name: "report.default-query".to_string(),
+            description: "default query report".to_string(),
+            content_type: ReportContentType::TextPlain,
+            template: "{% for item in items %}{{ item.name }}\n{% endfor %}".to_string(),
+            kind: ReportTemplateKind::Report,
+            scope_kind: Some(ReportScopeKind::ObjectsInClass),
+            class_id: Some(class.id),
+            default_query: Some("name__contains=app-&sort=name".to_string()),
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
+        }
+        .save(&context.pool)
         .await
         .unwrap();
 
@@ -643,24 +636,22 @@ mod tests {
         let classes = create_test_classes(&context, "report_ns_scope").await;
         let namespace_name = classes.namespace.namespace.name.clone();
 
-        let template = crate::models::report_template::create_report_template(
-            &context.pool,
-            NewReportTemplate {
-                namespace_id: classes[0].namespace_id,
-                name: "report.namespaces".to_string(),
-                description: "namespace listing".to_string(),
-                content_type: ReportContentType::TextPlain,
-                template: "{% for item in items %}{{ item.name }}\n{% endfor %}".to_string(),
-                kind: ReportTemplateKind::Report,
-                scope_kind: Some(ReportScopeKind::Namespaces),
-                class_id: None,
-                default_query: Some(format!("name__equals={namespace_name}")),
-                include: None,
-                relation_context: None,
-                default_missing_data_policy: None,
-                default_limits: None,
-            },
-        )
+        let template = NewReportTemplate {
+            namespace_id: classes[0].namespace_id,
+            name: "report.namespaces".to_string(),
+            description: "namespace listing".to_string(),
+            content_type: ReportContentType::TextPlain,
+            template: "{% for item in items %}{{ item.name }}\n{% endfor %}".to_string(),
+            kind: ReportTemplateKind::Report,
+            scope_kind: Some(ReportScopeKind::Namespaces),
+            class_id: None,
+            default_query: Some(format!("name__equals={namespace_name}")),
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
+        }
+        .save(&context.pool)
         .await
         .unwrap();
 
@@ -694,26 +685,22 @@ mod tests {
         let context = test_context;
         let classes = create_test_classes(&context, "report_cls_scope").await;
 
-        let template = crate::models::report_template::create_report_template(
-            &context.pool,
-            NewReportTemplate {
-                namespace_id: classes[0].namespace_id,
-                name: "report.classes".to_string(),
-                description: "class listing".to_string(),
-                content_type: ReportContentType::TextPlain,
-                template: "{% for item in items %}{{ item.name }}\n{% endfor %}".to_string(),
-                kind: ReportTemplateKind::Report,
-                scope_kind: Some(ReportScopeKind::Classes),
-                class_id: None,
-                default_query: Some(
-                    "name__contains=report_cls_scope_api_class_&sort=name".to_string(),
-                ),
-                include: None,
-                relation_context: None,
-                default_missing_data_policy: None,
-                default_limits: None,
-            },
-        )
+        let template = NewReportTemplate {
+            namespace_id: classes[0].namespace_id,
+            name: "report.classes".to_string(),
+            description: "class listing".to_string(),
+            content_type: ReportContentType::TextPlain,
+            template: "{% for item in items %}{{ item.name }}\n{% endfor %}".to_string(),
+            kind: ReportTemplateKind::Report,
+            scope_kind: Some(ReportScopeKind::Classes),
+            class_id: None,
+            default_query: Some("name__contains=report_cls_scope_api_class_&sort=name".to_string()),
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
+        }
+        .save(&context.pool)
         .await
         .unwrap();
 
@@ -750,9 +737,7 @@ mod tests {
         let classes = create_test_classes(&context, "report_rel_scope").await;
         let relation = create_class_relation(&context.pool, classes[0].id, classes[1].id).await;
 
-        let template = crate::models::report_template::create_report_template(
-            &context.pool,
-            NewReportTemplate {
+        let template = NewReportTemplate {
                 namespace_id: classes[0].namespace_id,
                 name: "report.class-relations".to_string(),
                 description: "class relation listing".to_string(),
@@ -768,8 +753,8 @@ mod tests {
                 relation_context: None,
                 default_missing_data_policy: None,
                 default_limits: None,
-            },
-        )
+            }
+.save(&context.pool)
         .await
         .unwrap();
 
@@ -811,24 +796,22 @@ mod tests {
         let context = test_context;
         let classes = create_test_classes(&context, "report_collection_object_id").await;
 
-        let template = crate::models::report_template::create_report_template(
-            &context.pool,
-            NewReportTemplate {
-                namespace_id: classes[0].namespace_id,
-                name: "report.namespaces-no-object".to_string(),
-                description: "namespace listing".to_string(),
-                content_type: ReportContentType::TextPlain,
-                template: "{% for item in items %}{{ item.name }}{% endfor %}".to_string(),
-                kind: ReportTemplateKind::Report,
-                scope_kind: Some(ReportScopeKind::Namespaces),
-                class_id: None,
-                default_query: None,
-                include: None,
-                relation_context: None,
-                default_missing_data_policy: None,
-                default_limits: None,
-            },
-        )
+        let template = NewReportTemplate {
+            namespace_id: classes[0].namespace_id,
+            name: "report.namespaces-no-object".to_string(),
+            description: "namespace listing".to_string(),
+            content_type: ReportContentType::TextPlain,
+            template: "{% for item in items %}{{ item.name }}{% endfor %}".to_string(),
+            kind: ReportTemplateKind::Report,
+            scope_kind: Some(ReportScopeKind::Namespaces),
+            class_id: None,
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
+        }
+        .save(&context.pool)
         .await
         .unwrap();
 
@@ -1661,9 +1644,7 @@ mod tests {
         let _ = create_object_relation(&context.pool, host_b.id, room_b.id, host_room_relation.id)
             .await;
 
-        let template = crate::models::report_template::create_report_template(
-            &context.pool,
-            NewReportTemplate {
+        let template = NewReportTemplate {
                 namespace_id: namespace.namespace.id,
                 name: "multiroot-template".to_string(),
                 description: "report template".to_string(),
@@ -1677,8 +1658,8 @@ mod tests {
                 relation_context: Some(ReportRelationContext { depth: Some(1) }),
                 default_missing_data_policy: None,
                 default_limits: None,
-            },
-        )
+            }
+.save(&context.pool)
         .await
         .unwrap();
 
@@ -1872,9 +1853,7 @@ mod tests {
         .save(&context.pool)
         .await
         .unwrap();
-        let template = crate::models::report_template::create_report_template(
-            &context.pool,
-            NewReportTemplate {
+        let template = NewReportTemplate {
                 namespace_id: namespace.namespace.id,
                 name: "bench-template".to_string(),
                 description: "report template".to_string(),
@@ -1888,8 +1867,8 @@ mod tests {
                 relation_context: Some(ReportRelationContext { depth: Some(1) }),
                 default_missing_data_policy: None,
                 default_limits: None,
-            },
-        )
+            }
+.save(&context.pool)
         .await
         .unwrap();
 

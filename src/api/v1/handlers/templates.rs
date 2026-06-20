@@ -13,7 +13,7 @@ use crate::models::{
     ReportTemplateRunRequest, TaskResponse, UpdateReportTemplate,
 };
 use crate::pagination::prepare_db_pagination;
-use crate::traits::NamespaceAccessors;
+use crate::traits::{CanDelete, CanSave, CanUpdate, NamespaceAccessors, SelfAccessors};
 use crate::utilities::response::{
     json_response, json_response_created, json_response_with_header, paginated_json_response,
 };
@@ -57,7 +57,7 @@ pub async fn create_template(
         NamespaceID(template.namespace_id)
     );
 
-    let created = crate::models::report_template::create_report_template(&pool, template).await?;
+    let created = template.save(&pool).await?;
 
     Ok(json_response_created(
         &created,
@@ -133,15 +133,15 @@ pub async fn get_template(
     template_id: web::Path<ReportTemplateID>,
 ) -> Result<impl Responder, ApiError> {
     let user = requestor.user;
-    let template_id = template_id.into_inner().0;
+    let template_id = template_id.into_inner();
 
     debug!(
         message = "Report template get requested",
         user_id = user.id,
-        template_id = template_id
+        template_id = template_id.id()
     );
 
-    let template = crate::models::report_template::report_template(&pool, template_id).await?;
+    let template = template_id.instance(&pool).await?;
 
     can!(
         &pool,
@@ -181,16 +181,16 @@ pub async fn run_template_report(
     run: web::Json<ReportTemplateRunRequest>,
 ) -> Result<impl Responder, ApiError> {
     let user = requestor.user;
-    let template_id = template_id.into_inner().0;
+    let template_id = template_id.into_inner();
     let run = run.into_inner();
 
     debug!(
         message = "Report template execution requested",
         user_id = user.id,
-        template_id = template_id
+        template_id = template_id.id()
     );
 
-    let template = crate::models::report_template::report_template(&pool, template_id).await?;
+    let template = template_id.instance(&pool).await?;
 
     can!(
         &pool,
@@ -245,16 +245,16 @@ pub async fn patch_template(
     update: web::Json<UpdateReportTemplate>,
 ) -> Result<impl Responder, ApiError> {
     let user = requestor.user;
-    let template_id = template_id.into_inner().0;
+    let template_id = template_id.into_inner();
     let update = update.into_inner();
 
     debug!(
         message = "Report template patch requested",
         user_id = user.id,
-        template_id = template_id
+        template_id = template_id.id()
     );
 
-    let existing = crate::models::report_template::report_template(&pool, template_id).await?;
+    let existing = template_id.instance(&pool).await?;
 
     can!(
         &pool,
@@ -274,8 +274,7 @@ pub async fn patch_template(
         );
     }
 
-    let updated =
-        crate::models::report_template::update_report_template(&pool, template_id, update).await?;
+    let updated = update.update(&pool, existing.id).await?;
 
     Ok(json_response(updated, StatusCode::OK))
 }
@@ -302,15 +301,15 @@ pub async fn delete_template(
     template_id: web::Path<ReportTemplateID>,
 ) -> Result<impl Responder, ApiError> {
     let user = requestor.user;
-    let template_id = template_id.into_inner().0;
+    let template_id = template_id.into_inner();
 
     debug!(
         message = "Report template delete requested",
         user_id = user.id,
-        template_id = template_id
+        template_id = template_id.id()
     );
 
-    let template = crate::models::report_template::report_template(&pool, template_id).await?;
+    let template = template_id.instance(&pool).await?;
 
     can!(
         &pool,
@@ -319,7 +318,7 @@ pub async fn delete_template(
         NamespaceID(template.namespace_id)
     );
 
-    crate::models::report_template::delete_report_template(&pool, template_id).await?;
+    template_id.delete(&pool).await?;
 
     Ok(json_response((), StatusCode::NO_CONTENT))
 }
