@@ -9900,15 +9900,11 @@
         },
         "example": {
           "class_id": null,
-          "default_limits": null,
-          "default_missing_data_policy": null,
           "default_query": "sort=name.desc",
           "description": "Updated template description",
-          "include": null,
           "kind": null,
           "name": "owner-report-v2",
           "namespace_id": 9,
-          "relation_context": null,
           "scope_kind": null,
           "template": "{% for item in items %}{{ item.name }}\n{% endfor %}"
         }
