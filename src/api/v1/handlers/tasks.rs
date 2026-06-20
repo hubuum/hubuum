@@ -9,7 +9,9 @@ use crate::db::traits::task::{
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::parse_query_parameter_with_passthrough;
-use crate::models::{TaskEventResponse, TaskKind, TaskRecord, TaskResponse, TaskStatus, User};
+use crate::models::{
+    TaskEventResponse, TaskID, TaskKind, TaskRecord, TaskResponse, TaskStatus, User,
+};
 use crate::pagination::prepare_db_pagination;
 use crate::tasks::ensure_task_worker_running;
 use crate::traits::GroupMemberships;
@@ -170,10 +172,10 @@ pub async fn get_tasks(
 pub async fn get_task(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
-    task_id: web::Path<i32>,
+    task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
-    let task = load_authorized_task(&pool, &requestor.user, task_id.into_inner()).await?;
+    let task = load_authorized_task(&pool, &requestor.user, task_id.into_inner().id()).await?;
     let report_output = if task.kind == TaskKind::Report.as_str() {
         find_report_task_output_summary(&pool, task.id).await?
     } else {
@@ -205,10 +207,10 @@ pub async fn get_task_events(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
     req: HttpRequest,
-    task_id: web::Path<i32>,
+    task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
-    let task_id = task_id.into_inner();
+    let task_id = task_id.into_inner().id();
     load_authorized_task(&pool, &requestor.user, task_id).await?;
     let (params, _) = parse_query_parameter_with_passthrough(req.query_string(), &[])?;
     let search_params = prepare_db_pagination::<TaskEventResponse>(&params)?;

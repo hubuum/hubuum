@@ -117,6 +117,38 @@ impl From<TaskResultCounts> for (i32, i32, i32) {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, ToSchema)]
+pub struct TaskID(i32);
+
+impl TaskID {
+    /// Validating constructor: task ids are positive integers. Constructing through `new` (and the
+    /// `Deserialize` impl, which routes through it) means an invalid id is rejected at the edge with
+    /// a clear `400` rather than surfacing later as a confusing lookup miss.
+    pub fn new(id: i32) -> Result<Self, ApiError> {
+        if id <= 0 {
+            return Err(ApiError::BadRequest(format!(
+                "Invalid task id '{id}': must be a positive integer"
+            )));
+        }
+        Ok(Self(id))
+    }
+
+    /// The underlying id. Use at persistence boundaries that still operate on the raw `i32`.
+    pub fn id(self) -> i32 {
+        self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for TaskID {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let id = i32::deserialize(deserializer)?;
+        TaskID::new(id).map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable)]
 #[diesel(table_name = tasks)]
 pub struct TaskRecord {
@@ -601,5 +633,33 @@ impl CursorPaginated for ImportTaskResultResponse {
 
     fn tie_breaker_sort() -> Vec<SortParam> {
         Self::default_sort()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_id_new_accepts_positive() {
+        assert_eq!(TaskID::new(1).unwrap().id(), 1);
+        assert_eq!(TaskID::new(i32::MAX).unwrap().id(), i32::MAX);
+    }
+
+    #[test]
+    fn task_id_new_rejects_non_positive() {
+        for invalid in [0, -1, i32::MIN] {
+            let err = TaskID::new(invalid).unwrap_err();
+            assert!(matches!(err, ApiError::BadRequest(_)), "got {err:?}");
+        }
+    }
+
+    #[test]
+    fn task_id_deserialize_routes_through_new() {
+        // A valid id deserializes; a non-positive id is rejected by the validating constructor,
+        // so an invalid path segment never produces a TaskID.
+        assert_eq!(serde_json::from_str::<TaskID>("7").unwrap().id(), 7);
+        assert!(serde_json::from_str::<TaskID>("0").is_err());
+        assert!(serde_json::from_str::<TaskID>("-3").is_err());
     }
 }

@@ -12,7 +12,7 @@ use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    CURRENT_IMPORT_VERSION, ImportRequest, ImportTaskResultResponse, TaskKind, TaskRecord,
+    CURRENT_IMPORT_VERSION, ImportRequest, ImportTaskResultResponse, TaskID, TaskKind, TaskRecord,
     TaskResponse, User,
 };
 use crate::pagination::prepare_db_pagination;
@@ -176,10 +176,11 @@ pub async fn create_import(
 pub async fn get_import(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
-    task_id: web::Path<i32>,
+    task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
-    let task = load_authorized_import_task(&pool, &requestor.user, task_id.into_inner()).await?;
+    let task =
+        load_authorized_import_task(&pool, &requestor.user, task_id.into_inner().id()).await?;
     Ok(json_response(task.to_response()?, StatusCode::OK))
 }
 
@@ -203,10 +204,10 @@ pub async fn get_import_results(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
     req: HttpRequest,
-    task_id: web::Path<i32>,
+    task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
-    let task_id = task_id.into_inner();
+    let task_id = task_id.into_inner().id();
     load_authorized_import_task(&pool, &requestor.user, task_id).await?;
     let params = parse_query_parameter(req.query_string())?;
     let search_params = prepare_db_pagination::<ImportTaskResultResponse>(&params)?;

@@ -32,7 +32,7 @@ use crate::models::{
     ReportIncludeRelatedDirection, ReportIncludeRelatedQuery, ReportIncludeRelatedSort,
     ReportJsonResponse, ReportMeta, ReportMissingDataPolicy, ReportRequest, ReportScope,
     ReportScopeKind, ReportTaskOutputRecord, ReportTemplate, ReportTemplateID, ReportWarning,
-    TaskKind, TaskRecord, TaskResponse, User,
+    TaskID, TaskKind, TaskRecord, TaskResponse, User,
 };
 use crate::pagination::page_limits_or_defaults;
 use crate::tasks::{
@@ -277,10 +277,11 @@ pub(crate) async fn submit_report_task(
 pub async fn get_report(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
-    task_id: web::Path<i32>,
+    task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
-    let task = load_authorized_report_task(&pool, &requestor.user, task_id.into_inner()).await?;
+    let task =
+        load_authorized_report_task(&pool, &requestor.user, task_id.into_inner().id()).await?;
     let output = find_report_task_output_summary(&pool, task.id).await?;
     Ok(json_response(
         task.to_response_with_report_output(output.as_ref())?,
@@ -315,10 +316,10 @@ pub async fn get_report(
 pub async fn get_report_output(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
-    task_id: web::Path<i32>,
+    task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
-    let task_id = task_id.into_inner();
+    let task_id = task_id.into_inner().id();
     load_authorized_report_task(&pool, &requestor.user, task_id).await?;
     let output = find_report_task_output(&pool, task_id)
         .await?
