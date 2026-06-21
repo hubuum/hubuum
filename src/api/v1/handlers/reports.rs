@@ -8,17 +8,18 @@ use serde_json::json;
 use crate::api::openapi::ApiErrorResponse;
 use crate::can;
 use crate::config::{
-    DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER, DEFAULT_REPORT_MAX_OUTPUT_BYTES,
-    DEFAULT_REPORT_OUTPUT_RETENTION_HOURS, DEFAULT_REPORT_STAGE_TIMEOUT_MS,
-    DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS, get_config,
+    DEFAULT_REPORT_DB_STATEMENT_TIMEOUT_MS, DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER,
+    DEFAULT_REPORT_MAX_OUTPUT_BYTES, DEFAULT_REPORT_OUTPUT_RETENTION_HOURS,
+    DEFAULT_REPORT_STAGE_TIMEOUT_MS, DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS, get_config,
 };
-use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
 use crate::db::traits::task::{TaskBackend, TaskCreateRequest, TaskStateUpdate};
+use crate::db::{DbPool, with_statement_timeout_scope};
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::{
-    FilterField, ParsedQueryParam, QueryOptions, SearchOperator, parse_query_parameter,
+    FilterField, ParsedQueryParam, QueryOptions, SearchOperator, StatementTimeoutMs,
+    parse_query_parameter,
 };
 use crate::models::{
     ClassIdSet, HubuumClassID, HubuumClassRelation, HubuumObject, HubuumObjectID,
@@ -516,13 +517,25 @@ pub(crate) async fn execute_report_task(
     .append(pool)
     .await?;
 
+    // Report-scoped, in-flight query budget. While these query stages run, every
+    // DB query they issue is bounded by this `statement_timeout` (applied as a
+    // transaction-local `SET LOCAL`), independently of the pool-global timeout
+    // and without affecting bookkeeping writes outside these scopes.
+    let statement_timeout = report_statement_timeout();
     let mut query_options = prepare_query_options(&runtime.report)?;
     let relation_hydration = resolve_relation_hydration_plan(&runtime, &mut query_options)?;
     let query_start = Instant::now();
-    let (items, mut warnings, truncated) =
-        execute_scope(pool, user, &runtime.report.scope, query_options).await?;
+    let (items, mut warnings, truncated) = with_statement_timeout_scope(
+        statement_timeout,
+        execute_scope(pool, user, &runtime.report.scope, query_options),
+    )
+    .await?;
     let mut items = items;
-    apply_report_includes(pool, user, &runtime.report, &mut items).await?;
+    with_statement_timeout_scope(
+        statement_timeout,
+        apply_report_includes(pool, user, &runtime.report, &mut items),
+    )
+    .await?;
     timings.query_duration_ms = duration_to_millis_i32(query_start.elapsed());
     enforce_report_stage_timeout(query_start, "query execution")?;
 
@@ -546,8 +559,11 @@ pub(crate) async fn execute_report_task(
 
     add_truncation_warning(&mut warnings, truncated);
     let hydration_start = Instant::now();
-    let (template_items, source) =
-        build_template_items(pool, user, &runtime, &items, relation_hydration).await?;
+    let (template_items, source) = with_statement_timeout_scope(
+        statement_timeout,
+        build_template_items(pool, user, &runtime, &items, relation_hydration),
+    )
+    .await?;
     timings.hydration_duration_ms = duration_to_millis_i32(hydration_start.elapsed());
     enforce_report_stage_timeout(hydration_start, "relation hydration")?;
     let template_report = runtime.template.is_some();
@@ -820,14 +836,27 @@ fn duration_to_millis_i32(duration: std::time::Duration) -> i32 {
     i32::try_from(duration.as_millis()).unwrap_or(i32::MAX)
 }
 
+/// The report-scoped Postgres `statement_timeout` to apply to report queries,
+/// or `None` when disabled (`report_db_statement_timeout_ms == 0`).
+///
+/// This is the in-flight, server-side query cancel that complements the
+/// post-completion wall-clock budget enforced by [`enforce_report_stage_timeout`].
+fn report_statement_timeout() -> Option<StatementTimeoutMs> {
+    let milliseconds = get_config()
+        .map(|config| config.report_db_statement_timeout_ms)
+        .unwrap_or(DEFAULT_REPORT_DB_STATEMENT_TIMEOUT_MS);
+    StatementTimeoutMs::new(milliseconds)
+}
+
 /// Post-completion rejection guard for a report stage.
 ///
 /// This is **not** an in-flight interrupt: it is called after a stage has already
 /// finished and rejects the report if the stage took longer than the configured
 /// budget. It bounds how long a stage is *accepted* to have taken, not how long
 /// it is *allowed to run*. In-flight protection comes from the MiniJinja fuel
-/// budget, `report_template_max_objects`, the output byte caps, and the
-/// pool-global `db_statement_timeout_ms` (which cancels slow queries server-side).
+/// budget, `report_template_max_objects`, the output byte caps, the pool-global
+/// `db_statement_timeout_ms`, and the report-scoped `report_db_statement_timeout_ms`
+/// (both of which cancel slow queries server-side).
 fn enforce_report_stage_timeout(stage_start: Instant, stage_name: &str) -> Result<(), ApiError> {
     let stage_timeout_ms = get_config()
         .map(|config| config.report_stage_timeout_ms)

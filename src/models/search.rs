@@ -177,6 +177,29 @@ fn parse_single_filter(key: &str, value: &str) -> Result<ParsedQueryParam, ApiEr
     Ok(parsed_query_param)
 }
 
+/// ## A per-query Postgres `statement_timeout`, in milliseconds.
+///
+/// A validated, *positive* timeout: the only way to construct one is
+/// [`StatementTimeoutMs::new`], which returns `None` for `0` (the "disabled"
+/// value), so a `StatementTimeoutMs` value always represents a meaningful budget.
+/// Callers thread `Option<StatementTimeoutMs>`, where `None` means "no
+/// per-query override" (the connection's pool-global timeout applies, if any).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StatementTimeoutMs(u64);
+
+impl StatementTimeoutMs {
+    /// Build a timeout from a raw millisecond value. `0` is treated as
+    /// "disabled" and yields `None`; any positive value yields `Some`.
+    pub fn new(milliseconds: u64) -> Option<Self> {
+        (milliseconds > 0).then_some(Self(milliseconds))
+    }
+
+    /// The timeout in milliseconds (always greater than zero).
+    pub fn as_millis(self) -> u64 {
+        self.0
+    }
+}
+
 /// ## A struct that represents a set of query options
 ///
 /// This struct holds a list of filters, a list of sort parameters, and a limit on the number of results.

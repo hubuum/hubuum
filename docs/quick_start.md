@@ -53,6 +53,7 @@ Hubuum can be configured using environment variables or command-line arguments. 
 | `HUBUUM_REPORT_TEMPLATE_MAX_OBJECTS` | `2000` | Maximum hydrated relation-aware template objects per report |
 | `HUBUUM_REPORT_MAX_OUTPUT_BYTES` | `262144` | Server maximum for rendered report output size; request-level `limits.max_output_bytes` cannot exceed this |
 | `HUBUUM_REPORT_STAGE_TIMEOUT_MS` | `10000` | Post-completion rejection budget per report stage (ms). Rejects a report *after* a stage finishes if it exceeded this; it does not interrupt in-flight work. Use `HUBUUM_DB_STATEMENT_TIMEOUT_MS` to actually cancel slow queries |
+| `HUBUUM_REPORT_DB_STATEMENT_TIMEOUT_MS` | `0` | Report-scoped Postgres `statement_timeout` in ms (`0` disables). Cancels slow queries in-flight **only while executing reports** (applied as a transaction-local `SET LOCAL`), without affecting imports or other DB work. Typically set `<= HUBUUM_REPORT_STAGE_TIMEOUT_MS` |
 
 **Report/template note**: These settings control async report task behavior, including stored output retention, template execution limits, and relation hydration guardrails. See [Report API](report_api.md) and [Template Guide](template_guide.md) for the user-facing behavior these limits affect.
 

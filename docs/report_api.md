@@ -392,6 +392,13 @@ enable `related.*` and `reachable.*`.
   Postgres `statement_timeout`: it applies to every database query the service
   makes, not only report stages, so choose a value that accommodates legitimate
   long-running operations (e.g. large imports).
+- to cancel slow in-flight queries **only while executing reports**, set
+  `HUBUUM_REPORT_DB_STATEMENT_TIMEOUT_MS` (0 = disabled). This is a
+  **report-scoped** Postgres `statement_timeout`, applied as a transaction-local
+  `SET LOCAL` on report queries (scope query, includes, relation hydration), so
+  it bounds report queries aggressively without capping imports, admin
+  operations, or other DB work sharing the pool. When set it should typically be
+  `<= HUBUUM_REPORT_STAGE_TIMEOUT_MS`.
 - successful stored outputs get an `output_expires_at` timestamp at completion time
 - background task workers clean up expired stored outputs and append a `cleanup` task event
 
@@ -406,6 +413,7 @@ Relevant env vars are documented centrally in [Quick Start](quick_start.md):
 - `HUBUUM_REPORT_MAX_OUTPUT_BYTES`
 - `HUBUUM_REPORT_STAGE_TIMEOUT_MS`
 - `HUBUUM_DB_STATEMENT_TIMEOUT_MS`
+- `HUBUUM_REPORT_DB_STATEMENT_TIMEOUT_MS`
 
 ## Cost controls
 

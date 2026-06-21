@@ -9,6 +9,7 @@ use diesel::r2d2::PooledConnection;
 use tracing::debug;
 
 use crate::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, EXIT_CODE_DATABASE_ERROR, fatal_error};
+use crate::models::search::StatementTimeoutMs;
 use crate::utilities::db::DatabaseUrlComponents;
 
 pub type DbPool = Pool<ConnectionManager<PgConnection>>;
@@ -17,6 +18,61 @@ fn acquire_connection(
     pool: &DbPool,
 ) -> Result<PooledConnection<ConnectionManager<PgConnection>>, ApiError> {
     pool.get().map_err(ApiError::from)
+}
+
+tokio::task_local! {
+    /// The per-query Postgres `statement_timeout` in effect for the current
+    /// async task, if any. Set for the duration of a scope via
+    /// [`with_statement_timeout_scope`] and consulted by [`with_connection`] /
+    /// [`with_transaction`] so that all DB work inside the scope is bounded
+    /// without threading a timeout through every caller. Outside any scope the
+    /// lookup yields `None`, so behavior is unchanged.
+    static AMBIENT_STATEMENT_TIMEOUT: Option<StatementTimeoutMs>;
+}
+
+/// Run `future` with an ambient per-query `statement_timeout` in effect.
+///
+/// While the future is being polled, every [`with_connection`] /
+/// [`with_transaction`] call made on the same task applies the given
+/// `statement_timeout` as a transaction-local `SET LOCAL statement_timeout`.
+/// This is how the report execution path bounds its queries independently of
+/// the pool-global `db_statement_timeout_ms`, without threading the timeout
+/// through the search layer. A `statement_timeout` of `None` is a no-op scope.
+pub async fn with_statement_timeout_scope<F, R>(
+    statement_timeout: Option<StatementTimeoutMs>,
+    future: F,
+) -> R
+where
+    F: std::future::Future<Output = R>,
+{
+    AMBIENT_STATEMENT_TIMEOUT
+        .scope(statement_timeout, future)
+        .await
+}
+
+/// The ambient per-query `statement_timeout` for the current task, or `None`
+/// when not running inside a [`with_statement_timeout_scope`] (including from
+/// synchronous, non-task contexts).
+fn ambient_statement_timeout() -> Option<StatementTimeoutMs> {
+    AMBIENT_STATEMENT_TIMEOUT
+        .try_with(|timeout| *timeout)
+        .unwrap_or(None)
+}
+
+/// Apply a transaction-local `SET LOCAL statement_timeout` to the current
+/// transaction. The value is bound rather than formatted into the SQL,
+/// mirroring [`StatementTimeoutCustomizer`]. `set_config(name, value,
+/// is_local=true)` scopes the value to the current transaction, so it reverts
+/// automatically at COMMIT/ROLLBACK and never leaks back to the shared pool.
+fn set_local_statement_timeout(
+    conn: &mut PgConnection,
+    statement_timeout: StatementTimeoutMs,
+) -> Result<(), diesel::result::Error> {
+    use diesel::RunQueryDsl;
+    diesel::sql_query("SELECT set_config('statement_timeout', $1, true)")
+        .bind::<diesel::sql_types::Text, _>(statement_timeout.as_millis().to_string())
+        .execute(conn)?;
+    Ok(())
 }
 
 /// Run database work on a single pooled connection without starting an explicit transaction.
@@ -30,6 +86,10 @@ fn acquire_connection(
 /// In practice this means the closure can return either Diesel errors directly or higher-level
 /// domain errors that already map into `ApiError`.
 ///
+/// If a [`with_statement_timeout_scope`] is in effect on the current task, the
+/// work is automatically bounded by that per-query `statement_timeout` (see
+/// [`with_connection_timeout`]). Otherwise no timeout is applied.
+///
 /// Note: block closures that use `?` and end with `Ok(...)` may require an explicit closure
 /// return type, for example:
 /// `with_connection(pool, |conn| -> Result<_, diesel::result::Error> { ... })`
@@ -38,8 +98,48 @@ where
     F: FnOnce(&mut PgConnection) -> Result<R, E>,
     ApiError: From<E>,
 {
+    with_connection_timeout(pool, ambient_statement_timeout(), f)
+}
+
+/// Run database work on a single pooled connection, optionally bounding it with
+/// an explicit per-query Postgres `statement_timeout`.
+///
+/// When `statement_timeout` is `None`, this behaves exactly like a plain pooled
+/// connection (no transaction, no override).
+///
+/// When it is `Some`, the closure runs inside a transaction that first issues a
+/// transaction-local `SET LOCAL statement_timeout`. Postgres cancels any
+/// statement exceeding the budget server-side, and the override reverts
+/// automatically at COMMIT/ROLLBACK, so it never leaks back to the shared pool.
+/// This is the mechanism that makes report queries bounded independently of the
+/// pool-global `db_statement_timeout_ms`.
+///
+/// Most callers should use [`with_connection`] and set the timeout ambiently via
+/// [`with_statement_timeout_scope`]; this explicit variant exists for callers
+/// (and tests) that want to pass the timeout directly.
+///
+/// Note: this intentionally wraps a (possibly read-only) closure in a
+/// transaction. That is contrary to the usual "single reads use
+/// [`with_connection`]" guidance, but the transaction here exists solely to
+/// scope `SET LOCAL`, not for multi-statement atomicity, and is encapsulated in
+/// this one helper rather than imposed on callers.
+pub fn with_connection_timeout<F, R, E>(
+    pool: &DbPool,
+    statement_timeout: Option<StatementTimeoutMs>,
+    f: F,
+) -> Result<R, ApiError>
+where
+    F: FnOnce(&mut PgConnection) -> Result<R, E>,
+    ApiError: From<E>,
+{
     let mut conn = acquire_connection(pool)?;
-    f(&mut conn).map_err(ApiError::from)
+    match statement_timeout {
+        None => f(&mut conn).map_err(ApiError::from),
+        Some(statement_timeout) => conn.transaction::<R, ApiError, _>(|conn| {
+            set_local_statement_timeout(conn, statement_timeout)?;
+            f(conn).map_err(ApiError::from)
+        }),
+    }
 }
 
 /// Run database work inside a SQL transaction on a single pooled connection.
@@ -53,6 +153,10 @@ where
 /// - read/modify/write sequences that must be atomic
 /// - permission mutations that must not leave partial state behind
 ///
+/// If a [`with_statement_timeout_scope`] is in effect on the current task, a
+/// transaction-local `SET LOCAL statement_timeout` is applied at the start of
+/// the transaction so this work is bounded too.
+///
 /// As with [`with_connection`], the closure may return any error type `E` that converts into
 /// [`ApiError`]. Block closures that end with `Ok(...)` may need an explicit closure return type,
 /// for example:
@@ -62,8 +166,14 @@ where
     F: FnOnce(&mut PgConnection) -> Result<R, E>,
     ApiError: From<E>,
 {
+    let statement_timeout = ambient_statement_timeout();
     let mut conn = acquire_connection(pool)?;
-    conn.transaction::<R, ApiError, _>(|conn| f(conn).map_err(ApiError::from))
+    conn.transaction::<R, ApiError, _>(|conn| {
+        if let Some(statement_timeout) = statement_timeout {
+            set_local_statement_timeout(conn, statement_timeout)?;
+        }
+        f(conn).map_err(ApiError::from)
+    })
 }
 
 pub fn init_pool(database_url: &str, max_size: u32) -> DbPool {
@@ -213,6 +323,65 @@ mod tests {
         diesel::sql_query("SELECT pg_sleep(0.1)")
             .execute(&mut conn)
             .expect("pg_sleep should complete when statement_timeout is disabled");
+    }
+
+    #[test]
+    fn statement_timeout_ms_new_treats_zero_as_disabled() {
+        assert_eq!(StatementTimeoutMs::new(0), None);
+        assert_eq!(
+            StatementTimeoutMs::new(50).map(StatementTimeoutMs::as_millis),
+            Some(50)
+        );
+    }
+
+    #[test]
+    fn with_connection_timeout_bounds_and_reverts() {
+        let config = get_config().expect("Failed to load config for test");
+        // Pool-global timeout disabled, so any cancellation must come from the
+        // per-query `SET LOCAL` applied by `with_connection_timeout` itself.
+        let pool = init_pool_with_statement_timeout(&config.database_url, 1, 0);
+
+        // A tiny explicit timeout cancels a query that sleeps past the budget.
+        let slow = with_connection_timeout(&pool, StatementTimeoutMs::new(50), |conn| {
+            diesel::sql_query("SELECT pg_sleep(1)").execute(conn)
+        });
+        assert!(
+            slow.is_err(),
+            "pg_sleep(1) should be cancelled by a 50ms per-query statement_timeout"
+        );
+
+        // The `SET LOCAL` reverts with the transaction, so a later checkout that
+        // passes `None` is unbounded again (proving no leak back to the pool).
+        with_connection_timeout(&pool, None, |conn| {
+            diesel::sql_query("SELECT pg_sleep(0.1)").execute(conn)
+        })
+        .expect("pg_sleep should complete when no per-query timeout is applied");
+    }
+
+    #[tokio::test]
+    async fn ambient_statement_timeout_scope_bounds_with_connection() {
+        let config = get_config().expect("Failed to load config for test");
+        // Pool-global timeout disabled; the only possible cancel is the ambient
+        // scope applied via `with_statement_timeout_scope`.
+        let pool = init_pool_with_statement_timeout(&config.database_url, 1, 0);
+
+        // Inside the scope, a plain `with_connection` call is bounded.
+        let bounded = with_statement_timeout_scope(StatementTimeoutMs::new(50), async {
+            with_connection(&pool, |conn| {
+                diesel::sql_query("SELECT pg_sleep(1)").execute(conn)
+            })
+        })
+        .await;
+        assert!(
+            bounded.is_err(),
+            "with_connection inside a 50ms scope should cancel pg_sleep(1)"
+        );
+
+        // Outside any scope, the ambient timeout is gone and slow work runs.
+        with_connection(&pool, |conn| {
+            diesel::sql_query("SELECT pg_sleep(0.1)").execute(conn)
+        })
+        .expect("with_connection outside a scope must not be bounded");
     }
 
     #[test]
