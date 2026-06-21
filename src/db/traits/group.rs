@@ -15,7 +15,7 @@ impl LoadGroupRecord for GroupID {
         use crate::schema::groups::dsl::{groups, id};
 
         with_connection(pool, |conn| {
-            groups.filter(id.eq(self.0)).first::<Group>(conn)
+            groups.filter(id.eq(self.id())).first::<Group>(conn)
         })
     }
 }
@@ -29,7 +29,7 @@ impl DeleteGroupRecord for GroupID {
         use crate::schema::groups::dsl::{groups, id};
 
         with_connection(pool, |conn| {
-            diesel::delete(groups.filter(id.eq(self.0))).execute(conn)
+            diesel::delete(groups.filter(id.eq(self.id()))).execute(conn)
         })
     }
 }

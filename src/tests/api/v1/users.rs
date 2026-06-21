@@ -205,7 +205,7 @@ mod tests {
         assert_eq!(patched_user.username, test_user.username);
         assert_eq!(patched_user.email, test_user.email);
 
-        let stored_user = UserID(test_user.id).user(&context.pool).await.unwrap();
+        let stored_user = UserID::new(test_user.id).unwrap().user(&context.pool).await.unwrap();
         assert_ne!(stored_user.password, test_user.password);
         LoginUser {
             username: test_user.username,

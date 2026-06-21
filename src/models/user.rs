@@ -184,8 +184,11 @@ impl NewUser {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-pub struct UserID(pub i32);
+crate::int_id_newtype! {
+    /// Identifier wrapper for a [`User`].
+    pub struct UserID;
+    noun = "user id";
+}
 
 impl UserID {
     pub async fn user<C>(&self, backend: &C) -> Result<User, ApiError>

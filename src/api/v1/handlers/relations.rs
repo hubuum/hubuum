@@ -5,7 +5,7 @@ use crate::extractors::UserAccess;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
     HubuumClassRelation, HubuumClassRelationID, HubuumObjectRelation, HubuumObjectRelationID,
-    NamespaceID, NewHubuumClassRelation, NewHubuumObjectRelation, Permissions,
+    NewHubuumClassRelation, NewHubuumObjectRelation, Permissions,
 };
 use crate::pagination::prepare_db_pagination;
 

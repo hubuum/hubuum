@@ -379,8 +379,10 @@ impl UserNamespaceAccessors for UserID {}
 impl GroupAccessors for User {}
 impl GroupAccessors for UserID {}
 
-impl GroupAccessors for &User {}
-impl GroupAccessors for &UserID {}
+// `&T` gets `GroupAccessors` wherever `T` is a user accessor, mirroring the blanket reference impls
+// for the adapter traits in `crate::traits::accessors`. This subsumes the explicit `&User` /
+// `&UserID` impls that previously had to be written out one type at a time.
+impl<T> GroupAccessors for &T where T: IdAccessor + InstanceAdapter<User> {}
 
 impl Search for User {}
 impl Search for UserID {}
@@ -485,7 +487,10 @@ impl InstanceAdapter<User> for User {
 
 impl IdAccessor for UserID {
     fn accessor_id(&self) -> i32 {
-        self.0
+        // Deref to the owned (Copy) value on purpose: with a `&self` receiver, `self.id()`
+        // binds to the `SelfAccessors::id` trait method, which calls back into `accessor_id`
+        // and recurses. The inherent `id` is only selected on an owned receiver.
+        (*self).id()
     }
 }
 
@@ -545,7 +550,7 @@ mod test {
             name: "test_user_namespace_listing".to_string(),
             description: "Test namespace".to_string(),
         }
-        .save_and_grant_all_to(&context.pool, GroupID(test_group_1.id))
+        .save_and_grant_all_to(&context.pool, GroupID::new(test_group_1.id).unwrap())
         .await
         .unwrap();
 

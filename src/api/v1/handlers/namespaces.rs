@@ -651,7 +651,7 @@ pub async fn get_namespace_user_permissions(
         message = "Namespace user permissions list requested",
         requestor = requestor.user.username,
         namespace_id = namespace_id.id(),
-        user_id = user_id.0
+        user_id = user_id.id()
     );
 
     let namespace = namespace_id.instance(&pool).await?;
@@ -665,7 +665,7 @@ pub async fn get_namespace_user_permissions(
     let search_params = prepare_db_pagination::<GroupPermission>(&query_options)?;
     let (permissions, total_count) = crate::models::namespace::user_on_paginated_with_total_count(
         &pool,
-        user_id.clone(),
+        user_id,
         namespace.clone(),
         &search_params,
     )

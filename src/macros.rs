@@ -77,10 +77,10 @@ macro_rules! can {
             $pool,
             vec![$($perm),+],
             vec![
-                // This should be fairly cheap. We're just getting the namespace ID for each object.
-                // which is a field lookup and convertinng it to NamespaceID directly. There is no
-                // database interaction here but the trait definition requires the pool to be passed.
-                $(NamespaceID($namespace.namespace_id($pool).await?)),+
+                // This should be fairly cheap. We're just getting the namespace ID for each object,
+                // which is a field lookup returning a `NamespaceID`. There is no database interaction
+                // here but the trait definition requires the pool to be passed.
+                $($namespace.namespace_id($pool).await?),+
             ]
         ).await?
     }};
@@ -609,4 +609,73 @@ macro_rules! bind_transitive_filter_params {
             >($filter.path_values)
             .bind::<diesel::sql_types::Bool, _>($filter.path_negated)
     }};
+}
+
+/// ## Declare an `i32`-backed id newtype with a validating constructor.
+///
+/// Generates the tuple struct (with a private field), a validating `new` that rejects
+/// non-positive ids, an `id()` accessor for the rare persistence boundaries that still operate on
+/// the raw `i32`, and a `Deserialize` impl routed through `new` so an invalid id is rejected at
+/// the API edge with a clear `400` rather than surfacing later as a confusing lookup miss.
+///
+/// `new` and `id` are deliberately *inherent* rather than trait methods: an `id()` on a shared
+/// trait would collide with [`SelfAccessors::id`](crate::traits::SelfAccessors::id), and a trait
+/// constructor would have to expose an unchecked `from_raw`, defeating the private field.
+///
+/// ### Arguments
+///
+/// * `noun` - human-readable name used in the validation error, e.g. `"namespace id"`.
+///
+/// ### Example
+///
+/// ```ignore
+/// int_id_newtype! {
+///     /// Identifier for a namespace.
+///     pub struct NamespaceID;
+///     noun = "namespace id";
+/// }
+/// ```
+#[macro_export]
+macro_rules! int_id_newtype {
+    (
+        $(#[$meta:meta])*
+        $vis:vis struct $name:ident;
+        noun = $noun:literal $(;)?
+    ) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, serde::Serialize, PartialEq, Eq, utoipa::ToSchema)]
+        $vis struct $name(i32);
+
+        impl $name {
+            #[doc = concat!("Validating constructor: ", $noun, "s are positive integers.")]
+            ///
+            /// Constructing through `new` (and the `Deserialize` impl, which routes through it)
+            /// means an invalid id is rejected at the edge with a clear `400` rather than
+            /// surfacing later as a confusing lookup miss.
+            pub fn new(id: i32) -> Result<Self, $crate::errors::ApiError> {
+                if id <= 0 {
+                    return Err($crate::errors::ApiError::BadRequest(format!(
+                        concat!("Invalid ", $noun, " '{id}': must be a positive integer"),
+                        id = id
+                    )));
+                }
+                Ok(Self(id))
+            }
+
+            /// The underlying id. Use at persistence boundaries that still operate on the raw `i32`.
+            pub fn id(self) -> i32 {
+                self.0
+            }
+        }
+
+        impl<'de> serde::Deserialize<'de> for $name {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                let id = <i32 as serde::Deserialize>::deserialize(deserializer)?;
+                Self::new(id).map_err(serde::de::Error::custom)
+            }
+        }
+    };
 }

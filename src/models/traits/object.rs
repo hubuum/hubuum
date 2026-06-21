@@ -5,8 +5,8 @@ use crate::db::traits::object::{
 };
 use crate::errors::ApiError;
 
-use crate::models::class::HubuumClass;
-use crate::models::namespace::Namespace;
+use crate::models::class::{HubuumClass, HubuumClassID};
+use crate::models::namespace::{Namespace, NamespaceID};
 use crate::models::object::{
     HubuumObject, HubuumObjectID, HubuumObjectWithPath, NewHubuumObject, UpdateHubuumObject,
 };
@@ -148,8 +148,8 @@ impl NamespaceAdapter for HubuumObject {
         self.lookup_object_namespace(pool).await
     }
 
-    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.namespace_id)
+    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<NamespaceID, ApiError> {
+        NamespaceID::new(self.namespace_id)
     }
 }
 
@@ -158,14 +158,17 @@ impl ClassAdapter for HubuumObject {
         self.lookup_object_class(pool).await
     }
 
-    async fn class_id_adapter(&self, _pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.hubuum_class_id)
+    async fn class_id_adapter(&self, _pool: &DbPool) -> Result<HubuumClassID, ApiError> {
+        HubuumClassID::new(self.hubuum_class_id)
     }
 }
 
 impl IdAccessor for HubuumObjectID {
     fn accessor_id(&self) -> i32 {
-        self.0
+        // Deref to the owned (Copy) value on purpose: with a `&self` receiver, `self.id()`
+        // binds to the `SelfAccessors::id` trait method, which calls back into `accessor_id`
+        // and recurses. The inherent `id` is only selected on an owned receiver.
+        (*self).id()
     }
 }
 
@@ -180,8 +183,8 @@ impl NamespaceAdapter for HubuumObjectID {
         self.lookup_object_namespace(pool).await
     }
 
-    async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.namespace(pool).await?.id)
+    async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<NamespaceID, ApiError> {
+        NamespaceID::new(self.namespace(pool).await?.id)
     }
 }
 
@@ -190,8 +193,8 @@ impl ClassAdapter for HubuumObjectID {
         self.lookup_object_class(pool).await
     }
 
-    async fn class_id_adapter(&self, pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.class(pool).await?.id)
+    async fn class_id_adapter(&self, pool: &DbPool) -> Result<HubuumClassID, ApiError> {
+        HubuumClassID::new(self.class(pool).await?.id)
     }
 }
 

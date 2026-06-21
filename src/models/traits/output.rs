@@ -32,7 +32,9 @@ impl ExpandNamespace<HubuumClassExpanded> for HubuumClass {
     where
         C: BackendContext + ?Sized,
     {
-        let namespace = NamespaceID(self.namespace_id).instance(backend).await?;
+        let namespace = NamespaceID::new(self.namespace_id)?
+            .instance(backend)
+            .await?;
 
         Ok(HubuumClassExpanded {
             id: self.id,

@@ -28,8 +28,11 @@ pub struct Namespace {
     pub updated_at: chrono::NaiveDateTime,
 }
 
-#[derive(Serialize, Debug, Deserialize, Copy, Clone, ToSchema)]
-pub struct NamespaceID(pub i32);
+crate::int_id_newtype! {
+    /// Identifier wrapper for a [`Namespace`].
+    pub struct NamespaceID;
+    noun = "namespace id";
+}
 
 #[derive(Serialize, Deserialize, Clone, AsChangeset, ToSchema)]
 #[schema(example = update_namespace_example)]

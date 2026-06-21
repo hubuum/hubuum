@@ -243,7 +243,7 @@ async fn create_class(
         class_name = class_data.name
     );
 
-    let namespace = NamespaceID(class_data.namespace_id);
+    let namespace = NamespaceID::new(class_data.namespace_id)?;
     can!(&pool, user, [Permissions::CreateClass], namespace);
 
     let class = class_data
@@ -337,7 +337,7 @@ async fn update_class(
             &pool,
             user,
             [Permissions::CreateClass],
-            NamespaceID(target_namespace_id)
+            NamespaceID::new(target_namespace_id)?
         );
     }
 
@@ -426,7 +426,7 @@ async fn get_class_permissions(
     let count_params = count_query_options(&params);
     let total_count = crate::models::namespace::count_groups_on_paginated(
         &pool,
-        NamespaceID(nid),
+        nid,
         vec![
             Permissions::CreateClass,
             Permissions::UpdateClass,
@@ -439,7 +439,7 @@ async fn get_class_permissions(
     let search_params = prepare_db_pagination::<GroupPermission>(&params)?;
     let permissions = groups_on_paginated(
         &pool,
-        NamespaceID(nid),
+        nid,
         vec![
             Permissions::CreateClass,
             Permissions::UpdateClass,
@@ -540,10 +540,7 @@ async fn create_class_relation(
         reverse_template_alias: partial_relation.reverse_template_alias.clone(),
     };
 
-    let ids = relation
-        .namespace_id(&pool)
-        .await
-        .map(|(id0, id1)| (NamespaceID(id0), NamespaceID(id1)))?;
+    let ids = relation.namespace_id(&pool).await?;
     can!(
         &pool,
         user,
@@ -601,10 +598,7 @@ async fn delete_class_relation(
 
     let relation = relation_id.instance(&pool).await?;
 
-    let ids = relation_id
-        .namespace_id(&pool)
-        .await
-        .map(|(id0, id1)| (NamespaceID(id0), NamespaceID(id1)))?;
+    let ids = relation_id.namespace_id(&pool).await?;
 
     can!(
         &pool,

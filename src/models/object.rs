@@ -55,8 +55,11 @@ pub struct UpdateHubuumObject {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, ToSchema)]
-pub struct HubuumObjectID(pub i32);
+crate::int_id_newtype! {
+    /// Identifier wrapper for a [`HubuumObject`].
+    pub struct HubuumObjectID;
+    noun = "object id";
+}
 
 // For objects per class.
 #[derive(QueryableByName, Debug, Serialize, Deserialize, ToSchema)]

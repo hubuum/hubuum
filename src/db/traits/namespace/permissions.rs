@@ -85,7 +85,7 @@ pub async fn user_on_from_backend<T: NamespaceAccessors>(
     use crate::schema::groups::dsl::{groups, id as group_table_id};
     use crate::schema::permissions::dsl::{group_id, namespace_id, permissions};
 
-    let namespace_target_id = namespace_ref.namespace_id(pool).await?;
+    let namespace_target_id = namespace_ref.namespace_id(pool).await?.id();
     let group_ids_subquery = user_id.group_ids_subquery_from_backend();
     let rows = with_connection(pool, |conn| {
         groups
@@ -113,7 +113,7 @@ pub async fn user_on_paginated_with_total_count_from_backend<T: NamespaceAccesso
     };
     use crate::{date_search, numeric_search, string_search};
 
-    let namespace_target_id = namespace_ref.namespace_id(pool).await?;
+    let namespace_target_id = namespace_ref.namespace_id(pool).await?.id();
     let build_query = || -> Result<_, ApiError> {
         let group_ids_subquery = user_id.group_ids_subquery_from_backend();
         let mut query = groups
@@ -215,7 +215,7 @@ pub async fn group_can_on_from_backend<T: NamespaceAccessors>(
     let base_query = permissions
         .into_boxed()
         .filter(group_id.eq(gid))
-        .filter(namespace_id.eq(namespace_ref.namespace_id(pool).await?));
+        .filter(namespace_id.eq(namespace_ref.namespace_id(pool).await?.id()));
 
     let filtered_query = permission_type.create_boxed_filter(base_query, true);
     let result = with_connection(pool, |conn| filtered_query.execute(conn))?;
@@ -315,7 +315,7 @@ pub async fn groups_on_from_backend<T: NamespaceAccessors>(
     };
     use crate::{date_search, numeric_search};
 
-    let namespace_target_id = namespace_ref.namespace_id(pool).await?;
+    let namespace_target_id = namespace_ref.namespace_id(pool).await?.id();
     let query_params = query_options.filters;
 
     let mut permission_filters = query_params.permissions()?;
@@ -418,7 +418,7 @@ pub async fn groups_on_paginated_with_total_count_from_backend<T: NamespaceAcces
     };
     use crate::{date_search, numeric_search, string_search};
 
-    let namespace_target_id = namespace_ref.namespace_id(pool).await?;
+    let namespace_target_id = namespace_ref.namespace_id(pool).await?.id();
     let mut permission_filters = query_options.filters.permissions()?;
     permission_filters.ensure_contains(&permissions_filter);
 

@@ -54,7 +54,7 @@ pub async fn create_template(
         &pool,
         user,
         [Permissions::CreateTemplate],
-        NamespaceID(template.namespace_id)
+        NamespaceID::new(template.namespace_id)?
     );
 
     let created = template.save(&pool).await?;
@@ -143,7 +143,7 @@ pub async fn get_template(
         &pool,
         user,
         [Permissions::ReadTemplate],
-        NamespaceID(template.namespace_id)
+        NamespaceID::new(template.namespace_id)?
     );
 
     Ok(json_response(template, StatusCode::OK))
@@ -192,7 +192,7 @@ pub async fn run_template_report(
         &pool,
         user.clone(),
         [Permissions::ReadTemplate],
-        NamespaceID(template.namespace_id)
+        NamespaceID::new(template.namespace_id)?
     );
 
     let report = template.build_report_request(run)?;
@@ -256,7 +256,7 @@ pub async fn patch_template(
         &pool,
         user.clone(),
         [Permissions::UpdateTemplate],
-        NamespaceID(existing.namespace_id)
+        NamespaceID::new(existing.namespace_id)?
     );
 
     if let Some(target_namespace) = update.namespace_id
@@ -266,7 +266,7 @@ pub async fn patch_template(
             &pool,
             user,
             [Permissions::CreateTemplate],
-            NamespaceID(target_namespace)
+            NamespaceID::new(target_namespace)?
         );
     }
 
@@ -311,7 +311,7 @@ pub async fn delete_template(
         &pool,
         user,
         [Permissions::DeleteTemplate],
-        NamespaceID(template.namespace_id)
+        NamespaceID::new(template.namespace_id)?
     );
 
     template_id.delete(&pool).await?;

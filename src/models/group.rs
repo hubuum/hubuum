@@ -21,8 +21,11 @@ use crate::traits::{
 
 use crate::db::DbPool;
 
-#[derive(Serialize, Deserialize, ToSchema)]
-pub struct GroupID(pub i32);
+crate::int_id_newtype! {
+    /// Identifier wrapper for a [`Group`].
+    pub struct GroupID;
+    noun = "group id";
+}
 
 impl IdAccessor for GroupID {
     fn accessor_id(&self) -> i32 {

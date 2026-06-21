@@ -181,6 +181,32 @@ mod tests {
         let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;
     }
 
+    // Invalid namespace ids are refused during path extraction (`NamespaceID`'s validating
+    // `Deserialize` plus the `PathConfig` error handler), so the request is rejected at the edge
+    // with a `400` rather than surfacing as a confusing lookup miss further in. Covers
+    // non-positive values rejected by `new` and non-integer segments rejected while parsing `i32`.
+    #[rstest]
+    #[case::zero("0")]
+    #[case::negative_one("-1")]
+    #[case::i32_min("-2147483648")]
+    #[case::non_numeric("abc")]
+    #[case::non_integer("1.5")]
+    #[actix_web::test]
+    async fn test_invalid_namespace_id_in_path_is_rejected(
+        #[future(awt)] test_context: TestContext,
+        #[case] invalid_id: &str,
+    ) {
+        let context = test_context;
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{NAMESPACE_ENDPOINT}/{invalid_id}"),
+        )
+        .await;
+        let _ = assert_response_status(resp, http::StatusCode::BAD_REQUEST).await;
+    }
+
     #[rstest]
     #[actix_web::test]
     async fn test_api_namespace_permissions(#[future(awt)] test_context: TestContext) {

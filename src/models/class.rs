@@ -55,8 +55,11 @@ pub struct HubuumClassWithPath {
     pub path: Vec<i32>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
-pub struct HubuumClassID(pub i32);
+crate::int_id_newtype! {
+    /// Identifier wrapper for a [`HubuumClass`].
+    pub struct HubuumClassID;
+    noun = "class id";
+}
 
 /// A normalized set of class ids: deduplicated, sorted ascending, and guaranteed positive.
 ///
@@ -171,7 +174,7 @@ pub mod tests {
         let class = create_class(&pool, &namespace.namespace, class_name).await;
 
         assert_eq!(
-            class.namespace_id(&pool).await.unwrap(),
+            class.namespace_id(&pool).await.unwrap().id(),
             namespace.namespace.id
         );
         assert_eq!(class.name, class_name);

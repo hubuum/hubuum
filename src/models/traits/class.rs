@@ -8,7 +8,9 @@ use crate::db::traits::class::{
 use crate::errors::ApiError;
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 
-use crate::models::{HubuumClass, HubuumClassID, Namespace, NewHubuumClass, UpdateHubuumClass};
+use crate::models::{
+    HubuumClass, HubuumClassID, Namespace, NamespaceID, NewHubuumClass, UpdateHubuumClass,
+};
 
 impl SaveAdapter for HubuumClass {
     type Output = HubuumClass;
@@ -61,8 +63,8 @@ impl InstanceAdapter<HubuumClass> for HubuumClass {
 }
 
 impl ClassAdapter for HubuumClass {
-    async fn class_id_adapter(&self, _pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.id)
+    async fn class_id_adapter(&self, _pool: &DbPool) -> Result<HubuumClassID, ApiError> {
+        HubuumClassID::new(self.id)
     }
 
     async fn class_adapter(&self, _pool: &DbPool) -> Result<HubuumClass, ApiError> {
@@ -75,14 +77,17 @@ impl NamespaceAdapter for HubuumClass {
         self.lookup_class_namespace(pool).await
     }
 
-    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.namespace_id)
+    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<NamespaceID, ApiError> {
+        NamespaceID::new(self.namespace_id)
     }
 }
 
 impl IdAccessor for HubuumClassID {
     fn accessor_id(&self) -> i32 {
-        self.0
+        // Deref to the owned (Copy) value on purpose: with a `&self` receiver, `self.id()`
+        // binds to the `SelfAccessors::id` trait method, which calls back into `accessor_id`
+        // and recurses. The inherent `id` is only selected on an owned receiver.
+        (*self).id()
     }
 }
 
@@ -93,8 +98,8 @@ impl InstanceAdapter<HubuumClass> for HubuumClassID {
 }
 
 impl ClassAdapter for HubuumClassID {
-    async fn class_id_adapter(&self, _pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.0)
+    async fn class_id_adapter(&self, _pool: &DbPool) -> Result<HubuumClassID, ApiError> {
+        Ok(*self)
     }
 
     async fn class_adapter(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
@@ -107,8 +112,8 @@ impl NamespaceAdapter for HubuumClassID {
         self.lookup_class_namespace(pool).await
     }
 
-    async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.namespace(pool).await?.id)
+    async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<NamespaceID, ApiError> {
+        NamespaceID::new(self.namespace(pool).await?.id)
     }
 }
 

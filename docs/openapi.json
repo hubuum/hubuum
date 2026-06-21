@@ -9154,7 +9154,8 @@
       },
       "ReportTemplateID": {
         "type": "integer",
-        "format": "int32"
+        "format": "int32",
+        "description": "Identifier wrapper for a [`ReportTemplate`]."
       },
       "ReportTemplateKind": {
         "type": "string",

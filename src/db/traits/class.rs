@@ -25,7 +25,7 @@ impl GetClass for HubuumClassID {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
         with_connection(pool, |conn| -> Result<HubuumClass, diesel::result::Error> {
             let class = hubuumclass
-                .filter(id.eq(self.0))
+                .filter(id.eq(self.id()))
                 .first::<HubuumClass>(conn)?;
             Ok(class)
         })
@@ -65,7 +65,7 @@ impl GetClass<(HubuumClass, HubuumClass)> for HubuumClassRelationID {
             pool,
             |conn| -> Result<(HubuumClass, HubuumClass), diesel::result::Error> {
                 let relation = hubuumclass_relation
-                    .filter(rel_id.eq(self.0))
+                    .filter(rel_id.eq(self.id()))
                     .first::<HubuumClassRelation>(conn)?;
 
                 let from_class = hubuumclass

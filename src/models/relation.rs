@@ -7,8 +7,11 @@ use utoipa::ToSchema;
 use crate::models::{HubuumClassWithPath, HubuumObjectWithPath};
 use crate::{schema::hubuumclass_relation, schema::hubuumobject_relation};
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct HubuumClassRelationID(pub i32);
+crate::int_id_newtype! {
+    /// Identifier wrapper for a [`HubuumClassRelation`].
+    pub struct HubuumClassRelationID;
+    noun = "class relation id";
+}
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Clone, PartialEq, Eq, ToSchema)]
 #[diesel(table_name = hubuumclass_relation)]
@@ -42,8 +45,11 @@ pub struct NewHubuumClassRelationFromClass {
     pub reverse_template_alias: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct HubuumObjectRelationID(pub i32);
+crate::int_id_newtype! {
+    /// Identifier wrapper for a [`HubuumObjectRelation`].
+    pub struct HubuumObjectRelationID;
+    noun = "object relation id";
+}
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Clone, Copy, PartialEq, Eq, ToSchema)]
 #[diesel(table_name = hubuumobject_relation)]

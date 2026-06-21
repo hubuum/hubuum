@@ -35,7 +35,7 @@ mod test {
                     name: namespace_name,
                     description: namespace_description,
                 }
-                .save_and_grant_all_to(&context.pool, GroupID(admin_group.id))
+                .save_and_grant_all_to(&context.pool, GroupID::new(admin_group.id).unwrap())
                 .await
                 .unwrap(),
             );
