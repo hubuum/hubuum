@@ -33,6 +33,10 @@ PURGE="false"
 SERVICE_NAME_SET="false"
 SCRIPT_BASE_URL="https://raw.githubusercontent.com/hubuum/hubuum/main/scripts"
 SCRIPT_REF=""
+# Space-delimited list of config variables the caller set explicitly on the
+# command line. Used to decide which values may be reused from an existing
+# installation's .env on a re-run.
+ARG_SET=""
 
 usage() {
   cat <<'EOF'
@@ -112,40 +116,79 @@ read_env_value() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --mode) MODE="$2"; shift 2 ;;
+    --mode) MODE="$2"; ARG_SET+=" MODE"; shift 2 ;;
     --stop) ACTION="stop"; shift ;;
     --uninstall) ACTION="uninstall"; shift ;;
     --purge) PURGE="true"; shift ;;
     --dir) INSTALL_DIR="$2"; shift 2 ;;
-    --web) WEB_FQDN="$2"; shift 2 ;;
-    --api) API_FQDN="$2"; shift 2 ;;
-    --api-port) API_PORT="$2"; shift 2 ;;
-    --shared-host-routing) SHARED_HOST_ROUTING="$2"; shift 2 ;;
-    --email) LETSENCRYPT_EMAIL="$2"; shift 2 ;;
-    --backend-image) BACKEND_IMAGE="$2"; shift 2 ;;
-    --frontend-image) FRONTEND_IMAGE="$2"; shift 2 ;;
-    --backend-ref) BACKEND_REF="$2"; shift 2 ;;
-    --frontend-ref) FRONTEND_REF="$2"; shift 2 ;;
-    --backend-repo) BACKEND_REPO="$2"; shift 2 ;;
-    --frontend-repo) FRONTEND_REPO="$2"; shift 2 ;;
+    --web) WEB_FQDN="$2"; ARG_SET+=" WEB_FQDN"; shift 2 ;;
+    --api) API_FQDN="$2"; ARG_SET+=" API_FQDN"; shift 2 ;;
+    --api-port) API_PORT="$2"; ARG_SET+=" API_PORT"; shift 2 ;;
+    --shared-host-routing) SHARED_HOST_ROUTING="$2"; ARG_SET+=" SHARED_HOST_ROUTING"; shift 2 ;;
+    --email) LETSENCRYPT_EMAIL="$2"; ARG_SET+=" LETSENCRYPT_EMAIL"; shift 2 ;;
+    --backend-image) BACKEND_IMAGE="$2"; ARG_SET+=" BACKEND_IMAGE"; shift 2 ;;
+    --frontend-image) FRONTEND_IMAGE="$2"; ARG_SET+=" FRONTEND_IMAGE"; shift 2 ;;
+    --backend-ref) BACKEND_REF="$2"; ARG_SET+=" BACKEND_REF"; shift 2 ;;
+    --frontend-ref) FRONTEND_REF="$2"; ARG_SET+=" FRONTEND_REF"; shift 2 ;;
+    --backend-repo) BACKEND_REPO="$2"; ARG_SET+=" BACKEND_REPO"; shift 2 ;;
+    --frontend-repo) FRONTEND_REPO="$2"; ARG_SET+=" FRONTEND_REPO"; shift 2 ;;
     --database-url) EXTERNAL_DATABASE_URL="$2"; shift 2 ;;
     --engine) ENGINE="$2"; shift 2 ;;
-    --postgres-image) POSTGRES_IMAGE="$2"; shift 2 ;;
-    --valkey-image) VALKEY_IMAGE="$2"; shift 2 ;;
-    --caddy-image) CADDY_IMAGE="$2"; shift 2 ;;
-    --network-subnet) NETWORK_SUBNET="$2"; shift 2 ;;
+    --postgres-image) POSTGRES_IMAGE="$2"; ARG_SET+=" POSTGRES_IMAGE"; shift 2 ;;
+    --valkey-image) VALKEY_IMAGE="$2"; ARG_SET+=" VALKEY_IMAGE"; shift 2 ;;
+    --caddy-image) CADDY_IMAGE="$2"; ARG_SET+=" CADDY_IMAGE"; shift 2 ;;
+    --network-subnet) NETWORK_SUBNET="$2"; ARG_SET+=" NETWORK_SUBNET"; shift 2 ;;
     --systemd) INSTALL_SYSTEMD="true"; shift ;;
     --service-name) SERVICE_NAME="$2"; SERVICE_NAME_SET="true"; shift 2 ;;
     --no-systemd) INSTALL_SYSTEMD="false"; shift ;;
     --script-base-url) SCRIPT_BASE_URL="${2%/}"; shift 2 ;;
     --script-ref) SCRIPT_REF="$2"; shift 2 ;;
-    --build-from-source) BUILD_FROM_SOURCE="true"; shift ;;
+    --build-from-source) BUILD_FROM_SOURCE="true"; ARG_SET+=" BUILD_FROM_SOURCE"; shift ;;
     --no-pull) PULL="false"; shift ;;
     --recreate) RECREATE="true"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
   esac
 done
+
+ENV_FILE="$INSTALL_DIR/.env"
+
+arg_was_set() {
+  [[ " $ARG_SET " == *" $1 "* ]]
+}
+
+# Reuse a value from an existing installation's .env when the caller did not
+# pass it explicitly, leaving the hardcoded default in place only for a fresh
+# install. This is what lets a bare re-run (including curl | bash) update an
+# existing deployment in place without re-specifying every argument.
+reuse_from_env() {
+  local var="$1" key="$2" val
+  arg_was_set "$var" && return 0
+  [[ -f "$ENV_FILE" ]] || return 0
+  val="$(read_env_value "$key" || true)"
+  [[ -n "$val" ]] || return 0
+  printf -v "$var" '%s' "$val"
+}
+
+if [[ "$ACTION" == "install" && -f "$ENV_FILE" ]]; then
+  reuse_from_env MODE INSTALL_MODE
+  reuse_from_env WEB_FQDN WEB_FQDN
+  reuse_from_env API_FQDN API_FQDN
+  reuse_from_env API_PORT HUBUUM_BIND_PORT
+  reuse_from_env SHARED_HOST_ROUTING SHARED_HOST_ROUTING
+  reuse_from_env LETSENCRYPT_EMAIL LETSENCRYPT_EMAIL
+  reuse_from_env BACKEND_IMAGE BACKEND_IMAGE
+  reuse_from_env FRONTEND_IMAGE FRONTEND_IMAGE
+  reuse_from_env POSTGRES_IMAGE POSTGRES_IMAGE
+  reuse_from_env VALKEY_IMAGE VALKEY_IMAGE
+  reuse_from_env CADDY_IMAGE CADDY_IMAGE
+  reuse_from_env BACKEND_REF BACKEND_REF
+  reuse_from_env FRONTEND_REF FRONTEND_REF
+  reuse_from_env BACKEND_REPO BACKEND_REPO
+  reuse_from_env FRONTEND_REPO FRONTEND_REPO
+  reuse_from_env BUILD_FROM_SOURCE BUILD_FROM_SOURCE
+  reuse_from_env NETWORK_SUBNET HUBUUM_CLIENT_ALLOWLIST
+fi
 
 [[ "$MODE" == "all" || "$MODE" == "backend" ]] || die "--mode must be all or backend"
 [[ "$ENGINE" == "auto" || "$ENGINE" == "docker" || "$ENGINE" == "podman" ]] || die "--engine must be auto, docker, or podman"
@@ -359,12 +402,22 @@ ENV_FILE="$INSTALL_DIR/.env"
 
 POSTGRES_PASSWORD=""
 HUBUUM_TOKEN_HASH_KEY=""
+EXISTING_POSTGRES_PASSWORD="$(read_env_value POSTGRES_PASSWORD || true)"
 if [[ "$RECREATE" != "true" ]]; then
   if [[ -z "$EXTERNAL_DATABASE_URL" && "$(read_env_value DATABASE_MANAGED || true)" == "false" ]]; then
     EXTERNAL_DATABASE_URL="$(read_env_value HUBUUM_DATABASE_URL || true)"
   fi
-  POSTGRES_PASSWORD="$(read_env_value POSTGRES_PASSWORD || true)"
+  POSTGRES_PASSWORD="$EXISTING_POSTGRES_PASSWORD"
   HUBUUM_TOKEN_HASH_KEY="$(read_env_value HUBUUM_TOKEN_HASH_KEY || true)"
+fi
+
+# A managed Postgres data volume is initialized with the password only on first
+# boot; rotating it afterwards leaves the stored credential out of sync and
+# breaks authentication. Preserve the existing password on --recreate and tell
+# the operator how to perform a real reset.
+if [[ "$RECREATE" == "true" && -z "$EXTERNAL_DATABASE_URL" && -n "$EXISTING_POSTGRES_PASSWORD" ]]; then
+  echo "WARNING: --recreate does not rotate the managed Postgres password, because the existing database volume was initialized with it. Rotating it would break authentication. To reset the database, uninstall with --purge first, then reinstall." >&2
+  POSTGRES_PASSWORD="$EXISTING_POSTGRES_PASSWORD"
 fi
 
 [[ -n "$POSTGRES_PASSWORD" ]] || POSTGRES_PASSWORD="$(random_hex 32)"
@@ -578,7 +631,8 @@ EOF
 if [[ "$DATABASE_MANAGED" == "true" ]]; then
   cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
 EOF
 fi
 
@@ -635,8 +689,10 @@ EOF
       SESSION_PREFIX: ${SESSION_PREFIX}
       NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME}
     depends_on:
-      - hubuum-api
-      - valkey
+      hubuum-api:
+        condition: service_started
+      valkey:
+        condition: service_healthy
     expose:
       - "3000"
     networks:
@@ -650,8 +706,11 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
     image: ${CADDY_IMAGE}
     container_name: hubuum-caddy
     restart: unless-stopped
-    env_file:
-      - .env
+    environment:
+      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL}
+      WEB_FQDN: ${WEB_FQDN}
+      API_FQDN: ${API_FQDN}
+      HUBUUM_BIND_PORT: ${HUBUUM_BIND_PORT}
     ports:
       - "80:80"
       - "443:443"

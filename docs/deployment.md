@@ -192,7 +192,22 @@ sudo ./update-single-host.sh
 
 For image-based installs, the update command pulls the latest configured images and restarts the stack. For source-build installs, it fetches the source checkouts, rebuilds the local app images, and restarts the stack.
 
-If the systemd unit exists, updates restart through systemd. Otherwise, updates fall back to `compose up -d`.
+If the systemd unit exists, updates restart through systemd, whose stop/start steps recreate the containers. Otherwise the update tears the stack down and brings it back up (`compose down` then `compose up -d`) so the freshly pulled images are actually picked up; a plain `compose up -d` does not reliably recreate running containers, particularly under Podman.
+
+### Re-running The Installer To Update
+
+The installer is idempotent and doubles as an in-place updater. Re-running it against an existing install directory reuses the configuration recorded in `.env` (mode, hostnames, email, images, refs, ports, network subnet, container engine, and systemd service name) and preserves generated secrets and the managed database, so you only need to pass the arguments you want to change:
+
+```bash
+# Pull the latest configured images and apply any changed configuration in place.
+curl -fsSL https://raw.githubusercontent.com/hubuum/hubuum/main/scripts/install-single-host.sh \
+  | sudo bash -s -- --dir /opt/hubuum
+
+# Change a single setting (for example, pin a new backend image) and reuse the rest.
+sudo ./install-single-host.sh --backend-image ghcr.io/hubuum/hubuum-server:v1.2.3
+```
+
+Any value passed explicitly on the command line overrides the stored one; everything else is taken from the existing `.env`. Compose applies only the services whose definition or image changed. For a clean recreate of every container (useful under Podman), use `update-single-host.sh` instead.
 
 ## Stop And Uninstall
 
@@ -256,7 +271,7 @@ Common optional parameters:
 - `--build-from-source`: clone repositories and build app images locally.
 - `--backend-ref`: source build backend Git ref. Default: `main`.
 - `--frontend-ref`: source build frontend Git ref. Default: `main`.
-- `--recreate`: regenerate generated secrets.
+- `--recreate`: regenerate generated secrets. The managed Postgres password is preserved, because the existing database volume was initialized with it and rotating it would break authentication. To reset the database, uninstall with `--purge` first, then reinstall.
 - `--no-pull`: skip pulling images before starting.
 
 ## Generated Environment

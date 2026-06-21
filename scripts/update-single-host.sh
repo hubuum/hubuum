@@ -123,9 +123,15 @@ else
 fi
 
 if [[ "$USE_SYSTEMD" == "true" && -d /run/systemd/system && "$(command -v systemctl || true)" ]] && systemctl cat "${SERVICE_NAME}.service" >/dev/null 2>&1; then
+  # The systemd unit's ExecStop/ExecStart run compose down then up, so a
+  # restart recreates containers against the freshly pulled images.
   systemctl restart "$SERVICE_NAME"
   echo "Hubuum updated and restarted via ${SERVICE_NAME}.service"
 else
+  # `compose up -d` on its own does not reliably recreate containers after a
+  # pull (notably under podman compose, which leaves running containers on the
+  # previous image). Tear the stack down first so the new images are picked up.
+  "${COMPOSE_CMD[@]}" down --remove-orphans
   "${COMPOSE_CMD[@]}" up -d
   echo "Hubuum updated and restarted via ${ENGINE_BIN} compose"
 fi
