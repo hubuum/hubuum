@@ -261,6 +261,14 @@ pub fn json_error_handler(err: JsonPayloadError, _: &HttpRequest) -> actix_web::
     ApiError::BadRequest(error_message).into()
 }
 
+/// Ensure that path-parameter errors are reported as a bad request rather than actix's default
+/// `404`. The validating `Deserialize` impls on the id newtypes already surface a clear message
+/// (e.g. "Invalid namespace id '0': must be a positive integer"); this maps that to a `400` so an
+/// invalid id is rejected at the edge as the contract promises.
+pub fn path_error_handler(err: actix_web::error::PathError, _: &HttpRequest) -> actix_web::Error {
+    ApiError::BadRequest(err.to_string()).into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

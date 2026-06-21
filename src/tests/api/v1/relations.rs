@@ -561,24 +561,41 @@ mod tests {
         cleanup(&classes).await;
     }
 
+    // The old directional class-relation routes are gone. A stale URL that collides with a current
+    // route expecting a numeric segment (here `/{class_id}/{object_id}`) is rejected as a `400`
+    // because the literal segment is not a valid id; the deeper paths match no route and are a plain
+    // `404`. Either way the old endpoint no longer serves. `{first}`/`{second}` are substituted with
+    // the fixture class ids since rstest cases cannot reference runtime values.
     #[rstest]
+    #[case::get_relations("{first}/relations", StatusCode::BAD_REQUEST)]
+    #[case::transitive("{first}/relations/transitive/", StatusCode::NOT_FOUND)]
+    #[case::transitive_to_class(
+        "{first}/relations/transitive/class/{second}",
+        StatusCode::NOT_FOUND
+    )]
     #[actix_web::test]
-    async fn test_old_directional_class_routes_removed(#[future(awt)] test_context: TestContext) {
+    async fn test_old_directional_class_routes_removed(
+        #[future(awt)] test_context: TestContext,
+        #[case] path_template: &str,
+        #[case] expected: StatusCode,
+    ) {
         let context = test_context;
-        let classes = create_test_classes(&context, "old_directional_class_routes_removed").await;
+        // Cases share the run's test database, so derive a unique fixture prefix per case to avoid
+        // class-name collisions.
+        let prefix = format!(
+            "old_directional_class_routes_removed_{}",
+            path_template.replace(['/', '{', '}', '.'], "_")
+        );
+        let classes = create_test_classes(&context, &prefix).await;
         let _ = create_relation(&context.pool, &classes[0], &classes[1]).await;
 
-        for endpoint in [
-            format!("/api/v1/classes/{}/relations", classes[0].id),
-            format!("/api/v1/classes/{}/relations/transitive/", classes[0].id),
-            format!(
-                "/api/v1/classes/{}/relations/transitive/class/{}",
-                classes[0].id, classes[1].id
-            ),
-        ] {
-            let resp = get_request(&context.pool, &context.admin_token, &endpoint).await;
-            let _ = assert_response_status(resp, StatusCode::NOT_FOUND).await;
-        }
+        let suffix = path_template
+            .replace("{first}", &classes[0].id.to_string())
+            .replace("{second}", &classes[1].id.to_string());
+        let endpoint = format!("/api/v1/classes/{suffix}");
+
+        let resp = get_request(&context.pool, &context.admin_token, &endpoint).await;
+        let _ = assert_response_status(resp, expected).await;
 
         cleanup(&classes).await;
     }
