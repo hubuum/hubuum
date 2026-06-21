@@ -14,6 +14,9 @@ use crate::traits::crud::{DeleteAdapter, SaveAdapter};
 
 impl IdAccessor for HubuumObjectRelationID {
     fn accessor_id(&self) -> i32 {
+        // Deref to the owned (Copy) value on purpose: with a `&self` receiver, `self.id()`
+        // binds to the `SelfAccessors::id` trait method, which calls back into `accessor_id`
+        // and recurses. The inherent `id` is only selected on an owned receiver.
         (*self).id()
     }
 }

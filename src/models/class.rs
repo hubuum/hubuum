@@ -55,36 +55,10 @@ pub struct HubuumClassWithPath {
     pub path: Vec<i32>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, ToSchema)]
-pub struct HubuumClassID(i32);
-
-impl HubuumClassID {
-    /// Validating constructor: class ids are positive integers. Constructing through `new` (and the
-    /// `Deserialize` impl, which routes through it) means an invalid id is rejected at the edge with
-    /// a clear `400` rather than surfacing later as a confusing lookup miss.
-    pub fn new(id: i32) -> Result<Self, ApiError> {
-        if id <= 0 {
-            return Err(ApiError::BadRequest(format!(
-                "Invalid class id '{id}': must be a positive integer"
-            )));
-        }
-        Ok(Self(id))
-    }
-
-    /// The underlying id. Use at persistence boundaries that still operate on the raw `i32`.
-    pub fn id(self) -> i32 {
-        self.0
-    }
-}
-
-impl<'de> Deserialize<'de> for HubuumClassID {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let id = i32::deserialize(deserializer)?;
-        HubuumClassID::new(id).map_err(serde::de::Error::custom)
-    }
+crate::int_id_newtype! {
+    /// Identifier wrapper for a [`HubuumClass`].
+    pub struct HubuumClassID;
+    noun = "class id";
 }
 
 /// A normalized set of class ids: deduplicated, sorted ascending, and guaranteed positive.

@@ -97,36 +97,10 @@ pub struct ReportTemplate {
     pub updated_at: chrono::NaiveDateTime,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, ToSchema)]
-pub struct ReportTemplateID(i32);
-
-impl ReportTemplateID {
-    /// Validating constructor: report-template ids are positive integers. Constructing through
-    /// `new` (and the `Deserialize` impl, which routes through it) means an invalid id is rejected
-    /// at the edge with a clear `400` rather than surfacing later as a confusing lookup miss.
-    pub fn new(id: i32) -> Result<Self, ApiError> {
-        if id <= 0 {
-            return Err(ApiError::BadRequest(format!(
-                "Invalid report template id '{id}': must be a positive integer"
-            )));
-        }
-        Ok(Self(id))
-    }
-
-    /// The underlying id. Use at persistence boundaries that still operate on the raw `i32`.
-    pub fn id(self) -> i32 {
-        self.0
-    }
-}
-
-impl<'de> Deserialize<'de> for ReportTemplateID {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let id = i32::deserialize(deserializer)?;
-        ReportTemplateID::new(id).map_err(serde::de::Error::custom)
-    }
+crate::int_id_newtype! {
+    /// Identifier wrapper for a [`ReportTemplate`].
+    pub struct ReportTemplateID;
+    noun = "report template id";
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]

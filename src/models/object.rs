@@ -55,36 +55,10 @@ pub struct UpdateHubuumObject {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, ToSchema)]
-pub struct HubuumObjectID(i32);
-
-impl HubuumObjectID {
-    /// Validating constructor: object ids are positive integers. Constructing through `new` (and the
-    /// `Deserialize` impl, which routes through it) means an invalid id is rejected at the edge with
-    /// a clear `400` rather than surfacing later as a confusing lookup miss.
-    pub fn new(id: i32) -> Result<Self, ApiError> {
-        if id <= 0 {
-            return Err(ApiError::BadRequest(format!(
-                "Invalid object id '{id}': must be a positive integer"
-            )));
-        }
-        Ok(Self(id))
-    }
-
-    /// The underlying id. Use at persistence boundaries that still operate on the raw `i32`.
-    pub fn id(self) -> i32 {
-        self.0
-    }
-}
-
-impl<'de> Deserialize<'de> for HubuumObjectID {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let id = i32::deserialize(deserializer)?;
-        HubuumObjectID::new(id).map_err(serde::de::Error::custom)
-    }
+crate::int_id_newtype! {
+    /// Identifier wrapper for a [`HubuumObject`].
+    pub struct HubuumObjectID;
+    noun = "object id";
 }
 
 // For objects per class.
