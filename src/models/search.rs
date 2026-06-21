@@ -285,16 +285,6 @@ pub struct JsonSqlPredicate {
     bind_variables: Vec<SQLValue>,
 }
 
-impl JsonSqlPredicate {
-    pub fn sql(&self) -> &str {
-        &self.sql
-    }
-
-    pub fn bind_variables(&self) -> &[SQLValue] {
-        &self.bind_variables
-    }
-}
-
 impl Expression for JsonSqlPredicate {
     type SqlType = Bool;
 }
@@ -309,6 +299,8 @@ impl QueryFragment<Pg> for JsonSqlPredicate {
     fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, Pg>) -> QueryResult<()> {
         out.unsafe_to_cache_prepared();
 
+        // `?` is reserved for bind placeholders in these generated fragments.
+        // `SQLComponent::into_predicate` checks that placeholder and bind counts match.
         let mut sql_parts = self.sql.split('?');
         if let Some(first_part) = sql_parts.next() {
             out.push_sql(first_part);
@@ -528,14 +520,6 @@ impl ParsedQueryParam {
 
     pub fn as_json_predicate(&self) -> Result<JsonSqlPredicate, ApiError> {
         self.as_json_sql()?.into_predicate()
-    }
-
-    pub fn as_json_predicate_for_field_expr(
-        &self,
-        field_expr: &str,
-    ) -> Result<JsonSqlPredicate, ApiError> {
-        self.as_json_sql_for_field_expr(field_expr)?
-            .into_predicate()
     }
 
     pub fn as_json_sql_for_field_expr(

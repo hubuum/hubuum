@@ -10,7 +10,7 @@ mod tests {
         NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation, Permissions,
         RelatedClassGraph, RelatedObjectGraph,
     };
-    use crate::pagination::NEXT_CURSOR_HEADER;
+    use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::traits::{CanSave, PermissionController, SelfAccessors};
     use crate::{assert_contains_all, assert_contains_same_ids};
 
@@ -1355,6 +1355,9 @@ mod tests {
 
         let resp = get_request(&context.pool, &context.admin_token, &endpoint).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
+        let total_count =
+            header_value(&resp, TOTAL_COUNT_HEADER).and_then(|value| value.parse::<i64>().ok());
+        assert_eq!(total_count, Some(expected_object_ids.len() as i64));
         let objects_fetched: Vec<HubuumObjectWithPath> = test::read_body_json(resp).await;
 
         let expected_ids = expected_object_ids
