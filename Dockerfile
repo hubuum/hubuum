@@ -18,6 +18,16 @@ RUN cargo binstall --no-confirm diesel_cli
 COPY Cargo.toml Cargo.lock ./
 COPY migrations ./migrations
 
+# The production image only builds binaries. Strip dev-only manifest sections so
+# Cargo does not require benchmark target files in the Docker build context.
+RUN awk ' \
+    /^\[dev-dependencies\]$/ { skip = 1; next } \
+    /^\[\[bench\]\]$/ { skip = 1; next } \
+    /^\[\[/ { skip = 0 } \
+    /^\[/ && !/^\[\[/ { skip = 0 } \
+    !skip { print } \
+    ' Cargo.toml > Cargo.toml.docker && mv Cargo.toml.docker Cargo.toml
+
 # Build dependencies only (creates dummy project)
 # Use cache mounts to persist cargo registry/git between builds
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
@@ -32,6 +42,16 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 # Copy the actual source code
 COPY . .
+
+# COPY restores the repository manifest; prune it again before the real
+# production build so benchmark-only targets stay out of the image build.
+RUN awk ' \
+    /^\[dev-dependencies\]$/ { skip = 1; next } \
+    /^\[\[bench\]\]$/ { skip = 1; next } \
+    /^\[\[/ { skip = 0 } \
+    /^\[/ && !/^\[\[/ { skip = 0 } \
+    !skip { print } \
+    ' Cargo.toml > Cargo.toml.docker && mv Cargo.toml.docker Cargo.toml
 
 # Build the real application (dependencies are cached)
 RUN --mount=type=cache,target=/usr/local/cargo/registry \

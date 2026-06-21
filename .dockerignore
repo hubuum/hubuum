@@ -22,6 +22,7 @@ docs/
 !README.md
 
 # Test and development files
+benches/
 **/test/
 # **/tests/
 *.log
