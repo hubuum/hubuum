@@ -8,6 +8,7 @@ use crate::models::{
     NewHubuumObject, NewHubuumObjectRelation, NewPermission, Permission, Permissions,
     PermissionsList, UpdateHubuumClass, UpdateHubuumObject, UpdateNamespace, UpdatePermission,
 };
+use crate::utilities::aliases::normalize_template_alias;
 
 pub async fn lookup_namespace_by_name(
     pool: &DbPool,
@@ -382,48 +383,6 @@ pub fn create_class_relation_db(
 
 fn normalize_template_alias_option(alias: Option<&str>) -> Result<Option<String>, ApiError> {
     alias.map(normalize_template_alias).transpose()
-}
-
-fn normalize_template_alias(alias: &str) -> Result<String, ApiError> {
-    let trimmed = alias.trim();
-    if trimmed.is_empty() {
-        return Err(ApiError::BadRequest(
-            "template aliases cannot be empty".to_string(),
-        ));
-    }
-
-    let mut normalized = String::new();
-    let mut previous_was_separator = true;
-    for character in trimmed.chars() {
-        if character.is_ascii_alphanumeric() {
-            if character.is_ascii_uppercase()
-                && !previous_was_separator
-                && !normalized.ends_with('_')
-            {
-                normalized.push('_');
-            }
-            normalized.push(character.to_ascii_lowercase());
-            previous_was_separator = false;
-        } else if matches!(character, ' ' | '-' | '_') {
-            if !normalized.is_empty() && !normalized.ends_with('_') {
-                normalized.push('_');
-            }
-            previous_was_separator = true;
-        } else {
-            return Err(ApiError::BadRequest(format!(
-                "template aliases may only contain letters, numbers, spaces, hyphens, and underscores: '{alias}'"
-            )));
-        }
-    }
-
-    let normalized = normalized.trim_matches('_').to_string();
-    if normalized.is_empty() || normalized.starts_with(|ch: char| ch.is_ascii_digit()) {
-        return Err(ApiError::BadRequest(format!(
-            "template aliases must start with a letter and contain at least one alphanumeric character: '{alias}'"
-        )));
-    }
-
-    Ok(normalized)
 }
 
 pub fn create_object_relation_db(

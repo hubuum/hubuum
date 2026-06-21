@@ -8,13 +8,14 @@ mod tests {
     use rstest::rstest;
     use std::time::Duration;
 
-    use crate::db::traits::task::purge_expired_report_outputs;
+    use crate::db::traits::task::{TaskBackend, TaskStateUpdate, purge_expired_report_outputs};
     use crate::models::{
         HubuumClass, HubuumClassRelation, HubuumObjectRelation, NewHubuumClass,
-        NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewReportTemplate,
-        NewTaskRecord, ReportContentType, ReportJsonResponse, ReportRelationContext, ReportRequest,
-        ReportScope, ReportScopeKind, ReportTemplateKind, TaskEventResponse, TaskKind,
-        TaskResponse, TaskStatus, UpdateReportTemplate,
+        NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
+        NewReportTaskOutputRecord, NewReportTemplate, NewTaskEventRecord, NewTaskRecord,
+        ReportContentType, ReportJsonResponse, ReportRelationContext, ReportRequest, ReportScope,
+        ReportScopeKind, ReportTemplateKind, TaskEventResponse, TaskID, TaskKind, TaskResponse,
+        TaskStatus, UpdateReportTemplate,
     };
     use crate::tests::api::v1::classes::tests::{cleanup, create_test_classes};
     use crate::tests::api_operations::{get_request, post_request_with_headers};
@@ -22,6 +23,13 @@ mod tests {
     use crate::tests::{TestContext, create_test_user, test_context};
     use crate::traits::{CanSave, CanUpdate};
     const REPORTS_ENDPOINT: &str = "/api/v1/reports";
+
+    /// Serializes only the two tests that contend over the process-wide set of expired report
+    /// outputs: one runs the global `purge_expired_report_outputs`, the other needs its expired
+    /// row to survive until it has queried it. They cannot safely interleave; every other test in
+    /// the suite remains free to run in parallel.
+    static EXPIRED_OUTPUT_PURGE_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+        std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
     async fn wait_for_task(
         context: &TestContext,
@@ -1481,6 +1489,10 @@ mod tests {
         let task: TaskResponse = test::read_body_json(resp).await;
         let _ = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
 
+        // Hold the purge lock from here: the global purge below must not race the expired-output
+        // test, which relies on its own expired row surviving.
+        let _purge_guard = EXPIRED_OUTPUT_PURGE_LOCK.lock().await;
+
         crate::db::with_connection(&context.pool, |conn| {
             use crate::schema::report_task_outputs::dsl::{
                 output_expires_at, report_task_outputs, task_id,
@@ -1495,8 +1507,14 @@ mod tests {
         })
         .unwrap();
 
+        // The purge is process-wide; assert it cleaned *our* task rather than asserting it cleaned
+        // nothing else, so other suites' expired rows can't make this brittle.
         let cleaned = purge_expired_report_outputs(&context.pool).await.unwrap();
-        assert_eq!(cleaned, vec![task.id]);
+        assert!(
+            cleaned.contains(&task.id),
+            "expected purge to include task {}, got {cleaned:?}",
+            task.id
+        );
 
         let projection = get_request(
             &context.pool,
@@ -1535,6 +1553,221 @@ mod tests {
                 .iter()
                 .any(|event| event.event_type == "cleanup" && event.message.contains("cleaned up"))
         );
+
+        cleanup(&classes).await;
+    }
+
+    /// An output whose retention has lapsed but which the purge job has not yet deleted must read as
+    /// explicitly expired (410 Gone + `output_expired`) rather than as a generic 404 that looks like
+    /// the report was never produced.
+    #[rstest]
+    #[actix_web::test]
+    async fn test_report_output_returns_gone_when_expired_before_purge(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        use diesel::prelude::*;
+
+        let context = test_context;
+        let classes = create_test_classes(&context, "report_expired").await;
+        let class = classes[0].clone();
+        let _ = create_report_objects(&context.pool, &class).await;
+        let template_id = create_template(
+            &context.pool,
+            class.namespace_id,
+            class.id,
+            ReportScopeKind::ObjectsInClass,
+            "expired-template",
+            ReportContentType::TextPlain,
+            "{% for item in items %}{{ item.name }}\n{% endfor %}",
+        )
+        .await;
+
+        let resp = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/templates/{template_id}/reports"),
+            &serde_json::json!({ "query": "sort=name" }),
+            vec![],
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(resp).await;
+        let _ = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+
+        // Hold the purge lock so the cleanup test's global purge cannot delete our expired row
+        // out from under the assertions below.
+        let _purge_guard = EXPIRED_OUTPUT_PURGE_LOCK.lock().await;
+
+        // Fixed, whole-second timestamp in the past: deterministically expired and round-trips
+        // through Postgres' microsecond-resolution `timestamp` column without precision loss.
+        // (A `now()`-derived value carries nanosecond precision on Linux that the column
+        // truncates, which would break the exact-equality assertions below.)
+        let backdated_expiry = chrono::NaiveDate::from_ymd_opt(2000, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        crate::db::with_connection(&context.pool, |conn| {
+            use crate::schema::report_task_outputs::dsl::{
+                output_expires_at, report_task_outputs, task_id,
+            };
+
+            diesel::update(report_task_outputs.filter(task_id.eq(task.id)))
+                .set(output_expires_at.eq(backdated_expiry))
+                .execute(conn)
+        })
+        .unwrap();
+
+        // Deliberately do NOT purge: the row still exists but is past its retention window.
+        let output = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/reports/{}/output", task.id),
+        )
+        .await;
+        assert_response_status(output, StatusCode::GONE).await;
+
+        let projection = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/reports/{}", task.id),
+        )
+        .await;
+        let projection = assert_response_status(projection, StatusCode::OK).await;
+        let projection: TaskResponse = test::read_body_json(projection).await;
+        let details = projection
+            .details
+            .as_ref()
+            .and_then(|details| details.report.as_ref())
+            .expect("report details");
+        assert!(!details.output_available);
+        assert!(details.output_expired);
+        assert_eq!(details.output_expires_at, Some(backdated_expiry));
+
+        // The batch task-list endpoint must classify expiry the same way as the single-task
+        // endpoints, not silently drop the expired row. Filtering by this test's (unique) admin
+        // keeps the result isolated under parallel execution.
+        let list_resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "/api/v1/tasks?submitted_by={}&kind=report&limit=50",
+                context.admin_user.id
+            ),
+        )
+        .await;
+        let list_resp = assert_response_status(list_resp, StatusCode::OK).await;
+        let listed: Vec<TaskResponse> = test::read_body_json(list_resp).await;
+        let listed_details = listed
+            .iter()
+            .find(|entry| entry.id == task.id)
+            .and_then(|entry| entry.details.as_ref())
+            .and_then(|details| details.report.as_ref())
+            .expect("expired report task present in task list with report details");
+        assert!(!listed_details.output_available);
+        assert!(listed_details.output_expired);
+        assert_eq!(listed_details.output_expires_at, Some(backdated_expiry));
+
+        cleanup(&classes).await;
+    }
+
+    /// Re-finalizing a report task must not trip the `report_task_outputs.task_id` UNIQUE
+    /// constraint: the second call is a no-op for the output row and leaves the task advanced.
+    #[rstest]
+    #[actix_web::test]
+    async fn test_finalize_report_with_output_is_idempotent(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        use diesel::prelude::*;
+
+        let context = test_context;
+        let classes = create_test_classes(&context, "report_refinalize").await;
+        let class = classes[0].clone();
+        let _ = create_report_objects(&context.pool, &class).await;
+        let template_id = create_template(
+            &context.pool,
+            class.namespace_id,
+            class.id,
+            ReportScopeKind::ObjectsInClass,
+            "refinalize-template",
+            ReportContentType::TextPlain,
+            "{% for item in items %}{{ item.name }}\n{% endfor %}",
+        )
+        .await;
+
+        let resp = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/templates/{template_id}/reports"),
+            &serde_json::json!({ "query": "sort=name" }),
+            vec![],
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(resp).await;
+        let _ = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+
+        let task_handle = TaskID::new(task.id).expect("valid task id");
+        let duplicate_output = NewReportTaskOutputRecord {
+            task_id: task.id,
+            template_name: Some("refinalize-template".to_string()),
+            content_type: "text/plain".to_string(),
+            json_output: None,
+            text_output: Some("second finalize body".to_string()),
+            meta_json: serde_json::json!({}),
+            warnings_json: serde_json::json!([]),
+            warning_count: 0,
+            truncated: false,
+            output_expires_at: chrono::Utc::now().naive_utc() + chrono::Duration::hours(1),
+            total_duration_ms: 0,
+            query_duration_ms: 0,
+            hydration_duration_ms: 0,
+            render_duration_ms: 0,
+        };
+
+        let record = task_handle
+            .finalize_report_with_output(
+                &context.pool,
+                TaskStateUpdate {
+                    status: TaskStatus::Succeeded,
+                    summary: Some("re-finalized".to_string()),
+                    processed_items: 1,
+                    success_items: 1,
+                    failed_items: 0,
+                    started_at: None,
+                    finished_at: None,
+                },
+                NewTaskEventRecord {
+                    task_id: task.id,
+                    event_type: TaskStatus::Succeeded.as_str().to_string(),
+                    message: "re-finalize".to_string(),
+                    data: None,
+                },
+                duplicate_output,
+            )
+            .await
+            .expect("re-finalize should be idempotent, not error");
+        assert_eq!(record.status, TaskStatus::Succeeded.as_str());
+
+        // The output row is untouched: exactly one row, and the original body, not the duplicate.
+        let (count, text): (i64, Option<String>) =
+            crate::db::with_connection(&context.pool, |conn| {
+                use crate::schema::report_task_outputs::dsl::{
+                    report_task_outputs, task_id, text_output,
+                };
+
+                let count = report_task_outputs
+                    .filter(task_id.eq(task.id))
+                    .count()
+                    .get_result::<i64>(conn)?;
+                let text = report_task_outputs
+                    .filter(task_id.eq(task.id))
+                    .select(text_output)
+                    .first::<Option<String>>(conn)?;
+                Ok::<_, diesel::result::Error>((count, text))
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_ne!(text.as_deref(), Some("second finalize body"));
 
         cleanup(&classes).await;
     }

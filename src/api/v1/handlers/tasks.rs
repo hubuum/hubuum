@@ -8,7 +8,9 @@ use crate::db::traits::task::{
 use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::parse_query_parameter_with_passthrough;
-use crate::models::{TaskEventResponse, TaskID, TaskKind, TaskResponse, TaskStatus};
+use crate::models::{
+    ReportOutputLookup, TaskEventResponse, TaskID, TaskKind, TaskResponse, TaskStatus,
+};
 use crate::pagination::prepare_db_pagination;
 use crate::tasks::ensure_task_worker_running;
 use crate::traits::GroupMemberships;
@@ -127,9 +129,23 @@ pub async fn get_tasks(
         .into_iter()
         .map(|output| (output.task_id, output))
         .collect::<std::collections::HashMap<_, _>>();
+    let now = chrono::Utc::now().naive_utc();
     let tasks = tasks
         .into_iter()
-        .map(|task| task.to_response_with_report_output(report_outputs.get(&task.id)))
+        .map(|task| {
+            // Classify each summary the same way the single-task lookups do, so `output_expired`
+            // is reported consistently here as on GET /tasks/{id} and GET /reports/{id}.
+            let report_output = match report_outputs.get(&task.id) {
+                Some(summary) if summary.output_expires_at > now => {
+                    ReportOutputLookup::Available(summary)
+                }
+                Some(summary) => ReportOutputLookup::Expired {
+                    expires_at: summary.output_expires_at,
+                },
+                None => ReportOutputLookup::Missing,
+            };
+            task.to_response_with_report_output(report_output)
+        })
         .collect::<Result<Vec<_>, _>>()?;
 
     paginated_json_response(tasks, total_count, StatusCode::OK, &params)
@@ -164,7 +180,7 @@ pub async fn get_task(
     let report_output = if task.kind == TaskKind::Report.as_str() {
         task.find_report_output_summary(&pool).await?
     } else {
-        None
+        ReportOutputLookup::Missing
     };
     Ok(json_response(
         task.to_response_with_report_output(report_output.as_ref())?,

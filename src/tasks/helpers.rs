@@ -66,6 +66,7 @@ pub(super) fn sanitize_error_for_storage(err: &ApiError) -> String {
         ApiError::Conflict(msg) => format!("Conflict: {}", msg),
         ApiError::Forbidden(msg) => format!("Permission denied: {}", msg),
         ApiError::NotFound(msg) => format!("Not found: {}", msg),
+        ApiError::Gone(msg) => format!("Gone: {}", msg),
         ApiError::BadRequest(msg) => format!("Invalid input: {}", msg),
         ApiError::ValidationError(msg) => format!("Validation failed: {}", msg),
         ApiError::DatabaseError(_) | ApiError::DbConnectionError(_) => {

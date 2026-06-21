@@ -62,6 +62,7 @@ pub enum ApiError {
     Conflict(String),
     TooManyRequests(String),
     NotFound(String),
+    Gone(String),
     DbConnectionError(String),
     HashError(String),
     BadRequest(String),
@@ -96,6 +97,7 @@ impl fmt::Display for ApiError {
         match self {
             ApiError::HashError(message) => write!(f, "{message}"),
             ApiError::NotFound(message) => write!(f, "{message}"),
+            ApiError::Gone(message) => write!(f, "{message}"),
             ApiError::Conflict(message) => write!(f, "{message}"),
             ApiError::TooManyRequests(message) => write!(f, "{message}"),
             ApiError::Forbidden(message) => write!(f, "{message}"),
@@ -141,6 +143,9 @@ impl ResponseError for ApiError {
             ApiError::NotFound(message) => {
                 HttpResponse::NotFound().json(json!({ "error": "Not Found", "message": message }))
             }
+            ApiError::Gone(message) => {
+                HttpResponse::Gone().json(json!({ "error": "Gone", "message": message }))
+            }
             ApiError::BadRequest(message) => HttpResponse::BadRequest()
                 .json(json!({ "error": "Bad Request", "message": message })),
             ApiError::OperatorMismatch(message) => HttpResponse::BadRequest()
@@ -165,6 +170,7 @@ impl ResponseError for ApiError {
             ApiError::DbConnectionError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::HashError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
+            ApiError::Gone(_) => StatusCode::GONE,
             ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
             ApiError::OperatorMismatch(_) => StatusCode::BAD_REQUEST,
             ApiError::InvalidIntegerRange(_) => StatusCode::BAD_REQUEST,

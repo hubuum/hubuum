@@ -5831,6 +5831,16 @@
                 }
               }
             }
+          },
+          "410": {
+            "description": "Report output expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -8963,7 +8973,8 @@
         "type": "object",
         "required": [
           "output_url",
-          "output_available"
+          "output_available",
+          "output_expired"
         ],
         "properties": {
           "output_available": {
@@ -8974,6 +8985,10 @@
               "string",
               "null"
             ]
+          },
+          "output_expired": {
+            "type": "boolean",
+            "description": "True when output was produced but has since passed its retention window. Distinguishes an\nexpired report from one that was never generated (both have `output_available = false`)."
           },
           "output_expires_at": {
             "type": [
