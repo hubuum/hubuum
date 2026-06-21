@@ -1,6 +1,6 @@
 use std::iter::IntoIterator;
 
-use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, SortParam};
+use crate::models::search::{FilterField, QueryOptions, SortParam};
 use crate::models::{
     ClassGraphRow, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
     HubuumObjectRelation, Namespace, Permissions, RelatedObjectForRootRow, RelatedObjectGraphRow,
@@ -10,7 +10,7 @@ use crate::models::{
 use crate::db::DbPool;
 use crate::db::traits::user::{
     LoadPermittedNamespaces, LoadUserGroups, LoadUserGroupsPaginated, LoadUserRecord,
-    QueryJsonDataIds, QueryJsonSchemaIds, UnifiedSearchBackend, UserSearchBackend,
+    UnifiedSearchBackend, UserSearchBackend,
 };
 use crate::errors::ApiError;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
@@ -344,34 +344,6 @@ pub trait GroupAccessors: SelfAccessors<User> {
         self.load_user_groups_paginated_with_total_count(backend.db_pool(), query_options)
             .await
     }
-
-    /// Execute the JSON schema filter query for classes and return matching class IDs.
-    ///
-    /// The name is historical: this returns the executed result set rather than a Diesel subquery.
-    fn json_schema_subquery<C>(
-        &self,
-        backend: &C,
-        json_schema_query_params: Vec<&ParsedQueryParam>,
-    ) -> Result<Vec<i32>, ApiError>
-    where
-        C: BackendContext + ?Sized,
-    {
-        self.query_class_ids_for_json_schema(backend.db_pool(), json_schema_query_params)
-    }
-
-    /// Execute the JSON data filter query for objects and return matching object IDs.
-    ///
-    /// The name is historical: this returns the executed result set rather than a Diesel subquery.
-    fn json_data_subquery<C>(
-        &self,
-        backend: &C,
-        json_schema_query_params: Vec<&ParsedQueryParam>,
-    ) -> Result<Vec<i32>, ApiError>
-    where
-        C: BackendContext + ?Sized,
-    {
-        self.query_object_ids_for_json_data(backend.db_pool(), json_schema_query_params)
-    }
 }
 
 /// Access namespaces that are visible to a user through direct or group-derived permissions.
@@ -529,6 +501,7 @@ mod test {
     use std::vec;
 
     use super::*;
+    use crate::models::search::ParsedQueryParam;
     use crate::models::{GroupID, NewHubuumClass, Permissions, PermissionsList};
     use crate::tests::{TestContext, create_test_group, create_test_user, test_context};
     use crate::traits::PermissionController;

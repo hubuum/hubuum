@@ -1,5 +1,10 @@
 #![allow(dead_code)]
 use chrono::NaiveDateTime;
+use diesel::expression::{AppearsOnTable, Expression, SelectableExpression, ValidGrouping};
+use diesel::pg::Pg;
+use diesel::query_builder::{AstPass, QueryFragment, QueryId};
+use diesel::result::QueryResult;
+use diesel::sql_types::{Bool, Float8, Integer, Text, Timestamp};
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -253,6 +258,81 @@ pub struct SQLComponent {
     pub bind_variables: Vec<SQLValue>,
 }
 
+impl SQLComponent {
+    fn placeholder_count(&self) -> usize {
+        self.sql.chars().filter(|c| *c == '?').count()
+    }
+
+    pub fn into_predicate(self) -> Result<JsonSqlPredicate, ApiError> {
+        let placeholder_count = self.placeholder_count();
+        if placeholder_count != self.bind_variables.len() {
+            return Err(ApiError::InternalServerError(format!(
+                "JSON SQL predicate has {placeholder_count} placeholders but {} bind values",
+                self.bind_variables.len()
+            )));
+        }
+
+        Ok(JsonSqlPredicate {
+            sql: self.sql,
+            bind_variables: self.bind_variables,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct JsonSqlPredicate {
+    sql: String,
+    bind_variables: Vec<SQLValue>,
+}
+
+impl Expression for JsonSqlPredicate {
+    type SqlType = Bool;
+}
+
+impl QueryId for JsonSqlPredicate {
+    type QueryId = ();
+
+    const HAS_STATIC_QUERY_ID: bool = false;
+}
+
+impl QueryFragment<Pg> for JsonSqlPredicate {
+    fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, Pg>) -> QueryResult<()> {
+        out.unsafe_to_cache_prepared();
+
+        // `?` is reserved for bind placeholders in these generated fragments.
+        // `SQLComponent::into_predicate` checks that placeholder and bind counts match.
+        let mut sql_parts = self.sql.split('?');
+        if let Some(first_part) = sql_parts.next() {
+            out.push_sql(first_part);
+        }
+
+        for (bind_variable, sql_part) in self.bind_variables.iter().zip(sql_parts) {
+            bind_sql_value(&mut out, bind_variable)?;
+            out.push_sql(sql_part);
+        }
+
+        Ok(())
+    }
+}
+
+impl<QS> SelectableExpression<QS> for JsonSqlPredicate {}
+
+impl<QS> AppearsOnTable<QS> for JsonSqlPredicate {}
+
+impl<GB> ValidGrouping<GB> for JsonSqlPredicate {
+    type IsAggregate = diesel::expression::is_aggregate::Never;
+}
+
+fn bind_sql_value<'b>(out: &mut AstPass<'_, 'b, Pg>, value: &'b SQLValue) -> QueryResult<()> {
+    match value {
+        SQLValue::String(value) => out.push_bind_param::<Text, _>(value),
+        SQLValue::Float(value) => out.push_bind_param::<Float8, _>(value),
+        SQLValue::Integer(value) => out.push_bind_param::<Integer, _>(value),
+        SQLValue::Date(value) => out.push_bind_param::<Timestamp, _>(value),
+        SQLValue::Boolean(value) => out.push_bind_param::<Bool, _>(value),
+    }
+}
+
 /// ## An sql value for bind variables
 ///
 /// This enum represents the different types of values that can be bound to a SQL query. The types
@@ -434,6 +514,18 @@ impl ParsedQueryParam {
     ///   * ApiError::InternalServerError if the field is not JSONB
     ///   * ApiError::BadRequest if the value is not a key=value pair
     pub fn as_json_sql(&self) -> Result<SQLComponent, ApiError> {
+        let field = self.field.clone();
+        self.as_json_sql_for_field_expr(field.table_field())
+    }
+
+    pub fn as_json_predicate(&self) -> Result<JsonSqlPredicate, ApiError> {
+        self.as_json_sql()?.into_predicate()
+    }
+
+    pub fn as_json_sql_for_field_expr(
+        &self,
+        jsonb_field_expr: &str,
+    ) -> Result<SQLComponent, ApiError> {
         if !self.is_json() {
             return Err(ApiError::InternalServerError(format!(
                 "Attempt to filter '{}' as JSON!",
@@ -444,13 +536,11 @@ impl ParsedQueryParam {
         // TODO: Since we may have a schema, we may have typing info, so we can also
         // validatethe value and the operator against the defined type in the schema.
 
-        let field = self.field.clone();
-
         let (op, neg) = self.operator.op_and_neg();
 
         // is_null has no value part — the entire RHS is the JSON path
         if op == Operator::IsNull {
-            return self.as_json_is_null_sql(&field, neg);
+            return self.as_json_is_null_sql(jsonb_field_expr, neg);
         }
 
         // split the value on key=value
@@ -484,7 +574,7 @@ impl ParsedQueryParam {
 
         let raw_key = key;
         let key = format!("'{{{raw_key}}}'");
-        let field_expr = format!("{} #>> {}", field.table_field(), key);
+        let field_expr = format!("{jsonb_field_expr} #>> {key}");
 
         // The bind variables for the SQL query. We can't bind the key as using
         // bind variables for the key itself is not supported in Postgres.
@@ -500,19 +590,19 @@ impl ParsedQueryParam {
         }
 
         if op == Operator::HasKey {
-            return self.as_json_has_key_sql(&field, raw_key, value, neg);
+            return self.as_json_has_key_sql(jsonb_field_expr, raw_key, value, neg);
         }
 
         if op == Operator::All {
-            return self.as_json_all_sql(&field, raw_key, value, neg);
+            return self.as_json_all_sql(jsonb_field_expr, raw_key, value, neg);
         }
 
         if op == Operator::ArrayLength {
-            return self.as_json_array_length_sql(&field, raw_key, value, neg);
+            return self.as_json_array_length_sql(jsonb_field_expr, raw_key, value, neg);
         }
 
         if op == Operator::In {
-            return self.as_json_in_sql(&field, &field_expr, raw_key, value, neg);
+            return self.as_json_in_sql(jsonb_field_expr, &field_expr, raw_key, value, neg);
         }
 
         let sql_type = get_jsonb_field_type_from_value_and_operator(value, op.clone());
@@ -614,7 +704,7 @@ impl ParsedQueryParam {
 
     fn as_json_is_null_sql(
         &self,
-        field: &FilterField,
+        jsonb_field_expr: &str,
         negated: bool,
     ) -> Result<SQLComponent, ApiError> {
         let path = &self.value;
@@ -624,7 +714,7 @@ impl ParsedQueryParam {
             )));
         }
         let key = format!("'{{{path}}}'");
-        let field_expr = format!("{} #>> {}", field.table_field(), key);
+        let field_expr = format!("{jsonb_field_expr} #>> {key}");
         let sql = if negated {
             format!("{field_expr} IS NOT NULL")
         } else {
@@ -638,13 +728,13 @@ impl ParsedQueryParam {
 
     fn as_json_has_key_sql(
         &self,
-        field: &FilterField,
+        jsonb_field_expr: &str,
         path: &str,
         key_name: &str,
         negated: bool,
     ) -> Result<SQLComponent, ApiError> {
         let key = format!("'{{{path}}}'");
-        let jsonb_expr = format!("{} #> {}", field.table_field(), key);
+        let jsonb_expr = format!("{jsonb_field_expr} #> {key}");
         let predicate = format!("jsonb_has_key({jsonb_expr}, ?)");
         let sql = if negated {
             format!("NOT ({predicate})")
@@ -659,7 +749,7 @@ impl ParsedQueryParam {
 
     fn as_json_in_sql(
         &self,
-        field: &FilterField,
+        jsonb_field_expr: &str,
         field_expr: &str,
         path: &str,
         value: &str,
@@ -679,7 +769,7 @@ impl ParsedQueryParam {
         // Array check: jsonb containment
         let array_placeholders = values.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
         let key = format!("'{{{path}}}'");
-        let jsonb_expr = format!("{} #> {}", field.table_field(), key);
+        let jsonb_expr = format!("{jsonb_field_expr} #> {key}");
         let array_check = format!("jsonb_contains_any({jsonb_expr}, ARRAY[{array_placeholders}])");
 
         let combined = format!("({scalar_check} OR {array_check})");
@@ -708,7 +798,7 @@ impl ParsedQueryParam {
 
     fn as_json_all_sql(
         &self,
-        field: &FilterField,
+        jsonb_field_expr: &str,
         path: &str,
         value: &str,
         negated: bool,
@@ -721,7 +811,7 @@ impl ParsedQueryParam {
         }
         let placeholders = values.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
         let key = format!("'{{{path}}}'");
-        let jsonb_expr = format!("{} #> {}", field.table_field(), key);
+        let jsonb_expr = format!("{jsonb_field_expr} #> {key}");
         let predicate = format!("jsonb_contains_all({jsonb_expr}, ARRAY[{placeholders}])");
         let sql = if negated {
             format!("NOT ({predicate})")
@@ -740,7 +830,7 @@ impl ParsedQueryParam {
 
     fn as_json_array_length_sql(
         &self,
-        field: &FilterField,
+        jsonb_field_expr: &str,
         path: &str,
         value: &str,
         negated: bool,
@@ -749,7 +839,7 @@ impl ParsedQueryParam {
             ApiError::BadRequest(format!("array_length requires an integer, got '{value}'"))
         })?;
         let key = format!("'{{{path}}}'");
-        let jsonb_expr = format!("{} #> {}", field.table_field(), key);
+        let jsonb_expr = format!("{jsonb_field_expr} #> {key}");
         let len_expr = format!("jsonb_array_length({jsonb_expr})");
         let cmp = if negated { "!=" } else { "=" };
         let sql = format!("jsonb_typeof({jsonb_expr}) = 'array' AND {len_expr} {cmp} ?");

@@ -139,26 +139,6 @@ macro_rules! check_permissions {
 }
 
 #[macro_export]
-/// A JSON field search macro
-macro_rules! json_search {
-    ($query:expr, $param:expr, $filter_field:expr, $dbfield:expr, $me:expr, $pool:expr) => {{
-        // First get the correct JSON queries from the filter field. For object relations we have
-        // both to and from JSON data fields, so we need to check which one to apply for this filter.
-        let json_data_queries = $param.json_datas($filter_field)?;
-
-        // If there are no queries, we can skip this filter.
-        if !json_data_queries.is_empty() {
-            // Get the object IDs that match the JSON data queries. This is a complexly built
-            // query that is executed and we fish out the IDs from the result.
-            let json_data_integers = $me.json_data_subquery($pool, json_data_queries)?;
-            // Apply the filter even when the subquery matches no objects so the overall result
-            // set is empty rather than silently ignoring the JSON predicate.
-            $query = $query.filter($dbfield.eq_any(json_data_integers))
-        }
-    }};
-}
-
-#[macro_export]
 /// A numeric search macro
 macro_rules! numeric_search {
     ($base_query:expr, $parsed_query_param:expr, $operator:expr, $diesel_field:expr) => {{

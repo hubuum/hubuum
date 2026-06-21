@@ -9,7 +9,7 @@ mod tests {
     use crate::traits::{CanDelete, CanSave};
     use actix_web::{http::StatusCode, test};
 
-    use crate::pagination::NEXT_CURSOR_HEADER;
+    use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::constants::{SchemaType, get_schema};
@@ -164,6 +164,9 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
+        let total_count =
+            header_value(&resp, TOTAL_COUNT_HEADER).and_then(|value| value.parse::<i64>().ok());
+        assert_eq!(total_count, Some(expected_names.len() as i64));
         let objects: Vec<HubuumObject> = test::read_body_json(resp).await;
 
         let object_names: Vec<&str> = objects.iter().map(|object| object.name.as_str()).collect();
