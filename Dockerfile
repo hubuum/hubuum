@@ -18,10 +18,10 @@ RUN cargo binstall --no-confirm diesel_cli
 COPY Cargo.toml Cargo.lock ./
 COPY migrations ./migrations
 
-# The production image only builds binaries. Strip dev-only manifest sections so
-# Cargo does not require benchmark target files in the Docker build context.
+# The production image only builds binaries. Strip benchmark targets so Cargo
+# does not require benchmark target files in the Docker build context. Keep
+# [dev-dependencies] intact so Cargo.lock stays in sync and --locked succeeds.
 RUN awk ' \
-    /^\[dev-dependencies\]$/ { skip = 1; next } \
     /^\[\[bench\]\]$/ { skip = 1; next } \
     /^\[\[/ { skip = 0 } \
     /^\[/ && !/^\[\[/ { skip = 0 } \
@@ -43,10 +43,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # Copy the actual source code
 COPY . .
 
-# COPY restores the repository manifest; prune it again before the real
-# production build so benchmark-only targets stay out of the image build.
+# COPY restores the repository manifest; prune benchmark targets again before
+# the real production build so benchmark-only targets stay out of the image
+# build, while keeping [dev-dependencies] so --locked stays satisfied.
 RUN awk ' \
-    /^\[dev-dependencies\]$/ { skip = 1; next } \
     /^\[\[bench\]\]$/ { skip = 1; next } \
     /^\[\[/ { skip = 0 } \
     /^\[/ && !/^\[\[/ { skip = 0 } \
