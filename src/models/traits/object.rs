@@ -5,7 +5,7 @@ use crate::db::traits::object::{
 };
 use crate::errors::ApiError;
 
-use crate::models::class::HubuumClass;
+use crate::models::class::{HubuumClass, HubuumClassID};
 use crate::models::namespace::{Namespace, NamespaceID};
 use crate::models::object::{
     HubuumObject, HubuumObjectID, HubuumObjectWithPath, NewHubuumObject, UpdateHubuumObject,
@@ -158,8 +158,8 @@ impl ClassAdapter for HubuumObject {
         self.lookup_object_class(pool).await
     }
 
-    async fn class_id_adapter(&self, _pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.hubuum_class_id)
+    async fn class_id_adapter(&self, _pool: &DbPool) -> Result<HubuumClassID, ApiError> {
+        HubuumClassID::new(self.hubuum_class_id)
     }
 }
 
@@ -193,8 +193,8 @@ impl ClassAdapter for HubuumObjectID {
         self.lookup_object_class(pool).await
     }
 
-    async fn class_id_adapter(&self, pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.class(pool).await?.id)
+    async fn class_id_adapter(&self, pool: &DbPool) -> Result<HubuumClassID, ApiError> {
+        HubuumClassID::new(self.class(pool).await?.id)
     }
 }
 

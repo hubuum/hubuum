@@ -63,8 +63,8 @@ impl InstanceAdapter<HubuumClass> for HubuumClass {
 }
 
 impl ClassAdapter for HubuumClass {
-    async fn class_id_adapter(&self, _pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.id)
+    async fn class_id_adapter(&self, _pool: &DbPool) -> Result<HubuumClassID, ApiError> {
+        HubuumClassID::new(self.id)
     }
 
     async fn class_adapter(&self, _pool: &DbPool) -> Result<HubuumClass, ApiError> {
@@ -98,8 +98,8 @@ impl InstanceAdapter<HubuumClass> for HubuumClassID {
 }
 
 impl ClassAdapter for HubuumClassID {
-    async fn class_id_adapter(&self, _pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.id())
+    async fn class_id_adapter(&self, _pool: &DbPool) -> Result<HubuumClassID, ApiError> {
+        Ok(*self)
     }
 
     async fn class_adapter(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {

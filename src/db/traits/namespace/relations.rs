@@ -10,6 +10,8 @@ impl GetNamespace<(Namespace, Namespace)> for HubuumClassRelation {
         use crate::schema::namespaces::dsl::{id as namespace_id, namespaces};
 
         let (from_id, to_id) = self.class_id(pool).await?;
+        // Work with raw ids at the Diesel boundary.
+        let (from_id, to_id) = (from_id.id(), to_id.id());
 
         let namespace_list = with_connection(pool, |conn| {
             hubuumclass
@@ -47,6 +49,8 @@ impl GetNamespace<(Namespace, Namespace)> for NewHubuumClassRelation {
         use crate::schema::namespaces::dsl::{id as namespace_id, namespaces};
 
         let (from_id, to_id) = self.class_id(pool).await?;
+        // Work with raw ids at the Diesel boundary.
+        let (from_id, to_id) = (from_id.id(), to_id.id());
 
         let namespace_list = with_connection(pool, |conn| {
             hubuumclass
@@ -84,6 +88,8 @@ impl GetNamespace<(Namespace, Namespace)> for HubuumObjectRelation {
         use crate::schema::namespaces::dsl::{id as namespace_id, namespaces};
 
         let (from_id, to_id) = self.object_id(pool).await?;
+        // Work with raw ids at the Diesel boundary.
+        let (from_id, to_id) = (from_id.id(), to_id.id());
 
         let namespace_list = with_connection(pool, |conn| {
             hubuumobject
@@ -121,6 +127,8 @@ impl GetNamespace<(Namespace, Namespace)> for NewHubuumObjectRelation {
         use crate::schema::namespaces::dsl::{id as namespace_id, namespaces};
 
         let (from_id, to_id) = self.object_id(pool).await?;
+        // Work with raw ids at the Diesel boundary.
+        let (from_id, to_id) = (from_id.id(), to_id.id());
 
         let namespace_list = with_connection(pool, |conn| {
             hubuumobject
@@ -158,6 +166,8 @@ impl GetNamespace<(Namespace, Namespace)> for HubuumObjectRelationID {
         use crate::schema::namespaces::dsl::{id as namespace_id, namespaces};
 
         let (from_id, to_id) = self.object_id(pool).await?;
+        // Work with raw ids at the Diesel boundary.
+        let (from_id, to_id) = (from_id.id(), to_id.id());
 
         let namespace_list = with_connection(pool, |conn| {
             hubuumobject

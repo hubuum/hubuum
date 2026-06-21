@@ -6,10 +6,10 @@ use crate::errors::ApiError;
 
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
-    ClassGraphRow, HubuumClass, HubuumClassRelation, HubuumClassRelationID,
-    HubuumClassRelationTransitive, HubuumClassWithPath, HubuumObject, HubuumObjectRelation,
-    HubuumObjectRelationID, Namespace, NamespaceID, NewHubuumClassRelation, NewHubuumObjectRelation,
-    ObjectGraphRow, RelatedObjectGraphRow,
+    ClassGraphRow, HubuumClass, HubuumClassID, HubuumClassRelation, HubuumClassRelationID,
+    HubuumClassRelationTransitive, HubuumClassWithPath, HubuumObject, HubuumObjectID,
+    HubuumObjectRelation, HubuumObjectRelationID, Namespace, NamespaceID, NewHubuumClassRelation,
+    NewHubuumObjectRelation, ObjectGraphRow, RelatedObjectGraphRow,
 };
 use crate::traits::accessors::{
     ClassAdapter, IdAccessor, InstanceAdapter, NamespaceAdapter, ObjectAdapter,
@@ -139,14 +139,20 @@ impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)> for Hu
     }
 }
 
-impl ClassAdapter<(HubuumClass, HubuumClass), (i32, i32)> for HubuumClassRelation {
+impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)> for HubuumClassRelation {
     async fn class_adapter(&self, pool: &DbPool) -> Result<(HubuumClass, HubuumClass), ApiError> {
         use crate::db::traits::GetClass;
         self.class_from_backend(pool).await
     }
 
-    async fn class_id_adapter(&self, _pool: &DbPool) -> Result<(i32, i32), ApiError> {
-        Ok((self.from_hubuum_class_id, self.to_hubuum_class_id))
+    async fn class_id_adapter(
+        &self,
+        _pool: &DbPool,
+    ) -> Result<(HubuumClassID, HubuumClassID), ApiError> {
+        Ok((
+            HubuumClassID::new(self.from_hubuum_class_id)?,
+            HubuumClassID::new(self.to_hubuum_class_id)?,
+        ))
     }
 }
 
@@ -163,29 +169,38 @@ impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)> for Hu
     }
 }
 
-impl ClassAdapter<(HubuumClass, HubuumClass), (i32, i32)> for HubuumClassRelationID {
+impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)> for HubuumClassRelationID {
     async fn class_adapter(&self, pool: &DbPool) -> Result<(HubuumClass, HubuumClass), ApiError> {
         use crate::db::traits::GetClass;
         self.class_from_backend(pool).await
     }
 
-    async fn class_id_adapter(&self, pool: &DbPool) -> Result<(i32, i32), ApiError> {
+    async fn class_id_adapter(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(HubuumClassID, HubuumClassID), ApiError> {
         self.instance(pool).await?.class_id(pool).await
     }
 }
 
-impl ClassAdapter<(HubuumClass, HubuumClass), (i32, i32)> for NewHubuumClassRelation {
+impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)> for NewHubuumClassRelation {
     async fn class_adapter(&self, pool: &DbPool) -> Result<(HubuumClass, HubuumClass), ApiError> {
         use crate::db::traits::GetClass;
         self.class_from_backend(pool).await
     }
 
-    async fn class_id_adapter(&self, _pool: &DbPool) -> Result<(i32, i32), ApiError> {
-        Ok((self.from_hubuum_class_id, self.to_hubuum_class_id))
+    async fn class_id_adapter(
+        &self,
+        _pool: &DbPool,
+    ) -> Result<(HubuumClassID, HubuumClassID), ApiError> {
+        Ok((
+            HubuumClassID::new(self.from_hubuum_class_id)?,
+            HubuumClassID::new(self.to_hubuum_class_id)?,
+        ))
     }
 }
 
-impl ObjectAdapter<(HubuumObject, HubuumObject), (i32, i32)> for NewHubuumObjectRelation {
+impl ObjectAdapter<(HubuumObject, HubuumObject), (HubuumObjectID, HubuumObjectID)> for NewHubuumObjectRelation {
     async fn object_adapter(
         &self,
         pool: &DbPool,
@@ -194,12 +209,18 @@ impl ObjectAdapter<(HubuumObject, HubuumObject), (i32, i32)> for NewHubuumObject
         self.object_from_backend(pool).await
     }
 
-    async fn object_id_adapter(&self, _pool: &DbPool) -> Result<(i32, i32), ApiError> {
-        Ok((self.from_hubuum_object_id, self.to_hubuum_object_id))
+    async fn object_id_adapter(
+        &self,
+        _pool: &DbPool,
+    ) -> Result<(HubuumObjectID, HubuumObjectID), ApiError> {
+        Ok((
+            HubuumObjectID::new(self.from_hubuum_object_id)?,
+            HubuumObjectID::new(self.to_hubuum_object_id)?,
+        ))
     }
 }
 
-impl ObjectAdapter<(HubuumObject, HubuumObject), (i32, i32)> for HubuumObjectRelationID {
+impl ObjectAdapter<(HubuumObject, HubuumObject), (HubuumObjectID, HubuumObjectID)> for HubuumObjectRelationID {
     async fn object_adapter(
         &self,
         pool: &DbPool,
@@ -208,12 +229,15 @@ impl ObjectAdapter<(HubuumObject, HubuumObject), (i32, i32)> for HubuumObjectRel
         self.object_from_backend(pool).await
     }
 
-    async fn object_id_adapter(&self, pool: &DbPool) -> Result<(i32, i32), ApiError> {
+    async fn object_id_adapter(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(HubuumObjectID, HubuumObjectID), ApiError> {
         self.instance(pool).await?.object_id(pool).await
     }
 }
 
-impl ObjectAdapter<(HubuumObject, HubuumObject), (i32, i32)> for HubuumObjectRelation {
+impl ObjectAdapter<(HubuumObject, HubuumObject), (HubuumObjectID, HubuumObjectID)> for HubuumObjectRelation {
     async fn object_adapter(
         &self,
         pool: &DbPool,
@@ -222,8 +246,14 @@ impl ObjectAdapter<(HubuumObject, HubuumObject), (i32, i32)> for HubuumObjectRel
         self.object_from_backend(pool).await
     }
 
-    async fn object_id_adapter(&self, _pool: &DbPool) -> Result<(i32, i32), ApiError> {
-        Ok((self.from_hubuum_object_id, self.to_hubuum_object_id))
+    async fn object_id_adapter(
+        &self,
+        _pool: &DbPool,
+    ) -> Result<(HubuumObjectID, HubuumObjectID), ApiError> {
+        Ok((
+            HubuumObjectID::new(self.from_hubuum_object_id)?,
+            HubuumObjectID::new(self.to_hubuum_object_id)?,
+        ))
     }
 }
 

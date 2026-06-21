@@ -25,7 +25,7 @@ where
     C: SelfAccessors<HubuumClass>,
     O: SelfAccessors<HubuumObject> + ClassAccessors<HubuumClass>,
 {
-    let object_class_id = object.class_id(pool).await?;
+    let object_class_id = object.class_id(pool).await?.id();
 
     if object_class_id != class.id() {
         debug!(

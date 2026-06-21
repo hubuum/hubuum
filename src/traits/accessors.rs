@@ -2,7 +2,9 @@
 
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::models::{HubuumClass, HubuumObject, Namespace, NamespaceID};
+use crate::models::{
+    HubuumClass, HubuumClassID, HubuumObject, HubuumObjectID, Namespace, NamespaceID,
+};
 
 use super::context::BackendContext;
 
@@ -130,7 +132,7 @@ where
 ///
 /// As with [`NamespaceAccessors`], this trait lets entity and identifier types share a common
 /// class lookup interface while keeping backend-specific loading in internal adapters.
-pub trait ClassAccessors<C = HubuumClass, I = i32> {
+pub trait ClassAccessors<C = HubuumClass, I = HubuumClassID> {
     /// Return the class instance for this value.
     async fn class<B>(&self, backend: &B) -> Result<C, ApiError>
     where
@@ -143,7 +145,7 @@ pub trait ClassAccessors<C = HubuumClass, I = i32> {
 }
 
 #[doc(hidden)]
-pub(crate) trait ClassAdapter<C = HubuumClass, I = i32> {
+pub(crate) trait ClassAdapter<C = HubuumClass, I = HubuumClassID> {
     async fn class_adapter(&self, pool: &DbPool) -> Result<C, ApiError>;
     async fn class_id_adapter(&self, pool: &DbPool) -> Result<I, ApiError>;
 }
@@ -184,7 +186,7 @@ where
 ///
 /// This follows the same pattern as the other accessor traits, including relation cases where the
 /// returned object or identifier type may be a tuple rather than a single value.
-pub trait ObjectAccessors<O = HubuumObject, I = i32> {
+pub trait ObjectAccessors<O = HubuumObject, I = HubuumObjectID> {
     #[allow(dead_code)]
     /// Return the object instance for this value.
     async fn object<B>(&self, backend: &B) -> Result<O, ApiError>
@@ -198,7 +200,7 @@ pub trait ObjectAccessors<O = HubuumObject, I = i32> {
 }
 
 #[doc(hidden)]
-pub(crate) trait ObjectAdapter<O = HubuumObject, I = i32> {
+pub(crate) trait ObjectAdapter<O = HubuumObject, I = HubuumObjectID> {
     #[allow(dead_code)]
     async fn object_adapter(&self, pool: &DbPool) -> Result<O, ApiError>;
     async fn object_id_adapter(&self, pool: &DbPool) -> Result<I, ApiError>;
