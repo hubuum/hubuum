@@ -26,6 +26,7 @@ pub const DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS: usize = 2_000;
 pub const DEFAULT_REPORT_MAX_OUTPUT_BYTES: usize = 262_144;
 pub const DEFAULT_REPORT_STAGE_TIMEOUT_MS: u64 = 10_000;
 pub const DEFAULT_DB_STATEMENT_TIMEOUT_MS: u64 = 0;
+pub const DEFAULT_REPORT_DB_STATEMENT_TIMEOUT_MS: u64 = 0;
 pub const DEFAULT_TOKEN_LIFETIME_HOURS: i64 = 24;
 pub const DEFAULT_LOGIN_RATE_LIMIT_ENABLED: bool = true;
 pub const DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS: usize = 5;
@@ -228,6 +229,23 @@ pub struct AppConfig {
         default_value_t = DEFAULT_DB_STATEMENT_TIMEOUT_MS
     )]
     pub db_statement_timeout_ms: u64,
+
+    /// Report-scoped Postgres `statement_timeout` in milliseconds (0 = disabled).
+    ///
+    /// Unlike `db_statement_timeout_ms`, this bounds *only* the queries issued
+    /// while executing a report (scope query, includes, relation hydration). It
+    /// is applied as a transaction-local `SET LOCAL statement_timeout` on those
+    /// queries, so it does not affect imports, admin commands, or any other DB
+    /// work sharing the pool. This lets operators cap report queries aggressively
+    /// without capping legitimately long-running work. When set it should
+    /// typically be `<= report_stage_timeout_ms` (the post-completion wall-clock
+    /// budget). Disabled by default to preserve existing behavior.
+    #[clap(
+        long,
+        env = "HUBUUM_REPORT_DB_STATEMENT_TIMEOUT_MS",
+        default_value_t = DEFAULT_REPORT_DB_STATEMENT_TIMEOUT_MS
+    )]
+    pub report_db_statement_timeout_ms: u64,
 
     /// Number of DB connections in the pool
     #[clap(long, env = "HUBUUM_DB_POOL_SIZE", default_value_t = 10)]
@@ -778,6 +796,10 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_DB_STATEMENT_TIMEOUT_MS),
+        report_db_statement_timeout_ms: env::var("HUBUUM_REPORT_DB_STATEMENT_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_REPORT_DB_STATEMENT_TIMEOUT_MS),
         db_pool_size: env_or_default("HUBUUM_DB_POOL_SIZE", "2")
             .parse()
             .unwrap_or(5),
