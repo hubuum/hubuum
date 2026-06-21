@@ -24,7 +24,7 @@ impl GetObject<(HubuumObject, HubuumObject)> for HubuumObjectRelationID {
 
         let objects = with_connection(pool, |conn| {
             obj_rel::hubuumobject_relation
-                .filter(obj_rel::id.eq(self.0))
+                .filter(obj_rel::id.eq(self.id()))
                 .inner_join(
                     obj::hubuumobject.on(obj::id
                         .eq(obj_rel::from_hubuum_object_id)
@@ -116,7 +116,7 @@ impl LoadObjectRecord for HubuumObjectID {
 
         with_connection(pool, |conn| {
             hubuumobject
-                .filter(id.eq(self.0))
+                .filter(id.eq(self.id()))
                 .first::<HubuumObject>(conn)
         })
     }
@@ -164,7 +164,7 @@ pub trait ValidateObjectRecord {
 
 impl ValidateObjectRecord for HubuumObject {
     async fn validate_object_record(&self, pool: &DbPool) -> Result<(), ApiError> {
-        let class = HubuumClassID(self.hubuum_class_id).class(pool).await?;
+        let class = HubuumClassID::new(self.hubuum_class_id)?.class(pool).await?;
 
         if class.validate_schema
             && let Some(ref schema) = class.json_schema
@@ -177,7 +177,7 @@ impl ValidateObjectRecord for HubuumObject {
 
 impl ValidateObjectRecord for NewHubuumObject {
     async fn validate_object_record(&self, pool: &DbPool) -> Result<(), ApiError> {
-        let class = HubuumClassID(self.hubuum_class_id).class(pool).await?;
+        let class = HubuumClassID::new(self.hubuum_class_id)?.class(pool).await?;
 
         if self.namespace_id != class.namespace_id {
             return Err(ApiError::BadRequest(format!(
@@ -198,9 +198,9 @@ impl ValidateObjectRecord for NewHubuumObject {
 impl ValidateObjectRecord for (&UpdateHubuumObject, i32) {
     async fn validate_object_record(&self, pool: &DbPool) -> Result<(), ApiError> {
         let (update_obj, object_id) = self;
-        let original = HubuumObjectID(*object_id).instance(pool).await?;
+        let original = HubuumObjectID::new(*object_id)?.instance(pool).await?;
         let merged = original.merge_update(update_obj);
-        let class = HubuumClassID(merged.hubuum_class_id).class(pool).await?;
+        let class = HubuumClassID::new(merged.hubuum_class_id)?.class(pool).await?;
 
         if merged.namespace_id != class.namespace_id {
             return Err(ApiError::BadRequest(format!(

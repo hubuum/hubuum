@@ -19,7 +19,7 @@ impl DeleteNamespaceRecord for NamespaceID {
         use crate::schema::namespaces::dsl::{id, namespaces};
 
         with_connection(pool, |conn| {
-            diesel::delete(namespaces.filter(id.eq(self.0))).execute(conn)
+            diesel::delete(namespaces.filter(id.eq(self.id()))).execute(conn)
         })?;
         Ok(())
     }

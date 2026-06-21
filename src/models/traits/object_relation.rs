@@ -14,7 +14,7 @@ use crate::traits::crud::{DeleteAdapter, SaveAdapter};
 
 impl IdAccessor for HubuumObjectRelationID {
     fn accessor_id(&self) -> i32 {
-        self.0
+        (*self).id()
     }
 }
 

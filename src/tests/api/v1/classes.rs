@@ -64,11 +64,11 @@ pub mod tests {
     pub async fn cleanup(classes: &ClassFixture) {
         let namespaces = classes
             .iter()
-            .map(|c| NamespaceID(c.namespace_id))
+            .map(|c| NamespaceID::new(c.namespace_id).unwrap())
             .collect::<Vec<NamespaceID>>();
 
         for ns in namespaces {
-            assert_eq!(ns.0, classes.namespace.namespace.id);
+            assert_eq!(ns.id(), classes.namespace.namespace.id);
         }
 
         classes.cleanup().await.unwrap();

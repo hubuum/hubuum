@@ -655,7 +655,7 @@ impl LoadClassRelationRecord for HubuumClassRelationID {
 
         with_connection(pool, |conn| {
             hubuumclass_relation
-                .filter(id.eq(self.0))
+                .filter(id.eq(self.id()))
                 .first::<HubuumClassRelation>(conn)
         })
     }
@@ -681,7 +681,7 @@ impl DeleteClassRelationRecord for HubuumClassRelationID {
         use crate::schema::hubuumclass_relation::dsl::{hubuumclass_relation, id};
 
         with_connection(pool, |conn| {
-            diesel::delete(hubuumclass_relation.filter(id.eq(self.0))).execute(conn)
+            diesel::delete(hubuumclass_relation.filter(id.eq(self.id()))).execute(conn)
         })?;
         Ok(())
     }
@@ -752,7 +752,7 @@ impl LoadObjectRelationRecord for HubuumObjectRelationID {
 
         with_connection(pool, |conn| {
             hubuumobject_relation
-                .filter(id.eq(self.0))
+                .filter(id.eq(self.id()))
                 .first::<HubuumObjectRelation>(conn)
         })
     }
@@ -778,7 +778,7 @@ impl DeleteObjectRelationRecord for HubuumObjectRelationID {
         use crate::schema::hubuumobject_relation::dsl::{hubuumobject_relation, id};
 
         with_connection(pool, |conn| {
-            diesel::delete(hubuumobject_relation.filter(id.eq(self.0))).execute(conn)
+            diesel::delete(hubuumobject_relation.filter(id.eq(self.id()))).execute(conn)
         })?;
         Ok(())
     }
@@ -804,7 +804,7 @@ impl SaveObjectRelationRecord for NewHubuumObjectRelation {
             ));
         }
 
-        let obj1 = match HubuumObjectID(self.from_hubuum_object_id)
+        let obj1 = match HubuumObjectID::new(self.from_hubuum_object_id)?
             .instance(pool)
             .await
         {
@@ -816,7 +816,7 @@ impl SaveObjectRelationRecord for NewHubuumObjectRelation {
             }
         };
 
-        let obj2 = match HubuumObjectID(self.to_hubuum_object_id)
+        let obj2 = match HubuumObjectID::new(self.to_hubuum_object_id)?
             .instance(pool)
             .await
         {

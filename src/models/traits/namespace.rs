@@ -73,14 +73,14 @@ impl NamespaceAdapter for Namespace {
         Ok(self.clone())
     }
 
-    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.id)
+    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<NamespaceID, ApiError> {
+        NamespaceID::new(self.id)
     }
 }
 
 impl IdAccessor for NamespaceID {
     fn accessor_id(&self) -> i32 {
-        self.0
+        (*self).id()
     }
 }
 
@@ -91,8 +91,8 @@ impl InstanceAdapter<Namespace> for NamespaceID {
 }
 
 impl NamespaceAdapter for NamespaceID {
-    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.0)
+    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<NamespaceID, ApiError> {
+        Ok(*self)
     }
 
     async fn namespace_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
@@ -114,7 +114,7 @@ impl NewNamespace {
     where
         C: BackendContext + ?Sized,
     {
-        self.save_namespace_for_group_record(backend.db_pool(), assignee.0)
+        self.save_namespace_for_group_record(backend.db_pool(), assignee.id())
             .await
     }
 

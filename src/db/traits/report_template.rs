@@ -11,6 +11,7 @@ use diesel::prelude::*;
 
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
+use crate::models::namespace::NamespaceID;
 use crate::models::report_template::{
     NewReportTemplateRow, ReportTemplate, ReportTemplateID, ReportTemplateRow,
     UpdateReportTemplateRow,
@@ -108,19 +109,26 @@ impl DeleteReportTemplateRecord for ReportTemplateID {
 
 /// Look up the namespace id of the report template identified by this id.
 pub(crate) trait ReportTemplateNamespaceLookup {
-    async fn lookup_report_template_namespace_id(&self, pool: &DbPool) -> Result<i32, ApiError>;
+    async fn lookup_report_template_namespace_id(
+        &self,
+        pool: &DbPool,
+    ) -> Result<NamespaceID, ApiError>;
 }
 
 impl ReportTemplateNamespaceLookup for ReportTemplateID {
-    async fn lookup_report_template_namespace_id(&self, pool: &DbPool) -> Result<i32, ApiError> {
+    async fn lookup_report_template_namespace_id(
+        &self,
+        pool: &DbPool,
+    ) -> Result<NamespaceID, ApiError> {
         use crate::schema::report_templates::dsl::{id, namespace_id, report_templates};
 
-        with_connection(pool, |conn| {
+        let raw = with_connection(pool, |conn| {
             report_templates
                 .filter(id.eq(self.id()))
                 .select(namespace_id)
                 .first::<i32>(conn)
-        })
+        })?;
+        NamespaceID::new(raw)
     }
 }
 

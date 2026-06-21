@@ -31,7 +31,7 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
         let group_id_subquery = user.group_ids_subquery_from_backend();
         let mut base_query = lookup_table
             .into_boxed()
-            .filter(namespace_id_field.eq(self.namespace_id(pool).await?))
+            .filter(namespace_id_field.eq(self.namespace_id(pool).await?.id()))
             .filter(group_id_field.eq_any(group_id_subquery));
 
         for permission in permissions_requested {
@@ -53,7 +53,7 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
     ) -> Result<Permission, ApiError> {
         use crate::schema::permissions::dsl::*;
 
-        let nid = self.namespace_id(pool).await?;
+        let nid = self.namespace_id(pool).await?.id();
 
         with_transaction(pool, |conn| -> Result<Permission, ApiError> {
             let existing_entry = permissions
@@ -235,7 +235,7 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
     ) -> Result<Permission, ApiError> {
         use crate::schema::permissions::dsl::*;
 
-        let nid = self.namespace_id(pool).await?;
+        let nid = self.namespace_id(pool).await?.id();
 
         with_transaction(pool, |conn| -> Result<Permission, ApiError> {
             permissions
@@ -336,7 +336,7 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
     ) -> Result<(), ApiError> {
         use crate::schema::permissions::dsl::*;
 
-        let namespace_id_for_revoke = self.namespace_id(pool).await?;
+        let namespace_id_for_revoke = self.namespace_id(pool).await?.id();
         with_connection(pool, |conn| {
             diesel::delete(permissions)
                 .filter(namespace_id.eq(namespace_id_for_revoke))

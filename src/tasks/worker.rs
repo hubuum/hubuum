@@ -163,7 +163,7 @@ async fn process_claimed_task(pool: &DbPool, task: &TaskRecord) -> Result<(), Ap
     let submitted_by = task.submitted_by.ok_or_else(|| {
         ApiError::BadRequest("Submitting user is no longer available for this task".to_string())
     })?;
-    let submitted_by = UserID(submitted_by).user(pool).await?;
+    let submitted_by = UserID::new(submitted_by)?.user(pool).await?;
 
     info!(
         message = "Dispatching task execution",

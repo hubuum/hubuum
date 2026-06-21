@@ -2,7 +2,7 @@
 
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::models::{HubuumClass, HubuumObject, Namespace};
+use crate::models::{HubuumClass, HubuumObject, Namespace, NamespaceID};
 
 use super::context::BackendContext;
 
@@ -76,7 +76,7 @@ where
 /// This allows both direct entities and identifier wrappers to expose a common namespace lookup
 /// API without pushing Diesel details into the public trait surface.
 #[allow(async_fn_in_trait)]
-pub trait NamespaceAccessors<N = Namespace, I = i32> {
+pub trait NamespaceAccessors<N = Namespace, I = NamespaceID> {
     /// Return the namespace instance for this value.
     async fn namespace<C>(&self, backend: &C) -> Result<N, ApiError>
     where
@@ -89,7 +89,7 @@ pub trait NamespaceAccessors<N = Namespace, I = i32> {
 }
 
 #[doc(hidden)]
-pub(crate) trait NamespaceAdapter<N = Namespace, I = i32> {
+pub(crate) trait NamespaceAdapter<N = Namespace, I = NamespaceID> {
     async fn namespace_adapter(&self, pool: &DbPool) -> Result<N, ApiError>;
     async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<I, ApiError>;
 }

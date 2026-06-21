@@ -445,7 +445,7 @@ pub trait NamespaceReportTemplates: NamespaceAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        let namespace_id = self.namespace_id(backend).await?;
+        let namespace_id = self.namespace_id(backend).await?.id();
         let rows = crate::db::traits::report_template::load_rows_in_namespace(
             backend.db_pool(),
             namespace_id,
@@ -480,7 +480,7 @@ impl SaveAdapter for NewReportTemplate {
             },
         )
         .await?;
-        let namespace_templates = NamespaceID(new_row.namespace_id)
+        let namespace_templates = NamespaceID::new(new_row.namespace_id)?
             .report_templates(pool, None)
             .await?;
         validate_template(
@@ -571,7 +571,7 @@ async fn apply_report_template_update(
         },
     )
     .await?;
-    let namespace_templates = NamespaceID(target_namespace_id)
+    let namespace_templates = NamespaceID::new(target_namespace_id)?
         .report_templates(pool, Some(template_id))
         .await?;
     validate_template(
@@ -933,22 +933,25 @@ impl InstanceAdapter<ReportTemplate> for ReportTemplateID {
 
 impl NamespaceAdapter for ReportTemplate {
     async fn namespace_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        NamespaceID(self.namespace_id).namespace_adapter(pool).await
+        NamespaceID::new(self.namespace_id)?
+            .namespace_adapter(pool)
+            .await
     }
 
-    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.namespace_id)
+    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<NamespaceID, ApiError> {
+        NamespaceID::new(self.namespace_id)
     }
 }
 
 impl NamespaceAdapter for ReportTemplateID {
     async fn namespace_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        NamespaceID(self.namespace_id_adapter(pool).await?)
+        self.namespace_id_adapter(pool)
+            .await?
             .namespace_adapter(pool)
             .await
     }
 
-    async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<i32, ApiError> {
+    async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<NamespaceID, ApiError> {
         self.lookup_report_template_namespace_id(pool).await
     }
 }

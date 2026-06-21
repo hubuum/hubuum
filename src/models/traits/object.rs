@@ -6,7 +6,7 @@ use crate::db::traits::object::{
 use crate::errors::ApiError;
 
 use crate::models::class::HubuumClass;
-use crate::models::namespace::Namespace;
+use crate::models::namespace::{Namespace, NamespaceID};
 use crate::models::object::{
     HubuumObject, HubuumObjectID, HubuumObjectWithPath, NewHubuumObject, UpdateHubuumObject,
 };
@@ -148,8 +148,8 @@ impl NamespaceAdapter for HubuumObject {
         self.lookup_object_namespace(pool).await
     }
 
-    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.namespace_id)
+    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<NamespaceID, ApiError> {
+        NamespaceID::new(self.namespace_id)
     }
 }
 
@@ -165,7 +165,7 @@ impl ClassAdapter for HubuumObject {
 
 impl IdAccessor for HubuumObjectID {
     fn accessor_id(&self) -> i32 {
-        self.0
+        (*self).id()
     }
 }
 
@@ -180,8 +180,8 @@ impl NamespaceAdapter for HubuumObjectID {
         self.lookup_object_namespace(pool).await
     }
 
-    async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<i32, ApiError> {
-        Ok(self.namespace(pool).await?.id)
+    async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<NamespaceID, ApiError> {
+        NamespaceID::new(self.namespace(pool).await?.id)
     }
 }
 

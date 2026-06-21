@@ -8,7 +8,7 @@ use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     ClassGraphRow, HubuumClass, HubuumClassRelation, HubuumClassRelationID,
     HubuumClassRelationTransitive, HubuumClassWithPath, HubuumObject, HubuumObjectRelation,
-    HubuumObjectRelationID, Namespace, NewHubuumClassRelation, NewHubuumObjectRelation,
+    HubuumObjectRelationID, Namespace, NamespaceID, NewHubuumClassRelation, NewHubuumObjectRelation,
     ObjectGraphRow, RelatedObjectGraphRow,
 };
 use crate::traits::accessors::{
@@ -22,7 +22,7 @@ use crate::traits::{
 
 impl IdAccessor for HubuumClassRelationID {
     fn accessor_id(&self) -> i32 {
-        self.0
+        (*self).id()
     }
 }
 
@@ -63,61 +63,76 @@ impl DeleteAdapter for HubuumClassRelationID {
     }
 }
 
-impl NamespaceAdapter<(Namespace, Namespace), (i32, i32)> for NewHubuumClassRelation {
+impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)> for NewHubuumClassRelation {
     async fn namespace_adapter(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
         use crate::db::traits::GetNamespace;
         self.namespace_from_backend(pool).await
     }
 
-    async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<(i32, i32), ApiError> {
+    async fn namespace_id_adapter(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(NamespaceID, NamespaceID), ApiError> {
         let (ns1, ns2) = self.namespace(pool).await?;
-        Ok((ns1.id, ns2.id))
+        Ok((NamespaceID::new(ns1.id)?, NamespaceID::new(ns2.id)?))
     }
 }
 
-impl NamespaceAdapter<(Namespace, Namespace), (i32, i32)> for NewHubuumObjectRelation {
+impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)> for NewHubuumObjectRelation {
     async fn namespace_adapter(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
         use crate::db::traits::GetNamespace;
         self.namespace_from_backend(pool).await
     }
 
-    async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<(i32, i32), ApiError> {
+    async fn namespace_id_adapter(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(NamespaceID, NamespaceID), ApiError> {
         let (ns1, ns2) = self.namespace(pool).await?;
-        Ok((ns1.id, ns2.id))
+        Ok((NamespaceID::new(ns1.id)?, NamespaceID::new(ns2.id)?))
     }
 }
 
-impl NamespaceAdapter<(Namespace, Namespace), (i32, i32)> for HubuumObjectRelationID {
+impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)> for HubuumObjectRelationID {
     async fn namespace_adapter(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
         self.instance(pool).await?.namespace(pool).await
     }
 
-    async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<(i32, i32), ApiError> {
+    async fn namespace_id_adapter(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(NamespaceID, NamespaceID), ApiError> {
         self.instance(pool).await?.namespace_id(pool).await
     }
 }
 
-impl NamespaceAdapter<(Namespace, Namespace), (i32, i32)> for HubuumObjectRelation {
+impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)> for HubuumObjectRelation {
     async fn namespace_adapter(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
         use crate::db::traits::GetNamespace;
         self.namespace_from_backend(pool).await
     }
 
-    async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<(i32, i32), ApiError> {
+    async fn namespace_id_adapter(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(NamespaceID, NamespaceID), ApiError> {
         let (ns1, ns2) = self.namespace(pool).await?;
-        Ok((ns1.id, ns2.id))
+        Ok((NamespaceID::new(ns1.id)?, NamespaceID::new(ns2.id)?))
     }
 }
 
-impl NamespaceAdapter<(Namespace, Namespace), (i32, i32)> for HubuumClassRelation {
+impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)> for HubuumClassRelation {
     async fn namespace_adapter(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
         use crate::db::traits::GetNamespace;
         self.namespace_from_backend(pool).await
     }
 
-    async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<(i32, i32), ApiError> {
+    async fn namespace_id_adapter(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(NamespaceID, NamespaceID), ApiError> {
         let (ns1, ns2) = self.namespace(pool).await?;
-        Ok((ns1.id, ns2.id))
+        Ok((NamespaceID::new(ns1.id)?, NamespaceID::new(ns2.id)?))
     }
 }
 
@@ -132,12 +147,15 @@ impl ClassAdapter<(HubuumClass, HubuumClass), (i32, i32)> for HubuumClassRelatio
     }
 }
 
-impl NamespaceAdapter<(Namespace, Namespace), (i32, i32)> for HubuumClassRelationID {
+impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)> for HubuumClassRelationID {
     async fn namespace_adapter(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
         self.instance(pool).await?.namespace(pool).await
     }
 
-    async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<(i32, i32), ApiError> {
+    async fn namespace_id_adapter(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(NamespaceID, NamespaceID), ApiError> {
         self.instance(pool).await?.namespace_id(pool).await
     }
 }

@@ -77,10 +77,10 @@ macro_rules! can {
             $pool,
             vec![$($perm),+],
             vec![
-                // This should be fairly cheap. We're just getting the namespace ID for each object.
-                // which is a field lookup and convertinng it to NamespaceID directly. There is no
-                // database interaction here but the trait definition requires the pool to be passed.
-                $(NamespaceID($namespace.namespace_id($pool).await?)),+
+                // This should be fairly cheap. We're just getting the namespace ID for each object,
+                // which is a field lookup returning a `NamespaceID`. There is no database interaction
+                // here but the trait definition requires the pool to be passed.
+                $($namespace.namespace_id($pool).await?),+
             ]
         ).await?
     }};

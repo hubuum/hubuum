@@ -185,7 +185,7 @@ pub async fn delete_group(
 ) -> Result<impl Responder, ApiError> {
     debug!(
         message = "Group delete requested",
-        target = group_id.0,
+        target = group_id.id(),
         requestor = requestor.user.id
     );
 

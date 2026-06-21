@@ -66,8 +66,9 @@ async fn ensure_namespace_permission_cached(
         return result.clone();
     }
 
+    let namespace = NamespaceID::new(namespace_id).map_err(|err| err.to_string())?;
     let result = user
-        .can(pool, vec![permission], vec![NamespaceID(namespace_id)])
+        .can(pool, vec![permission], vec![namespace])
         .await
         .map_err(|err| err.to_string());
     state.namespace_permission_cache.insert(key, result.clone());

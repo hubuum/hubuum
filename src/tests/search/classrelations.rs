@@ -24,7 +24,7 @@ mod test {
             description: crname.clone(),
         };
         let namespace = namespace
-            .save_and_grant_all_to(pool, GroupID(admin_group.id))
+            .save_and_grant_all_to(pool, GroupID::new(admin_group.id).unwrap())
             .await
             .unwrap();
 

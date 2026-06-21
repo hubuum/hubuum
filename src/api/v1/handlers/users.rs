@@ -258,7 +258,7 @@ pub async fn delete_user(
 ) -> Result<impl Responder, ApiError> {
     debug!(
         message = "User delete requested",
-        target = user_id.0,
+        target = user_id.id(),
         requestor = requestor.user.id
     );
 

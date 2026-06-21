@@ -344,7 +344,7 @@ async fn prepare_report_runtime(
 
     let namespace_templates = match &template {
         Some(template) => {
-            NamespaceID(template.namespace_id)
+            NamespaceID::new(template.namespace_id)?
                 .report_templates(pool, None)
                 .await?
         }
@@ -380,7 +380,7 @@ async fn resolve_template(
         pool,
         user.clone(),
         [Permissions::ReadTemplate],
-        NamespaceID(template.namespace_id)
+        NamespaceID::new(template.namespace_id)?
     );
 
     Ok(Some(template))
@@ -1144,7 +1144,7 @@ async fn build_template_items(
             Ok((hydrated_items, None))
         }
         ReportScopeKind::RelatedObjects => {
-            let source_object = HubuumObjectID(runtime.report.scope.object_id_required()?)
+            let source_object = HubuumObjectID::new(runtime.report.scope.object_id_required()?)?
                 .instance(pool)
                 .await?;
             let source = object_with_root_path(&source_object);
@@ -1986,8 +1986,8 @@ async fn execute_scope(
             to_json_items(user.search_object_relations(pool, query_options).await?)?
         }
         ReportScopeKind::RelatedObjects => {
-            let class_id = HubuumClassID(scope.class_id_required()?);
-            let object_id = HubuumObjectID(scope.object_id_required()?);
+            let class_id = HubuumClassID::new(scope.class_id_required()?)?;
+            let object_id = HubuumObjectID::new(scope.object_id_required()?)?;
             check_if_object_in_class(pool, &class_id, &object_id).await?;
             let source_object = object_id.instance(pool).await?;
             can!(pool, user.clone(), [Permissions::ReadObject], source_object);
