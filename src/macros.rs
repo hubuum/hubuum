@@ -148,12 +148,9 @@ macro_rules! json_search {
 
         // If there are no queries, we can skip this filter.
         if !json_data_queries.is_empty() {
-            // Get the object IDs that match the JSON data queries. This is a complexly built
-            // query that is executed and we fish out the IDs from the result.
-            let json_data_integers = $me.json_data_subquery($pool, json_data_queries)?;
-            // Apply the filter even when the subquery matches no objects so the overall result
-            // set is empty rather than silently ignoring the JSON predicate.
-            $query = $query.filter($dbfield.eq_any(json_data_integers))
+            for json_data_query in json_data_queries {
+                $query = $query.filter(json_data_query.as_json_predicate()?);
+            }
         }
     }};
 }

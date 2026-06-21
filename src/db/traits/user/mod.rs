@@ -16,7 +16,6 @@ use crate::models::{
 };
 use crate::traits::{ClassAccessors, GroupAccessors, NamespaceAccessors, SelfAccessors};
 use crate::utilities::auth::hash_password;
-use crate::utilities::extensions::CustomStringExtensions;
 
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;

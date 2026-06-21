@@ -20,15 +20,6 @@ pub struct HubuumClass {
     pub updated_at: chrono::NaiveDateTime,
 }
 
-// For retruning the IDs in raw sql queries, which is used
-// to search in jsonb fields
-#[derive(QueryableByName, Debug)]
-#[diesel(table_name = hubuumclass)]
-pub struct ClassIdResult {
-    #[diesel(column_name = id)]
-    pub id: i32,
-}
-
 #[derive(Serialize, Deserialize, Insertable, Clone, Debug, ToSchema)]
 #[schema(example = new_hubuum_class_example)]
 #[diesel(table_name = hubuumclass)]

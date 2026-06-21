@@ -55,15 +55,6 @@ pub struct UpdateHubuumObject {
     pub description: Option<String>,
 }
 
-// For retruning the IDs in raw sql queries, which is used
-// to search in jsonb fields
-#[derive(QueryableByName, Debug)]
-#[diesel(table_name = hubuumobject)]
-pub struct ObjectIDResult {
-    #[diesel(column_name = id)]
-    pub id: i32,
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, ToSchema)]
 pub struct HubuumObjectID(pub i32);
 

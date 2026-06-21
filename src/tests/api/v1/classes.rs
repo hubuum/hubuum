@@ -295,6 +295,38 @@ pub mod tests {
 
     #[rstest]
     #[actix_web::test]
+    async fn test_api_classes_json_schema_filter_composes_with_pagination_and_count(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let prefix = "classes_json_schema_composed";
+        let created_classes = create_test_classes(&context, prefix).await;
+        let query_string = format!(
+            "name__contains={prefix}&json_schema__contains=description=blog&sort=id&limit=2"
+        );
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{CLASSES_ENDPOINT}?{query_string}"),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+
+        let total_count =
+            header_value(&resp, TOTAL_COUNT_HEADER).and_then(|value| value.parse::<i64>().ok());
+        assert_eq!(total_count, Some(3));
+        assert!(header_value(&resp, NEXT_CURSOR_HEADER).is_some());
+
+        let classes: Vec<HubuumClassExpanded> = test::read_body_json(resp).await;
+        assert_eq!(classes.len(), 2);
+        assert_contains_all!(&created_classes[0..3], &classes);
+
+        cleanup(&created_classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
     async fn test_api_classes_get_by_id(#[future(awt)] test_context: TestContext) {
         let context = test_context;
         let created_classes = create_test_classes(&context, "api_classes_get_by_id").await;

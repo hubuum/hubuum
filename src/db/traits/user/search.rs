@@ -282,27 +282,9 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
                 query_params = ?json_schema_queries
             );
 
-            let json_schema_integers = self.json_schema_subquery(pool, json_schema_queries)?;
-
-            if json_schema_integers.is_empty() {
-                debug!(
-                    message = "Searching classes",
-                    stage = "JSON Schema",
-                    user_id = self.id(),
-                    result = "No class IDs found, returning empty result"
-                );
-                return Ok(vec![]);
+            for param in json_schema_queries {
+                base_query = base_query.filter(param.as_json_predicate()?);
             }
-
-            debug!(
-                message = "Searching classes",
-                stage = "JSON Schema",
-                user_id = self.id(),
-                result = "Found class IDs",
-                class_ids = ?json_schema_integers
-            );
-
-            base_query = base_query.filter(class_id.eq_any(json_schema_integers));
         }
 
         for param in query_params {
@@ -382,11 +364,9 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
 
         let json_schema_queries = query_params.json_schemas()?;
         if !json_schema_queries.is_empty() {
-            let json_schema_integers = self.json_schema_subquery(pool, json_schema_queries)?;
-            if json_schema_integers.is_empty() {
-                return Ok(0);
+            for param in json_schema_queries {
+                base_query = base_query.filter(param.as_json_predicate()?);
             }
-            base_query = base_query.filter(class_id.eq_any(json_schema_integers));
         }
 
         for param in query_params {
@@ -501,26 +481,9 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
                 query_params = ?json_data_queries
             );
 
-            let json_data_integers = self.json_data_subquery(pool, json_data_queries)?;
-            if json_data_integers.is_empty() {
-                debug!(
-                    message = "Searching objects",
-                    stage = "JSON Data",
-                    user_id = self.id(),
-                    result = "No object IDs found, returning empty result"
-                );
-                return Ok(vec![]);
+            for param in json_data_queries {
+                base_query = base_query.filter(param.as_json_predicate()?);
             }
-
-            debug!(
-                message = "Searching objects",
-                stage = "JSON Data",
-                user_id = self.id(),
-                result = "Found object IDs",
-                class_ids = ?json_data_integers
-            );
-
-            base_query = base_query.filter(object_id.eq_any(json_data_integers));
         }
 
         for param in query_params {
@@ -600,11 +563,9 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
 
         let json_data_queries = query_params.json_datas(FilterField::JsonData)?;
         if !json_data_queries.is_empty() {
-            let json_data_integers = self.json_data_subquery(pool, json_data_queries)?;
-            if json_data_integers.is_empty() {
-                return Ok(0);
+            for param in json_data_queries {
+                base_query = base_query.filter(param.as_json_predicate()?);
             }
-            base_query = base_query.filter(object_id.eq_any(json_data_integers));
         }
 
         for param in query_params {
@@ -2229,7 +2190,7 @@ where
 
     let mut where_clauses = Vec::new();
     for param in &query_params {
-        let clause = build_related_objects_clause(user, pool, param, &mut bind_variables)?;
+        let clause = build_related_objects_clause(param, &mut bind_variables)?;
         if let Some(clause) = clause {
             where_clauses.push(clause);
         }
@@ -2627,9 +2588,7 @@ fn related_objects_column(field: &FilterField) -> Option<&'static str> {
     }
 }
 
-fn build_related_objects_clause<U: QueryJsonDataIds + ?Sized>(
-    user: &U,
-    pool: &DbPool,
+fn build_related_objects_clause(
     param: &ParsedQueryParam,
     bind_variables: &mut Vec<SQLValue>,
 ) -> Result<Option<String>, ApiError> {
@@ -2640,19 +2599,15 @@ fn build_related_objects_clause<U: QueryJsonDataIds + ?Sized>(
     }
 
     if param.field == FilterField::JsonDataFrom || param.field == FilterField::JsonDataTo {
-        let object_ids = user.query_object_ids_for_json_data(pool, vec![param])?;
-        if object_ids.is_empty() {
-            return Ok(Some("FALSE".to_string()));
-        }
-
-        let column = if param.field == FilterField::JsonDataFrom {
-            "related_objects.ancestor_object_id"
+        let jsonb_field_expr = if param.field == FilterField::JsonDataFrom {
+            "related_objects.ancestor_data"
         } else {
-            "related_objects.descendant_object_id"
+            "related_objects.descendant_data"
         };
 
-        let array_sql = sql_integer_array(&object_ids, bind_variables);
-        return Ok(Some(format!("{column} = ANY({array_sql})")));
+        let predicate = param.as_json_sql_for_field_expr(jsonb_field_expr)?;
+        bind_variables.extend(predicate.bind_variables);
+        return Ok(Some(format!("({})", predicate.sql)));
     }
 
     let column = related_objects_column(&param.field).ok_or_else(|| {
