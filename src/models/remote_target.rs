@@ -504,26 +504,33 @@ fn validate_auth_config(auth_config: &RemoteAuthConfig) -> Result<(), ApiError> 
                 .chars()
                 .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
     };
-    match auth_config {
-        RemoteAuthConfig::None => Ok(()),
-        RemoteAuthConfig::BearerSecret { secret }
-        | RemoteAuthConfig::BasicSecret { secret, .. }
-        | RemoteAuthConfig::ApiKeySecret { secret, .. } => {
-            if valid_secret(secret) {
-                Ok(())
-            } else {
-                Err(ApiError::BadRequest(
-                    "remote auth secret references must contain only letters, numbers, and underscores"
-                        .to_string(),
-                ))
-            }
+    let secret = match auth_config {
+        RemoteAuthConfig::None => return Ok(()),
+        RemoteAuthConfig::ApiKeySecret { header, secret } => {
+            // Reject an unusable header name now rather than at invocation time.
+            reqwest::header::HeaderName::from_bytes(header.as_bytes()).map_err(|_| {
+                ApiError::BadRequest(format!("Invalid API key header name: {header}"))
+            })?;
+            secret
         }
+        RemoteAuthConfig::BearerSecret { secret }
+        | RemoteAuthConfig::BasicSecret { secret, .. } => secret,
+    };
+
+    if valid_secret(secret) {
+        Ok(())
+    } else {
+        Err(ApiError::BadRequest(
+            "remote auth secret references must contain only letters, numbers, and underscores"
+                .to_string(),
+        ))
     }
 }
 
 fn validate_template(label: &str, source: &str) -> Result<(), ApiError> {
-    minijinja::Environment::new()
-        .template_from_str(source)
+    let mut env = minijinja::Environment::new();
+    crate::utilities::reporting::register_curated_helpers(&mut env);
+    env.template_from_str(source)
         .map(|_| ())
         .map_err(|error| ApiError::BadRequest(format!("Invalid {label}: {error}")))
 }
@@ -753,6 +760,42 @@ mod tests {
                 },
                 1000,
             )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn curated_filters_are_accepted_in_templates() {
+        // The `tojson` filter is documented for remote targets; validation must accept it.
+        assert!(
+            validate_target_parts(
+                "https://example.com/{{ object.id }}",
+                &serde_json::json!({ "X-Object": "{{ object.name }}" }),
+                Some("{\"data\": {{ object.data | tojson }}}"),
+                &RemoteAuthConfig::None,
+                1000,
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn api_key_header_name_is_validated() {
+        // A valid header name passes.
+        assert!(
+            validate_auth_config(&RemoteAuthConfig::ApiKeySecret {
+                header: "X-API-Key".to_string(),
+                secret: "inventory_api_key".to_string(),
+            })
+            .is_ok()
+        );
+
+        // An invalid header name is rejected at validation time, not at invocation.
+        assert!(
+            validate_auth_config(&RemoteAuthConfig::ApiKeySecret {
+                header: "Invalid Header".to_string(),
+                secret: "inventory_api_key".to_string(),
+            })
             .is_err()
         );
     }

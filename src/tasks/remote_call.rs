@@ -282,8 +282,9 @@ fn render_template(
     template: &str,
     context: &serde_json::Value,
 ) -> Result<String, ApiError> {
-    minijinja::Environment::new()
-        .template_from_str(template)
+    let mut env = minijinja::Environment::new();
+    crate::utilities::reporting::register_curated_helpers(&mut env);
+    env.template_from_str(template)
         .and_then(|compiled| compiled.render(context))
         .map_err(|error| ApiError::BadRequest(format!("Failed rendering {label}: {error}")))
 }
@@ -475,5 +476,20 @@ fn sanitize_reqwest_error(error: reqwest::Error) -> String {
         "Remote connection failed".to_string()
     } else {
         format!("Remote call failed: {error}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_template_supports_curated_filters() {
+        // The `tojson` filter is documented for remote target body templates; it must
+        // actually render, not just compile, so execution matches the docs.
+        let context = serde_json::json!({ "object": { "data": { "host": "h1" } } });
+        let rendered =
+            render_template("body_template", "{{ object.data | tojson }}", &context).unwrap();
+        assert_eq!(rendered, "{\"host\":\"h1\"}");
     }
 }

@@ -435,7 +435,13 @@ fn format_nullable_value(
     escape_formatter(out, state, value)
 }
 
-fn register_curated_helpers(env: &mut Environment<'static>) {
+/// Register the curated MiniJinja filters/functions shared by every Hubuum
+/// templating surface (reports and remote targets). Keeping a single registrar
+/// means validation and execution accept the same template syntax — e.g. the
+/// `tojson` filter documented for remote targets is available wherever templates
+/// render. The missing-value helpers degrade to no-ops when no report warning
+/// capture is active, so they are safe to use outside report rendering.
+pub(crate) fn register_curated_helpers(env: &mut Environment<'static>) {
     env.add_filter("csv_cell", csv_cell_filter);
     env.add_filter("tojson", tojson_filter);
     env.add_filter("default_if_empty", default_if_empty_filter);
