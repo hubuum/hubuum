@@ -66,7 +66,9 @@ impl DeleteAdapter for HubuumClassRelationID {
     }
 }
 
-impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)> for NewHubuumClassRelation {
+impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)>
+    for NewHubuumClassRelation
+{
     async fn namespace_adapter(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
         use crate::db::traits::GetNamespace;
         self.namespace_from_backend(pool).await
@@ -81,7 +83,9 @@ impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)> for Ne
     }
 }
 
-impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)> for NewHubuumObjectRelation {
+impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)>
+    for NewHubuumObjectRelation
+{
     async fn namespace_adapter(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
         use crate::db::traits::GetNamespace;
         self.namespace_from_backend(pool).await
@@ -96,7 +100,9 @@ impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)> for Ne
     }
 }
 
-impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)> for HubuumObjectRelationID {
+impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)>
+    for HubuumObjectRelationID
+{
     async fn namespace_adapter(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
         self.instance(pool).await?.namespace(pool).await
     }
@@ -139,7 +145,9 @@ impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)> for Hu
     }
 }
 
-impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)> for HubuumClassRelation {
+impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)>
+    for HubuumClassRelation
+{
     async fn class_adapter(&self, pool: &DbPool) -> Result<(HubuumClass, HubuumClass), ApiError> {
         use crate::db::traits::GetClass;
         self.class_from_backend(pool).await
@@ -156,7 +164,9 @@ impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)> fo
     }
 }
 
-impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)> for HubuumClassRelationID {
+impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)>
+    for HubuumClassRelationID
+{
     async fn namespace_adapter(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
         self.instance(pool).await?.namespace(pool).await
     }
@@ -169,7 +179,9 @@ impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)> for Hu
     }
 }
 
-impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)> for HubuumClassRelationID {
+impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)>
+    for HubuumClassRelationID
+{
     async fn class_adapter(&self, pool: &DbPool) -> Result<(HubuumClass, HubuumClass), ApiError> {
         use crate::db::traits::GetClass;
         self.class_from_backend(pool).await
@@ -183,7 +195,9 @@ impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)> fo
     }
 }
 
-impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)> for NewHubuumClassRelation {
+impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)>
+    for NewHubuumClassRelation
+{
     async fn class_adapter(&self, pool: &DbPool) -> Result<(HubuumClass, HubuumClass), ApiError> {
         use crate::db::traits::GetClass;
         self.class_from_backend(pool).await
@@ -200,7 +214,9 @@ impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)> fo
     }
 }
 
-impl ObjectAdapter<(HubuumObject, HubuumObject), (HubuumObjectID, HubuumObjectID)> for NewHubuumObjectRelation {
+impl ObjectAdapter<(HubuumObject, HubuumObject), (HubuumObjectID, HubuumObjectID)>
+    for NewHubuumObjectRelation
+{
     async fn object_adapter(
         &self,
         pool: &DbPool,
@@ -220,7 +236,9 @@ impl ObjectAdapter<(HubuumObject, HubuumObject), (HubuumObjectID, HubuumObjectID
     }
 }
 
-impl ObjectAdapter<(HubuumObject, HubuumObject), (HubuumObjectID, HubuumObjectID)> for HubuumObjectRelationID {
+impl ObjectAdapter<(HubuumObject, HubuumObject), (HubuumObjectID, HubuumObjectID)>
+    for HubuumObjectRelationID
+{
     async fn object_adapter(
         &self,
         pool: &DbPool,
@@ -237,7 +255,9 @@ impl ObjectAdapter<(HubuumObject, HubuumObject), (HubuumObjectID, HubuumObjectID
     }
 }
 
-impl ObjectAdapter<(HubuumObject, HubuumObject), (HubuumObjectID, HubuumObjectID)> for HubuumObjectRelation {
+impl ObjectAdapter<(HubuumObject, HubuumObject), (HubuumObjectID, HubuumObjectID)>
+    for HubuumObjectRelation
+{
     async fn object_adapter(
         &self,
         pool: &DbPool,

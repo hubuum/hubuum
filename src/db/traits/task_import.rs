@@ -459,6 +459,11 @@ pub fn apply_permissions_db(
                     has_create_template: Some(false),
                     has_update_template: Some(false),
                     has_delete_template: Some(false),
+                    has_read_remote_target: Some(false),
+                    has_create_remote_target: Some(false),
+                    has_update_remote_target: Some(false),
+                    has_delete_remote_target: Some(false),
+                    has_execute_remote_target: Some(false),
                 }
             } else {
                 UpdatePermission::default()
@@ -509,6 +514,15 @@ pub fn apply_permissions_db(
                 has_create_template: permission_list.contains(&Permissions::CreateTemplate),
                 has_update_template: permission_list.contains(&Permissions::UpdateTemplate),
                 has_delete_template: permission_list.contains(&Permissions::DeleteTemplate),
+                has_read_remote_target: permission_list.contains(&Permissions::ReadRemoteTarget),
+                has_create_remote_target: permission_list
+                    .contains(&Permissions::CreateRemoteTarget),
+                has_update_remote_target: permission_list
+                    .contains(&Permissions::UpdateRemoteTarget),
+                has_delete_remote_target: permission_list
+                    .contains(&Permissions::DeleteRemoteTarget),
+                has_execute_remote_target: permission_list
+                    .contains(&Permissions::ExecuteRemoteTarget),
             };
 
             diesel::insert_into(permissions_table)
@@ -554,6 +568,11 @@ fn apply_permission_list_to_update(update: &mut UpdatePermission, permissions: &
             Permissions::CreateTemplate => update.has_create_template = Some(true),
             Permissions::UpdateTemplate => update.has_update_template = Some(true),
             Permissions::DeleteTemplate => update.has_delete_template = Some(true),
+            Permissions::ReadRemoteTarget => update.has_read_remote_target = Some(true),
+            Permissions::CreateRemoteTarget => update.has_create_remote_target = Some(true),
+            Permissions::UpdateRemoteTarget => update.has_update_remote_target = Some(true),
+            Permissions::DeleteRemoteTarget => update.has_delete_remote_target = Some(true),
+            Permissions::ExecuteRemoteTarget => update.has_execute_remote_target = Some(true),
         }
     }
 }

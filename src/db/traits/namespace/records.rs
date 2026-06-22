@@ -122,6 +122,11 @@ impl SaveNamespaceForGroupRecord for NewNamespace {
                 has_create_template: true,
                 has_update_template: true,
                 has_delete_template: true,
+                has_read_remote_target: true,
+                has_create_remote_target: true,
+                has_update_remote_target: true,
+                has_delete_remote_target: true,
+                has_execute_remote_target: true,
             };
 
             diesel::insert_into(permissions)

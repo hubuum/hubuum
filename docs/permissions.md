@@ -83,6 +83,23 @@ Report templates are used to format report output and are scoped to namespaces. 
 - Templates with the same name cannot exist within the same namespace (enforced by a unique constraint).
 - Valid template content types are: `text/plain`, `text/html`, and `text/csv`. The `application/json` content type is reserved for the default JSON report output and cannot be used for stored templates.
 
+### Permissions for remote targets
+
+Remote targets define outbound object actions and are scoped to namespaces. The following permissions
+control target management and invocation:
+
+| Permission | Description |
+| ---------- | ----------- |
+| `ReadRemoteTarget` | Allows listing and reading remote target definitions in the namespace. |
+| `CreateRemoteTarget` | Allows creating remote targets in the namespace. Also required when moving a target into a namespace. |
+| `UpdateRemoteTarget` | Allows modifying existing targets in the namespace. Required on the source namespace when moving a target. |
+| `DeleteRemoteTarget` | Allows deleting targets from the namespace. |
+| `ExecuteRemoteTarget` | Allows invoking targets in the namespace. |
+
+Invoking a remote target also requires `ReadObject` on the object namespace. The worker re-checks
+both `ReadObject` and `ExecuteRemoteTarget` for the submitting user before executing the outbound
+HTTP call.
+
 ## Example
 
 ### Part 1: A (relatively) simple example

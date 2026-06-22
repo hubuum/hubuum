@@ -201,6 +201,8 @@ impl LoadUserRecord for UserID {
     async fn load_user_record(&self, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::{id, users};
 
-        with_connection(pool, |conn| users.filter(id.eq(self.id())).first::<User>(conn))
+        with_connection(pool, |conn| {
+            users.filter(id.eq(self.id())).first::<User>(conn)
+        })
     }
 }

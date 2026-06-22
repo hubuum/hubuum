@@ -125,6 +125,47 @@ diesel::table! {
         has_delete_template -> Bool,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        has_read_remote_target -> Bool,
+        has_create_remote_target -> Bool,
+        has_update_remote_target -> Bool,
+        has_delete_remote_target -> Bool,
+        has_execute_remote_target -> Bool,
+    }
+}
+
+diesel::table! {
+    remote_call_results (id) {
+        id -> Int4,
+        task_id -> Int4,
+        target_id -> Nullable<Int4>,
+        object_id -> Nullable<Int4>,
+        method -> Varchar,
+        rendered_url -> Text,
+        response_status -> Nullable<Int4>,
+        response_headers -> Nullable<Jsonb>,
+        response_body_preview -> Nullable<Text>,
+        duration_ms -> Int4,
+        success -> Bool,
+        error -> Nullable<Text>,
+        created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    remote_targets (id) {
+        id -> Int4,
+        namespace_id -> Int4,
+        name -> Varchar,
+        description -> Varchar,
+        method -> Varchar,
+        url_template -> Text,
+        headers_template -> Jsonb,
+        body_template -> Nullable<Text>,
+        auth_config -> Jsonb,
+        timeout_ms -> Int4,
+        enabled -> Bool,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
     }
 }
 
@@ -240,6 +281,10 @@ diesel::joinable!(hubuumobject_relation -> hubuumclass_relation (class_relation_
 diesel::joinable!(import_task_results -> tasks (task_id));
 diesel::joinable!(permissions -> groups (group_id));
 diesel::joinable!(permissions -> namespaces (namespace_id));
+diesel::joinable!(remote_call_results -> hubuumobject (object_id));
+diesel::joinable!(remote_call_results -> remote_targets (target_id));
+diesel::joinable!(remote_call_results -> tasks (task_id));
+diesel::joinable!(remote_targets -> namespaces (namespace_id));
 diesel::joinable!(report_task_outputs -> tasks (task_id));
 diesel::joinable!(report_templates -> hubuumclass (class_id));
 diesel::joinable!(report_templates -> namespaces (namespace_id));
@@ -258,6 +303,8 @@ diesel::allow_tables_to_appear_in_same_query!(
     import_task_results,
     namespaces,
     permissions,
+    remote_call_results,
+    remote_targets,
     report_task_outputs,
     report_templates,
     task_events,

@@ -67,6 +67,18 @@ fn permission_filter_sql(permission: Permissions, target: bool) -> &'static str 
         (Permissions::UpdateTemplate, false) => "permissions.has_update_template = FALSE",
         (Permissions::DeleteTemplate, true) => "permissions.has_delete_template = TRUE",
         (Permissions::DeleteTemplate, false) => "permissions.has_delete_template = FALSE",
+        (Permissions::ReadRemoteTarget, true) => "permissions.has_read_remote_target = TRUE",
+        (Permissions::ReadRemoteTarget, false) => "permissions.has_read_remote_target = FALSE",
+        (Permissions::CreateRemoteTarget, true) => "permissions.has_create_remote_target = TRUE",
+        (Permissions::CreateRemoteTarget, false) => "permissions.has_create_remote_target = FALSE",
+        (Permissions::UpdateRemoteTarget, true) => "permissions.has_update_remote_target = TRUE",
+        (Permissions::UpdateRemoteTarget, false) => "permissions.has_update_remote_target = FALSE",
+        (Permissions::DeleteRemoteTarget, true) => "permissions.has_delete_remote_target = TRUE",
+        (Permissions::DeleteRemoteTarget, false) => "permissions.has_delete_remote_target = FALSE",
+        (Permissions::ExecuteRemoteTarget, true) => "permissions.has_execute_remote_target = TRUE",
+        (Permissions::ExecuteRemoteTarget, false) => {
+            "permissions.has_execute_remote_target = FALSE"
+        }
     }
 }
 

@@ -52,6 +52,7 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/iam/users
 - CI generates the spec and fails if it drifts from `docs/openapi.json`.
 - The report endpoint is documented in [docs/report_api.md](docs/report_api.md).
 - Stored template examples are documented in [docs/template_guide.md](docs/template_guide.md).
+- Remote target actions are documented in [docs/remote_targets.md](docs/remote_targets.md).
 
 ### Production Behavior
 

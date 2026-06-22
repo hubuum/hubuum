@@ -6,6 +6,7 @@ pub mod namespace;
 pub mod object;
 pub mod permissions;
 pub mod relations;
+pub mod remote_target;
 pub mod report_template;
 pub mod task;
 pub mod task_import;

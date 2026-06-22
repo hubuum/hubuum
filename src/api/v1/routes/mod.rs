@@ -5,6 +5,7 @@ pub mod groups;
 pub mod imports;
 pub mod namespaces;
 pub mod relations;
+pub mod remote_targets;
 pub mod reports;
 pub mod search;
 pub mod tasks;
@@ -21,5 +22,6 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(web::scope("/reports").configure(reports::config))
         .service(web::scope("/tasks").configure(tasks::config))
         .service(web::scope("/templates").configure(templates::config))
+        .service(web::scope("/remote-targets").configure(remote_targets::config))
         .service(web::scope("/relations").configure(relations::config));
 }
