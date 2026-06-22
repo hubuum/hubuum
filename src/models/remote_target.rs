@@ -1,12 +1,16 @@
+use std::net::IpAddr;
 use std::str::FromStr;
 
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
+use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
+use urlparse::urlparse;
 use utoipa::ToSchema;
 
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
+use crate::models::{HubuumClassID, HubuumObjectID, NamespaceID};
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
@@ -109,7 +113,7 @@ pub struct RemoteTarget {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct NewRemoteTarget {
-    pub namespace_id: i32,
+    pub namespace_id: NamespaceID,
     pub name: String,
     pub description: String,
     pub method: RemoteHttpMethod,
@@ -127,7 +131,7 @@ pub struct NewRemoteTarget {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct UpdateRemoteTarget {
-    pub namespace_id: Option<i32>,
+    pub namespace_id: Option<NamespaceID>,
     pub name: Option<String>,
     pub description: Option<String>,
     pub method: Option<RemoteHttpMethod>,
@@ -194,9 +198,9 @@ impl Default for RemoteTargetInvokeRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StoredRemoteCallTaskPayload {
-    pub target_id: i32,
-    pub class_id: i32,
-    pub object_id: i32,
+    pub target_id: RemoteTargetID,
+    pub class_id: HubuumClassID,
+    pub object_id: HubuumObjectID,
     pub parameters: serde_json::Value,
     pub body_override: serde_json::Value,
 }
@@ -268,7 +272,7 @@ impl NewRemoteTarget {
         )?;
 
         Ok(NewRemoteTargetRow {
-            namespace_id: self.namespace_id,
+            namespace_id: self.namespace_id.id(),
             name: self.name,
             description: self.description,
             method: self.method.as_str().to_string(),
@@ -327,7 +331,7 @@ impl UpdateRemoteTarget {
         )?;
 
         Ok(UpdateRemoteTargetRow {
-            namespace_id: self.namespace_id,
+            namespace_id: self.namespace_id.map(NamespaceID::id),
             name: self.name,
             description: self.description,
             method: self.method.map(|method| method.as_str().to_string()),
@@ -367,18 +371,108 @@ pub fn validate_target_parts(
     Ok(())
 }
 
-pub fn validate_rendered_remote_url(url: &str) -> Result<(), ApiError> {
-    if !url.starts_with("https://") {
-        return Err(ApiError::BadRequest(
-            "remote target URLs must use https".to_string(),
-        ));
-    }
-    if url.trim() != url || url.len() <= "https://".len() {
+/// Host and port extracted from a validated outbound remote target URL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutboundUrlParts {
+    pub host: String,
+    pub port: u16,
+}
+
+/// Validate a fully rendered outbound URL and return its host/port.
+///
+/// Enforces that the URL parses, uses the `https` scheme, carries no embedded
+/// credentials, and names a host. The returned host/port feed the worker's
+/// SSRF address screening before the outbound call is made.
+pub fn validate_rendered_remote_url(url: &str) -> Result<OutboundUrlParts, ApiError> {
+    if url.is_empty() || url.chars().any(|ch| ch.is_whitespace() || ch.is_control()) {
         return Err(ApiError::BadRequest(
             "remote target URL is invalid".to_string(),
         ));
     }
-    Ok(())
+
+    let parsed = urlparse(url);
+
+    if !parsed.scheme.eq_ignore_ascii_case("https") {
+        return Err(ApiError::BadRequest(
+            "remote target URLs must use https".to_string(),
+        ));
+    }
+
+    if parsed.username.is_some() || parsed.password.is_some() {
+        return Err(ApiError::BadRequest(
+            "remote target URLs must not contain embedded credentials".to_string(),
+        ));
+    }
+
+    let host = parsed
+        .hostname
+        .filter(|host| !host.is_empty())
+        .ok_or_else(|| ApiError::BadRequest("remote target URL is missing a host".to_string()))?;
+
+    let port = parsed.port.unwrap_or(443);
+
+    Ok(OutboundUrlParts { host, port })
+}
+
+/// IP networks that must never be reachable as remote targets unless explicitly
+/// allowed via configuration. Covers loopback, RFC1918, link-local, carrier-grade
+/// NAT, cloud metadata, unique-local, documentation, and other non-global ranges.
+fn blocked_outbound_nets() -> &'static [IpNet] {
+    use std::sync::OnceLock;
+    static NETS: OnceLock<Vec<IpNet>> = OnceLock::new();
+    NETS.get_or_init(|| {
+        [
+            // IPv4
+            "0.0.0.0/8",
+            "10.0.0.0/8",
+            "100.64.0.0/10",
+            "127.0.0.0/8",
+            "169.254.0.0/16",
+            "172.16.0.0/12",
+            "192.0.0.0/24",
+            "192.0.2.0/24",
+            "192.168.0.0/16",
+            "198.18.0.0/15",
+            "198.51.100.0/24",
+            "203.0.113.0/24",
+            "224.0.0.0/4",
+            "240.0.0.0/4",
+            "255.255.255.255/32",
+            // IPv6
+            "::/128",
+            "::1/128",
+            "::ffff:0:0/96",
+            "64:ff9b::/96",
+            "100::/64",
+            "2001:db8::/32",
+            "fc00::/7",
+            "fe80::/10",
+            "ff00::/8",
+        ]
+        .iter()
+        .map(|net| net.parse().expect("static blocked net must parse"))
+        .collect()
+    })
+}
+
+/// Returns true when an outbound remote call to `ip` must be refused (SSRF guard).
+///
+/// IPv4-mapped IPv6 addresses are unwrapped so an attacker cannot smuggle a private
+/// IPv4 address through an IPv6 literal.
+pub fn remote_target_ip_blocked(ip: IpAddr) -> bool {
+    let ip = match ip {
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => IpAddr::V4(v4),
+            None => IpAddr::V6(v6),
+        },
+        other => other,
+    };
+
+    blocked_outbound_nets().iter().any(|net| match (net, ip) {
+        (IpNet::V4(net), IpAddr::V4(addr)) => net.contains(&addr),
+        (IpNet::V6(net), IpAddr::V6(addr)) => net.contains(&addr),
+        _ => false,
+    })
 }
 
 fn validate_header_templates(value: &serde_json::Value) -> Result<(), ApiError> {
@@ -558,9 +652,59 @@ mod tests {
 
     #[test]
     fn rendered_remote_urls_must_be_https() {
-        assert!(validate_rendered_remote_url("https://example.com/hook").is_ok());
+        let parts = validate_rendered_remote_url("https://example.com/hook").unwrap();
+        assert_eq!(parts.host, "example.com");
+        assert_eq!(parts.port, 443);
+
+        assert_eq!(
+            validate_rendered_remote_url("https://example.com:8443/hook")
+                .unwrap()
+                .port,
+            8443
+        );
+
         assert!(validate_rendered_remote_url("http://example.com/hook").is_err());
         assert!(validate_rendered_remote_url("https://").is_err());
+        assert!(validate_rendered_remote_url("ftp://example.com").is_err());
+        assert!(validate_rendered_remote_url("https://example.com /hook").is_err());
+    }
+
+    #[test]
+    fn rendered_remote_urls_reject_embedded_credentials() {
+        assert!(validate_rendered_remote_url("https://user:pass@example.com/hook").is_err());
+        assert!(validate_rendered_remote_url("https://user@example.com/hook").is_err());
+    }
+
+    #[test]
+    fn private_and_internal_ips_are_blocked() {
+        use std::net::{Ipv4Addr, Ipv6Addr};
+
+        // Blocked: loopback, RFC1918, link-local / cloud metadata, ULA, mapped v4.
+        assert!(remote_target_ip_blocked(IpAddr::V4(Ipv4Addr::LOCALHOST)));
+        assert!(remote_target_ip_blocked(IpAddr::V4(Ipv4Addr::new(
+            10, 0, 0, 5
+        ))));
+        assert!(remote_target_ip_blocked(IpAddr::V4(Ipv4Addr::new(
+            192, 168, 1, 1
+        ))));
+        assert!(remote_target_ip_blocked(IpAddr::V4(Ipv4Addr::new(
+            169, 254, 169, 254
+        ))));
+        assert!(remote_target_ip_blocked(IpAddr::V6(Ipv6Addr::LOCALHOST)));
+        assert!(remote_target_ip_blocked(
+            "fd00::1".parse::<IpAddr>().unwrap()
+        ));
+        assert!(remote_target_ip_blocked(
+            "::ffff:127.0.0.1".parse::<IpAddr>().unwrap()
+        ));
+
+        // Allowed: genuinely global addresses.
+        assert!(!remote_target_ip_blocked(IpAddr::V4(Ipv4Addr::new(
+            8, 8, 8, 8
+        ))));
+        assert!(!remote_target_ip_blocked(
+            "2606:4700:4700::1111".parse::<IpAddr>().unwrap()
+        ));
     }
 
     #[test]

@@ -54,7 +54,7 @@ pub async fn create_remote_target(
         &pool,
         user,
         [Permissions::CreateRemoteTarget],
-        NamespaceID::new(target.namespace_id)?
+        target.namespace_id
     );
 
     let created: RemoteTarget = target
@@ -172,12 +172,7 @@ pub async fn patch_remote_target(
         NamespaceID::new(existing.namespace_id)?
     );
     if let Some(namespace_id) = update.namespace_id {
-        can!(
-            &pool,
-            user,
-            [Permissions::CreateRemoteTarget],
-            NamespaceID::new(namespace_id)?
-        );
+        can!(&pool, user, [Permissions::CreateRemoteTarget], namespace_id);
     }
 
     let row = update.into_row(&existing)?;
@@ -279,9 +274,9 @@ pub async fn invoke_remote_target(
     );
 
     let payload = serde_json::to_value(StoredRemoteCallTaskPayload {
-        target_id: target.id,
-        class_id: class.id,
-        object_id: object.id,
+        target_id,
+        class_id,
+        object_id,
         parameters: invoke.parameters,
         body_override: invoke.body_override,
     })?;

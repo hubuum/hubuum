@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::time::Instant;
 
 use base64::Engine;
@@ -5,16 +6,19 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use tracing::warn;
 
 use crate::can;
-use crate::config::{DEFAULT_REPORT_MAX_OUTPUT_BYTES, DEFAULT_REPORT_STAGE_TIMEOUT_MS, get_config};
+use crate::config::{
+    DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS, DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES,
+    DEFAULT_REMOTE_CALL_TIMEOUT_MS, get_config,
+};
 use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
 use crate::db::traits::remote_target::insert_remote_call_result;
 use crate::db::traits::task::{TaskBackend, TaskStateUpdate};
 use crate::errors::ApiError;
 use crate::models::{
-    HubuumClassID, HubuumObjectID, NamespaceID, NewRemoteCallResult, NewTaskEventRecord,
-    Permissions, RemoteAuthConfig, RemoteHttpMethod, RemoteTargetID, StoredRemoteCallTaskPayload,
-    TaskRecord, TaskStatus, User, validate_rendered_remote_url,
+    NamespaceID, NewRemoteCallResult, NewTaskEventRecord, Permissions, RemoteAuthConfig,
+    RemoteHttpMethod, StoredRemoteCallTaskPayload, TaskRecord, TaskStatus, User,
+    remote_target_ip_blocked, validate_rendered_remote_url,
 };
 use crate::traits::{ClassAccessors, NamespaceAccessors, SelfAccessors};
 
@@ -50,8 +54,8 @@ pub(super) async fn execute_remote_call_task(
             let sanitized = crate::tasks::helpers::sanitize_error_for_storage(&error);
             let fallback = NewRemoteCallResult {
                 task_id: task.id,
-                target_id: Some(request.target_id),
-                object_id: Some(request.object_id),
+                target_id: Some(request.target_id.id()),
+                object_id: Some(request.object_id.id()),
                 method: "unknown".to_string(),
                 rendered_url: "".to_string(),
                 response_status: None,
@@ -93,19 +97,15 @@ async fn execute_remote_call(
     user: &User,
     request: &StoredRemoteCallTaskPayload,
 ) -> Result<RemoteExecutionOutcome, ApiError> {
-    let target = RemoteTargetID::new(request.target_id)?
-        .instance(pool)
-        .await?;
+    let target = request.target_id.instance(pool).await?;
     if !target.enabled {
         return Err(ApiError::BadRequest(
             "Remote target is disabled".to_string(),
         ));
     }
 
-    let object = HubuumObjectID::new(request.object_id)?
-        .instance(pool)
-        .await?;
-    let class = HubuumClassID::new(request.class_id)?.class(pool).await?;
+    let object = request.object_id.instance(pool).await?;
+    let class = request.class_id.class(pool).await?;
     if object.hubuum_class_id != class.id {
         return Err(ApiError::NotFound("Object not found in class".to_string()));
     }
@@ -140,7 +140,8 @@ async fn execute_remote_call(
     });
 
     let rendered_url = render_template("url_template", &target.url_template, &context)?;
-    validate_rendered_remote_url(&rendered_url)?;
+    let url_parts = validate_rendered_remote_url(&rendered_url)?;
+    let screened_addrs = screen_outbound_host(&url_parts.host, url_parts.port).await?;
     let rendered_headers = render_headers(&target.headers_template, &context)?;
     let rendered_body = target
         .body_template
@@ -152,8 +153,14 @@ async fn execute_remote_call(
     apply_auth(&mut headers, &target.auth_config)?;
 
     let timeout_ms = bounded_timeout_ms(target.timeout_ms);
+    // Never follow redirects: a 3xx could otherwise bounce the call to a non-https
+    // scheme or an internal address that bypassed the initial SSRF screening.
+    // Pin DNS to the addresses we already screened so the host cannot rebind to a
+    // private address between our check and the connection.
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_millis(timeout_ms))
+        .redirect(reqwest::redirect::Policy::none())
+        .resolve_to_addrs(&url_parts.host, &screened_addrs)
         .build()
         .map_err(|error| ApiError::InternalServerError(format!("HTTP client error: {error}")))?;
 
@@ -166,19 +173,16 @@ async fn execute_remote_call(
 
     let start = Instant::now();
     let response_result = request_builder.send().await;
-    let duration_ms = i32::try_from(start.elapsed().as_millis()).unwrap_or(i32::MAX);
     let preview_limit = get_config()
-        .map(|config| config.report_max_output_bytes)
-        .unwrap_or(DEFAULT_REPORT_MAX_OUTPUT_BYTES);
+        .map(|config| config.remote_call_max_response_bytes)
+        .unwrap_or(DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES);
 
     match response_result {
         Ok(response) => {
             let status = response.status();
             let response_headers = headers_to_json(response.headers());
-            let body_preview = response.text().await.map_err(|error| {
-                ApiError::InternalServerError(format!("Failed reading remote response: {error}"))
-            })?;
-            let body_preview = truncate_preview(&body_preview, preview_limit);
+            let body_preview = read_capped_body(response, preview_limit).await?;
+            let duration_ms = i32::try_from(start.elapsed().as_millis()).unwrap_or(i32::MAX);
             let success = status.is_success();
             insert_remote_call_result(
                 pool,
@@ -213,6 +217,7 @@ async fn execute_remote_call(
             })
         }
         Err(error) => {
+            let duration_ms = i32::try_from(start.elapsed().as_millis()).unwrap_or(i32::MAX);
             let message = sanitize_reqwest_error(error);
             insert_remote_call_result(
                 pool,
@@ -366,17 +371,94 @@ fn reqwest_method(method: RemoteHttpMethod) -> reqwest::Method {
 }
 
 fn bounded_timeout_ms(timeout_ms: i32) -> u64 {
-    let requested = u64::try_from(timeout_ms).unwrap_or(DEFAULT_REPORT_STAGE_TIMEOUT_MS);
+    let requested = u64::try_from(timeout_ms).unwrap_or(DEFAULT_REMOTE_CALL_TIMEOUT_MS);
     let cap = get_config()
-        .map(|config| config.report_stage_timeout_ms)
-        .unwrap_or(DEFAULT_REPORT_STAGE_TIMEOUT_MS);
+        .map(|config| config.remote_call_timeout_ms)
+        .unwrap_or(DEFAULT_REMOTE_CALL_TIMEOUT_MS);
     requested.min(cap)
+}
+
+/// Resolve `host` and reject the call if any resolved address is private/internal,
+/// unless the deployment has opted in via `remote_call_allow_private_targets`.
+/// Returns the screened socket addresses so the caller can pin reqwest's resolver
+/// to exactly these IPs (defeating DNS rebinding).
+async fn screen_outbound_host(host: &str, port: u16) -> Result<Vec<SocketAddr>, ApiError> {
+    let allow_private = get_config()
+        .map(|config| config.remote_call_allow_private_targets)
+        .unwrap_or(DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS);
+
+    let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|_| {
+            ApiError::BadRequest(format!("Failed to resolve remote target host '{host}'"))
+        })?
+        .collect();
+
+    if addrs.is_empty() {
+        return Err(ApiError::BadRequest(format!(
+            "Remote target host '{host}' did not resolve to any address"
+        )));
+    }
+
+    if !allow_private
+        && let Some(blocked) = addrs
+            .iter()
+            .find(|addr| remote_target_ip_blocked(addr.ip()))
+    {
+        return Err(ApiError::BadRequest(format!(
+            "Remote target host '{host}' resolves to a disallowed address ({})",
+            blocked.ip()
+        )));
+    }
+
+    Ok(addrs)
+}
+
+/// Read at most `limit` bytes of the response body, stopping early so an oversized
+/// or hostile response cannot exhaust worker memory.
+async fn read_capped_body(
+    mut response: reqwest::Response,
+    limit: usize,
+) -> Result<String, ApiError> {
+    let mut buffer: Vec<u8> = Vec::new();
+    while buffer.len() < limit {
+        match response.chunk().await.map_err(|error| {
+            ApiError::InternalServerError(format!("Failed reading remote response: {error}"))
+        })? {
+            Some(chunk) => {
+                let remaining = limit - buffer.len();
+                let take = remaining.min(chunk.len());
+                buffer.extend_from_slice(&chunk[..take]);
+            }
+            None => break,
+        }
+    }
+    Ok(String::from_utf8_lossy(&buffer).into_owned())
+}
+
+/// Response headers that may carry secrets the remote echoes back; their values are
+/// redacted before storage so they are never persisted in `remote_call_results`.
+fn is_sensitive_response_header(name: &str) -> bool {
+    const SENSITIVE: [&str; 6] = [
+        "set-cookie",
+        "set-cookie2",
+        "authorization",
+        "proxy-authorization",
+        "www-authenticate",
+        "proxy-authenticate",
+    ];
+    SENSITIVE.contains(&name.to_ascii_lowercase().as_str())
 }
 
 fn headers_to_json(headers: &HeaderMap) -> serde_json::Value {
     let mut object = serde_json::Map::new();
     for (name, value) in headers {
-        if let Ok(value) = value.to_str() {
+        if is_sensitive_response_header(name.as_str()) {
+            object.insert(
+                name.to_string(),
+                serde_json::Value::String("[redacted]".to_string()),
+            );
+        } else if let Ok(value) = value.to_str() {
             object.insert(
                 name.to_string(),
                 serde_json::Value::String(value.to_string()),
@@ -384,17 +466,6 @@ fn headers_to_json(headers: &HeaderMap) -> serde_json::Value {
         }
     }
     serde_json::Value::Object(object)
-}
-
-fn truncate_preview(value: &str, limit: usize) -> String {
-    if value.len() <= limit {
-        return value.to_string();
-    }
-    let mut end = limit;
-    while !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value[..end].to_string()
 }
 
 fn sanitize_reqwest_error(error: reqwest::Error) -> String {

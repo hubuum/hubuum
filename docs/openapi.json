@@ -8489,6 +8489,11 @@
           }
         }
       },
+      "NamespaceID": {
+        "type": "integer",
+        "format": "int32",
+        "description": "Identifier wrapper for a [`Namespace`]."
+      },
       "NamespaceKey": {
         "type": "object",
         "required": [
@@ -8743,8 +8748,7 @@
             "type": "string"
           },
           "namespace_id": {
-            "type": "integer",
-            "format": "int32"
+            "$ref": "#/components/schemas/NamespaceID"
           },
           "timeout_ms": {
             "type": "integer",
@@ -10660,11 +10664,14 @@
             ]
           },
           "namespace_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NamespaceID"
+              }
+            ]
           },
           "timeout_ms": {
             "type": [

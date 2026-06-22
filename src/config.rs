@@ -25,6 +25,9 @@ pub const DEFAULT_REPORT_TEMPLATE_FUEL: u64 = 50_000;
 pub const DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS: usize = 2_000;
 pub const DEFAULT_REPORT_MAX_OUTPUT_BYTES: usize = 262_144;
 pub const DEFAULT_REPORT_STAGE_TIMEOUT_MS: u64 = 10_000;
+pub const DEFAULT_REMOTE_CALL_TIMEOUT_MS: u64 = 10_000;
+pub const DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES: usize = 262_144;
+pub const DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS: bool = false;
 pub const DEFAULT_DB_STATEMENT_TIMEOUT_MS: u64 = 0;
 pub const DEFAULT_REPORT_DB_STATEMENT_TIMEOUT_MS: u64 = 0;
 pub const DEFAULT_TOKEN_LIFETIME_HOURS: i64 = 24;
@@ -215,6 +218,40 @@ pub struct AppConfig {
         default_value_t = DEFAULT_REPORT_STAGE_TIMEOUT_MS
     )]
     pub report_stage_timeout_ms: u64,
+
+    /// Upper bound (milliseconds) applied to a remote target's per-call `timeout_ms`.
+    ///
+    /// A target may request a smaller timeout, but never a larger one. This bounds the
+    /// wall-clock cost of any single outbound remote call dispatched by the worker.
+    #[clap(
+        long,
+        env = "HUBUUM_REMOTE_CALL_TIMEOUT_MS",
+        default_value_t = DEFAULT_REMOTE_CALL_TIMEOUT_MS
+    )]
+    pub remote_call_timeout_ms: u64,
+
+    /// Maximum number of remote response body bytes read and stored as a preview.
+    ///
+    /// The worker stops reading the outbound response once this limit is reached, so a
+    /// hostile or oversized response cannot exhaust worker memory.
+    #[clap(
+        long,
+        env = "HUBUUM_REMOTE_CALL_MAX_RESPONSE_BYTES",
+        default_value_t = DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES
+    )]
+    pub remote_call_max_response_bytes: usize,
+
+    /// Allow remote targets to resolve to private, loopback, or link-local addresses.
+    ///
+    /// Disabled by default. When `false`, the worker refuses to call any URL whose host
+    /// resolves to a non-global address (loopback, RFC1918, link-local, ULA, cloud
+    /// metadata, etc.), mitigating SSRF. Enable only for trusted internal deployments.
+    #[clap(
+        long,
+        env = "HUBUUM_REMOTE_CALL_ALLOW_PRIVATE_TARGETS",
+        default_value_t = DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS
+    )]
+    pub remote_call_allow_private_targets: bool,
 
     /// Pool-global Postgres `statement_timeout` in milliseconds (0 = disabled).
     ///
@@ -490,6 +527,18 @@ impl AppConfig {
         if self.report_stage_timeout_ms == 0 {
             return Err(ApiError::BadRequest(
                 "report_stage_timeout_ms must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.remote_call_timeout_ms == 0 {
+            return Err(ApiError::BadRequest(
+                "remote_call_timeout_ms must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.remote_call_max_response_bytes == 0 {
+            return Err(ApiError::BadRequest(
+                "remote_call_max_response_bytes must be greater than 0".to_string(),
             ));
         }
 
@@ -792,6 +841,18 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_REPORT_STAGE_TIMEOUT_MS),
+        remote_call_timeout_ms: env::var("HUBUUM_REMOTE_CALL_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_REMOTE_CALL_TIMEOUT_MS),
+        remote_call_max_response_bytes: env::var("HUBUUM_REMOTE_CALL_MAX_RESPONSE_BYTES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES),
+        remote_call_allow_private_targets: env::var("HUBUUM_REMOTE_CALL_ALLOW_PRIVATE_TARGETS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS),
         db_statement_timeout_ms: env::var("HUBUUM_DB_STATEMENT_TIMEOUT_MS")
             .ok()
             .and_then(|value| value.parse().ok())

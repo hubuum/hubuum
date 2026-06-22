@@ -285,19 +285,44 @@ The worker:
 1. loads the target, class, object, and namespace
 2. re-checks permissions for the submitting user
 3. renders URL, headers, and body
-4. resolves auth secrets from environment variables
-5. performs the outbound HTTP request
-6. stores a sanitized result row
-7. finalizes the task
+4. validates the rendered URL and screens the destination address (see Outbound safety)
+5. resolves auth secrets from environment variables
+6. performs the outbound HTTP request
+7. stores a sanitized result row
+8. finalizes the task
 
 Task status rules:
 
 - HTTP `2xx` marks the task `succeeded`
 - non-`2xx` marks the task `failed`
-- timeout, connection failure, rendering failure, missing secret, disabled target, or permission failure marks the task `failed`
+- timeout, connection failure, rendering failure, missing secret, disabled target, blocked destination, or permission failure marks the task `failed`
 
 Stored result rows include method, rendered URL, response status, response headers, a capped response
-body preview, duration, success flag, and sanitized error text. Secret values are not persisted.
+body preview, duration, success flag, and sanitized error text. Secret values are not persisted, and
+sensitive response headers (`Set-Cookie`, `Authorization`, `WWW-Authenticate`, and similar) are
+redacted before storage.
+
+## Outbound safety
+
+Outbound calls are constrained to mitigate server-side request forgery (SSRF):
+
+- the rendered URL must parse, use `https`, and carry no embedded credentials
+- redirects are never followed; a `3xx` response is treated as the final response
+- the destination host is resolved and every resolved address is screened. Calls to private,
+  loopback, link-local, unique-local, carrier-grade NAT, or cloud-metadata addresses are refused
+  unless `HUBUUM_REMOTE_CALL_ALLOW_PRIVATE_TARGETS` is enabled for the deployment
+- the screened address is pinned for the connection, so a host cannot rebind to a private address
+  between the screening and the request
+- the response body is read only up to `HUBUUM_REMOTE_CALL_MAX_RESPONSE_BYTES`; anything beyond that
+  is discarded
+
+Relevant configuration:
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `HUBUUM_REMOTE_CALL_TIMEOUT_MS` | `10000` | Upper bound on a target's per-call `timeout_ms`. |
+| `HUBUUM_REMOTE_CALL_MAX_RESPONSE_BYTES` | `262144` | Maximum response body bytes read and stored as a preview. |
+| `HUBUUM_REMOTE_CALL_ALLOW_PRIVATE_TARGETS` | `false` | Allow targets that resolve to private/internal addresses. |
 
 There is no public remote-call result endpoint in this first version. Use the generic task and task
 event endpoints to poll status and inspect task-level events.
