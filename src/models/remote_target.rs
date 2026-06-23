@@ -8,13 +8,18 @@ use serde::{Deserialize, Serialize};
 use urlparse::urlparse;
 use utoipa::ToSchema;
 
+use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
-use crate::models::{HubuumClassID, HubuumObjectID, NamespaceID};
+use crate::models::{
+    HubuumClassID, HubuumClassRelationID, HubuumObjectID, HubuumObjectRelationID, Namespace,
+    NamespaceID, Permissions,
+};
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
 use crate::schema::{remote_call_results, remote_targets};
+use crate::traits::{ClassAccessors, NamespaceAccessors, ObjectAccessors, SelfAccessors};
 
 crate::int_id_newtype! {
     /// Identifier wrapper for a remote target.
@@ -29,6 +34,45 @@ pub enum RemoteHttpMethod {
     Post,
     Patch,
     Delete,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteTargetSubjectType {
+    Namespace,
+    Class,
+    Object,
+    ClassRelation,
+    ObjectRelation,
+}
+
+impl RemoteTargetSubjectType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Namespace => "namespace",
+            Self::Class => "class",
+            Self::Object => "object",
+            Self::ClassRelation => "class_relation",
+            Self::ObjectRelation => "object_relation",
+        }
+    }
+}
+
+impl FromStr for RemoteTargetSubjectType {
+    type Err = ApiError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "namespace" => Ok(Self::Namespace),
+            "class" => Ok(Self::Class),
+            "object" => Ok(Self::Object),
+            "class_relation" => Ok(Self::ClassRelation),
+            "object_relation" => Ok(Self::ObjectRelation),
+            _ => Err(ApiError::BadRequest(format!(
+                "Unsupported remote target subject type: '{value}'"
+            ))),
+        }
+    }
 }
 
 impl RemoteHttpMethod {
@@ -88,6 +132,7 @@ pub(crate) struct RemoteTargetRow {
     pub headers_template: serde_json::Value,
     pub body_template: Option<String>,
     pub auth_config: serde_json::Value,
+    pub allowed_subject_types: serde_json::Value,
     pub timeout_ms: i32,
     pub enabled: bool,
     pub created_at: NaiveDateTime,
@@ -105,6 +150,7 @@ pub struct RemoteTarget {
     pub headers_template: serde_json::Value,
     pub body_template: Option<String>,
     pub auth_config: RemoteAuthConfig,
+    pub allowed_subject_types: Vec<RemoteTargetSubjectType>,
     pub timeout_ms: i32,
     pub enabled: bool,
     pub created_at: NaiveDateTime,
@@ -123,6 +169,7 @@ pub struct NewRemoteTarget {
     pub body_template: Option<String>,
     #[serde(default)]
     pub auth_config: RemoteAuthConfig,
+    pub allowed_subject_types: Vec<RemoteTargetSubjectType>,
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: i32,
     #[serde(default = "default_enabled")]
@@ -145,6 +192,7 @@ pub struct UpdateRemoteTarget {
     #[schema(value_type = Option<String>)]
     pub body_template: Option<Option<String>>,
     pub auth_config: Option<RemoteAuthConfig>,
+    pub allowed_subject_types: Option<Vec<RemoteTargetSubjectType>>,
     pub timeout_ms: Option<i32>,
     pub enabled: Option<bool>,
 }
@@ -160,6 +208,7 @@ pub(crate) struct NewRemoteTargetRow {
     pub headers_template: serde_json::Value,
     pub body_template: Option<String>,
     pub auth_config: serde_json::Value,
+    pub allowed_subject_types: serde_json::Value,
     pub timeout_ms: i32,
     pub enabled: bool,
 }
@@ -175,23 +224,131 @@ pub(crate) struct UpdateRemoteTargetRow {
     pub headers_template: Option<serde_json::Value>,
     pub body_template: Option<Option<String>>,
     pub auth_config: Option<serde_json::Value>,
+    pub allowed_subject_types: Option<serde_json::Value>,
     pub timeout_ms: Option<i32>,
     pub enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct RemoteTargetInvokeRequest {
+    pub subject: RemoteInvocationSubject,
     #[serde(default)]
-    pub parameters: serde_json::Value,
+    pub parameters: RemoteInvocationParameters,
     #[serde(default)]
-    pub body_override: serde_json::Value,
+    pub body_override: RemoteInvocationBodyOverride,
 }
 
-impl Default for RemoteTargetInvokeRequest {
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, ToSchema)]
+#[serde(transparent)]
+pub struct RemoteInvocationParameters(serde_json::Value);
+
+impl RemoteInvocationParameters {
+    pub fn new(value: serde_json::Value) -> Result<Self, ApiError> {
+        if value.is_object() {
+            Ok(Self(value))
+        } else {
+            Err(ApiError::BadRequest(
+                "parameters must be a JSON object".to_string(),
+            ))
+        }
+    }
+
+    pub fn into_value(self) -> serde_json::Value {
+        self.0
+    }
+}
+
+impl Default for RemoteInvocationParameters {
     fn default() -> Self {
-        Self {
-            parameters: serde_json::json!({}),
-            body_override: serde_json::json!({}),
+        Self(serde_json::json!({}))
+    }
+}
+
+impl<'de> Deserialize<'de> for RemoteInvocationParameters {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, ToSchema)]
+#[serde(transparent)]
+pub struct RemoteInvocationBodyOverride(serde_json::Value);
+
+impl RemoteInvocationBodyOverride {
+    pub fn new(value: serde_json::Value) -> Result<Self, ApiError> {
+        if value.is_object() {
+            Ok(Self(value))
+        } else {
+            Err(ApiError::BadRequest(
+                "body_override must be a JSON object".to_string(),
+            ))
+        }
+    }
+
+    pub fn into_value(self) -> serde_json::Value {
+        self.0
+    }
+}
+
+impl Default for RemoteInvocationBodyOverride {
+    fn default() -> Self {
+        Self(serde_json::json!({}))
+    }
+}
+
+impl<'de> Deserialize<'de> for RemoteInvocationBodyOverride {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum RemoteInvocationSubject {
+    Namespace {
+        namespace_id: NamespaceID,
+    },
+    Class {
+        class_id: HubuumClassID,
+    },
+    Object {
+        class_id: HubuumClassID,
+        object_id: HubuumObjectID,
+    },
+    ClassRelation {
+        relation_id: HubuumClassRelationID,
+    },
+    ObjectRelation {
+        relation_id: HubuumObjectRelationID,
+    },
+}
+
+impl RemoteInvocationSubject {
+    pub fn subject_type(&self) -> RemoteTargetSubjectType {
+        match self {
+            Self::Namespace { .. } => RemoteTargetSubjectType::Namespace,
+            Self::Class { .. } => RemoteTargetSubjectType::Class,
+            Self::Object { .. } => RemoteTargetSubjectType::Object,
+            Self::ClassRelation { .. } => RemoteTargetSubjectType::ClassRelation,
+            Self::ObjectRelation { .. } => RemoteTargetSubjectType::ObjectRelation,
+        }
+    }
+
+    pub fn subject_id(&self) -> i32 {
+        match self {
+            Self::Namespace { namespace_id } => namespace_id.id(),
+            Self::Class { class_id } => class_id.id(),
+            Self::Object { object_id, .. } => object_id.id(),
+            Self::ClassRelation { relation_id } => relation_id.id(),
+            Self::ObjectRelation { relation_id } => relation_id.id(),
         }
     }
 }
@@ -199,10 +356,50 @@ impl Default for RemoteTargetInvokeRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StoredRemoteCallTaskPayload {
     pub target_id: RemoteTargetID,
-    pub class_id: HubuumClassID,
-    pub object_id: HubuumObjectID,
-    pub parameters: serde_json::Value,
-    pub body_override: serde_json::Value,
+    pub subject: RemoteInvocationSubject,
+    pub parameters: RemoteInvocationParameters,
+    pub body_override: RemoteInvocationBodyOverride,
+}
+
+pub struct ResolvedRemoteInvocationSubject {
+    pub subject_type: RemoteTargetSubjectType,
+    pub subject_id: i32,
+    pub namespaces: Vec<Namespace>,
+    pub required_read_permission: Permissions,
+    pub context: RemoteTemplateContext,
+}
+
+#[derive(Debug, Clone)]
+pub struct RemoteTemplateContext {
+    value: serde_json::Value,
+}
+
+impl RemoteTemplateContext {
+    pub fn new(value: serde_json::Value) -> Result<Self, ApiError> {
+        if value.is_object() {
+            Ok(Self { value })
+        } else {
+            Err(ApiError::InternalServerError(
+                "remote template context must be a JSON object".to_string(),
+            ))
+        }
+    }
+
+    pub fn insert(
+        &mut self,
+        key: impl Into<String>,
+        value: serde_json::Value,
+    ) -> Result<(), ApiError> {
+        let object = self.value.as_object_mut().ok_or_else(|| {
+            ApiError::InternalServerError("remote template context is not an object".to_string())
+        })?;
+        object.insert(key.into(), value);
+        Ok(())
+    }
+
+    pub fn into_value(self) -> serde_json::Value {
+        self.value
+    }
 }
 
 #[derive(Debug, Clone, Queryable, Selectable, Serialize, Deserialize, PartialEq, ToSchema)]
@@ -211,7 +408,8 @@ pub struct RemoteCallResult {
     pub id: i32,
     pub task_id: i32,
     pub target_id: Option<i32>,
-    pub object_id: Option<i32>,
+    pub subject_type: String,
+    pub subject_id: i32,
     pub method: String,
     pub rendered_url: String,
     pub response_status: Option<i32>,
@@ -228,7 +426,8 @@ pub struct RemoteCallResult {
 pub struct NewRemoteCallResult {
     pub task_id: i32,
     pub target_id: Option<i32>,
-    pub object_id: Option<i32>,
+    pub subject_type: String,
+    pub subject_id: i32,
     pub method: String,
     pub rendered_url: String,
     pub response_status: Option<i32>,
@@ -253,6 +452,7 @@ impl TryFrom<RemoteTargetRow> for RemoteTarget {
             headers_template: row.headers_template,
             body_template: row.body_template,
             auth_config: serde_json::from_value(row.auth_config)?,
+            allowed_subject_types: serde_json::from_value(row.allowed_subject_types)?,
             timeout_ms: row.timeout_ms,
             enabled: row.enabled,
             created_at: row.created_at,
@@ -268,6 +468,7 @@ impl NewRemoteTarget {
             &self.headers_template,
             self.body_template.as_deref(),
             &self.auth_config,
+            &self.allowed_subject_types,
             self.timeout_ms,
         )?;
 
@@ -280,6 +481,7 @@ impl NewRemoteTarget {
             headers_template: self.headers_template,
             body_template: self.body_template,
             auth_config: serde_json::to_value(self.auth_config)?,
+            allowed_subject_types: serde_json::to_value(self.allowed_subject_types)?,
             timeout_ms: self.timeout_ms,
             enabled: self.enabled,
         })
@@ -296,6 +498,7 @@ impl UpdateRemoteTarget {
             && self.headers_template.is_none()
             && self.body_template.is_none()
             && self.auth_config.is_none()
+            && self.allowed_subject_types.is_none()
             && self.timeout_ms.is_none()
             && self.enabled.is_none()
     }
@@ -320,6 +523,10 @@ impl UpdateRemoteTarget {
             .auth_config
             .clone()
             .unwrap_or_else(|| existing.auth_config.clone());
+        let allowed_subject_types = self
+            .allowed_subject_types
+            .clone()
+            .unwrap_or_else(|| existing.allowed_subject_types.clone());
         let timeout_ms = self.timeout_ms.unwrap_or(existing.timeout_ms);
 
         validate_target_parts(
@@ -327,6 +534,7 @@ impl UpdateRemoteTarget {
             &headers_template,
             body_template.as_deref(),
             &auth_config,
+            &allowed_subject_types,
             timeout_ms,
         )?;
 
@@ -339,6 +547,10 @@ impl UpdateRemoteTarget {
             headers_template: self.headers_template,
             body_template: self.body_template,
             auth_config: self.auth_config.map(serde_json::to_value).transpose()?,
+            allowed_subject_types: self
+                .allowed_subject_types
+                .map(serde_json::to_value)
+                .transpose()?,
             timeout_ms: self.timeout_ms,
             enabled: self.enabled,
         })
@@ -350,6 +562,7 @@ pub fn validate_target_parts(
     headers_template: &serde_json::Value,
     body_template: Option<&str>,
     auth_config: &RemoteAuthConfig,
+    allowed_subject_types: &[RemoteTargetSubjectType],
     timeout_ms: i32,
 ) -> Result<(), ApiError> {
     if timeout_ms <= 0 {
@@ -368,7 +581,163 @@ pub fn validate_target_parts(
     }
     validate_header_templates(headers_template)?;
     validate_auth_config(auth_config)?;
+    validate_allowed_subject_types(allowed_subject_types)?;
     Ok(())
+}
+
+pub fn validate_allowed_subject_types(
+    allowed_subject_types: &[RemoteTargetSubjectType],
+) -> Result<(), ApiError> {
+    if allowed_subject_types.is_empty() {
+        return Err(ApiError::BadRequest(
+            "allowed_subject_types must include at least one subject type".to_string(),
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for subject_type in allowed_subject_types {
+        if !seen.insert(*subject_type) {
+            return Err(ApiError::BadRequest(format!(
+                "allowed_subject_types contains duplicate '{}'",
+                subject_type.as_str()
+            )));
+        }
+    }
+    Ok(())
+}
+
+impl RemoteTarget {
+    pub fn allows_subject_type(&self, subject_type: RemoteTargetSubjectType) -> bool {
+        self.allowed_subject_types.contains(&subject_type)
+    }
+}
+
+impl RemoteInvocationSubject {
+    pub async fn resolve(
+        &self,
+        pool: &DbPool,
+    ) -> Result<ResolvedRemoteInvocationSubject, ApiError> {
+        match self {
+            Self::Namespace { namespace_id } => {
+                let namespace = namespace_id.namespace(pool).await?;
+                let context = serde_json::json!({
+                    "subject_type": self.subject_type().as_str(),
+                    "subject": namespace.clone(),
+                    "namespace": namespace.clone(),
+                });
+                Ok(ResolvedRemoteInvocationSubject {
+                    subject_type: self.subject_type(),
+                    subject_id: self.subject_id(),
+                    namespaces: vec![namespace],
+                    required_read_permission: Permissions::ReadCollection,
+                    context: RemoteTemplateContext::new(context)?,
+                })
+            }
+            Self::Class { class_id } => {
+                let class = class_id.class(pool).await?;
+                let namespace = NamespaceID::new(class.namespace_id)?
+                    .namespace(pool)
+                    .await?;
+                let context = serde_json::json!({
+                    "subject_type": self.subject_type().as_str(),
+                    "subject": class.clone(),
+                    "class": class.clone(),
+                    "namespace": namespace.clone(),
+                });
+                Ok(ResolvedRemoteInvocationSubject {
+                    subject_type: self.subject_type(),
+                    subject_id: self.subject_id(),
+                    namespaces: vec![namespace],
+                    required_read_permission: Permissions::ReadClass,
+                    context: RemoteTemplateContext::new(context)?,
+                })
+            }
+            Self::Object {
+                class_id,
+                object_id,
+            } => {
+                let class = class_id.class(pool).await?;
+                let object = object_id.instance(pool).await?;
+                if object.hubuum_class_id != class.id {
+                    return Err(ApiError::NotFound("Object not found in class".to_string()));
+                }
+                let namespace = NamespaceID::new(object.namespace_id)?
+                    .namespace(pool)
+                    .await?;
+                let context = serde_json::json!({
+                    "subject_type": self.subject_type().as_str(),
+                    "subject": object.clone(),
+                    "object": object.clone(),
+                    "class": class.clone(),
+                    "namespace": namespace.clone(),
+                });
+                Ok(ResolvedRemoteInvocationSubject {
+                    subject_type: self.subject_type(),
+                    subject_id: self.subject_id(),
+                    namespaces: vec![namespace],
+                    required_read_permission: Permissions::ReadObject,
+                    context: RemoteTemplateContext::new(context)?,
+                })
+            }
+            Self::ClassRelation { relation_id } => {
+                let relation = relation_id.instance(pool).await?;
+                let (from_class, to_class) = relation_id.class(pool).await?;
+                let namespaces = relation_id.namespace(pool).await?;
+                let subject_namespaces =
+                    unique_namespaces(vec![namespaces.0.clone(), namespaces.1.clone()]);
+                let context = serde_json::json!({
+                    "subject_type": self.subject_type().as_str(),
+                    "subject": relation.clone(),
+                    "class_relation": relation.clone(),
+                    "from_class": from_class.clone(),
+                    "to_class": to_class.clone(),
+                    "namespaces": [namespaces.0.clone(), namespaces.1.clone()],
+                });
+                Ok(ResolvedRemoteInvocationSubject {
+                    subject_type: self.subject_type(),
+                    subject_id: self.subject_id(),
+                    namespaces: subject_namespaces,
+                    required_read_permission: Permissions::ReadClassRelation,
+                    context: RemoteTemplateContext::new(context)?,
+                })
+            }
+            Self::ObjectRelation { relation_id } => {
+                let relation = relation_id.instance(pool).await?;
+                let (from_object, to_object) = relation_id.object(pool).await?;
+                let class_relation_id = HubuumClassRelationID::new(relation.class_relation_id)?;
+                let class_relation = class_relation_id.instance(pool).await?;
+                let (from_class, to_class) = class_relation_id.class(pool).await?;
+                let namespaces = relation_id.namespace(pool).await?;
+                let subject_namespaces =
+                    unique_namespaces(vec![namespaces.0.clone(), namespaces.1.clone()]);
+                let context = serde_json::json!({
+                    "subject_type": self.subject_type().as_str(),
+                    "subject": relation.clone(),
+                    "object_relation": relation.clone(),
+                    "from_object": from_object.clone(),
+                    "to_object": to_object.clone(),
+                    "class_relation": class_relation.clone(),
+                    "from_class": from_class.clone(),
+                    "to_class": to_class.clone(),
+                    "namespaces": [namespaces.0.clone(), namespaces.1.clone()],
+                });
+                Ok(ResolvedRemoteInvocationSubject {
+                    subject_type: self.subject_type(),
+                    subject_id: self.subject_id(),
+                    namespaces: subject_namespaces,
+                    required_read_permission: Permissions::ReadObjectRelation,
+                    context: RemoteTemplateContext::new(context)?,
+                })
+            }
+        }
+    }
+}
+
+fn unique_namespaces(namespaces: Vec<Namespace>) -> Vec<Namespace> {
+    let mut seen = std::collections::HashSet::new();
+    namespaces
+        .into_iter()
+        .filter(|namespace| seen.insert(namespace.id))
+        .collect()
 }
 
 /// Host and port extracted from a validated outbound remote target URL.
@@ -726,6 +1095,7 @@ mod tests {
                 &RemoteAuthConfig::BearerSecret {
                     secret: "servicenow_token".to_string(),
                 },
+                &[RemoteTargetSubjectType::Object],
                 1000,
             )
             .is_ok()
@@ -737,6 +1107,7 @@ mod tests {
                 &serde_json::json!({}),
                 None,
                 &RemoteAuthConfig::None,
+                &[RemoteTargetSubjectType::Object],
                 1000,
             )
             .is_err()
@@ -747,6 +1118,7 @@ mod tests {
                 &serde_json::json!([]),
                 None,
                 &RemoteAuthConfig::None,
+                &[RemoteTargetSubjectType::Object],
                 1000,
             )
             .is_err()
@@ -757,6 +1129,7 @@ mod tests {
                 &serde_json::json!({ "Invalid Header": "{{ object.id }}" }),
                 None,
                 &RemoteAuthConfig::None,
+                &[RemoteTargetSubjectType::Object],
                 1000,
             )
             .is_err()
@@ -770,6 +1143,7 @@ mod tests {
                     header: "X-API-Key".to_string(),
                     secret: "bad-secret".to_string(),
                 },
+                &[RemoteTargetSubjectType::Object],
                 1000,
             )
             .is_err()
@@ -785,6 +1159,7 @@ mod tests {
                 &serde_json::json!({ "X-Object": "{{ object.name }}" }),
                 Some("{\"data\": {{ object.data | tojson }}}"),
                 &RemoteAuthConfig::None,
+                &[RemoteTargetSubjectType::Object],
                 1000,
             )
             .is_ok()

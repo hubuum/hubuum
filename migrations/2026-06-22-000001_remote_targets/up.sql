@@ -19,6 +19,7 @@ CREATE TABLE remote_targets (
     headers_template JSONB NOT NULL DEFAULT '{}'::jsonb,
     body_template TEXT NULL,
     auth_config JSONB NOT NULL DEFAULT '{"type":"none"}'::jsonb,
+    allowed_subject_types JSONB NOT NULL,
     timeout_ms INT NOT NULL DEFAULT 10000,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP NOT NULL DEFAULT now(),
@@ -26,14 +27,20 @@ CREATE TABLE remote_targets (
     UNIQUE (namespace_id, name),
     CHECK (timeout_ms > 0),
     CHECK (jsonb_typeof(headers_template) = 'object'),
-    CHECK (jsonb_typeof(auth_config) = 'object')
+    CHECK (jsonb_typeof(auth_config) = 'object'),
+    CHECK (
+        jsonb_typeof(allowed_subject_types) = 'array'
+        AND jsonb_array_length(allowed_subject_types) > 0
+        AND allowed_subject_types <@ '["namespace", "class", "object", "class_relation", "object_relation"]'::jsonb
+    )
 );
 
 CREATE TABLE remote_call_results (
     id SERIAL PRIMARY KEY,
     task_id INT REFERENCES tasks (id) ON DELETE CASCADE NOT NULL UNIQUE,
     target_id INT REFERENCES remote_targets (id) ON DELETE SET NULL,
-    object_id INT REFERENCES hubuumobject (id) ON DELETE SET NULL,
+    subject_type VARCHAR NOT NULL CHECK (subject_type IN ('namespace', 'class', 'object', 'class_relation', 'object_relation')),
+    subject_id INT NOT NULL,
     method VARCHAR NOT NULL,
     rendered_url TEXT NOT NULL,
     response_status INT NULL,
@@ -48,7 +55,7 @@ CREATE TABLE remote_call_results (
 CREATE INDEX idx_remote_targets_namespace_id ON remote_targets(namespace_id);
 CREATE INDEX idx_remote_targets_enabled ON remote_targets(enabled);
 CREATE INDEX idx_remote_call_results_target_id ON remote_call_results(target_id);
-CREATE INDEX idx_remote_call_results_object_id ON remote_call_results(object_id);
+CREATE INDEX idx_remote_call_results_subject ON remote_call_results(subject_type, subject_id);
 
 CREATE TRIGGER update_remote_targets_updated_at
 BEFORE UPDATE ON remote_targets

@@ -145,7 +145,8 @@ pub async fn insert_remote_call_result(
             .do_update()
             .set((
                 crate::schema::remote_call_results::target_id.eq(entry.target_id),
-                crate::schema::remote_call_results::object_id.eq(entry.object_id),
+                crate::schema::remote_call_results::subject_type.eq(entry.subject_type.clone()),
+                crate::schema::remote_call_results::subject_id.eq(entry.subject_id),
                 crate::schema::remote_call_results::method.eq(entry.method.clone()),
                 crate::schema::remote_call_results::rendered_url.eq(entry.rendered_url.clone()),
                 crate::schema::remote_call_results::response_status.eq(entry.response_status),

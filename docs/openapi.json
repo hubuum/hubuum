@@ -1542,125 +1542,6 @@
         ]
       }
     },
-    "/api/v1/classes/{class_id}/objects/{object_id}/remote-targets/{target_id}/invoke": {
-      "post": {
-        "tags": [
-          "remote-targets"
-        ],
-        "summary": "Post Api V1 Classes By Class Id Objects By Object Id Remote Targets By Target Id Invoke",
-        "description": "Auto-generated documentation for POST /api/v1/classes/{class_id}/objects/{object_id}/remote-targets/{target_id}/invoke.",
-        "operationId": "postApiV1ClassesByClassIdObjectsByObjectIdRemoteTargetsByTargetIdInvoke",
-        "parameters": [
-          {
-            "name": "class_id",
-            "in": "path",
-            "description": "Class ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "object_id",
-            "in": "path",
-            "description": "Object ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "target_id",
-            "in": "path",
-            "description": "Remote target ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RemoteTargetInvokeRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "description": "Remote call task accepted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Object or remote target not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
     "/api/v1/classes/{class_id}/permissions": {
       "get": {
         "tags": [
@@ -6100,6 +5981,105 @@
         ]
       }
     },
+    "/api/v1/remote-targets/{target_id}/invoke": {
+      "post": {
+        "tags": [
+          "remote-targets"
+        ],
+        "summary": "Post Api V1 Remote Targets By Target Id Invoke",
+        "description": "Auto-generated documentation for POST /api/v1/remote-targets/{target_id}/invoke.",
+        "operationId": "postApiV1RemoteTargetsByTargetIdInvoke",
+        "parameters": [
+          {
+            "name": "target_id",
+            "in": "path",
+            "description": "Remote target ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoteTargetInvokeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Remote call task accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Subject or remote target not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/reports": {
       "post": {
         "tags": [
@@ -7594,6 +7574,11 @@
           }
         }
       },
+      "HubuumClassID": {
+        "type": "integer",
+        "format": "int32",
+        "description": "Identifier wrapper for a [`HubuumClass`]."
+      },
       "HubuumClassRelation": {
         "type": "object",
         "required": [
@@ -7637,6 +7622,11 @@
             "format": "date-time"
           }
         }
+      },
+      "HubuumClassRelationID": {
+        "type": "integer",
+        "format": "int32",
+        "description": "Identifier wrapper for a [`HubuumClassRelation`]."
       },
       "HubuumClassWithPath": {
         "type": "object",
@@ -7728,6 +7718,11 @@
           }
         }
       },
+      "HubuumObjectID": {
+        "type": "integer",
+        "format": "int32",
+        "description": "Identifier wrapper for a [`HubuumObject`]."
+      },
       "HubuumObjectRelation": {
         "type": "object",
         "required": [
@@ -7764,6 +7759,11 @@
             "format": "date-time"
           }
         }
+      },
+      "HubuumObjectRelationID": {
+        "type": "integer",
+        "format": "int32",
+        "description": "Identifier wrapper for a [`HubuumObjectRelation`]."
       },
       "HubuumObjectWithPath": {
         "type": "object",
@@ -8722,9 +8722,16 @@
           "name",
           "description",
           "method",
-          "url_template"
+          "url_template",
+          "allowed_subject_types"
         ],
         "properties": {
+          "allowed_subject_types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemoteTargetSubjectType"
+            }
+          },
           "auth_config": {
             "$ref": "#/components/schemas/RemoteAuthConfig"
           },
@@ -9263,6 +9270,8 @@
         "required": [
           "id",
           "task_id",
+          "subject_type",
+          "subject_id",
           "method",
           "rendered_url",
           "duration_ms",
@@ -9291,13 +9300,6 @@
           "method": {
             "type": "string"
           },
-          "object_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          },
           "rendered_url": {
             "type": "string"
           },
@@ -9314,6 +9316,13 @@
               "null"
             ],
             "format": "int32"
+          },
+          "subject_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "subject_type": {
+            "type": "string"
           },
           "success": {
             "type": "boolean"
@@ -9340,6 +9349,106 @@
           "delete"
         ]
       },
+      "RemoteInvocationBodyOverride": {},
+      "RemoteInvocationParameters": {},
+      "RemoteInvocationSubject": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "namespace_id",
+              "type"
+            ],
+            "properties": {
+              "namespace_id": {
+                "$ref": "#/components/schemas/NamespaceID"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "namespace"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "class_id",
+              "type"
+            ],
+            "properties": {
+              "class_id": {
+                "$ref": "#/components/schemas/HubuumClassID"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "class"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "class_id",
+              "object_id",
+              "type"
+            ],
+            "properties": {
+              "class_id": {
+                "$ref": "#/components/schemas/HubuumClassID"
+              },
+              "object_id": {
+                "$ref": "#/components/schemas/HubuumObjectID"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "object"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "relation_id",
+              "type"
+            ],
+            "properties": {
+              "relation_id": {
+                "$ref": "#/components/schemas/HubuumClassRelationID"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "class_relation"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "relation_id",
+              "type"
+            ],
+            "properties": {
+              "relation_id": {
+                "$ref": "#/components/schemas/HubuumObjectRelationID"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "object_relation"
+                ]
+              }
+            }
+          }
+        ]
+      },
       "RemoteTarget": {
         "type": "object",
         "required": [
@@ -9351,12 +9460,19 @@
           "url_template",
           "headers_template",
           "auth_config",
+          "allowed_subject_types",
           "timeout_ms",
           "enabled",
           "created_at",
           "updated_at"
         ],
         "properties": {
+          "allowed_subject_types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemoteTargetSubjectType"
+            }
+          },
           "auth_config": {
             "$ref": "#/components/schemas/RemoteAuthConfig"
           },
@@ -9411,10 +9527,30 @@
       },
       "RemoteTargetInvokeRequest": {
         "type": "object",
+        "required": [
+          "subject"
+        ],
         "properties": {
-          "body_override": {},
-          "parameters": {}
+          "body_override": {
+            "$ref": "#/components/schemas/RemoteInvocationBodyOverride"
+          },
+          "parameters": {
+            "$ref": "#/components/schemas/RemoteInvocationParameters"
+          },
+          "subject": {
+            "$ref": "#/components/schemas/RemoteInvocationSubject"
+          }
         }
+      },
+      "RemoteTargetSubjectType": {
+        "type": "string",
+        "enum": [
+          "namespace",
+          "class",
+          "object",
+          "class_relation",
+          "object_relation"
+        ]
       },
       "ReportContentType": {
         "type": "string",
@@ -10618,6 +10754,15 @@
       "UpdateRemoteTarget": {
         "type": "object",
         "properties": {
+          "allowed_subject_types": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/RemoteTargetSubjectType"
+            }
+          },
           "auth_config": {
             "oneOf": [
               {

@@ -5,7 +5,6 @@ use base64::Engine;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use tracing::warn;
 
-use crate::can;
 use crate::config::{
     DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS, DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES,
     DEFAULT_REMOTE_CALL_TIMEOUT_MS, get_config,
@@ -17,10 +16,11 @@ use crate::db::traits::task::{TaskBackend, TaskStateUpdate};
 use crate::errors::ApiError;
 use crate::models::{
     NamespaceID, NewRemoteCallResult, NewTaskEventRecord, Permissions, RemoteAuthConfig,
-    RemoteHttpMethod, StoredRemoteCallTaskPayload, TaskRecord, TaskStatus, User,
+    RemoteHttpMethod, RemoteInvocationBodyOverride, RemoteInvocationParameters,
+    RemoteTemplateContext, StoredRemoteCallTaskPayload, TaskRecord, TaskStatus, User,
     remote_target_ip_blocked, validate_rendered_remote_url,
 };
-use crate::traits::{ClassAccessors, NamespaceAccessors, SelfAccessors};
+use crate::traits::NamespaceAccessors;
 
 pub(super) async fn execute_remote_call_task(
     pool: &DbPool,
@@ -55,7 +55,8 @@ pub(super) async fn execute_remote_call_task(
             let fallback = NewRemoteCallResult {
                 task_id: task.id,
                 target_id: Some(request.target_id.id()),
-                object_id: Some(request.object_id.id()),
+                subject_type: request.subject.subject_type().as_str().to_string(),
+                subject_id: request.subject.subject_id(),
                 method: "unknown".to_string(),
                 rendered_url: "".to_string(),
                 response_status: None,
@@ -104,40 +105,40 @@ async fn execute_remote_call(
         ));
     }
 
-    let object = request.object_id.instance(pool).await?;
-    let class = request.class_id.class(pool).await?;
-    if object.hubuum_class_id != class.id {
-        return Err(ApiError::NotFound("Object not found in class".to_string()));
+    let resolved = request.subject.resolve(pool).await?;
+    if !target.allows_subject_type(resolved.subject_type) {
+        return Err(ApiError::BadRequest(format!(
+            "Remote target '{}' does not allow '{}' subjects",
+            target.name,
+            resolved.subject_type.as_str()
+        )));
     }
-    if target.namespace_id != object.namespace_id {
-        return Err(ApiError::NotFound(
-            "Remote target not found for object namespace".to_string(),
-        ));
-    }
-    let namespace = NamespaceID::new(object.namespace_id)?
+    let target_namespace = NamespaceID::new(target.namespace_id)?
         .namespace(pool)
         .await?;
-
-    can!(
+    if !resolved
+        .namespaces
+        .iter()
+        .any(|namespace| namespace.id == target.namespace_id)
+    {
+        return Err(ApiError::NotFound(
+            "Remote target not found for invocation subject".to_string(),
+        ));
+    }
+    user.can(
         pool,
-        user.clone(),
-        [Permissions::ReadObject],
-        namespace.clone()
-    );
-    can!(
-        pool,
-        user.clone(),
-        [Permissions::ExecuteRemoteTarget],
-        namespace.clone()
-    );
+        [resolved.required_read_permission],
+        resolved.namespaces.clone(),
+    )
+    .await?;
+    user.can(pool, [Permissions::ExecuteRemoteTarget], [target_namespace])
+        .await?;
 
-    let context = serde_json::json!({
-        "object": object,
-        "class": class,
-        "namespace": namespace,
-        "parameters": request.parameters,
-        "body_override": request.body_override,
-    });
+    let context = invocation_context(
+        resolved.context,
+        request.parameters.clone(),
+        request.body_override.clone(),
+    )?;
 
     let rendered_url = render_template("url_template", &target.url_template, &context)?;
     let url_parts = validate_rendered_remote_url(&rendered_url)?;
@@ -192,7 +193,8 @@ async fn execute_remote_call(
                 NewRemoteCallResult {
                     task_id,
                     target_id: Some(target.id),
-                    object_id: Some(object.id),
+                    subject_type: resolved.subject_type.as_str().to_string(),
+                    subject_id: resolved.subject_id,
                     method: target.method.as_str().to_string(),
                     rendered_url,
                     response_status: Some(i32::from(status.as_u16())),
@@ -227,7 +229,8 @@ async fn execute_remote_call(
                 NewRemoteCallResult {
                     task_id,
                     target_id: Some(target.id),
-                    object_id: Some(object.id),
+                    subject_type: resolved.subject_type.as_str().to_string(),
+                    subject_id: resolved.subject_id,
                     method: target.method.as_str().to_string(),
                     rendered_url,
                     response_status: None,
@@ -278,6 +281,16 @@ async fn finalize_remote_task(
     )
     .await?;
     Ok(())
+}
+
+fn invocation_context(
+    mut context: RemoteTemplateContext,
+    parameters: RemoteInvocationParameters,
+    body_override: RemoteInvocationBodyOverride,
+) -> Result<serde_json::Value, ApiError> {
+    context.insert("parameters", parameters.into_value())?;
+    context.insert("body_override", body_override.into_value())?;
+    Ok(context.into_value())
 }
 
 fn render_template(

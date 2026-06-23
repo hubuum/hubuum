@@ -1,12 +1,12 @@
 # Remote Target API
 
 Remote targets let namespace administrators define outbound HTTP actions and let authorized users
-invoke one action for one Hubuum object.
+invoke one action for one Hubuum subject.
 
 The first version is manual invocation only:
 
 - targets are namespace-scoped
-- invocations are object-scoped
+- invocations can target one namespace, class, object, class relation, or object relation
 - execution is queued through the generic task system as `remote_call`
 - outbound methods are `get`, `post`, `patch`, and `delete`
 - rendered outbound URLs must use `https://`
@@ -19,7 +19,7 @@ Endpoints:
 - `GET /api/v1/remote-targets/{target_id}`
 - `PATCH /api/v1/remote-targets/{target_id}`
 - `DELETE /api/v1/remote-targets/{target_id}`
-- `POST /api/v1/classes/{class_id}/objects/{object_id}/remote-targets/{target_id}/invoke`
+- `POST /api/v1/remote-targets/{target_id}/invoke`
 
 Related task endpoints:
 
@@ -42,8 +42,20 @@ Remote target permissions are namespace permissions:
 | `DeleteRemoteTarget` | Delete targets in the namespace. |
 | `ExecuteRemoteTarget` | Invoke targets in the namespace. |
 
-Invoking a target also requires `ReadObject` on the object's namespace. The worker re-checks
-`ReadObject` and `ExecuteRemoteTarget` for the submitting user before making the outbound call.
+Invoking a target also requires read permission for the selected subject. The worker re-checks
+subject read permission and `ExecuteRemoteTarget` for the submitting user before making the
+outbound call.
+
+| Subject type | Read permission |
+| --- | --- |
+| `namespace` | `ReadCollection` on the namespace. |
+| `class` | `ReadClass` on the class namespace. |
+| `object` | `ReadObject` on the object namespace. |
+| `class_relation` | `ReadClassRelation` on both endpoint namespaces. |
+| `object_relation` | `ReadObjectRelation` on both endpoint namespaces. |
+
+`ExecuteRemoteTarget` is checked on the target namespace. For relation subjects, the target
+namespace must be one of the relation endpoint namespaces.
 
 ## Target model
 
@@ -65,6 +77,7 @@ Example:
     "type": "bearer_secret",
     "secret": "servicenow_token"
   },
+  "allowed_subject_types": ["object"],
   "timeout_ms": 5000,
   "enabled": true
 }
@@ -82,6 +95,7 @@ Fields:
 | `headers_template` | object | no | JSON object whose values are string templates. Defaults to `{}`. |
 | `body_template` | string or null | no | Optional template rendered to the outbound request body. |
 | `auth_config` | object | no | Defaults to `{ "type": "none" }`. |
+| `allowed_subject_types` | array | yes | Non-empty list of allowed subject types. Values are `namespace`, `class`, `object`, `class_relation`, and `object_relation`. |
 | `timeout_ms` | integer | no | Per-call timeout. Capped by server configuration. Must be greater than zero. |
 | `enabled` | boolean | no | Disabled targets cannot be invoked. Defaults to `true`. |
 
@@ -144,7 +158,25 @@ Secret reference names may contain only letters, numbers, and underscores.
 
 ## Template context
 
-`url_template`, `headers_template` values, and `body_template` render with the same context:
+`url_template`, `headers_template` values, and `body_template` render with the same context.
+Every invocation includes:
+
+- `subject_type`
+- `subject`
+- `parameters`
+- `body_override`
+
+Subject-specific keys:
+
+| Subject type | Additional context |
+| --- | --- |
+| `namespace` | `namespace` |
+| `class` | `class`, `namespace` |
+| `object` | `object`, `class`, `namespace` |
+| `class_relation` | `class_relation`, `from_class`, `to_class`, `namespaces` |
+| `object_relation` | `object_relation`, `from_object`, `to_object`, `class_relation`, `from_class`, `to_class`, `namespaces` |
+
+For object subjects, common fields include:
 
 - `object.id`
 - `object.name`
@@ -154,8 +186,6 @@ Secret reference names may contain only letters, numbers, and underscores.
 - `object.data`
 - `class`
 - `namespace`
-- `parameters`
-- `body_override`
 
 Example URL:
 
@@ -222,12 +252,17 @@ Requires `DeleteRemoteTarget` on the target namespace.
 
 ## Invoke target
 
-`POST /api/v1/classes/{class_id}/objects/{object_id}/remote-targets/{target_id}/invoke`
+`POST /api/v1/remote-targets/{target_id}/invoke`
 
 Request body:
 
 ```json
 {
+  "subject": {
+    "type": "object",
+    "class_id": 34,
+    "object_id": 56
+  },
   "parameters": {
     "priority": "high"
   },
@@ -237,10 +272,34 @@ Request body:
 }
 ```
 
-Both fields are optional and default to `{}`.
+`subject` is required. `parameters` and `body_override` are optional JSON objects and default to
+`{}`.
 
-The path class must match the object's class, and the target must belong to the object's namespace.
-Disabled targets return `400 Bad Request`.
+Supported subject shapes:
+
+```json
+{ "type": "namespace", "namespace_id": 12 }
+```
+
+```json
+{ "type": "class", "class_id": 34 }
+```
+
+```json
+{ "type": "object", "class_id": 34, "object_id": 56 }
+```
+
+```json
+{ "type": "class_relation", "relation_id": 78 }
+```
+
+```json
+{ "type": "object_relation", "relation_id": 90 }
+```
+
+For object subjects, `class_id` must match the object's class. The subject type must be listed in
+the target's `allowed_subject_types`, and the target namespace must be one of the subject
+namespaces. Disabled targets return `400 Bad Request`.
 
 On success, Hubuum creates a queued task and returns `202 Accepted`:
 

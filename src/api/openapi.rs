@@ -14,15 +14,16 @@ use crate::models::{
     NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation,
     NewNamespaceWithAssignee, NewRemoteTarget, NewReportTemplate, NewUser, ObjectKey,
     ObjectsByClass, Permission, Permissions, RelatedClassGraph, RelatedObjectGraph,
-    RemoteAuthConfig, RemoteCallResult, RemoteHttpMethod, RemoteTarget, RemoteTargetID,
-    RemoteTargetInvokeRequest, ReportContentType, ReportJsonResponse, ReportLimits, ReportMeta,
-    ReportMissingDataPolicy, ReportRequest, ReportScope, ReportScopeKind, ReportTaskDetails,
-    ReportTemplate, ReportTemplateID, ReportTemplateKind, ReportTemplateRunRequest, ReportWarning,
-    TaskDetails, TaskEventResponse, TaskKind, TaskLinks, TaskProgress, TaskResponse, TaskStatus,
-    UnifiedSearchBatchResponse, UnifiedSearchDoneEvent, UnifiedSearchErrorEvent, UnifiedSearchKind,
-    UnifiedSearchResponse, UnifiedSearchStartedEvent, UpdateGroup, UpdateHubuumClass,
-    UpdateHubuumObject, UpdateNamespace, UpdateRemoteTarget, UpdateReportTemplate, UpdateUser,
-    UserResponse, UserToken, UserTokenMetadata,
+    RemoteAuthConfig, RemoteCallResult, RemoteHttpMethod, RemoteInvocationBodyOverride,
+    RemoteInvocationParameters, RemoteInvocationSubject, RemoteTarget, RemoteTargetID,
+    RemoteTargetInvokeRequest, RemoteTargetSubjectType, ReportContentType, ReportJsonResponse,
+    ReportLimits, ReportMeta, ReportMissingDataPolicy, ReportRequest, ReportScope, ReportScopeKind,
+    ReportTaskDetails, ReportTemplate, ReportTemplateID, ReportTemplateKind,
+    ReportTemplateRunRequest, ReportWarning, TaskDetails, TaskEventResponse, TaskKind, TaskLinks,
+    TaskProgress, TaskResponse, TaskStatus, UnifiedSearchBatchResponse, UnifiedSearchDoneEvent,
+    UnifiedSearchErrorEvent, UnifiedSearchKind, UnifiedSearchResponse, UnifiedSearchStartedEvent,
+    UpdateGroup, UpdateHubuumClass, UpdateHubuumObject, UpdateNamespace, UpdateRemoteTarget,
+    UpdateReportTemplate, UpdateUser, UserResponse, UserToken, UserTokenMetadata,
 };
 use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER, page_limits_or_defaults};
 use actix_web::{HttpResponse, Responder};
@@ -238,6 +239,10 @@ use utoipa::{Modify, OpenApi, ToSchema};
             RemoteTarget,
             NewRemoteTarget,
             UpdateRemoteTarget,
+            RemoteTargetSubjectType,
+            RemoteInvocationSubject,
+            RemoteInvocationParameters,
+            RemoteInvocationBodyOverride,
             RemoteTargetInvokeRequest,
             RemoteCallResult
         )
@@ -722,6 +727,7 @@ mod tests {
             "/api/v1/templates/{template_id}/reports",
             "/api/v1/remote-targets",
             "/api/v1/remote-targets/{target_id}",
+            "/api/v1/remote-targets/{target_id}/invoke",
             "/api/v1/relations/classes",
             "/api/v1/relations/classes/{relation_id}",
             "/api/v1/relations/objects",
@@ -739,7 +745,6 @@ mod tests {
             "/api/v1/classes/{class_id}/objects/{object_id}/related/objects",
             "/api/v1/classes/{class_id}/objects/{object_id}/related/relations",
             "/api/v1/classes/{class_id}/objects/{object_id}/related/graph",
-            "/api/v1/classes/{class_id}/objects/{object_id}/remote-targets/{target_id}/invoke",
             "/api/v1/classes/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}",
         ]
         .into_iter()

@@ -39,7 +39,7 @@ Public task-producing endpoints today:
 
 - `POST /api/v1/imports`
 - `POST /api/v1/reports`
-- `POST /api/v1/classes/{class_id}/objects/{object_id}/remote-targets/{target_id}/invoke`
+- `POST /api/v1/remote-targets/{target_id}/invoke`
 
 ## Task statuses
 

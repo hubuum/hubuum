@@ -20,7 +20,8 @@ mod tests {
 
     use crate::db::with_connection;
     use crate::models::{
-        NewHubuumClass, NewHubuumObject, Permissions, PermissionsList, RemoteCallResult,
+        HubuumClassRelation, HubuumObjectRelation, NewHubuumClass, NewHubuumClassRelation,
+        NewHubuumObject, NewHubuumObjectRelation, Permissions, PermissionsList, RemoteCallResult,
         RemoteTarget, TaskResponse, TaskStatus,
     };
     use crate::tests::TestContext;
@@ -29,7 +30,7 @@ mod tests {
     };
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{create_test_group, create_test_user};
-    use crate::traits::{PermissionController, SelfAccessors};
+    use crate::traits::{CanSave, PermissionController, SelfAccessors};
 
     const RT_ENDPOINT: &str = "/api/v1/remote-targets";
     const LOCALHOST_CERT_DER_B64: &str = "MIIDHzCCAgegAwIBAgIUT7YypqM2YgvdrXLHby8OFyeNEEIwDQYJKoZIhvcNAQELBQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MDYyMzA0MDEyMloXDTI2MDYyNDA0MDEyMlowFDESMBAGA1UEAwwJbG9jYWxob3N0MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAn3A378veyRzeP7MSS/S61EPpE+v9Z+fGlFC4qB8SOUHvO1D6+QZrqcKkUJZb/HKnQyDydMNMBJfjswid5l18ogPVFmfGInGp50T3ceH8i1DAnN1Bj6g6h/QgKe64elkYDukaoHkqLGiQ7Nwsllm8UqwdgFa+B1hYD6uoYAcd/4gv5ClxOx6bkwganvWas+PXyHEEdYW7YBRAyPrJHIInWjck5k5UJPn5Vy551ptGpurvUqf2M7VcmnxjHAldTnc9br+chIvLtyulWg8pBAdFwu+4ZM0jWQpTRhVi5lWB+q7mmI8Da4izV0/K2a1bDnSN6j4rmAzEknok0fMoGXzWjQIDAQABo2kwZzAdBgNVHQ4EFgQUDp9XEjhqPBb8Ef0vyJXXDqLjcDwwHwYDVR0jBBgwFoAUDp9XEjhqPBb8Ef0vyJXXDqLjcDwwDwYDVR0TAQH/BAUwAwEB/zAUBgNVHREEDTALgglsb2NhbGhvc3QwDQYJKoZIhvcNAQELBQADggEBAJFxe1GtT9g/PI0Ht912WKwCJc8Oj0U49zUK8TRe9VZHMaJriozeS+4P6I6RhmMR4RV2bPtvjQjzv9ZCHoGoiPUupHd+PUGn8oyezDWoGLuwlPE0dQyn3OAdV1no6q/HI6PFThHTd2o/cLl3nfyIu56sCRLiwrMg6xH3UZ6VJ4qjtxTuyYloMNrb09Uyo7G1Qpw7qfiOB8whyJcjC8Gx1H1JTmF/h/CU2u79yAcVIRA4N6zJLAdtsseUjyTb5CAagmvZ6wZBqB+XNCwXzV09+56zt5fFtopF7mBgQcE21wtlzoKKLUyivc5FzgOHPv3YDJiooYyFXcOOobY1B0k8ih8=";
@@ -67,13 +68,121 @@ mod tests {
     }
 
     fn target_payload(namespace_id: i32, name: &str, url_template: &str) -> serde_json::Value {
+        target_payload_with_subjects(
+            namespace_id,
+            name,
+            url_template,
+            serde_json::json!(["object"]),
+        )
+    }
+
+    fn target_payload_with_subjects(
+        namespace_id: i32,
+        name: &str,
+        url_template: &str,
+        allowed_subject_types: serde_json::Value,
+    ) -> serde_json::Value {
         serde_json::json!({
             "namespace_id": namespace_id,
             "name": name,
             "description": "test target",
             "method": "post",
             "url_template": url_template,
+            "allowed_subject_types": allowed_subject_types,
         })
+    }
+
+    fn object_invoke_body(class_id: i32, object_id: i32) -> serde_json::Value {
+        serde_json::json!({
+            "subject": {
+                "type": "object",
+                "class_id": class_id,
+                "object_id": object_id,
+            }
+        })
+    }
+
+    fn object_invoke_body_with_payload(
+        class_id: i32,
+        object_id: i32,
+        parameters: serde_json::Value,
+        body_override: serde_json::Value,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "subject": {
+                "type": "object",
+                "class_id": class_id,
+                "object_id": object_id,
+            },
+            "parameters": parameters,
+            "body_override": body_override,
+        })
+    }
+
+    fn invoke_endpoint(target_id: i32) -> String {
+        format!("{RT_ENDPOINT}/{target_id}/invoke")
+    }
+
+    fn namespace_invoke_body(namespace_id: i32) -> serde_json::Value {
+        serde_json::json!({
+            "subject": {
+                "type": "namespace",
+                "namespace_id": namespace_id,
+            }
+        })
+    }
+
+    fn class_invoke_body(class_id: i32) -> serde_json::Value {
+        serde_json::json!({
+            "subject": {
+                "type": "class",
+                "class_id": class_id,
+            }
+        })
+    }
+
+    fn object_relation_invoke_body(relation_id: i32) -> serde_json::Value {
+        serde_json::json!({
+            "subject": {
+                "type": "object_relation",
+                "relation_id": relation_id,
+            }
+        })
+    }
+
+    async fn setup_cross_namespace_object_relation(
+        context: &TestContext,
+        label: &str,
+    ) -> (i32, i32, i32, HubuumClassRelation, HubuumObjectRelation) {
+        let (from_namespace_id, from_class_id, from_object_id) =
+            setup_object(context, &format!("{label}_from")).await;
+        let (to_namespace_id, to_class_id, to_object_id) =
+            setup_object(context, &format!("{label}_to")).await;
+        let class_relation = NewHubuumClassRelation {
+            from_hubuum_class_id: from_class_id,
+            to_hubuum_class_id: to_class_id,
+            forward_template_alias: None,
+            reverse_template_alias: None,
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+        let object_relation = NewHubuumObjectRelation {
+            from_hubuum_object_id: from_object_id,
+            to_hubuum_object_id: to_object_id,
+            class_relation_id: class_relation.id,
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        (
+            from_namespace_id,
+            to_namespace_id,
+            from_class_id,
+            class_relation,
+            object_relation,
+        )
     }
 
     async fn create_target(
@@ -215,6 +324,7 @@ mod tests {
             "method": "post",
             "url_template": "https://service.example.com/hook/{{ object.id }}",
             "body_template": "{\"id\": {{ object.id }}}",
+            "allowed_subject_types": ["object"],
         });
         let resp = post_request(&context.pool, &context.admin_token, RT_ENDPOINT, create).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
@@ -350,9 +460,44 @@ mod tests {
             "description": "test",
             "method": "get",
             "url_template": "https://x.example.com/hook",
+            "allowed_subject_types": ["object"],
             "auth_config": { "type": "bearer_secret", "secret": "not-valid" },
         });
         let resp = post_request(&context.pool, &context.admin_token, RT_ENDPOINT, payload).await;
+        assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+    }
+
+    #[actix_web::test]
+    async fn create_rejects_empty_or_duplicate_allowed_subject_types() {
+        let context = TestContext::new().await;
+        let (namespace_id, _, _) = setup_object(&context, "rt_subject_validation").await;
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            RT_ENDPOINT,
+            target_payload_with_subjects(
+                namespace_id,
+                "empty-subjects",
+                "https://x.example.com/hook",
+                serde_json::json!([]),
+            ),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            RT_ENDPOINT,
+            target_payload_with_subjects(
+                namespace_id,
+                "duplicate-subjects",
+                "https://x.example.com/hook",
+                serde_json::json!(["object", "object"]),
+            ),
+        )
+        .await;
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
     }
 
@@ -440,11 +585,8 @@ mod tests {
         let resp = post_request(
             &context.pool,
             &context.admin_token,
-            &format!(
-                "/api/v1/classes/{class_id}/objects/{object_id}/remote-targets/{}/invoke",
-                target.id
-            ),
-            serde_json::json!({}),
+            &invoke_endpoint(target.id),
+            object_invoke_body(class_id, object_id),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
@@ -455,6 +597,109 @@ mod tests {
         // The worker screens the loopback address and finalizes the task as failed.
         let finished = wait_for_task(&context, task.id, TaskStatus::Failed).await;
         assert_eq!(finished.status, TaskStatus::Failed);
+    }
+
+    #[actix_web::test]
+    async fn invoke_accepts_namespace_and_class_subjects() {
+        let context = TestContext::new().await;
+        let (namespace_id, class_id, _) = setup_object(&context, "rt_scope_subjects").await;
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            RT_ENDPOINT,
+            target_payload_with_subjects(
+                namespace_id,
+                "scope-subject-target",
+                "https://127.0.0.1/hook",
+                serde_json::json!(["namespace", "class"]),
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let target: RemoteTarget = test::read_body_json(resp).await;
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &invoke_endpoint(target.id),
+            namespace_invoke_body(namespace_id),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::ACCEPTED).await;
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &invoke_endpoint(target.id),
+            class_invoke_body(class_id),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::ACCEPTED).await;
+    }
+
+    #[actix_web::test]
+    async fn invoke_rejects_subject_type_not_allowed_by_target() {
+        let context = TestContext::new().await;
+        let (namespace_id, class_id, object_id) =
+            setup_object(&context, "rt_subject_allowed").await;
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            RT_ENDPOINT,
+            target_payload_with_subjects(
+                namespace_id,
+                "class-only-target",
+                "https://x.example.com/hook",
+                serde_json::json!(["class"]),
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let target: RemoteTarget = test::read_body_json(resp).await;
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &invoke_endpoint(target.id),
+            object_invoke_body(class_id, object_id),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+    }
+
+    #[actix_web::test]
+    async fn invoke_rejects_non_object_parameters_and_body_override() {
+        let context = TestContext::new().await;
+        let (namespace_id, class_id, object_id) = setup_object(&context, "rt_newtypes").await;
+        let target = create_target(
+            &context,
+            namespace_id,
+            "newtype-target",
+            "https://x.example.com/h",
+        )
+        .await;
+
+        let mut non_object_parameters = object_invoke_body(class_id, object_id);
+        non_object_parameters["parameters"] = serde_json::json!("not-an-object");
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &invoke_endpoint(target.id),
+            non_object_parameters,
+        )
+        .await;
+        assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+
+        let mut non_object_body_override = object_invoke_body(class_id, object_id);
+        non_object_body_override["body_override"] = serde_json::json!(["not", "object"]);
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &invoke_endpoint(target.id),
+            non_object_body_override,
+        )
+        .await;
+        assert_response_status(resp, StatusCode::BAD_REQUEST).await;
     }
 
     #[actix_web::test]
@@ -480,6 +725,7 @@ mod tests {
             },
             "body_template": "{\"host\": {{ object.data.hostname | tojson }}, \"trace\": {{ parameters.trace | tojson }}, \"override\": {{ body_override | tojson }}}",
             "auth_config": { "type": "bearer_secret", "secret": "remote_success_token" },
+            "allowed_subject_types": ["object"],
         });
         let resp = post_request(&context.pool, &context.admin_token, RT_ENDPOINT, payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
@@ -488,14 +734,13 @@ mod tests {
         let resp = post_request(
             &context.pool,
             &context.admin_token,
-            &format!(
-                "/api/v1/classes/{class_id}/objects/{object_id}/remote-targets/{}/invoke",
-                target.id
+            &invoke_endpoint(target.id),
+            object_invoke_body_with_payload(
+                class_id,
+                object_id,
+                serde_json::json!({ "trace": "trace-123" }),
+                serde_json::json!({ "force": true }),
             ),
-            serde_json::json!({
-                "parameters": { "trace": "trace-123" },
-                "body_override": { "force": true },
-            }),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
@@ -515,7 +760,8 @@ mod tests {
         let result = remote_call_result(&context, task.id);
         assert!(result.success);
         assert_eq!(result.target_id, Some(target.id));
-        assert_eq!(result.object_id, Some(object_id));
+        assert_eq!(result.subject_type, "object");
+        assert_eq!(result.subject_id, object_id);
         assert_eq!(result.method, "post");
         assert_eq!(
             result.rendered_url,
@@ -542,6 +788,7 @@ mod tests {
             "description": "test",
             "method": "post",
             "url_template": "https://service.example.com/hook",
+            "allowed_subject_types": ["object"],
             "enabled": false,
         });
         let resp = post_request(&context.pool, &context.admin_token, RT_ENDPOINT, payload).await;
@@ -551,11 +798,8 @@ mod tests {
         let resp = post_request(
             &context.pool,
             &context.admin_token,
-            &format!(
-                "/api/v1/classes/{class_id}/objects/{object_id}/remote-targets/{}/invoke",
-                target.id
-            ),
-            serde_json::json!({}),
+            &invoke_endpoint(target.id),
+            object_invoke_body(class_id, object_id),
         )
         .await;
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
@@ -577,11 +821,8 @@ mod tests {
         let resp = post_request(
             &context.pool,
             &context.admin_token,
-            &format!(
-                "/api/v1/classes/{}/objects/{object_id}/remote-targets/{}/invoke",
-                999_999, target.id
-            ),
-            serde_json::json!({}),
+            &invoke_endpoint(target.id),
+            object_invoke_body(999_999, object_id),
         )
         .await;
         assert_response_status(resp, StatusCode::NOT_FOUND).await;
@@ -622,14 +863,163 @@ mod tests {
         let resp = post_request(
             &context.pool,
             &context.normal_token,
-            &format!(
-                "/api/v1/classes/{class_id}/objects/{object_id}/remote-targets/{}/invoke",
-                target.id
-            ),
-            serde_json::json!({}),
+            &invoke_endpoint(target.id),
+            object_invoke_body(class_id, object_id),
         )
         .await;
         assert_response_status(resp, StatusCode::FORBIDDEN).await;
+    }
+
+    #[actix_web::test]
+    async fn invoke_accepts_cross_namespace_relations_when_target_is_anchored_on_subject_namespace()
+    {
+        let context = TestContext::new().await;
+        let (from_namespace_id, _to_namespace_id, _from_class_id, class_relation, object_relation) =
+            setup_cross_namespace_object_relation(&context, "rt_relation_accept").await;
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            RT_ENDPOINT,
+            target_payload_with_subjects(
+                from_namespace_id,
+                "relation-target",
+                "https://127.0.0.1/hook",
+                serde_json::json!(["class_relation", "object_relation"]),
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let target: RemoteTarget = test::read_body_json(resp).await;
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &invoke_endpoint(target.id),
+            serde_json::json!({
+                "subject": {
+                    "type": "class_relation",
+                    "relation_id": class_relation.id,
+                }
+            }),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::ACCEPTED).await;
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &invoke_endpoint(target.id),
+            object_relation_invoke_body(object_relation.id),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::ACCEPTED).await;
+    }
+
+    #[actix_web::test]
+    async fn invoke_relation_requires_read_on_both_namespaces() {
+        let context = TestContext::new().await;
+        let (from_namespace_id, to_namespace_id, _from_class_id, _class_relation, object_relation) =
+            setup_cross_namespace_object_relation(&context, "rt_relation_read").await;
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            RT_ENDPOINT,
+            target_payload_with_subjects(
+                from_namespace_id,
+                "relation-read-target",
+                "https://127.0.0.1/hook",
+                serde_json::json!(["object_relation"]),
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let target: RemoteTarget = test::read_body_json(resp).await;
+
+        let group = create_test_group(&context.pool).await;
+        group
+            .add_member(&context.pool, &context.normal_user)
+            .await
+            .unwrap();
+        let from_namespace = crate::models::NamespaceID::new(from_namespace_id)
+            .unwrap()
+            .instance(&context.pool)
+            .await
+            .unwrap();
+        from_namespace
+            .grant(
+                &context.pool,
+                group.id,
+                PermissionsList::new([
+                    Permissions::ReadObjectRelation,
+                    Permissions::ExecuteRemoteTarget,
+                ]),
+            )
+            .await
+            .unwrap();
+
+        let resp = post_request(
+            &context.pool,
+            &context.normal_token,
+            &invoke_endpoint(target.id),
+            object_relation_invoke_body(object_relation.id),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::FORBIDDEN).await;
+
+        let to_namespace = crate::models::NamespaceID::new(to_namespace_id)
+            .unwrap()
+            .instance(&context.pool)
+            .await
+            .unwrap();
+        to_namespace
+            .grant_one(&context.pool, group.id, Permissions::ReadObjectRelation)
+            .await
+            .unwrap();
+
+        let resp = post_request(
+            &context.pool,
+            &context.normal_token,
+            &invoke_endpoint(target.id),
+            object_relation_invoke_body(object_relation.id),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::ACCEPTED).await;
+    }
+
+    #[actix_web::test]
+    async fn invoke_relation_returns_404_when_target_namespace_is_not_part_of_subject() {
+        let context = TestContext::new().await;
+        let (
+            _from_namespace_id,
+            _to_namespace_id,
+            _from_class_id,
+            _class_relation,
+            object_relation,
+        ) = setup_cross_namespace_object_relation(&context, "rt_relation_scope").await;
+        let unrelated_namespace = context.namespace_fixture("rt_relation_unrelated").await;
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            RT_ENDPOINT,
+            target_payload_with_subjects(
+                unrelated_namespace.namespace.id,
+                "relation-unrelated-target",
+                "https://x.example.com/hook",
+                serde_json::json!(["object_relation"]),
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let target: RemoteTarget = test::read_body_json(resp).await;
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &invoke_endpoint(target.id),
+            object_relation_invoke_body(object_relation.id),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::NOT_FOUND).await;
     }
 
     #[actix_web::test]
@@ -643,10 +1033,7 @@ mod tests {
             "https://127.0.0.1/hook",
         )
         .await;
-        let endpoint = format!(
-            "/api/v1/classes/{class_id}/objects/{object_id}/remote-targets/{}/invoke",
-            target.id
-        );
+        let endpoint = invoke_endpoint(target.id);
         let key = vec![(
             header::HeaderName::from_static("idempotency-key"),
             "remote-key-1".to_string(),
@@ -657,7 +1044,12 @@ mod tests {
             &context.pool,
             &context.admin_token,
             &endpoint,
-            serde_json::json!({ "parameters": { "a": 1 } }),
+            object_invoke_body_with_payload(
+                class_id,
+                object_id,
+                serde_json::json!({ "a": 1 }),
+                serde_json::json!({}),
+            ),
             key.clone(),
         )
         .await;
@@ -669,7 +1061,12 @@ mod tests {
             &context.pool,
             &context.admin_token,
             &endpoint,
-            serde_json::json!({ "parameters": { "a": 1 } }),
+            object_invoke_body_with_payload(
+                class_id,
+                object_id,
+                serde_json::json!({ "a": 1 }),
+                serde_json::json!({}),
+            ),
             key.clone(),
         )
         .await;
@@ -682,7 +1079,12 @@ mod tests {
             &context.pool,
             &context.admin_token,
             &endpoint,
-            serde_json::json!({ "parameters": { "a": 2 } }),
+            object_invoke_body_with_payload(
+                class_id,
+                object_id,
+                serde_json::json!({ "a": 2 }),
+                serde_json::json!({}),
+            ),
             key,
         )
         .await;

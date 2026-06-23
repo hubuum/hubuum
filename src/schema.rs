@@ -138,7 +138,8 @@ diesel::table! {
         id -> Int4,
         task_id -> Int4,
         target_id -> Nullable<Int4>,
-        object_id -> Nullable<Int4>,
+        subject_type -> Varchar,
+        subject_id -> Int4,
         method -> Varchar,
         rendered_url -> Text,
         response_status -> Nullable<Int4>,
@@ -162,6 +163,7 @@ diesel::table! {
         headers_template -> Jsonb,
         body_template -> Nullable<Text>,
         auth_config -> Jsonb,
+        allowed_subject_types -> Jsonb,
         timeout_ms -> Int4,
         enabled -> Bool,
         created_at -> Timestamp,
@@ -281,7 +283,6 @@ diesel::joinable!(hubuumobject_relation -> hubuumclass_relation (class_relation_
 diesel::joinable!(import_task_results -> tasks (task_id));
 diesel::joinable!(permissions -> groups (group_id));
 diesel::joinable!(permissions -> namespaces (namespace_id));
-diesel::joinable!(remote_call_results -> hubuumobject (object_id));
 diesel::joinable!(remote_call_results -> remote_targets (target_id));
 diesel::joinable!(remote_call_results -> tasks (task_id));
 diesel::joinable!(remote_targets -> namespaces (namespace_id));

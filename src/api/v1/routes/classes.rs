@@ -1,6 +1,6 @@
 use actix_web::web;
 
-use crate::api::v1::handlers::{classes, remote_targets};
+use crate::api::v1::handlers::classes;
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(classes::get_classes)
         .service(classes::get_class)
@@ -23,6 +23,5 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(classes::get_related_object_graph)
         .service(classes::get_object_relation_from_class_and_objects)
         .service(classes::delete_object_relation)
-        .service(classes::create_object_relation)
-        .service(remote_targets::invoke_remote_target);
+        .service(classes::create_object_relation);
 }

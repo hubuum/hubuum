@@ -13,15 +13,14 @@ use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    HubuumClassID, HubuumObjectID, NamespaceID, NewRemoteTarget, Permissions, RemoteTarget,
-    RemoteTargetID, RemoteTargetInvokeRequest, StoredRemoteCallTaskPayload, TaskKind,
-    UpdateRemoteTarget,
+    NamespaceID, NewRemoteTarget, Permissions, RemoteTarget, RemoteTargetID,
+    RemoteTargetInvokeRequest, StoredRemoteCallTaskPayload, TaskKind, UpdateRemoteTarget,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
-use crate::traits::{ClassAccessors, NamespaceAccessors, SelfAccessors};
+use crate::traits::NamespaceAccessors;
 use crate::utilities::response::{
     json_response, json_response_created, json_response_with_header, paginated_json_response,
 };
@@ -217,12 +216,10 @@ pub async fn delete_remote_target(
 
 #[utoipa::path(
     post,
-    path = "/api/v1/classes/{class_id}/objects/{object_id}/remote-targets/{target_id}/invoke",
+    path = "/api/v1/remote-targets/{target_id}/invoke",
     tag = "remote-targets",
     security(("bearer_auth" = [])),
     params(
-        ("class_id" = i32, Path, description = "Class ID"),
-        ("object_id" = i32, Path, description = "Object ID"),
         ("target_id" = i32, Path, description = "Remote target ID")
     ),
     request_body = RemoteTargetInvokeRequest,
@@ -231,52 +228,65 @@ pub async fn delete_remote_target(
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
-        (status = 404, description = "Object or remote target not found", body = ApiErrorResponse),
+        (status = 404, description = "Subject or remote target not found", body = ApiErrorResponse),
         (status = 409, description = "Conflict", body = ApiErrorResponse)
     )
 )]
-#[post("/{class_id}/objects/{object_id}/remote-targets/{target_id}/invoke")]
+#[post("/{target_id}/invoke")]
 pub async fn invoke_remote_target(
     pool: web::Data<DbPool>,
     requestor: UserAccess,
     req: HttpRequest,
-    path: web::Path<(HubuumClassID, HubuumObjectID, RemoteTargetID)>,
+    target_id: web::Path<RemoteTargetID>,
     body: web::Json<RemoteTargetInvokeRequest>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
     let user = requestor.user;
-    let (class_id, object_id, target_id) = path.into_inner();
+    let target_id = target_id.into_inner();
     let invoke = body.into_inner();
-    let class = class_id.class(&pool).await?;
-    let object = object_id.instance(&pool).await?;
-    if object.hubuum_class_id != class.id {
-        return Err(ApiError::NotFound("Object not found in class".to_string()));
-    }
     let target = target_id.instance(&pool).await?;
-    if target.namespace_id != object.namespace_id {
-        return Err(ApiError::NotFound(
-            "Remote target not found for object namespace".to_string(),
-        ));
-    }
     if !target.enabled {
         return Err(ApiError::BadRequest(
             "Remote target is disabled".to_string(),
         ));
     }
 
-    let namespace = NamespaceID::new(object.namespace_id)?;
-    can!(&pool, user.clone(), [Permissions::ReadObject], namespace);
-    can!(
+    let resolved = invoke.subject.resolve(&pool).await?;
+    if !target.allows_subject_type(resolved.subject_type) {
+        return Err(ApiError::BadRequest(format!(
+            "Remote target '{}' does not allow '{}' subjects",
+            target.name,
+            resolved.subject_type.as_str()
+        )));
+    }
+    let target_namespace = NamespaceID::new(target.namespace_id)?
+        .namespace(&pool)
+        .await?;
+    if !resolved
+        .namespaces
+        .iter()
+        .any(|namespace| namespace.id == target.namespace_id)
+    {
+        return Err(ApiError::NotFound(
+            "Remote target not found for invocation subject".to_string(),
+        ));
+    }
+    user.can(
         &pool,
-        user.clone(),
+        [resolved.required_read_permission],
+        resolved.namespaces.clone(),
+    )
+    .await?;
+    user.can(
+        &pool,
         [Permissions::ExecuteRemoteTarget],
-        namespace
-    );
+        [target_namespace],
+    )
+    .await?;
 
     let payload = serde_json::to_value(StoredRemoteCallTaskPayload {
         target_id,
-        class_id,
-        object_id,
+        subject: invoke.subject,
         parameters: invoke.parameters,
         body_override: invoke.body_override,
     })?;
@@ -293,7 +303,8 @@ pub async fn invoke_remote_target(
         message = "Remote target invocation queued",
         task_id = task.id,
         target_id = target.id,
-        object_id = object.id
+        subject_type = resolved.subject_type.as_str(),
+        subject_id = resolved.subject_id
     );
 
     let mut headers = std::collections::HashMap::new();
