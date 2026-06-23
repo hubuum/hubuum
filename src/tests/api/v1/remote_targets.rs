@@ -5,11 +5,23 @@ mod tests {
         http::{StatusCode, header},
         test,
     };
+    use base64::Engine;
+    use diesel::prelude::*;
+    use std::sync::Arc;
     use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::sync::oneshot;
+    use tokio_rustls::TlsAcceptor;
+    use tokio_rustls::rustls::{
+        ServerConfig,
+        pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
+    };
 
+    use crate::db::with_connection;
     use crate::models::{
-        NewHubuumClass, NewHubuumObject, Permissions, PermissionsList, RemoteTarget, TaskResponse,
-        TaskStatus,
+        NewHubuumClass, NewHubuumObject, Permissions, PermissionsList, RemoteCallResult,
+        RemoteTarget, TaskResponse, TaskStatus,
     };
     use crate::tests::TestContext;
     use crate::tests::api_operations::{
@@ -20,6 +32,8 @@ mod tests {
     use crate::traits::{PermissionController, SelfAccessors};
 
     const RT_ENDPOINT: &str = "/api/v1/remote-targets";
+    const LOCALHOST_CERT_DER_B64: &str = "MIIDHzCCAgegAwIBAgIUT7YypqM2YgvdrXLHby8OFyeNEEIwDQYJKoZIhvcNAQELBQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MDYyMzA0MDEyMloXDTI2MDYyNDA0MDEyMlowFDESMBAGA1UEAwwJbG9jYWxob3N0MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAn3A378veyRzeP7MSS/S61EPpE+v9Z+fGlFC4qB8SOUHvO1D6+QZrqcKkUJZb/HKnQyDydMNMBJfjswid5l18ogPVFmfGInGp50T3ceH8i1DAnN1Bj6g6h/QgKe64elkYDukaoHkqLGiQ7Nwsllm8UqwdgFa+B1hYD6uoYAcd/4gv5ClxOx6bkwganvWas+PXyHEEdYW7YBRAyPrJHIInWjck5k5UJPn5Vy551ptGpurvUqf2M7VcmnxjHAldTnc9br+chIvLtyulWg8pBAdFwu+4ZM0jWQpTRhVi5lWB+q7mmI8Da4izV0/K2a1bDnSN6j4rmAzEknok0fMoGXzWjQIDAQABo2kwZzAdBgNVHQ4EFgQUDp9XEjhqPBb8Ef0vyJXXDqLjcDwwHwYDVR0jBBgwFoAUDp9XEjhqPBb8Ef0vyJXXDqLjcDwwDwYDVR0TAQH/BAUwAwEB/zAUBgNVHREEDTALgglsb2NhbGhvc3QwDQYJKoZIhvcNAQELBQADggEBAJFxe1GtT9g/PI0Ht912WKwCJc8Oj0U49zUK8TRe9VZHMaJriozeS+4P6I6RhmMR4RV2bPtvjQjzv9ZCHoGoiPUupHd+PUGn8oyezDWoGLuwlPE0dQyn3OAdV1no6q/HI6PFThHTd2o/cLl3nfyIu56sCRLiwrMg6xH3UZ6VJ4qjtxTuyYloMNrb09Uyo7G1Qpw7qfiOB8whyJcjC8Gx1H1JTmF/h/CU2u79yAcVIRA4N6zJLAdtsseUjyTb5CAagmvZ6wZBqB+XNCwXzV09+56zt5fFtopF7mBgQcE21wtlzoKKLUyivc5FzgOHPv3YDJiooYyFXcOOobY1B0k8ih8=";
+    const LOCALHOST_KEY_DER_B64: &str = "MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCfcDfvy97JHN4/sxJL9LrUQ+kT6/1n58aUULioHxI5Qe87UPr5BmupwqRQllv8cqdDIPJ0w0wEl+OzCJ3mXXyiA9UWZ8YicannRPdx4fyLUMCc3UGPqDqH9CAp7rh6WRgO6RqgeSosaJDs3CyWWbxSrB2AVr4HWFgPq6hgBx3/iC/kKXE7HpuTCBqe9Zqz49fIcQR1hbtgFEDI+skcgidaNyTmTlQk+flXLnnWm0am6u9Sp/YztVyafGMcCV1Odz1uv5yEi8u3K6VaDykEB0XC77hkzSNZClNGFWLmVYH6ruaYjwNriLNXT8rZrVsOdI3qPiuYDMSSeiTR8ygZfNaNAgMBAAECggEAAQH66ebA1Y9whamibqggtQiyrd6HAohCnR1CEhpOWCcaXPbuAtJNkUapRSf72gAAND4v3j2ikL1S+P9Yxhc7lBclbMoV+3uxk5+qFYVxzNlzsz1RoLUMs0IkCtEt6L/UyIaLDjLGUCavrIAKuxNKlM0/EOOgCcyljFuUUAIKIwOcOKv7rG/t7GC+wZMTT3oyICgihwsN7D527BTKRlk6zcSCj38B21drfgLAMreGRt8NGcByhzo3BuazRkYyEw8SP9LCEbDQKwWGR2xJtxwnSHcrvYvSklhDAB3EP29URstGUxapRg4re25e3MRVIjVdYtCeGt8Ie71UZgO/lgwYAQKBgQDPL192FKjTUwqfhjICpXYiNbbseXw7dvvNfLOZvuE20zPTkwwEWkpF2dxQX44RfYS625jzj9GHRijKwL6HlV89i+pNw+N2OWLUdWkkeMVqqknSPgJavZ4O3WKpk+cSgVm0VgaxNfvwoNi+TnLQblP6YFoXMG/luY3wYg0CviHzAQKBgQDFAPGIU/G6SYAnD5SJcojUXKzH3ivvciBYuLJt4FGUlfym9fnkQNbGNJAL4c3otPTcR/r0br2JIrxod5/w4c93Q4EKmXEwMdW26npxDR8uO/caSvFGZweikqxIj0Im5UlGV3cuanFb+u0jZWjCjFxMO2sWGRMdwrgQm+GyG7z/jQKBgA+vxIiKM+YcKXe+j1bH9FPOwVTSNefCsHn0cRy46RBfmVLxlT1XILx9LEMhmP4WBNCpA8GdJ/4X/8qqIULeumFMkKbmp/gxjBwN77IFOt1Cm2hBraf1J1x0wp2YRyyNgp82zDbqoXKsmvx9sA+76rvQQ8Hxtucrz2Vd5yJIBwYBAoGAaLd7q8+TKkZvjFPHzNfIy7kHTqZWDE1JzF9A2Q7nzmd7iPQvBJlCkNDX0LkSTqQBlCXey5chwIdqRs1vgwdE1ExZh1zQwaF7zGMO+pDTBixxyNQVNCsH7+6vDVK5AxvVu0I6471IzG+xJaN98AvT8+GRpollk+gxFwMFETuVVvECgYAJ8qBnL/YnusNmORCdItqG6adl+0H4ohikxNurIP8cBRjKGJ6XSC2Qs3BmljiqL9aLluKTcbhOBKlH6iq63vA8KxF7JjVBj2NXClDh6MO6hr/4gWTi7VMpC3CWT80IijoMAth37y+MImdaJhG2kut+XcT14KFakVJM1JCbe0Ygdw==";
 
     /// Create a namespace + class + object owned by the admin group so the admin token holds
     /// every remote-target permission for it. Returns (namespace_id, class_id, object_id).
@@ -108,6 +122,84 @@ mod tests {
             sleep(Duration::from_millis(100)).await;
         }
         panic!("task {task_id} did not reach {expected:?} in time");
+    }
+
+    async fn spawn_https_remote_server() -> (u16, oneshot::Receiver<String>) {
+        let _ = tokio_rustls::rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let cert_der = base64::engine::general_purpose::STANDARD
+            .decode(LOCALHOST_CERT_DER_B64)
+            .unwrap();
+        let key_der = base64::engine::general_purpose::STANDARD
+            .decode(LOCALHOST_KEY_DER_B64)
+            .unwrap();
+        let config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![CertificateDer::from(cert_der)],
+                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der)),
+            )
+            .unwrap();
+        let acceptor = TlsAcceptor::from(Arc::new(config));
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (request_tx, request_rx) = oneshot::channel();
+
+        actix_rt::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = acceptor.accept(stream).await.unwrap();
+            let mut request = Vec::new();
+            let header_end;
+            loop {
+                let mut chunk = [0_u8; 1024];
+                let read = stream.read(&mut chunk).await.unwrap();
+                assert!(read > 0, "client closed before sending request headers");
+                request.extend_from_slice(&chunk[..read]);
+                if let Some(index) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                    header_end = index + 4;
+                    break;
+                }
+            }
+
+            let headers = String::from_utf8_lossy(&request[..header_end]).into_owned();
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().unwrap())
+                })
+                .unwrap_or(0);
+            while request.len() < header_end + content_length {
+                let mut chunk = [0_u8; 1024];
+                let read = stream.read(&mut chunk).await.unwrap();
+                assert!(read > 0, "client closed before sending request body");
+                request.extend_from_slice(&chunk[..read]);
+            }
+
+            let request_text = String::from_utf8_lossy(&request).into_owned();
+            request_tx.send(request_text).unwrap();
+            let body = "remote-ok-body";
+            let response = format!(
+                "HTTP/1.1 201 Created\r\nContent-Type: text/plain\r\nX-Remote-Result: accepted\r\nSet-Cookie: session=secret\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+            stream.shutdown().await.unwrap();
+        });
+
+        (port, request_rx)
+    }
+
+    fn remote_call_result(context: &TestContext, task_id_value: i32) -> RemoteCallResult {
+        use crate::schema::remote_call_results::dsl::{remote_call_results, task_id};
+
+        with_connection(&context.pool, |conn| {
+            remote_call_results
+                .filter(task_id.eq(task_id_value))
+                .first::<RemoteCallResult>(conn)
+        })
+        .unwrap()
     }
 
     #[actix_web::test]
@@ -363,6 +455,81 @@ mod tests {
         // The worker screens the loopback address and finalizes the task as failed.
         let finished = wait_for_task(&context, task.id, TaskStatus::Failed).await;
         assert_eq!(finished.status, TaskStatus::Failed);
+    }
+
+    #[actix_web::test]
+    async fn invoke_success_records_sanitized_https_result_and_sends_auth() {
+        unsafe {
+            std::env::set_var(
+                "HUBUUM_REMOTE_SECRET_REMOTE_SUCCESS_TOKEN",
+                "expected-token",
+            );
+        }
+        let context = TestContext::new().await;
+        let (port, request_rx) = spawn_https_remote_server().await;
+        let (namespace_id, class_id, object_id) = setup_object(&context, "rt_success").await;
+        let payload = serde_json::json!({
+            "namespace_id": namespace_id,
+            "name": "success-target",
+            "description": "test",
+            "method": "post",
+            "url_template": format!("https://localhost:{port}/hook/{{{{ object.data.hostname }}}}"),
+            "headers_template": {
+                "X-Object": "{{ object.name }}",
+                "X-Trace": "{{ parameters.trace }}",
+            },
+            "body_template": "{\"host\": {{ object.data.hostname | tojson }}, \"trace\": {{ parameters.trace | tojson }}, \"override\": {{ body_override | tojson }}}",
+            "auth_config": { "type": "bearer_secret", "secret": "remote_success_token" },
+        });
+        let resp = post_request(&context.pool, &context.admin_token, RT_ENDPOINT, payload).await;
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let target: RemoteTarget = test::read_body_json(resp).await;
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "/api/v1/classes/{class_id}/objects/{object_id}/remote-targets/{}/invoke",
+                target.id
+            ),
+            serde_json::json!({
+                "parameters": { "trace": "trace-123" },
+                "body_override": { "force": true },
+            }),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(resp).await;
+        let finished = wait_for_task(&context, task.id, TaskStatus::Succeeded).await;
+        assert_eq!(finished.status, TaskStatus::Succeeded);
+
+        let request = request_rx.await.unwrap();
+        assert!(request.starts_with("POST /hook/host-01 HTTP/1.1"));
+        assert!(request.contains("authorization: Bearer expected-token"));
+        assert!(request.contains("x-object: "));
+        assert!(request.contains("x-trace: trace-123"));
+        assert!(request.contains("\"host\": \"host-01\""));
+        assert!(request.contains("\"trace\": \"trace-123\""));
+        assert!(request.contains("\"force\":true"));
+
+        let result = remote_call_result(&context, task.id);
+        assert!(result.success);
+        assert_eq!(result.target_id, Some(target.id));
+        assert_eq!(result.object_id, Some(object_id));
+        assert_eq!(result.method, "post");
+        assert_eq!(
+            result.rendered_url,
+            format!("https://localhost:{port}/hook/host-01")
+        );
+        assert_eq!(result.response_status, Some(201));
+        assert_eq!(
+            result.response_body_preview.as_deref(),
+            Some("remote-ok-body")
+        );
+        let headers = result.response_headers.unwrap();
+        assert_eq!(headers["x-remote-result"], "accepted");
+        assert_eq!(headers["set-cookie"], "[redacted]");
+        assert_eq!(result.error, None);
     }
 
     #[actix_web::test]

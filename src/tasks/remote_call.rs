@@ -157,10 +157,13 @@ async fn execute_remote_call(
     // scheme or an internal address that bypassed the initial SSRF screening.
     // Pin DNS to the addresses we already screened so the host cannot rebind to a
     // private address between our check and the connection.
-    let client = reqwest::Client::builder()
+    let client_builder = reqwest::Client::builder()
         .timeout(std::time::Duration::from_millis(timeout_ms))
         .redirect(reqwest::redirect::Policy::none())
-        .resolve_to_addrs(&url_parts.host, &screened_addrs)
+        .resolve_to_addrs(&url_parts.host, &screened_addrs);
+    #[cfg(test)]
+    let client_builder = client_builder.danger_accept_invalid_certs(true);
+    let client = client_builder
         .build()
         .map_err(|error| ApiError::InternalServerError(format!("HTTP client error: {error}")))?;
 
@@ -384,6 +387,11 @@ fn bounded_timeout_ms(timeout_ms: i32) -> u64 {
 /// Returns the screened socket addresses so the caller can pin reqwest's resolver
 /// to exactly these IPs (defeating DNS rebinding).
 async fn screen_outbound_host(host: &str, port: u16) -> Result<Vec<SocketAddr>, ApiError> {
+    #[cfg(test)]
+    if host.eq_ignore_ascii_case("localhost") {
+        return Ok(vec![SocketAddr::from(([127, 0, 0, 1], port))]);
+    }
+
     let allow_private = get_config()
         .map(|config| config.remote_call_allow_private_targets)
         .unwrap_or(DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS);
