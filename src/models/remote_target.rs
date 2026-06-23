@@ -485,6 +485,8 @@ fn validate_header_templates(value: &serde_json::Value) -> Result<(), ApiError> 
                 "header names must not be empty".to_string(),
             ));
         }
+        reqwest::header::HeaderName::from_bytes(name.as_bytes())
+            .map_err(|_| ApiError::BadRequest(format!("Invalid header name: {name}")))?;
         match value {
             serde_json::Value::String(template) => validate_template("header template", template)?,
             _ => {
@@ -743,6 +745,16 @@ mod tests {
             validate_target_parts(
                 "https://example.com",
                 &serde_json::json!([]),
+                None,
+                &RemoteAuthConfig::None,
+                1000,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_target_parts(
+                "https://example.com",
+                &serde_json::json!({ "Invalid Header": "{{ object.id }}" }),
                 None,
                 &RemoteAuthConfig::None,
                 1000,
