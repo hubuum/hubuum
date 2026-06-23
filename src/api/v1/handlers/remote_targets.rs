@@ -288,9 +288,10 @@ async fn find_or_create_remote_call_task(
     payload: serde_json::Value,
 ) -> Result<crate::models::TaskRecord, ApiError> {
     let hash = request_hash(&payload)?;
+    let request_hash_for_match = hash.clone();
     let matches_request = |task: &crate::models::TaskRecord| {
         task.kind == TaskKind::RemoteCall.as_str()
-            && task.request_hash.as_deref() == Some(hash.as_str())
+            && task.request_hash.as_deref() == Some(request_hash_for_match.as_str())
     };
 
     if let Some(key) = idempotency_key.as_deref()
@@ -309,10 +310,12 @@ async fn find_or_create_remote_call_task(
         message = "Creating remote call task",
         submitted_by = submitted_by
     );
+    let create_idempotency_key = idempotency_key.clone();
+
     match (TaskCreateRequest {
         kind: TaskKind::RemoteCall,
         submitted_by,
-        idempotency_key,
+        idempotency_key: create_idempotency_key,
         request_hash: Some(hash),
         request_payload: payload,
         total_items: 1,
@@ -321,9 +324,19 @@ async fn find_or_create_remote_call_task(
     .await
     {
         Ok(task) => Ok(task),
-        Err(ApiError::Conflict(_)) => Err(ApiError::Conflict(
-            "Idempotency-Key is already in use for a different task submission".to_string(),
-        )),
+        Err(ApiError::Conflict(_)) => {
+            if let Some(key) = idempotency_key.as_deref()
+                && let Some(existing) =
+                    crate::models::TaskRecord::find_by_idempotency(pool, submitted_by, key).await?
+                && matches_request(&existing)
+            {
+                return Ok(existing);
+            }
+
+            Err(ApiError::Conflict(
+                "Idempotency-Key is already in use for a different task submission".to_string(),
+            ))
+        }
         Err(error) => Err(error),
     }
 }

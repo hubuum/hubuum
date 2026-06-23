@@ -7,6 +7,7 @@ mod tests {
     };
     use base64::Engine;
     use diesel::prelude::*;
+    use futures::join;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -234,6 +235,12 @@ mod tests {
     }
 
     async fn spawn_https_remote_server() -> (u16, oneshot::Receiver<String>) {
+        spawn_https_remote_server_with_body(b"remote-ok-body".to_vec()).await
+    }
+
+    async fn spawn_https_remote_server_with_body(
+        body: Vec<u8>,
+    ) -> (u16, oneshot::Receiver<String>) {
         let _ = tokio_rustls::rustls::crypto::aws_lc_rs::default_provider().install_default();
         let cert_der = base64::engine::general_purpose::STANDARD
             .decode(LOCALHOST_CERT_DER_B64)
@@ -287,13 +294,12 @@ mod tests {
 
             let request_text = String::from_utf8_lossy(&request).into_owned();
             request_tx.send(request_text).unwrap();
-            let body = "remote-ok-body";
             let response = format!(
-                "HTTP/1.1 201 Created\r\nContent-Type: text/plain\r\nX-Remote-Result: accepted\r\nSet-Cookie: session=secret\r\nContent-Length: {}\r\n\r\n{}",
-                body.len(),
-                body
+                "HTTP/1.1 201 Created\r\nContent-Type: text/plain\r\nX-Remote-Result: accepted\r\nSet-Cookie: session=secret\r\nContent-Length: {}\r\n\r\n",
+                body.len()
             );
             stream.write_all(response.as_bytes()).await.unwrap();
+            stream.write_all(&body).await.unwrap();
             stream.shutdown().await.unwrap();
         });
 
@@ -779,6 +785,48 @@ mod tests {
     }
 
     #[actix_web::test]
+    async fn invoke_stores_sanitized_response_body_preview_with_nul() {
+        let context = TestContext::new().await;
+        let (port, request_rx) =
+            spawn_https_remote_server_with_body(b"before\0after".to_vec()).await;
+        let (namespace_id, class_id, object_id) = setup_object(&context, "rt_nul_preview").await;
+        let target = create_target(
+            &context,
+            namespace_id,
+            "nul-preview-target",
+            &format!("https://localhost:{port}/hook"),
+        )
+        .await;
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &invoke_endpoint(target.id),
+            object_invoke_body(class_id, object_id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(resp).await;
+        let finished = wait_for_task(&context, task.id, TaskStatus::Succeeded).await;
+        assert_eq!(finished.status, TaskStatus::Succeeded);
+
+        let _request = request_rx.await.unwrap();
+        let result = remote_call_result(&context, task.id);
+        assert!(result.success);
+        assert_eq!(
+            result.response_body_preview.as_deref(),
+            Some("before\u{FFFD}after")
+        );
+        assert!(
+            !result
+                .response_body_preview
+                .as_deref()
+                .unwrap_or_default()
+                .contains('\0')
+        );
+    }
+
+    #[actix_web::test]
     async fn invoke_disabled_target_returns_400() {
         let context = TestContext::new().await;
         let (namespace_id, class_id, object_id) = setup_object(&context, "rt_disabled").await;
@@ -1117,5 +1165,53 @@ mod tests {
         )
         .await;
         assert_response_status(resp, StatusCode::CONFLICT).await;
+    }
+
+    #[actix_web::test]
+    async fn invoke_idempotency_key_reuses_task_under_concurrent_submissions() {
+        let context = TestContext::new().await;
+        let (namespace_id, class_id, object_id) =
+            setup_object(&context, "rt_idem_concurrent").await;
+        let target = create_target(
+            &context,
+            namespace_id,
+            "idem-concurrent-target",
+            "https://127.0.0.1/hook",
+        )
+        .await;
+        let endpoint = invoke_endpoint(target.id);
+        let key = context.scoped_name("remote-same-task-concurrent");
+        let body = object_invoke_body_with_payload(
+            class_id,
+            object_id,
+            serde_json::json!({ "a": 1 }),
+            serde_json::json!({}),
+        );
+
+        let first = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            &endpoint,
+            body.clone(),
+            vec![(
+                header::HeaderName::from_static("idempotency-key"),
+                key.clone(),
+            )],
+        );
+        let second = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            &endpoint,
+            body,
+            vec![(header::HeaderName::from_static("idempotency-key"), key)],
+        );
+
+        let (first, second) = join!(first, second);
+        let first = assert_response_status(first, StatusCode::ACCEPTED).await;
+        let second = assert_response_status(second, StatusCode::ACCEPTED).await;
+        let first_task: TaskResponse = test::read_body_json(first).await;
+        let second_task: TaskResponse = test::read_body_json(second).await;
+
+        assert_eq!(first_task.id, second_task.id);
     }
 }

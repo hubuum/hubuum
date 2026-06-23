@@ -777,12 +777,15 @@ fn acquire_task_capacity_lock(
 }
 
 fn task_capacity_lock_key(submitted_by: i32, kind: TaskKind) -> i64 {
-    let kind_offset = match kind {
-        TaskKind::Report => 1_000_000_000_i64,
-        TaskKind::RemoteCall => 2_000_000_000_i64,
-        TaskKind::Import | TaskKind::Export | TaskKind::Reindex => 9_000_000_000_i64,
+    const BASE_KEY: i64 = 4_801_000_000_000_i64;
+    const KIND_STRIDE: i64 = 1_i64 << 32;
+
+    let kind_slot = match kind {
+        TaskKind::Report => 1_i64,
+        TaskKind::RemoteCall => 2_i64,
+        TaskKind::Import | TaskKind::Export | TaskKind::Reindex => 9_i64,
     };
-    4_801_000_000_000_i64 + kind_offset + i64::from(submitted_by)
+    BASE_KEY + (kind_slot * KIND_STRIDE) + i64::from(submitted_by)
 }
 
 fn count_active_tasks_for_user_in_transaction(
@@ -827,7 +830,7 @@ mod tests {
     use std::sync::mpsc;
     use std::thread;
 
-    use super::{TaskBackend, TaskCreateRequest, claim_next_queued_task};
+    use super::{TaskBackend, TaskCreateRequest, claim_next_queued_task, task_capacity_lock_key};
     use crate::db::traits::user::DeleteUserRecord;
     use crate::db::with_transaction;
     use crate::errors::ApiError;
@@ -838,6 +841,31 @@ mod tests {
         TaskStatus,
     };
     use crate::tests::{TestContext, create_test_user};
+
+    #[test]
+    fn test_task_capacity_lock_keys_do_not_collide_between_kind_slots() {
+        assert_ne!(
+            task_capacity_lock_key(1_000_000_000, TaskKind::Report),
+            task_capacity_lock_key(0, TaskKind::RemoteCall)
+        );
+
+        let user_id = 42;
+        let report_key = task_capacity_lock_key(user_id, TaskKind::Report);
+        let remote_call_key = task_capacity_lock_key(user_id, TaskKind::RemoteCall);
+        let fallback_key = task_capacity_lock_key(user_id, TaskKind::Import);
+
+        assert_ne!(report_key, remote_call_key);
+        assert_ne!(report_key, fallback_key);
+        assert_ne!(remote_call_key, fallback_key);
+        assert_eq!(
+            fallback_key,
+            task_capacity_lock_key(user_id, TaskKind::Export)
+        );
+        assert_eq!(
+            fallback_key,
+            task_capacity_lock_key(user_id, TaskKind::Reindex)
+        );
+    }
 
     #[test]
     fn test_claim_next_queued_task_is_safe_under_concurrency() {

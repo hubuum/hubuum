@@ -452,7 +452,7 @@ async fn read_capped_body(
             None => break,
         }
     }
-    Ok(String::from_utf8_lossy(&buffer).into_owned())
+    Ok(String::from_utf8_lossy(&buffer).replace('\0', "\u{FFFD}"))
 }
 
 /// Response headers that may carry secrets the remote echoes back; their values are
