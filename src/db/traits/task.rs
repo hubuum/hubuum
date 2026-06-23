@@ -670,21 +670,44 @@ impl TaskCreateRequest {
         pool: &DbPool,
         max_active_report_tasks: usize,
     ) -> Result<TaskRecord, ApiError> {
-        if self.kind != TaskKind::Report {
-            return Err(ApiError::BadRequest(
-                "create_with_active_report_limit only accepts report tasks".to_string(),
-            ));
+        self.create_with_active_kind_limit(pool, TaskKind::Report, max_active_report_tasks)
+            .await
+    }
+
+    /// Queue this remote call task, rejecting it with `429` if the submitter already has
+    /// `max_active_remote_call_tasks` queued/validating/running remote calls.
+    pub async fn create_with_active_remote_call_limit(
+        self,
+        pool: &DbPool,
+        max_active_remote_call_tasks: usize,
+    ) -> Result<TaskRecord, ApiError> {
+        self.create_with_active_kind_limit(pool, TaskKind::RemoteCall, max_active_remote_call_tasks)
+            .await
+    }
+
+    async fn create_with_active_kind_limit(
+        self,
+        pool: &DbPool,
+        limited_kind: TaskKind,
+        max_active_tasks: usize,
+    ) -> Result<TaskRecord, ApiError> {
+        if self.kind != limited_kind {
+            return Err(ApiError::BadRequest(format!(
+                "active task limit only accepts {} tasks",
+                limited_kind.as_str()
+            )));
         }
 
-        let max_active_report_tasks = i64::try_from(max_active_report_tasks).unwrap_or(i64::MAX);
+        let max_active_tasks = i64::try_from(max_active_tasks).unwrap_or(i64::MAX);
         let submitter_id = self.submitted_by;
         let task = with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
-            acquire_report_task_capacity_lock(conn, submitter_id)?;
+            acquire_task_capacity_lock(conn, submitter_id, limited_kind)?;
             let active_count =
-                count_active_report_tasks_for_user_in_transaction(conn, submitter_id)?;
-            if active_count >= max_active_report_tasks {
+                count_active_tasks_for_user_in_transaction(conn, submitter_id, limited_kind)?;
+            if active_count >= max_active_tasks {
                 return Err(ApiError::TooManyRequests(format!(
-                    "Too many active report tasks for user ({active_count} >= {max_active_report_tasks}); wait for queued or running reports to finish"
+                    "Too many active {} tasks for user ({active_count} >= {max_active_tasks}); wait for queued or running tasks to finish",
+                    limited_kind.as_str()
                 )));
             }
 
@@ -735,30 +758,37 @@ fn insert_queued_task_with_event(
     Ok(task)
 }
 
-fn acquire_report_task_capacity_lock(
+fn acquire_task_capacity_lock(
     conn: &mut PgConnection,
     submitted_by: i32,
+    kind: TaskKind,
 ) -> Result<(), ApiError> {
-    let lock_key = report_task_capacity_lock_key(submitted_by);
+    let lock_key = task_capacity_lock_key(submitted_by, kind);
     let lock = diesel::sql_query("SELECT TRUE AS locked FROM pg_advisory_xact_lock($1)")
         .bind::<BigInt, _>(lock_key)
         .get_result::<AdvisoryLockRow>(conn)?;
     if !lock.locked {
         return Err(ApiError::InternalServerError(
-            "Failed to acquire report task capacity lock".to_string(),
+            "Failed to acquire task capacity lock".to_string(),
         ));
     }
 
     Ok(())
 }
 
-fn report_task_capacity_lock_key(submitted_by: i32) -> i64 {
-    4_801_000_000_000_i64 + i64::from(submitted_by)
+fn task_capacity_lock_key(submitted_by: i32, kind: TaskKind) -> i64 {
+    let kind_offset = match kind {
+        TaskKind::Report => 1_000_000_000_i64,
+        TaskKind::RemoteCall => 2_000_000_000_i64,
+        TaskKind::Import | TaskKind::Export | TaskKind::Reindex => 9_000_000_000_i64,
+    };
+    4_801_000_000_000_i64 + kind_offset + i64::from(submitted_by)
 }
 
-fn count_active_report_tasks_for_user_in_transaction(
+fn count_active_tasks_for_user_in_transaction(
     conn: &mut PgConnection,
     submitted_by_value: i32,
+    task_kind: TaskKind,
 ) -> Result<i64, ApiError> {
     use crate::schema::tasks::dsl::{deleted_at, kind, status, submitted_by, tasks};
 
@@ -769,7 +799,7 @@ fn count_active_report_tasks_for_user_in_transaction(
     ];
 
     tasks
-        .filter(kind.eq(TaskKind::Report.as_str()))
+        .filter(kind.eq(task_kind.as_str()))
         .filter(submitted_by.eq(Some(submitted_by_value)))
         .filter(status.eq_any(active_statuses))
         .filter(deleted_at.is_null())
@@ -802,7 +832,11 @@ mod tests {
     use crate::db::with_transaction;
     use crate::errors::ApiError;
     use crate::models::search::QueryOptions;
-    use crate::models::{NewTaskRecord, TaskID, TaskKind, TaskStatus};
+    use crate::models::{
+        NamespaceID, NewTaskRecord, RemoteInvocationBodyOverride, RemoteInvocationParameters,
+        RemoteInvocationSubject, RemoteTargetID, StoredRemoteCallTaskPayload, TaskID, TaskKind,
+        TaskStatus,
+    };
     use crate::tests::{TestContext, create_test_user};
 
     #[test]
@@ -956,6 +990,55 @@ mod tests {
         match error {
             ApiError::TooManyRequests(message) => {
                 assert!(message.contains("Too many active report tasks for user"));
+            }
+            other => panic!("expected TooManyRequests, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_remote_call_task_active_limit_blocks_new_work_for_same_user() {
+        let context = block_on(TestContext::new());
+        let payload = serde_json::to_value(StoredRemoteCallTaskPayload {
+            target_id: RemoteTargetID::new(1).unwrap(),
+            subject: RemoteInvocationSubject::Namespace {
+                namespace_id: NamespaceID::new(1).unwrap(),
+            },
+            parameters: RemoteInvocationParameters::default(),
+            body_override: RemoteInvocationBodyOverride::default(),
+        })
+        .unwrap();
+
+        let first = block_on(
+            TaskCreateRequest {
+                kind: TaskKind::RemoteCall,
+                submitted_by: context.admin_user.id,
+                idempotency_key: Some(context.scoped_name("remote-cap-first")),
+                request_hash: Some(context.scoped_name("remote-cap-first-hash")),
+                request_payload: payload.clone(),
+                total_items: 1,
+            }
+            .create_with_active_remote_call_limit(&context.pool, 1),
+        )
+        .unwrap();
+
+        assert_eq!(first.status, TaskStatus::Queued.as_str());
+
+        let error = block_on(
+            TaskCreateRequest {
+                kind: TaskKind::RemoteCall,
+                submitted_by: context.admin_user.id,
+                idempotency_key: Some(context.scoped_name("remote-cap-second")),
+                request_hash: Some(context.scoped_name("remote-cap-second-hash")),
+                request_payload: payload,
+                total_items: 1,
+            }
+            .create_with_active_remote_call_limit(&context.pool, 1),
+        )
+        .unwrap_err();
+
+        match error {
+            ApiError::TooManyRequests(message) => {
+                assert!(message.contains("Too many active remote_call tasks for user"));
             }
             other => panic!("expected TooManyRequests, got {other:?}"),
         }

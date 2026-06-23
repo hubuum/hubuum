@@ -7,7 +7,8 @@ use tracing::warn;
 
 use crate::config::{
     DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS, DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES,
-    DEFAULT_REMOTE_CALL_TIMEOUT_MS, get_config,
+    DEFAULT_REMOTE_CALL_TIMEOUT_MS, DEFAULT_REPORT_TEMPLATE_FUEL,
+    DEFAULT_REPORT_TEMPLATE_RECURSION_LIMIT, get_config,
 };
 use crate::db::DbPool;
 use crate::db::traits::remote_target::insert_remote_call_result;
@@ -134,7 +135,7 @@ async fn execute_remote_call(
         .map_err(|error| ApiError::InternalServerError(format!("HTTP client error: {error}")))?;
 
     let mut request_builder = client
-        .request(reqwest_method(target.method), rendered_url.clone())
+        .request(reqwest_method(target.method), url_parts.url.clone())
         .headers(headers);
     if let Some(body) = rendered_body {
         request_builder = request_builder.body(body);
@@ -161,7 +162,7 @@ async fn execute_remote_call(
                     subject_type: resolved.subject_type.as_str().to_string(),
                     subject_id: resolved.subject_id,
                     method: target.method.as_str().to_string(),
-                    rendered_url,
+                    rendered_url: url_parts.url.to_string(),
                     response_status: Some(i32::from(status.as_u16())),
                     response_headers: Some(response_headers),
                     response_body_preview: Some(body_preview),
@@ -197,7 +198,7 @@ async fn execute_remote_call(
                     subject_type: resolved.subject_type.as_str().to_string(),
                     subject_id: resolved.subject_id,
                     method: target.method.as_str().to_string(),
-                    rendered_url,
+                    rendered_url: url_parts.url.to_string(),
                     response_status: None,
                     response_headers: None,
                     response_body_preview: None,
@@ -263,11 +264,33 @@ fn render_template(
     template: &str,
     context: &serde_json::Value,
 ) -> Result<String, ApiError> {
-    let mut env = minijinja::Environment::new();
-    crate::utilities::reporting::register_curated_helpers(&mut env);
+    let env = build_remote_template_environment();
     env.template_from_str(template)
         .and_then(|compiled| compiled.render(context))
         .map_err(|error| ApiError::BadRequest(format!("Failed rendering {label}: {error}")))
+}
+
+fn build_remote_template_environment() -> minijinja::Environment<'static> {
+    let mut env = minijinja::Environment::new();
+    let (recursion_limit, fuel) = remote_template_limits();
+    env.set_recursion_limit(recursion_limit);
+    env.set_fuel(Some(fuel));
+    crate::utilities::reporting::register_curated_helpers(&mut env);
+    env
+}
+
+fn remote_template_limits() -> (usize, u64) {
+    get_config()
+        .map(|config| {
+            (
+                config.report_template_recursion_limit,
+                config.report_template_fuel,
+            )
+        })
+        .unwrap_or((
+            DEFAULT_REPORT_TEMPLATE_RECURSION_LIMIT,
+            DEFAULT_REPORT_TEMPLATE_FUEL,
+        ))
 }
 
 fn render_headers(
@@ -357,6 +380,13 @@ fn bounded_timeout_ms(timeout_ms: i32) -> u64 {
     let cap = get_config()
         .map(|config| config.remote_call_timeout_ms)
         .unwrap_or(DEFAULT_REMOTE_CALL_TIMEOUT_MS);
+    if requested > cap {
+        warn!(
+            message = "Remote call timeout clamped to configured maximum",
+            requested_timeout_ms = requested,
+            configured_max_timeout_ms = cap
+        );
+    }
     requested.min(cap)
 }
 
@@ -479,5 +509,22 @@ mod tests {
         let rendered =
             render_template("body_template", "{{ object.data | tojson }}", &context).unwrap();
         assert_eq!(rendered, "{\"host\":\"h1\"}");
+    }
+
+    #[test]
+    fn render_template_is_fuel_bounded() {
+        let context = serde_json::json!({});
+        let error = render_template(
+            "body_template",
+            "{% for _ in range(1000000000) %}x{% endfor %}",
+            &context,
+        )
+        .unwrap_err();
+
+        assert!(
+            error.to_string().contains("fuel")
+                || error.to_string().contains("operation")
+                || error.to_string().contains("limit")
+        );
     }
 }

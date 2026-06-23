@@ -20,6 +20,7 @@ pub const DEFAULT_TASK_POLL_INTERVAL_MS: u64 = 200;
 pub const DEFAULT_REPORT_OUTPUT_RETENTION_HOURS: i64 = 24 * 7;
 pub const DEFAULT_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS: u64 = 300;
 pub const DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER: usize = 100;
+pub const DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER: usize = 100;
 pub const DEFAULT_REPORT_TEMPLATE_RECURSION_LIMIT: usize = 64;
 pub const DEFAULT_REPORT_TEMPLATE_FUEL: u64 = 50_000;
 pub const DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS: usize = 2_000;
@@ -252,6 +253,14 @@ pub struct AppConfig {
         default_value_t = DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS
     )]
     pub remote_call_allow_private_targets: bool,
+
+    /// Maximum queued/validating/running remote call tasks one user may have at once.
+    #[clap(
+        long,
+        env = "HUBUUM_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER",
+        default_value_t = DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER
+    )]
+    pub remote_call_max_active_tasks_per_user: usize,
 
     /// Pool-global Postgres `statement_timeout` in milliseconds (0 = disabled).
     ///
@@ -539,6 +548,12 @@ impl AppConfig {
         if self.remote_call_max_response_bytes == 0 {
             return Err(ApiError::BadRequest(
                 "remote_call_max_response_bytes must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.remote_call_max_active_tasks_per_user == 0 {
+            return Err(ApiError::BadRequest(
+                "remote_call_max_active_tasks_per_user must be greater than 0".to_string(),
             ));
         }
 
@@ -853,6 +868,12 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS),
+        remote_call_max_active_tasks_per_user: env::var(
+            "HUBUUM_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER",
+        )
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER),
         db_statement_timeout_ms: env::var("HUBUUM_DB_STATEMENT_TIMEOUT_MS")
             .ok()
             .and_then(|value| value.parse().ok())
@@ -1109,11 +1130,11 @@ mod tests {
 
     use super::{
         AppConfig, DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS, DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS,
-        DEFAULT_PAGE_LIMIT, DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER,
-        DEFAULT_REPORT_MAX_OUTPUT_BYTES, DEFAULT_TASK_POLL_INTERVAL_MS,
-        DEFAULT_TOKEN_LIFETIME_HOURS, MAX_PAGE_LIMIT, TEST_ENV_LOCK, TlsBackend,
-        default_actix_workers, default_task_workers, get_config_from_env, token_hash_key_bytes,
-        token_hash_key_is_ephemeral,
+        DEFAULT_PAGE_LIMIT, DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER,
+        DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER, DEFAULT_REPORT_MAX_OUTPUT_BYTES,
+        DEFAULT_TASK_POLL_INTERVAL_MS, DEFAULT_TOKEN_LIFETIME_HOURS, MAX_PAGE_LIMIT, TEST_ENV_LOCK,
+        TlsBackend, default_actix_workers, default_task_workers, get_config_from_env,
+        token_hash_key_bytes, token_hash_key_is_ephemeral,
     };
 
     struct EnvVarGuard {
@@ -1340,6 +1361,49 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "report_max_active_tasks_per_user must be greater than 0"
+        );
+    }
+
+    #[test]
+    fn remote_call_max_active_tasks_per_user_is_parsed_from_env() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER", Some("9"));
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(parsed.remote_call_max_active_tasks_per_user, 9);
+        assert_eq!(loaded.remote_call_max_active_tasks_per_user, 9);
+    }
+
+    #[test]
+    fn remote_call_max_active_tasks_per_user_defaults_when_env_var_is_unset() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER", None);
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(
+            parsed.remote_call_max_active_tasks_per_user,
+            DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER
+        );
+        assert_eq!(
+            loaded.remote_call_max_active_tasks_per_user,
+            DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER
+        );
+    }
+
+    #[test]
+    fn remote_call_max_active_tasks_per_user_is_validated() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER", Some("0"));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "remote_call_max_active_tasks_per_user must be greater than 0"
         );
     }
 

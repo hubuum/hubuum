@@ -5,9 +5,11 @@ use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
-use urlparse::urlparse;
 use utoipa::ToSchema;
 
+use crate::config::{
+    DEFAULT_REPORT_TEMPLATE_FUEL, DEFAULT_REPORT_TEMPLATE_RECURSION_LIMIT, get_config,
+};
 use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
 use crate::errors::ApiError;
@@ -790,6 +792,7 @@ fn unique_namespaces(namespaces: Vec<Namespace>) -> Vec<Namespace> {
 /// Host and port extracted from a validated outbound remote target URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutboundUrlParts {
+    pub url: reqwest::Url,
     pub host: String,
     pub port: u16,
 }
@@ -806,28 +809,36 @@ pub fn validate_rendered_remote_url(url: &str) -> Result<OutboundUrlParts, ApiEr
         ));
     }
 
-    let parsed = urlparse(url);
+    let parsed = reqwest::Url::parse(url)
+        .map_err(|_| ApiError::BadRequest("remote target URL is invalid".to_string()))?;
 
-    if !parsed.scheme.eq_ignore_ascii_case("https") {
+    if parsed.scheme() != "https" {
         return Err(ApiError::BadRequest(
             "remote target URLs must use https".to_string(),
         ));
     }
 
-    if parsed.username.is_some() || parsed.password.is_some() {
+    if !parsed.username().is_empty() || parsed.password().is_some() {
         return Err(ApiError::BadRequest(
             "remote target URLs must not contain embedded credentials".to_string(),
         ));
     }
 
     let host = parsed
-        .hostname
+        .host_str()
         .filter(|host| !host.is_empty())
-        .ok_or_else(|| ApiError::BadRequest("remote target URL is missing a host".to_string()))?;
+        .ok_or_else(|| ApiError::BadRequest("remote target URL is missing a host".to_string()))?
+        .to_string();
 
-    let port = parsed.port.unwrap_or(443);
+    let port = parsed.port_or_known_default().ok_or_else(|| {
+        ApiError::BadRequest("remote target URL is missing a known port".to_string())
+    })?;
 
-    Ok(OutboundUrlParts { host, port })
+    Ok(OutboundUrlParts {
+        url: parsed,
+        host,
+        port,
+    })
 }
 
 /// IP networks that must never be reachable as remote targets unless explicitly
@@ -946,11 +957,33 @@ fn validate_auth_config(auth_config: &RemoteAuthConfig) -> Result<(), ApiError> 
 }
 
 fn validate_template(label: &str, source: &str) -> Result<(), ApiError> {
-    let mut env = minijinja::Environment::new();
+    let mut env = build_remote_template_validation_environment();
     crate::utilities::reporting::register_curated_helpers(&mut env);
     env.template_from_str(source)
         .map(|_| ())
         .map_err(|error| ApiError::BadRequest(format!("Invalid {label}: {error}")))
+}
+
+fn build_remote_template_validation_environment() -> minijinja::Environment<'static> {
+    let mut env = minijinja::Environment::new();
+    let (recursion_limit, fuel) = remote_template_limits();
+    env.set_recursion_limit(recursion_limit);
+    env.set_fuel(Some(fuel));
+    env
+}
+
+fn remote_template_limits() -> (usize, u64) {
+    get_config()
+        .map(|config| {
+            (
+                config.report_template_recursion_limit,
+                config.report_template_fuel,
+            )
+        })
+        .unwrap_or((
+            DEFAULT_REPORT_TEMPLATE_RECURSION_LIMIT,
+            DEFAULT_REPORT_TEMPLATE_FUEL,
+        ))
 }
 
 fn deserialize_double_option<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
@@ -1078,15 +1111,18 @@ mod tests {
     #[test]
     fn rendered_remote_urls_must_be_https() {
         let parts = validate_rendered_remote_url("https://example.com/hook").unwrap();
+        assert_eq!(parts.url.host_str(), Some(parts.host.as_str()));
+        assert_eq!(parts.url.port_or_known_default(), Some(parts.port));
         assert_eq!(parts.host, "example.com");
         assert_eq!(parts.port, 443);
 
+        let custom_port = validate_rendered_remote_url("https://example.com:8443/hook").unwrap();
+        assert_eq!(custom_port.url.host_str(), Some(custom_port.host.as_str()));
         assert_eq!(
-            validate_rendered_remote_url("https://example.com:8443/hook")
-                .unwrap()
-                .port,
-            8443
+            custom_port.url.port_or_known_default(),
+            Some(custom_port.port)
         );
+        assert_eq!(custom_port.port, 8443);
 
         assert!(validate_rendered_remote_url("http://example.com/hook").is_err());
         assert!(validate_rendered_remote_url("https://").is_err());
@@ -1098,6 +1134,7 @@ mod tests {
     fn rendered_remote_urls_reject_embedded_credentials() {
         assert!(validate_rendered_remote_url("https://user:pass@example.com/hook").is_err());
         assert!(validate_rendered_remote_url("https://user@example.com/hook").is_err());
+        assert!(validate_rendered_remote_url("https://example.com@127.0.0.1/hook").is_err());
     }
 
     #[test]

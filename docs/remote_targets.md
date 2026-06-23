@@ -111,6 +111,10 @@ resolves the value from an environment variable:
 HUBUUM_REMOTE_SECRET_<UPPERCASE_SECRET_NAME>
 ```
 
+The reference name is configuration metadata, not a secret value. Users with `ReadRemoteTarget` can
+see which reference name a target uses, but only the worker reads the corresponding environment
+variable value.
+
 For example, this target auth config:
 
 ```json
@@ -373,6 +377,10 @@ Outbound calls are constrained to mitigate server-side request forgery (SSRF):
   unless `HUBUUM_REMOTE_CALL_ALLOW_PRIVATE_TARGETS` is enabled for the deployment
 - the screened address is pinned for the connection, so a host cannot rebind to a private address
   between the screening and the request
+- URL, header, and body templates render with the shared MiniJinja fuel and recursion limits used by
+  report templates
+- each submitting user can have only a bounded number of queued, validating, or running remote-call
+  tasks at once
 - the response body is read only up to `HUBUUM_REMOTE_CALL_MAX_RESPONSE_BYTES`; anything beyond that
   is discarded
 
@@ -383,6 +391,9 @@ Relevant configuration:
 | `HUBUUM_REMOTE_CALL_TIMEOUT_MS` | `10000` | Upper bound on a target's per-call `timeout_ms`. |
 | `HUBUUM_REMOTE_CALL_MAX_RESPONSE_BYTES` | `262144` | Maximum response body bytes read and stored as a preview. |
 | `HUBUUM_REMOTE_CALL_ALLOW_PRIVATE_TARGETS` | `false` | Allow targets that resolve to private/internal addresses. |
+| `HUBUUM_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER` | `100` | Maximum queued, validating, or running remote-call tasks per submitting user. |
+| `HUBUUM_REPORT_TEMPLATE_RECURSION_LIMIT` | `64` | Shared MiniJinja recursion limit for report and remote target templates. |
+| `HUBUUM_REPORT_TEMPLATE_FUEL` | `50000` | Shared MiniJinja execution fuel budget for report and remote target templates. |
 
 There is no public remote-call result endpoint in this first version. Use the generic task and task
 event endpoints to poll status and inspect task-level events.

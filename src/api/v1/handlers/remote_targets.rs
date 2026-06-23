@@ -3,6 +3,7 @@ use tracing::{debug, info};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::can;
+use crate::config::{DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER, get_config};
 use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
 use crate::db::traits::remote_target::{
@@ -316,7 +317,7 @@ async fn find_or_create_remote_call_task(
         request_payload: payload,
         total_items: 1,
     })
-    .create_generic(pool)
+    .create_with_active_remote_call_limit(pool, max_active_remote_call_tasks_per_user())
     .await
     {
         Ok(task) => Ok(task),
@@ -325,4 +326,10 @@ async fn find_or_create_remote_call_task(
         )),
         Err(error) => Err(error),
     }
+}
+
+fn max_active_remote_call_tasks_per_user() -> usize {
+    get_config()
+        .map(|config| config.remote_call_max_active_tasks_per_user)
+        .unwrap_or(DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER)
 }
