@@ -101,7 +101,7 @@ require `ReadCollection`; class subjects require `ReadClass`; object subjects re
 class relation subjects require `ReadClassRelation` on both endpoint namespaces; object relation
 subjects require `ReadObjectRelation` on both endpoint namespaces. The worker re-checks both subject
 read permission and `ExecuteRemoteTarget` for the submitting user before executing the outbound HTTP
-call.
+call. `ReadRemoteTarget` is not required to invoke a target by ID.
 
 ## Example
 

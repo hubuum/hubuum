@@ -9,11 +9,12 @@ use urlparse::urlparse;
 use utoipa::ToSchema;
 
 use crate::db::DbPool;
+use crate::db::traits::UserPermissions;
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     HubuumClassID, HubuumClassRelationID, HubuumObjectID, HubuumObjectRelationID, Namespace,
-    NamespaceID, Permissions,
+    NamespaceID, Permissions, User,
 };
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
@@ -609,6 +610,52 @@ impl RemoteTarget {
     pub fn allows_subject_type(&self, subject_type: RemoteTargetSubjectType) -> bool {
         self.allowed_subject_types.contains(&subject_type)
     }
+}
+
+pub async fn authorize_remote_invocation(
+    pool: &DbPool,
+    user: &User,
+    target: &RemoteTarget,
+    subject: &RemoteInvocationSubject,
+) -> Result<ResolvedRemoteInvocationSubject, ApiError> {
+    let target_namespace_id = NamespaceID::new(target.namespace_id)?;
+    user.can(
+        pool,
+        [Permissions::ExecuteRemoteTarget],
+        [target_namespace_id],
+    )
+    .await?;
+
+    if !target.enabled {
+        return Err(ApiError::BadRequest(
+            "Remote target is disabled".to_string(),
+        ));
+    }
+
+    let resolved = subject.resolve(pool).await?;
+    if !target.allows_subject_type(resolved.subject_type) {
+        return Err(ApiError::BadRequest(format!(
+            "Remote target does not allow '{}' subjects",
+            resolved.subject_type.as_str()
+        )));
+    }
+    if !resolved
+        .namespaces
+        .iter()
+        .any(|namespace| namespace.id == target.namespace_id)
+    {
+        return Err(ApiError::NotFound(
+            "Remote target not found for invocation subject".to_string(),
+        ));
+    }
+    user.can(
+        pool,
+        [resolved.required_read_permission],
+        resolved.namespaces.clone(),
+    )
+    .await?;
+
+    Ok(resolved)
 }
 
 impl RemoteInvocationSubject {

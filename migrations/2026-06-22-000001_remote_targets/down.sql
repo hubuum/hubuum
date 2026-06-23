@@ -1,6 +1,7 @@
 DROP TRIGGER IF EXISTS update_remote_targets_updated_at ON remote_targets;
 DROP TABLE IF EXISTS remote_call_results;
 DROP TABLE IF EXISTS remote_targets;
+DROP FUNCTION IF EXISTS remote_target_subject_types_valid(JSONB);
 
 ALTER TABLE tasks
     DROP CONSTRAINT tasks_kind_check,

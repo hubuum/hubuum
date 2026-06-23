@@ -54,8 +54,9 @@ outbound call.
 | `class_relation` | `ReadClassRelation` on both endpoint namespaces. |
 | `object_relation` | `ReadObjectRelation` on both endpoint namespaces. |
 
-`ExecuteRemoteTarget` is checked on the target namespace. For relation subjects, the target
-namespace must be one of the relation endpoint namespaces.
+`ExecuteRemoteTarget` is checked on the target namespace. `ReadRemoteTarget` is not required to
+invoke a target by ID. For relation subjects, the target namespace must be one of the relation
+endpoint namespaces.
 
 ## Target model
 

@@ -806,6 +806,34 @@ mod tests {
     }
 
     #[actix_web::test]
+    async fn invoke_checks_execute_before_disclosing_disabled_target() {
+        let context = TestContext::new().await;
+        let (namespace_id, class_id, object_id) =
+            setup_object(&context, "rt_disabled_forbidden").await;
+        let payload = serde_json::json!({
+            "namespace_id": namespace_id,
+            "name": "disabled-forbidden-target",
+            "description": "test",
+            "method": "post",
+            "url_template": "https://service.example.com/hook",
+            "allowed_subject_types": ["object"],
+            "enabled": false,
+        });
+        let resp = post_request(&context.pool, &context.admin_token, RT_ENDPOINT, payload).await;
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let target: RemoteTarget = test::read_body_json(resp).await;
+
+        let resp = post_request(
+            &context.pool,
+            &context.normal_token,
+            &invoke_endpoint(target.id),
+            object_invoke_body(class_id, object_id),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::FORBIDDEN).await;
+    }
+
+    #[actix_web::test]
     async fn invoke_class_mismatch_returns_404() {
         let context = TestContext::new().await;
         let (namespace_id, _class_id, object_id) = setup_object(&context, "rt_mismatch").await;

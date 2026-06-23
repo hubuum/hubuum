@@ -10,17 +10,15 @@ use crate::config::{
     DEFAULT_REMOTE_CALL_TIMEOUT_MS, get_config,
 };
 use crate::db::DbPool;
-use crate::db::traits::UserPermissions;
 use crate::db::traits::remote_target::insert_remote_call_result;
 use crate::db::traits::task::{TaskBackend, TaskStateUpdate};
 use crate::errors::ApiError;
 use crate::models::{
-    NamespaceID, NewRemoteCallResult, NewTaskEventRecord, Permissions, RemoteAuthConfig,
-    RemoteHttpMethod, RemoteInvocationBodyOverride, RemoteInvocationParameters,
-    RemoteTemplateContext, StoredRemoteCallTaskPayload, TaskRecord, TaskStatus, User,
+    NewRemoteCallResult, NewTaskEventRecord, RemoteAuthConfig, RemoteHttpMethod,
+    RemoteInvocationBodyOverride, RemoteInvocationParameters, RemoteTemplateContext,
+    StoredRemoteCallTaskPayload, TaskRecord, TaskStatus, User, authorize_remote_invocation,
     remote_target_ip_blocked, validate_rendered_remote_url,
 };
-use crate::traits::NamespaceAccessors;
 
 pub(super) async fn execute_remote_call_task(
     pool: &DbPool,
@@ -99,40 +97,7 @@ async fn execute_remote_call(
     request: &StoredRemoteCallTaskPayload,
 ) -> Result<RemoteExecutionOutcome, ApiError> {
     let target = request.target_id.instance(pool).await?;
-    if !target.enabled {
-        return Err(ApiError::BadRequest(
-            "Remote target is disabled".to_string(),
-        ));
-    }
-
-    let resolved = request.subject.resolve(pool).await?;
-    if !target.allows_subject_type(resolved.subject_type) {
-        return Err(ApiError::BadRequest(format!(
-            "Remote target '{}' does not allow '{}' subjects",
-            target.name,
-            resolved.subject_type.as_str()
-        )));
-    }
-    let target_namespace = NamespaceID::new(target.namespace_id)?
-        .namespace(pool)
-        .await?;
-    if !resolved
-        .namespaces
-        .iter()
-        .any(|namespace| namespace.id == target.namespace_id)
-    {
-        return Err(ApiError::NotFound(
-            "Remote target not found for invocation subject".to_string(),
-        ));
-    }
-    user.can(
-        pool,
-        [resolved.required_read_permission],
-        resolved.namespaces.clone(),
-    )
-    .await?;
-    user.can(pool, [Permissions::ExecuteRemoteTarget], [target_namespace])
-        .await?;
+    let resolved = authorize_remote_invocation(pool, user, &target, &request.subject).await?;
 
     let context = invocation_context(
         resolved.context,
@@ -402,6 +367,8 @@ fn bounded_timeout_ms(timeout_ms: i32) -> u64 {
 async fn screen_outbound_host(host: &str, port: u16) -> Result<Vec<SocketAddr>, ApiError> {
     #[cfg(test)]
     if host.eq_ignore_ascii_case("localhost") {
+        // Tests use localhost for the HTTPS success path; the SSRF guard test uses
+        // 127.0.0.1 directly so loopback screening still has coverage.
         return Ok(vec![SocketAddr::from(([127, 0, 0, 1], port))]);
     }
 

@@ -15,6 +15,7 @@ use crate::models::search::parse_query_parameter;
 use crate::models::{
     NamespaceID, NewRemoteTarget, Permissions, RemoteTarget, RemoteTargetID,
     RemoteTargetInvokeRequest, StoredRemoteCallTaskPayload, TaskKind, UpdateRemoteTarget,
+    authorize_remote_invocation,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::tasks::{
@@ -245,44 +246,7 @@ pub async fn invoke_remote_target(
     let target_id = target_id.into_inner();
     let invoke = body.into_inner();
     let target = target_id.instance(&pool).await?;
-    if !target.enabled {
-        return Err(ApiError::BadRequest(
-            "Remote target is disabled".to_string(),
-        ));
-    }
-
-    let resolved = invoke.subject.resolve(&pool).await?;
-    if !target.allows_subject_type(resolved.subject_type) {
-        return Err(ApiError::BadRequest(format!(
-            "Remote target '{}' does not allow '{}' subjects",
-            target.name,
-            resolved.subject_type.as_str()
-        )));
-    }
-    let target_namespace = NamespaceID::new(target.namespace_id)?
-        .namespace(&pool)
-        .await?;
-    if !resolved
-        .namespaces
-        .iter()
-        .any(|namespace| namespace.id == target.namespace_id)
-    {
-        return Err(ApiError::NotFound(
-            "Remote target not found for invocation subject".to_string(),
-        ));
-    }
-    user.can(
-        &pool,
-        [resolved.required_read_permission],
-        resolved.namespaces.clone(),
-    )
-    .await?;
-    user.can(
-        &pool,
-        [Permissions::ExecuteRemoteTarget],
-        [target_namespace],
-    )
-    .await?;
+    let resolved = authorize_remote_invocation(&pool, &user, &target, &invoke.subject).await?;
 
     let payload = serde_json::to_value(StoredRemoteCallTaskPayload {
         target_id,

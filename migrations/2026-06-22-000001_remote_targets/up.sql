@@ -9,6 +9,25 @@ ALTER TABLE tasks
     DROP CONSTRAINT tasks_kind_check,
     ADD CONSTRAINT tasks_kind_check CHECK (kind IN ('import', 'report', 'export', 'reindex', 'remote_call'));
 
+CREATE FUNCTION remote_target_subject_types_valid(subject_types JSONB)
+RETURNS BOOLEAN
+LANGUAGE sql
+IMMUTABLE
+AS $$
+    SELECT CASE
+        WHEN jsonb_typeof(subject_types) <> 'array' THEN FALSE
+        ELSE jsonb_array_length(subject_types) > 0
+            AND subject_types <@ '["namespace", "class", "object", "class_relation", "object_relation"]'::jsonb
+            AND (
+                SELECT COUNT(*)
+                FROM jsonb_array_elements_text(subject_types)
+            ) = (
+                SELECT COUNT(DISTINCT value)
+                FROM jsonb_array_elements_text(subject_types) AS item(value)
+            )
+    END;
+$$;
+
 CREATE TABLE remote_targets (
     id SERIAL PRIMARY KEY,
     namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
@@ -28,11 +47,7 @@ CREATE TABLE remote_targets (
     CHECK (timeout_ms > 0),
     CHECK (jsonb_typeof(headers_template) = 'object'),
     CHECK (jsonb_typeof(auth_config) = 'object'),
-    CHECK (
-        jsonb_typeof(allowed_subject_types) = 'array'
-        AND jsonb_array_length(allowed_subject_types) > 0
-        AND allowed_subject_types <@ '["namespace", "class", "object", "class_relation", "object_relation"]'::jsonb
-    )
+    CHECK (remote_target_subject_types_valid(allowed_subject_types))
 );
 
 CREATE TABLE remote_call_results (
