@@ -341,8 +341,8 @@ the same task. Reusing it with a different submission returns `409 Conflict`.
 
 The worker:
 
-1. loads the target, class, object, and namespace
-2. re-checks permissions for the submitting user
+1. loads the target and resolves the requested subject
+2. re-checks subject read permission and target execution permission for the submitting user
 3. renders URL, headers, and body
 4. validates the rendered URL and screens the destination address (see Outbound safety)
 5. resolves auth secrets from environment variables
@@ -356,10 +356,10 @@ Task status rules:
 - non-`2xx` marks the task `failed`
 - timeout, connection failure, rendering failure, missing secret, disabled target, blocked destination, or permission failure marks the task `failed`
 
-Stored result rows include method, rendered URL, response status, response headers, a capped response
-body preview, duration, success flag, and sanitized error text. Secret values are not persisted, and
-sensitive response headers (`Set-Cookie`, `Authorization`, `WWW-Authenticate`, and similar) are
-redacted before storage.
+Stored result rows include subject type, subject ID, method, rendered URL, response status, response
+headers, a capped response body preview, duration, success flag, and sanitized error text. Secret
+values are not persisted, and sensitive response headers (`Set-Cookie`, `Authorization`,
+`WWW-Authenticate`, and similar) are redacted before storage.
 
 ## Outbound safety
 

@@ -85,7 +85,7 @@ Report templates are used to format report output and are scoped to namespaces. 
 
 ### Permissions for remote targets
 
-Remote targets define outbound object actions and are scoped to namespaces. The following permissions
+Remote targets define outbound subject actions and are scoped to namespaces. The following permissions
 control target management and invocation:
 
 | Permission | Description |
@@ -96,9 +96,12 @@ control target management and invocation:
 | `DeleteRemoteTarget` | Allows deleting targets from the namespace. |
 | `ExecuteRemoteTarget` | Allows invoking targets in the namespace. |
 
-Invoking a remote target also requires `ReadObject` on the object namespace. The worker re-checks
-both `ReadObject` and `ExecuteRemoteTarget` for the submitting user before executing the outbound
-HTTP call.
+Invoking a remote target also requires read permission for the selected subject. Namespace subjects
+require `ReadCollection`; class subjects require `ReadClass`; object subjects require `ReadObject`;
+class relation subjects require `ReadClassRelation` on both endpoint namespaces; object relation
+subjects require `ReadObjectRelation` on both endpoint namespaces. The worker re-checks both subject
+read permission and `ExecuteRemoteTarget` for the submitting user before executing the outbound HTTP
+call.
 
 ## Example
 
