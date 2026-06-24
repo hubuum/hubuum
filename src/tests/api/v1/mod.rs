@@ -6,6 +6,7 @@ pub mod namespaces;
 pub mod objects;
 pub mod querying;
 pub mod relations;
+pub mod remote_targets;
 pub mod reports;
 pub mod request_and_correlation;
 pub mod search;

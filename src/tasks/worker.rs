@@ -19,6 +19,7 @@ use crate::models::{
 
 use super::execution::execute_import_task;
 use super::helpers::sanitize_error_for_storage;
+use super::remote_call::execute_remote_call_task;
 use super::types::WorkerLoopAction;
 
 static TASK_WORKER: Once = Once::new();
@@ -176,6 +177,7 @@ async fn process_claimed_task(pool: &DbPool, task: &TaskRecord) -> Result<(), Ap
     match TaskKind::from_db(&task.kind)? {
         TaskKind::Import => execute_import_task(pool, task, &submitted_by).await,
         TaskKind::Report => execute_report_task(pool, task, &submitted_by).await,
+        TaskKind::RemoteCall => execute_remote_call_task(pool, task, &submitted_by).await,
         other => Err(ApiError::BadRequest(format!(
             "Task kind '{}' is not implemented",
             other.as_str()
@@ -192,6 +194,7 @@ pub(super) async fn mark_claimed_task_failed(
     let counts = match TaskKind::from_db(&task.kind)? {
         TaskKind::Import => task.count_import_results(pool).await?,
         TaskKind::Report => TaskResultCounts::new(1, 0, 1)?,
+        TaskKind::RemoteCall => TaskResultCounts::new(1, 0, 1)?,
         _ => TaskResultCounts::default(),
     };
 

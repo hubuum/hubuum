@@ -798,7 +798,8 @@ mod tests {
 
         let (classes, relations) =
             create_classes_and_relations(&context, "get_class_relation_with_permissions").await;
-        let namespace = NamespaceID::new(classes[0].namespace_id).unwrap()
+        let namespace = NamespaceID::new(classes[0].namespace_id)
+            .unwrap()
             .instance(&context.pool)
             .await
             .unwrap();
@@ -1886,7 +1887,8 @@ mod tests {
         let _ = create_object_relation(&context.pool, &objects[0], &objects[4], &class_relation_15)
             .await;
 
-        let namespace = NamespaceID::new(classes[0].namespace_id).unwrap()
+        let namespace = NamespaceID::new(classes[0].namespace_id)
+            .unwrap()
             .instance(&context.pool)
             .await
             .unwrap();
@@ -2002,7 +2004,8 @@ mod tests {
         )
         .await;
 
-        let visible_namespace = NamespaceID::new(visible_classes[0].namespace_id).unwrap()
+        let visible_namespace = NamespaceID::new(visible_classes[0].namespace_id)
+            .unwrap()
             .instance(&context.pool)
             .await
             .unwrap();

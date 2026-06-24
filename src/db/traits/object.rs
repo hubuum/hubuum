@@ -164,7 +164,9 @@ pub trait ValidateObjectRecord {
 
 impl ValidateObjectRecord for HubuumObject {
     async fn validate_object_record(&self, pool: &DbPool) -> Result<(), ApiError> {
-        let class = HubuumClassID::new(self.hubuum_class_id)?.class(pool).await?;
+        let class = HubuumClassID::new(self.hubuum_class_id)?
+            .class(pool)
+            .await?;
 
         if class.validate_schema
             && let Some(ref schema) = class.json_schema
@@ -177,7 +179,9 @@ impl ValidateObjectRecord for HubuumObject {
 
 impl ValidateObjectRecord for NewHubuumObject {
     async fn validate_object_record(&self, pool: &DbPool) -> Result<(), ApiError> {
-        let class = HubuumClassID::new(self.hubuum_class_id)?.class(pool).await?;
+        let class = HubuumClassID::new(self.hubuum_class_id)?
+            .class(pool)
+            .await?;
 
         if self.namespace_id != class.namespace_id {
             return Err(ApiError::BadRequest(format!(
@@ -200,7 +204,9 @@ impl ValidateObjectRecord for (&UpdateHubuumObject, i32) {
         let (update_obj, object_id) = self;
         let original = HubuumObjectID::new(*object_id)?.instance(pool).await?;
         let merged = original.merge_update(update_obj);
-        let class = HubuumClassID::new(merged.hubuum_class_id)?.class(pool).await?;
+        let class = HubuumClassID::new(merged.hubuum_class_id)?
+            .class(pool)
+            .await?;
 
         if merged.namespace_id != class.namespace_id {
             return Err(ApiError::BadRequest(format!(

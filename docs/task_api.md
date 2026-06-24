@@ -2,8 +2,8 @@
 
 The task API is the generic interface for long-running operations.
 
-Imports and reports are public task-producing APIs today, and the task model is designed so later
-exports or reindex jobs can use the same status and event model too.
+Imports, reports, and remote target invocations are public task-producing APIs today, and the task
+model is designed so later exports or reindex jobs can use the same status and event model too.
 
 The current architecture is:
 
@@ -33,11 +33,13 @@ Current and reserved task kinds:
 - `report`
 - `export`
 - `reindex`
+- `remote_call`
 
 Public task-producing endpoints today:
 
 - `POST /api/v1/imports`
 - `POST /api/v1/reports`
+- `POST /api/v1/remote-targets/{target_id}/invoke`
 
 ## Task statuses
 

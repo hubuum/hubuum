@@ -3,6 +3,7 @@ pub mod groups;
 pub mod imports;
 pub mod namespaces;
 pub mod relations;
+pub mod remote_targets;
 pub mod reports;
 pub mod search;
 pub mod tasks;

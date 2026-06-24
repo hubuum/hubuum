@@ -34,6 +34,11 @@ pub enum Permissions {
     CreateTemplate,
     UpdateTemplate,
     DeleteTemplate,
+    ReadRemoteTarget,
+    CreateRemoteTarget,
+    UpdateRemoteTarget,
+    DeleteRemoteTarget,
+    ExecuteRemoteTarget,
 }
 
 impl Permissions {
@@ -72,6 +77,11 @@ impl Permissions {
             "CreateTemplate" => Ok(Permissions::CreateTemplate),
             "UpdateTemplate" => Ok(Permissions::UpdateTemplate),
             "DeleteTemplate" => Ok(Permissions::DeleteTemplate),
+            "ReadRemoteTarget" => Ok(Permissions::ReadRemoteTarget),
+            "CreateRemoteTarget" => Ok(Permissions::CreateRemoteTarget),
+            "UpdateRemoteTarget" => Ok(Permissions::UpdateRemoteTarget),
+            "DeleteRemoteTarget" => Ok(Permissions::DeleteRemoteTarget),
+            "ExecuteRemoteTarget" => Ok(Permissions::ExecuteRemoteTarget),
             _ => Err(ApiError::BadRequest(format!("Invalid permission: '{s}'"))),
         }
     }
@@ -106,6 +116,11 @@ impl Display for Permissions {
                 Permissions::CreateTemplate => "CreateTemplate",
                 Permissions::UpdateTemplate => "UpdateTemplate",
                 Permissions::DeleteTemplate => "DeleteTemplate",
+                Permissions::ReadRemoteTarget => "ReadRemoteTarget",
+                Permissions::CreateRemoteTarget => "CreateRemoteTarget",
+                Permissions::UpdateRemoteTarget => "UpdateRemoteTarget",
+                Permissions::DeleteRemoteTarget => "DeleteRemoteTarget",
+                Permissions::ExecuteRemoteTarget => "ExecuteRemoteTarget",
             }
         )
     }
@@ -259,6 +274,21 @@ impl<'a> PermissionFilter<'a, permissions::BoxedQuery<'a, diesel::pg::Pg>> for P
             Permissions::DeleteTemplate => {
                 query.filter(permissions::has_delete_template.eq(target))
             }
+            Permissions::ReadRemoteTarget => {
+                query.filter(permissions::has_read_remote_target.eq(target))
+            }
+            Permissions::CreateRemoteTarget => {
+                query.filter(permissions::has_create_remote_target.eq(target))
+            }
+            Permissions::UpdateRemoteTarget => {
+                query.filter(permissions::has_update_remote_target.eq(target))
+            }
+            Permissions::DeleteRemoteTarget => {
+                query.filter(permissions::has_delete_remote_target.eq(target))
+            }
+            Permissions::ExecuteRemoteTarget => {
+                query.filter(permissions::has_execute_remote_target.eq(target))
+            }
         }
     }
 }
@@ -295,6 +325,11 @@ pub struct Permission {
     pub has_delete_template: bool,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+    pub has_read_remote_target: bool,
+    pub has_create_remote_target: bool,
+    pub has_update_remote_target: bool,
+    pub has_delete_remote_target: bool,
+    pub has_execute_remote_target: bool,
 }
 
 // Insertable permission models.
@@ -327,6 +362,11 @@ pub struct NewPermission {
     pub has_create_template: bool,
     pub has_update_template: bool,
     pub has_delete_template: bool,
+    pub has_read_remote_target: bool,
+    pub has_create_remote_target: bool,
+    pub has_update_remote_target: bool,
+    pub has_delete_remote_target: bool,
+    pub has_execute_remote_target: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, AsChangeset, Default)]
@@ -356,6 +396,11 @@ pub struct UpdatePermission {
     pub has_create_template: Option<bool>,
     pub has_update_template: Option<bool>,
     pub has_delete_template: Option<bool>,
+    pub has_read_remote_target: Option<bool>,
+    pub has_create_remote_target: Option<bool>,
+    pub has_update_remote_target: Option<bool>,
+    pub has_delete_remote_target: Option<bool>,
+    pub has_execute_remote_target: Option<bool>,
 }
 
 #[cfg(test)]

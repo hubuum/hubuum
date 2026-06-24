@@ -90,6 +90,11 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                             has_create_template: Some(false),
                             has_update_template: Some(false),
                             has_delete_template: Some(false),
+                            has_read_remote_target: Some(false),
+                            has_create_remote_target: Some(false),
+                            has_update_remote_target: Some(false),
+                            has_delete_remote_target: Some(false),
+                            has_execute_remote_target: Some(false),
                         }
                     } else {
                         UpdatePermission::default()
@@ -169,6 +174,21 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                             Permissions::DeleteTemplate => {
                                 update_perm.has_delete_template = Some(true);
                             }
+                            Permissions::ReadRemoteTarget => {
+                                update_perm.has_read_remote_target = Some(true);
+                            }
+                            Permissions::CreateRemoteTarget => {
+                                update_perm.has_create_remote_target = Some(true);
+                            }
+                            Permissions::UpdateRemoteTarget => {
+                                update_perm.has_update_remote_target = Some(true);
+                            }
+                            Permissions::DeleteRemoteTarget => {
+                                update_perm.has_delete_remote_target = Some(true);
+                            }
+                            Permissions::ExecuteRemoteTarget => {
+                                update_perm.has_execute_remote_target = Some(true);
+                            }
                         }
                     }
 
@@ -217,6 +237,16 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                         has_create_template: permission_list.contains(&Permissions::CreateTemplate),
                         has_update_template: permission_list.contains(&Permissions::UpdateTemplate),
                         has_delete_template: permission_list.contains(&Permissions::DeleteTemplate),
+                        has_read_remote_target: permission_list
+                            .contains(&Permissions::ReadRemoteTarget),
+                        has_create_remote_target: permission_list
+                            .contains(&Permissions::CreateRemoteTarget),
+                        has_update_remote_target: permission_list
+                            .contains(&Permissions::UpdateRemoteTarget),
+                        has_delete_remote_target: permission_list
+                            .contains(&Permissions::DeleteRemoteTarget),
+                        has_execute_remote_target: permission_list
+                            .contains(&Permissions::ExecuteRemoteTarget),
                     };
 
                     Ok(diesel::insert_into(permissions)
@@ -317,6 +347,21 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                     }
                     Permissions::DeleteTemplate => {
                         update_perm.has_delete_template = Some(false);
+                    }
+                    Permissions::ReadRemoteTarget => {
+                        update_perm.has_read_remote_target = Some(false);
+                    }
+                    Permissions::CreateRemoteTarget => {
+                        update_perm.has_create_remote_target = Some(false);
+                    }
+                    Permissions::UpdateRemoteTarget => {
+                        update_perm.has_update_remote_target = Some(false);
+                    }
+                    Permissions::DeleteRemoteTarget => {
+                        update_perm.has_delete_remote_target = Some(false);
+                    }
+                    Permissions::ExecuteRemoteTarget => {
+                        update_perm.has_execute_remote_target = Some(false);
                     }
                 }
             }

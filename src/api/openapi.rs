@@ -1,6 +1,7 @@
 use crate::api::handlers::{auth, meta};
 use crate::api::v1::handlers::{
-    classes, groups, imports, namespaces, relations, reports, search, tasks, templates, users,
+    classes, groups, imports, namespaces, relations, remote_targets, reports, search, tasks,
+    templates, users,
 };
 use crate::models::{
     ClassKey, Group, GroupKey, GroupPermission, HubuumClass, HubuumClassExpanded,
@@ -11,15 +12,18 @@ use crate::models::{
     ImportPermissionPolicy, ImportRequest, ImportTaskDetails, ImportTaskResultResponse, LoginUser,
     Namespace, NamespaceKey, NewGroup, NewHubuumClass, NewHubuumClassRelation,
     NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation,
-    NewNamespaceWithAssignee, NewReportTemplate, NewUser, ObjectKey, ObjectsByClass, Permission,
-    Permissions, RelatedClassGraph, RelatedObjectGraph, ReportContentType, ReportJsonResponse,
+    NewNamespaceWithAssignee, NewRemoteTarget, NewReportTemplate, NewUser, ObjectKey,
+    ObjectsByClass, Permission, Permissions, RelatedClassGraph, RelatedObjectGraph,
+    RemoteAuthConfig, RemoteCallResult, RemoteHttpMethod, RemoteInvocationBodyOverride,
+    RemoteInvocationParameters, RemoteInvocationSubject, RemoteTarget, RemoteTargetID,
+    RemoteTargetInvokeRequest, RemoteTargetSubjectType, ReportContentType, ReportJsonResponse,
     ReportLimits, ReportMeta, ReportMissingDataPolicy, ReportRequest, ReportScope, ReportScopeKind,
     ReportTaskDetails, ReportTemplate, ReportTemplateID, ReportTemplateKind,
     ReportTemplateRunRequest, ReportWarning, TaskDetails, TaskEventResponse, TaskKind, TaskLinks,
     TaskProgress, TaskResponse, TaskStatus, UnifiedSearchBatchResponse, UnifiedSearchDoneEvent,
     UnifiedSearchErrorEvent, UnifiedSearchKind, UnifiedSearchResponse, UnifiedSearchStartedEvent,
-    UpdateGroup, UpdateHubuumClass, UpdateHubuumObject, UpdateNamespace, UpdateReportTemplate,
-    UpdateUser, UserResponse, UserToken, UserTokenMetadata,
+    UpdateGroup, UpdateHubuumClass, UpdateHubuumObject, UpdateNamespace, UpdateRemoteTarget,
+    UpdateReportTemplate, UpdateUser, UserResponse, UserToken, UserTokenMetadata,
 };
 use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER, page_limits_or_defaults};
 use actix_web::{HttpResponse, Responder};
@@ -107,6 +111,12 @@ use utoipa::{Modify, OpenApi, ToSchema};
         templates::run_template_report,
         templates::patch_template,
         templates::delete_template,
+        remote_targets::get_remote_targets,
+        remote_targets::create_remote_target,
+        remote_targets::get_remote_target,
+        remote_targets::patch_remote_target,
+        remote_targets::delete_remote_target,
+        remote_targets::invoke_remote_target,
         classes::get_classes,
         classes::create_class,
         classes::get_class,
@@ -222,7 +232,19 @@ use utoipa::{Modify, OpenApi, ToSchema};
             ReportTemplate,
             ReportTemplateRunRequest,
             NewReportTemplate,
-            UpdateReportTemplate
+            UpdateReportTemplate,
+            RemoteTargetID,
+            RemoteHttpMethod,
+            RemoteAuthConfig,
+            RemoteTarget,
+            NewRemoteTarget,
+            UpdateRemoteTarget,
+            RemoteTargetSubjectType,
+            RemoteInvocationSubject,
+            RemoteInvocationParameters,
+            RemoteInvocationBodyOverride,
+            RemoteTargetInvokeRequest,
+            RemoteCallResult
         )
     ),
     modifiers(&SecurityAddon, &OperationDefaults),
@@ -238,7 +260,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
         (name = "tasks", description = "Generic long-running task endpoints"),
         (name = "imports", description = "Import submission and import-specific result endpoints"),
         (name = "reports", description = "Server-side report execution endpoints"),
-        (name = "templates", description = "Stored report template management endpoints")
+        (name = "templates", description = "Stored report template management endpoints"),
+        (name = "remote-targets", description = "Namespace-scoped remote target management and invocation endpoints")
     )
 )]
 pub struct ApiDoc;
@@ -702,6 +725,9 @@ mod tests {
             "/api/v1/templates",
             "/api/v1/templates/{template_id}",
             "/api/v1/templates/{template_id}/reports",
+            "/api/v1/remote-targets",
+            "/api/v1/remote-targets/{target_id}",
+            "/api/v1/remote-targets/{target_id}/invoke",
             "/api/v1/relations/classes",
             "/api/v1/relations/classes/{relation_id}",
             "/api/v1/relations/objects",

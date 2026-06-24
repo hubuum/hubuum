@@ -17,6 +17,7 @@ pub enum TaskKind {
     Report,
     Export,
     Reindex,
+    RemoteCall,
 }
 
 impl TaskKind {
@@ -26,6 +27,7 @@ impl TaskKind {
             TaskKind::Report => "report",
             TaskKind::Export => "export",
             TaskKind::Reindex => "reindex",
+            TaskKind::RemoteCall => "remote_call",
         }
     }
 
@@ -35,6 +37,7 @@ impl TaskKind {
             "report" => Ok(TaskKind::Report),
             "export" => Ok(TaskKind::Export),
             "reindex" => Ok(TaskKind::Reindex),
+            "remote_call" => Ok(TaskKind::RemoteCall),
             _ => Err(ApiError::InternalServerError(format!(
                 "Unknown task kind '{value}'"
             ))),

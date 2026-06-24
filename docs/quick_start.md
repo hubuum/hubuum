@@ -184,4 +184,5 @@ services:
 - [Relationships](relationship_endpoints.md) - Working with object relationships
 - [Task System](task_system.md) - Background workers, queue claiming, and task execution flow
 - [Report API](report_api.md) - Server-side report execution and templated output
+- [Remote Target API](remote_targets.md) - Namespace-scoped outbound subject actions
 - [Template Guide](template_guide.md) - Stored template syntax, context, and examples

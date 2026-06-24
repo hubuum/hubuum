@@ -27,6 +27,7 @@ Notes:
 | `/api/v1/namespaces/{namespace_id}/permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at` | `id.asc` | returns `GroupPermission` rows |
 | `/api/v1/namespaces/{namespace_id}/permissions/user/{user_id}` | `id`, `name`, `groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at` | `id.asc` | constrained to one namespace and one user's memberships |
 | `/api/v1/namespaces/{namespace_id}/has_permissions/{permission}` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id.asc` | path permission already narrows the result set |
+| `/api/v1/remote-targets` | `id`, `name`, `description`, `namespace_id`, `namespaces`, `kind`, `created_at`, `updated_at` | `id`, `name`, `description`, `namespace_id`, `created_at`, `updated_at` | `id.asc` | `kind` filters the target HTTP method; results are scoped to namespaces where the caller has `ReadRemoteTarget` |
 
 ## Classes and objects
 
@@ -73,4 +74,5 @@ This file is the human-oriented summary. For exact route definitions and generat
 - [querying.md](querying.md)
 - [relationship_endpoints.md](relationship_endpoints.md)
 - [report_api.md](report_api.md)
+- [remote_targets.md](remote_targets.md)
 - [openapi.json](openapi.json)
