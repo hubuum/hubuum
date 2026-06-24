@@ -1,8 +1,9 @@
-use std::net::SocketAddr;
-use std::time::Instant;
-
 use base64::Engine;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use hubuum_outbound_http::{
+    OutboundHeaders, OutboundHttpError, OutboundMethod, OutboundRequest, validate_outbound_url,
+};
+use hubuum_templates::prepare_template;
+use std::time::Instant;
 use tracing::warn;
 
 use crate::config::{
@@ -18,7 +19,6 @@ use crate::models::{
     NewRemoteCallResult, NewTaskEventRecord, RemoteAuthConfig, RemoteHttpMethod,
     RemoteInvocationBodyOverride, RemoteInvocationParameters, RemoteTemplateContext,
     StoredRemoteCallTaskPayload, TaskRecord, TaskStatus, User, authorize_remote_invocation,
-    remote_target_ip_blocked, validate_rendered_remote_url,
 };
 
 pub(super) async fn execute_remote_call_task(
@@ -91,6 +91,15 @@ struct RemoteExecutionOutcome {
     event_data: Option<serde_json::Value>,
 }
 
+struct RemoteFailureContext<'a> {
+    pool: &'a DbPool,
+    task_id: i32,
+    target_id: i32,
+    subject_type: &'a str,
+    subject_id: i32,
+    method: &'a str,
+}
+
 async fn execute_remote_call(
     pool: &DbPool,
     task_id: i32,
@@ -107,8 +116,22 @@ async fn execute_remote_call(
     )?;
 
     let rendered_url = render_template("url_template", &target.url_template, &context)?;
-    let url_parts = validate_rendered_remote_url(&rendered_url)?;
-    let screened_addrs = screen_outbound_host(&url_parts.host, url_parts.port).await?;
+    let start = Instant::now();
+    let failure_context = RemoteFailureContext {
+        pool,
+        task_id,
+        target_id: target.id,
+        subject_type: resolved.subject_type.as_str(),
+        subject_id: resolved.subject_id,
+        method: target.method.as_str(),
+    };
+    let normalized_rendered_url = match validate_outbound_url(&rendered_url) {
+        Ok(parts) => parts.url().to_string(),
+        Err(error) => {
+            return record_remote_call_failure(&failure_context, rendered_url, 0, error).await;
+        }
+    };
+
     let rendered_headers = render_headers(&target.headers_template, &context)?;
     let rendered_body = target
         .body_template
@@ -120,40 +143,40 @@ async fn execute_remote_call(
     apply_auth(&mut headers, &target.auth_config)?;
 
     let timeout_ms = bounded_timeout_ms(target.timeout_ms);
-    // Never follow redirects: a 3xx could otherwise bounce the call to a non-https
-    // scheme or an internal address that bypassed the initial SSRF screening.
-    // Pin DNS to the addresses we already screened so the host cannot rebind to a
-    // private address between our check and the connection.
-    let client_builder = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(timeout_ms))
-        .redirect(reqwest::redirect::Policy::none())
-        .resolve_to_addrs(&url_parts.host, &screened_addrs);
-    #[cfg(test)]
-    let client_builder = client_builder.danger_accept_invalid_certs(true);
-    let client = client_builder
-        .build()
-        .map_err(|error| ApiError::InternalServerError(format!("HTTP client error: {error}")))?;
-
-    let mut request_builder = client
-        .request(reqwest_method(target.method), url_parts.url.clone())
-        .headers(headers);
-    if let Some(body) = rendered_body {
-        request_builder = request_builder.body(body);
-    }
-
-    let start = Instant::now();
-    let response_result = request_builder.send().await;
     let preview_limit = get_config()
         .map(|config| config.remote_call_max_response_bytes)
         .unwrap_or(DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES);
+    let allow_private_targets = get_config()
+        .map(|config| config.remote_call_allow_private_targets)
+        .unwrap_or(DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS);
+
+    #[cfg(test)]
+    let dangerous_accept_invalid_certs = true;
+    #[cfg(not(test))]
+    let dangerous_accept_invalid_certs = false;
+    #[cfg(test)]
+    let dangerous_allow_localhost = true;
+    #[cfg(not(test))]
+    let dangerous_allow_localhost = false;
+
+    let response_result = OutboundRequest::new(
+        outbound_method(target.method),
+        normalized_rendered_url.clone(),
+        std::time::Duration::from_millis(timeout_ms),
+    )
+    .headers(headers)
+    .body(rendered_body)
+    .max_response_bytes(preview_limit)
+    .allow_private_targets(allow_private_targets)
+    .dangerous_accept_invalid_certs(dangerous_accept_invalid_certs)
+    .dangerous_allow_localhost(dangerous_allow_localhost)
+    .send()
+    .await;
 
     match response_result {
         Ok(response) => {
-            let status = response.status();
-            let response_headers = headers_to_json(response.headers());
-            let body_preview = read_capped_body(response, preview_limit).await?;
-            let duration_ms = i32::try_from(start.elapsed().as_millis()).unwrap_or(i32::MAX);
-            let success = status.is_success();
+            let status = response.status_display();
+            let success = response.is_success();
             insert_remote_call_result(
                 pool,
                 NewRemoteCallResult {
@@ -162,11 +185,11 @@ async fn execute_remote_call(
                     subject_type: resolved.subject_type.as_str().to_string(),
                     subject_id: resolved.subject_id,
                     method: target.method.as_str().to_string(),
-                    rendered_url: url_parts.url.to_string(),
-                    response_status: Some(i32::from(status.as_u16())),
-                    response_headers: Some(response_headers),
-                    response_body_preview: Some(body_preview),
-                    duration_ms,
+                    rendered_url: response.url().to_string(),
+                    response_status: Some(i32::from(response.status_code())),
+                    response_headers: Some(response.headers().clone()),
+                    response_body_preview: Some(response.body_preview().to_string()),
+                    duration_ms: response.duration_ms(),
                     success,
                     error: (!success).then(|| format!("Remote returned HTTP {status}")),
                 },
@@ -182,39 +205,55 @@ async fn execute_remote_call(
                 success,
                 summary,
                 event_data: Some(serde_json::json!({
-                    "status": i32::from(status.as_u16()),
-                    "duration_ms": duration_ms,
+                    "status": i32::from(response.status_code()),
+                    "duration_ms": response.duration_ms(),
                 })),
             })
         }
         Err(error) => {
             let duration_ms = i32::try_from(start.elapsed().as_millis()).unwrap_or(i32::MAX);
-            let message = sanitize_reqwest_error(error);
-            insert_remote_call_result(
-                pool,
-                NewRemoteCallResult {
-                    task_id,
-                    target_id: Some(target.id),
-                    subject_type: resolved.subject_type.as_str().to_string(),
-                    subject_id: resolved.subject_id,
-                    method: target.method.as_str().to_string(),
-                    rendered_url: url_parts.url.to_string(),
-                    response_status: None,
-                    response_headers: None,
-                    response_body_preview: None,
-                    duration_ms,
-                    success: false,
-                    error: Some(message.clone()),
-                },
+            record_remote_call_failure(
+                &failure_context,
+                normalized_rendered_url,
+                duration_ms,
+                error,
             )
-            .await?;
-            Ok(RemoteExecutionOutcome {
-                success: false,
-                summary: message,
-                event_data: Some(serde_json::json!({ "duration_ms": duration_ms })),
-            })
+            .await
         }
     }
+}
+
+async fn record_remote_call_failure(
+    context: &RemoteFailureContext<'_>,
+    rendered_url: String,
+    duration_ms: i32,
+    error: OutboundHttpError,
+) -> Result<RemoteExecutionOutcome, ApiError> {
+    let api_error = outbound_error_to_api_error(error);
+    let message = crate::tasks::helpers::sanitize_error_for_storage(&api_error);
+    insert_remote_call_result(
+        context.pool,
+        NewRemoteCallResult {
+            task_id: context.task_id,
+            target_id: Some(context.target_id),
+            subject_type: context.subject_type.to_string(),
+            subject_id: context.subject_id,
+            method: context.method.to_string(),
+            rendered_url,
+            response_status: None,
+            response_headers: None,
+            response_body_preview: None,
+            duration_ms,
+            success: false,
+            error: Some(message.clone()),
+        },
+    )
+    .await?;
+    Ok(RemoteExecutionOutcome {
+        success: false,
+        summary: message,
+        event_data: Some(serde_json::json!({ "duration_ms": duration_ms })),
+    })
 }
 
 async fn finalize_remote_task(
@@ -264,19 +303,13 @@ fn render_template(
     template: &str,
     context: &serde_json::Value,
 ) -> Result<String, ApiError> {
-    let env = build_remote_template_environment();
-    env.template_from_str(template)
-        .and_then(|compiled| compiled.render(context))
-        .map_err(|error| ApiError::BadRequest(format!("Failed rendering {label}: {error}")))
-}
-
-fn build_remote_template_environment() -> minijinja::Environment<'static> {
-    let mut env = minijinja::Environment::new();
     let (recursion_limit, fuel) = remote_template_limits();
-    env.set_recursion_limit(recursion_limit);
-    env.set_fuel(Some(fuel));
-    crate::utilities::reporting::register_curated_helpers(&mut env);
-    env
+    prepare_template(template)
+        .limit_recursion(recursion_limit)
+        .limit_fuel(fuel)
+        .context(context)
+        .render()
+        .map_err(|error| ApiError::BadRequest(format!("Failed rendering {label}: {error}")))
 }
 
 fn remote_template_limits() -> (usize, u64) {
@@ -296,8 +329,8 @@ fn remote_template_limits() -> (usize, u64) {
 fn render_headers(
     headers_template: &serde_json::Value,
     context: &serde_json::Value,
-) -> Result<HeaderMap, ApiError> {
-    let mut headers = HeaderMap::new();
+) -> Result<OutboundHeaders, ApiError> {
+    let mut headers = OutboundHeaders::new();
     let object = headers_template.as_object().ok_or_else(|| {
         ApiError::BadRequest("headers_template must be a JSON object".to_string())
     })?;
@@ -305,53 +338,50 @@ fn render_headers(
         let value = value.as_str().ok_or_else(|| {
             ApiError::BadRequest("header template values must be strings".to_string())
         })?;
-        let name = HeaderName::from_bytes(name.as_bytes())
-            .map_err(|_| ApiError::BadRequest(format!("Invalid header name: {name}")))?;
         let rendered = render_template("header template", value, context)?;
-        let value = HeaderValue::from_str(&rendered)
-            .map_err(|_| ApiError::BadRequest(format!("Invalid header value for {name}")))?;
-        headers.insert(name, value);
+        headers
+            .insert(name, &rendered)
+            .map_err(outbound_error_to_bad_request)?;
     }
     Ok(headers)
 }
 
-fn apply_auth(headers: &mut HeaderMap, auth_config: &RemoteAuthConfig) -> Result<(), ApiError> {
+fn apply_auth(
+    headers: &mut OutboundHeaders,
+    auth_config: &RemoteAuthConfig,
+) -> Result<(), ApiError> {
     match auth_config {
         RemoteAuthConfig::None => Ok(()),
         RemoteAuthConfig::BearerSecret { secret } => {
             let value = format!("Bearer {}", resolve_secret(secret)?);
-            headers.insert(
-                reqwest::header::AUTHORIZATION,
-                HeaderValue::from_str(&value).map_err(|_| {
-                    ApiError::BadRequest("Resolved bearer secret is not a valid header".to_string())
-                })?,
-            );
+            headers.insert("authorization", &value).map_err(|_| {
+                ApiError::BadRequest("Resolved bearer secret is not a valid header".to_string())
+            })?;
             Ok(())
         }
         RemoteAuthConfig::BasicSecret { username, secret } => {
             let raw = format!("{}:{}", username, resolve_secret(secret)?);
             let encoded = base64::engine::general_purpose::STANDARD.encode(raw);
-            headers.insert(
-                reqwest::header::AUTHORIZATION,
-                HeaderValue::from_str(&format!("Basic {encoded}")).map_err(|_| {
+            headers
+                .insert("authorization", &format!("Basic {encoded}"))
+                .map_err(|_| {
                     ApiError::BadRequest("Resolved basic secret is not a valid header".to_string())
-                })?,
-            );
+                })?;
             Ok(())
         }
         RemoteAuthConfig::ApiKeySecret { header, secret } => {
-            let name = HeaderName::from_bytes(header.as_bytes()).map_err(|_| {
-                ApiError::BadRequest(format!("Invalid API key header name: {header}"))
-            })?;
             let value = resolve_secret(secret)?;
-            headers.insert(
-                name,
-                HeaderValue::from_str(&value).map_err(|_| {
-                    ApiError::BadRequest(
+            headers
+                .insert(header, &value)
+                .map_err(|error| match error {
+                    OutboundHttpError::InvalidHeaderName { .. } => {
+                        ApiError::BadRequest(format!("Invalid API key header name: {header}"))
+                    }
+                    OutboundHttpError::InvalidHeaderValue { .. } => ApiError::BadRequest(
                         "Resolved API key secret is not a valid header".to_string(),
-                    )
-                })?,
-            );
+                    ),
+                    other => ApiError::BadRequest(outbound_error_to_api_message(other)),
+                })?;
             Ok(())
         }
     }
@@ -366,12 +396,12 @@ fn resolve_secret(secret: &str) -> Result<String, ApiError> {
     })
 }
 
-fn reqwest_method(method: RemoteHttpMethod) -> reqwest::Method {
+fn outbound_method(method: RemoteHttpMethod) -> OutboundMethod {
     match method {
-        RemoteHttpMethod::Get => reqwest::Method::GET,
-        RemoteHttpMethod::Post => reqwest::Method::POST,
-        RemoteHttpMethod::Patch => reqwest::Method::PATCH,
-        RemoteHttpMethod::Delete => reqwest::Method::DELETE,
+        RemoteHttpMethod::Get => OutboundMethod::Get,
+        RemoteHttpMethod::Post => OutboundMethod::Post,
+        RemoteHttpMethod::Patch => OutboundMethod::Patch,
+        RemoteHttpMethod::Delete => OutboundMethod::Delete,
     }
 }
 
@@ -390,111 +420,57 @@ fn bounded_timeout_ms(timeout_ms: i32) -> u64 {
     requested.min(cap)
 }
 
-/// Resolve `host` and reject the call if any resolved address is private/internal,
-/// unless the deployment has opted in via `remote_call_allow_private_targets`.
-/// Returns the screened socket addresses so the caller can pin reqwest's resolver
-/// to exactly these IPs (defeating DNS rebinding).
-async fn screen_outbound_host(host: &str, port: u16) -> Result<Vec<SocketAddr>, ApiError> {
-    #[cfg(test)]
-    if host.eq_ignore_ascii_case("localhost") {
-        // Tests use localhost for the HTTPS success path; the SSRF guard test uses
-        // 127.0.0.1 directly so loopback screening still has coverage.
-        return Ok(vec![SocketAddr::from(([127, 0, 0, 1], port))]);
-    }
-
-    let allow_private = get_config()
-        .map(|config| config.remote_call_allow_private_targets)
-        .unwrap_or(DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS);
-
-    let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, port))
-        .await
-        .map_err(|_| {
-            ApiError::BadRequest(format!("Failed to resolve remote target host '{host}'"))
-        })?
-        .collect();
-
-    if addrs.is_empty() {
-        return Err(ApiError::BadRequest(format!(
-            "Remote target host '{host}' did not resolve to any address"
-        )));
-    }
-
-    if !allow_private
-        && let Some(blocked) = addrs
-            .iter()
-            .find(|addr| remote_target_ip_blocked(addr.ip()))
-    {
-        return Err(ApiError::BadRequest(format!(
-            "Remote target host '{host}' resolves to a disallowed address ({})",
-            blocked.ip()
-        )));
-    }
-
-    Ok(addrs)
-}
-
-/// Read at most `limit` bytes of the response body, stopping early so an oversized
-/// or hostile response cannot exhaust worker memory.
-async fn read_capped_body(
-    mut response: reqwest::Response,
-    limit: usize,
-) -> Result<String, ApiError> {
-    let mut buffer: Vec<u8> = Vec::new();
-    while buffer.len() < limit {
-        match response.chunk().await.map_err(|error| {
-            ApiError::InternalServerError(format!("Failed reading remote response: {error}"))
-        })? {
-            Some(chunk) => {
-                let remaining = limit - buffer.len();
-                let take = remaining.min(chunk.len());
-                buffer.extend_from_slice(&chunk[..take]);
-            }
-            None => break,
+fn outbound_error_to_api_message(error: OutboundHttpError) -> String {
+    match error {
+        OutboundHttpError::InvalidUrl => "remote target URL is invalid".to_string(),
+        OutboundHttpError::NonHttpsUrl => "remote target URLs must use https".to_string(),
+        OutboundHttpError::EmbeddedCredentials => {
+            "remote target URLs must not contain embedded credentials".to_string()
+        }
+        OutboundHttpError::MissingHost => "remote target URL is missing a host".to_string(),
+        OutboundHttpError::MissingKnownPort => {
+            "remote target URL is missing a known port".to_string()
+        }
+        OutboundHttpError::DnsResolution { host } => {
+            format!("Failed to resolve remote target host '{host}'")
+        }
+        OutboundHttpError::EmptyDnsResolution { host } => {
+            format!("Remote target host '{host}' did not resolve to any address")
+        }
+        OutboundHttpError::DisallowedAddress { host, address } => {
+            format!("Remote target host '{host}' resolves to a disallowed address ({address})")
+        }
+        OutboundHttpError::ClientBuild(error) => format!("HTTP client error: {error}"),
+        OutboundHttpError::ResponseRead(error) => {
+            format!("Failed reading remote response: {error}")
+        }
+        OutboundHttpError::Timeout => "Remote call timed out".to_string(),
+        OutboundHttpError::Connect => "Remote connection failed".to_string(),
+        OutboundHttpError::Request(error) => format!("Remote call failed: {error}"),
+        OutboundHttpError::InvalidHeaderName { name } => format!("Invalid header name: {name}"),
+        OutboundHttpError::InvalidHeaderValue { name } => {
+            format!("Invalid header value for {name}")
         }
     }
-    Ok(String::from_utf8_lossy(&buffer).replace('\0', "\u{FFFD}"))
 }
 
-/// Response headers that may carry secrets the remote echoes back; their values are
-/// redacted before storage so they are never persisted in `remote_call_results`.
-fn is_sensitive_response_header(name: &str) -> bool {
-    const SENSITIVE: [&str; 6] = [
-        "set-cookie",
-        "set-cookie2",
-        "authorization",
-        "proxy-authorization",
-        "www-authenticate",
-        "proxy-authenticate",
-    ];
-    SENSITIVE.contains(&name.to_ascii_lowercase().as_str())
-}
-
-fn headers_to_json(headers: &HeaderMap) -> serde_json::Value {
-    let mut object = serde_json::Map::new();
-    for (name, value) in headers {
-        if is_sensitive_response_header(name.as_str()) {
-            object.insert(
-                name.to_string(),
-                serde_json::Value::String("[redacted]".to_string()),
-            );
-        } else if let Ok(value) = value.to_str() {
-            object.insert(
-                name.to_string(),
-                serde_json::Value::String(value.to_string()),
-            );
-        }
-    }
-    serde_json::Value::Object(object)
-}
-
-fn sanitize_reqwest_error(error: reqwest::Error) -> String {
-    if error.is_timeout() {
-        "Remote call timed out".to_string()
-    } else if error.is_connect() {
-        "Remote connection failed".to_string()
+fn outbound_error_to_api_error(error: OutboundHttpError) -> ApiError {
+    let internal = matches!(
+        &error,
+        OutboundHttpError::ClientBuild(_)
+            | OutboundHttpError::ResponseRead(_)
+            | OutboundHttpError::Request(_)
+    );
+    let message = outbound_error_to_api_message(error);
+    if internal {
+        ApiError::InternalServerError(message)
     } else {
-        format!("Remote call failed: {error}")
+        ApiError::BadRequest(message)
     }
+}
+
+fn outbound_error_to_bad_request(error: OutboundHttpError) -> ApiError {
+    ApiError::BadRequest(outbound_error_to_api_message(error))
 }
 
 #[cfg(test)]
@@ -525,6 +501,30 @@ mod tests {
             error.to_string().contains("fuel")
                 || error.to_string().contains("operation")
                 || error.to_string().contains("limit")
+        );
+    }
+
+    #[test]
+    fn internal_outbound_errors_are_sanitized_for_storage() {
+        let error = outbound_error_to_api_error(OutboundHttpError::ResponseRead(
+            "transport failure for https://example.com/secret".to_string(),
+        ));
+
+        assert!(matches!(error, ApiError::InternalServerError(_)));
+        assert_eq!(
+            crate::tasks::helpers::sanitize_error_for_storage(&error),
+            "An internal error occurred"
+        );
+    }
+
+    #[test]
+    fn user_actionable_outbound_errors_remain_visible_for_storage() {
+        let error = outbound_error_to_api_error(OutboundHttpError::NonHttpsUrl);
+
+        assert!(matches!(error, ApiError::BadRequest(_)));
+        assert_eq!(
+            crate::tasks::helpers::sanitize_error_for_storage(&error),
+            "Invalid input: remote target URLs must use https"
         );
     }
 }

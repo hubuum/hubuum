@@ -101,7 +101,8 @@ fn build_list_query<'a>(
     query_options: &'a QueryOptions,
 ) -> Result<crate::schema::remote_targets::BoxedQuery<'a, diesel::pg::Pg>, ApiError> {
     use crate::schema::remote_targets::dsl::{
-        created_at, description, id, method, name, namespace_id, remote_targets, updated_at,
+        class_id, created_at, description, id, method, name, namespace_id, remote_targets,
+        updated_at,
     };
 
     let mut query = remote_targets
@@ -117,6 +118,7 @@ fn build_list_query<'a>(
             FilterField::NamespaceId | FilterField::Namespaces => {
                 numeric_search!(query, param, operator, namespace_id)
             }
+            FilterField::ClassId => numeric_search!(query, param, operator, class_id),
             FilterField::Kind => string_search!(query, param, operator, method),
             FilterField::CreatedAt => date_search!(query, param, operator, created_at),
             FilterField::UpdatedAt => date_search!(query, param, operator, updated_at),

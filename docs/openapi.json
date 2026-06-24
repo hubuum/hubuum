@@ -8741,6 +8741,16 @@
               "null"
             ]
           },
+          "class_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HubuumClassID"
+              }
+            ]
+          },
           "description": {
             "type": "string"
           },
@@ -9481,6 +9491,13 @@
               "string",
               "null"
             ]
+          },
+          "class_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
           },
           "created_at": {
             "type": "string",
@@ -10778,6 +10795,13 @@
               "string",
               "null"
             ]
+          },
+          "class_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
           },
           "description": {
             "type": [

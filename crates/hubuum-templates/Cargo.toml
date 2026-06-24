@@ -1,0 +1,12 @@
+[package]
+name = "hubuum-templates"
+version = "0.0.1"
+edition = "2024"
+description = "Bounded MiniJinja template helpers for Hubuum."
+license = "MIT"
+repository = "https://github.com/hubuum/hubuum"
+
+[dependencies]
+chrono = "0.4"
+minijinja = { version = "2", features = ["fuel"] }
+serde_json = "1"

@@ -156,6 +156,7 @@ diesel::table! {
     remote_targets (id) {
         id -> Int4,
         namespace_id -> Int4,
+        class_id -> Nullable<Int4>,
         name -> Varchar,
         description -> Varchar,
         method -> Varchar,
@@ -285,6 +286,7 @@ diesel::joinable!(permissions -> groups (group_id));
 diesel::joinable!(permissions -> namespaces (namespace_id));
 diesel::joinable!(remote_call_results -> remote_targets (target_id));
 diesel::joinable!(remote_call_results -> tasks (task_id));
+diesel::joinable!(remote_targets -> hubuumclass (class_id));
 diesel::joinable!(remote_targets -> namespaces (namespace_id));
 diesel::joinable!(report_task_outputs -> tasks (task_id));
 diesel::joinable!(report_templates -> hubuumclass (class_id));

@@ -1,9 +1,8 @@
-use std::net::IpAddr;
 use std::str::FromStr;
 
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
-use ipnet::IpNet;
+use hubuum_templates::prepare_template;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -128,6 +127,7 @@ pub enum RemoteAuthConfig {
 pub(crate) struct RemoteTargetRow {
     pub id: i32,
     pub namespace_id: i32,
+    pub class_id: Option<i32>,
     pub name: String,
     pub description: String,
     pub method: String,
@@ -146,6 +146,7 @@ pub(crate) struct RemoteTargetRow {
 pub struct RemoteTarget {
     pub id: i32,
     pub namespace_id: i32,
+    pub class_id: Option<i32>,
     pub name: String,
     pub description: String,
     pub method: RemoteHttpMethod,
@@ -163,6 +164,7 @@ pub struct RemoteTarget {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct NewRemoteTarget {
     pub namespace_id: NamespaceID,
+    pub class_id: Option<HubuumClassID>,
     pub name: String,
     pub description: String,
     pub method: RemoteHttpMethod,
@@ -182,6 +184,13 @@ pub struct NewRemoteTarget {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct UpdateRemoteTarget {
     pub namespace_id: Option<NamespaceID>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_double_option"
+    )]
+    #[schema(value_type = Option<i32>)]
+    pub class_id: Option<Option<HubuumClassID>>,
     pub name: Option<String>,
     pub description: Option<String>,
     pub method: Option<RemoteHttpMethod>,
@@ -204,6 +213,7 @@ pub struct UpdateRemoteTarget {
 #[diesel(table_name = remote_targets)]
 pub(crate) struct NewRemoteTargetRow {
     pub namespace_id: i32,
+    pub class_id: Option<i32>,
     pub name: String,
     pub description: String,
     pub method: String,
@@ -220,6 +230,7 @@ pub(crate) struct NewRemoteTargetRow {
 #[diesel(table_name = remote_targets)]
 pub(crate) struct UpdateRemoteTargetRow {
     pub namespace_id: Option<i32>,
+    pub class_id: Option<Option<i32>>,
     pub name: Option<String>,
     pub description: Option<String>,
     pub method: Option<String>,
@@ -448,6 +459,7 @@ impl TryFrom<RemoteTargetRow> for RemoteTarget {
         Ok(Self {
             id: row.id,
             namespace_id: row.namespace_id,
+            class_id: row.class_id,
             name: row.name,
             description: row.description,
             method: RemoteHttpMethod::from_str(&row.method)?,
@@ -467,6 +479,7 @@ impl TryFrom<RemoteTargetRow> for RemoteTarget {
 impl NewRemoteTarget {
     pub(crate) fn into_row(self) -> Result<NewRemoteTargetRow, ApiError> {
         validate_target_parts(
+            self.class_id.map(HubuumClassID::id),
             &self.url_template,
             &self.headers_template,
             self.body_template.as_deref(),
@@ -477,6 +490,7 @@ impl NewRemoteTarget {
 
         Ok(NewRemoteTargetRow {
             namespace_id: self.namespace_id.id(),
+            class_id: self.class_id.map(HubuumClassID::id),
             name: self.name,
             description: self.description,
             method: self.method.as_str().to_string(),
@@ -494,6 +508,7 @@ impl NewRemoteTarget {
 impl UpdateRemoteTarget {
     pub fn is_empty(&self) -> bool {
         self.namespace_id.is_none()
+            && self.class_id.is_none()
             && self.name.is_none()
             && self.description.is_none()
             && self.method.is_none()
@@ -531,8 +546,14 @@ impl UpdateRemoteTarget {
             .clone()
             .unwrap_or_else(|| existing.allowed_subject_types.clone());
         let timeout_ms = self.timeout_ms.unwrap_or(existing.timeout_ms);
+        let class_id = match self.class_id {
+            Some(Some(class_id)) => Some(class_id.id()),
+            Some(None) => None,
+            None => existing.class_id,
+        };
 
         validate_target_parts(
+            class_id,
             &url_template,
             &headers_template,
             body_template.as_deref(),
@@ -543,6 +564,9 @@ impl UpdateRemoteTarget {
 
         Ok(UpdateRemoteTargetRow {
             namespace_id: self.namespace_id.map(NamespaceID::id),
+            class_id: self
+                .class_id
+                .map(|class_id| class_id.map(HubuumClassID::id)),
             name: self.name,
             description: self.description,
             method: self.method.map(|method| method.as_str().to_string()),
@@ -561,6 +585,7 @@ impl UpdateRemoteTarget {
 }
 
 pub fn validate_target_parts(
+    class_id: Option<i32>,
     url_template: &str,
     headers_template: &serde_json::Value,
     body_template: Option<&str>,
@@ -585,7 +610,24 @@ pub fn validate_target_parts(
     validate_header_templates(headers_template)?;
     validate_auth_config(auth_config)?;
     validate_allowed_subject_types(allowed_subject_types)?;
+    validate_class_scope(class_id, allowed_subject_types)?;
     Ok(())
+}
+
+pub fn validate_class_scope(
+    class_id: Option<i32>,
+    allowed_subject_types: &[RemoteTargetSubjectType],
+) -> Result<(), ApiError> {
+    let allows_objects = allowed_subject_types.contains(&RemoteTargetSubjectType::Object);
+    match (allows_objects, class_id) {
+        (true, None) => Err(ApiError::BadRequest(
+            "class_id is required when allowed_subject_types includes 'object'".to_string(),
+        )),
+        (false, Some(_)) => Err(ApiError::BadRequest(
+            "class_id is only valid when allowed_subject_types includes 'object'".to_string(),
+        )),
+        _ => Ok(()),
+    }
 }
 
 pub fn validate_allowed_subject_types(
@@ -640,6 +682,13 @@ pub async fn authorize_remote_invocation(
             "Remote target does not allow '{}' subjects",
             resolved.subject_type.as_str()
         )));
+    }
+    if let RemoteInvocationSubject::Object { class_id, .. } = subject
+        && target.class_id != Some(class_id.id())
+    {
+        return Err(ApiError::NotFound(
+            "Remote target not found for invocation subject class".to_string(),
+        ));
     }
     if !resolved
         .namespaces
@@ -789,119 +838,6 @@ fn unique_namespaces(namespaces: Vec<Namespace>) -> Vec<Namespace> {
         .collect()
 }
 
-/// Host and port extracted from a validated outbound remote target URL.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OutboundUrlParts {
-    pub url: reqwest::Url,
-    pub host: String,
-    pub port: u16,
-}
-
-/// Validate a fully rendered outbound URL and return its host/port.
-///
-/// Enforces that the URL parses, uses the `https` scheme, carries no embedded
-/// credentials, and names a host. The returned host/port feed the worker's
-/// SSRF address screening before the outbound call is made.
-pub fn validate_rendered_remote_url(url: &str) -> Result<OutboundUrlParts, ApiError> {
-    if url.is_empty() || url.chars().any(|ch| ch.is_whitespace() || ch.is_control()) {
-        return Err(ApiError::BadRequest(
-            "remote target URL is invalid".to_string(),
-        ));
-    }
-
-    let parsed = reqwest::Url::parse(url)
-        .map_err(|_| ApiError::BadRequest("remote target URL is invalid".to_string()))?;
-
-    if parsed.scheme() != "https" {
-        return Err(ApiError::BadRequest(
-            "remote target URLs must use https".to_string(),
-        ));
-    }
-
-    if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err(ApiError::BadRequest(
-            "remote target URLs must not contain embedded credentials".to_string(),
-        ));
-    }
-
-    let host = parsed
-        .host_str()
-        .filter(|host| !host.is_empty())
-        .ok_or_else(|| ApiError::BadRequest("remote target URL is missing a host".to_string()))?
-        .to_string();
-
-    let port = parsed.port_or_known_default().ok_or_else(|| {
-        ApiError::BadRequest("remote target URL is missing a known port".to_string())
-    })?;
-
-    Ok(OutboundUrlParts {
-        url: parsed,
-        host,
-        port,
-    })
-}
-
-/// IP networks that must never be reachable as remote targets unless explicitly
-/// allowed via configuration. Covers loopback, RFC1918, link-local, carrier-grade
-/// NAT, cloud metadata, unique-local, documentation, and other non-global ranges.
-fn blocked_outbound_nets() -> &'static [IpNet] {
-    use std::sync::OnceLock;
-    static NETS: OnceLock<Vec<IpNet>> = OnceLock::new();
-    NETS.get_or_init(|| {
-        [
-            // IPv4
-            "0.0.0.0/8",
-            "10.0.0.0/8",
-            "100.64.0.0/10",
-            "127.0.0.0/8",
-            "169.254.0.0/16",
-            "172.16.0.0/12",
-            "192.0.0.0/24",
-            "192.0.2.0/24",
-            "192.168.0.0/16",
-            "198.18.0.0/15",
-            "198.51.100.0/24",
-            "203.0.113.0/24",
-            "224.0.0.0/4",
-            "240.0.0.0/4",
-            "255.255.255.255/32",
-            // IPv6
-            "::/128",
-            "::1/128",
-            "::ffff:0:0/96",
-            "64:ff9b::/96",
-            "100::/64",
-            "2001:db8::/32",
-            "fc00::/7",
-            "fe80::/10",
-            "ff00::/8",
-        ]
-        .iter()
-        .map(|net| net.parse().expect("static blocked net must parse"))
-        .collect()
-    })
-}
-
-/// Returns true when an outbound remote call to `ip` must be refused (SSRF guard).
-///
-/// IPv4-mapped IPv6 addresses are unwrapped so an attacker cannot smuggle a private
-/// IPv4 address through an IPv6 literal.
-pub fn remote_target_ip_blocked(ip: IpAddr) -> bool {
-    let ip = match ip {
-        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
-            Some(v4) => IpAddr::V4(v4),
-            None => IpAddr::V6(v6),
-        },
-        other => other,
-    };
-
-    blocked_outbound_nets().iter().any(|net| match (net, ip) {
-        (IpNet::V4(net), IpAddr::V4(addr)) => net.contains(&addr),
-        (IpNet::V6(net), IpAddr::V6(addr)) => net.contains(&addr),
-        _ => false,
-    })
-}
-
 fn validate_header_templates(value: &serde_json::Value) -> Result<(), ApiError> {
     let object = value.as_object().ok_or_else(|| {
         ApiError::BadRequest("headers_template must be a JSON object".to_string())
@@ -957,19 +893,12 @@ fn validate_auth_config(auth_config: &RemoteAuthConfig) -> Result<(), ApiError> 
 }
 
 fn validate_template(label: &str, source: &str) -> Result<(), ApiError> {
-    let mut env = build_remote_template_validation_environment();
-    crate::utilities::reporting::register_curated_helpers(&mut env);
-    env.template_from_str(source)
-        .map(|_| ())
-        .map_err(|error| ApiError::BadRequest(format!("Invalid {label}: {error}")))
-}
-
-fn build_remote_template_validation_environment() -> minijinja::Environment<'static> {
-    let mut env = minijinja::Environment::new();
     let (recursion_limit, fuel) = remote_template_limits();
-    env.set_recursion_limit(recursion_limit);
-    env.set_fuel(Some(fuel));
-    env
+    prepare_template(source)
+        .limit_recursion(recursion_limit)
+        .limit_fuel(fuel)
+        .validate()
+        .map_err(|error| ApiError::BadRequest(format!("Invalid {label}: {error}")))
 }
 
 fn remote_template_limits() -> (usize, u64) {
@@ -1109,70 +1038,10 @@ mod tests {
     }
 
     #[test]
-    fn rendered_remote_urls_must_be_https() {
-        let parts = validate_rendered_remote_url("https://example.com/hook").unwrap();
-        assert_eq!(parts.url.host_str(), Some(parts.host.as_str()));
-        assert_eq!(parts.url.port_or_known_default(), Some(parts.port));
-        assert_eq!(parts.host, "example.com");
-        assert_eq!(parts.port, 443);
-
-        let custom_port = validate_rendered_remote_url("https://example.com:8443/hook").unwrap();
-        assert_eq!(custom_port.url.host_str(), Some(custom_port.host.as_str()));
-        assert_eq!(
-            custom_port.url.port_or_known_default(),
-            Some(custom_port.port)
-        );
-        assert_eq!(custom_port.port, 8443);
-
-        assert!(validate_rendered_remote_url("http://example.com/hook").is_err());
-        assert!(validate_rendered_remote_url("https://").is_err());
-        assert!(validate_rendered_remote_url("ftp://example.com").is_err());
-        assert!(validate_rendered_remote_url("https://example.com /hook").is_err());
-    }
-
-    #[test]
-    fn rendered_remote_urls_reject_embedded_credentials() {
-        assert!(validate_rendered_remote_url("https://user:pass@example.com/hook").is_err());
-        assert!(validate_rendered_remote_url("https://user@example.com/hook").is_err());
-        assert!(validate_rendered_remote_url("https://example.com@127.0.0.1/hook").is_err());
-    }
-
-    #[test]
-    fn private_and_internal_ips_are_blocked() {
-        use std::net::{Ipv4Addr, Ipv6Addr};
-
-        // Blocked: loopback, RFC1918, link-local / cloud metadata, ULA, mapped v4.
-        assert!(remote_target_ip_blocked(IpAddr::V4(Ipv4Addr::LOCALHOST)));
-        assert!(remote_target_ip_blocked(IpAddr::V4(Ipv4Addr::new(
-            10, 0, 0, 5
-        ))));
-        assert!(remote_target_ip_blocked(IpAddr::V4(Ipv4Addr::new(
-            192, 168, 1, 1
-        ))));
-        assert!(remote_target_ip_blocked(IpAddr::V4(Ipv4Addr::new(
-            169, 254, 169, 254
-        ))));
-        assert!(remote_target_ip_blocked(IpAddr::V6(Ipv6Addr::LOCALHOST)));
-        assert!(remote_target_ip_blocked(
-            "fd00::1".parse::<IpAddr>().unwrap()
-        ));
-        assert!(remote_target_ip_blocked(
-            "::ffff:127.0.0.1".parse::<IpAddr>().unwrap()
-        ));
-
-        // Allowed: genuinely global addresses.
-        assert!(!remote_target_ip_blocked(IpAddr::V4(Ipv4Addr::new(
-            8, 8, 8, 8
-        ))));
-        assert!(!remote_target_ip_blocked(
-            "2606:4700:4700::1111".parse::<IpAddr>().unwrap()
-        ));
-    }
-
-    #[test]
     fn target_parts_validate_templates_and_auth_references() {
         assert!(
             validate_target_parts(
+                Some(1),
                 "https://example.com/{{ object.id }}",
                 &serde_json::json!({ "X-Object": "{{ object.name }}" }),
                 Some("{\"id\": {{ object.id }}}"),
@@ -1187,6 +1056,7 @@ mod tests {
 
         assert!(
             validate_target_parts(
+                Some(1),
                 "https://example.com/{{",
                 &serde_json::json!({}),
                 None,
@@ -1198,6 +1068,7 @@ mod tests {
         );
         assert!(
             validate_target_parts(
+                Some(1),
                 "https://example.com",
                 &serde_json::json!([]),
                 None,
@@ -1209,6 +1080,7 @@ mod tests {
         );
         assert!(
             validate_target_parts(
+                Some(1),
                 "https://example.com",
                 &serde_json::json!({ "Invalid Header": "{{ object.id }}" }),
                 None,
@@ -1220,6 +1092,7 @@ mod tests {
         );
         assert!(
             validate_target_parts(
+                Some(1),
                 "https://example.com",
                 &serde_json::json!({}),
                 None,
@@ -1239,6 +1112,7 @@ mod tests {
         // The `tojson` filter is documented for remote targets; validation must accept it.
         assert!(
             validate_target_parts(
+                Some(1),
                 "https://example.com/{{ object.id }}",
                 &serde_json::json!({ "X-Object": "{{ object.name }}" }),
                 Some("{\"data\": {{ object.data | tojson }}}"),
@@ -1248,6 +1122,24 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn object_targets_require_class_scope() {
+        assert!(
+            validate_class_scope(None, &[RemoteTargetSubjectType::Object])
+                .unwrap_err()
+                .to_string()
+                .contains("class_id is required")
+        );
+        assert!(
+            validate_class_scope(Some(1), &[RemoteTargetSubjectType::Class])
+                .unwrap_err()
+                .to_string()
+                .contains("class_id is only valid")
+        );
+        assert!(validate_class_scope(Some(1), &[RemoteTargetSubjectType::Object]).is_ok());
+        assert!(validate_class_scope(None, &[RemoteTargetSubjectType::Class]).is_ok());
     }
 
     #[test]
