@@ -65,6 +65,7 @@ Example:
 ```json
 {
   "namespace_id": 12,
+  "class_id": 34,
   "name": "create-ticket",
   "description": "Create a ticket for the object",
   "method": "post",
@@ -89,6 +90,7 @@ Fields:
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `namespace_id` | integer | yes | Namespace that owns the target and controls permissions. |
+| `class_id` | integer or null | required for object targets | Class scope for targets whose `allowed_subject_types` includes `object`. Must belong to `namespace_id`. Must be null or omitted for non-object targets. |
 | `name` | string | yes | Unique with `namespace_id`. |
 | `description` | string | yes | Human-readable description. |
 | `method` | string | yes | One of `get`, `post`, `patch`, `delete`. |
@@ -302,9 +304,9 @@ Supported subject shapes:
 { "type": "object_relation", "relation_id": 90 }
 ```
 
-For object subjects, `class_id` must match the object's class. The subject type must be listed in
-the target's `allowed_subject_types`, and the target namespace must be one of the subject
-namespaces. Disabled targets return `400 Bad Request`.
+For object subjects, `class_id` must match the object's class and the remote target's persisted
+`class_id`. The subject type must be listed in the target's `allowed_subject_types`, and the target
+namespace must be one of the subject namespaces. Disabled targets return `400 Bad Request`.
 
 On success, Hubuum creates a queued task and returns `202 Accepted`:
 

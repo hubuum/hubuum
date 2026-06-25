@@ -6,11 +6,13 @@ use std::io::{self, Write};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, OnceLock, RwLock};
 
+use hubuum_templates::{
+    MissingValue, MissingValueRecorder, TemplateLimits, register_curated_helpers,
+};
 use lru::LruCache;
 use minijinja::value::Value;
 use minijinja::{
-    AutoEscape, Environment, Error as MiniJinjaError, ErrorKind as MiniJinjaErrorKind, State,
-    UndefinedBehavior, escape_formatter,
+    AutoEscape, Environment, Error as MiniJinjaError, UndefinedBehavior, escape_formatter,
 };
 
 use crate::config::get_config;
@@ -89,10 +91,7 @@ pub fn validate_template_with_limits(
         namespace_templates,
         content_type,
         ReportMissingDataPolicy::Omit,
-        TemplateLimits {
-            recursion_limit,
-            fuel,
-        },
+        TemplateLimits::new(recursion_limit, fuel),
     )?;
 
     env.env
@@ -188,10 +187,7 @@ pub fn render_template(
                 namespace_templates,
                 content_type,
                 missing_data_policy,
-                TemplateLimits {
-                    recursion_limit,
-                    fuel,
-                },
+                TemplateLimits::new(recursion_limit, fuel),
             )?);
             let mut cache = template_env_cache()
                 .write()
@@ -281,14 +277,6 @@ fn namespace_signature(
     }
 }
 
-/// Recursion and fuel bounds for a MiniJinja environment, bundled so `build_environment`
-/// stays within a sensible argument count.
-#[derive(Debug, Clone, Copy)]
-struct TemplateLimits {
-    recursion_limit: usize,
-    fuel: u64,
-}
-
 fn build_environment(
     template_name: &str,
     template_source: &str,
@@ -308,8 +296,8 @@ fn build_environment(
 
     env.set_keep_trailing_newline(true);
     env.set_undefined_behavior(undefined_behavior(missing_data_policy));
-    env.set_recursion_limit(limits.recursion_limit);
-    env.set_fuel(Some(limits.fuel));
+    env.set_recursion_limit(limits.recursion_limit());
+    env.set_fuel(Some(limits.fuel()));
     env.set_auto_escape_callback(move |_| match content_type {
         ReportContentType::TextHtml => AutoEscape::Html,
         _ => AutoEscape::None,
@@ -325,7 +313,10 @@ fn build_environment(
         }
         Ok(template_map.get(name).cloned())
     });
-    register_curated_helpers(&mut env);
+    register_curated_helpers(
+        &mut env,
+        Some(record_missing_value_warning as MissingValueRecorder),
+    );
     env.add_template_owned(template_name.to_string(), template_source.to_string())
         .map_err(|error| template_error("Template load failed", error))?;
 
@@ -418,7 +409,7 @@ fn format_nullable_value(
     replacement: Option<&str>,
 ) -> Result<(), MiniJinjaError> {
     if value.is_undefined() {
-        record_missing_value_warning(state, None);
+        record_missing_value_warning(MissingValue::new(state.name(), None));
         if let Some(replacement) = replacement {
             out.write_str(replacement)?;
         }
@@ -433,176 +424,6 @@ fn format_nullable_value(
     }
 
     escape_formatter(out, state, value)
-}
-
-/// Register the curated MiniJinja filters/functions shared by every Hubuum
-/// templating surface (reports and remote targets). Keeping a single registrar
-/// means validation and execution accept the same template syntax — e.g. the
-/// `tojson` filter documented for remote targets is available wherever templates
-/// render. The missing-value helpers degrade to no-ops when no report warning
-/// capture is active, so they are safe to use outside report rendering.
-pub(crate) fn register_curated_helpers(env: &mut Environment<'static>) {
-    env.add_filter("csv_cell", csv_cell_filter);
-    env.add_filter("tojson", tojson_filter);
-    env.add_filter("default_if_empty", default_if_empty_filter);
-    env.add_filter("format_datetime", format_datetime_filter);
-    env.add_filter("join_nonempty", join_nonempty_filter);
-    env.add_function("coalesce", coalesce_function);
-}
-
-fn csv_cell_filter(value: Value) -> String {
-    let rendered = if value.is_none() || value.is_undefined() {
-        String::new()
-    } else {
-        value.to_string()
-    };
-    let guarded = if csv_cell_needs_formula_guard(&rendered) {
-        // Neutralize spreadsheet formula injection: Excel/Sheets/LibreOffice
-        // interpret a cell that begins with a formula trigger as a formula.
-        // Prefixing a single quote forces the cell to be treated as text.
-        format!("'{rendered}")
-    } else {
-        rendered
-    };
-    if guarded.contains([',', '"', '\n', '\r']) {
-        format!("\"{}\"", guarded.replace('"', "\"\""))
-    } else {
-        guarded
-    }
-}
-
-/// Returns true when a CSV cell would be interpreted as a formula by a
-/// spreadsheet application and therefore must be neutralized.
-///
-/// Leading spaces and tabs are ignored by spreadsheets when deciding whether a
-/// cell is a formula, so we look past leading spaces/tabs for the trigger
-/// characters `=`, `+`, `-`, `@`. A cell that itself begins with a control
-/// character (tab, CR, LF) is also treated as dangerous.
-fn csv_cell_needs_formula_guard(rendered: &str) -> bool {
-    match rendered.chars().next() {
-        Some('\t' | '\r' | '\n') => true,
-        Some(_) => rendered
-            .trim_start_matches([' ', '\t'])
-            .starts_with(['=', '+', '-', '@']),
-        None => false,
-    }
-}
-
-fn tojson_filter(value: Value) -> Result<String, MiniJinjaError> {
-    serde_json::to_string(&value).map_err(|error| {
-        MiniJinjaError::new(
-            MiniJinjaErrorKind::InvalidOperation,
-            "unable to serialize template value as JSON",
-        )
-        .with_source(error)
-    })
-}
-
-fn default_if_empty_filter(state: &State<'_, '_>, value: Value, fallback: Value) -> Value {
-    if value.is_undefined() {
-        record_missing_value_warning(state, None);
-    }
-    if value_is_missing_or_empty(&value) {
-        fallback
-    } else {
-        value
-    }
-}
-
-fn format_datetime_filter(value: Value, format: Option<String>) -> Result<String, MiniJinjaError> {
-    let format = format.unwrap_or_else(|| "iso".to_string());
-    let raw = match value.as_str() {
-        Some(raw) if !raw.trim().is_empty() => raw.trim(),
-        _ if value.is_none() || value.is_undefined() => return Ok(String::new()),
-        _ => {
-            return Err(MiniJinjaError::new(
-                MiniJinjaErrorKind::InvalidOperation,
-                "format_datetime expects an RFC3339 or Hubuum timestamp string",
-            ));
-        }
-    };
-
-    let parsed = parse_template_datetime(raw).ok_or_else(|| {
-        MiniJinjaError::new(
-            MiniJinjaErrorKind::InvalidOperation,
-            format!("Unable to parse '{raw}' as a supported datetime"),
-        )
-    })?;
-
-    Ok(match format.as_str() {
-        "iso" => parsed.to_rfc3339(),
-        "date" => parsed.format("%Y-%m-%d").to_string(),
-        "datetime" => parsed.format("%Y-%m-%d %H:%M:%S").to_string(),
-        "time" => parsed.format("%H:%M:%S").to_string(),
-        other => {
-            return Err(MiniJinjaError::new(
-                MiniJinjaErrorKind::InvalidOperation,
-                format!("Unsupported datetime format '{other}'"),
-            ));
-        }
-    })
-}
-
-fn join_nonempty_filter(value: Value, sep: Option<String>) -> Result<String, MiniJinjaError> {
-    let joiner = sep.unwrap_or_else(|| ", ".to_string());
-    let items = value.try_iter().map_err(|_| {
-        MiniJinjaError::new(
-            MiniJinjaErrorKind::InvalidOperation,
-            "join_nonempty expects a list-like value",
-        )
-    })?;
-
-    Ok(items
-        .filter(|item| !value_is_missing_or_empty(item))
-        .map(|item| item.to_string())
-        .filter(|item| !item.is_empty())
-        .collect::<Vec<_>>()
-        .join(&joiner))
-}
-
-fn coalesce_function(state: &State<'_, '_>, values: minijinja::value::Rest<Value>) -> Value {
-    if values.iter().any(Value::is_undefined) {
-        record_missing_value_warning(state, None);
-    }
-    values
-        .iter()
-        .find(|value| !value_is_missing_or_empty(value))
-        .cloned()
-        .unwrap_or(Value::UNDEFINED)
-}
-
-fn value_is_missing_or_empty(value: &Value) -> bool {
-    if value.is_undefined() || value.is_none() {
-        return true;
-    }
-
-    if let Some(text) = value.as_str() {
-        return text.is_empty();
-    }
-
-    matches!(value.len(), Some(0))
-}
-
-fn parse_template_datetime(raw: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
-    chrono::DateTime::parse_from_rfc3339(raw)
-        .ok()
-        .or_else(|| {
-            chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S")
-                .ok()
-                .and_then(|value| {
-                    chrono::FixedOffset::east_opt(0)
-                        .map(|offset| value.and_utc().with_timezone(&offset))
-                })
-        })
-        .or_else(|| {
-            chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d")
-                .ok()
-                .and_then(|value| value.and_hms_opt(0, 0, 0))
-                .and_then(|value| {
-                    chrono::FixedOffset::east_opt(0)
-                        .map(|offset| value.and_utc().with_timezone(&offset))
-                })
-        })
 }
 
 fn template_error(prefix: &str, error: MiniJinjaError) -> ApiError {
@@ -625,13 +446,14 @@ fn finish_template_warning_capture() -> Vec<ReportWarning> {
     })
 }
 
-fn record_missing_value_warning(state: &State<'_, '_>, path: Option<String>) {
+fn record_missing_value_warning(missing: MissingValue) {
     TEMPLATE_WARNING_CAPTURE.with(|capture| {
         let mut capture = capture.borrow_mut();
         let Some(capture) = capture.as_mut() else {
             return;
         };
-        let template_name = state.name().to_string();
+        let template_name = missing.template_name().to_string();
+        let path = missing.into_path();
         let key = (template_name.clone(), path.clone());
         if capture.missing_value_keys.contains(&key) {
             return;
@@ -723,28 +545,6 @@ mod tests {
 
         assert_eq!(rendered, "srv-01=alice\nsrv-02=bob\n");
         assert!(warnings.is_empty());
-    }
-
-    #[test]
-    fn csv_cell_neutralizes_formula_injection() {
-        // Leading formula triggers are prefixed with a quote so a spreadsheet
-        // treats the cell as text rather than evaluating it.
-        assert_eq!(
-            csv_cell_filter(Value::from("=HYPERLINK(\"http://evil\")")),
-            "\"'=HYPERLINK(\"\"http://evil\"\")\""
-        );
-        assert_eq!(csv_cell_filter(Value::from("@SUM(A1:A9)")), "'@SUM(A1:A9)");
-        assert_eq!(csv_cell_filter(Value::from("+1+1")), "'+1+1");
-        assert_eq!(csv_cell_filter(Value::from("-2+3")), "'-2+3");
-        // Spreadsheets ignore leading spaces/tabs when detecting a formula.
-        assert_eq!(csv_cell_filter(Value::from("  =1+1")), "'  =1+1");
-        assert_eq!(csv_cell_filter(Value::from("\t=1+1")), "'\t=1+1");
-        // Leading control characters are dangerous on their own.
-        assert_eq!(csv_cell_filter(Value::from("\rdata")), "\"'\rdata\"");
-        // Ordinary values are left untouched (still RFC-4180 quoted as needed).
-        assert_eq!(csv_cell_filter(Value::from("plain value")), "plain value");
-        assert_eq!(csv_cell_filter(Value::from("a,b")), "\"a,b\"");
-        assert_eq!(csv_cell_filter(Value::from("3.14")), "3.14");
     }
 
     #[test]

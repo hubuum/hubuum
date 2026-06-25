@@ -31,6 +31,7 @@ $$;
 CREATE TABLE remote_targets (
     id SERIAL PRIMARY KEY,
     namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
+    class_id INT REFERENCES hubuumclass (id) ON DELETE CASCADE NULL,
     name VARCHAR NOT NULL,
     description VARCHAR NOT NULL DEFAULT '',
     method VARCHAR NOT NULL CHECK (method IN ('get', 'post', 'patch', 'delete')),
@@ -47,6 +48,7 @@ CREATE TABLE remote_targets (
     CHECK (timeout_ms > 0),
     CHECK (jsonb_typeof(headers_template) = 'object'),
     CHECK (jsonb_typeof(auth_config) = 'object'),
+    CHECK (NOT (allowed_subject_types ? 'object') OR class_id IS NOT NULL),
     CHECK (remote_target_subject_types_valid(allowed_subject_types))
 );
 
@@ -68,6 +70,7 @@ CREATE TABLE remote_call_results (
 );
 
 CREATE INDEX idx_remote_targets_namespace_id ON remote_targets(namespace_id);
+CREATE INDEX idx_remote_targets_class_id ON remote_targets(class_id);
 CREATE INDEX idx_remote_targets_enabled ON remote_targets(enabled);
 CREATE INDEX idx_remote_call_results_target_id ON remote_call_results(target_id);
 CREATE INDEX idx_remote_call_results_subject ON remote_call_results(subject_type, subject_id);

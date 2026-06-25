@@ -1458,6 +1458,8 @@ dependencies = [
  "futures",
  "futures-util",
  "hmac",
+ "hubuum-outbound-http",
+ "hubuum-templates",
  "iai-callgrind",
  "ipnet",
  "jsonschema",
@@ -1483,6 +1485,25 @@ dependencies = [
  "utoipa",
  "utoipa-swagger-ui",
  "uuid",
+]
+
+[[package]]
+name = "hubuum-outbound-http"
+version = "0.0.1"
+dependencies = [
+ "ipnet",
+ "reqwest 0.12.28",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "hubuum-templates"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "minijinja",
+ "serde_json",
 ]
 
 [[package]]

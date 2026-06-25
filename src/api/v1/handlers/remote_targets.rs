@@ -14,7 +14,7 @@ use crate::errors::ApiError;
 use crate::extractors::UserAccess;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    NamespaceID, NewRemoteTarget, Permissions, RemoteTarget, RemoteTargetID,
+    HubuumClassID, NamespaceID, NewRemoteTarget, Permissions, RemoteTarget, RemoteTargetID,
     RemoteTargetInvokeRequest, StoredRemoteCallTaskPayload, TaskKind, UpdateRemoteTarget,
     authorize_remote_invocation,
 };
@@ -22,7 +22,7 @@ use crate::pagination::prepare_db_pagination;
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
-use crate::traits::NamespaceAccessors;
+use crate::traits::{ClassAccessors, NamespaceAccessors};
 use crate::utilities::response::{
     json_response, json_response_created, json_response_with_header, paginated_json_response,
 };
@@ -57,6 +57,12 @@ pub async fn create_remote_target(
         [Permissions::CreateRemoteTarget],
         target.namespace_id
     );
+    validate_remote_target_class_scope(
+        &pool,
+        target.namespace_id.id(),
+        target.class_id.map(HubuumClassID::id),
+    )
+    .await?;
 
     let created: RemoteTarget = target
         .into_row()?
@@ -175,6 +181,16 @@ pub async fn patch_remote_target(
     if let Some(namespace_id) = update.namespace_id {
         can!(&pool, user, [Permissions::CreateRemoteTarget], namespace_id);
     }
+    let effective_namespace_id = update
+        .namespace_id
+        .map(NamespaceID::id)
+        .unwrap_or(existing.namespace_id);
+    let effective_class_id = match update.class_id {
+        Some(Some(class_id)) => Some(class_id.id()),
+        Some(None) => None,
+        None => existing.class_id,
+    };
+    validate_remote_target_class_scope(&pool, effective_namespace_id, effective_class_id).await?;
 
     let row = update.into_row(&existing)?;
     let updated: RemoteTarget = row
@@ -182,6 +198,23 @@ pub async fn patch_remote_target(
         .await?
         .try_into()?;
     Ok(json_response(updated, StatusCode::OK))
+}
+
+async fn validate_remote_target_class_scope(
+    pool: &DbPool,
+    namespace_id: i32,
+    class_id: Option<i32>,
+) -> Result<(), ApiError> {
+    let Some(class_id) = class_id else {
+        return Ok(());
+    };
+    let class = HubuumClassID::new(class_id)?.class(pool).await?;
+    if class.namespace_id != namespace_id {
+        return Err(ApiError::BadRequest(
+            "class_id must belong to the remote target namespace".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 #[utoipa::path(

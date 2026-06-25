@@ -16,6 +16,10 @@
 - Model methods should stay thin and delegate persistence-heavy work to backend traits.
 - Use `BackendContext` for APIs that should accept either `DbPool` or wrappers such as `web::Data<DbPool>`.
 - Put multi-step database writes in `with_transaction`; use `with_connection` for single reads, single writes, and non-atomic database work.
+- Workspace crates should expose small, explicit interfaces with private fields. Prefer typed request/builder APIs over long positional argument lists when callers must provide several settings.
+- Keep workspace crate boundaries clean of app-specific errors, global config, Actix, Diesel, and task persistence unless the crate explicitly owns that layer.
+- Avoid leaking third-party implementation types from workspace crate APIs unless they are the intentional integration surface. Use crate-owned structs, builders, traits, and errors at boundaries where practical.
+- Use typestate builders when they prevent meaningful invalid call order or missing required data; otherwise prefer a simpler builder with validating terminal methods.
 
 ## API Conventions
 

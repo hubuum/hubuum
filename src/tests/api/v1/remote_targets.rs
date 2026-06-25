@@ -68,9 +68,44 @@ mod tests {
         )
     }
 
-    fn target_payload(namespace_id: i32, name: &str, url_template: &str) -> serde_json::Value {
+    async fn create_object_in_namespace(
+        context: &TestContext,
+        namespace_id: i32,
+        label: &str,
+    ) -> (i32, i32) {
+        let class = NewHubuumClass {
+            name: context.scoped_name(&format!("{label}-class")),
+            description: "remote target alternate class".to_string(),
+            namespace_id,
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+        let object = NewHubuumObject {
+            name: context.scoped_name(&format!("{label}-object")),
+            description: "remote target alternate object".to_string(),
+            namespace_id,
+            hubuum_class_id: class.id,
+            data: serde_json::json!({"hostname": "other-host"}),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        (class.id, object.id)
+    }
+
+    fn target_payload(
+        namespace_id: i32,
+        class_id: i32,
+        name: &str,
+        url_template: &str,
+    ) -> serde_json::Value {
         target_payload_with_subjects(
             namespace_id,
+            Some(class_id),
             name,
             url_template,
             serde_json::json!(["object"]),
@@ -79,12 +114,14 @@ mod tests {
 
     fn target_payload_with_subjects(
         namespace_id: i32,
+        class_id: Option<i32>,
         name: &str,
         url_template: &str,
         allowed_subject_types: serde_json::Value,
     ) -> serde_json::Value {
         serde_json::json!({
             "namespace_id": namespace_id,
+            "class_id": class_id,
             "name": name,
             "description": "test target",
             "method": "post",
@@ -189,6 +226,7 @@ mod tests {
     async fn create_target(
         context: &TestContext,
         namespace_id: i32,
+        class_id: i32,
         name: &str,
         url_template: &str,
     ) -> RemoteTarget {
@@ -196,7 +234,7 @@ mod tests {
             &context.pool,
             &context.admin_token,
             RT_ENDPOINT,
-            target_payload(namespace_id, name, url_template),
+            target_payload(namespace_id, class_id, name, url_template),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
@@ -320,11 +358,12 @@ mod tests {
     #[actix_web::test]
     async fn crud_lifecycle_as_admin() {
         let context = TestContext::new().await;
-        let (namespace_id, _class_id, _object_id) = setup_object(&context, "rt_crud").await;
+        let (namespace_id, class_id, _object_id) = setup_object(&context, "rt_crud").await;
 
         // Create
         let create = serde_json::json!({
             "namespace_id": namespace_id,
+            "class_id": class_id,
             "name": "crud-target",
             "description": "created",
             "method": "post",
@@ -394,7 +433,7 @@ mod tests {
     #[actix_web::test]
     async fn create_requires_create_permission() {
         let context = TestContext::new().await;
-        let (namespace_id, _, _) = setup_object(&context, "rt_perm").await;
+        let (namespace_id, class_id, _) = setup_object(&context, "rt_perm").await;
 
         // Normal user with no permission is forbidden.
         let resp = post_request(
@@ -403,6 +442,7 @@ mod tests {
             RT_ENDPOINT,
             target_payload(
                 namespace_id,
+                class_id,
                 "perm-target",
                 "https://service.example.com/hook",
             ),
@@ -436,6 +476,7 @@ mod tests {
             RT_ENDPOINT,
             target_payload(
                 namespace_id,
+                class_id,
                 "perm-target",
                 "https://service.example.com/hook",
             ),
@@ -447,14 +488,19 @@ mod tests {
     #[actix_web::test]
     async fn create_rejects_invalid_template_and_secret() {
         let context = TestContext::new().await;
-        let (namespace_id, _, _) = setup_object(&context, "rt_invalid").await;
+        let (namespace_id, class_id, _) = setup_object(&context, "rt_invalid").await;
 
         // Broken minijinja template.
         let resp = post_request(
             &context.pool,
             &context.admin_token,
             RT_ENDPOINT,
-            target_payload(namespace_id, "bad-template", "https://x.example.com/{{"),
+            target_payload(
+                namespace_id,
+                class_id,
+                "bad-template",
+                "https://x.example.com/{{",
+            ),
         )
         .await;
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
@@ -462,6 +508,7 @@ mod tests {
         // Auth secret reference with an illegal character.
         let payload = serde_json::json!({
             "namespace_id": namespace_id,
+            "class_id": class_id,
             "name": "bad-secret",
             "description": "test",
             "method": "get",
@@ -476,7 +523,7 @@ mod tests {
     #[actix_web::test]
     async fn create_rejects_empty_or_duplicate_allowed_subject_types() {
         let context = TestContext::new().await;
-        let (namespace_id, _, _) = setup_object(&context, "rt_subject_validation").await;
+        let (namespace_id, class_id, _) = setup_object(&context, "rt_subject_validation").await;
 
         let resp = post_request(
             &context.pool,
@@ -484,6 +531,7 @@ mod tests {
             RT_ENDPOINT,
             target_payload_with_subjects(
                 namespace_id,
+                None,
                 "empty-subjects",
                 "https://x.example.com/hook",
                 serde_json::json!([]),
@@ -498,6 +546,7 @@ mod tests {
             RT_ENDPOINT,
             target_payload_with_subjects(
                 namespace_id,
+                Some(class_id),
                 "duplicate-subjects",
                 "https://x.example.com/hook",
                 serde_json::json!(["object", "object"]),
@@ -508,15 +557,60 @@ mod tests {
     }
 
     #[actix_web::test]
+    async fn create_object_target_requires_class_scope_in_target_namespace() {
+        let context = TestContext::new().await;
+        let (namespace_id, _class_id, _) = setup_object(&context, "rt_class_scope").await;
+        let (other_namespace_id, other_class_id, _) =
+            setup_object(&context, "rt_class_scope_other").await;
+
+        let payload_without_class = serde_json::json!({
+            "namespace_id": namespace_id,
+            "name": "object-without-class",
+            "description": "test",
+            "method": "post",
+            "url_template": "https://x.example.com/hook",
+            "allowed_subject_types": ["object"],
+        });
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            RT_ENDPOINT,
+            payload_without_class,
+        )
+        .await;
+        assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+
+        let payload_with_foreign_class = serde_json::json!({
+            "namespace_id": namespace_id,
+            "class_id": other_class_id,
+            "name": "object-with-foreign-class",
+            "description": "test",
+            "method": "post",
+            "url_template": "https://x.example.com/hook",
+            "allowed_subject_types": ["object"],
+        });
+        assert_ne!(namespace_id, other_namespace_id);
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            RT_ENDPOINT,
+            payload_with_foreign_class,
+        )
+        .await;
+        assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+    }
+
+    #[actix_web::test]
     async fn move_requires_create_on_target_namespace() {
         let context = TestContext::new().await;
-        let (source_ns, _, _) = setup_object(&context, "rt_move_src").await;
+        let (source_ns, class_id, _) = setup_object(&context, "rt_move_src").await;
         let target_namespace = context.namespace_fixture("rt_move_dst").await;
         let target_ns = target_namespace.namespace.id;
 
         let created = create_target(
             &context,
             source_ns,
+            class_id,
             "move-target",
             "https://x.example.com/h",
         )
@@ -543,7 +637,11 @@ mod tests {
             .await
             .unwrap();
 
-        let move_payload = serde_json::json!({ "namespace_id": target_ns });
+        let move_payload = serde_json::json!({
+            "namespace_id": target_ns,
+            "class_id": null,
+            "allowed_subject_types": ["namespace"],
+        });
         let resp = patch_request(
             &context.pool,
             &user_token,
@@ -583,6 +681,7 @@ mod tests {
         let target = create_target(
             &context,
             namespace_id,
+            class_id,
             "invoke-target",
             "https://127.0.0.1/hook",
         )
@@ -615,6 +714,7 @@ mod tests {
             RT_ENDPOINT,
             target_payload_with_subjects(
                 namespace_id,
+                None,
                 "scope-subject-target",
                 "https://127.0.0.1/hook",
                 serde_json::json!(["namespace", "class"]),
@@ -654,6 +754,7 @@ mod tests {
             RT_ENDPOINT,
             target_payload_with_subjects(
                 namespace_id,
+                None,
                 "class-only-target",
                 "https://x.example.com/hook",
                 serde_json::json!(["class"]),
@@ -674,12 +775,41 @@ mod tests {
     }
 
     #[actix_web::test]
+    async fn invoke_object_requires_target_class_scope() {
+        let context = TestContext::new().await;
+        let (namespace_id, target_class_id, _target_object_id) =
+            setup_object(&context, "rt_target_class").await;
+        let (other_class_id, other_object_id) =
+            create_object_in_namespace(&context, namespace_id, "rt_other_class").await;
+        assert_ne!(target_class_id, other_class_id);
+
+        let target = create_target(
+            &context,
+            namespace_id,
+            target_class_id,
+            "class-scoped-object-target",
+            "https://x.example.com/h",
+        )
+        .await;
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &invoke_endpoint(target.id),
+            object_invoke_body(other_class_id, other_object_id),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::NOT_FOUND).await;
+    }
+
+    #[actix_web::test]
     async fn invoke_rejects_non_object_parameters_and_body_override() {
         let context = TestContext::new().await;
         let (namespace_id, class_id, object_id) = setup_object(&context, "rt_newtypes").await;
         let target = create_target(
             &context,
             namespace_id,
+            class_id,
             "newtype-target",
             "https://x.example.com/h",
         )
@@ -721,6 +851,7 @@ mod tests {
         let (namespace_id, class_id, object_id) = setup_object(&context, "rt_success").await;
         let payload = serde_json::json!({
             "namespace_id": namespace_id,
+            "class_id": class_id,
             "name": "success-target",
             "description": "test",
             "method": "post",
@@ -793,6 +924,7 @@ mod tests {
         let target = create_target(
             &context,
             namespace_id,
+            class_id,
             "nul-preview-target",
             &format!("https://localhost:{port}/hook"),
         )
@@ -832,6 +964,7 @@ mod tests {
         let (namespace_id, class_id, object_id) = setup_object(&context, "rt_disabled").await;
         let payload = serde_json::json!({
             "namespace_id": namespace_id,
+            "class_id": class_id,
             "name": "disabled-target",
             "description": "test",
             "method": "post",
@@ -860,6 +993,7 @@ mod tests {
             setup_object(&context, "rt_disabled_forbidden").await;
         let payload = serde_json::json!({
             "namespace_id": namespace_id,
+            "class_id": class_id,
             "name": "disabled-forbidden-target",
             "description": "test",
             "method": "post",
@@ -884,10 +1018,11 @@ mod tests {
     #[actix_web::test]
     async fn invoke_class_mismatch_returns_404() {
         let context = TestContext::new().await;
-        let (namespace_id, _class_id, object_id) = setup_object(&context, "rt_mismatch").await;
+        let (namespace_id, class_id, object_id) = setup_object(&context, "rt_mismatch").await;
         let target = create_target(
             &context,
             namespace_id,
+            class_id,
             "mismatch-target",
             "https://x.example.com/h",
         )
@@ -911,6 +1046,7 @@ mod tests {
         let target = create_target(
             &context,
             namespace_id,
+            class_id,
             "exec-target",
             "https://x.example.com/h",
         )
@@ -958,6 +1094,7 @@ mod tests {
             RT_ENDPOINT,
             target_payload_with_subjects(
                 from_namespace_id,
+                None,
                 "relation-target",
                 "https://127.0.0.1/hook",
                 serde_json::json!(["class_relation", "object_relation"]),
@@ -1002,6 +1139,7 @@ mod tests {
             RT_ENDPOINT,
             target_payload_with_subjects(
                 from_namespace_id,
+                None,
                 "relation-read-target",
                 "https://127.0.0.1/hook",
                 serde_json::json!(["object_relation"]),
@@ -1079,6 +1217,7 @@ mod tests {
             RT_ENDPOINT,
             target_payload_with_subjects(
                 unrelated_namespace.namespace.id,
+                None,
                 "relation-unrelated-target",
                 "https://x.example.com/hook",
                 serde_json::json!(["object_relation"]),
@@ -1105,6 +1244,7 @@ mod tests {
         let target = create_target(
             &context,
             namespace_id,
+            class_id,
             "idem-target",
             "https://127.0.0.1/hook",
         )
@@ -1175,6 +1315,7 @@ mod tests {
         let target = create_target(
             &context,
             namespace_id,
+            class_id,
             "idem-concurrent-target",
             "https://127.0.0.1/hook",
         )

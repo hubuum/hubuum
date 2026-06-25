@@ -13,6 +13,9 @@ categories = ["web-programming::http-server"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[workspace]
+members = ["crates/hubuum-outbound-http", "crates/hubuum-templates"]
+
 [dependencies]
 actix-rt = "2"
 actix-service = "2"
@@ -41,6 +44,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
 hmac = "0.13"
+hubuum-outbound-http = { path = "crates/hubuum-outbound-http" }
+hubuum-templates = { path = "crates/hubuum-templates" }
 minijinja = { version = "2", features = ["loader", "fuel"] }
 tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "net", "io-util"] }
 tracing = "0.1"
