@@ -163,6 +163,27 @@ mod tests {
         assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
     }
 
+    #[actix_web::test]
+    async fn test_probe_paths_bypass_client_allowlist() {
+        let app = test::init_service(
+            App::new()
+                .wrap(ClientAllowlistMiddleware::new_with_trust(
+                    ClientAllowlist::from_str("10.0.0.0/24").unwrap(),
+                    ProxyTrust::peer_only(),
+                ))
+                .route("/healthz", web::get().to(ok_handler)),
+        )
+        .await;
+
+        let req = test::TestRequest::get()
+            .uri("/healthz")
+            .peer_addr("192.168.1.100:9000".parse().unwrap())
+            .to_request();
+
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
     // Unit tests for ClientAllowlist logic (no actix-web involved)
     #[cfg(test)]
     mod allowlist_unit_tests {

@@ -108,6 +108,10 @@ where
     }
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
+        if is_probe_path(req.path()) {
+            return Box::pin(self.service.call(req));
+        }
+
         let client_ip = extract_client_ip(&req, &self.proxy_trust);
 
         match client_ip {
@@ -122,6 +126,10 @@ where
             }
         }
     }
+}
+
+fn is_probe_path(path: &str) -> bool {
+    matches!(path, "/healthz" | "/readyz")
 }
 
 /// Extract the client IP from the request

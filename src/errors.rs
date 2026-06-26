@@ -61,6 +61,7 @@ pub enum ApiError {
     DatabaseError(String),
     Conflict(String),
     TooManyRequests(String),
+    ServiceUnavailable(String),
     NotFound(String),
     Gone(String),
     DbConnectionError(String),
@@ -100,6 +101,7 @@ impl fmt::Display for ApiError {
             ApiError::Gone(message) => write!(f, "{message}"),
             ApiError::Conflict(message) => write!(f, "{message}"),
             ApiError::TooManyRequests(message) => write!(f, "{message}"),
+            ApiError::ServiceUnavailable(message) => write!(f, "{message}"),
             ApiError::Forbidden(message) => write!(f, "{message}"),
             ApiError::InternalServerError(message) => write!(f, "{message}"),
             ApiError::Unauthorized(message) => write!(f, "{message}"),
@@ -123,6 +125,8 @@ impl ResponseError for ApiError {
             }
             ApiError::TooManyRequests(message) => HttpResponse::TooManyRequests()
                 .json(json!({ "error": "Too Many Requests", "message": message })),
+            ApiError::ServiceUnavailable(message) => HttpResponse::ServiceUnavailable()
+                .json(json!({ "error": "Service Unavailable", "message": message })),
             ApiError::Forbidden(message) => {
                 HttpResponse::Forbidden().json(json!({ "error": "Forbidden", "message": message }))
             }
@@ -161,6 +165,7 @@ impl ResponseError for ApiError {
         match self {
             ApiError::Conflict(_) => StatusCode::CONFLICT,
             ApiError::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
+            ApiError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
             ApiError::NotAcceptable(_) => StatusCode::NOT_ACCEPTABLE,
             ApiError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
@@ -387,6 +392,11 @@ mod tests {
         assert_eq!(
             ApiError::TooManyRequests("test".to_string()).status_code(),
             StatusCode::TOO_MANY_REQUESTS
+        );
+
+        assert_eq!(
+            ApiError::ServiceUnavailable("test".to_string()).status_code(),
+            StatusCode::SERVICE_UNAVAILABLE
         );
     }
 }

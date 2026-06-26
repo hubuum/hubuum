@@ -1,4 +1,4 @@
-use crate::api::handlers::{auth, meta};
+use crate::api::handlers::{auth, meta, probes};
 use crate::api::v1::handlers::{
     classes, groups, imports, namespaces, relations, remote_targets, reports, search, tasks,
     templates, users,
@@ -44,6 +44,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
     ),
     servers((url = "/", description = "Current deployment base URL")),
     paths(
+        probes::healthz,
+        probes::readyz,
         meta::get_db_state,
         meta::get_object_and_class_count,
         meta::get_task_queue_state,
@@ -144,6 +146,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         schemas(
             ApiErrorResponse,
             MessageResponse,
+            probes::ProbeResponse,
             LoginResponse,
             CountsResponse,
             meta::DbStateResponse,
@@ -685,6 +688,8 @@ mod tests {
             .collect::<BTreeSet<_>>();
 
         let expected_paths = [
+            "/healthz",
+            "/readyz",
             "/api/v0/auth/login",
             "/api/v0/auth/logout",
             "/api/v0/auth/logout_all",
@@ -886,8 +891,10 @@ mod tests {
                     "description is empty for {method} {path}"
                 );
 
+                let is_public_probe =
+                    matches!(path.as_str(), "/healthz" | "/readyz") && method == "get";
                 let is_login = path == "/api/v0/auth/login" && method == "post";
-                if !is_login {
+                if !is_login && !is_public_probe {
                     let security = operation
                         .get("security")
                         .and_then(Value::as_array)
