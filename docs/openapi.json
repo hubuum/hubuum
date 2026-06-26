@@ -7302,6 +7302,60 @@
           }
         ]
       }
+    },
+    "/healthz": {
+      "get": {
+        "tags": [
+          "probes"
+        ],
+        "summary": "Get Healthz",
+        "description": "Auto-generated documentation for GET /healthz.",
+        "operationId": "getHealthz",
+        "responses": {
+          "200": {
+            "description": "Process is alive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "tags": [
+          "probes"
+        ],
+        "summary": "Get Readyz",
+        "description": "Auto-generated documentation for GET /readyz.",
+        "operationId": "getReadyz",
+        "responses": {
+          "200": {
+            "description": "Service is ready to receive traffic",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service is not ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -9141,6 +9195,17 @@
           "DeleteRemoteTarget",
           "ExecuteRemoteTarget"
         ]
+      },
+      "ProbeResponse": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        }
       },
       "RelatedClassGraph": {
         "type": "object",
