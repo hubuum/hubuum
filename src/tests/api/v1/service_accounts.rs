@@ -312,6 +312,34 @@ mod tests {
         assert!(matches!((first, second), (Some(a), Some(b)) if b >= a));
     }
 
+    /// #5 (regression): the `last_used_at` returned by validation must equal the
+    /// value persisted in Postgres (microsecond resolution). Before the fix the
+    /// returned value carried the raw nanosecond wall clock, so on platforms with
+    /// sub-microsecond clocks (Linux CI) it was microscopically ahead of the
+    /// stored value, breaking non-decreasing comparisons across uses.
+    #[actix_web::test]
+    async fn test_last_used_at_matches_persisted_value() {
+        use crate::schema::tokens::dsl::{last_used_at, token as token_col, tokens};
+
+        let context = TestContext::new().await;
+        let pool = &context.pool;
+        let user = create_test_user(pool).await;
+        let raw = user.create_token(pool).await.unwrap();
+
+        let returned = raw.is_valid(pool).await.unwrap().last_used_at;
+
+        let hash = raw.storage_hash();
+        let persisted: Option<chrono::NaiveDateTime> = with_connection(pool, |conn| {
+            tokens
+                .filter(token_col.eq(&hash))
+                .select(last_used_at)
+                .first::<Option<chrono::NaiveDateTime>>(conn)
+        })
+        .expect("token row should exist after validation");
+
+        assert_eq!(returned, persisted);
+    }
+
     /// #8: disabling a service account makes its existing tokens fail validation.
     #[actix_web::test]
     async fn test_disabled_sa_token_rejected_at_validation() {

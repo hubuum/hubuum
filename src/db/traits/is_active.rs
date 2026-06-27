@@ -1,3 +1,4 @@
+use chrono::SubsecRound;
 use diesel::prelude::*;
 use tracing::warn;
 
@@ -29,7 +30,13 @@ impl Status<PrincipalToken> for Token {
 
         let token_hash = self.storage_hash();
         let token_preview = self.obfuscate();
-        let now = chrono::Utc::now().naive_utc();
+        // Truncate to microseconds: Postgres `timestamp` columns store microsecond
+        // resolution, so the value we persist below and reflect back in-memory must
+        // be truncated to match what a subsequent read returns. Otherwise the
+        // returned `last_used_at` (nanosecond wall clock) would be microscopically
+        // ahead of the stored value, breaking non-decreasing comparisons on
+        // platforms whose clock has sub-microsecond resolution (e.g. Linux).
+        let now = chrono::Utc::now().naive_utc().trunc_subsecs(6);
         let cutoff = active_tokens_cutoff();
 
         let result = with_connection(pool, |conn| {
