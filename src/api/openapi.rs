@@ -1,7 +1,7 @@
 use crate::api::handlers::{auth, meta, probes};
 use crate::api::v1::handlers::{
-    classes, groups, imports, namespaces, relations, remote_targets, reports, search, tasks,
-    templates, users,
+    classes, groups, imports, namespaces, principals, relations, remote_targets, reports, search,
+    service_accounts, tasks, templates, users,
 };
 use crate::models::{
     ClassKey, Group, GroupKey, GroupPermission, HubuumClass, HubuumClassExpanded,
@@ -12,18 +12,19 @@ use crate::models::{
     ImportPermissionPolicy, ImportRequest, ImportTaskDetails, ImportTaskResultResponse, LoginUser,
     Namespace, NamespaceKey, NewGroup, NewHubuumClass, NewHubuumClassRelation,
     NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation,
-    NewNamespaceWithAssignee, NewRemoteTarget, NewReportTemplate, NewUser, ObjectKey,
-    ObjectsByClass, Permission, Permissions, RelatedClassGraph, RelatedObjectGraph,
-    RemoteAuthConfig, RemoteCallResult, RemoteHttpMethod, RemoteInvocationBodyOverride,
-    RemoteInvocationParameters, RemoteInvocationSubject, RemoteTarget, RemoteTargetID,
-    RemoteTargetInvokeRequest, RemoteTargetSubjectType, ReportContentType, ReportJsonResponse,
-    ReportLimits, ReportMeta, ReportMissingDataPolicy, ReportRequest, ReportScope, ReportScopeKind,
-    ReportTaskDetails, ReportTemplate, ReportTemplateID, ReportTemplateKind,
-    ReportTemplateRunRequest, ReportWarning, TaskDetails, TaskEventResponse, TaskKind, TaskLinks,
-    TaskProgress, TaskResponse, TaskStatus, UnifiedSearchBatchResponse, UnifiedSearchDoneEvent,
+    NewNamespaceWithAssignee, NewRemoteTarget, NewReportTemplate, NewServiceAccount, NewUser,
+    ObjectKey, ObjectsByClass, Permission, Permissions, PrincipalMemberResponse, PrincipalToken,
+    PrincipalTokenMetadata, RelatedClassGraph, RelatedObjectGraph, RemoteAuthConfig,
+    RemoteCallResult, RemoteHttpMethod, RemoteInvocationBodyOverride, RemoteInvocationParameters,
+    RemoteInvocationSubject, RemoteTarget, RemoteTargetID, RemoteTargetInvokeRequest,
+    RemoteTargetSubjectType, ReportContentType, ReportJsonResponse, ReportLimits, ReportMeta,
+    ReportMissingDataPolicy, ReportRequest, ReportScope, ReportScopeKind, ReportTaskDetails,
+    ReportTemplate, ReportTemplateID, ReportTemplateKind, ReportTemplateRunRequest, ReportWarning,
+    ServiceAccountResponse, TaskDetails, TaskEventResponse, TaskKind, TaskLinks, TaskProgress,
+    TaskResponse, TaskStatus, UnifiedSearchBatchResponse, UnifiedSearchDoneEvent,
     UnifiedSearchErrorEvent, UnifiedSearchKind, UnifiedSearchResponse, UnifiedSearchStartedEvent,
     UpdateGroup, UpdateHubuumClass, UpdateHubuumObject, UpdateNamespace, UpdateRemoteTarget,
-    UpdateReportTemplate, UpdateUser, UserResponse, UserToken, UserTokenMetadata,
+    UpdateReportTemplate, UpdateServiceAccount, UpdateUser, UserResponse,
 };
 use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER, page_limits_or_defaults};
 use actix_web::{HttpResponse, Responder};
@@ -61,8 +62,6 @@ use utoipa::{Modify, OpenApi, ToSchema};
         users::get_users,
         users::create_user,
         users::get_user,
-        users::get_user_tokens,
-        users::get_user_groups,
         users::update_user,
         users::delete_user,
         groups::get_groups,
@@ -73,6 +72,17 @@ use utoipa::{Modify, OpenApi, ToSchema};
         groups::get_group_members,
         groups::add_group_member,
         groups::delete_group_member,
+        service_accounts::create_service_account,
+        service_accounts::list_service_accounts,
+        service_accounts::get_service_account,
+        service_accounts::update_service_account,
+        service_accounts::disable_service_account,
+        service_accounts::delete_service_account,
+        principals::create_token,
+        principals::list_tokens,
+        principals::revoke_token,
+        principals::list_principal_groups,
+        principals::list_principal_permissions,
         namespaces::get_namespaces,
         namespaces::create_namespace,
         namespaces::get_namespace,
@@ -86,7 +96,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         namespaces::get_namespace_group_permission,
         namespaces::grant_namespace_group_permission,
         namespaces::revoke_namespace_group_permission,
-        namespaces::get_namespace_user_permissions,
+        namespaces::get_namespace_principal_permissions,
         namespaces::get_namespace_groups_with_permission,
         relations::get_class_relations,
         relations::get_class_relation,
@@ -162,8 +172,15 @@ use utoipa::{Modify, OpenApi, ToSchema};
             UpdateUser,
             LoginUser,
             auth::LogoutTokenRequest,
-            UserToken,
-            UserTokenMetadata,
+            PrincipalToken,
+            PrincipalTokenMetadata,
+            PrincipalMemberResponse,
+            NewServiceAccount,
+            ServiceAccountResponse,
+            UpdateServiceAccount,
+            principals::NewTokenRequest,
+            principals::GroupGrant,
+            principals::PrincipalNamespacePermissions,
             Group,
             NewGroup,
             UpdateGroup,
@@ -255,6 +272,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
         (name = "meta", description = "Meta and database state endpoints"),
         (name = "auth", description = "Authentication and token lifecycle"),
         (name = "users", description = "User management endpoints"),
+        (name = "service-accounts", description = "Service-account (non-human principal) management endpoints"),
+        (name = "principals", description = "Principal-scoped token, group, and permission endpoints (human users and service accounts)"),
         (name = "groups", description = "Group management endpoints"),
         (name = "namespaces", description = "Namespace and permission endpoints"),
         (name = "relations", description = "Class and object relation endpoints"),
@@ -392,13 +411,14 @@ fn is_cursor_paginated_get(path: &str, method: &str) -> bool {
         && matches!(
             path,
             "/api/v1/iam/users"
-                | "/api/v1/iam/users/{user_id}/tokens"
-                | "/api/v1/iam/users/{user_id}/groups"
+                | "/api/v1/iam/service-accounts"
+                | "/api/v1/iam/principals/{principal_id}/tokens"
+                | "/api/v1/iam/principals/{principal_id}/groups"
                 | "/api/v1/iam/groups"
                 | "/api/v1/iam/groups/{group_id}/members"
                 | "/api/v1/namespaces"
                 | "/api/v1/namespaces/{namespace_id}/permissions"
-                | "/api/v1/namespaces/{namespace_id}/permissions/user/{user_id}"
+                | "/api/v1/namespaces/{namespace_id}/permissions/principal/{principal_id}"
                 | "/api/v1/namespaces/{namespace_id}/has_permissions/{permission}"
                 | "/api/v1/tasks"
                 | "/api/v1/templates"
@@ -703,18 +723,23 @@ mod tests {
             "/api/v0/meta/login-rate-limit/{id}",
             "/api/v1/iam/users",
             "/api/v1/iam/users/{user_id}",
-            "/api/v1/iam/users/{user_id}/tokens",
-            "/api/v1/iam/users/{user_id}/groups",
             "/api/v1/iam/groups",
             "/api/v1/iam/groups/{group_id}",
             "/api/v1/iam/groups/{group_id}/members",
-            "/api/v1/iam/groups/{group_id}/members/{user_id}",
+            "/api/v1/iam/groups/{group_id}/members/{principal_id}",
+            "/api/v1/iam/service-accounts",
+            "/api/v1/iam/service-accounts/{service_account_id}",
+            "/api/v1/iam/service-accounts/{service_account_id}/disable",
+            "/api/v1/iam/principals/{principal_id}/tokens",
+            "/api/v1/iam/principals/{principal_id}/tokens/{token_id}/revoke",
+            "/api/v1/iam/principals/{principal_id}/groups",
+            "/api/v1/iam/principals/{principal_id}/permissions",
             "/api/v1/namespaces",
             "/api/v1/namespaces/{namespace_id}",
             "/api/v1/namespaces/{namespace_id}/permissions",
             "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}",
             "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}/{permission}",
-            "/api/v1/namespaces/{namespace_id}/permissions/user/{user_id}",
+            "/api/v1/namespaces/{namespace_id}/permissions/principal/{principal_id}",
             "/api/v1/namespaces/{namespace_id}/has_permissions/{permission}",
             "/api/v1/imports",
             "/api/v1/imports/{task_id}",

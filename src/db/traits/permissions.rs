@@ -5,30 +5,34 @@ use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::models::{
     NewPermission, Permission, PermissionFilter, Permissions, PermissionsList, UpdatePermission,
-    User,
 };
-use crate::traits::{GroupAccessors, GroupMemberships, NamespaceAccessors, SelfAccessors};
+use crate::traits::NamespaceAccessors;
 
-use super::user::GroupIdsSubqueryBackend;
+use super::authz::{AuthzSubject, scope_allows};
 
 pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
-    async fn user_can_all_from_backend<
-        U: SelfAccessors<User> + GroupAccessors + GroupMemberships,
-    >(
+    async fn user_can_all_from_backend<S: AuthzSubject>(
         &self,
         pool: &DbPool,
-        user: U,
+        subject: S,
         permissions_requested: Vec<Permissions>,
+        scopes: Option<&[Permissions]>,
     ) -> Result<bool, ApiError> {
         let lookup_table = crate::schema::permissions::dsl::permissions;
         let group_id_field = crate::schema::permissions::dsl::group_id;
         let namespace_id_field = crate::schema::permissions::dsl::namespace_id;
 
-        if user.is_admin(pool).await? {
+        // Fail-closed token-scope pre-filter, applied BEFORE the admin bypass so
+        // a scoped admin token can never exceed its scopes.
+        if !scope_allows(scopes, &permissions_requested) {
+            return Ok(false);
+        }
+
+        if subject.is_admin(pool).await? {
             return Ok(true);
         }
 
-        let group_id_subquery = user.group_ids_subquery_from_backend();
+        let group_id_subquery = subject.group_ids_subquery();
         let mut base_query = lookup_table
             .into_boxed()
             .filter(namespace_id_field.eq(self.namespace_id(pool).await?.id()))

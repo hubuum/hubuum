@@ -2,7 +2,6 @@ pub mod aliases;
 pub mod auth;
 pub mod db;
 pub mod extensions;
-pub mod iam;
 pub mod init;
 pub mod reporting;
 pub mod response;

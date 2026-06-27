@@ -1,6 +1,15 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    group_memberships (principal_id, group_id) {
+        principal_id -> Int4,
+        group_id -> Int4,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     groups (id) {
         id -> Int4,
         groupname -> Varchar,
@@ -123,13 +132,23 @@ diesel::table! {
         has_create_template -> Bool,
         has_update_template -> Bool,
         has_delete_template -> Bool,
-        created_at -> Timestamp,
-        updated_at -> Timestamp,
         has_read_remote_target -> Bool,
         has_create_remote_target -> Bool,
         has_update_remote_target -> Bool,
         has_delete_remote_target -> Bool,
         has_execute_remote_target -> Bool,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    principals (id) {
+        id -> Int4,
+        kind -> Varchar,
+        name -> Varchar,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
     }
 }
 
@@ -215,6 +234,19 @@ diesel::table! {
 }
 
 diesel::table! {
+    service_accounts (id) {
+        id -> Int4,
+        kind -> Varchar,
+        description -> Varchar,
+        owner_group_id -> Int4,
+        created_by -> Nullable<Int4>,
+        disabled_at -> Nullable<Timestamp>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     task_events (id) {
         id -> Int4,
         task_id -> Int4,
@@ -239,6 +271,9 @@ diesel::table! {
         processed_items -> Int4,
         success_items -> Int4,
         failed_items -> Int4,
+        submitted_token_id -> Nullable<Int4>,
+        submitted_token_scoped -> Bool,
+        submitted_token_scopes -> Jsonb,
         request_redacted_at -> Nullable<Timestamp>,
         started_at -> Nullable<Timestamp>,
         finished_at -> Nullable<Timestamp>,
@@ -250,26 +285,31 @@ diesel::table! {
 }
 
 diesel::table! {
-    tokens (token) {
-        token -> Varchar,
-        user_id -> Int4,
-        issued -> Timestamp,
+    token_scopes (token_id, permission) {
+        token_id -> Int4,
+        permission -> Varchar,
     }
 }
 
 diesel::table! {
-    user_groups (user_id, group_id) {
-        user_id -> Int4,
-        group_id -> Int4,
-        created_at -> Timestamp,
-        updated_at -> Timestamp,
+    tokens (id) {
+        id -> Int4,
+        token -> Varchar,
+        principal_id -> Int4,
+        name -> Nullable<Varchar>,
+        description -> Nullable<Varchar>,
+        issued -> Timestamp,
+        expires_at -> Nullable<Timestamp>,
+        last_used_at -> Nullable<Timestamp>,
+        revoked_at -> Nullable<Timestamp>,
+        scoped -> Bool,
     }
 }
 
 diesel::table! {
     users (id) {
         id -> Int4,
-        username -> Varchar,
+        kind -> Varchar,
         password -> Varchar,
         email -> Nullable<Varchar>,
         created_at -> Timestamp,
@@ -277,6 +317,8 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(group_memberships -> groups (group_id));
+diesel::joinable!(group_memberships -> principals (principal_id));
 diesel::joinable!(hubuumclass -> namespaces (namespace_id));
 diesel::joinable!(hubuumobject -> hubuumclass (hubuum_class_id));
 diesel::joinable!(hubuumobject -> namespaces (namespace_id));
@@ -291,12 +333,14 @@ diesel::joinable!(remote_targets -> namespaces (namespace_id));
 diesel::joinable!(report_task_outputs -> tasks (task_id));
 diesel::joinable!(report_templates -> hubuumclass (class_id));
 diesel::joinable!(report_templates -> namespaces (namespace_id));
+diesel::joinable!(service_accounts -> groups (owner_group_id));
 diesel::joinable!(task_events -> tasks (task_id));
-diesel::joinable!(tokens -> users (user_id));
-diesel::joinable!(user_groups -> groups (group_id));
-diesel::joinable!(user_groups -> users (user_id));
+diesel::joinable!(tasks -> tokens (submitted_token_id));
+diesel::joinable!(token_scopes -> tokens (token_id));
+diesel::joinable!(tokens -> principals (principal_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    group_memberships,
     groups,
     hubuumclass,
     hubuumclass_reachability,
@@ -306,13 +350,15 @@ diesel::allow_tables_to_appear_in_same_query!(
     import_task_results,
     namespaces,
     permissions,
+    principals,
     remote_call_results,
     remote_targets,
     report_task_outputs,
     report_templates,
+    service_accounts,
     task_events,
     tasks,
+    token_scopes,
     tokens,
-    user_groups,
     users,
 );

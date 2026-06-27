@@ -15,9 +15,9 @@ Notes:
 |-----------|---------------|-------------|--------------|-------|
 | `/api/v1/iam/users` | `id`, `name`, `username`, `email`, `created_at`, `updated_at` | `id`, `name`, `username`, `email`, `created_at`, `updated_at` | `id.asc` | `name` and `username` sort/filter the same underlying field |
 | `/api/v1/iam/groups` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id.asc` | `name` and `groupname` sort/filter the same underlying field |
-| `/api/v1/iam/users/{user_id}/groups` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id.asc` | path constrains the result to one user's memberships |
-| `/api/v1/iam/groups/{group_id}/members` | `id`, `name`, `username`, `email`, `created_at`, `updated_at` | `id`, `name`, `username`, `email`, `created_at`, `updated_at` | `id.asc` | path constrains the result to one group's members |
-| `/api/v1/iam/users/{user_id}/tokens` | `issued_at`, `name` | `issued_at`, `name` | `issued_at.desc`, `name.asc` | `name` refers to the token string |
+| `/api/v1/iam/principals/{principal_id}/groups` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id.asc` | path constrains the result to one principal's memberships (human or service account) |
+| `/api/v1/iam/groups/{group_id}/members` | `id`, `name`, `created_at`, `updated_at` | `id`, `name`, `created_at`, `updated_at` | `id.asc` | members are principals; each row carries `principal_id`, `kind` (human/service_account), and `name` (`username` is accepted as an alias for `name`) |
+| `/api/v1/iam/principals/{principal_id}/tokens` | `id`, `name`, `issued_at`, `expires_at`, `last_used_at` | `id`, `name`, `issued_at`, `expires_at`, `last_used_at` | `issued_at.desc`, `id.asc` | `name` is the token's label, never the secret; `id` is the stable tie-breaker |
 
 ## Namespaces and permissions
 
@@ -25,7 +25,7 @@ Notes:
 |-----------|---------------|-------------|--------------|-------|
 | `/api/v1/namespaces` | `id`, `name`, `description`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `description`, `created_at`, `updated_at` | `id.asc` | `permissions` narrows the namespaces to those where the caller has the named permission |
 | `/api/v1/namespaces/{namespace_id}/permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at` | `id.asc` | returns `GroupPermission` rows |
-| `/api/v1/namespaces/{namespace_id}/permissions/user/{user_id}` | `id`, `name`, `groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at` | `id.asc` | constrained to one namespace and one user's memberships |
+| `/api/v1/namespaces/{namespace_id}/permissions/principal/{principal_id}` | `id`, `name`, `groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at` | `id.asc` | constrained to one namespace and one principal's memberships (human or service account) |
 | `/api/v1/namespaces/{namespace_id}/has_permissions/{permission}` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id.asc` | path permission already narrows the result set |
 | `/api/v1/remote-targets` | `id`, `name`, `description`, `namespace_id`, `namespaces`, `kind`, `created_at`, `updated_at` | `id`, `name`, `description`, `namespace_id`, `created_at`, `updated_at` | `id.asc` | `kind` filters the target HTTP method; results are scoped to namespaces where the caller has `ReadRemoteTarget` |
 

@@ -1,4 +1,4 @@
-pub use crate::db::traits::user::GroupMemberships;
+pub use crate::db::traits::authz::{AuthzSubject, PrincipalIdAccessor};
 pub use crate::models::traits::{GroupAccessors, Search};
 pub mod accessors;
 pub mod context;

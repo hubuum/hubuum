@@ -1,7 +1,7 @@
 use diesel::{ExpressionMethods, JoinOnDsl, QueryDsl, RunQueryDsl, Table};
 use std::iter::IntoIterator;
 
-use tracing::{debug, trace};
+use tracing::debug;
 
 use crate::models::search::{
     FilterField, ParsedQueryParam, QueryOptions, QueryParamsExt, SearchOperator,
@@ -10,14 +10,14 @@ use crate::models::traits::ExpandNamespaceFromMap;
 use crate::models::traits::user::UserNamespaceAccessors;
 use crate::models::{
     ClassGraphRow, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
-    HubuumObjectRelation, Namespace, NewUser, Permissions, PermissionsList, RelatedObjectGraphRow,
-    RelatedObjectIncludeRow, ReportIncludeRelatedDirection, ReportIncludeRelatedQuery,
-    ReportIncludeRelatedSort, Token, UpdateUser, User, UserID, UserToken,
+    HubuumObjectRelation, Namespace, NewUser, Permissions, PermissionsList, PrincipalToken,
+    RelatedObjectGraphRow, RelatedObjectIncludeRow, ReportIncludeRelatedDirection,
+    ReportIncludeRelatedQuery, ReportIncludeRelatedSort, Token, UpdateUser, User, UserID,
 };
 use crate::traits::{ClassAccessors, GroupAccessors, NamespaceAccessors, SelfAccessors};
 use crate::utilities::auth::hash_password;
 
-use crate::db::{DbPool, with_connection};
+use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 
 use crate::{date_search, numeric_search, string_search, trace_query};
@@ -41,6 +41,7 @@ mod tests {
 
     use crate::models::{Permissions as P, PermissionsList as PL};
     use crate::tests::{TestScope, create_test_group, create_user_with_params};
+    use crate::traits::AuthzSubject;
     use crate::traits::PermissionController;
 
     // user_idx, namespaces_idx, permissions, expected
@@ -156,7 +157,7 @@ mod tests {
             .map(|i| &namespaces[*i].namespace)
             .collect::<Vec<_>>();
 
-        let result = user.can(&pool, permissions, namespaces).await;
+        let result = user.can(&pool, permissions, namespaces, None).await;
 
         match (result, expected) {
             (Ok(()), true) => {

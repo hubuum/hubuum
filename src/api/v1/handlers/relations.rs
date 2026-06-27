@@ -1,7 +1,7 @@
 use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::extractors::UserAccess;
+use crate::extractors::Authenticated;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
     HubuumClassRelation, HubuumClassRelationID, HubuumObjectRelation, HubuumObjectRelationID,
@@ -37,10 +37,10 @@ use actix_web::{HttpRequest, Responder, get, http::StatusCode, routes, web};
 #[get("classes/")]
 async fn get_class_relations(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let query_string = req.query_string();
 
     let params = match parse_query_parameter(query_string) {
@@ -51,7 +51,9 @@ async fn get_class_relations(
     debug!(message = "Listing class relations", user_id = user.id());
 
     let search_params = prepare_db_pagination::<HubuumClassRelation>(&params)?;
-    let (classes, total_count) = user.class_relations_page(&pool, search_params).await?;
+    let (classes, total_count) = user
+        .class_relations_page(&pool, search_params, requestor.scopes())
+        .await?;
 
     paginated_json_response(classes, total_count, StatusCode::OK, &params)
 }
@@ -73,10 +75,10 @@ async fn get_class_relations(
 #[get("classes/{relation_id}")]
 async fn get_class_relation(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     relation_id: web::Path<HubuumClassRelationID>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let relation_id = relation_id.into_inner();
 
     debug!(
@@ -89,6 +91,7 @@ async fn get_class_relation(
     can!(
         &pool,
         user,
+        requestor.scopes(),
         [Permissions::ReadClassRelation],
         namespaces.0,
         namespaces.1
@@ -117,11 +120,11 @@ async fn get_class_relation(
 #[post("classes/")]
 async fn create_class_relation(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     relation: web::Json<NewHubuumClassRelation>,
 ) -> Result<impl Responder, ApiError> {
     let relation = relation.into_inner();
-    let user = requestor.user;
+    let user = &requestor.principal;
 
     debug!(
         message = "Creating class relation",
@@ -134,6 +137,7 @@ async fn create_class_relation(
     can!(
         &pool,
         user,
+        requestor.scopes(),
         [Permissions::CreateClassRelation],
         namespaces.0,
         namespaces.1
@@ -161,10 +165,10 @@ async fn create_class_relation(
 #[delete("classes/{relation_id}")]
 async fn delete_class_relation(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     relation_id: web::Path<HubuumClassRelationID>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let relation_id = relation_id.into_inner();
 
     debug!(
@@ -177,6 +181,7 @@ async fn delete_class_relation(
     can!(
         &pool,
         user,
+        requestor.scopes(),
         [Permissions::DeleteClassRelation],
         namespaces.0,
         namespaces.1
@@ -203,10 +208,10 @@ async fn delete_class_relation(
 #[get("objects/")]
 async fn get_object_relations(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let query_string = req.query_string();
 
     let params = match parse_query_parameter(query_string) {
@@ -217,7 +222,9 @@ async fn get_object_relations(
     debug!(message = "Listing object relations", user_id = user.id());
 
     let search_params = prepare_db_pagination::<HubuumObjectRelation>(&params)?;
-    let (object_relations, total_count) = user.object_relations_page(&pool, search_params).await?;
+    let (object_relations, total_count) = user
+        .object_relations_page(&pool, search_params, requestor.scopes())
+        .await?;
 
     paginated_json_response(object_relations, total_count, StatusCode::OK, &params)
 }
@@ -239,10 +246,10 @@ async fn get_object_relations(
 #[get("objects/{relation_id}")]
 async fn get_object_relation(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     relation_id: web::Path<HubuumObjectRelationID>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let relation_id = relation_id.into_inner();
 
     debug!(
@@ -255,6 +262,7 @@ async fn get_object_relation(
     can!(
         &pool,
         user,
+        requestor.scopes(),
         [Permissions::ReadObjectRelation],
         namespaces.0,
         namespaces.1
@@ -283,11 +291,11 @@ async fn get_object_relation(
 #[post("objects/")]
 async fn create_object_relation(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     relation: web::Json<NewHubuumObjectRelation>,
 ) -> Result<impl Responder, ApiError> {
     let relation = relation.into_inner();
-    let user = requestor.user;
+    let user = &requestor.principal;
 
     debug!(
         message = "Creating object relation",
@@ -300,6 +308,7 @@ async fn create_object_relation(
     can!(
         &pool,
         user,
+        requestor.scopes(),
         [Permissions::CreateObjectRelation],
         namespaces.0,
         namespaces.1
@@ -327,10 +336,10 @@ async fn create_object_relation(
 #[delete("objects/{relation_id}")]
 async fn delete_object_relation(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     relation_id: web::Path<HubuumObjectRelationID>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let relation_id = relation_id.into_inner();
 
     debug!(
@@ -343,6 +352,7 @@ async fn delete_object_relation(
     can!(
         &pool,
         user,
+        requestor.scopes(),
         [Permissions::DeleteObjectRelation],
         namespaces.0,
         namespaces.1

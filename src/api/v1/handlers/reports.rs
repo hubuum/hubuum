@@ -13,10 +13,10 @@ use crate::config::{
     DEFAULT_REPORT_STAGE_TIMEOUT_MS, DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS, get_config,
 };
 use crate::db::traits::UserPermissions;
-use crate::db::traits::task::{TaskBackend, TaskCreateRequest, TaskStateUpdate};
+use crate::db::traits::task::{TaskBackend, TaskCreateRequest, TaskScopeSnapshot, TaskStateUpdate};
 use crate::db::{DbPool, with_statement_timeout_scope};
 use crate::errors::ApiError;
-use crate::extractors::UserAccess;
+use crate::extractors::Authenticated;
 use crate::models::search::{
     FilterField, ParsedQueryParam, QueryOptions, SearchOperator, StatementTimeoutMs,
     parse_query_parameter,
@@ -29,13 +29,13 @@ use crate::models::{
     ReportIncludeRelatedQuery, ReportIncludeRelatedSort, ReportJsonResponse, ReportMeta,
     ReportMissingDataPolicy, ReportOutputLookup, ReportRequest, ReportScope, ReportScopeKind,
     ReportTaskOutputRecord, ReportTemplate, ReportTemplateID, ReportWarning, TaskID, TaskKind,
-    TaskRecord, TaskResponse, User,
+    TaskRecord, TaskResponse,
 };
 use crate::pagination::page_limits_or_defaults;
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
-use crate::traits::{NamespaceAccessors, Search, SelfAccessors};
+use crate::traits::{AuthzSubject, NamespaceAccessors, SelfAccessors};
 use crate::utilities::reporting::{SizeLimitedWriter, render_template};
 use crate::utilities::response::{json_response, json_response_with_header};
 
@@ -206,12 +206,21 @@ struct ReachableTemplateTarget {
 #[post("")]
 pub async fn run_report(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     req: HttpRequest,
     report: web::Json<ReportRequest>,
 ) -> Result<impl Responder, ApiError> {
     let report = report.into_inner();
-    let task = submit_report_task(&pool, &requestor.user, req, report, None).await?;
+    let task = submit_report_task(
+        &pool,
+        &requestor.principal,
+        requestor.scopes(),
+        Some(requestor.token_meta.id),
+        req,
+        report,
+        None,
+    )
+    .await?;
 
     let response = task.to_response()?;
     let mut headers = HashMap::new();
@@ -225,9 +234,13 @@ pub async fn run_report(
     ))
 }
 
-pub(crate) async fn submit_report_task(
+pub(crate) async fn submit_report_task<S: AuthzSubject>(
     pool: &DbPool,
-    user: &User,
+    subject: &S,
+    // Scope boundary of the submitting token, persisted as the task scope
+    // snapshot so async execution cannot exceed it.
+    scopes: Option<&[Permissions]>,
+    submitted_token_id: Option<i32>,
     req: HttpRequest,
     report: ReportRequest,
     template: Option<ReportTemplate>,
@@ -246,9 +259,13 @@ pub(crate) async fn submit_report_task(
     validate_report_submission(&runtime)?;
     let task_payload = runtime_to_task_payload(&runtime)?;
 
+    let snapshot =
+        TaskScopeSnapshot::from_request(submitted_token_id, scopes);
+
     find_or_create_report_task(
         pool,
-        user.id,
+        subject.principal_id(),
+        snapshot,
         idempotency_key,
         serde_json::to_value(task_payload)?,
         hash,
@@ -273,13 +290,13 @@ pub(crate) async fn submit_report_task(
 #[get("/{task_id}")]
 pub async fn get_report(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
     let task = task_id
         .into_inner()
-        .load_authorized_report(&pool, &requestor.user)
+        .load_authorized_report(&pool, &requestor.principal)
         .await?;
     let output = task.find_report_output_summary(&pool).await?;
     Ok(json_response(
@@ -315,13 +332,13 @@ pub async fn get_report(
 #[get("/{task_id}/output")]
 pub async fn get_report_output(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
     let task_id = task_id.into_inner();
     task_id
-        .load_authorized_report(&pool, &requestor.user)
+        .load_authorized_report(&pool, &requestor.principal)
         .await?;
     match task_id.find_report_output(&pool).await? {
         ReportOutputLookup::Available(output) => render_report_task_output(output),
@@ -368,7 +385,8 @@ async fn prepare_report_runtime(
 
 async fn resolve_template(
     pool: &DbPool,
-    user: &crate::models::User,
+    subject: &impl crate::traits::Search,
+    scopes: Option<&[Permissions]>,
     template_id: Option<i32>,
 ) -> Result<Option<ReportTemplate>, ApiError> {
     let Some(template_id) = template_id else {
@@ -378,7 +396,8 @@ async fn resolve_template(
     let template = ReportTemplateID::new(template_id)?.instance(pool).await?;
     can!(
         pool,
-        user.clone(),
+        subject,
+        scopes,
         [Permissions::ReadTemplate],
         NamespaceID::new(template.namespace_id)?
     );
@@ -416,6 +435,7 @@ fn runtime_to_task_payload(runtime: &ReportRuntime) -> Result<StoredReportTaskPa
 async fn find_or_create_report_task(
     pool: &DbPool,
     submitted_by: i32,
+    snapshot: TaskScopeSnapshot,
     idempotency_key: Option<String>,
     payload: serde_json::Value,
     request_hash_value: String,
@@ -445,6 +465,9 @@ async fn find_or_create_report_task(
         request_hash: Some(request_hash_value),
         request_payload: payload,
         total_items: 1,
+        submitted_token_id: snapshot.token_id,
+        submitted_token_scoped: snapshot.scoped,
+        submitted_token_scopes: snapshot.scopes,
     })
     .create_with_active_report_limit(pool, max_active_report_tasks_per_user())
     .await
@@ -470,14 +493,15 @@ async fn find_or_create_report_task(
 pub(crate) async fn execute_report_task(
     pool: &DbPool,
     task: &TaskRecord,
-    user: &User,
+    subject: &impl crate::traits::Search,
+    scopes: Option<&[Permissions]>,
 ) -> Result<(), ApiError> {
     let payload = task
         .request_payload
         .clone()
         .ok_or_else(|| ApiError::BadRequest("Report task payload is missing".to_string()))?;
     let payload: StoredReportTaskPayload = serde_json::from_value(payload)?;
-    let template = resolve_template(pool, user, payload.template_id).await?;
+    let template = resolve_template(pool, subject, scopes, payload.template_id).await?;
     let runtime = prepare_report_runtime(pool, payload.report, template).await?;
     validate_report_submission(&runtime)?;
     let total_start = Instant::now();
@@ -527,13 +551,13 @@ pub(crate) async fn execute_report_task(
     let query_start = Instant::now();
     let (items, mut warnings, truncated) = with_statement_timeout_scope(
         statement_timeout,
-        execute_scope(pool, user, &runtime.report.scope, query_options),
+        execute_scope(pool, subject, scopes, &runtime.report.scope, query_options),
     )
     .await?;
     let mut items = items;
     with_statement_timeout_scope(
         statement_timeout,
-        apply_report_includes(pool, user, &runtime.report, &mut items),
+        apply_report_includes(pool, subject, scopes, &runtime.report, &mut items),
     )
     .await?;
     timings.query_duration_ms = duration_to_millis_i32(query_start.elapsed());
@@ -561,7 +585,7 @@ pub(crate) async fn execute_report_task(
     let hydration_start = Instant::now();
     let (template_items, source) = with_statement_timeout_scope(
         statement_timeout,
-        build_template_items(pool, user, &runtime, &items, relation_hydration),
+        build_template_items(pool, subject, scopes, &runtime, &items, relation_hydration),
     )
     .await?;
     timings.hydration_duration_ms = duration_to_millis_i32(hydration_start.elapsed());
@@ -1032,7 +1056,8 @@ fn validate_relation_depth(depth: i32) -> Result<i32, ApiError> {
 
 async fn build_template_items(
     pool: &DbPool,
-    user: &crate::models::User,
+    user: &impl crate::traits::Search,
+    scopes: Option<&[Permissions]>,
     runtime: &ReportRuntime,
     items: &[serde_json::Value],
     relation_hydration: Option<RelationHydrationPlan>,
@@ -1070,6 +1095,7 @@ async fn build_template_items(
                     &root_ids,
                     relation_hydration.depth_limit,
                     per_root_cap,
+                    scopes,
                 )
                 .await?;
 
@@ -1090,7 +1116,7 @@ async fn build_template_items(
             all_object_ids.sort_unstable();
             all_object_ids.dedup();
             let all_relations = user
-                .search_object_relations_between_ids(pool, &all_object_ids)
+                .search_object_relations_between_ids(pool, &all_object_ids, scopes)
                 .await?;
 
             // One class-metadata fetch over every object in the report.
@@ -1156,6 +1182,7 @@ async fn build_template_items(
             let hydrated = hydrate_related_root(
                 pool,
                 user,
+                scopes,
                 source,
                 related_objects,
                 relation_hydration.depth_limit,
@@ -1171,7 +1198,8 @@ async fn build_template_items(
 
 async fn hydrate_related_root(
     pool: &DbPool,
-    user: &crate::models::User,
+    user: &impl crate::traits::Search,
+    scopes: Option<&[Permissions]>,
     source: HubuumObjectWithPath,
     related_objects: Vec<HubuumObjectWithPath>,
     depth_limit: i32,
@@ -1190,7 +1218,7 @@ async fn hydrate_related_root(
         .chain(related_objects.iter().map(|object| object.id))
         .collect::<Vec<_>>();
     let relations = user
-        .search_object_relations_between_ids(pool, &object_ids)
+        .search_object_relations_between_ids(pool, &object_ids, scopes)
         .await?;
 
     let mut all_objects = BTreeMap::<i32, HubuumObjectWithPath>::new();
@@ -1960,39 +1988,54 @@ fn object_with_root_path(object: &HubuumObject) -> HubuumObjectWithPath {
 
 async fn execute_scope(
     pool: &DbPool,
-    user: &crate::models::User,
+    subject: &impl crate::traits::Search,
+    scopes: Option<&[Permissions]>,
     scope: &ReportScope,
     mut query_options: QueryOptions,
 ) -> Result<(Vec<serde_json::Value>, Vec<ReportWarning>, bool), ApiError> {
     let item_limit = query_options.limit.unwrap_or(1).saturating_sub(1).max(1);
 
     let data = match scope.kind {
-        ReportScopeKind::Namespaces => {
-            to_json_items(user.search_namespaces(pool, query_options).await?)?
+        ReportScopeKind::Namespaces => to_json_items(
+            subject
+                .search_namespaces(pool, query_options, scopes)
+                .await?,
+        )?,
+        ReportScopeKind::Classes => {
+            to_json_items(subject.search_classes(pool, query_options, scopes).await?)?
         }
-        ReportScopeKind::Classes => to_json_items(user.search_classes(pool, query_options).await?)?,
         ReportScopeKind::ObjectsInClass => {
             push_exact_filter(
                 &mut query_options,
                 FilterField::ClassId,
                 scope.class_id_required()?,
             )?;
-            to_json_items(user.search_objects(pool, query_options).await?)?
+            to_json_items(subject.search_objects(pool, query_options, scopes).await?)?
         }
-        ReportScopeKind::ClassRelations => {
-            to_json_items(user.search_class_relations(pool, query_options).await?)?
-        }
-        ReportScopeKind::ObjectRelations => {
-            to_json_items(user.search_object_relations(pool, query_options).await?)?
-        }
+        ReportScopeKind::ClassRelations => to_json_items(
+            subject
+                .search_class_relations(pool, query_options, scopes)
+                .await?,
+        )?,
+        ReportScopeKind::ObjectRelations => to_json_items(
+            subject
+                .search_object_relations(pool, query_options, scopes)
+                .await?,
+        )?,
         ReportScopeKind::RelatedObjects => {
             let class_id = HubuumClassID::new(scope.class_id_required()?)?;
             let object_id = HubuumObjectID::new(scope.object_id_required()?)?;
             check_if_object_in_class(pool, &class_id, &object_id).await?;
             let source_object = object_id.instance(pool).await?;
-            can!(pool, user.clone(), [Permissions::ReadObject], source_object);
-            let related = user
-                .search_objects_related_to(pool, object_id, query_options)
+            can!(
+                pool,
+                subject,
+                scopes,
+                [Permissions::ReadObject],
+                source_object
+            );
+            let related = subject
+                .search_objects_related_to(pool, object_id, query_options, scopes)
                 .await?;
             to_json_items(
                 related
@@ -2009,7 +2052,8 @@ async fn execute_scope(
 
 async fn apply_report_includes(
     pool: &DbPool,
-    user: &crate::models::User,
+    user: &impl crate::traits::Search,
+    scopes: Option<&[Permissions]>,
     report: &ReportRequest,
     items: &mut [serde_json::Value],
 ) -> Result<(), ApiError> {
@@ -2054,7 +2098,7 @@ async fn apply_report_includes(
             limit,
         };
         let related = user
-            .related_objects_for_roots(pool, &root_object_ids, include_query)
+            .related_objects_for_roots(pool, &root_object_ids, include_query, scopes)
             .await?;
 
         for row in related {

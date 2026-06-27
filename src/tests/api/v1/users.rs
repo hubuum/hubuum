@@ -3,7 +3,7 @@ mod tests {
     use crate::db::traits::ActiveTokens;
     use crate::models::group::NewGroup;
     use crate::models::user::{LoginUser, NewUser, UpdateUser, User, UserID, UserResponse};
-    use crate::models::{Group, Token, UserTokenMetadata};
+    use crate::models::{Group, PrincipalTokenMetadata};
     use crate::pagination::NEXT_CURSOR_HEADER;
     use actix_web::{http::StatusCode, test};
     use rstest::rstest;
@@ -15,10 +15,15 @@ mod tests {
     use crate::tests::{TestContext, create_test_admin, create_test_user, test_context};
 
     const USERS_ENDPOINT: &str = "/api/v1/iam/users";
+    const PRINCIPALS_ENDPOINT: &str = "/api/v1/iam/principals";
 
-    fn assert_user_response_matches(user: &User, response: &UserResponse) {
+    async fn assert_user_response_matches(
+        pool: &crate::db::DbPool,
+        user: &User,
+        response: &UserResponse,
+    ) {
         assert_eq!(response.id, user.id);
-        assert_eq!(response.username, user.username);
+        assert_eq!(response.name, user.name(pool).await.unwrap());
         assert_eq!(response.email, user.email);
         assert_eq!(response.created_at, user.created_at);
         assert_eq!(response.updated_at, user.updated_at);
@@ -49,7 +54,7 @@ mod tests {
             let returned_value: serde_json::Value = serde_json::from_slice(&body).unwrap();
             assert!(returned_value.get("password").is_none());
             let returned_user: UserResponse = serde_json::from_value(returned_value).unwrap();
-            assert_user_response_matches(target, &returned_user);
+            assert_user_response_matches(&context.pool, target, &returned_user).await;
         }
     }
 
@@ -68,7 +73,7 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &token,
-            &format!("{}/{}/tokens", USERS_ENDPOINT, &target.id),
+            &format!("{}/{}/tokens", PRINCIPALS_ENDPOINT, &target.id),
         )
         .await;
         let _ = assert_response_status(resp, expected_status).await;
@@ -110,7 +115,7 @@ mod tests {
         let context = test_context;
 
         let new_user = NewUser {
-            username: "test_create_user_endpoint".to_string(),
+            name: "test_create_user_endpoint".to_string(),
             password: "testpassword".to_string(),
             email: None,
         };
@@ -171,7 +176,6 @@ mod tests {
 
         // Test setting a new password
         let updated_user = UpdateUser {
-            username: None,
             password: Some("newpassword".to_string()),
             email: None,
         };
@@ -202,7 +206,10 @@ mod tests {
         assert!(patched_value.get("password").is_none());
         let patched_user: UserResponse = serde_json::from_value(patched_value).unwrap();
 
-        assert_eq!(patched_user.username, test_user.username);
+        assert_eq!(
+            patched_user.name,
+            test_user.name(&context.pool).await.unwrap()
+        );
         assert_eq!(patched_user.email, test_user.email);
 
         let stored_user = UserID::new(test_user.id)
@@ -212,7 +219,7 @@ mod tests {
             .unwrap();
         assert_ne!(stored_user.password, test_user.password);
         LoginUser {
-            username: test_user.username,
+            name: test_user.name(&context.pool).await.unwrap(),
             password: "newpassword".to_string(),
         }
         .login(&context.pool)
@@ -245,7 +252,7 @@ mod tests {
         let mut created_users = Vec::new();
         for i in 0..3 {
             let user = NewUser {
-                username: format!("{prefix}_{i}"),
+                name: format!("{prefix}_{i}"),
                 password: "testpassword".to_string(),
                 email: Some(format!("{prefix}_{i}@example.com")),
             }
@@ -255,7 +262,7 @@ mod tests {
             created_users.push(user);
         }
 
-        let url = format!("{USERS_ENDPOINT}?username__contains={prefix}&sort={sort_order}");
+        let url = format!("{USERS_ENDPOINT}?name__contains={prefix}&sort={sort_order}");
         let resp = get_request(&context.pool, &context.admin_token, &url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let users: Vec<UserResponse> = test::read_body_json(resp).await;
@@ -282,7 +289,7 @@ mod tests {
         let mut created_users = Vec::new();
         for i in 0..3 {
             let user = NewUser {
-                username: format!("{prefix}_{i}"),
+                name: format!("{prefix}_{i}"),
                 password: "testpassword".to_string(),
                 email: Some(format!("{prefix}_{i}@example.com")),
             }
@@ -292,7 +299,7 @@ mod tests {
             created_users.push(user);
         }
 
-        let url = format!("{USERS_ENDPOINT}?username__contains={prefix}&sort=id&limit={limit}");
+        let url = format!("{USERS_ENDPOINT}?name__contains={prefix}&sort=id&limit={limit}");
         let resp = get_request(&context.pool, &context.admin_token, &url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let users: Vec<UserResponse> = test::read_body_json(resp).await;
@@ -314,7 +321,7 @@ mod tests {
         for idx in 0..3 {
             created_users.push(
                 NewUser {
-                    username: format!("{prefix}_{idx}"),
+                    name: format!("{prefix}_{idx}"),
                     password: "testpassword".to_string(),
                     email: Some(format!("{prefix}_{idx}@example.com")),
                 }
@@ -327,7 +334,7 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{USERS_ENDPOINT}?username__contains={prefix}&limit=2&sort=id"),
+            &format!("{USERS_ENDPOINT}?name__contains={prefix}&limit=2&sort=id"),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
@@ -342,7 +349,7 @@ mod tests {
             &context.pool,
             &context.admin_token,
             &format!(
-                "{USERS_ENDPOINT}?username__contains={prefix}&limit=2&sort=id&cursor={}",
+                "{USERS_ENDPOINT}?name__contains={prefix}&limit=2&sort=id&cursor={}",
                 next_cursor.unwrap()
             ),
         )
@@ -373,15 +380,15 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &token,
-            &format!("{}/{}/tokens?limit=1", USERS_ENDPOINT, test_user.id),
+            &format!("{}/{}/tokens?limit=1", PRINCIPALS_ENDPOINT, test_user.id),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
-        let tokens: Vec<crate::models::UserTokenMetadata> = test::read_body_json(resp).await;
+        let tokens: Vec<crate::models::PrincipalTokenMetadata> = test::read_body_json(resp).await;
 
         assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].user_id, test_user.id);
+        assert_eq!(tokens[0].principal_id, test_user.id);
         assert!(next_cursor.is_some());
 
         let resp = get_request(
@@ -389,16 +396,16 @@ mod tests {
             &token,
             &format!(
                 "{}/{}/tokens?limit=1&cursor={}",
-                USERS_ENDPOINT,
+                PRINCIPALS_ENDPOINT,
                 test_user.id,
                 next_cursor.unwrap()
             ),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let tokens: Vec<crate::models::UserTokenMetadata> = test::read_body_json(resp).await;
+        let tokens: Vec<crate::models::PrincipalTokenMetadata> = test::read_body_json(resp).await;
         assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].user_id, test_user.id);
+        assert_eq!(tokens[0].principal_id, test_user.id);
     }
 
     #[rstest]
@@ -417,23 +424,27 @@ mod tests {
         test_user.create_token(&context.pool).await.unwrap();
         test_user.create_token(&context.pool).await.unwrap();
 
-        let (tokens, total_count): (Vec<UserTokenMetadata>, i64) =
+        let (tokens, total_count): (Vec<PrincipalTokenMetadata>, i64) =
             assert_paginated_collection_total_count(&context.pool, &auth_token, 10, |cursor| {
                 match cursor {
                     Some(cursor) => format!(
                         "{}/{}/tokens?sort=issued_at.asc,name.asc&limit=1&cursor={cursor}",
-                        USERS_ENDPOINT, test_user.id
+                        PRINCIPALS_ENDPOINT, test_user.id
                     ),
                     None => format!(
                         "{}/{}/tokens?sort=issued_at.asc,name.asc&limit=1",
-                        USERS_ENDPOINT, test_user.id
+                        PRINCIPALS_ENDPOINT, test_user.id
                     ),
                 }
             })
             .await;
 
         assert_eq!(total_count, tokens.len() as i64);
-        assert!(tokens.iter().all(|token| token.user_id == test_user.id));
+        assert!(
+            tokens
+                .iter()
+                .all(|token| token.principal_id == test_user.id)
+        );
     }
 
     #[rstest]
@@ -467,7 +478,7 @@ mod tests {
             &context.admin_token,
             &format!(
                 "{}/{}/groups?groupname__contains=filter-user-groups&sort=id",
-                USERS_ENDPOINT, user.id
+                PRINCIPALS_ENDPOINT, user.id
             ),
         )
         .await;
@@ -524,11 +535,11 @@ mod tests {
             |cursor| match cursor {
                 Some(cursor) => format!(
                     "{}/{}/groups?groupname__contains=pagination-user-groups&sort=id&limit=2&cursor={cursor}",
-                    USERS_ENDPOINT, user.id
+                    PRINCIPALS_ENDPOINT, user.id
                 ),
                 None => format!(
                     "{}/{}/groups?groupname__contains=pagination-user-groups&sort=id&limit=2",
-                    USERS_ENDPOINT, user.id
+                    PRINCIPALS_ENDPOINT, user.id
                 ),
             },
         )
@@ -555,31 +566,46 @@ mod tests {
         let context = test_context;
         let user = create_test_user(&context.pool).await;
         let auth_token = user.create_token(&context.pool).await.unwrap().get_token();
-        let matching_token = user.create_token(&context.pool).await.unwrap().get_token();
-        user.create_token(&context.pool).await.unwrap();
+
+        // Token filtering is now by the token's `name` label (principal model),
+        // not by the raw token value. Mint two named tokens via the principal
+        // token endpoint and filter for the matching label.
+        let matching_name = format!("matching-token-{}", user.id);
+        let other_name = format!("other-token-{}", user.id);
+        for token_name in [&matching_name, &other_name] {
+            let resp = post_request(
+                &context.pool,
+                &auth_token,
+                &format!("{}/{}/tokens", PRINCIPALS_ENDPOINT, user.id),
+                &serde_json::json!({ "name": token_name }),
+            )
+            .await;
+            let _ = assert_response_status(resp, StatusCode::CREATED).await;
+        }
 
         let resp = get_request(
             &context.pool,
             &auth_token,
             &format!(
-                "{}/{}/tokens?name={matching_token}&sort=name",
-                USERS_ENDPOINT, user.id
+                "{}/{}/tokens?name={matching_name}&sort=name",
+                PRINCIPALS_ENDPOINT, user.id
             ),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let tokens: Vec<crate::models::UserTokenMetadata> = test::read_body_json(resp).await;
+        let tokens: Vec<crate::models::PrincipalTokenMetadata> = test::read_body_json(resp).await;
         let expected_issued = user
             .tokens(&context.pool)
             .await
             .unwrap()
             .into_iter()
-            .find(|token| token.token == Token::storage_hash_from_raw(&matching_token))
+            .find(|token| token.name.as_deref() == Some(matching_name.as_str()))
             .map(|token| token.issued)
             .expect("matching token should exist in the database");
 
         assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].user_id, user.id);
+        assert_eq!(tokens[0].principal_id, user.id);
+        assert_eq!(tokens[0].name.as_deref(), Some(matching_name.as_str()));
         assert_eq!(tokens[0].issued, expected_issued);
     }
 }

@@ -463,7 +463,7 @@ mod tests {
 
         // We can verify this by checking the permissions for the user
         let user_perm_endpoint = &format!(
-            "{NAMESPACE_ENDPOINT}/{}/permissions/user/{}",
+            "{NAMESPACE_ENDPOINT}/{}/permissions/principal/{}",
             ns.namespace.id, test_user.id
         );
         let resp = get_request(&context.pool, &context.admin_token, user_perm_endpoint).await;
@@ -686,11 +686,11 @@ mod tests {
             10,
             |cursor| match cursor {
                 Some(cursor) => format!(
-                    "{NAMESPACE_ENDPOINT}/{}/permissions/user/{}?sort=id&limit=1&cursor={cursor}",
+                    "{NAMESPACE_ENDPOINT}/{}/permissions/principal/{}?sort=id&limit=1&cursor={cursor}",
                     ns.namespace.id, user.id
                 ),
                 None => format!(
-                    "{NAMESPACE_ENDPOINT}/{}/permissions/user/{}?sort=id&limit=1",
+                    "{NAMESPACE_ENDPOINT}/{}/permissions/principal/{}?sort=id&limit=1",
                     ns.namespace.id, user.id
                 ),
             },

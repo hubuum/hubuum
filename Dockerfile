@@ -63,7 +63,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 FROM debian:trixie-slim
 
-RUN apt-get update && apt-get install -y libpq5 libssl3 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y libpq5 libssl3 postgresql-client && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /tmp/hubuum-server /usr/local/bin/hubuum-server
 COPY --from=builder /tmp/hubuum-admin /usr/local/bin/hubuum-admin
@@ -73,5 +73,7 @@ COPY --from=builder /usr/src/hubuum/migrations /migrations
 # Copy a start script
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+
+EXPOSE 8080
 
 ENTRYPOINT ["/entrypoint.sh"]

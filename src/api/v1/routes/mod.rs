@@ -15,6 +15,13 @@ pub mod users;
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(web::scope("/iam/users").configure(users::config))
         .service(web::scope("/iam/groups").configure(groups::config))
+        .service(
+            web::scope("/iam/service-accounts")
+                .configure(crate::api::v1::handlers::service_accounts::config),
+        )
+        .service(
+            web::scope("/iam/principals").configure(crate::api::v1::handlers::principals::config),
+        )
         .service(web::scope("/imports").configure(imports::config))
         .service(web::scope("/namespaces").configure(namespaces::config))
         .service(web::scope("/classes").configure(classes::config))

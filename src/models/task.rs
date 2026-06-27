@@ -141,6 +141,11 @@ pub struct TaskRecord {
     pub processed_items: i32,
     pub success_items: i32,
     pub failed_items: i32,
+    /// Scope snapshot of the submitting token (principal-centric). Captured at
+    /// enqueue time so async execution can never exceed the token's scope.
+    pub submitted_token_id: Option<i32>,
+    pub submitted_token_scoped: bool,
+    pub submitted_token_scopes: serde_json::Value,
     pub request_redacted_at: Option<NaiveDateTime>,
     pub started_at: Option<NaiveDateTime>,
     pub finished_at: Option<NaiveDateTime>,
@@ -164,6 +169,12 @@ pub struct NewTaskRecord {
     pub processed_items: i32,
     pub success_items: i32,
     pub failed_items: i32,
+    #[diesel(column_name = submitted_token_id)]
+    pub submitted_token_id: Option<i32>,
+    #[diesel(column_name = submitted_token_scoped)]
+    pub submitted_token_scoped: bool,
+    #[diesel(column_name = submitted_token_scopes)]
+    pub submitted_token_scopes: serde_json::Value,
     pub request_redacted_at: Option<NaiveDateTime>,
     pub started_at: Option<NaiveDateTime>,
     pub finished_at: Option<NaiveDateTime>,

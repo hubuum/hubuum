@@ -1819,6 +1819,8 @@ filter_fields!(
     (StartedAt, "started_at"),
     (FinishedAt, "finished_at"),
     (IssuedAt, "issued_at"),
+    (ExpiresAt, "expires_at"),
+    (LastUsedAt, "last_used_at"),
     (Kind, "kind"),
     (Status, "status"),
     (SubmittedBy, "submitted_by"),

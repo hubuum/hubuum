@@ -13,9 +13,7 @@ use crate::db::traits::task::{
     TaskBackend, TaskStateUpdate, claim_next_queued_task, purge_expired_report_outputs,
 };
 use crate::errors::ApiError;
-use crate::models::{
-    NewTaskEventRecord, TaskKind, TaskRecord, TaskResultCounts, TaskStatus, UserID,
-};
+use crate::models::{NewTaskEventRecord, TaskKind, TaskRecord, TaskResultCounts, TaskStatus};
 
 use super::execution::execute_import_task;
 use super::helpers::sanitize_error_for_storage;
@@ -162,22 +160,54 @@ async fn maybe_cleanup_expired_report_outputs(pool: &DbPool) -> Result<(), ApiEr
 
 async fn process_claimed_task(pool: &DbPool, task: &TaskRecord) -> Result<(), ApiError> {
     let submitted_by = task.submitted_by.ok_or_else(|| {
-        ApiError::BadRequest("Submitting user is no longer available for this task".to_string())
+        ApiError::BadRequest(
+            "Submitting principal is no longer available for this task".to_string(),
+        )
     })?;
-    let submitted_by = UserID::new(submitted_by)?.user(pool).await?;
+    let principal = crate::models::principal::load_principal_by_id(pool, submitted_by).await?;
+
+    // Disabled-SA gate: queued service-account tasks must not run once the SA is
+    // disabled (mirrors the immediate token-validation rejection).
+    if crate::models::service_account::principal_is_disabled(pool, &principal).await? {
+        return Err(ApiError::BadRequest(
+            "Submitting service account is disabled; task will not run".to_string(),
+        ));
+    }
+
+    // Reconstruct the submitting token's scope boundary from the snapshot,
+    // failing closed on any unknown permission string.
+    let snapshot_scopes: Option<Vec<crate::models::Permissions>> = if task.submitted_token_scoped {
+        let entries = task.submitted_token_scopes.as_array().ok_or_else(|| {
+            ApiError::InternalServerError("Task scope snapshot is not an array".to_string())
+        })?;
+        let mut parsed = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let raw = entry.as_str().ok_or_else(|| {
+                ApiError::InternalServerError(
+                    "Task scope snapshot entry is not a string".to_string(),
+                )
+            })?;
+            parsed.push(crate::models::Permissions::from_string(raw)?);
+        }
+        Some(parsed)
+    } else {
+        None
+    };
+    let scopes = snapshot_scopes.as_deref();
 
     info!(
         message = "Dispatching task execution",
         task_id = task.id,
         task_kind = task.kind.as_str(),
         status = task.status.as_str(),
-        submitted_by = submitted_by.id
+        submitted_by = principal.id,
+        scoped = task.submitted_token_scoped
     );
 
     match TaskKind::from_db(&task.kind)? {
-        TaskKind::Import => execute_import_task(pool, task, &submitted_by).await,
-        TaskKind::Report => execute_report_task(pool, task, &submitted_by).await,
-        TaskKind::RemoteCall => execute_remote_call_task(pool, task, &submitted_by).await,
+        TaskKind::Import => execute_import_task(pool, task, &principal, scopes).await,
+        TaskKind::Report => execute_report_task(pool, task, &principal, scopes).await,
+        TaskKind::RemoteCall => execute_remote_call_task(pool, task, &principal, scopes).await,
         other => Err(ApiError::BadRequest(format!(
             "Task kind '{}' is not implemented",
             other.as_str()

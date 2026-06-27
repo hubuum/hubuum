@@ -8,6 +8,11 @@ Permissions within Hubuum are based on the following principles:
 - Permissions are granted on collections. Permissions are never granted to individual classes or objects.
 - Permissions are not inherited from any structure to any other. If a user (through a group membership) has read access to a class, they do not automatically have read access to the objects of that class.
 
+Group membership is principal-centric: both human users and service accounts are
+**principals** and gain a group's permissions by being members of it. For the
+identity model, tokens, and how token **scopes** narrow these permissions for
+automated callers, see [auth_model.md](auth_model.md).
+
 ## Permission types
 
 There are three types of permissions for each collection:

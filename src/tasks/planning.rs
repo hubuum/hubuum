@@ -28,13 +28,12 @@ use crate::models::{
     ClassKey, ImportAtomicity, ImportClassInput, ImportClassRelationInput, ImportCollisionPolicy,
     ImportMode, ImportNamespaceInput, ImportNamespacePermissionInput, ImportObjectInput,
     ImportObjectRelationInput, ImportPermissionPolicy, ImportRequest, Namespace, NamespaceID,
-    NamespaceKey, ObjectKey, Permissions, User,
+    NamespaceKey, ObjectKey, Permissions,
 };
-use crate::traits::GroupMemberships;
 
 async fn is_import_admin(
     pool: &DbPool,
-    user: &User,
+    user: &impl crate::db::traits::authz::AuthzSubject,
     state: &mut PlanningState,
 ) -> Result<bool, String> {
     if let Some(is_admin) = state.is_admin {
@@ -48,14 +47,16 @@ async fn is_import_admin(
 
 async fn ensure_namespace_permission_cached(
     pool: &DbPool,
-    user: &User,
+    user: &impl crate::db::traits::authz::AuthzSubject,
     state: &mut PlanningState,
     namespace_id: i32,
     namespace_exists_in_db: bool,
     permission: Permissions,
 ) -> Result<(), String> {
     if !namespace_exists_in_db {
-        if is_import_admin(pool, user, state).await? {
+        // Admin-bypass for newly-created namespaces applies only to unscoped
+        // tokens; a scoped import can never operate on new namespaces.
+        if state.scopes.is_none() && is_import_admin(pool, user, state).await? {
             return Ok(());
         }
         return Err("Only admins may operate on newly created namespaces within an import".into());
@@ -67,8 +68,9 @@ async fn ensure_namespace_permission_cached(
     }
 
     let namespace = NamespaceID::new(namespace_id).map_err(|err| err.to_string())?;
+    let scopes = state.scopes.clone();
     let result = user
-        .can(pool, vec![permission], vec![namespace])
+        .can(pool, vec![permission], vec![namespace], scopes.as_deref())
         .await
         .map_err(|err| err.to_string());
     state.namespace_permission_cache.insert(key, result.clone());
@@ -368,11 +370,13 @@ async fn object_relation_exists_cached(
 
 pub(super) async fn plan_import(
     pool: &DbPool,
-    user: &User,
+    user: &impl crate::db::traits::authz::AuthzSubject,
+    scopes: Option<&[Permissions]>,
     request: &ImportRequest,
 ) -> PlanningOutcome {
     let mode = request.mode();
     let mut state = PlanningState::new();
+    state.scopes = scopes.map(|s| s.to_vec());
     let mut planned_items = Vec::with_capacity(request.total_items() as usize);
     let mut failures = Vec::new();
     let mut aborted = false;
@@ -609,7 +613,7 @@ pub(super) async fn plan_import(
 
 pub(super) async fn plan_namespace(
     pool: &DbPool,
-    user: &User,
+    user: &impl crate::db::traits::authz::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportNamespaceInput,
@@ -772,7 +776,7 @@ pub(super) async fn plan_namespace(
 
 pub(super) async fn plan_class(
     pool: &DbPool,
-    user: &User,
+    user: &impl crate::db::traits::authz::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportClassInput,
@@ -951,7 +955,7 @@ pub(super) async fn plan_class(
 
 pub(super) async fn plan_object(
     pool: &DbPool,
-    user: &User,
+    user: &impl crate::db::traits::authz::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportObjectInput,
@@ -1152,7 +1156,7 @@ pub(super) async fn plan_object(
 
 pub(super) async fn plan_class_relation(
     pool: &DbPool,
-    user: &User,
+    user: &impl crate::db::traits::authz::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportClassRelationInput,
@@ -1290,7 +1294,7 @@ pub(super) async fn plan_class_relation(
 
 pub(super) async fn plan_object_relation(
     pool: &DbPool,
-    user: &User,
+    user: &impl crate::db::traits::authz::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportObjectRelationInput,
@@ -1421,7 +1425,7 @@ pub(super) async fn plan_object_relation(
 
 pub(super) async fn plan_namespace_permission(
     pool: &DbPool,
-    user: &User,
+    user: &impl crate::db::traits::authz::AuthzSubject,
     _mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportNamespacePermissionInput,

@@ -3,7 +3,9 @@ use diesel::prelude::*;
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, QueryOptions};
-use crate::models::{Group, GroupID, NewGroup, NewUserGroup, UpdateGroup, User, UserGroup};
+use crate::models::{
+    Group, GroupID, NewGroup, NewPrincipalGroup, Principal, PrincipalGroup, UpdateGroup,
+};
 use crate::{date_search, numeric_search, string_search};
 
 pub trait LoadGroupRecord {
@@ -76,14 +78,17 @@ impl UpdateGroupRecord for UpdateGroup {
     }
 }
 
+/// Group membership is principal-centric: members are `Principal`s, which may be
+/// human users or service accounts. Member listings expose the principal name
+/// and kind via the principals table.
 pub trait GroupMembersBackend {
-    async fn load_group_members(&self, pool: &DbPool) -> Result<Vec<User>, ApiError>;
+    async fn load_group_members(&self, pool: &DbPool) -> Result<Vec<Principal>, ApiError>;
 
     async fn load_group_members_paginated(
         &self,
         pool: &DbPool,
         query_options: &QueryOptions,
-    ) -> Result<Vec<User>, ApiError>;
+    ) -> Result<Vec<Principal>, ApiError>;
 
     async fn count_group_members_paginated(
         &self,
@@ -93,22 +98,22 @@ pub trait GroupMembersBackend {
 
     async fn remove_group_member_from_backend(
         &self,
-        user: &User,
+        member_principal_id: i32,
         pool: &DbPool,
     ) -> Result<(), ApiError>;
 }
 
 impl GroupMembersBackend for Group {
-    async fn load_group_members(&self, pool: &DbPool) -> Result<Vec<User>, ApiError> {
-        use crate::schema::user_groups::dsl::{group_id, user_groups, user_id};
-        use crate::schema::users::dsl::*;
+    async fn load_group_members(&self, pool: &DbPool) -> Result<Vec<Principal>, ApiError> {
+        use crate::schema::group_memberships::dsl::{group_id, group_memberships};
+        use crate::schema::principals::dsl::principals;
 
         with_connection(pool, |conn| {
-            user_groups
+            group_memberships
                 .filter(group_id.eq(self.id))
-                .inner_join(users.on(id.eq(user_id)))
-                .select((id, username, password, email, created_at, updated_at))
-                .load::<User>(conn)
+                .inner_join(principals)
+                .select(crate::schema::principals::all_columns)
+                .load::<Principal>(conn)
         })
     }
 
@@ -116,16 +121,14 @@ impl GroupMembersBackend for Group {
         &self,
         pool: &DbPool,
         query_options: &QueryOptions,
-    ) -> Result<Vec<User>, ApiError> {
-        use crate::schema::user_groups::dsl::{group_id, user_groups, user_id};
-        use crate::schema::users::dsl::{
-            created_at, email, id, password, updated_at, username, users,
-        };
+    ) -> Result<Vec<Principal>, ApiError> {
+        use crate::schema::group_memberships::dsl::{group_id, group_memberships};
+        use crate::schema::principals::dsl::{created_at, id, name, principals, updated_at};
 
-        let mut base_query = user_groups
+        let mut base_query = group_memberships
             .filter(group_id.eq(self.id))
-            .inner_join(users.on(id.eq(user_id)))
-            .select((id, username, password, email, created_at, updated_at))
+            .inner_join(principals)
+            .select(crate::schema::principals::all_columns)
             .into_boxed();
 
         for param in &query_options.filters {
@@ -133,23 +136,22 @@ impl GroupMembersBackend for Group {
             match param.field {
                 FilterField::Id => numeric_search!(base_query, param, operator, id),
                 FilterField::Name | FilterField::Username => {
-                    string_search!(base_query, param, operator, username)
+                    string_search!(base_query, param, operator, name)
                 }
-                FilterField::Email => string_search!(base_query, param, operator, email),
                 FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
                 FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
                 _ => {
                     return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't searchable (or does not exist) for users",
+                        "Field '{}' isn't searchable (or does not exist) for principals",
                         param.field
                     )));
                 }
             }
         }
 
-        crate::apply_query_options!(base_query, query_options, User);
+        crate::apply_query_options!(base_query, query_options, Principal);
 
-        with_connection(pool, |conn| base_query.load::<User>(conn))
+        with_connection(pool, |conn| base_query.load::<Principal>(conn))
     }
 
     async fn count_group_members_paginated(
@@ -157,12 +159,12 @@ impl GroupMembersBackend for Group {
         pool: &DbPool,
         query_options: &QueryOptions,
     ) -> Result<i64, ApiError> {
-        use crate::schema::user_groups::dsl::{group_id, user_groups, user_id};
-        use crate::schema::users::dsl::{created_at, email, id, updated_at, username, users};
+        use crate::schema::group_memberships::dsl::{group_id, group_memberships};
+        use crate::schema::principals::dsl::{created_at, id, name, principals, updated_at};
 
-        let mut base_query = user_groups
+        let mut base_query = group_memberships
             .filter(group_id.eq(self.id))
-            .inner_join(users.on(id.eq(user_id)))
+            .inner_join(principals)
             .into_boxed();
 
         for param in &query_options.filters {
@@ -170,14 +172,13 @@ impl GroupMembersBackend for Group {
             match param.field {
                 FilterField::Id => numeric_search!(base_query, param, operator, id),
                 FilterField::Name | FilterField::Username => {
-                    string_search!(base_query, param, operator, username)
+                    string_search!(base_query, param, operator, name)
                 }
-                FilterField::Email => string_search!(base_query, param, operator, email),
                 FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
                 FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
                 _ => {
                     return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't searchable (or does not exist) for users",
+                        "Field '{}' isn't searchable (or does not exist) for principals",
                         param.field
                     )));
                 }
@@ -189,59 +190,89 @@ impl GroupMembersBackend for Group {
 
     async fn remove_group_member_from_backend(
         &self,
-        user: &User,
+        member_principal_id: i32,
         pool: &DbPool,
     ) -> Result<(), ApiError> {
-        use crate::schema::user_groups::dsl::*;
+        use crate::schema::group_memberships::dsl::*;
 
         with_connection(pool, |conn| {
-            diesel::delete(user_groups.filter(user_id.eq(user.id).and(group_id.eq(self.id))))
-                .execute(conn)
+            diesel::delete(
+                group_memberships.filter(
+                    principal_id
+                        .eq(member_principal_id)
+                        .and(group_id.eq(self.id)),
+                ),
+            )
+            .execute(conn)
         })?;
         Ok(())
     }
 }
 
-pub trait SaveUserGroupRecord {
-    async fn save_user_group_record(&self, pool: &DbPool) -> Result<UserGroup, ApiError>;
+pub trait SavePrincipalGroupRecord {
+    async fn save_principal_group_record(&self, pool: &DbPool) -> Result<PrincipalGroup, ApiError>;
 }
 
-impl SaveUserGroupRecord for NewUserGroup {
-    async fn save_user_group_record(&self, pool: &DbPool) -> Result<UserGroup, ApiError> {
-        use crate::schema::user_groups::dsl::user_groups;
+impl SavePrincipalGroupRecord for NewPrincipalGroup {
+    async fn save_principal_group_record(&self, pool: &DbPool) -> Result<PrincipalGroup, ApiError> {
+        use crate::schema::group_memberships::dsl::group_memberships;
 
         with_connection(pool, |conn| {
-            diesel::insert_into(user_groups)
+            diesel::insert_into(group_memberships)
                 .values(self)
+                .on_conflict_do_nothing()
+                .get_result(conn)
+                .optional()?
+                .map_or_else(
+                    || {
+                        // Already a member; return the existing row.
+                        load_principal_group(conn, self.principal_id, self.group_id)
+                    },
+                    Ok,
+                )
+        })
+    }
+}
+
+impl SavePrincipalGroupRecord for PrincipalGroup {
+    async fn save_principal_group_record(&self, pool: &DbPool) -> Result<PrincipalGroup, ApiError> {
+        use crate::schema::group_memberships::dsl::group_memberships;
+
+        with_connection(pool, |conn| {
+            diesel::insert_into(group_memberships)
+                .values((
+                    crate::schema::group_memberships::principal_id.eq(self.principal_id),
+                    crate::schema::group_memberships::group_id.eq(self.group_id),
+                ))
                 .get_result(conn)
         })
     }
 }
 
-impl SaveUserGroupRecord for UserGroup {
-    async fn save_user_group_record(&self, pool: &DbPool) -> Result<UserGroup, ApiError> {
-        use crate::schema::user_groups::dsl::user_groups;
-
-        with_connection(pool, |conn| {
-            diesel::insert_into(user_groups)
-                .values(self)
-                .get_result(conn)
-        })
-    }
+fn load_principal_group(
+    conn: &mut PgConnection,
+    principal: i32,
+    group: i32,
+) -> Result<PrincipalGroup, diesel::result::Error> {
+    use crate::schema::group_memberships::dsl::{group_id, group_memberships, principal_id};
+    group_memberships
+        .filter(principal_id.eq(principal))
+        .filter(group_id.eq(group))
+        .first::<PrincipalGroup>(conn)
 }
 
-pub trait DeleteUserGroupRecord {
-    async fn delete_user_group_record(&self, pool: &DbPool) -> Result<(), ApiError>;
+pub trait DeletePrincipalGroupRecord {
+    async fn delete_principal_group_record(&self, pool: &DbPool) -> Result<(), ApiError>;
 }
 
-impl DeleteUserGroupRecord for UserGroup {
-    async fn delete_user_group_record(&self, pool: &DbPool) -> Result<(), ApiError> {
-        use crate::schema::user_groups::dsl::*;
+impl DeletePrincipalGroupRecord for PrincipalGroup {
+    async fn delete_principal_group_record(&self, pool: &DbPool) -> Result<(), ApiError> {
+        use crate::schema::group_memberships::dsl::*;
 
         with_connection(pool, |conn| {
             diesel::delete(
-                user_groups
-                    .filter(user_id.eq(self.user_id))
+                group_memberships
+                    .filter(principal_id.eq(self.principal_id))
                     .filter(group_id.eq(self.group_id)),
             )
             .execute(conn)
@@ -250,26 +281,28 @@ impl DeleteUserGroupRecord for UserGroup {
     }
 }
 
-pub trait UserGroupUserLookup {
-    async fn load_user_group_user(&self, pool: &DbPool) -> Result<User, ApiError>;
+pub trait PrincipalGroupPrincipalLookup {
+    async fn load_principal_group_principal(&self, pool: &DbPool) -> Result<Principal, ApiError>;
 }
 
-impl UserGroupUserLookup for UserGroup {
-    async fn load_user_group_user(&self, pool: &DbPool) -> Result<User, ApiError> {
-        use crate::schema::users::dsl::{id, users};
+impl PrincipalGroupPrincipalLookup for PrincipalGroup {
+    async fn load_principal_group_principal(&self, pool: &DbPool) -> Result<Principal, ApiError> {
+        use crate::schema::principals::dsl::{id, principals};
 
         with_connection(pool, |conn| {
-            users.filter(id.eq(self.user_id)).first::<User>(conn)
+            principals
+                .filter(id.eq(self.principal_id))
+                .first::<Principal>(conn)
         })
     }
 }
 
-pub trait UserGroupGroupLookup {
-    async fn load_user_group_group(&self, pool: &DbPool) -> Result<Group, ApiError>;
+pub trait PrincipalGroupGroupLookup {
+    async fn load_principal_group_group(&self, pool: &DbPool) -> Result<Group, ApiError>;
 }
 
-impl UserGroupGroupLookup for UserGroup {
-    async fn load_user_group_group(&self, pool: &DbPool) -> Result<Group, ApiError> {
+impl PrincipalGroupGroupLookup for PrincipalGroup {
+    async fn load_principal_group_group(&self, pool: &DbPool) -> Result<Group, ApiError> {
         use crate::schema::groups::dsl::{groups, id};
 
         with_connection(pool, |conn| {

@@ -1,6 +1,9 @@
 use super::*;
+use crate::db::traits::authz::scope_allows;
 use crate::models::RelatedObjectForRootRow;
+use crate::models::permissions::PermissionFilter;
 use crate::models::search::SQLValue;
+use crate::traits::PrincipalIdAccessor;
 use crate::traits::{CursorPaginated, CursorSqlMapping};
 use crate::utilities::extensions::CustomStringExtensions;
 
@@ -49,14 +52,15 @@ macro_rules! bind_raw_sql_query {
     }};
 }
 
-pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
+pub trait UserSearchBackend: UserNamespaceAccessors {
     async fn search_namespaces_from_backend(
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<Namespace>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
-        self.search_namespaces_from_backend_with_admin_status(pool, query_options, is_admin)
+        self.search_namespaces_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
             .await
     }
 
@@ -64,9 +68,10 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<i64, ApiError> {
         let is_admin = self.is_admin(pool).await?;
-        self.count_namespaces_from_backend_with_admin_status(pool, query_options, is_admin)
+        self.count_namespaces_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
             .await
     }
 
@@ -75,7 +80,13 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<Namespace>, ApiError> {
+        // Fail-closed: a scoped token must carry the resource read permission.
+        if !scope_allows(scopes, &[Permissions::ReadCollection]) {
+            return Ok(Vec::new());
+        }
+        let is_admin = is_admin && scopes.is_none();
         use crate::schema::namespaces::dsl::{
             created_at as namespace_created_at, description as namespace_description,
             id as namespace_id, name as namespace_name, namespaces,
@@ -89,26 +100,33 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         debug!(
             message = "Searching namespaces",
             stage = "Starting",
-            user_id = self.id(),
+            user_id = self.principal_id(),
             query_params = ?query_params
         );
 
-        let mut permissions_list = query_params.permissions()?;
-        permissions_list.ensure_contains(&[Permissions::ReadCollection]);
+        // Validate any `permissions` query filters. The requested value does not
+        // narrow namespace visibility beyond the ReadCollection baseline applied
+        // below — a namespace is a collection, and ReadCollection is what gates
+        // seeing it.
+        query_params.permissions()?;
 
         let mut base_query = if is_admin {
             namespaces.into_boxed()
         } else {
-            let group_id_subquery = self.group_ids_subquery_from_backend();
+            let group_id_subquery = self.group_ids_subquery();
+
+            // Visibility requires the principal's groups to actually hold
+            // ReadCollection (has_read_namespace) on the namespace, not merely to
+            // have *some* permission row for it.
+            let permission_subquery = Permissions::ReadCollection.create_boxed_filter(
+                permissions
+                    .filter(group_id.eq_any(group_id_subquery))
+                    .into_boxed(),
+                true,
+            );
 
             namespaces
-                .filter(
-                    namespace_id.eq_any(
-                        permissions
-                            .filter(group_id.eq_any(group_id_subquery))
-                            .select(permissions_nid),
-                    ),
-                )
+                .filter(namespace_id.eq_any(permission_subquery.select(permissions_nid)))
                 .into_boxed()
         };
 
@@ -153,6 +171,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<i64, ApiError> {
         use crate::schema::namespaces::dsl::{
             created_at as namespace_created_at, description as namespace_description,
@@ -163,23 +182,36 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             group_id, namespace_id as permissions_nid, permissions,
         };
 
+        // Fail-closed: a scoped token must carry the resource read permission.
+        if !scope_allows(scopes, &[Permissions::ReadCollection]) {
+            return Ok(0);
+        }
+        let is_admin = is_admin && scopes.is_none();
+
         let query_params = query_options.filters.clone();
-        let mut permissions_list = query_params.permissions()?;
-        permissions_list.ensure_contains(&[Permissions::ReadCollection]);
+        // Validate any `permissions` query filters. The requested value does not
+        // narrow namespace visibility beyond the ReadCollection baseline applied
+        // below — a namespace is a collection, and ReadCollection is what gates
+        // seeing it.
+        query_params.permissions()?;
 
         let mut base_query = if is_admin {
             namespaces.into_boxed()
         } else {
-            let group_id_subquery = self.group_ids_subquery_from_backend();
+            let group_id_subquery = self.group_ids_subquery();
+
+            // Visibility requires the principal's groups to actually hold
+            // ReadCollection (has_read_namespace) on the namespace, not merely to
+            // have *some* permission row for it.
+            let permission_subquery = Permissions::ReadCollection.create_boxed_filter(
+                permissions
+                    .filter(group_id.eq_any(group_id_subquery))
+                    .into_boxed(),
+                true,
+            );
 
             namespaces
-                .filter(
-                    namespace_id.eq_any(
-                        permissions
-                            .filter(group_id.eq_any(group_id_subquery))
-                            .select(permissions_nid),
-                    ),
-                )
+                .filter(namespace_id.eq_any(permission_subquery.select(permissions_nid)))
                 .into_boxed()
         };
 
@@ -217,9 +249,10 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
-        self.search_classes_from_backend_with_admin_status(pool, query_options, is_admin)
+        self.search_classes_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
             .await
     }
 
@@ -227,9 +260,10 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<i64, ApiError> {
         let is_admin = self.is_admin(pool).await?;
-        self.count_classes_from_backend_with_admin_status(pool, query_options, is_admin)
+        self.count_classes_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
             .await
     }
 
@@ -238,6 +272,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         use crate::schema::hubuumclass::dsl::{
             created_at as class_created_at, description as class_description, hubuumclass,
@@ -250,7 +285,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         debug!(
             message = "Searching classes",
             stage = "Starting",
-            user_id = self.id(),
+            user_id = self.principal_id(),
             query_params = ?query_params
         );
 
@@ -258,14 +293,19 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         permissions_list.ensure_contains(&[Permissions::ReadClass, Permissions::ReadCollection]);
 
         let namespaces = self
-            .load_namespaces_with_permissions_with_admin_status(pool, &permissions_list, is_admin)
+            .load_namespaces_with_permissions_with_admin_status(
+                pool,
+                &permissions_list,
+                is_admin,
+                scopes,
+            )
             .await?;
         let namespace_ids: Vec<i32> = namespaces.iter().map(|n| n.id).collect();
 
         debug!(
             message = "Searching classes",
             stage = "Namespace IDs",
-            user_id = self.id(),
+            user_id = self.principal_id(),
             namespace_ids = ?namespace_ids
         );
 
@@ -278,7 +318,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             debug!(
                 message = "Searching classes",
                 stage = "JSON Schema",
-                user_id = self.id(),
+                user_id = self.principal_id(),
                 query_params = ?json_schema_queries
             );
 
@@ -341,6 +381,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<i64, ApiError> {
         use crate::schema::hubuumclass::dsl::{
             created_at as class_created_at, description as class_description, hubuumclass,
@@ -354,7 +395,12 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         permissions_list.ensure_contains(&[Permissions::ReadClass, Permissions::ReadCollection]);
 
         let namespaces = self
-            .load_namespaces_with_permissions_with_admin_status(pool, &permissions_list, is_admin)
+            .load_namespaces_with_permissions_with_admin_status(
+                pool,
+                &permissions_list,
+                is_admin,
+                scopes,
+            )
             .await?;
         let namespace_ids: Vec<i32> = namespaces.iter().map(|n| n.id).collect();
 
@@ -414,9 +460,10 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumObject>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
-        self.search_objects_from_backend_with_admin_status(pool, query_options, is_admin)
+        self.search_objects_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
             .await
     }
 
@@ -424,9 +471,10 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<i64, ApiError> {
         let is_admin = self.is_admin(pool).await?;
-        self.count_objects_from_backend_with_admin_status(pool, query_options, is_admin)
+        self.count_objects_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
             .await
     }
 
@@ -435,6 +483,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumObject>, ApiError> {
         use crate::schema::hubuumobject::dsl::{
             created_at as object_created_at, description as object_description, hubuum_class_id,
@@ -447,7 +496,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         debug!(
             message = "Searching objects",
             stage = "Starting",
-            user_id = self.id(),
+            user_id = self.principal_id(),
             query_params = ?query_params
         );
 
@@ -455,7 +504,12 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         permission_list.ensure_contains(&[Permissions::ReadObject, Permissions::ReadCollection]);
 
         let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(pool, &permission_list, is_admin)
+            .load_namespaces_with_permissions_with_admin_status(
+                pool,
+                &permission_list,
+                is_admin,
+                scopes,
+            )
             .await?
             .into_iter()
             .map(|n| n.id)
@@ -464,7 +518,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         debug!(
             message = "Searching objects",
             stage = "Namespace IDs",
-            user_id = self.id(),
+            user_id = self.principal_id(),
             namespace_ids = ?namespace_ids
         );
 
@@ -477,7 +531,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             debug!(
                 message = "Searching objects",
                 stage = "JSON Data",
-                user_id = self.id(),
+                user_id = self.principal_id(),
                 query_params = ?json_data_queries
             );
 
@@ -538,6 +592,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<i64, ApiError> {
         use crate::schema::hubuumobject::dsl::{
             created_at as object_created_at, description as object_description, hubuum_class_id,
@@ -551,7 +606,12 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         permission_list.ensure_contains(&[Permissions::ReadObject, Permissions::ReadCollection]);
 
         let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(pool, &permission_list, is_admin)
+            .load_namespaces_with_permissions_with_admin_status(
+                pool,
+                &permission_list,
+                is_admin,
+                scopes,
+            )
             .await?
             .into_iter()
             .map(|n| n.id)
@@ -616,20 +676,32 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
-        self.search_class_relations_from_backend_with_admin_status(pool, query_options, is_admin)
-            .await
+        self.search_class_relations_from_backend_with_admin_status(
+            pool,
+            query_options,
+            is_admin,
+            scopes,
+        )
+        .await
     }
 
     async fn class_relations_page_from_backend(
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError> {
         let is_admin = self.is_admin(pool).await?;
-        self.class_relations_page_from_backend_with_admin_status(pool, query_options, is_admin)
-            .await
+        self.class_relations_page_from_backend_with_admin_status(
+            pool,
+            query_options,
+            is_admin,
+            scopes,
+        )
+        .await
     }
 
     async fn search_class_relations_from_backend_with_admin_status(
@@ -637,9 +709,15 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
         let (items, _) = self
-            .class_relations_page_from_backend_with_admin_status(pool, query_options, is_admin)
+            .class_relations_page_from_backend_with_admin_status(
+                pool,
+                query_options,
+                is_admin,
+                scopes,
+            )
             .await?;
         Ok(items)
     }
@@ -649,6 +727,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError> {
         use crate::schema::hubuumclass::dsl::{
             hubuumclass, id as class_id, namespace_id as class_namespace_id,
@@ -663,7 +742,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         debug!(
             message = "Searching class relations",
             stage = "Starting",
-            user_id = self.id(),
+            user_id = self.principal_id(),
             query_params = ?query_params
         );
 
@@ -672,7 +751,12 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         permissions_list.ensure_contains(&[Permissions::ReadClassRelation]);
 
         let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(pool, &permissions_list, is_admin)
+            .load_namespaces_with_permissions_with_admin_status(
+                pool,
+                &permissions_list,
+                is_admin,
+                scopes,
+            )
             .await?
             .into_iter()
             .map(|n| n.id)
@@ -681,7 +765,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         debug!(
             message = "Searching class relations",
             stage = "Namespace IDs",
-            user_id = self.id(),
+            user_id = self.principal_id(),
             namespace_ids = ?namespace_ids
         );
 
@@ -699,7 +783,12 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
                     cursor: None,
                 };
                 let classes = self
-                    .search_classes_from_backend_with_admin_status(pool, query_options, is_admin)
+                    .search_classes_from_backend_with_admin_status(
+                        pool,
+                        query_options,
+                        is_admin,
+                        scopes,
+                    )
                     .await?;
                 let class_ids: Vec<i32> = classes.iter().map(|c| c.id).collect();
 
@@ -707,7 +796,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
                     debug!(
                         message = "Searching class relations with class names",
                         stage = "Class IDs",
-                        user_id = self.id(),
+                        user_id = self.principal_id(),
                         result = "No class IDs found, returning empty result"
                     );
                     return Ok((vec![], 0));
@@ -716,7 +805,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
                 debug!(
                     message = "Searching class relations with class names",
                     stage = "Class IDs",
-                    user_id = self.id(),
+                    user_id = self.principal_id(),
                     result = "Found class IDs",
                     class_ids = ?class_ids
                 );
@@ -819,6 +908,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         class: K,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError>
     where
         K: SelfAccessors<HubuumClass>,
@@ -829,6 +919,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             class,
             query_options,
             is_admin,
+            scopes,
         )
         .await
     }
@@ -839,6 +930,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         class: K,
         query_options: QueryOptions,
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError>
     where
         K: SelfAccessors<HubuumClass>,
@@ -858,7 +950,12 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         permissions_list.ensure_contains(&[Permissions::ReadClassRelation]);
 
         let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(pool, &permissions_list, is_admin)
+            .load_namespaces_with_permissions_with_admin_status(
+                pool,
+                &permissions_list,
+                is_admin,
+                scopes,
+            )
             .await?
             .into_iter()
             .map(|n| n.id)
@@ -947,10 +1044,11 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         pool: &DbPool,
         class_ids: &[i32],
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.search_class_relations_between_ids_from_backend_with_admin_status(
-            pool, class_ids, is_admin,
+            pool, class_ids, is_admin, scopes,
         )
         .await
     }
@@ -960,6 +1058,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         class_ids: &[i32],
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
         use crate::schema::hubuumclass::dsl::{
             hubuumclass, id as class_id, namespace_id as class_namespace_id,
@@ -974,7 +1073,12 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
 
         let permission_list = [Permissions::ReadClassRelation];
         let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(pool, &permission_list, is_admin)
+            .load_namespaces_with_permissions_with_admin_status(
+                pool,
+                &permission_list,
+                is_admin,
+                scopes,
+            )
             .await?
             .into_iter()
             .map(|n| n.id)
@@ -1009,6 +1113,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         class: K,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<ClassGraphRow>, ApiError>
     where
         K: SelfAccessors<HubuumClass>,
@@ -1019,6 +1124,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             class,
             query_options,
             is_admin,
+            scopes,
         )
         .await
     }
@@ -1028,6 +1134,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         class: K,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<(Vec<ClassGraphRow>, i64), ApiError>
     where
         K: SelfAccessors<HubuumClass>,
@@ -1038,6 +1145,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             class,
             query_options,
             is_admin,
+            scopes,
         )
         .await
     }
@@ -1048,13 +1156,20 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         class: K,
         query_options: QueryOptions,
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<ClassGraphRow>, ApiError>
     where
         K: SelfAccessors<HubuumClass>,
     {
-        let Some(base_spec) =
-            build_related_classes_query_spec(self, pool, class, query_options.clone(), is_admin)
-                .await?
+        let Some(base_spec) = build_related_classes_query_spec(
+            self,
+            pool,
+            class,
+            query_options.clone(),
+            is_admin,
+            scopes,
+        )
+        .await?
         else {
             return Ok(vec![]);
         };
@@ -1077,13 +1192,20 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         class: K,
         query_options: QueryOptions,
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<(Vec<ClassGraphRow>, i64), ApiError>
     where
         K: SelfAccessors<HubuumClass>,
     {
-        let Some(base_spec) =
-            build_related_classes_query_spec(self, pool, class, query_options.clone(), is_admin)
-                .await?
+        let Some(base_spec) = build_related_classes_query_spec(
+            self,
+            pool,
+            class,
+            query_options.clone(),
+            is_admin,
+            scopes,
+        )
+        .await?
         else {
             return Ok((vec![], 0));
         };
@@ -1112,20 +1234,32 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
-        self.search_object_relations_from_backend_with_admin_status(pool, query_options, is_admin)
-            .await
+        self.search_object_relations_from_backend_with_admin_status(
+            pool,
+            query_options,
+            is_admin,
+            scopes,
+        )
+        .await
     }
 
     async fn object_relations_page_from_backend(
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError> {
         let is_admin = self.is_admin(pool).await?;
-        self.object_relations_page_from_backend_with_admin_status(pool, query_options, is_admin)
-            .await
+        self.object_relations_page_from_backend_with_admin_status(
+            pool,
+            query_options,
+            is_admin,
+            scopes,
+        )
+        .await
     }
 
     async fn search_object_relations_from_backend_with_admin_status(
@@ -1133,9 +1267,15 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
         let (items, _) = self
-            .object_relations_page_from_backend_with_admin_status(pool, query_options, is_admin)
+            .object_relations_page_from_backend_with_admin_status(
+                pool,
+                query_options,
+                is_admin,
+                scopes,
+            )
             .await?;
         Ok(items)
     }
@@ -1145,6 +1285,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError> {
         use crate::schema::hubuumobject::dsl::{
             hubuumobject, id as object_id, namespace_id as object_namespace_id,
@@ -1160,7 +1301,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         debug!(
             message = "Searching object relations",
             stage = "Starting",
-            user_id = self.id(),
+            user_id = self.principal_id(),
             query_params = ?query_params
         );
 
@@ -1168,7 +1309,12 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         permissions_list.ensure_contains(&[Permissions::ReadObjectRelation]);
 
         let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(pool, &permissions_list, is_admin)
+            .load_namespaces_with_permissions_with_admin_status(
+                pool,
+                &permissions_list,
+                is_admin,
+                scopes,
+            )
             .await?
             .into_iter()
             .map(|n| n.id)
@@ -1177,7 +1323,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         debug!(
             message = "Searching object relations",
             stage = "Namespace IDs",
-            user_id = self.id(),
+            user_id = self.principal_id(),
             namespace_ids = ?namespace_ids
         );
 
@@ -1260,6 +1406,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         object: O,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError>
     where
         O: SelfAccessors<HubuumObject>,
@@ -1270,6 +1417,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             object,
             query_options,
             is_admin,
+            scopes,
         )
         .await
     }
@@ -1280,6 +1428,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         object: O,
         query_options: QueryOptions,
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError>
     where
         O: SelfAccessors<HubuumObject>,
@@ -1299,7 +1448,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         debug!(
             message = "Searching direct object relations touching object",
             stage = "Starting",
-            user_id = self.id(),
+            user_id = self.principal_id(),
             object_id = object.id(),
             query_params = ?query_params
         );
@@ -1308,7 +1457,12 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         permissions_list.ensure_contains(&[Permissions::ReadObjectRelation]);
 
         let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(pool, &permissions_list, is_admin)
+            .load_namespaces_with_permissions_with_admin_status(
+                pool,
+                &permissions_list,
+                is_admin,
+                scopes,
+            )
             .await?
             .into_iter()
             .map(|n| n.id)
@@ -1317,7 +1471,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         debug!(
             message = "Searching direct object relations touching object",
             stage = "Namespace IDs",
-            user_id = self.id(),
+            user_id = self.principal_id(),
             object_id = object.id(),
             namespace_ids = ?namespace_ids
         );
@@ -1408,10 +1562,11 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         pool: &DbPool,
         object_ids: &[i32],
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.search_object_relations_between_ids_from_backend_with_admin_status(
-            pool, object_ids, is_admin,
+            pool, object_ids, is_admin, scopes,
         )
         .await
     }
@@ -1421,6 +1576,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         object_ids: &[i32],
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
         use crate::schema::hubuumobject::dsl::{
             hubuumobject, id as object_id_column, namespace_id as object_namespace_id,
@@ -1435,7 +1591,12 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
 
         let permission_list = [Permissions::ReadObjectRelation];
         let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(pool, &permission_list, is_admin)
+            .load_namespaces_with_permissions_with_admin_status(
+                pool,
+                &permission_list,
+                is_admin,
+                scopes,
+            )
             .await?
             .into_iter()
             .map(|n| n.id)
@@ -1443,7 +1604,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
 
         debug!(
             message = "Searching object relations between visible object IDs",
-            user_id = self.id(),
+            user_id = self.principal_id(),
             object_ids = ?object_ids,
             namespace_ids = ?namespace_ids
         );
@@ -1477,6 +1638,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         object: O,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<RelatedObjectGraphRow>, ApiError>
     where
         O: SelfAccessors<HubuumObject> + ClassAccessors,
@@ -1487,6 +1649,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             object,
             query_options,
             is_admin,
+            scopes,
         )
         .await
     }
@@ -1496,6 +1659,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         object: O,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<(Vec<RelatedObjectGraphRow>, i64), ApiError>
     where
         O: SelfAccessors<HubuumObject> + ClassAccessors,
@@ -1506,6 +1670,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             object,
             query_options,
             is_admin,
+            scopes,
         )
         .await
     }
@@ -1516,13 +1681,20 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         object: O,
         query_options: QueryOptions,
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<RelatedObjectGraphRow>, ApiError>
     where
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
-        let Some(base_spec) =
-            build_related_objects_query_spec(self, pool, object, query_options.clone(), is_admin)
-                .await?
+        let Some(base_spec) = build_related_objects_query_spec(
+            self,
+            pool,
+            object,
+            query_options.clone(),
+            is_admin,
+            scopes,
+        )
+        .await?
         else {
             return Ok(vec![]);
         };
@@ -1547,13 +1719,20 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         object: O,
         query_options: QueryOptions,
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<(Vec<RelatedObjectGraphRow>, i64), ApiError>
     where
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
-        let Some(base_spec) =
-            build_related_objects_query_spec(self, pool, object, query_options.clone(), is_admin)
-                .await?
+        let Some(base_spec) = build_related_objects_query_spec(
+            self,
+            pool,
+            object,
+            query_options.clone(),
+            is_admin,
+            scopes,
+        )
+        .await?
         else {
             return Ok((vec![], 0));
         };
@@ -1585,6 +1764,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         pool: &DbPool,
         root_object_ids: &[i32],
         include: ReportIncludeRelatedQuery,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.related_objects_for_roots_from_backend_with_admin_status(
@@ -1592,6 +1772,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             root_object_ids,
             include,
             is_admin,
+            scopes,
         )
         .await
     }
@@ -1602,6 +1783,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         root_object_ids: &[i32],
         include: ReportIncludeRelatedQuery,
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError> {
         if root_object_ids.is_empty() {
             return Ok(Vec::new());
@@ -1610,7 +1792,12 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         let permissions =
             PermissionsList::new([Permissions::ReadObject, Permissions::ReadObjectRelation]);
         let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(pool, &permissions, is_admin)
+            .load_namespaces_with_permissions_with_admin_status(
+                pool,
+                &permissions,
+                is_admin,
+                scopes,
+            )
             .await?
             .into_iter()
             .map(|namespace| namespace.id)
@@ -1662,6 +1849,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         root_object_ids: &[i32],
         max_depth: i32,
         per_root_cap: i32,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<RelatedObjectForRootRow>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.bidirectionally_related_objects_for_roots_from_backend_with_admin_status(
@@ -1670,6 +1858,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             max_depth,
             per_root_cap,
             is_admin,
+            scopes,
         )
         .await
     }
@@ -1681,6 +1870,7 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         max_depth: i32,
         per_root_cap: i32,
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<RelatedObjectForRootRow>, ApiError> {
         if root_object_ids.is_empty() {
             return Ok(Vec::new());
@@ -1689,7 +1879,12 @@ pub trait UserSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         let permissions =
             PermissionsList::new([Permissions::ReadObject, Permissions::ReadObjectRelation]);
         let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(pool, &permissions, is_admin)
+            .load_namespaces_with_permissions_with_admin_status(
+                pool,
+                &permissions,
+                is_admin,
+                scopes,
+            )
             .await?
             .into_iter()
             .map(|namespace| namespace.id)
@@ -2069,9 +2264,10 @@ async fn build_related_classes_query_spec<U, K>(
     class: K,
     query_options: QueryOptions,
     is_admin: bool,
+    scopes: Option<&[Permissions]>,
 ) -> Result<Option<RawSqlQuerySpec>, ApiError>
 where
-    U: SelfAccessors<User> + UserNamespaceAccessors + ?Sized,
+    U: UserNamespaceAccessors + ?Sized,
     K: SelfAccessors<HubuumClass>,
 {
     let query_params = query_options.filters.clone();
@@ -2080,7 +2276,12 @@ where
     permissions_list.ensure_contains(&[Permissions::ReadClass, Permissions::ReadClassRelation]);
 
     let namespace_ids: Vec<i32> = user
-        .load_namespaces_with_permissions_with_admin_status(pool, &permissions_list, is_admin)
+        .load_namespaces_with_permissions_with_admin_status(
+            pool,
+            &permissions_list,
+            is_admin,
+            scopes,
+        )
         .await?
         .into_iter()
         .map(|n| n.id)
@@ -2130,9 +2331,10 @@ async fn build_related_objects_query_spec<U, O>(
     object: O,
     query_options: QueryOptions,
     is_admin: bool,
+    scopes: Option<&[Permissions]>,
 ) -> Result<Option<RawSqlQuerySpec>, ApiError>
 where
-    U: SelfAccessors<User> + UserNamespaceAccessors + ?Sized,
+    U: UserNamespaceAccessors + ?Sized,
     O: SelfAccessors<HubuumObject> + ClassAccessors,
 {
     let query_params = query_options.filters.clone();
@@ -2140,7 +2342,7 @@ where
     debug!(
         message = "Searching objects related to object",
         stage = "Starting",
-        user_id = user.id(),
+        user_id = user.principal_id(),
         object_id = object.id(),
         query_params = ?query_params
     );
@@ -2149,7 +2351,12 @@ where
     permissions_list.ensure_contains(&[Permissions::ReadObject, Permissions::ReadObjectRelation]);
 
     let namespace_ids: Vec<i32> = user
-        .load_namespaces_with_permissions_with_admin_status(pool, &permissions_list, is_admin)
+        .load_namespaces_with_permissions_with_admin_status(
+            pool,
+            &permissions_list,
+            is_admin,
+            scopes,
+        )
         .await?
         .into_iter()
         .map(|n| n.id)
@@ -2159,7 +2366,7 @@ where
         debug!(
             message = "Searching object relations related to object",
             stage = "Namespace IDs",
-            user_id = user.id(),
+            user_id = user.principal_id(),
             result = "No namespace IDs found, returning empty result"
         );
         return Ok(None);
@@ -2168,7 +2375,7 @@ where
     debug!(
         message = "Searching object relations related to object",
         stage = "Namespace IDs",
-        user_id = user.id(),
+        user_id = user.principal_id(),
         result = "Found namespace IDs",
         namespace_ids = ?namespace_ids
     );
@@ -2871,33 +3078,37 @@ fn build_related_objects_clause(
     Ok(Some(clause))
 }
 
-impl<T: ?Sized> UserSearchBackend for T where T: SelfAccessors<User> + UserNamespaceAccessors {}
+impl<T: ?Sized> UserSearchBackend for T where T: UserNamespaceAccessors {}
 
 impl User {
     pub async fn search_users(
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
-    ) -> Result<Vec<User>, ApiError> {
-        use crate::schema::users::dsl::{created_at, email, id, updated_at, username, users};
+    ) -> Result<Vec<crate::models::UserWithName>, ApiError> {
+        use crate::schema::principals;
+        use crate::schema::users::dsl::{created_at, email, id, updated_at, users};
 
         let query_params = query_options.filters.clone();
 
         debug!(
             message = "Searching users",
             stage = "Starting",
-            user_id = self.id(),
+            user_id = self.principal_id(),
             query_params = ?query_params
         );
 
-        let mut base_query = users.into_boxed();
+        let mut base_query = users
+            .inner_join(principals::table.on(id.eq(principals::id)))
+            .into_boxed();
 
         for param in query_params {
             let operator = param.operator.clone();
             match param.field {
                 FilterField::Id => numeric_search!(base_query, param, operator, id),
-                FilterField::Name => string_search!(base_query, param, operator, username),
-                FilterField::Username => string_search!(base_query, param, operator, username),
+                FilterField::Name | FilterField::Username => {
+                    string_search!(base_query, param, operator, principals::name)
+                }
                 FilterField::Email => string_search!(base_query, param, operator, email),
                 FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
                 FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
@@ -2910,18 +3121,21 @@ impl User {
             }
         }
 
-        crate::apply_query_options!(base_query, query_options, User);
+        crate::apply_query_options!(base_query, query_options, crate::models::UserWithName);
 
         trace_query!(base_query, "Searching users");
 
-        let result = with_connection(pool, |conn| {
+        let rows = with_connection(pool, |conn| {
             base_query
-                .select(users::all_columns())
+                .select((crate::schema::users::all_columns, principals::name))
                 .distinct() // TODO: Is it the joins that makes this required?
-                .load::<User>(conn)
+                .load::<(User, String)>(conn)
         })?;
 
-        Ok(result)
+        Ok(rows
+            .into_iter()
+            .map(crate::models::UserWithName::from_tuple)
+            .collect())
     }
 
     pub async fn count_users(
@@ -2929,17 +3143,21 @@ impl User {
         pool: &DbPool,
         query_options: QueryOptions,
     ) -> Result<i64, ApiError> {
-        use crate::schema::users::dsl::{created_at, email, id, updated_at, username, users};
+        use crate::schema::principals;
+        use crate::schema::users::dsl::{created_at, email, id, updated_at, users};
 
         let query_params = query_options.filters.clone();
-        let mut base_query = users.into_boxed();
+        let mut base_query = users
+            .inner_join(principals::table.on(id.eq(principals::id)))
+            .into_boxed();
 
         for param in query_params {
             let operator = param.operator.clone();
             match param.field {
                 FilterField::Id => numeric_search!(base_query, param, operator, id),
-                FilterField::Name => string_search!(base_query, param, operator, username),
-                FilterField::Username => string_search!(base_query, param, operator, username),
+                FilterField::Name | FilterField::Username => {
+                    string_search!(base_query, param, operator, principals::name)
+                }
                 FilterField::Email => string_search!(base_query, param, operator, email),
                 FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
                 FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
@@ -2975,7 +3193,7 @@ impl User {
         debug!(
             message = "Searching groups",
             stage = "Starting",
-            user_id = self.id(),
+            user_id = self.principal_id(),
             query_params = ?query_params
         );
 

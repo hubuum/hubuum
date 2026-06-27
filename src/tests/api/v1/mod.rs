@@ -10,6 +10,7 @@ pub mod remote_targets;
 pub mod reports;
 pub mod request_and_correlation;
 pub mod search;
+pub mod service_accounts;
 pub mod tasks;
 pub mod templates;
 pub mod users;

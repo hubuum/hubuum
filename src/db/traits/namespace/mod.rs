@@ -12,13 +12,11 @@ use crate::models::{HubuumClassRelation, NewHubuumObjectRelation};
 use crate::models::{HubuumObjectRelation, NewHubuumClassRelation};
 use crate::models::{
     HubuumObjectRelationID, Namespace, NamespaceID, NewNamespace, NewNamespaceWithAssignee,
-    NewPermission, Permission, Permissions, UpdateNamespace, User, UserID,
+    NewPermission, Permission, Permissions, UpdateNamespace,
 };
 use crate::traits::{
     ClassAccessors, GroupAccessors, NamespaceAccessors, ObjectAccessors, SelfAccessors,
 };
-
-use super::user::{GroupIdsSubqueryBackend, GroupMemberships};
 
 mod permissions;
 mod records;

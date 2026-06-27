@@ -8,19 +8,20 @@ use crate::errors::ApiError;
 use crate::models::traits::ExpandNamespaceFromMap;
 use crate::models::traits::user::UserNamespaceAccessors;
 use crate::models::{
-    HubuumClass, HubuumClassExpanded, HubuumObject, Namespace, Permissions, UnifiedSearchSpec, User,
+    HubuumClass, HubuumClassExpanded, HubuumObject, Namespace, Permissions, UnifiedSearchSpec,
 };
-use crate::traits::SelfAccessors;
 
-pub trait UnifiedSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
+pub trait UnifiedSearchBackend: UserNamespaceAccessors {
     async fn search_unified_namespaces_from_backend(
         &self,
         pool: &DbPool,
         params: &UnifiedSearchSpec,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<Namespace>, ApiError> {
         use crate::schema::namespaces::dsl as ns;
 
-        let namespaces = permitted_namespaces(self, pool, &[Permissions::ReadCollection]).await?;
+        let namespaces =
+            permitted_namespaces(self, pool, &[Permissions::ReadCollection], scopes).await?;
         if namespaces.is_empty() {
             return Ok(vec![]);
         }
@@ -47,6 +48,7 @@ pub trait UnifiedSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         pool: &DbPool,
         params: &UnifiedSearchSpec,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         use crate::schema::hubuumclass::dsl as class_dsl;
 
@@ -54,6 +56,7 @@ pub trait UnifiedSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             self,
             pool,
             &[Permissions::ReadCollection, Permissions::ReadClass],
+            scopes,
         )
         .await?;
         if namespaces.is_empty() {
@@ -102,6 +105,7 @@ pub trait UnifiedSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         pool: &DbPool,
         params: &UnifiedSearchSpec,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumObject>, ApiError> {
         use crate::schema::hubuumobject::dsl as object_dsl;
 
@@ -109,6 +113,7 @@ pub trait UnifiedSearchBackend: SelfAccessors<User> + UserNamespaceAccessors {
             self,
             pool,
             &[Permissions::ReadCollection, Permissions::ReadObject],
+            scopes,
         )
         .await?;
         if namespaces.is_empty() {
@@ -156,13 +161,14 @@ async fn permitted_namespaces<T>(
     user: &T,
     pool: &DbPool,
     permissions: &[Permissions],
+    scopes: Option<&[Permissions]>,
 ) -> Result<Vec<Namespace>, ApiError>
 where
-    T: SelfAccessors<User> + UserNamespaceAccessors + ?Sized,
+    T: UserNamespaceAccessors + ?Sized,
 {
     let permissions = permissions.to_vec();
-    user.load_namespaces_with_permissions(pool, &permissions)
+    user.load_namespaces_with_permissions(pool, &permissions, scopes)
         .await
 }
 
-impl<T: ?Sized> UnifiedSearchBackend for T where T: SelfAccessors<User> + UserNamespaceAccessors {}
+impl<T: ?Sized> UnifiedSearchBackend for T where T: UserNamespaceAccessors {}

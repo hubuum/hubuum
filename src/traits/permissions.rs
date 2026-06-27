@@ -1,12 +1,11 @@
 use serde::Serialize;
 
+use crate::db::traits::authz::AuthzSubject;
 use crate::db::traits::permissions::PermissionControllerBackend;
-use crate::db::traits::user::GroupMemberships;
 use crate::errors::ApiError;
-use crate::models::traits::GroupAccessors;
-use crate::models::{Permission, Permissions, PermissionsList, User};
+use crate::models::{Permission, Permissions, PermissionsList};
 
-use super::{BackendContext, NamespaceAccessors, SelfAccessors};
+use super::{BackendContext, NamespaceAccessors};
 
 #[allow(dead_code)]
 pub trait PermissionController: Serialize + NamespaceAccessors {
@@ -24,13 +23,13 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// do this:
     /// ```ignore
     /// class = class_id.class(backend).await?;
-    /// if (class.user_can(backend, userid, Permissions::ReadClass).await?) {
+    /// if (class.user_can(backend, subject, Permissions::ReadClass, scopes).await?) {
     ///     return Ok(class);
     /// }
     /// ```
     /// And not this:
     /// ```ignore
-    /// if (class_id.user_can(backend, userid, Permissions::ReadClass).await?) {
+    /// if (class_id.user_can(backend, subject, Permissions::ReadClass, scopes).await?) {
     ///    return Ok(class_id.class(backend).await?);
     /// }
     /// ```
@@ -38,33 +37,36 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// ## Arguments
     ///
     /// * `backend` - The backend context to use for the query.
-    /// * `user` - The user to check permissions for.
+    /// * `subject` - The principal (impl `AuthzSubject`) to check permissions for.
     /// * `permission` - The permission to check.
+    /// * `scopes` - The token scope set as `Option<&[Permissions]>`; `None` = unscoped
+    ///   (full authority), `Some(..)` intersects the check fail-closed (even for admins).
     ///
     /// ## Returns
     ///
-    /// * `Ok(true)` if the user has the given permission on this class.
-    /// * `Ok(false)` if the user does not have the given permission on this class.
-    /// * `Err(_)` if the user does not have the given permission on this class, or if the
-    ///   permission is invalid.
+    /// * `Ok(true)` if the subject has the given permission on this class.
+    /// * `Ok(false)` if the subject does not have the given permission on this class.
+    /// * `Err(_)` if the lookup fails or the permission is invalid.
     ///
     /// ## Example
     ///
     /// ```ignore
-    /// if (hubuum_class_or_classid.user_can(backend, userid, ClassPermissions::ReadClass).await?) {
+    /// if (hubuum_class_or_classid.user_can(backend, subject, Permissions::ReadClass, scopes).await?) {
     ///     // Do something
     /// }
-    async fn user_can<C, U>(
+    async fn user_can<C, S>(
         &self,
         backend: &C,
-        user: U,
+        subject: S,
         permission: Permissions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<bool, ApiError>
     where
         C: BackendContext + ?Sized,
-        U: SelfAccessors<User> + GroupAccessors + GroupMemberships,
+        S: AuthzSubject,
     {
-        self.user_can_all(backend, user, vec![permission]).await
+        self.user_can_all(backend, subject, vec![permission], scopes)
+            .await
     }
 
     /// Check if the user has all the given permissions on the object.
@@ -82,14 +84,14 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// ```ignore
     /// permissions = vec![Permissions::ReadClass, Permissions::UpdateClass];
     /// class = class_id.class(backend).await?;
-    /// if (class.user_can(backend, userid, permissions).await?) {
+    /// if (class.user_can_all(backend, subject, permissions, scopes).await?) {
     ///     return Ok(class);
     /// }
     /// ```
     /// And not this:
     /// ```ignore
     /// permissions = vec![Permissions::ReadClass, Permissions::UpdateClass];
-    /// if (class_id.user_can(backend, userid, permissions).await?) {
+    /// if (class_id.user_can_all(backend, subject, permissions, scopes).await?) {
     ///    return Ok(class_id.class(backend).await?);
     /// }
     /// ```
@@ -97,33 +99,35 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// ## Arguments
     ///
     /// * `backend` - The backend context to use for the query.
-    /// * `user` - The user to check permissions for.
-    /// * `permission` - The permissions to check.
+    /// * `subject` - The principal (impl `AuthzSubject`) to check permissions for.
+    /// * `permission` - The permissions to check (all must be present).
+    /// * `scopes` - The token scope set as `Option<&[Permissions]>`; `None` = unscoped
+    ///   (full authority), `Some(..)` intersects the check fail-closed (even for admins).
     ///
     /// ## Returns
     ///
-    /// * `Ok(true)` if the user has the given permission on this class.
-    /// * `Ok(false)` if the user does not have the given permission on this class.
-    /// * `Err(_)` if the user does not have the given permission on this class, or if the
-    ///   permission is invalid.
+    /// * `Ok(true)` if the subject has all the given permissions on this class.
+    /// * `Ok(false)` if the subject does not.
+    /// * `Err(_)` if the lookup fails or a permission is invalid.
     ///
     /// ## Example
     ///
     /// ```ignore
-    /// if (hubuum_class_or_classid.user_can(backend, userid, ClassPermissions::ReadClass).await?) {
+    /// if (hubuum_class_or_classid.user_can_all(backend, subject, permissions, scopes).await?) {
     ///     // Do something
     /// }
-    async fn user_can_all<C, U>(
+    async fn user_can_all<C, S>(
         &self,
         backend: &C,
-        user: U,
+        subject: S,
         permission: Vec<Permissions>,
+        scopes: Option<&[Permissions]>,
     ) -> Result<bool, ApiError>
     where
         C: BackendContext + ?Sized,
-        U: SelfAccessors<User> + GroupAccessors + GroupMemberships,
+        S: AuthzSubject,
     {
-        self.user_can_all_from_backend(backend.db_pool(), user, permission)
+        self.user_can_all_from_backend(backend.db_pool(), subject, permission, scopes)
             .await
     }
 

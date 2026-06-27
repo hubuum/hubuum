@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::errors::ApiError;
-use crate::models::{HubuumClassExpanded, HubuumObject, Namespace, User};
+use crate::models::{HubuumClassExpanded, HubuumObject, Namespace, Permissions};
 use crate::pagination::{page_limits, validate_page_limit_with_max};
-use crate::traits::{BackendContext, Search};
+use crate::traits::BackendContext;
 use crate::utilities::extensions::CustomStringExtensions;
 
 #[derive(
@@ -421,16 +421,20 @@ fn object_value_matches(value: &serde_json::Value, query_lower: &str) -> bool {
     }
 }
 
-async fn search_namespaces<C>(
-    user: &User,
+async fn search_namespaces<C, S>(
+    user: &S,
     backend: &C,
     params: &UnifiedSearchQuery,
     search_spec: &UnifiedSearchSpec,
+    scopes: Option<&[Permissions]>,
 ) -> Result<SearchPage<Namespace>, ApiError>
 where
     C: BackendContext + ?Sized,
+    S: crate::traits::Search + ?Sized,
 {
-    let rows = user.search_unified_namespaces(backend, search_spec).await?;
+    let rows = user
+        .search_unified_namespaces(backend, search_spec, scopes)
+        .await?;
     if rows.is_empty() {
         return Ok(SearchPage {
             items: vec![],
@@ -458,16 +462,20 @@ where
     )
 }
 
-async fn search_classes<C>(
-    user: &User,
+async fn search_classes<C, S>(
+    user: &S,
     backend: &C,
     params: &UnifiedSearchQuery,
     search_spec: &UnifiedSearchSpec,
+    scopes: Option<&[Permissions]>,
 ) -> Result<SearchPage<HubuumClassExpanded>, ApiError>
 where
     C: BackendContext + ?Sized,
+    S: crate::traits::Search + ?Sized,
 {
-    let rows = user.search_unified_classes(backend, search_spec).await?;
+    let rows = user
+        .search_unified_classes(backend, search_spec, scopes)
+        .await?;
     if rows.is_empty() {
         return Ok(SearchPage {
             items: vec![],
@@ -498,16 +506,20 @@ where
     })
 }
 
-async fn search_objects<C>(
-    user: &User,
+async fn search_objects<C, S>(
+    user: &S,
     backend: &C,
     params: &UnifiedSearchQuery,
     search_spec: &UnifiedSearchSpec,
+    scopes: Option<&[Permissions]>,
 ) -> Result<SearchPage<HubuumObject>, ApiError>
 where
     C: BackendContext + ?Sized,
+    S: crate::traits::Search + ?Sized,
 {
-    let rows = user.search_unified_objects(backend, search_spec).await?;
+    let rows = user
+        .search_unified_objects(backend, search_spec, scopes)
+        .await?;
     if rows.is_empty() {
         return Ok(SearchPage {
             items: vec![],
@@ -534,17 +546,19 @@ where
     )
 }
 
-pub async fn execute_unified_search<C>(
-    user: &User,
+pub async fn execute_unified_search<C, S>(
+    user: &S,
     backend: &C,
     params: &UnifiedSearchQuery,
+    scopes: Option<&[Permissions]>,
 ) -> Result<UnifiedSearchResponse, ApiError>
 where
     C: BackendContext + ?Sized,
+    S: crate::traits::Search + ?Sized,
 {
     let search_spec = params.search_spec();
     let namespaces = if params.includes(UnifiedSearchKind::Namespace) {
-        search_namespaces(user, backend, params, &search_spec).await?
+        search_namespaces(user, backend, params, &search_spec, scopes).await?
     } else {
         SearchPage {
             items: vec![],
@@ -553,7 +567,7 @@ where
     };
 
     let classes = if params.includes(UnifiedSearchKind::Class) {
-        search_classes(user, backend, params, &search_spec).await?
+        search_classes(user, backend, params, &search_spec, scopes).await?
     } else {
         SearchPage {
             items: vec![],
@@ -562,7 +576,7 @@ where
     };
 
     let objects = if params.includes(UnifiedSearchKind::Object) {
-        search_objects(user, backend, params, &search_spec).await?
+        search_objects(user, backend, params, &search_spec, scopes).await?
     } else {
         SearchPage {
             items: vec![],
@@ -585,19 +599,21 @@ where
     })
 }
 
-pub async fn execute_unified_search_batch<C>(
-    user: &User,
+pub async fn execute_unified_search_batch<C, S>(
+    user: &S,
     backend: &C,
     params: &UnifiedSearchQuery,
     kind: UnifiedSearchKind,
+    scopes: Option<&[Permissions]>,
 ) -> Result<UnifiedSearchBatchResponse, ApiError>
 where
     C: BackendContext + ?Sized,
+    S: crate::traits::Search + ?Sized,
 {
     let search_spec = params.search_spec();
     match kind {
         UnifiedSearchKind::Namespace => {
-            let page = search_namespaces(user, backend, params, &search_spec).await?;
+            let page = search_namespaces(user, backend, params, &search_spec, scopes).await?;
             Ok(UnifiedSearchBatchResponse {
                 kind: kind.batch_key().to_string(),
                 namespaces: page.items,
@@ -607,7 +623,7 @@ where
             })
         }
         UnifiedSearchKind::Class => {
-            let page = search_classes(user, backend, params, &search_spec).await?;
+            let page = search_classes(user, backend, params, &search_spec, scopes).await?;
             Ok(UnifiedSearchBatchResponse {
                 kind: kind.batch_key().to_string(),
                 namespaces: vec![],
@@ -617,7 +633,7 @@ where
             })
         }
         UnifiedSearchKind::Object => {
-            let page = search_objects(user, backend, params, &search_spec).await?;
+            let page = search_objects(user, backend, params, &search_spec, scopes).await?;
             Ok(UnifiedSearchBatchResponse {
                 kind: kind.batch_key().to_string(),
                 namespaces: vec![],

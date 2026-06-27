@@ -43,7 +43,7 @@ mod tests {
 
         // Test wrong password
         let login_info = web::Form(LoginUser {
-            username: new_user.username.clone(),
+            name: new_user.name(&pool).await.unwrap(),
             password: "wrongpassword".to_string(),
         });
 
@@ -62,7 +62,7 @@ mod tests {
         );
 
         let login_info_ok = web::Form(LoginUser {
-            username: new_user.username.clone(),
+            name: new_user.name(&pool).await.unwrap(),
             password: "testpassword".to_string(),
         });
 
@@ -109,14 +109,14 @@ mod tests {
             .to_string();
 
         // Verify the token hash in database and that it belongs to the user
-        use crate::models::token::{Token, UserToken};
+        use crate::models::token::{PrincipalToken, Token};
         use crate::schema::tokens::dsl::*;
         let token_hash = Token::storage_hash_from_raw(&token_value);
         let token_exists = with_connection(&pool, |conn| {
             tokens
                 .filter(token.eq(&token_hash))
-                .filter(user_id.eq(new_user.id))
-                .first::<UserToken>(conn)
+                .filter(principal_id.eq(new_user.id))
+                .first::<PrincipalToken>(conn)
         })
         .is_ok();
 
@@ -151,7 +151,7 @@ mod tests {
         .await;
 
         let login_info = web::Form(LoginUser {
-            username: "nosuchuser".to_string(),
+            name: "nosuchuser".to_string(),
             password: "nosuchpassword".to_string(),
         });
 
@@ -186,7 +186,7 @@ mod tests {
 
         #[derive(Debug, serde::Deserialize, serde::Serialize)]
         struct NoPassword {
-            username: String,
+            name: String,
         }
 
         #[derive(Debug, serde::Deserialize, serde::Serialize)]
@@ -196,7 +196,7 @@ mod tests {
 
         // Perform login request with username but no password element
         let login_info_no_password = web::Form(NoPassword {
-            username: "testuser".to_string(),
+            name: "testuser".to_string(),
         });
 
         let resp = test::TestRequest::post()
@@ -480,7 +480,7 @@ mod tests {
 
         for _ in 0..max_attempts {
             let login_info = web::Form(LoginUser {
-                username: "forwarded-ip-user".to_string(),
+                name: "forwarded-ip-user".to_string(),
                 password: "wrongpassword".to_string(),
             });
 
@@ -498,7 +498,7 @@ mod tests {
         // The throttled bucket is keyed to the resolved client 198.51.100.10; a different
         // genuine client behind the same proxy is not affected.
         let other_client_login = web::Form(LoginUser {
-            username: "forwarded-ip-user".to_string(),
+            name: "forwarded-ip-user".to_string(),
             password: "wrongpassword".to_string(),
         });
 
@@ -535,7 +535,7 @@ mod tests {
 
         for attempt in 0..max_attempts {
             let login_info = web::Form(LoginUser {
-                username: "spoof-victim".to_string(),
+                name: "spoof-victim".to_string(),
                 password: "wrongpassword".to_string(),
             });
 
@@ -551,7 +551,7 @@ mod tests {
         }
 
         let login_info = web::Form(LoginUser {
-            username: "spoof-victim".to_string(),
+            name: "spoof-victim".to_string(),
             password: "wrongpassword".to_string(),
         });
 
@@ -589,7 +589,7 @@ mod tests {
         // Each distinct username keeps its own (user, ip) bucket at a single failure.
         for attempt in 0..per_ip {
             let login_info = web::Form(LoginUser {
-                username: format!("spray-user-{attempt}"),
+                name: format!("spray-user-{attempt}"),
                 password: "wrongpassword".to_string(),
             });
 
@@ -606,7 +606,7 @@ mod tests {
 
         // A brand-new username from the same source IP is now throttled by the per-IP cap.
         let login_info = web::Form(LoginUser {
-            username: "spray-user-final".to_string(),
+            name: "spray-user-final".to_string(),
             password: "wrongpassword".to_string(),
         });
 
@@ -637,7 +637,7 @@ mod tests {
 
         for _ in 0..max_attempts {
             let login_info = web::Form(LoginUser {
-                username: "throttle-user".to_string(),
+                name: "throttle-user".to_string(),
                 password: "wrongpassword".to_string(),
             });
 
@@ -651,7 +651,7 @@ mod tests {
         }
 
         let login_info = web::Form(LoginUser {
-            username: "throttle-user".to_string(),
+            name: "throttle-user".to_string(),
             password: "wrongpassword".to_string(),
         });
 
@@ -664,7 +664,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
 
         let other_user_login = web::Form(LoginUser {
-            username: "other-throttle-user".to_string(),
+            name: "other-throttle-user".to_string(),
             password: "wrongpassword".to_string(),
         });
 

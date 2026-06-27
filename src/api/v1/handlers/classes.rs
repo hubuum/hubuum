@@ -7,7 +7,7 @@ use crate::can;
 use crate::db::DbPool;
 use crate::db::traits::{ClassRelation, ObjectRelationMemberships, UserPermissions};
 use crate::errors::ApiError;
-use crate::extractors::UserAccess;
+use crate::extractors::Authenticated;
 use crate::models::traits::{ExpandNamespace, ToHubuumObjects};
 use crate::pagination::{
     count_query_options, page_limits, prepare_db_pagination, validate_page_limit,
@@ -191,10 +191,10 @@ fn ensure_graph_result_within_limit<T>(
 #[get("/")]
 async fn get_classes(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let query_string = req.query_string();
 
     let params = match parse_query_parameter(query_string) {
@@ -205,10 +205,12 @@ async fn get_classes(
     debug!(message = "Listing classes", user_id = user.id());
 
     let total_count = user
-        .count_classes(&pool, count_query_options(&params))
+        .count_classes(&pool, count_query_options(&params), requestor.scopes())
         .await?;
     let search_params = prepare_db_pagination::<HubuumClassExpanded>(&params)?;
-    let classes = user.search_classes(&pool, search_params).await?;
+    let classes = user
+        .search_classes(&pool, search_params, requestor.scopes())
+        .await?;
 
     paginated_json_response(classes, total_count, StatusCode::OK, &params)
 }
@@ -231,10 +233,10 @@ async fn get_classes(
 #[post("/")]
 async fn create_class(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     class_data: web::Json<NewHubuumClass>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let class_data = class_data.into_inner();
 
     debug!(
@@ -244,7 +246,13 @@ async fn create_class(
     );
 
     let namespace = NamespaceID::new(class_data.namespace_id)?;
-    can!(&pool, user, [Permissions::CreateClass], namespace);
+    can!(
+        &pool,
+        user,
+        requestor.scopes(),
+        [Permissions::CreateClass],
+        namespace
+    );
 
     let class = class_data
         .save(&pool)
@@ -275,10 +283,10 @@ async fn create_class(
 #[get("/{class_id}")]
 async fn get_class(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let class = class_id.into_inner();
 
     debug!(
@@ -288,7 +296,13 @@ async fn get_class(
     );
 
     let class = class.instance(&pool).await?;
-    can!(&pool, user, [Permissions::ReadClass], class);
+    can!(
+        &pool,
+        user,
+        requestor.scopes(),
+        [Permissions::ReadClass],
+        class
+    );
     let class = class.expand_namespace(&pool).await?;
 
     Ok(json_response(class, StatusCode::OK))
@@ -313,11 +327,11 @@ async fn get_class(
 #[patch("/{class_id}")]
 async fn update_class(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     class_data: web::Json<UpdateHubuumClass>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let class_id = class_id.into_inner();
     let class_data = class_data.into_inner();
 
@@ -328,7 +342,13 @@ async fn update_class(
     );
 
     let class = class_id.instance(&pool).await?;
-    can!(&pool, user, [Permissions::UpdateClass], class);
+    can!(
+        &pool,
+        user,
+        requestor.scopes(),
+        [Permissions::UpdateClass],
+        class
+    );
 
     if let Some(target_namespace_id) = class_data.namespace_id
         && target_namespace_id != class.namespace_id
@@ -336,6 +356,7 @@ async fn update_class(
         can!(
             &pool,
             user,
+            requestor.scopes(),
             [Permissions::CreateClass],
             NamespaceID::new(target_namespace_id)?
         );
@@ -366,10 +387,10 @@ async fn update_class(
 #[delete("/{class_id}")]
 async fn delete_class(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let class_id = class_id.into_inner();
 
     debug!(
@@ -379,7 +400,13 @@ async fn delete_class(
     );
 
     let class = class_id.instance(&pool).await?;
-    can!(&pool, user, [Permissions::DeleteClass], class);
+    can!(
+        &pool,
+        user,
+        requestor.scopes(),
+        [Permissions::DeleteClass],
+        class
+    );
 
     class.delete(&pool).await?;
     Ok(json_response((), StatusCode::NO_CONTENT))
@@ -402,14 +429,14 @@ async fn delete_class(
 #[get("/{class_id}/permissions")]
 async fn get_class_permissions(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::models::namespace::groups_on_paginated;
     use crate::traits::NamespaceAccessors;
 
-    let user = requestor.user;
+    let user = &requestor.principal;
     let class_id = class_id.into_inner();
     let params = parse_query_parameter(req.query_string())?;
 
@@ -420,7 +447,13 @@ async fn get_class_permissions(
     );
 
     let class = class_id.instance(&pool).await?;
-    can!(&pool, user, [Permissions::ReadClass], class);
+    can!(
+        &pool,
+        user,
+        requestor.scopes(),
+        [Permissions::ReadClass],
+        class
+    );
 
     let nid = class.namespace_id(&pool).await?;
     let count_params = count_query_options(&params);
@@ -473,19 +506,25 @@ async fn get_class_permissions(
 #[get("/{class_id}/related/classes/")]
 async fn get_related_classes(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let class_id = class_id.into_inner();
     let params = parse_query_parameter(req.query_string())?;
     let class = class_id.instance(&pool).await?;
-    can!(&pool, user, [Permissions::ReadClass], class);
+    can!(
+        &pool,
+        user,
+        requestor.scopes(),
+        [Permissions::ReadClass],
+        class
+    );
 
     let search_params = prepare_db_pagination::<ClassGraphRow>(&params)?;
     let (classes, total_count) = user
-        .classes_related_to_page(&pool, class, search_params)
+        .classes_related_to_page(&pool, class, search_params, requestor.scopes())
         .await?;
 
     paginated_json_mapped_response(classes, total_count, StatusCode::OK, &params, |page| {
@@ -515,14 +554,14 @@ async fn get_related_classes(
 #[post("/{class_id}/relations/")]
 async fn create_class_relation(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     relation_data: web::Json<NewHubuumClassRelationFromClass>,
 ) -> Result<impl Responder, ApiError> {
     use crate::models::NewHubuumClassRelation;
     use crate::traits::NamespaceAccessors;
 
-    let user = requestor.user;
+    let user = &requestor.principal;
     let class_id = class_id.into_inner();
     let partial_relation = relation_data.into_inner();
 
@@ -544,6 +583,7 @@ async fn create_class_relation(
     can!(
         &pool,
         user,
+        requestor.scopes(),
         [Permissions::CreateClassRelation],
         ids.0,
         ids.1
@@ -581,12 +621,12 @@ async fn create_class_relation(
 #[delete("/{class_id}/relations/{relation_id}")]
 async fn delete_class_relation(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumClassRelationID)>,
 ) -> Result<impl Responder, ApiError> {
     use crate::traits::NamespaceAccessors;
 
-    let user = requestor.user;
+    let user = &requestor.principal;
     let (class_id, relation_id) = paths.into_inner();
 
     debug!(
@@ -603,6 +643,7 @@ async fn delete_class_relation(
     can!(
         &pool,
         user,
+        requestor.scopes(),
         [Permissions::DeleteClassRelation],
         ids.0,
         ids.1
@@ -650,15 +691,21 @@ async fn delete_class_relation(
 #[get("/{class_id}/related/relations/")]
 async fn get_related_class_relations(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let class_id = class_id.into_inner();
     let params = parse_query_parameter(req.query_string())?;
     let class = class_id.instance(&pool).await?;
-    can!(&pool, user, [Permissions::ReadClass], class);
+    can!(
+        &pool,
+        user,
+        requestor.scopes(),
+        [Permissions::ReadClass],
+        class
+    );
 
     debug!(
         message = "Getting direct relations touching class",
@@ -668,7 +715,7 @@ async fn get_related_class_relations(
 
     let search_params = prepare_db_pagination::<HubuumClassRelation>(&params)?;
     let (relations, total_count) = user
-        .class_relations_touching_page(&pool, class, search_params)
+        .class_relations_touching_page(&pool, class, search_params, requestor.scopes())
         .await?;
     paginated_json_response(relations, total_count, StatusCode::OK, &params)
 }
@@ -693,19 +740,27 @@ async fn get_related_class_relations(
 #[get("/{class_id}/related/graph/")]
 async fn get_related_class_graph(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let class_id = class_id.into_inner();
     let (params, graph_limit) =
         prepare_graph_query_options(parse_query_parameter(req.query_string())?)?;
     let class = class_id.instance(&pool).await?;
-    can!(&pool, user, [Permissions::ReadClass], class);
+    can!(
+        &pool,
+        user,
+        requestor.scopes(),
+        [Permissions::ReadClass],
+        class
+    );
 
     let root_class = class_with_root_path(&class);
-    let connected_classes = user.search_classes_related_to(&pool, class, params).await?;
+    let connected_classes = user
+        .search_classes_related_to(&pool, class, params, requestor.scopes())
+        .await?;
     ensure_graph_result_within_limit(&connected_classes, graph_limit, "classes")?;
     let mut classes = Vec::with_capacity(connected_classes.len() + 1);
     classes.push(root_class);
@@ -713,7 +768,7 @@ async fn get_related_class_graph(
 
     let class_ids = classes.iter().map(|item| item.id).collect::<Vec<_>>();
     let relations = user
-        .search_class_relations_between_ids(&pool, &class_ids)
+        .search_class_relations_between_ids(&pool, &class_ids, requestor.scopes())
         .await?;
 
     Ok(json_response(
@@ -744,11 +799,11 @@ async fn get_related_class_graph(
 #[get("/{class_id}/")]
 async fn get_objects_in_class(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let class = class_id.into_inner();
     let query_string = req.query_string();
 
@@ -769,10 +824,12 @@ async fn get_objects_in_class(
     );
 
     let total_count = user
-        .count_objects(&pool, count_query_options(&params))
+        .count_objects(&pool, count_query_options(&params), requestor.scopes())
         .await?;
     let search_params = prepare_db_pagination::<HubuumObject>(&params)?;
-    let objects = user.search_objects(&pool, search_params).await?;
+    let objects = user
+        .search_objects(&pool, search_params, requestor.scopes())
+        .await?;
 
     paginated_json_response(objects, total_count, StatusCode::OK, &params)
 }
@@ -796,11 +853,11 @@ async fn get_objects_in_class(
 #[post("/{class_id}/")]
 async fn create_object_in_class(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     object_data: web::Json<NewHubuumObject>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let class_id = class_id.into_inner();
     let object_data = object_data.into_inner();
 
@@ -812,7 +869,13 @@ async fn create_object_in_class(
     );
 
     let class = class_id.instance(&pool).await?;
-    can!(&pool, user, [Permissions::CreateObject], class);
+    can!(
+        &pool,
+        user,
+        requestor.scopes(),
+        [Permissions::CreateObject],
+        class
+    );
     ensure_new_object_matches_path_class(&object_data, &class)?;
 
     let object = object_data.save(&pool).await?;
@@ -841,10 +904,10 @@ async fn create_object_in_class(
 #[get("/{class_id}/{object_id}")]
 async fn get_object_in_class(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumObjectID)>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let (class_id, object_id) = paths.into_inner();
 
     debug!(
@@ -856,7 +919,13 @@ async fn get_object_in_class(
 
     check_if_object_in_class(&pool, &class_id, &object_id).await?;
     let object = object_id.instance(&pool).await?;
-    can!(&pool, user, [Permissions::ReadObject], object);
+    can!(
+        &pool,
+        user,
+        requestor.scopes(),
+        [Permissions::ReadObject],
+        object
+    );
 
     Ok(json_response(object, StatusCode::OK))
 }
@@ -881,11 +950,11 @@ async fn get_object_in_class(
 #[patch("/{class_id}/{object_id}")]
 async fn patch_object_in_class(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumObjectID)>,
     object_data: web::Json<UpdateHubuumObject>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let (class_id, object_id) = paths.into_inner();
     let object_data = object_data.into_inner();
 
@@ -898,7 +967,13 @@ async fn patch_object_in_class(
 
     check_if_object_in_class(&pool, &class_id, &object_id).await?;
     let object = object_id.instance(&pool).await?;
-    can!(&pool, user, [Permissions::UpdateObject], object);
+    can!(
+        &pool,
+        user,
+        requestor.scopes(),
+        [Permissions::UpdateObject],
+        object
+    );
     ensure_object_update_stays_in_path_class(&object_data, &object)?;
 
     let object = object_data.update(&pool, object.id).await?;
@@ -923,10 +998,10 @@ async fn patch_object_in_class(
 #[delete("/{class_id}/{object_id}")]
 async fn delete_object_in_class(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumObjectID)>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let (class_id, object_id) = paths.into_inner();
 
     debug!(
@@ -938,7 +1013,13 @@ async fn delete_object_in_class(
 
     check_if_object_in_class(&pool, &class_id, &object_id).await?;
     let object = object_id.instance(&pool).await?;
-    can!(&pool, user, [Permissions::DeleteObject], object);
+    can!(
+        &pool,
+        user,
+        requestor.scopes(),
+        [Permissions::DeleteObject],
+        object
+    );
 
     object.delete(&pool).await?;
     Ok(json_response((), StatusCode::NO_CONTENT))
@@ -967,11 +1048,11 @@ async fn delete_object_in_class(
 #[get("/{class_id}/objects/{object_id}/related/objects/")]
 async fn get_related_objects(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumObjectID)>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let (class_id, object_id) = paths.into_inner();
     let query_string = req.query_string();
 
@@ -979,7 +1060,13 @@ async fn get_related_objects(
 
     check_if_object_in_class(&pool, &class_id, &object_id).await?;
     let object = object_id.instance(&pool).await?;
-    can!(&pool, user, [Permissions::ReadObject], object);
+    can!(
+        &pool,
+        user,
+        requestor.scopes(),
+        [Permissions::ReadObject],
+        object
+    );
 
     if related_options.ignore_self_class {
         params.filters.add_filter(
@@ -1014,7 +1101,7 @@ async fn get_related_objects(
 
     let search_params = prepare_db_pagination::<RelatedObjectGraphRow>(&params)?;
     let (hits, total_count) = user
-        .objects_related_to_page(&pool, object, search_params)
+        .objects_related_to_page(&pool, object, search_params, requestor.scopes())
         .await?;
 
     paginated_json_mapped_response(hits, total_count, StatusCode::OK, &params, |page| {
@@ -1043,17 +1130,23 @@ async fn get_related_objects(
 #[get("/{class_id}/objects/{object_id}/related/relations/")]
 async fn get_related_object_relations(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumObjectID)>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let (class_id, object_id) = paths.into_inner();
     let params = parse_query_parameter(req.query_string())?;
 
     check_if_object_in_class(&pool, &class_id, &object_id).await?;
     let object = object_id.instance(&pool).await?;
-    can!(&pool, user, [Permissions::ReadObject], object);
+    can!(
+        &pool,
+        user,
+        requestor.scopes(),
+        [Permissions::ReadObject],
+        object
+    );
 
     debug!(
         message = "Getting direct relations touching object",
@@ -1065,7 +1158,7 @@ async fn get_related_object_relations(
 
     let search_params = prepare_db_pagination::<HubuumObjectRelation>(&params)?;
     let (relations, total_count) = user
-        .object_relations_touching_page(&pool, object, search_params)
+        .object_relations_touching_page(&pool, object, search_params, requestor.scopes())
         .await?;
 
     paginated_json_response(relations, total_count, StatusCode::OK, &params)
@@ -1092,18 +1185,24 @@ async fn get_related_object_relations(
 #[get("/{class_id}/objects/{object_id}/related/graph/")]
 async fn get_related_object_graph(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumObjectID)>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let (class_id, object_id) = paths.into_inner();
     let (params, graph_limit) =
         prepare_graph_query_options(parse_query_parameter(req.query_string())?)?;
 
     check_if_object_in_class(&pool, &class_id, &object_id).await?;
     let object = object_id.instance(&pool).await?;
-    can!(&pool, user, [Permissions::ReadObject], object);
+    can!(
+        &pool,
+        user,
+        requestor.scopes(),
+        [Permissions::ReadObject],
+        object
+    );
 
     debug!(
         message = "Getting related object graph",
@@ -1115,7 +1214,7 @@ async fn get_related_object_graph(
 
     let root_object = object_with_root_path(&object);
     let connected_objects = user
-        .search_objects_related_to(&pool, object, params)
+        .search_objects_related_to(&pool, object, params, requestor.scopes())
         .await?;
     ensure_graph_result_within_limit(&connected_objects, graph_limit, "objects")?;
     let mut objects = Vec::with_capacity(connected_objects.len() + 1);
@@ -1124,7 +1223,7 @@ async fn get_related_object_graph(
 
     let object_ids = objects.iter().map(|item| item.id).collect::<Vec<_>>();
     let relations = user
-        .search_object_relations_between_ids(&pool, &object_ids)
+        .search_object_relations_between_ids(&pool, &object_ids, requestor.scopes())
         .await?;
 
     Ok(json_response(
@@ -1153,10 +1252,10 @@ async fn get_related_object_graph(
 #[get("/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}")]
 async fn get_object_relation_from_class_and_objects(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumObjectID, HubuumClassID, HubuumObjectID)>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let (from_class, from_object, to_class, to_object) = paths.into_inner();
 
     debug!(
@@ -1170,6 +1269,7 @@ async fn get_object_relation_from_class_and_objects(
     can!(
         &pool,
         user,
+        requestor.scopes(),
         [Permissions::ReadObjectRelation],
         from_class,
         from_object,
@@ -1214,10 +1314,10 @@ async fn get_object_relation_from_class_and_objects(
 #[delete("/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}")]
 async fn delete_object_relation(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumObjectID, HubuumClassID, HubuumObjectID)>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let (from_class, from_object, to_class, to_object) = paths.into_inner();
 
     check_if_object_in_class(&pool, &from_class, &from_object).await?;
@@ -1235,6 +1335,7 @@ async fn delete_object_relation(
     can!(
         &pool,
         user,
+        requestor.scopes(),
         [Permissions::DeleteObjectRelation],
         from_class,
         from_object,
@@ -1299,10 +1400,10 @@ async fn delete_object_relation(
 #[post("/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}")]
 async fn create_object_relation(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumObjectID, HubuumClassID, HubuumObjectID)>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let (from_class, from_object, to_class, to_object) = paths.into_inner();
 
     debug!(
@@ -1317,6 +1418,7 @@ async fn create_object_relation(
     can!(
         &pool,
         user,
+        requestor.scopes(),
         [Permissions::CreateObjectRelation],
         from_class,
         to_class

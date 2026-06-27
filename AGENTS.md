@@ -38,6 +38,7 @@
 - Put behavior on types with `impl` blocks when it naturally belongs to the type. Prefer this over collections of bare functions that operate on loosely related data.
 - Keep invariants close to the data they protect. Constructors and setters should reject invalid states rather than relying on callers to remember preconditions.
 - Use small, explicit APIs. Expose only what callers need, and keep representation details private unless there is a strong reason not to.
+- Prefer `use` imports over inline fully-qualified paths for functions, types, and macros. Only fully-qualify a path inline when needed to resolve a genuine name ambiguity (or for a one-off reference where a `use` would mislead).
 
 ## OpenAPI
 
@@ -56,6 +57,8 @@
 - Prefer the shared test utilities in `src/tests/*` for API requests, fixtures, scoped names, and assertions.
 - Use `TestScope` or `TestContext` for database-backed tests so test data is isolated and names do not collide under parallel execution.
 - Clean up fixtures where tests create persistent domain objects outside existing fixture helpers.
+- Keep each test focused on a single behavior; avoid asserting several unrelated outcomes in one test body. When a behavior varies by input, drive the variants with `#[rstest]` `#[case(...)]` parameterization rather than stacking multiple assertions in one test. (A small amount of arrange/precondition checking in service of the one behavior under test is fine.)
+- Do not add dead code (unused fields, functions, imports, or `#[allow(dead_code)]`) to make a test or build pass; remove what is unused instead.
 
 ## Benchmarks
 

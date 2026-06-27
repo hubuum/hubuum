@@ -6,14 +6,14 @@ use crate::db::traits::task::{
     TaskBackend, list_report_task_output_summaries, list_tasks_with_total_count,
 };
 use crate::errors::ApiError;
-use crate::extractors::UserAccess;
+use crate::extractors::Authenticated;
 use crate::models::search::parse_query_parameter_with_passthrough;
 use crate::models::{
     ReportOutputLookup, TaskEventResponse, TaskID, TaskKind, TaskResponse, TaskStatus,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::tasks::ensure_task_worker_running;
-use crate::traits::GroupMemberships;
+use crate::traits::AuthzSubject;
 use crate::utilities::response::{json_response, paginated_json_response};
 
 #[derive(Debug, Default)]
@@ -98,17 +98,17 @@ fn parse_task_list_query(
 #[get("/")]
 pub async fn get_tasks(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
     let (params, filters) = parse_task_list_query(req.query_string())?;
     let search_params = prepare_db_pagination::<TaskResponse>(&params)?;
-    let is_admin = requestor.user.is_admin(&pool).await?;
+    let is_admin = requestor.principal.is_admin(&pool).await?;
     let submitted_by_filter = if is_admin {
         filters.submitted_by
     } else {
-        Some(requestor.user.id)
+        Some(requestor.principal.id)
     };
     let (tasks, total_count) = list_tasks_with_total_count(
         &pool,
@@ -169,13 +169,13 @@ pub async fn get_tasks(
 #[get("/{task_id}")]
 pub async fn get_task(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
     let task = task_id
         .into_inner()
-        .load_authorized(&pool, &requestor.user)
+        .load_authorized(&pool, &requestor.principal)
         .await?;
     let report_output = if task.kind == TaskKind::Report.as_str() {
         task.find_report_output_summary(&pool).await?
@@ -206,13 +206,13 @@ pub async fn get_task(
 #[get("/{task_id}/events")]
 pub async fn get_task_events(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     req: HttpRequest,
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
     let task_id = task_id.into_inner();
-    task_id.load_authorized(&pool, &requestor.user).await?;
+    task_id.load_authorized(&pool, &requestor.principal).await?;
     let (params, _) = parse_query_parameter_with_passthrough(req.query_string(), &[])?;
     let search_params = prepare_db_pagination::<TaskEventResponse>(&params)?;
     let (events, total_count) = task_id

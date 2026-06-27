@@ -6,7 +6,7 @@ use serde::Serialize;
 use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::extractors::UserAccess;
+use crate::extractors::Authenticated;
 use crate::models::{
     UnifiedSearchDoneEvent, UnifiedSearchErrorEvent, UnifiedSearchKind, UnifiedSearchResponse,
     UnifiedSearchStartedEvent, execute_unified_search, execute_unified_search_batch,
@@ -45,11 +45,12 @@ fn sse_event<T: Serialize>(event: &str, payload: &T) -> Result<Bytes, ApiError> 
 #[get("")]
 pub async fn get_search(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let params = parse_unified_search_query(req.query_string())?;
-    let response = execute_unified_search(&requestor.user, &pool, &params).await?;
+    let response =
+        execute_unified_search(&requestor.principal, &pool, &params, requestor.scopes()).await?;
     Ok(json_response(response, StatusCode::OK))
 }
 
@@ -77,7 +78,7 @@ pub async fn get_search(
 #[get("/stream")]
 pub async fn stream_search(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
     let params = parse_unified_search_query(req.query_string())?;
@@ -97,7 +98,15 @@ pub async fn stream_search(
             continue;
         }
 
-        match execute_unified_search_batch(&requestor.user, &pool, &params, kind).await {
+        match execute_unified_search_batch(
+            &requestor.principal,
+            &pool,
+            &params,
+            kind,
+            requestor.scopes(),
+        )
+        .await
+        {
             Ok(batch) => events.push(sse_event("batch", &batch)?),
             Err(error) => {
                 events.push(sse_event(

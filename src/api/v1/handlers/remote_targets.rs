@@ -9,9 +9,10 @@ use crate::db::traits::UserPermissions;
 use crate::db::traits::remote_target::{
     DeleteRemoteTargetRecord, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
 };
-use crate::db::traits::task::TaskCreateRequest;
+use crate::db::traits::task::{TaskCreateRequest, TaskScopeSnapshot};
 use crate::errors::ApiError;
-use crate::extractors::UserAccess;
+use crate::extractors::Authenticated;
+use crate::models::namespace::user_can_on_any;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
     HubuumClassID, NamespaceID, NewRemoteTarget, Permissions, RemoteTarget, RemoteTargetID,
@@ -46,14 +47,15 @@ use crate::utilities::response::{
 #[post("/")]
 pub async fn create_remote_target(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     target: web::Json<NewRemoteTarget>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let target = target.into_inner();
     can!(
         &pool,
         user,
+        requestor.scopes(),
         [Permissions::CreateRemoteTarget],
         target.namespace_id
     );
@@ -91,18 +93,22 @@ pub async fn create_remote_target(
 #[get("/")]
 pub async fn get_remote_targets(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let params = parse_query_parameter(req.query_string())?;
     let query_options = prepare_db_pagination::<RemoteTarget>(&params)?;
-    let allowed_namespace_ids =
-        crate::models::namespace::user_can_on_any(&pool, user, Permissions::ReadRemoteTarget)
-            .await?
-            .into_iter()
-            .map(|namespace| namespace.id)
-            .collect::<Vec<_>>();
+    let allowed_namespace_ids = user_can_on_any(
+        &pool,
+        user,
+        Permissions::ReadRemoteTarget,
+        requestor.scopes(),
+    )
+    .await?
+    .into_iter()
+    .map(|namespace| namespace.id)
+    .collect::<Vec<_>>();
     let (targets, total_count) =
         RemoteTarget::list_with_total_count(&pool, &allowed_namespace_ids, &query_options).await?;
 
@@ -125,14 +131,15 @@ pub async fn get_remote_targets(
 #[get("/{target_id}")]
 pub async fn get_remote_target(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     target_id: web::Path<RemoteTargetID>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let target = target_id.into_inner().instance(&pool).await?;
     can!(
         &pool,
         user,
+        requestor.scopes(),
         [Permissions::ReadRemoteTarget],
         NamespaceID::new(target.namespace_id)?
     );
@@ -158,11 +165,11 @@ pub async fn get_remote_target(
 #[patch("/{target_id}")]
 pub async fn patch_remote_target(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     target_id: web::Path<RemoteTargetID>,
     update: web::Json<UpdateRemoteTarget>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let target_id = target_id.into_inner();
     let update = update.into_inner();
     if update.is_empty() {
@@ -175,11 +182,18 @@ pub async fn patch_remote_target(
     can!(
         &pool,
         user.clone(),
+        requestor.scopes(),
         [Permissions::UpdateRemoteTarget],
         NamespaceID::new(existing.namespace_id)?
     );
     if let Some(namespace_id) = update.namespace_id {
-        can!(&pool, user, [Permissions::CreateRemoteTarget], namespace_id);
+        can!(
+            &pool,
+            user,
+            requestor.scopes(),
+            [Permissions::CreateRemoteTarget],
+            namespace_id
+        );
     }
     let effective_namespace_id = update
         .namespace_id
@@ -233,15 +247,16 @@ async fn validate_remote_target_class_scope(
 #[delete("/{target_id}")]
 pub async fn delete_remote_target(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     target_id: web::Path<RemoteTargetID>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let target_id = target_id.into_inner();
     let existing = target_id.instance(&pool).await?;
     can!(
         &pool,
         user,
+        requestor.scopes(),
         [Permissions::DeleteRemoteTarget],
         NamespaceID::new(existing.namespace_id)?
     );
@@ -270,17 +285,19 @@ pub async fn delete_remote_target(
 #[post("/{target_id}/invoke")]
 pub async fn invoke_remote_target(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     req: HttpRequest,
     target_id: web::Path<RemoteTargetID>,
     body: web::Json<RemoteTargetInvokeRequest>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
-    let user = requestor.user;
+    let user = &requestor.principal;
     let target_id = target_id.into_inner();
     let invoke = body.into_inner();
     let target = target_id.instance(&pool).await?;
-    let resolved = authorize_remote_invocation(&pool, &user, &target, &invoke.subject).await?;
+    let resolved =
+        authorize_remote_invocation(&pool, user, requestor.scopes(), &target, &invoke.subject)
+            .await?;
 
     let payload = serde_json::to_value(StoredRemoteCallTaskPayload {
         target_id,
@@ -288,9 +305,14 @@ pub async fn invoke_remote_target(
         parameters: invoke.parameters,
         body_override: invoke.body_override,
     })?;
+    let snapshot = TaskScopeSnapshot::from_request(
+        Some(requestor.token_meta.id),
+        requestor.scopes(),
+    );
     let task = find_or_create_remote_call_task(
         &pool,
         user.id,
+        snapshot,
         idempotency_key_from_headers(req.headers())?,
         payload,
     )
@@ -317,6 +339,7 @@ pub async fn invoke_remote_target(
 async fn find_or_create_remote_call_task(
     pool: &DbPool,
     submitted_by: i32,
+    snapshot: TaskScopeSnapshot,
     idempotency_key: Option<String>,
     payload: serde_json::Value,
 ) -> Result<crate::models::TaskRecord, ApiError> {
@@ -352,6 +375,9 @@ async fn find_or_create_remote_call_task(
         request_hash: Some(hash),
         request_payload: payload,
         total_items: 1,
+        submitted_token_id: snapshot.token_id,
+        submitted_token_scoped: snapshot.scoped,
+        submitted_token_scopes: snapshot.scopes,
     })
     .create_with_active_remote_call_limit(pool, max_active_remote_call_tasks_per_user())
     .await

@@ -4,7 +4,8 @@ use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, UserAccess};
 use crate::models::group::{GroupID, NewGroup, UpdateGroup};
 use crate::models::search::parse_query_parameter;
-use crate::models::{Group, User, UserID, UserResponse};
+use crate::models::service_account::service_accounts_owned_by_group;
+use crate::models::{Group, Principal, PrincipalID, PrincipalMemberResponse};
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::utilities::response::{
     json_response, json_response_created, paginated_json_mapped_response, paginated_json_response,
@@ -16,7 +17,7 @@ use tracing::debug;
 
 #[derive(Serialize, Deserialize)]
 struct GroupMember {
-    pub user_id: UserID,
+    pub principal_id: PrincipalID,
     pub group_id: GroupID,
 }
 
@@ -174,7 +175,8 @@ pub async fn update_group(
     responses(
         (status = 204, description = "Group deleted"),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 404, description = "Group not found", body = ApiErrorResponse)
+        (status = 404, description = "Group not found", body = ApiErrorResponse),
+        (status = 409, description = "Group still owns service accounts", body = ApiErrorResponse)
     )
 )]
 #[delete("/{group_id}")]
@@ -189,6 +191,20 @@ pub async fn delete_group(
         requestor = requestor.user.id
     );
 
+    // owner_group_id is ON DELETE RESTRICT: surface a clear 409 listing the owned
+    // service accounts instead of letting the FK violation become an opaque error.
+    let owned = service_accounts_owned_by_group(&pool, group_id.id()).await?;
+    if !owned.is_empty() {
+        let list = owned
+            .iter()
+            .map(|(id, name)| format!("{name} (id {id})"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(ApiError::Conflict(format!(
+            "Group owns service accounts; reassign or delete them first: {list}"
+        )));
+    }
+
     group_id.delete(&pool).await?;
     Ok(json_response(json!({}), StatusCode::NO_CONTENT))
 }
@@ -202,7 +218,7 @@ pub async fn delete_group(
         ("group_id" = i32, Path, description = "Group ID")
     ),
     responses(
-        (status = 200, description = "Members of group", body = [UserResponse]),
+        (status = 200, description = "Members of group", body = [PrincipalMemberResponse]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Group not found", body = ApiErrorResponse)
     )
@@ -226,22 +242,25 @@ pub async fn get_group_members(
 
     let count_params = count_query_options(&params);
     let total_count = group.count_members_paginated(&pool, &count_params).await?;
-    let search_params = prepare_db_pagination::<User>(&params)?;
+    let search_params = prepare_db_pagination::<Principal>(&params)?;
     let members = group.members_paginated(&pool, &search_params).await?;
 
-    paginated_json_mapped_response(members, total_count, StatusCode::OK, &params, |users| {
-        users.into_iter().map(UserResponse::from).collect()
+    paginated_json_mapped_response(members, total_count, StatusCode::OK, &params, |members| {
+        members
+            .into_iter()
+            .map(PrincipalMemberResponse::from)
+            .collect()
     })
 }
 
 #[utoipa::path(
     post,
-    path = "/api/v1/iam/groups/{group_id}/members/{user_id}",
+    path = "/api/v1/iam/groups/{group_id}/members/{principal_id}",
     tag = "groups",
     security(("bearer_auth" = [])),
     params(
         ("group_id" = i32, Path, description = "Group ID"),
-        ("user_id" = i32, Path, description = "User ID")
+        ("principal_id" = i32, Path, description = "Principal ID")
     ),
     responses(
         (status = 204, description = "User added to group"),
@@ -249,35 +268,35 @@ pub async fn get_group_members(
         (status = 404, description = "User or group not found", body = ApiErrorResponse)
     )
 )]
-#[post("/{group_id}/members/{user_id}")]
+#[post("/{group_id}/members/{principal_id}")]
 pub async fn add_group_member(
     pool: web::Data<DbPool>,
     user_group_ids: web::Path<GroupMember>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
     let group = user_group_ids.group_id.group(&pool).await?;
-    let user = user_group_ids.user_id.user(&pool).await?;
+    let principal = user_group_ids.principal_id.principal(&pool).await?;
 
     debug!(
-        message = "Adding user to group",
-        user = user.id,
+        message = "Adding principal to group",
+        principal = principal.id,
         group = group.id,
         requestor = requestor.user.id
     );
 
-    group.add_member(&pool, &user).await?;
+    group.add_member(&pool, &principal).await?;
 
     Ok(json_response(json!({}), StatusCode::NO_CONTENT))
 }
 
 #[utoipa::path(
     delete,
-    path = "/api/v1/iam/groups/{group_id}/members/{user_id}",
+    path = "/api/v1/iam/groups/{group_id}/members/{principal_id}",
     tag = "groups",
     security(("bearer_auth" = [])),
     params(
         ("group_id" = i32, Path, description = "Group ID"),
-        ("user_id" = i32, Path, description = "User ID")
+        ("principal_id" = i32, Path, description = "Principal ID")
     ),
     responses(
         (status = 204, description = "User removed from group"),
@@ -285,22 +304,22 @@ pub async fn add_group_member(
         (status = 404, description = "User or group not found", body = ApiErrorResponse)
     )
 )]
-#[delete("/{group_id}/members/{user_id}")]
+#[delete("/{group_id}/members/{principal_id}")]
 pub async fn delete_group_member(
     pool: web::Data<DbPool>,
     user_group_ids: web::Path<GroupMember>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
     let group = user_group_ids.group_id.group(&pool).await?;
-    let user = user_group_ids.user_id.user(&pool).await?;
+    let principal = user_group_ids.principal_id.principal(&pool).await?;
 
     debug!(
-        message = "Deleting user from group",
-        user = user.id,
+        message = "Deleting principal from group",
+        principal = principal.id,
         group = group.id,
         requestor = requestor.user.id
     );
 
-    group.remove_member(&user, &pool).await?;
+    group.remove_member(&principal, &pool).await?;
     Ok(json_response(json!({}), StatusCode::NO_CONTENT))
 }

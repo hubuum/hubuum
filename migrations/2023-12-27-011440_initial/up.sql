@@ -1,15 +1,82 @@
-    -- Your SQL goes here
+    -- Greenfield squashed schema. Defines the entire database in final form:
+    -- principal abstraction (humans + service accounts), principal-centric group
+    -- membership and tokens, rich token lifecycle + scopes, and the folded
+    -- remote-target schema. No backwards-compatibility shims.
+
+    ----------------------
+    ---- Drop (reverse dependency order; CASCADE covers the rest)
+    ----------------------
+    DROP TABLE IF EXISTS remote_call_results CASCADE;
+    DROP TABLE IF EXISTS report_task_outputs CASCADE;
+    DROP TABLE IF EXISTS import_task_results CASCADE;
+    DROP TABLE IF EXISTS task_events CASCADE;
+    DROP TABLE IF EXISTS tasks CASCADE;
+    DROP TABLE IF EXISTS token_scopes CASCADE;
+    DROP TABLE IF EXISTS tokens CASCADE;
+    DROP TABLE IF EXISTS remote_targets CASCADE;
+    DROP TABLE IF EXISTS report_templates CASCADE;
+    DROP TABLE IF EXISTS hubuumobject_relation CASCADE;
+    DROP TABLE IF EXISTS hubuumclass_reachability CASCADE;
+    DROP TABLE IF EXISTS hubuumclass_relation CASCADE;
+    DROP TABLE IF EXISTS hubuumobject CASCADE;
+    DROP TABLE IF EXISTS hubuumclass CASCADE;
+    DROP TABLE IF EXISTS permissions CASCADE;
+    DROP TABLE IF EXISTS group_memberships CASCADE;
+    DROP TABLE IF EXISTS user_groups CASCADE;
+    DROP TABLE IF EXISTS service_accounts CASCADE;
     DROP TABLE IF EXISTS users CASCADE;
-    CREATE TABLE users (
+    DROP TABLE IF EXISTS namespaces CASCADE;
+    DROP TABLE IF EXISTS groups CASCADE;
+    DROP TABLE IF EXISTS principals CASCADE;
+
+    ----------------------
+    ---- Functions needed before tables/constraints reference them
+    ----------------------
+
+    -- Update the updated_at column whenever a row is updated
+    CREATE OR REPLACE FUNCTION update_modified_column()
+    RETURNS TRIGGER AS $$
+    BEGIN
+        NEW.updated_at = now();
+        RETURN NEW;
+    END;
+    $$ language 'plpgsql';
+
+    CREATE OR REPLACE FUNCTION remote_target_subject_types_valid(subject_types JSONB)
+    RETURNS BOOLEAN
+    LANGUAGE sql
+    IMMUTABLE
+    AS $$
+        SELECT CASE
+            WHEN jsonb_typeof(subject_types) <> 'array' THEN FALSE
+            ELSE jsonb_array_length(subject_types) > 0
+                AND subject_types <@ '["namespace", "class", "object", "class_relation", "object_relation"]'::jsonb
+                AND (
+                    SELECT COUNT(*)
+                    FROM jsonb_array_elements_text(subject_types)
+                ) = (
+                    SELECT COUNT(DISTINCT value)
+                    FROM jsonb_array_elements_text(subject_types) AS item(value)
+                )
+        END;
+    $$;
+
+    ----------------------
+    ---- Identity: principals + subtypes
+    ----------------------
+
+    -- Parent identity table. Both humans and service accounts are principals; a
+    -- principal id IS the user/service-account id (class-table inheritance).
+    CREATE TABLE principals (
         id SERIAL PRIMARY KEY,
-        username VARCHAR NOT NULL UNIQUE,
-        password VARCHAR NOT NULL,
-        email VARCHAR NULL,
+        kind VARCHAR NOT NULL CHECK (kind IN ('human', 'service_account')),
+        name VARCHAR NOT NULL UNIQUE,
         created_at TIMESTAMP NOT NULL DEFAULT now(),
-        updated_at TIMESTAMP NOT NULL DEFAULT now()
+        updated_at TIMESTAMP NOT NULL DEFAULT now(),
+        -- Backs the composite (id, kind) FKs on the subtype tables.
+        UNIQUE (id, kind)
     );
 
-    DROP TABLE IF EXISTS groups CASCADE;
     CREATE TABLE groups (
         id SERIAL PRIMARY KEY,
         groupname VARCHAR NOT NULL UNIQUE,
@@ -18,24 +85,6 @@
         updated_at TIMESTAMP NOT NULL DEFAULT now()
     );
 
-    DROP TABLE IF EXISTS user_groups CASCADE;
-    CREATE TABLE user_groups (
-        user_id INT REFERENCES users (id) ON DELETE CASCADE NOT NULL,
-        group_id INT REFERENCES groups (id) ON DELETE CASCADE NOT NULL,
-        PRIMARY KEY (user_id, group_id),
-        created_at TIMESTAMP NOT NULL DEFAULT now(),
-        updated_at TIMESTAMP NOT NULL DEFAULT now()
-    );
-
-    DROP TABLE IF EXISTS tokens CASCADE;
-    CREATE TABLE tokens (
-        token VARCHAR NOT NULL UNIQUE,
-        user_id INT REFERENCES users (id) ON DELETE CASCADE NOT NULL,
-        issued TIMESTAMP NOT NULL DEFAULT now(),
-        PRIMARY KEY (token)
-    );
-
-    DROP TABLE IF EXISTS namespaces CASCADE;
     CREATE TABLE namespaces (
         id SERIAL PRIMARY KEY,
         name VARCHAR NOT NULL UNIQUE,
@@ -44,7 +93,39 @@
         updated_at TIMESTAMP NOT NULL DEFAULT now()
     );
 
-    DROP TABLE IF EXISTS permissions CASCADE;
+    -- Human user. id is the principal id; the login/display name is principals.name.
+    CREATE TABLE users (
+        id INT PRIMARY KEY,
+        kind VARCHAR NOT NULL DEFAULT 'human' CHECK (kind = 'human'),
+        password VARCHAR NOT NULL,
+        email VARCHAR NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now(),
+        FOREIGN KEY (id, kind) REFERENCES principals (id, kind) ON DELETE CASCADE
+    );
+
+    -- Service account. id is the principal id; the name is principals.name.
+    CREATE TABLE service_accounts (
+        id INT PRIMARY KEY,
+        kind VARCHAR NOT NULL DEFAULT 'service_account' CHECK (kind = 'service_account'),
+        description VARCHAR NOT NULL DEFAULT '',
+        owner_group_id INT NOT NULL REFERENCES groups (id) ON DELETE RESTRICT,
+        created_by INT NULL REFERENCES principals (id) ON DELETE SET NULL,
+        disabled_at TIMESTAMP NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now(),
+        FOREIGN KEY (id, kind) REFERENCES principals (id, kind) ON DELETE CASCADE
+    );
+
+    -- Group membership is principal-centric (humans and service accounts alike).
+    CREATE TABLE group_memberships (
+        principal_id INT REFERENCES principals (id) ON DELETE CASCADE NOT NULL,
+        group_id INT REFERENCES groups (id) ON DELETE CASCADE NOT NULL,
+        PRIMARY KEY (principal_id, group_id),
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+    );
+
     CREATE TABLE permissions (
         id SERIAL PRIMARY KEY,
         namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
@@ -73,12 +154,16 @@
         has_create_template BOOLEAN NOT NULL DEFAULT FALSE,
         has_update_template BOOLEAN NOT NULL DEFAULT FALSE,
         has_delete_template BOOLEAN NOT NULL DEFAULT FALSE,
+        has_read_remote_target BOOLEAN NOT NULL DEFAULT FALSE,
+        has_create_remote_target BOOLEAN NOT NULL DEFAULT FALSE,
+        has_update_remote_target BOOLEAN NOT NULL DEFAULT FALSE,
+        has_delete_remote_target BOOLEAN NOT NULL DEFAULT FALSE,
+        has_execute_remote_target BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMP NOT NULL DEFAULT now(),
         updated_at TIMESTAMP NOT NULL DEFAULT now(),
         UNIQUE (namespace_id, group_id)
     );
 
-    DROP TABLE IF EXISTS hubuumclass CASCADE;
     CREATE TABLE hubuumclass (
         id SERIAL PRIMARY KEY,
         name VARCHAR NOT NULL UNIQUE,
@@ -90,7 +175,6 @@
         updated_at TIMESTAMP NOT NULL DEFAULT now()
     );
 
-    DROP TABLE IF EXISTS hubuumobject CASCADE;
     CREATE TABLE hubuumobject (
         id SERIAL PRIMARY KEY,
         name VARCHAR NOT NULL,
@@ -104,7 +188,6 @@
     );
 
     -- A bidirectional relation between classes
-    DROP TABLE IF EXISTS hubuumclass_relation CASCADE;
     CREATE TABLE hubuumclass_relation (
         id SERIAL PRIMARY KEY,
         from_hubuum_class_id INT REFERENCES hubuumclass (id) ON DELETE CASCADE NOT NULL,
@@ -117,7 +200,6 @@
     );
 
     -- Canonical shortest-path reachability cache for class relations.
-    DROP TABLE IF EXISTS hubuumclass_reachability CASCADE;
     CREATE TABLE hubuumclass_reachability (
         id BIGSERIAL PRIMARY KEY,
         ancestor_class_id INT NOT NULL,
@@ -129,21 +211,17 @@
     );
 
     -- A bidirectional relation between objects
-    DROP TABLE IF EXISTS hubuumobject_relation CASCADE;
     CREATE TABLE hubuumobject_relation (
         id SERIAL PRIMARY KEY,
         from_hubuum_object_id INT REFERENCES hubuumobject (id) ON DELETE CASCADE NOT NULL,
-        to_hubuum_object_id INT REFERENCES hubuumobject (id) ON DELETE CASCADE NOT NULL,    
+        to_hubuum_object_id INT REFERENCES hubuumobject (id) ON DELETE CASCADE NOT NULL,
         class_relation_id INT REFERENCES hubuumclass_relation (id) ON DELETE CASCADE NOT NULL,
         created_at TIMESTAMP NOT NULL DEFAULT now(),
         updated_at TIMESTAMP NOT NULL DEFAULT now(),
         UNIQUE (from_hubuum_object_id, to_hubuum_object_id)
     );
 
-
-
     -- Table to store report templates
-    DROP TABLE IF EXISTS report_templates CASCADE;
     CREATE TABLE report_templates (
         id SERIAL PRIMARY KEY,
         namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
@@ -178,10 +256,57 @@
         )
     );
 
-    DROP TABLE IF EXISTS tasks CASCADE;
+    CREATE TABLE remote_targets (
+        id SERIAL PRIMARY KEY,
+        namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
+        class_id INT REFERENCES hubuumclass (id) ON DELETE CASCADE NULL,
+        name VARCHAR NOT NULL,
+        description VARCHAR NOT NULL DEFAULT '',
+        method VARCHAR NOT NULL CHECK (method IN ('get', 'post', 'patch', 'delete')),
+        url_template TEXT NOT NULL,
+        headers_template JSONB NOT NULL DEFAULT '{}'::jsonb,
+        body_template TEXT NULL,
+        auth_config JSONB NOT NULL DEFAULT '{"type":"none"}'::jsonb,
+        allowed_subject_types JSONB NOT NULL,
+        timeout_ms INT NOT NULL DEFAULT 10000,
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now(),
+        UNIQUE (namespace_id, name),
+        CHECK (timeout_ms > 0),
+        CHECK (jsonb_typeof(headers_template) = 'object'),
+        CHECK (jsonb_typeof(auth_config) = 'object'),
+        CHECK (NOT (allowed_subject_types ? 'object') OR class_id IS NOT NULL),
+        CHECK (remote_target_subject_types_valid(allowed_subject_types))
+    );
+
+    -- Bearer tokens are principal-centric with a full lifecycle (named, expiring,
+    -- last-used tracked, soft-revocable, optionally scoped).
+    CREATE TABLE tokens (
+        id SERIAL PRIMARY KEY,
+        token VARCHAR NOT NULL UNIQUE,
+        principal_id INT REFERENCES principals (id) ON DELETE CASCADE NOT NULL,
+        name VARCHAR NULL,
+        description VARCHAR NULL,
+        issued TIMESTAMP NOT NULL DEFAULT now(),
+        expires_at TIMESTAMP NULL,
+        last_used_at TIMESTAMP NULL,
+        revoked_at TIMESTAMP NULL,
+        scoped BOOLEAN NOT NULL DEFAULT FALSE
+    );
+
+    -- A token's scope set. Presence is governed by tokens.scoped, not by row count:
+    -- scoped=false => unscoped (full principal authority); scoped=true with zero
+    -- rows => deny-all.
+    CREATE TABLE token_scopes (
+        token_id INT REFERENCES tokens (id) ON DELETE CASCADE NOT NULL,
+        permission VARCHAR NOT NULL,
+        PRIMARY KEY (token_id, permission)
+    );
+
     CREATE TABLE tasks (
         id SERIAL PRIMARY KEY,
-        kind VARCHAR NOT NULL CHECK (kind IN ('import', 'report', 'export', 'reindex')),
+        kind VARCHAR NOT NULL CHECK (kind IN ('import', 'report', 'export', 'reindex', 'remote_call')),
         status VARCHAR NOT NULL CHECK (
             status IN (
                 'queued',
@@ -193,7 +318,7 @@
                 'cancelled'
             )
         ),
-        submitted_by INT REFERENCES users (id) ON DELETE SET NULL,
+        submitted_by INT REFERENCES principals (id) ON DELETE SET NULL,
         idempotency_key VARCHAR NULL,
         request_hash VARCHAR NULL,
         request_payload JSONB NULL,
@@ -202,17 +327,22 @@
         processed_items INT NOT NULL DEFAULT 0,
         success_items INT NOT NULL DEFAULT 0,
         failed_items INT NOT NULL DEFAULT 0,
+        -- Scope snapshot: the submitting token's scope boundary, captured at
+        -- enqueue time so async execution cannot exceed it even after the token
+        -- is revoked.
+        submitted_token_id INT NULL REFERENCES tokens (id) ON DELETE SET NULL,
+        submitted_token_scoped BOOLEAN NOT NULL DEFAULT FALSE,
+        submitted_token_scopes JSONB NOT NULL DEFAULT '[]'::jsonb,
         request_redacted_at TIMESTAMP NULL,
         started_at TIMESTAMP NULL,
         finished_at TIMESTAMP NULL,
         deleted_at TIMESTAMP NULL,
-        deleted_by INT NULL REFERENCES users (id) ON DELETE SET NULL,
+        deleted_by INT NULL REFERENCES principals (id) ON DELETE SET NULL,
         created_at TIMESTAMP NOT NULL DEFAULT now(),
         updated_at TIMESTAMP NOT NULL DEFAULT now(),
         UNIQUE (submitted_by, idempotency_key)
     );
 
-    DROP TABLE IF EXISTS task_events CASCADE;
     CREATE TABLE task_events (
         id SERIAL PRIMARY KEY,
         task_id INT REFERENCES tasks (id) ON DELETE CASCADE NOT NULL,
@@ -222,7 +352,6 @@
         created_at TIMESTAMP NOT NULL DEFAULT now()
     );
 
-    DROP TABLE IF EXISTS import_task_results CASCADE;
     CREATE TABLE import_task_results (
         id SERIAL PRIMARY KEY,
         task_id INT REFERENCES tasks (id) ON DELETE CASCADE NOT NULL,
@@ -236,7 +365,6 @@
         created_at TIMESTAMP NOT NULL DEFAULT now()
     );
 
-    DROP TABLE IF EXISTS report_task_outputs CASCADE;
     CREATE TABLE report_task_outputs (
         id SERIAL PRIMARY KEY,
         task_id INT REFERENCES tasks (id) ON DELETE CASCADE NOT NULL UNIQUE,
@@ -260,19 +388,40 @@
         )
     );
 
+    CREATE TABLE remote_call_results (
+        id SERIAL PRIMARY KEY,
+        task_id INT REFERENCES tasks (id) ON DELETE CASCADE NOT NULL UNIQUE,
+        target_id INT REFERENCES remote_targets (id) ON DELETE SET NULL,
+        subject_type VARCHAR NOT NULL CHECK (subject_type IN ('namespace', 'class', 'object', 'class_relation', 'object_relation')),
+        subject_id INT NOT NULL,
+        method VARCHAR NOT NULL,
+        rendered_url TEXT NOT NULL,
+        response_status INT NULL,
+        response_headers JSONB NULL,
+        response_body_preview TEXT NULL,
+        duration_ms INT NOT NULL DEFAULT 0,
+        success BOOLEAN NOT NULL,
+        error TEXT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT now()
+    );
+
     ----------------------
     ---- Indexes
     ----------------------
 
-    ---- Users and groups
-    CREATE INDEX idx_users_username ON users(username);
+    ---- Identity, groups, namespaces
+    CREATE INDEX idx_principals_name ON principals(name);
+    CREATE INDEX idx_principals_kind ON principals(kind);
     CREATE INDEX idx_groups_groupname ON groups(groupname);
-    CREATE INDEX idx_user_groups_user_id ON user_groups(user_id);
-    CREATE INDEX idx_user_groups_group_id ON user_groups(group_id);
-
-    ---- Namespaces and tokens
+    CREATE INDEX idx_group_memberships_principal_id ON group_memberships(principal_id);
+    CREATE INDEX idx_group_memberships_group_id ON group_memberships(group_id);
+    CREATE INDEX idx_service_accounts_owner_group_id ON service_accounts(owner_group_id);
     CREATE INDEX idx_namespaces_name ON namespaces(name);
-    CREATE INDEX idx_tokens_user_id ON tokens(user_id);
+
+    ---- Tokens
+    CREATE INDEX idx_tokens_principal_id ON tokens(principal_id);
+    CREATE INDEX idx_tokens_active ON tokens(token) WHERE revoked_at IS NULL;
+    CREATE INDEX idx_token_scopes_token_id ON token_scopes(token_id);
 
     ---- Classes and objects
     CREATE INDEX idx_hubuumclass_namespace_id ON hubuumclass(namespace_id);
@@ -297,6 +446,13 @@
     ---- Report templates
     CREATE INDEX idx_report_templates_namespace_id ON report_templates(namespace_id);
 
+    ---- Remote targets
+    CREATE INDEX idx_remote_targets_namespace_id ON remote_targets(namespace_id);
+    CREATE INDEX idx_remote_targets_class_id ON remote_targets(class_id);
+    CREATE INDEX idx_remote_targets_enabled ON remote_targets(enabled);
+    CREATE INDEX idx_remote_call_results_target_id ON remote_call_results(target_id);
+    CREATE INDEX idx_remote_call_results_subject ON remote_call_results(subject_type, subject_id);
+
     ---- Search
     CREATE INDEX idx_hubuumobject_data_search
         ON hubuumobject
@@ -315,15 +471,6 @@
     ----------------------
     ---- Functions
     ----------------------
-
-    -- Update the updated_at column whenever a row is updated
-    CREATE OR REPLACE FUNCTION update_modified_column()
-    RETURNS TRIGGER AS $$
-    BEGIN
-        NEW.updated_at = now();
-        RETURN NEW;
-    END;
-    $$ language 'plpgsql';
 
     CREATE OR REPLACE FUNCTION try_inet(value TEXT)
     RETURNS inet
@@ -505,9 +652,9 @@
         END IF;
 
         -- Get class IDs for the relation
-        SELECT from_hubuum_class_id, to_hubuum_class_id 
-        INTO relation_from_class_id, relation_to_class_id 
-        FROM hubuumclass_relation 
+        SELECT from_hubuum_class_id, to_hubuum_class_id
+        INTO relation_from_class_id, relation_to_class_id
+        FROM hubuumclass_relation
         WHERE id = NEW.class_relation_id;
 
         -- Check if the objects match the class relation
@@ -655,8 +802,8 @@
         start_class_id INT;
     BEGIN
         -- Get the class ID of the start object
-        SELECT hubuum_class_id INTO start_class_id 
-        FROM hubuumobject 
+        SELECT hubuum_class_id INTO start_class_id
+        FROM hubuumobject
         WHERE id = start_object_id;
 
         IF start_class_id IS NULL THEN
@@ -975,13 +1122,12 @@
               );
     $$ LANGUAGE sql STABLE;
 
-
     ----------------------
     ---- Triggers
     ----------------------
 
     -- Enforce order of to_class / to_object and from_class / from_object in class and
-    -- object relations. These ensure that the from entry is always the smaller of the 
+    -- object relations. These ensure that the from entry is always the smaller of the
     -- two values.
     DROP TRIGGER IF EXISTS before_insert_or_update_class_relation ON hubuumclass_relation;
     CREATE TRIGGER before_insert_or_update_class_relation
@@ -995,9 +1141,19 @@
     FOR EACH ROW
     EXECUTE FUNCTION enforce_object_relation_order();
 
+    DROP TRIGGER IF EXISTS update_principals_updated_at ON principals;
+    CREATE TRIGGER update_principals_updated_at
+    BEFORE UPDATE ON principals
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
     DROP TRIGGER IF EXISTS update_users_updated_at ON users;
     CREATE TRIGGER update_users_updated_at
     BEFORE UPDATE ON users
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+    DROP TRIGGER IF EXISTS update_service_accounts_updated_at ON service_accounts;
+    CREATE TRIGGER update_service_accounts_updated_at
+    BEFORE UPDATE ON service_accounts
     FOR EACH ROW EXECUTE FUNCTION update_modified_column();
 
     DROP TRIGGER IF EXISTS update_groups_updated_at ON groups;
@@ -1005,9 +1161,9 @@
     BEFORE UPDATE ON groups
     FOR EACH ROW EXECUTE FUNCTION update_modified_column();
 
-    DROP TRIGGER IF EXISTS update_user_groups_updated_at ON user_groups;
-    CREATE TRIGGER update_user_groups_updated_at
-    BEFORE UPDATE ON user_groups
+    DROP TRIGGER IF EXISTS update_group_memberships_updated_at ON group_memberships;
+    CREATE TRIGGER update_group_memberships_updated_at
+    BEFORE UPDATE ON group_memberships
     FOR EACH ROW EXECUTE FUNCTION update_modified_column();
 
     DROP TRIGGER IF EXISTS update_namespaces_updated_at ON namespaces;
@@ -1063,6 +1219,11 @@
     DROP TRIGGER IF EXISTS update_report_templates_updated_at ON report_templates;
     CREATE TRIGGER update_report_templates_updated_at
     BEFORE UPDATE ON report_templates
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+    DROP TRIGGER IF EXISTS update_remote_targets_updated_at ON remote_targets;
+    CREATE TRIGGER update_remote_targets_updated_at
+    BEFORE UPDATE ON remote_targets
     FOR EACH ROW EXECUTE FUNCTION update_modified_column();
 
     DROP TRIGGER IF EXISTS update_tasks_updated_at ON tasks;
