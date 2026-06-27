@@ -146,7 +146,8 @@ where
     C: BackendContext + ?Sized,
 {
     use crate::db::with_transaction;
-    use crate::schema::tokens;
+    use crate::models::principal::PrincipalKind;
+    use crate::schema::{principals, service_accounts, tokens};
 
     let raw = crate::utilities::auth::generate_token();
     let hash = raw.storage_hash();
@@ -158,6 +159,27 @@ where
     let description = description.map(|s| s.to_string());
 
     with_transaction(backend.db_pool(), |conn| -> Result<(), ApiError> {
+        let principal_kind = principals::table
+            .filter(principals::id.eq(principal))
+            .select(principals::kind)
+            .first::<String>(conn)?;
+
+        // Lock the SA row in the same transaction as insert so disable-vs-mint
+        // races fail closed.
+        if principal_kind == PrincipalKind::ServiceAccount.as_str() {
+            let disabled_at = service_accounts::table
+                .filter(service_accounts::id.eq(principal))
+                .for_update()
+                .select(service_accounts::disabled_at)
+                .first::<Option<chrono::NaiveDateTime>>(conn)?;
+
+            if disabled_at.is_some() {
+                return Err(ApiError::Conflict(
+                    "Service account is disabled".to_string(),
+                ));
+            }
+        }
+
         let new_token_id: i32 = diesel::insert_into(tokens::table)
             .values((
                 tokens::token.eq(&hash),

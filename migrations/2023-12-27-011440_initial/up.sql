@@ -416,11 +416,13 @@
     CREATE INDEX idx_group_memberships_principal_id ON group_memberships(principal_id);
     CREATE INDEX idx_group_memberships_group_id ON group_memberships(group_id);
     CREATE INDEX idx_service_accounts_owner_group_id ON service_accounts(owner_group_id);
+    CREATE INDEX idx_service_accounts_disabled_at ON service_accounts(disabled_at) WHERE disabled_at IS NOT NULL;
     CREATE INDEX idx_namespaces_name ON namespaces(name);
 
     ---- Tokens
     CREATE INDEX idx_tokens_principal_id ON tokens(principal_id);
     CREATE INDEX idx_tokens_active ON tokens(token) WHERE revoked_at IS NULL;
+    CREATE INDEX idx_tokens_principal_active_issued ON tokens(principal_id, issued DESC) WHERE revoked_at IS NULL;
     CREATE INDEX idx_token_scopes_token_id ON token_scopes(token_id);
 
     ---- Classes and objects

@@ -27,6 +27,24 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS`,
   `HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V4`, `HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6`,
   and proxy-trust configuration `HUBUUM_TRUSTED_PROXIES` / `HUBUUM_TRUSTED_PROXY_HOPS`.
+- Principal-centric identity model with two principal kinds: `human` and
+  `service_account`.
+- Service-account IAM endpoints under `/api/v1/iam/service-accounts`.
+- Principal management endpoints under `/api/v1/iam/principals/{principal_id}`
+  for token, group, and effective-permission management.
+- Token scopes for least-privilege automation, including fail-closed scope
+  enforcement and persisted task scope snapshots.
+
+### Changed
+
+- Group membership is principal-centric (`group_memberships`) and applies to both
+  human users and service accounts.
+- Tokens are principal-centric and now support lifecycle metadata (`name`,
+  `description`, `expires_at`, `last_used_at`, `revoked_at`, `scoped`).
+- Service-account disable flow now immediately soft-revokes its tokens and
+  cancels queued tasks.
+- Human/IAM extractors are explicitly privilege-separated: service accounts and
+  scoped tokens are rejected from human/management endpoints.
 
 ## [0.0.1] - 2026-03-12
 

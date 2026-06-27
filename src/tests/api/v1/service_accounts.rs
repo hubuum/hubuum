@@ -407,6 +407,27 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
+    /// Duplicate scope entries are rejected at the request boundary with 400.
+    #[actix_web::test]
+    async fn test_token_mint_duplicate_scopes_rejected() {
+        let context = TestContext::new().await;
+        let pool = &context.pool;
+        let group = create_test_group(pool).await;
+        let sa = create_test_service_account(pool, &group, None).await;
+
+        let resp = post_request(
+            pool,
+            &context.admin_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", sa.id),
+            &serde_json::json!({
+                "scopes": ["ReadCollection", "ReadCollection"]
+            }),
+        )
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
     /// #13: omitting `scopes` mints an unscoped token (`scoped = false`).
     #[actix_web::test]
     async fn test_token_mint_omitted_scopes_is_unscoped() {
@@ -601,7 +622,7 @@ mod tests {
     #[rstest]
     #[case::admin(TokenManager::Admin, StatusCode::CREATED)]
     #[case::owner_group_member(TokenManager::OwnerGroupMember, StatusCode::CREATED)]
-    #[case::outsider(TokenManager::Outsider, StatusCode::FORBIDDEN)]
+    #[case::outsider(TokenManager::Outsider, StatusCode::NOT_FOUND)]
     #[actix_web::test]
     async fn test_sa_token_mint_authz(#[case] caller: TokenManager, #[case] expected: StatusCode) {
         let context = TestContext::new().await;
@@ -1165,7 +1186,7 @@ mod tests {
     #[rstest]
     #[case::admin(Reassigner::Admin, StatusCode::OK)]
     #[case::member_of_both(Reassigner::MemberOfBothGroups, StatusCode::OK)]
-    #[case::member_of_current_only(Reassigner::MemberOfCurrentGroupOnly, StatusCode::FORBIDDEN)]
+    #[case::member_of_current_only(Reassigner::MemberOfCurrentGroupOnly, StatusCode::NOT_FOUND)]
     #[actix_web::test]
     async fn test_owner_group_reassignment_authz(
         #[case] caller: Reassigner,

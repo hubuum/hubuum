@@ -44,9 +44,8 @@ async fn ensure_can_manage(
     {
         Ok(())
     } else {
-        Err(ApiError::Forbidden(
-            "Not permitted to manage this service account".to_string(),
-        ))
+        // Avoid leaking whether a target service account exists via 403 vs 404.
+        Err(ApiError::NotFound("Service account not found".to_string()))
     }
 }
 

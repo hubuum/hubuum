@@ -23,6 +23,7 @@ use crate::utilities::response::{
     json_response, paginated_json_mapped_response, paginated_json_response,
 };
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(create_token)
@@ -69,9 +70,8 @@ async fn ensure_can_manage_principal(
     if permitted {
         Ok(())
     } else {
-        Err(ApiError::Forbidden(
-            "Not permitted to manage this principal".to_string(),
-        ))
+        // Avoid leaking whether a target principal exists via 403 vs 404.
+        Err(ApiError::NotFound("Principal not found".to_string()))
     }
 }
 
@@ -114,6 +114,15 @@ pub async fn create_token(
         return Err(ApiError::BadRequest(
             "scopes must be non-empty when provided".to_string(),
         ));
+    }
+
+    if let Some(scopes) = &body.scopes {
+        let unique: HashSet<Permissions> = scopes.iter().copied().collect();
+        if unique.len() != scopes.len() {
+            return Err(ApiError::BadRequest(
+                "scopes must not contain duplicates".to_string(),
+            ));
+        }
     }
 
     debug!(
