@@ -103,7 +103,7 @@ mod tests {
             &context,
             &test_admin_user,
             &test_user,
-            StatusCode::FORBIDDEN,
+            StatusCode::NOT_FOUND,
         )
         .await;
         check_show_user_tokens(&context, &test_user, &test_admin_user, StatusCode::OK).await;

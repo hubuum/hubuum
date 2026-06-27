@@ -1186,7 +1186,7 @@ mod tests {
     #[rstest]
     #[case::admin(Reassigner::Admin, StatusCode::OK)]
     #[case::member_of_both(Reassigner::MemberOfBothGroups, StatusCode::OK)]
-    #[case::member_of_current_only(Reassigner::MemberOfCurrentGroupOnly, StatusCode::NOT_FOUND)]
+    #[case::member_of_current_only(Reassigner::MemberOfCurrentGroupOnly, StatusCode::FORBIDDEN)]
     #[actix_web::test]
     async fn test_owner_group_reassignment_authz(
         #[case] caller: Reassigner,
