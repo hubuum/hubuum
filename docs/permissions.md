@@ -26,13 +26,13 @@ There are three types of permissions for each collection:
 The following permissions are available for collections:
 
 | Permission | Description |
-| ---------- | ----------- |
-| `read_collection`     | Allows reading data about the collection, ie its members or the permissions associated with it. |
-| `update_collection`   | Allows updating the collection (changing its name). |
-| `delete_collection`   | Allows deleting the collection. |
-| `create_collection`   | Allows creating collections within the collection. |
-| `create_class`        | Allows creating classes within the collection. |
-| `create_object`       | Allows creating objects within the collection. |
+| --- | --- |
+| `read_collection` | Allows reading data about the collection, ie its members or the permissions associated with it. |
+| `update_collection` | Allows updating the collection (changing its name). |
+| `delete_collection` | Allows deleting the collection. |
+| `create_collection` | Allows creating collections within the collection. |
+| `create_class` | Allows creating classes within the collection. |
+| `create_object` | Allows creating objects within the collection. |
 | `create_relationship` | Allows creating relationships of classes within the collection. |
 
 The permission to grant groups (or users) access to the collection itself is done by the parent collection. Every collection has a parent collection and the root collection is created when the Hubuum instance is created.
@@ -42,43 +42,43 @@ The permission to grant groups (or users) access to the collection itself is don
 The following permissions are available for classes:
 
 | Permission | Description |
-| ---------- | ----------- |
-| `read_class`     | Allows reading the class. |
-| `update_class`   | Allows updating the class (ie, change its name, its definition, validation requirements, etc). |
-| `delete_class`   | Allows deleting the class. Note that deleting a class deletes all objects belonging to that class. |
-| `create_object`  | Allows creating new objects of the class. |
+| --- | --- |
+| `read_class` | Allows reading the class. |
+| `update_class` | Allows updating the class (ie, change its name, its definition, validation requirements, etc). |
+| `delete_class` | Allows deleting the class. Note that deleting a class deletes all objects belonging to that class. |
+| `create_object` | Allows creating new objects of the class. |
 
 ### Permissions for objects
 
 The following permissions are available for objects:
 
 | Permission | Description |
-| ---------- | ----------- |
-| `read_object`     | Allows reading the object. |
-| `update_object`   | Allows updating the object. |
-| `delete_object`   | Allows deleting the object. |
+| --- | --- |
+| `read_object` | Allows reading the object. |
+| `update_object` | Allows updating the object. |
+| `delete_object` | Allows deleting the object. |
 
 ### Permissions for class relationships
 
 The following permissions are available for relationships between classes:
 
 | Permission | Description |
-| ---------- | ----------- |
-| `read_class_relationship`     | Allows reading the relationship. |
-| `update_class_relationship`   | Allows updating the relationship. |
-| `delete_class_relationship`   | Allows deleting the relationship. |
-| `create_object_relationship`   | Allows creating relationships between objects adhering of the class relationship. |
+| --- | --- |
+| `read_class_relationship` | Allows reading the relationship. |
+| `update_class_relationship` | Allows updating the relationship. |
+| `delete_class_relationship` | Allows deleting the relationship. |
+| `create_object_relationship` | Allows creating relationships between objects adhering of the class relationship. |
 
 ### Permissions for templates
 
 Report templates are used to format report output and are scoped to namespaces. The following permissions control access to templates:
 
 | Permission | Description |
-| ---------- | ----------- |
-| `read_template`     | Allows reading templates and using them in report generation. Required to view template definitions or to reference a template when running a report. |
-| `create_template`   | Allows creating new templates within the namespace. Also required when moving a template to a different namespace (as the target namespace permission). |
-| `update_template`   | Allows modifying existing templates (name, description, template content, namespace). Required when moving a template to a different namespace (as the source namespace permission). |
-| `delete_template`   | Allows deleting templates from the namespace. |
+| --- | --- |
+| `read_template` | Allows reading templates and using them in report generation. Required to view template definitions or to reference a template when running a report. |
+| `create_template` | Allows creating new templates within the namespace. Also required when moving a template to a different namespace (as the target namespace permission). |
+| `update_template` | Allows modifying existing templates (name, description, template content, namespace). Required when moving a template to a different namespace (as the source namespace permission). |
+| `delete_template` | Allows deleting templates from the namespace. |
 
 **Important notes about template permissions:**
 
@@ -94,7 +94,7 @@ Remote targets define outbound subject actions and are scoped to namespaces. The
 control target management and invocation:
 
 | Permission | Description |
-| ---------- | ----------- |
+| --- | --- |
 | `ReadRemoteTarget` | Allows listing and reading remote target definitions in the namespace. |
 | `CreateRemoteTarget` | Allows creating remote targets in the namespace. Also required when moving a target into a namespace. |
 | `UpdateRemoteTarget` | Allows modifying existing targets in the namespace. Required on the source namespace when moving a target. |

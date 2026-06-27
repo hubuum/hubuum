@@ -39,4 +39,13 @@ These conventions are present in the codebase and docs and should be followed al
    Do not hand-edit `src/schema.rs`; use Diesel migrations and regeneration flow.
    Keep `docs/openapi.json` synchronized with code changes.
 
+7. Markdown must pass markdownlint.
+   CI runs `markdownlint-cli2` over `**/*.md` with `.markdownlint.json`
+   (via `DavidAnson/markdownlint-cli2-action`). Run
+   `npx markdownlint-cli2 --config .markdownlint.json "**/*.md" "!target"`
+   locally before committing docs (the `!target` glob skips generated
+   `target/doc` output). Fenced code blocks must specify a language
+   (use `text` for plain ASCII/diagrams), and tables must use one
+   consistent column style (MD060).
+
 When guidance in this file and [AGENTS.md](AGENTS.md) overlap, follow [AGENTS.md](AGENTS.md).

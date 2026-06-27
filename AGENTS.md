@@ -8,6 +8,7 @@
 - Run clippy as `cargo clippy --all-targets -- -D warnings`.
 - `rustfmt` should pass for all Rust code. Keep formatting mechanical and avoid hand-formatting that fights `rustfmt`.
 - Regenerate OpenAPI after endpoint or schema changes before considering the change complete.
+- Markdown lint must pass for all `*.md` files. Run it locally with `npx markdownlint-cli2 --config .markdownlint.json "**/*.md" "!target"` before considering documentation changes complete. Every fenced code block must declare a language (use `text` for plain ASCII/diagrams), and tables must use a single, consistent column style (MD060).
 
 ## Architecture
 

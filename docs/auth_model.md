@@ -16,7 +16,7 @@ identity, tokens, and the authority gates that sit in front of those permissions
 Every authenticated identity in Hubuum is a **principal**. There are two kinds:
 
 | Kind | Table | Can password-login? | Can hold tokens? | Typical use |
-|------|-------|---------------------|------------------|-------------|
+| --- | --- | --- | --- | --- |
 | `human` | `users` | Yes | Yes | People |
 | `service_account` | `service_accounts` | **No** | Yes | Automation / integrations |
 
@@ -25,7 +25,7 @@ identity, and a `users` or `service_accounts` row shares the *same id*
 (`users.id` / `service_accounts.id` are `INT PRIMARY KEY REFERENCES principals(id)`).
 A principal id *is* the user/service-account id.
 
-```
+```text
                  ┌──────────────────────────┐
                  │        principals         │
                  │  id (PK), kind, name      │   name is globally unique
@@ -94,7 +94,7 @@ Tokens belong to a principal and have a full lifecycle. The stored value is an H
 hash — the raw token is shown exactly once, at creation.
 
 | Field | Meaning |
-|-------|---------|
+| --- | --- |
 | `name`, `description` | Optional, human-facing labels |
 | `issued` | Creation time |
 | `expires_at` | Optional per-token expiry; **overrides** the global window |
@@ -133,7 +133,7 @@ Scope semantics are **fail-closed**, with `scoped` as the source of truth (never
 presence):
 
 | Token state | Meaning |
-|-------------|---------|
+| --- | --- |
 | `scoped = false` (request omitted `scopes`) | **Unscoped** — full principal authority |
 | `scoped = true` with one or more scope rows | Effective = grants ∩ scopes |
 | `scoped = true` with **zero** scope rows | **Denies everything** |
@@ -155,7 +155,7 @@ Enforcement details:
 Scope strings are the permission names from the permission model
 ([permissions.md](permissions.md)):
 
-```
+```text
 ReadCollection UpdateCollection DeleteCollection DelegateCollection
 CreateClass ReadClass UpdateClass DeleteClass
 CreateObject ReadObject UpdateObject DeleteObject
@@ -188,7 +188,7 @@ it acts exclusively through tokens.
 ### Lifecycle
 
 | Action | Endpoint | Notes |
-|--------|----------|-------|
+| --- | --- | --- |
 | Create | `POST /api/v1/iam/service-accounts` | Body: `name`, `owner_group_id`, optional `description` |
 | List | `GET /api/v1/iam/service-accounts` | Admin sees all; others see SAs of groups they belong to |
 | Get / Update | `GET` / `PATCH /api/v1/iam/service-accounts/{id}` | |
@@ -231,7 +231,7 @@ Token and group-membership management is principal-shaped, so one route family
 serves both kinds:
 
 | Endpoint | Purpose | Authorization |
-|----------|---------|---------------|
+| --- | --- | --- |
 | `POST /api/v1/iam/principals/{principal_id}/tokens` | Mint a token (returns raw value once) | human: self or admin; SA: admin or human owner-group member |
 | `GET /api/v1/iam/principals/{principal_id}/tokens` | List token metadata (never the hash) | same as above |
 | `POST /api/v1/iam/principals/{principal_id}/tokens/{token_id}/revoke` | Soft-revoke a token | same as above |
