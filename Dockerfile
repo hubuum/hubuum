@@ -14,8 +14,18 @@ RUN apt-get update && \
 # Install diesel CLI using binstall (much faster)
 RUN cargo binstall --no-confirm diesel_cli
 
-# Copy manifests first for better layer caching
+# Copy manifests first for better layer caching. Workspace member manifests are
+# required for Cargo to load the workspace during the dependency-only build.
+#
+# NOTE: workspace members are listed explicitly (not auto-detected) so that only
+# crate *manifests* — not their sources — enter the dependency-cache layer,
+# keeping that layer valid across crate source edits. When you add a crate under
+# crates/, update THREE places below: (1) add a COPY for its Cargo.toml here,
+# (2) add a dummy src/lib.rs in the dependency-only build, and (3) add its src
+# dir to that step's `rm -rf` cleanup.
 COPY Cargo.toml Cargo.lock ./
+COPY crates/hubuum-outbound-http/Cargo.toml ./crates/hubuum-outbound-http/Cargo.toml
+COPY crates/hubuum-templates/Cargo.toml ./crates/hubuum-templates/Cargo.toml
 COPY migrations ./migrations
 
 # The production image only builds binaries. Strip benchmark targets so Cargo
@@ -32,13 +42,15 @@ RUN awk ' \
 # Use cache mounts to persist cargo registry/git between builds
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    mkdir -p src/bin && \
+    mkdir -p src/bin crates/hubuum-outbound-http/src crates/hubuum-templates/src && \
     echo "fn main() {}" > src/main.rs && \
     echo "pub fn dummy() {}" > src/lib.rs && \
     echo "fn main() {}" > src/bin/admin.rs && \
     echo "fn main() {}" > src/bin/openapi.rs && \
+    echo "pub fn dummy() {}" > crates/hubuum-outbound-http/src/lib.rs && \
+    echo "pub fn dummy() {}" > crates/hubuum-templates/src/lib.rs && \
     cargo build ${CARGO_BUILD_FLAGS} --bin hubuum-server --bin hubuum-admin && \
-    rm -rf src
+    rm -rf src crates/hubuum-outbound-http/src crates/hubuum-templates/src
 
 # Copy the actual source code
 COPY . .
