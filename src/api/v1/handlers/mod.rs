@@ -1,6 +1,7 @@
 pub mod classes;
 pub mod groups;
 pub mod imports;
+pub mod me;
 pub mod namespaces;
 pub mod principals;
 pub mod relations;

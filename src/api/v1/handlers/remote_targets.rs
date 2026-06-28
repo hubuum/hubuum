@@ -305,10 +305,8 @@ pub async fn invoke_remote_target(
         parameters: invoke.parameters,
         body_override: invoke.body_override,
     })?;
-    let snapshot = TaskScopeSnapshot::from_request(
-        Some(requestor.token_meta.id),
-        requestor.scopes(),
-    );
+    let snapshot =
+        TaskScopeSnapshot::from_request(Some(requestor.token_meta.id), requestor.scopes());
     let task = find_or_create_remote_call_task(
         &pool,
         user.id,

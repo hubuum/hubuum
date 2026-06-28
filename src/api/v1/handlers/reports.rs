@@ -259,8 +259,7 @@ pub(crate) async fn submit_report_task<S: AuthzSubject>(
     validate_report_submission(&runtime)?;
     let task_payload = runtime_to_task_payload(&runtime)?;
 
-    let snapshot =
-        TaskScopeSnapshot::from_request(submitted_token_id, scopes);
+    let snapshot = TaskScopeSnapshot::from_request(submitted_token_id, scopes);
 
     find_or_create_report_task(
         pool,

@@ -17,6 +17,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::api;
+    use crate::api::v1::handlers::me::MeResponse;
     use crate::db::traits::Status;
     use crate::db::traits::authz::scope_allows;
     use crate::db::traits::task::scope_snapshot_json;
@@ -30,10 +31,11 @@ mod tests {
     use crate::models::user::{LoginUser, NewUser};
     use crate::models::{
         NewServiceAccount, NewTaskRecord, Permissions, PrincipalID, PrincipalMemberResponse,
-        ServiceAccount, ServiceAccountID, ServiceAccountResponse, TaskID, TaskKind, TaskRecord,
-        TaskStatus,
+        PrincipalTokenMetadata, ServiceAccount, ServiceAccountID, ServiceAccountResponse, TaskID,
+        TaskKind, TaskRecord, TaskStatus,
     };
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
+    use crate::tests::asserts::assert_response_status;
     use crate::tests::{
         TestContext, create_test_group, create_test_service_account, create_test_user,
         ensure_admin_group, scoped_token, service_account_token,
@@ -42,6 +44,7 @@ mod tests {
     use crate::utilities::auth::generate_random_password;
 
     const LOGIN_ENDPOINT: &str = "/api/v0/auth/login";
+    const ME_ENDPOINT: &str = "/api/v1/iam/me";
     const PRINCIPALS_ENDPOINT: &str = "/api/v1/iam/principals";
 
     // ----- Batch 1: identity / subtype invariants -----
@@ -758,6 +761,104 @@ mod tests {
         .await;
 
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// `/iam/me` gives service-account consumers a path-id-free way to discover
+    /// their principal identity and current token metadata.
+    #[actix_web::test]
+    async fn test_me_route_works_for_service_account() {
+        let context = TestContext::new().await;
+        let pool = &context.pool;
+        let group = create_test_group(pool).await;
+        let sa = create_test_service_account(pool, &group, None).await;
+        let token = scoped_token(pool, sa.id, &[Permissions::ReadCollection]).await;
+
+        let resp = get_request(pool, &token, ME_ENDPOINT).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let body: MeResponse = test::read_body_json(resp).await;
+
+        assert_eq!(body.principal.principal_id, sa.id);
+        assert_eq!(body.principal.kind, "service_account");
+        assert!(body.token.scoped);
+        assert_eq!(body.token.scopes, Some(vec![Permissions::ReadCollection]));
+    }
+
+    /// `/iam/me/groups` is self-service and accepts service-account tokens; it
+    /// returns only the authenticated principal's memberships.
+    #[actix_web::test]
+    async fn test_me_groups_route_works_for_service_account() {
+        let context = TestContext::new().await;
+        let pool = &context.pool;
+        let group = create_test_group(pool).await;
+        let other_group = create_test_group(pool).await;
+        let sa = create_test_service_account(pool, &group, None).await;
+        group.add_member(pool, &sa).await.unwrap();
+        let token = service_account_token(pool, &sa, None, None).await;
+
+        let resp = get_request(pool, &token, &format!("{ME_ENDPOINT}/groups")).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let groups: Vec<crate::models::Group> = test::read_body_json(resp).await;
+        let ids: std::collections::HashSet<i32> = groups.iter().map(|g| g.id).collect();
+
+        assert!(ids.contains(&group.id));
+        assert!(!ids.contains(&other_group.id));
+    }
+
+    /// `/iam/me/permissions` is self-service for the authenticated principal and
+    /// reports effective namespace permissions through its group memberships.
+    #[actix_web::test]
+    async fn test_me_permissions_route_works_for_service_account() {
+        let context = TestContext::new().await;
+        let pool = &context.pool;
+        let fixture = context.with_namespace().await;
+        let sa = create_test_service_account(pool, &fixture.owner_group, None).await;
+        fixture.owner_group.add_member(pool, &sa).await.unwrap();
+        let token = service_account_token(pool, &sa, None, None).await;
+
+        let resp = get_request(pool, &token, &format!("{ME_ENDPOINT}/permissions")).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let report: Vec<crate::api::v1::handlers::principals::PrincipalNamespacePermissions> =
+            test::read_body_json(resp).await;
+
+        assert!(
+            report
+                .iter()
+                .any(|entry| entry.namespace_id == fixture.namespace.id),
+            "self permissions should include the fixture namespace"
+        );
+    }
+
+    /// `/iam/me/tokens` is still a credential-management surface: human unscoped
+    /// callers can list their own tokens, while service-account tokens are rejected.
+    #[actix_web::test]
+    async fn test_me_tokens_route_is_human_unscoped_only_and_self_scoped() {
+        let context = TestContext::new().await;
+        let pool = &context.pool;
+        let group = create_test_group(pool).await;
+        let sa = create_test_service_account(pool, &group, None).await;
+        let sa_token = service_account_token(pool, &sa, None, None).await;
+
+        let denied = get_request(pool, &sa_token, &format!("{ME_ENDPOINT}/tokens")).await;
+        assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+
+        let visible = get_request(
+            pool,
+            &context.normal_token,
+            &format!("{ME_ENDPOINT}/tokens"),
+        )
+        .await;
+        let visible = assert_response_status(visible, StatusCode::OK).await;
+        let tokens: Vec<PrincipalTokenMetadata> = test::read_body_json(visible).await;
+
+        assert!(
+            tokens
+                .iter()
+                .all(|token| token.principal_id == context.normal_user.id)
+        );
+        assert!(
+            !tokens.is_empty(),
+            "normal user should see its own active token"
+        );
     }
 
     /// #29: the principal-shaped namespace effective-permission route works for a

@@ -1,7 +1,7 @@
 use crate::api::handlers::{auth, meta, probes};
 use crate::api::v1::handlers::{
-    classes, groups, imports, namespaces, principals, relations, remote_targets, reports, search,
-    service_accounts, tasks, templates, users,
+    classes, groups, imports, me, namespaces, principals, relations, remote_targets, reports,
+    search, service_accounts, tasks, templates, users,
 };
 use crate::models::{
     ClassKey, Group, GroupKey, GroupPermission, HubuumClass, HubuumClassExpanded,
@@ -83,6 +83,10 @@ use utoipa::{Modify, OpenApi, ToSchema};
         principals::revoke_token,
         principals::list_principal_groups,
         principals::list_principal_permissions,
+        me::get_me,
+        me::list_my_tokens,
+        me::list_my_groups,
+        me::list_my_permissions,
         namespaces::get_namespaces,
         namespaces::create_namespace,
         namespaces::get_namespace,
@@ -181,6 +185,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
             principals::NewTokenRequest,
             principals::GroupGrant,
             principals::PrincipalNamespacePermissions,
+            me::CurrentTokenMetadata,
+            me::MeResponse,
             Group,
             NewGroup,
             UpdateGroup,
@@ -412,6 +418,8 @@ fn is_cursor_paginated_get(path: &str, method: &str) -> bool {
             path,
             "/api/v1/iam/users"
                 | "/api/v1/iam/service-accounts"
+                | "/api/v1/iam/me/tokens"
+                | "/api/v1/iam/me/groups"
                 | "/api/v1/iam/principals/{principal_id}/tokens"
                 | "/api/v1/iam/principals/{principal_id}/groups"
                 | "/api/v1/iam/groups"
@@ -730,6 +738,10 @@ mod tests {
             "/api/v1/iam/service-accounts",
             "/api/v1/iam/service-accounts/{service_account_id}",
             "/api/v1/iam/service-accounts/{service_account_id}/disable",
+            "/api/v1/iam/me",
+            "/api/v1/iam/me/tokens",
+            "/api/v1/iam/me/groups",
+            "/api/v1/iam/me/permissions",
             "/api/v1/iam/principals/{principal_id}/tokens",
             "/api/v1/iam/principals/{principal_id}/tokens/{token_id}/revoke",
             "/api/v1/iam/principals/{principal_id}/groups",
