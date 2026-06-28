@@ -9705,12 +9705,19 @@
           },
           "password": {
             "type": "string"
+          },
+          "proper_name": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "example": {
           "email": "alice@example.com",
           "name": "alice",
-          "password": "correct-horse-battery-staple"
+          "password": "correct-horse-battery-staple",
+          "proper_name": "Alice Doe"
         }
       },
       "ObjectKey": {
@@ -12031,11 +12038,18 @@
               "string",
               "null"
             ]
+          },
+          "proper_name": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "example": {
           "email": "alice@example.com",
-          "password": "new-password"
+          "password": "new-password",
+          "proper_name": "Alice Doe"
         }
       },
       "UserResponse": {
@@ -12064,6 +12078,12 @@
           },
           "name": {
             "type": "string"
+          },
+          "proper_name": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "updated_at": {
             "type": "string",

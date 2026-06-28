@@ -311,6 +311,7 @@ diesel::table! {
         id -> Int4,
         kind -> Varchar,
         password -> Varchar,
+        proper_name -> Nullable<Varchar>,
         email -> Nullable<Varchar>,
         created_at -> Timestamp,
         updated_at -> Timestamp,

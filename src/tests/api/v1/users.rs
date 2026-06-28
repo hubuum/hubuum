@@ -117,6 +117,7 @@ mod tests {
         let new_user = NewUser {
             name: "test_create_user_endpoint".to_string(),
             password: "testpassword".to_string(),
+            proper_name: Some("Test Create User".to_string()),
             email: None,
         };
 
@@ -177,6 +178,7 @@ mod tests {
         // Test setting a new password
         let updated_user = UpdateUser {
             password: Some("newpassword".to_string()),
+            proper_name: Some("Updated Proper Name".to_string()),
             email: None,
         };
 
@@ -210,6 +212,7 @@ mod tests {
             patched_user.name,
             test_user.name(&context.pool).await.unwrap()
         );
+        assert_eq!(patched_user.proper_name, updated_user.proper_name.clone());
         assert_eq!(patched_user.email, test_user.email);
 
         let stored_user = UserID::new(test_user.id)
@@ -240,6 +243,8 @@ mod tests {
     #[case::id_desc("id.desc", &[2, 1, 0])]
     #[case::name_asc("name.asc", &[0, 1, 2])]
     #[case::name_desc("name.desc", &[2, 1, 0])]
+    #[case::proper_name_asc("proper_name.asc", &[0, 1, 2])]
+    #[case::proper_name_desc("proper_name.desc", &[2, 1, 0])]
     #[actix_web::test]
     async fn test_list_users_sorted(
         #[case] sort_order: &str,
@@ -254,6 +259,7 @@ mod tests {
             let user = NewUser {
                 name: format!("{prefix}_{i}"),
                 password: "testpassword".to_string(),
+                proper_name: Some(format!("{prefix} Proper {i}")),
                 email: Some(format!("{prefix}_{i}@example.com")),
             }
             .save(&context.pool)
@@ -278,6 +284,49 @@ mod tests {
     }
 
     #[rstest]
+    #[actix_web::test]
+    async fn test_list_users_filter_by_proper_name(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let prefix = "proper_name_filter";
+
+        let matching_user = NewUser {
+            name: format!("{prefix}_match_username"),
+            password: "testpassword".to_string(),
+            proper_name: Some(format!("{prefix}_match_display")),
+            email: Some(format!("{prefix}_match@example.com")),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let other_user = NewUser {
+            name: format!("{prefix}_other_username"),
+            password: "testpassword".to_string(),
+            proper_name: Some(format!("{prefix}_other_display")),
+            email: Some(format!("{prefix}_other@example.com")),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{USERS_ENDPOINT}?proper_name__contains={prefix}_match&sort=id"),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let users: Vec<UserResponse> = test::read_body_json(resp).await;
+
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].id, matching_user.id);
+        assert_eq!(users[0].proper_name, matching_user.proper_name);
+
+        matching_user.delete(&context.pool).await.unwrap();
+        other_user.delete(&context.pool).await.unwrap();
+    }
+
+    #[rstest]
     #[case::limit_1(1)]
     #[case::limit_2(2)]
     #[case::limit_5(3)]
@@ -291,6 +340,7 @@ mod tests {
             let user = NewUser {
                 name: format!("{prefix}_{i}"),
                 password: "testpassword".to_string(),
+                proper_name: Some(format!("{prefix} Proper {i}")),
                 email: Some(format!("{prefix}_{i}@example.com")),
             }
             .save(&context.pool)
@@ -323,6 +373,7 @@ mod tests {
                 NewUser {
                     name: format!("{prefix}_{idx}"),
                     password: "testpassword".to_string(),
+                    proper_name: Some(format!("{prefix} Proper {idx}")),
                     email: Some(format!("{prefix}_{idx}@example.com")),
                 }
                 .save(&context.pool)

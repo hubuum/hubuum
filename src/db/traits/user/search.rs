@@ -3087,7 +3087,7 @@ impl User {
         query_options: QueryOptions,
     ) -> Result<Vec<crate::models::UserWithName>, ApiError> {
         use crate::schema::principals;
-        use crate::schema::users::dsl::{created_at, email, id, updated_at, users};
+        use crate::schema::users::dsl::{created_at, email, id, proper_name, updated_at, users};
 
         let query_params = query_options.filters.clone();
 
@@ -3108,6 +3108,9 @@ impl User {
                 FilterField::Id => numeric_search!(base_query, param, operator, id),
                 FilterField::Name | FilterField::Username => {
                     string_search!(base_query, param, operator, principals::name)
+                }
+                FilterField::ProperName => {
+                    string_search!(base_query, param, operator, proper_name)
                 }
                 FilterField::Email => string_search!(base_query, param, operator, email),
                 FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
@@ -3144,7 +3147,7 @@ impl User {
         query_options: QueryOptions,
     ) -> Result<i64, ApiError> {
         use crate::schema::principals;
-        use crate::schema::users::dsl::{created_at, email, id, updated_at, users};
+        use crate::schema::users::dsl::{created_at, email, id, proper_name, updated_at, users};
 
         let query_params = query_options.filters.clone();
         let mut base_query = users
@@ -3157,6 +3160,9 @@ impl User {
                 FilterField::Id => numeric_search!(base_query, param, operator, id),
                 FilterField::Name | FilterField::Username => {
                     string_search!(base_query, param, operator, principals::name)
+                }
+                FilterField::ProperName => {
+                    string_search!(base_query, param, operator, proper_name)
                 }
                 FilterField::Email => string_search!(base_query, param, operator, email),
                 FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),

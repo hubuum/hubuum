@@ -13,7 +13,7 @@ Notes:
 
 | Endpoints | Filter fields | Sort fields | Default sort | Notes |
 | --- | --- | --- | --- | --- |
-| `/api/v1/iam/users` | `id`, `name`, `username`, `email`, `created_at`, `updated_at` | `id`, `name`, `username`, `email`, `created_at`, `updated_at` | `id.asc` | `name` and `username` sort/filter the same underlying field |
+| `/api/v1/iam/users` | `id`, `name`, `username`, `proper_name`, `email`, `created_at`, `updated_at` | `id`, `name`, `username`, `proper_name`, `email`, `created_at`, `updated_at` | `id.asc` | `name` and `username` sort/filter the same underlying field; `proper_name` targets the users table display-name column |
 | `/api/v1/iam/groups` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id.asc` | `name` and `groupname` sort/filter the same underlying field |
 | `/api/v1/iam/principals/{principal_id}/groups` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id.asc` | path constrains the result to one principal's memberships (human or service account) |
 | `/api/v1/iam/groups/{group_id}/members` | `id`, `name`, `created_at`, `updated_at` | `id`, `name`, `created_at`, `updated_at` | `id.asc` | members are principals; each row carries `principal_id`, `kind` (human/service_account), and `name` (`username` is accepted as an alias for `name`) |

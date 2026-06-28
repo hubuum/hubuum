@@ -416,6 +416,7 @@ pub async fn create_user_with_params(pool: &DbPool, username: &str, password: &s
     let result = NewUser {
         name: username.to_string(),
         password: password.to_string(),
+        proper_name: None,
         email: None,
     }
     .save(pool)
@@ -540,6 +541,7 @@ pub async fn ensure_user(pool: &DbPool, uname: &str) -> User {
     let result = NewUser {
         name: uname.to_string(),
         password: "testpassword".to_string(),
+        proper_name: None,
         email: None,
     }
     .save(pool)

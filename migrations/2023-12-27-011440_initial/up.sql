@@ -98,6 +98,7 @@
         id INT PRIMARY KEY,
         kind VARCHAR NOT NULL DEFAULT 'human' CHECK (kind = 'human'),
         password VARCHAR NOT NULL,
+        proper_name VARCHAR NULL,
         email VARCHAR NULL,
         created_at TIMESTAMP NOT NULL DEFAULT now(),
         updated_at TIMESTAMP NOT NULL DEFAULT now(),

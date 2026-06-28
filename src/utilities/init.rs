@@ -71,6 +71,7 @@ pub async fn init(pool: DbPool) -> InitResult {
     let adm_user = match (NewUser {
         name: "admin".to_string(),
         email: None,
+        proper_name: Some("Administrator".to_string()),
         password: default_password.clone(),
     }
     .save(&pool))

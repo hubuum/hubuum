@@ -169,6 +169,7 @@ impl CreateUserRecord for NewUser {
 
         let name = self.name.clone();
         let password = self.password.clone();
+        let proper_name = self.proper_name.clone();
         let email = self.email.clone();
 
         with_transaction(pool, |conn| -> Result<User, ApiError> {
@@ -182,6 +183,7 @@ impl CreateUserRecord for NewUser {
                 .values((
                     users::id.eq(principal.id),
                     users::password.eq(&password),
+                    users::proper_name.eq(&proper_name),
                     users::email.eq(&email),
                 ))
                 .get_result::<User>(conn)?;

@@ -29,6 +29,7 @@ pub struct User {
     pub kind: String,
     #[serde(skip_serializing)]
     pub password: String,
+    pub proper_name: Option<String>,
     pub email: Option<String>,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
@@ -40,6 +41,7 @@ pub struct User {
 pub struct UserResponse {
     pub id: i32,
     pub name: String,
+    pub proper_name: Option<String>,
     pub email: Option<String>,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
@@ -51,6 +53,7 @@ impl UserResponse {
         Self {
             id: user.id,
             name,
+            proper_name: user.proper_name.clone(),
             email: user.email.clone(),
             created_at: user.created_at,
             updated_at: user.updated_at,
@@ -91,6 +94,7 @@ impl CursorPaginated for UserWithName {
             FilterField::Id
                 | FilterField::Name
                 | FilterField::Username
+                | FilterField::ProperName
                 | FilterField::Email
                 | FilterField::CreatedAt
                 | FilterField::UpdatedAt
@@ -101,6 +105,10 @@ impl CursorPaginated for UserWithName {
         Ok(match field {
             FilterField::Id => CursorValue::Integer(self.user.id as i64),
             FilterField::Name | FilterField::Username => CursorValue::String(self.name.clone()),
+            FilterField::ProperName => match &self.user.proper_name {
+                Some(value) => CursorValue::String(value.clone()),
+                None => CursorValue::Null,
+            },
             FilterField::Email => match &self.user.email {
                 Some(email) => CursorValue::String(email.clone()),
                 None => CursorValue::Null,
@@ -140,6 +148,11 @@ impl CursorSqlMapping for UserWithName {
                 column: "principals.name",
                 sql_type: CursorSqlType::String,
                 nullable: false,
+            },
+            FilterField::ProperName => CursorSqlField {
+                column: "users.proper_name",
+                sql_type: CursorSqlType::String,
+                nullable: true,
             },
             FilterField::Email => CursorSqlField {
                 column: "users.email",
@@ -240,6 +253,7 @@ impl User {
 #[diesel(table_name = users)]
 pub struct UpdateUser {
     pub password: Option<String>,
+    pub proper_name: Option<String>,
     pub email: Option<String>,
 }
 
@@ -276,6 +290,7 @@ impl UpdateUser {
 pub struct NewUser {
     pub name: String,
     pub password: String,
+    pub proper_name: Option<String>,
     pub email: Option<String>,
 }
 
@@ -383,6 +398,7 @@ pub fn auth_failure() -> ApiError {
 fn update_user_example() -> UpdateUser {
     UpdateUser {
         password: Some("new-password".to_string()),
+        proper_name: Some("Alice Doe".to_string()),
         email: Some("alice@example.com".to_string()),
     }
 }
@@ -392,6 +408,7 @@ fn new_user_example() -> NewUser {
     NewUser {
         name: "alice".to_string(),
         password: "correct-horse-battery-staple".to_string(),
+        proper_name: Some("Alice Doe".to_string()),
         email: Some("alice@example.com".to_string()),
     }
 }

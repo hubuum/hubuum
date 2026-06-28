@@ -1806,6 +1806,7 @@ filter_fields!(
     (Name, "name"),
     (Groupname, "groupname"),
     (Username, "username"),
+    (ProperName, "proper_name"),
     (Description, "description"),
     (Email, "email"),
     (ValidateSchema, "validate_schema"),

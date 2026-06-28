@@ -93,6 +93,7 @@ mod tests {
             NewUser {
                 name,
                 password: "pw".to_string(),
+                proper_name: None,
                 email: None,
             }
             .save(pool)

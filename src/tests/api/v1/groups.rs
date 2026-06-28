@@ -496,6 +496,7 @@ mod tests {
         let matching_user = NewUser {
             name: format!("filter-group-member-match-{}", group.id),
             password: "testpassword".to_string(),
+            proper_name: Some("Matching Member".to_string()),
             email: Some(format!("match-{}@example.com", group.id)),
         }
         .save(&context.pool)
@@ -504,6 +505,7 @@ mod tests {
         let other_user = NewUser {
             name: format!("filter-group-member-other-{}", group.id),
             password: "testpassword".to_string(),
+            proper_name: Some("Other Member".to_string()),
             email: Some(format!("other-{}@example.com", group.id)),
         }
         .save(&context.pool)
