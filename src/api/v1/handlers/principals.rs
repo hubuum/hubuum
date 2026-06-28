@@ -75,7 +75,7 @@ async fn ensure_can_manage_principal(
     }
 }
 
-pub async fn principal_permissions_response(
+pub(crate) async fn principal_permissions_response(
     pool: &DbPool,
     principal: &impl AuthzSubject,
 ) -> Result<Vec<PrincipalNamespacePermissions>, ApiError> {
