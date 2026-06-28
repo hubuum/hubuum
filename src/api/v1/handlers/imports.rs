@@ -113,10 +113,8 @@ pub async fn create_import(
     let payload = serde_json::to_value(&import_request)?;
     let hash = request_hash(&payload)?;
     let idempotency_key = idempotency_key_from_headers(req.headers())?;
-    let snapshot = TaskScopeSnapshot::from_request(
-        Some(requestor.token_meta.id),
-        requestor.scopes(),
-    );
+    let snapshot =
+        TaskScopeSnapshot::from_request(Some(requestor.token_meta.id), requestor.scopes());
 
     let task = find_or_create_import_task(
         &pool,

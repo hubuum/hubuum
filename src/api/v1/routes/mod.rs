@@ -1,3 +1,4 @@
+use crate::api::v1::handlers::me;
 use actix_web::web;
 
 pub mod classes;
@@ -22,6 +23,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(
             web::scope("/iam/principals").configure(crate::api::v1::handlers::principals::config),
         )
+        .service(web::scope("/iam/me").configure(me::config))
         .service(web::scope("/imports").configure(imports::config))
         .service(web::scope("/namespaces").configure(namespaces::config))
         .service(web::scope("/classes").configure(classes::config))

@@ -75,6 +75,39 @@ async fn ensure_can_manage_principal(
     }
 }
 
+pub async fn principal_permissions_response(
+    pool: &DbPool,
+    principal: &impl AuthzSubject,
+) -> Result<Vec<PrincipalNamespacePermissions>, ApiError> {
+    let rows = principal_all_permissions(pool, principal).await?;
+
+    // Fold (namespace, group, permission-row) tuples into a per-namespace,
+    // per-group report. BTreeMap keeps namespaces in a stable id order; groups
+    // with no granted flags are dropped.
+    let mut by_namespace: BTreeMap<i32, PrincipalNamespacePermissions> = BTreeMap::new();
+    for (namespace, group, permission) in rows {
+        let permissions = permission.granted();
+        if permissions.is_empty() {
+            continue;
+        }
+        by_namespace
+            .entry(namespace.id)
+            .or_insert_with(|| PrincipalNamespacePermissions {
+                namespace_id: namespace.id,
+                namespace_name: namespace.name.clone(),
+                grants: Vec::new(),
+            })
+            .grants
+            .push(GroupGrant {
+                group_id: group.id,
+                groupname: group.groupname.clone(),
+                permissions,
+            });
+    }
+
+    Ok(by_namespace.into_values().collect())
+}
+
 #[utoipa::path(
     post,
     path = "/api/v1/iam/principals/{principal_id}/tokens",
@@ -290,32 +323,6 @@ pub async fn list_principal_permissions(
     let principal = pid.principal(&pool).await?;
     ensure_can_manage_principal(&pool, &requestor, &principal).await?;
 
-    let rows = principal_all_permissions(&pool, pid).await?;
-
-    // Fold (namespace, group, permission-row) tuples into a per-namespace,
-    // per-group report. BTreeMap keeps namespaces in a stable id order; groups
-    // with no granted flags are dropped.
-    let mut by_namespace: BTreeMap<i32, PrincipalNamespacePermissions> = BTreeMap::new();
-    for (namespace, group, permission) in rows {
-        let permissions = permission.granted();
-        if permissions.is_empty() {
-            continue;
-        }
-        by_namespace
-            .entry(namespace.id)
-            .or_insert_with(|| PrincipalNamespacePermissions {
-                namespace_id: namespace.id,
-                namespace_name: namespace.name.clone(),
-                grants: Vec::new(),
-            })
-            .grants
-            .push(GroupGrant {
-                group_id: group.id,
-                groupname: group.groupname.clone(),
-                permissions,
-            });
-    }
-
-    let report: Vec<PrincipalNamespacePermissions> = by_namespace.into_values().collect();
+    let report = principal_permissions_response(&pool, &pid).await?;
     Ok(json_response(report, StatusCode::OK))
 }
