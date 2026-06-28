@@ -85,7 +85,7 @@ mod test {
 
             let hits = context
                 .admin_user
-                .search_classes(&context.pool, query_options.clone())
+                .search_classes(&context.pool, query_options.clone(), None)
                 .await
                 .unwrap();
             assert_eq!(

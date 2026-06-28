@@ -29,11 +29,52 @@ pub struct TaskStateUpdate {
 
 pub struct TaskCreateRequest {
     pub kind: TaskKind,
+    /// Principal id of the submitter.
     pub submitted_by: i32,
     pub idempotency_key: Option<String>,
     pub request_hash: Option<String>,
     pub request_payload: serde_json::Value,
     pub total_items: i32,
+    /// Scope snapshot of the submitting token (see `TaskRecord`).
+    pub submitted_token_id: Option<i32>,
+    pub submitted_token_scoped: bool,
+    pub submitted_token_scopes: serde_json::Value,
+}
+
+/// Encode a token scope set as the persisted snapshot JSON (an array of
+/// permission strings; empty array for unscoped or deny-all).
+pub fn scope_snapshot_json(scopes: Option<&[crate::models::Permissions]>) -> serde_json::Value {
+    let strings: Vec<String> = scopes
+        .map(|s| s.iter().map(|p| p.to_string()).collect())
+        .unwrap_or_default();
+    serde_json::Value::Array(strings.into_iter().map(serde_json::Value::String).collect())
+}
+
+/// The submitting token's scope boundary, captured at task-creation time and
+/// persisted so async execution can never exceed it.
+#[derive(Debug, Clone)]
+pub struct TaskScopeSnapshot {
+    pub token_id: Option<i32>,
+    /// Whether the submitting token was scoped. This is NOT derivable from
+    /// `scopes`: an unscoped token (`None`) and a deny-all scoped token
+    /// (`Some(&[])`) both serialize to an empty array, so the boolean is the
+    /// only thing that distinguishes "full authority" from "deny everything".
+    pub scoped: bool,
+    pub scopes: serde_json::Value,
+}
+
+impl TaskScopeSnapshot {
+    /// Build from the submitting token id and its live scope set.
+    pub fn from_request(
+        token_id: Option<i32>,
+        scopes: Option<&[crate::models::Permissions]>,
+    ) -> Self {
+        Self {
+            token_id,
+            scoped: scopes.is_some(),
+            scopes: scope_snapshot_json(scopes),
+        }
+    }
 }
 
 #[derive(QueryableByName)]
@@ -740,6 +781,9 @@ fn insert_queued_task_with_event(
             processed_items: 0,
             success_items: 0,
             failed_items: 0,
+            submitted_token_id: request.submitted_token_id,
+            submitted_token_scoped: request.submitted_token_scoped,
+            submitted_token_scopes: request.submitted_token_scopes,
             request_redacted_at: None,
             started_at: None,
             finished_at: None,
@@ -879,6 +923,9 @@ mod tests {
                     kind: TaskKind::Import.as_str().to_string(),
                     status: TaskStatus::Queued.as_str().to_string(),
                     submitted_by: Some(context.admin_user.id),
+                    submitted_token_id: None,
+                    submitted_token_scoped: false,
+                    submitted_token_scopes: serde_json::json!([]),
                     idempotency_key: Some(format!("{claim_prefix}-{index}")),
                     request_hash: None,
                     request_payload: None,
@@ -962,6 +1009,9 @@ mod tests {
                 kind: TaskKind::Import.as_str().to_string(),
                 status: TaskStatus::Succeeded.as_str().to_string(),
                 submitted_by: Some(task_owner.id),
+                submitted_token_id: None,
+                submitted_token_scoped: false,
+                submitted_token_scopes: serde_json::json!([]),
                 idempotency_key: Some(context.scoped_name("deleted-owner-task")),
                 request_hash: None,
                 request_payload: None,
@@ -991,6 +1041,9 @@ mod tests {
             TaskCreateRequest {
                 kind: TaskKind::Report,
                 submitted_by: context.admin_user.id,
+                submitted_token_id: None,
+                submitted_token_scoped: false,
+                submitted_token_scopes: serde_json::json!([]),
                 idempotency_key: Some(context.scoped_name("report-cap-first")),
                 request_hash: Some(context.scoped_name("report-cap-first-hash")),
                 request_payload: serde_json::json!({"report": "first"}),
@@ -1006,6 +1059,9 @@ mod tests {
             TaskCreateRequest {
                 kind: TaskKind::Report,
                 submitted_by: context.admin_user.id,
+                submitted_token_id: None,
+                submitted_token_scoped: false,
+                submitted_token_scopes: serde_json::json!([]),
                 idempotency_key: Some(context.scoped_name("report-cap-second")),
                 request_hash: Some(context.scoped_name("report-cap-second-hash")),
                 request_payload: serde_json::json!({"report": "second"}),
@@ -1040,6 +1096,9 @@ mod tests {
             TaskCreateRequest {
                 kind: TaskKind::RemoteCall,
                 submitted_by: context.admin_user.id,
+                submitted_token_id: None,
+                submitted_token_scoped: false,
+                submitted_token_scopes: serde_json::json!([]),
                 idempotency_key: Some(context.scoped_name("remote-cap-first")),
                 request_hash: Some(context.scoped_name("remote-cap-first-hash")),
                 request_payload: payload.clone(),
@@ -1055,6 +1114,9 @@ mod tests {
             TaskCreateRequest {
                 kind: TaskKind::RemoteCall,
                 submitted_by: context.admin_user.id,
+                submitted_token_id: None,
+                submitted_token_scoped: false,
+                submitted_token_scopes: serde_json::json!([]),
                 idempotency_key: Some(context.scoped_name("remote-cap-second")),
                 request_hash: Some(context.scoped_name("remote-cap-second-hash")),
                 request_payload: payload,

@@ -499,7 +499,7 @@ mod tests {
     use chrono::NaiveDate;
 
     use super::*;
-    use crate::models::{Namespace, User};
+    use crate::models::{Namespace, UserWithName};
 
     fn namespace(id: i32, name: &str) -> Namespace {
         Namespace {
@@ -616,7 +616,7 @@ mod tests {
 
     #[test]
     fn test_prepare_db_pagination_adds_limit_and_tie_breaker() {
-        let prepared = prepare_db_pagination::<User>(&QueryOptions {
+        let prepared = prepare_db_pagination::<UserWithName>(&QueryOptions {
             filters: vec![],
             sort: vec![SortParam {
                 field: FilterField::Username,
@@ -635,7 +635,7 @@ mod tests {
 
     #[test]
     fn test_cursor_filter_sql_handles_nullable_descending_strings() {
-        let sql = cursor_filter_sql::<User>(
+        let sql = cursor_filter_sql::<UserWithName>(
             &[SortParam {
                 field: FilterField::Email,
                 descending: true,

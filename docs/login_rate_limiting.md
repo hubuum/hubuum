@@ -12,8 +12,8 @@ in-depth reference.
 The limiter defends against online credential-guessing on the `POST /api/v0/auth/login`
 endpoint. Two attacks motivated the current design (see advisory GHSA-63j4-jh8h-chch):
 
-1. *Password spraying.* One password tried across many usernames from a single host. A
-   limiter keyed only on `(username, IP)` leaves every bucket at one attempt, so nothing is
+1. *Password spraying.* One password tried across many account names from a single host. A
+   limiter keyed only on `(name, IP)` leaves every bucket at one attempt, so nothing is
    throttled.
 2. *Spoofed forwarding headers.* When the server trusts `X-Forwarded-For`, taking the
    leftmost (attacker-supplied) entry lets an attacker mint a fresh bucket on every request
@@ -26,8 +26,8 @@ A login is throttled if *any* applicable scope is currently locked out.
 
 | Scope | Key | Default threshold | Catches |
 | ----- | --- | ----------------- | ------- |
-| User + IP | `(username, client IP)` | `5` | Single-account brute force from one host |
-| IP | `client IP` | `20` | Spraying many usernames from one host |
+| Name + IP | `(name, client IP)` | `5` | Single-account brute force from one host |
+| IP | `client IP` | `20` | Spraying many account names from one host |
 | Subnet | `client IP / prefix` | `100` | Distributed spraying from one network |
 
 The per-IP and per-subnet scopes apply only when a client IP is known and their thresholds
@@ -37,7 +37,7 @@ are non-zero. Setting `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP=0` or
 Subnets are formed by masking the client IP to a configurable prefix length (default `/24`
 for IPv4, `/64` for IPv6).
 
-A successful login clears only the `(username, IP)` scope. The per-IP and per-subnet
+A successful login clears only the `(name, IP)` scope. The per-IP and per-subnet
 budgets are deliberately left intact, so one user's success cannot reset the spray or
 distributed counters for the whole host or network.
 
@@ -119,7 +119,7 @@ the peer is the attacker's own untrusted address, so it becomes the client regar
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
 | `HUBUUM_LOGIN_RATE_LIMIT_ENABLED` | `true` | Master switch for login throttling |
-| `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS` | `5` | Max failed attempts per `(username, IP)` per window |
+| `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS` | `5` | Max failed attempts per `(name, IP)` per window |
 | `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP` | `20` | Max failed attempts per client IP per window (`0` disables) |
 | `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET` | `100` | Max failed attempts per client subnet per window (`0` disables) |
 | `HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS` | `300` | Sliding window length in seconds |
@@ -148,7 +148,7 @@ Query parameters (all optional, and combinable):
 - `include` — `locked` (default, only currently-locked scopes) or `all` (every tracked
   scope).
 - `scope` — restrict to one scope kind: `user_ip`, `ip`, or `subnet`.
-- `q` — case-insensitive substring match on the scope identifier (a username, IP, or
+- `q` — case-insensitive substring match on the scope identifier (a name, IP, or
   subnet). For example, `q=alice` or `q=198.51.100`.
 
 `tracked_entries` and `locked_entries` are totals across all scopes; `returned_entries` is

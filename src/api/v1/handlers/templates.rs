@@ -6,7 +6,8 @@ use crate::can;
 use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
 use crate::errors::ApiError;
-use crate::extractors::UserAccess;
+use crate::extractors::Authenticated;
+use crate::models::namespace::user_can_on_any;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
     NamespaceID, NewReportTemplate, Permissions, ReportTemplate, ReportTemplateID,
@@ -37,10 +38,10 @@ use crate::utilities::response::{
 #[post("/")]
 pub async fn create_template(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     template: web::Json<NewReportTemplate>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let template = template.into_inner();
 
     debug!(
@@ -53,6 +54,7 @@ pub async fn create_template(
     can!(
         &pool,
         user,
+        requestor.scopes(),
         [Permissions::CreateTemplate],
         NamespaceID::new(template.namespace_id)?
     );
@@ -81,10 +83,10 @@ pub async fn create_template(
 #[get("/")]
 pub async fn get_templates(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let params = parse_query_parameter(req.query_string())?;
 
     info!(
@@ -94,7 +96,7 @@ pub async fn get_templates(
 
     let search_params = prepare_db_pagination::<ReportTemplate>(&params)?;
     let allowed_namespace_ids =
-        crate::models::namespace::user_can_on_any(&pool, user, Permissions::ReadTemplate)
+        user_can_on_any(&pool, user, Permissions::ReadTemplate, requestor.scopes())
             .await?
             .into_iter()
             .map(|namespace| namespace.id)
@@ -125,10 +127,10 @@ pub async fn get_templates(
 #[get("/{template_id}")]
 pub async fn get_template(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     template_id: web::Path<ReportTemplateID>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let template_id = template_id.into_inner();
 
     debug!(
@@ -142,6 +144,7 @@ pub async fn get_template(
     can!(
         &pool,
         user,
+        requestor.scopes(),
         [Permissions::ReadTemplate],
         NamespaceID::new(template.namespace_id)?
     );
@@ -171,12 +174,12 @@ pub async fn get_template(
 #[post("/{template_id}/reports")]
 pub async fn run_template_report(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     req: HttpRequest,
     template_id: web::Path<ReportTemplateID>,
     run: web::Json<ReportTemplateRunRequest>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let template_id = template_id.into_inner();
     let run = run.into_inner();
 
@@ -191,6 +194,7 @@ pub async fn run_template_report(
     can!(
         &pool,
         user.clone(),
+        requestor.scopes(),
         [Permissions::ReadTemplate],
         NamespaceID::new(template.namespace_id)?
     );
@@ -198,7 +202,9 @@ pub async fn run_template_report(
     let report = template.build_report_request(run)?;
     let task = crate::api::v1::handlers::reports::submit_report_task(
         &pool,
-        &user,
+        user,
+        requestor.scopes(),
+        Some(requestor.token_meta.id),
         req,
         report,
         Some(template),
@@ -236,11 +242,11 @@ pub async fn run_template_report(
 #[patch("/{template_id}")]
 pub async fn patch_template(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     template_id: web::Path<ReportTemplateID>,
     update: web::Json<UpdateReportTemplate>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let template_id = template_id.into_inner();
     let update = update.into_inner();
 
@@ -255,6 +261,7 @@ pub async fn patch_template(
     can!(
         &pool,
         user.clone(),
+        requestor.scopes(),
         [Permissions::UpdateTemplate],
         NamespaceID::new(existing.namespace_id)?
     );
@@ -265,6 +272,7 @@ pub async fn patch_template(
         can!(
             &pool,
             user,
+            requestor.scopes(),
             [Permissions::CreateTemplate],
             NamespaceID::new(target_namespace)?
         );
@@ -293,10 +301,10 @@ pub async fn patch_template(
 #[delete("/{template_id}")]
 pub async fn delete_template(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     template_id: web::Path<ReportTemplateID>,
 ) -> Result<impl Responder, ApiError> {
-    let user = requestor.user;
+    let user = &requestor.principal;
     let template_id = template_id.into_inner();
 
     debug!(
@@ -310,6 +318,7 @@ pub async fn delete_template(
     can!(
         &pool,
         user,
+        requestor.scopes(),
         [Permissions::DeleteTemplate],
         NamespaceID::new(template.namespace_id)?
     );

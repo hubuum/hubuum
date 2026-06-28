@@ -4,9 +4,9 @@ use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, web};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
-use crate::db::traits::task::{TaskBackend, TaskCreateRequest};
+use crate::db::traits::task::{TaskBackend, TaskCreateRequest, TaskScopeSnapshot};
 use crate::errors::ApiError;
-use crate::extractors::UserAccess;
+use crate::extractors::Authenticated;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
     CURRENT_IMPORT_VERSION, ImportRequest, ImportTaskResultResponse, TaskID, TaskKind, TaskRecord,
@@ -23,6 +23,7 @@ use crate::utilities::response::{
 async fn find_or_create_import_task(
     pool: &DbPool,
     submitted_by: i32,
+    snapshot: TaskScopeSnapshot,
     idempotency_key: Option<String>,
     payload: serde_json::Value,
     request_hash: String,
@@ -55,6 +56,9 @@ async fn find_or_create_import_task(
         request_hash: Some(request_hash),
         request_payload: payload,
         total_items,
+        submitted_token_id: snapshot.token_id,
+        submitted_token_scoped: snapshot.scoped,
+        submitted_token_scopes: snapshot.scopes,
     })
     .create_generic(pool)
     .await
@@ -93,7 +97,7 @@ async fn find_or_create_import_task(
 #[post("")]
 pub async fn create_import(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     req: HttpRequest,
     import_request: web::Json<ImportRequest>,
 ) -> Result<impl Responder, ApiError> {
@@ -109,10 +113,15 @@ pub async fn create_import(
     let payload = serde_json::to_value(&import_request)?;
     let hash = request_hash(&payload)?;
     let idempotency_key = idempotency_key_from_headers(req.headers())?;
+    let snapshot = TaskScopeSnapshot::from_request(
+        Some(requestor.token_meta.id),
+        requestor.scopes(),
+    );
 
     let task = find_or_create_import_task(
         &pool,
-        requestor.user.id,
+        requestor.principal.id,
+        snapshot,
         idempotency_key,
         payload,
         hash,
@@ -150,13 +159,13 @@ pub async fn create_import(
 #[get("/{task_id}")]
 pub async fn get_import(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
     let task = task_id
         .into_inner()
-        .load_authorized_import(&pool, &requestor.user)
+        .load_authorized_import(&pool, &requestor.principal)
         .await?;
     Ok(json_response(task.to_response()?, StatusCode::OK))
 }
@@ -179,14 +188,14 @@ pub async fn get_import(
 #[get("/{task_id}/results")]
 pub async fn get_import_results(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     req: HttpRequest,
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(pool.get_ref().clone());
     let task_id = task_id.into_inner();
     task_id
-        .load_authorized_import(&pool, &requestor.user)
+        .load_authorized_import(&pool, &requestor.principal)
         .await?;
     let params = parse_query_parameter(req.query_string())?;
     let search_params = prepare_db_pagination::<ImportTaskResultResponse>(&params)?;

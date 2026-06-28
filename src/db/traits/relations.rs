@@ -465,7 +465,10 @@ where
         use diesel::sql_query;
         use diesel::sql_types::{Array, Integer};
 
-        let namespaces = user_can_on_any(pool, self, Permissions::ReadObject).await?;
+        // No token context on this internal traversal helper (production related-
+        // object endpoints go through the scope-aware `objects_related_to_page`),
+        // so this runs with full principal authority.
+        let namespaces = user_can_on_any(pool, self, Permissions::ReadObject, None).await?;
         with_connection(pool, |conn| {
             sql_query("SELECT * FROM get_transitively_linked_objects($1, $2, $3, $4)")
                 .bind::<Integer, _>(source_object.id())

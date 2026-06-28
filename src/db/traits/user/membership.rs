@@ -1,27 +1,29 @@
 use super::*;
-pub trait LoadUserGroups: SelfAccessors<User> {
+use crate::db::traits::authz::{AuthzSubject, scope_allows};
+
+pub trait LoadUserGroups: AuthzSubject {
     async fn load_user_groups(&self, pool: &DbPool) -> Result<Vec<Group>, ApiError>;
 }
 
 impl<T: ?Sized> LoadUserGroups for T
 where
-    T: SelfAccessors<User>,
+    T: AuthzSubject,
 {
     async fn load_user_groups(&self, pool: &DbPool) -> Result<Vec<Group>, ApiError> {
+        use crate::schema::group_memberships::dsl::{group_id, group_memberships, principal_id};
         use crate::schema::groups::dsl::*;
-        use crate::schema::user_groups::dsl::{group_id, user_groups, user_id};
 
         with_connection(pool, |conn| {
-            user_groups
+            group_memberships
                 .inner_join(groups.on(id.eq(group_id)))
-                .filter(user_id.eq(self.id()))
+                .filter(principal_id.eq(self.principal_id()))
                 .select(groups::all_columns())
                 .load::<Group>(conn)
         })
     }
 }
 
-pub trait LoadUserGroupsPaginated: SelfAccessors<User> {
+pub trait LoadUserGroupsPaginated: AuthzSubject {
     async fn load_user_groups_paginated_with_total_count(
         &self,
         pool: &DbPool,
@@ -31,21 +33,21 @@ pub trait LoadUserGroupsPaginated: SelfAccessors<User> {
 
 impl<T: ?Sized> LoadUserGroupsPaginated for T
 where
-    T: SelfAccessors<User>,
+    T: AuthzSubject,
 {
     async fn load_user_groups_paginated_with_total_count(
         &self,
         pool: &DbPool,
         query_options: &QueryOptions,
     ) -> Result<(Vec<Group>, i64), ApiError> {
+        use crate::schema::group_memberships::dsl::{group_id, group_memberships, principal_id};
         use crate::schema::groups::dsl::*;
-        use crate::schema::user_groups::dsl::{group_id, user_groups, user_id};
         use crate::{date_search, numeric_search, string_search};
 
         let build_query = || -> Result<_, ApiError> {
-            let mut base_query = user_groups
+            let mut base_query = group_memberships
                 .inner_join(groups.on(id.eq(group_id)))
-                .filter(user_id.eq(self.id()))
+                .filter(principal_id.eq(self.principal_id()))
                 .into_boxed();
 
             for param in &query_options.filters {
@@ -83,41 +85,31 @@ where
     }
 }
 
-pub trait GroupIdsSubqueryBackend: SelfAccessors<User> {
-    fn group_ids_subquery_from_backend<'a>(
-        &self,
-    ) -> crate::schema::user_groups::BoxedQuery<'a, diesel::pg::Pg, diesel::sql_types::Integer>;
-}
-
-impl<T: ?Sized> GroupIdsSubqueryBackend for T
-where
-    T: SelfAccessors<User>,
-{
-    fn group_ids_subquery_from_backend<'a>(
-        &self,
-    ) -> crate::schema::user_groups::BoxedQuery<'a, diesel::pg::Pg, diesel::sql_types::Integer>
-    {
-        use crate::schema::user_groups::dsl::*;
-
-        user_groups
-            .filter(user_id.eq(self.id()))
-            .select(group_id)
-            .into_boxed()
-    }
-}
-
-pub trait LoadPermittedNamespaces: SelfAccessors<User> + GroupAccessors + GroupMemberships {
+pub trait LoadPermittedNamespaces: GroupAccessors + AuthzSubject {
+    /// Load all namespaces the subject has the given permissions on, intersected
+    /// with the token scope set.
+    ///
+    /// * `scopes = None` — unscoped (admins get all namespaces via the fast path).
+    /// * `scopes = Some(..)` — the requested permissions must be within scope; a
+    ///   scoped admin falls through to the per-namespace permission query rather
+    ///   than the all-namespaces fast path.
     async fn load_namespaces_with_permissions<'a, I>(
         &self,
         pool: &DbPool,
         permissions_list: &'a I,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<Namespace>, ApiError>
     where
         &'a I: IntoIterator<Item = &'a Permissions>,
     {
-        let is_admin = self.is_admin(pool).await?;
-        self.load_namespaces_with_permissions_with_admin_status(pool, permissions_list, is_admin)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, pool).await?;
+        self.load_namespaces_with_permissions_with_admin_status(
+            pool,
+            permissions_list,
+            is_admin,
+            scopes,
+        )
+        .await
     }
 
     async fn load_namespaces_with_permissions_with_admin_status<'a, I>(
@@ -125,6 +117,7 @@ pub trait LoadPermittedNamespaces: SelfAccessors<User> + GroupAccessors + GroupM
         pool: &DbPool,
         permissions_list: &'a I,
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<Namespace>, ApiError>
     where
         &'a I: IntoIterator<Item = &'a Permissions>;
@@ -132,13 +125,14 @@ pub trait LoadPermittedNamespaces: SelfAccessors<User> + GroupAccessors + GroupM
 
 impl<T: ?Sized> LoadPermittedNamespaces for T
 where
-    T: SelfAccessors<User> + GroupAccessors + GroupMemberships,
+    T: GroupAccessors + AuthzSubject,
 {
     async fn load_namespaces_with_permissions_with_admin_status<'a, I>(
         &self,
         pool: &DbPool,
         permissions_list: &'a I,
         is_admin: bool,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<Namespace>, ApiError>
     where
         &'a I: IntoIterator<Item = &'a Permissions>,
@@ -146,7 +140,18 @@ where
         use crate::models::PermissionFilter;
         use crate::schema::namespaces::dsl::{id as namespaces_table_id, namespaces};
         use crate::schema::permissions::dsl::{group_id, namespace_id, permissions};
-        if is_admin {
+
+        let requested: Vec<Permissions> = permissions_list.into_iter().copied().collect();
+
+        // Fail-closed: a scoped token that requests anything outside its scope
+        // can see no namespaces through that request.
+        if !scope_allows(scopes, &requested) {
+            return Ok(Vec::new());
+        }
+
+        // Unscoped admins see everything; scoped admins fall through to the
+        // permission query so their token scope still bounds the listing.
+        if is_admin && scopes.is_none() {
             return with_connection(pool, |conn| {
                 namespaces
                     .select(namespaces::all_columns())
@@ -154,13 +159,13 @@ where
             });
         }
 
-        let groups_id_subquery = self.group_ids_subquery_from_backend();
+        let groups_id_subquery = self.group_ids_subquery();
 
         let mut base_query = permissions
             .into_boxed()
             .filter(group_id.eq_any(groups_id_subquery));
 
-        for perm in permissions_list {
+        for perm in &requested {
             base_query = perm.create_boxed_filter(base_query, true);
         }
 

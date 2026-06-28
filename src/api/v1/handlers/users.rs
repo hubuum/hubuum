@@ -3,11 +3,10 @@ use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, AdminOrSelfAccess};
 use crate::models::search::parse_query_parameter;
-use crate::models::user::{NewUser, UpdateUser, UserID, UserResponse};
-use crate::models::{Group, User, UserToken, UserTokenMetadata};
+use crate::models::user::{NewUser, UpdateUser, UserID, UserResponse, UserWithName};
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::utilities::response::{
-    json_response, json_response_created, paginated_json_mapped_response, paginated_json_response,
+    json_response, json_response_created, paginated_json_mapped_response,
 };
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, routes, web};
 use serde_json::json;
@@ -41,12 +40,12 @@ pub async fn get_users(
         Err(e) => return Err(e),
     };
 
-    debug!(message = "User list requested", requestor = user.username);
+    debug!(message = "User list requested", requestor = user.id);
 
     let total_count = user
         .count_users(&pool, count_query_options(&params))
         .await?;
-    let search_params = prepare_db_pagination::<User>(&params)?;
+    let search_params = prepare_db_pagination::<UserWithName>(&params)?;
     let result = user.search_users(&pool, search_params).await?;
 
     paginated_json_mapped_response(result, total_count, StatusCode::OK, &params, |users| {
@@ -78,59 +77,16 @@ pub async fn create_user(
     debug!(
         message = "User create requested",
         requestor = requestor.user.id,
-        new_user = new_user.username.as_str()
+        new_user = new_user.name.as_str()
     );
 
     let user = new_user.into_inner().save(&pool).await?;
+    let response = user.to_response(&pool).await?;
 
     Ok(json_response_created(
-        UserResponse::from(&user),
+        response,
         format!("/api/v1/iam/users/{}", user.id).as_str(),
     ))
-}
-
-#[utoipa::path(
-    get,
-    path = "/api/v1/iam/users/{user_id}/tokens",
-    tag = "users",
-    security(("bearer_auth" = [])),
-    params(
-        ("user_id" = i32, Path, description = "User ID")
-    ),
-    responses(
-        (status = 200, description = "Active token metadata for user", body = [UserTokenMetadata]),
-        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 404, description = "User not found", body = ApiErrorResponse)
-    )
-)]
-#[get("/{user_id}/tokens")]
-pub async fn get_user_tokens(
-    pool: web::Data<DbPool>,
-    user_id: web::Path<UserID>,
-    requestor: AdminOrSelfAccess,
-    req: HttpRequest,
-) -> Result<impl Responder, ApiError> {
-    use crate::db::traits::ActiveTokens;
-    let params = parse_query_parameter(req.query_string())?;
-
-    let user = user_id.into_inner().user(&pool).await?;
-    debug!(
-        message = "User tokens requested",
-        target = user.id,
-        requestor = requestor.user.id
-    );
-
-    let search_params = prepare_db_pagination::<UserToken>(&params)?;
-    let (valid_tokens, total_count) = user
-        .tokens_paginated_with_total_count(&pool, &search_params)
-        .await?;
-    paginated_json_mapped_response(
-        valid_tokens,
-        total_count,
-        StatusCode::OK,
-        &params,
-        |tokens| tokens.into_iter().map(UserTokenMetadata::from).collect(),
-    )
 }
 
 #[utoipa::path(
@@ -161,45 +117,10 @@ pub async fn get_user(
         requestor = requestor.user.id
     );
 
-    Ok(json_response(UserResponse::from(user), StatusCode::OK))
-}
-
-#[utoipa::path(
-    get,
-    path = "/api/v1/iam/users/{user_id}/groups",
-    tag = "users",
-    security(("bearer_auth" = [])),
-    params(
-        ("user_id" = i32, Path, description = "User ID")
-    ),
-    responses(
-        (status = 200, description = "Groups of user", body = [Group]),
-        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 404, description = "User not found", body = ApiErrorResponse)
-    )
-)]
-#[get("/{user_id}/groups")]
-pub async fn get_user_groups(
-    pool: web::Data<DbPool>,
-    user_id: web::Path<UserID>,
-    requestor: AdminOrSelfAccess,
-    req: HttpRequest,
-) -> Result<impl Responder, ApiError> {
-    use crate::models::traits::GroupAccessors;
-    let params = parse_query_parameter(req.query_string())?;
-
-    let user = user_id.into_inner().user(&pool).await?;
-    debug!(
-        message = "User groups requested",
-        target = user.id,
-        requestor = requestor.user.id
-    );
-
-    let search_params = prepare_db_pagination::<Group>(&params)?;
-    let (groups, total_count) = user
-        .groups_paginated_with_total_count(&pool, &search_params)
-        .await?;
-    paginated_json_response(groups, total_count, StatusCode::OK, &params)
+    Ok(json_response(
+        user.to_response(&pool).await?,
+        StatusCode::OK,
+    ))
 }
 
 #[utoipa::path(
@@ -233,7 +154,10 @@ pub async fn update_user(
     );
 
     let user = updated_user.into_inner().save(user.id, &pool).await?;
-    Ok(json_response(UserResponse::from(user), StatusCode::OK))
+    Ok(json_response(
+        user.to_response(&pool).await?,
+        StatusCode::OK,
+    ))
 }
 
 #[utoipa::path(

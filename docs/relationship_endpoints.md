@@ -12,7 +12,7 @@ For filtering, sorting, and cursor pagination support, see:
 ### Class relations
 
 | Operation | Method | Path | Description |
-|-----------|--------|------|-------------|
+| --- | --- | --- | --- |
 | List | `GET` | `/api/v1/relations/classes` | List class relations visible to the caller |
 | Get | `GET` | `/api/v1/relations/classes/{relation_id}` | Fetch one class relation |
 | Create | `POST` | `/api/v1/relations/classes` | Create a class relation |
@@ -21,7 +21,7 @@ For filtering, sorting, and cursor pagination support, see:
 ### Object relations
 
 | Operation | Method | Path | Description |
-|-----------|--------|------|-------------|
+| --- | --- | --- | --- |
 | List | `GET` | `/api/v1/relations/objects` | List object relations visible to the caller |
 | Get | `GET` | `/api/v1/relations/objects/{relation_id}` | Fetch one object relation |
 | Create | `POST` | `/api/v1/relations/objects` | Create an object relation |
@@ -32,7 +32,7 @@ For filtering, sorting, and cursor pagination support, see:
 These endpoints are scoped by the class in the path.
 
 | Operation | Method | Path | Description |
-|-----------|--------|------|-------------|
+| --- | --- | --- | --- |
 | List connected classes | `GET` | `/api/v1/classes/{class_id}/related/classes` | List classes connected to the class |
 | List direct relations | `GET` | `/api/v1/classes/{class_id}/related/relations` | List direct relations touching the class |
 | Get neighborhood graph | `GET` | `/api/v1/classes/{class_id}/related/graph` | Return the connected-class neighborhood graph |
@@ -44,7 +44,7 @@ These endpoints are scoped by the class in the path.
 These endpoints are scoped by the class and object in the path.
 
 | Operation | Method | Path | Description |
-|-----------|--------|------|-------------|
+| --- | --- | --- | --- |
 | List connected objects | `GET` | `/api/v1/classes/{class_id}/objects/{object_id}/related/objects` | List objects connected to the object; supports `ignore_classes` and `ignore_self_class` result filters |
 | List direct relations | `GET` | `/api/v1/classes/{class_id}/objects/{object_id}/related/relations` | List direct relations touching the object |
 | Get neighborhood graph | `GET` | `/api/v1/classes/{class_id}/objects/{object_id}/related/graph` | Return the connected-object neighborhood graph |

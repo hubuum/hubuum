@@ -18,13 +18,14 @@ use crate::errors::ApiError;
 use crate::models::{
     NewRemoteCallResult, NewTaskEventRecord, RemoteAuthConfig, RemoteHttpMethod,
     RemoteInvocationBodyOverride, RemoteInvocationParameters, RemoteTemplateContext,
-    StoredRemoteCallTaskPayload, TaskRecord, TaskStatus, User, authorize_remote_invocation,
+    StoredRemoteCallTaskPayload, TaskRecord, TaskStatus, authorize_remote_invocation,
 };
 
 pub(super) async fn execute_remote_call_task(
     pool: &DbPool,
     task: &TaskRecord,
-    user: &User,
+    user: &impl crate::db::traits::authz::AuthzSubject,
+    scopes: Option<&[crate::models::Permissions]>,
 ) -> Result<(), ApiError> {
     let payload = task
         .request_payload
@@ -46,7 +47,7 @@ pub(super) async fn execute_remote_call_task(
     )
     .await?;
 
-    let result = execute_remote_call(pool, task.id, user, &request).await;
+    let result = execute_remote_call(pool, task.id, user, scopes, &request).await;
     match result {
         Ok(success) => finalize_remote_task(pool, task, success).await,
         Err(error) => {
@@ -103,11 +104,13 @@ struct RemoteFailureContext<'a> {
 async fn execute_remote_call(
     pool: &DbPool,
     task_id: i32,
-    user: &User,
+    user: &impl crate::db::traits::authz::AuthzSubject,
+    scopes: Option<&[crate::models::Permissions]>,
     request: &StoredRemoteCallTaskPayload,
 ) -> Result<RemoteExecutionOutcome, ApiError> {
     let target = request.target_id.instance(pool).await?;
-    let resolved = authorize_remote_invocation(pool, user, &target, &request.subject).await?;
+    let resolved =
+        authorize_remote_invocation(pool, user, scopes, &target, &request.subject).await?;
 
     let context = invocation_context(
         resolved.context,

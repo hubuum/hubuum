@@ -1,4 +1,5 @@
 pub mod active_tokens;
+pub mod authz;
 pub mod class;
 pub mod group;
 pub mod is_active;
@@ -12,7 +13,6 @@ pub mod task;
 pub mod task_import;
 pub mod user;
 
-#[allow(unused_imports)]
 pub use user::UserPermissions;
 
 use super::{DbPool, with_connection};
@@ -25,7 +25,7 @@ use crate::errors::ApiError;
 use crate::models::search::{ParsedQueryParam, QueryOptions};
 use crate::models::{
     HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, HubuumObject, HubuumObjectID,
-    HubuumObjectRelation, HubuumObjectTransitiveLink, Namespace, User, UserToken,
+    HubuumObjectRelation, HubuumObjectTransitiveLink, Namespace, PrincipalToken, User,
 };
 use crate::traits::{GroupAccessors, SelfAccessors};
 
@@ -48,12 +48,12 @@ pub trait Status<T> {
 pub trait ActiveTokens {
     /// Get all active tokens for a given structure.
     #[allow(dead_code)]
-    async fn tokens(&self, pool: &DbPool) -> Result<Vec<UserToken>, ApiError>;
+    async fn tokens(&self, pool: &DbPool) -> Result<Vec<PrincipalToken>, ApiError>;
     async fn tokens_paginated_with_total_count(
         &self,
         pool: &DbPool,
         query_options: &QueryOptions,
-    ) -> Result<(Vec<UserToken>, i64), ApiError>;
+    ) -> Result<(Vec<PrincipalToken>, i64), ApiError>;
 }
 
 /// Trait for getting the namespace(s) of a structure from the backend database.

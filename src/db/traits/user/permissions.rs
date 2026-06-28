@@ -1,6 +1,7 @@
 use super::*;
-pub trait UserPermissions: SelfAccessors<User> + GroupAccessors + GroupMemberships {
-    /// ## Check if a user has a set of permissions in a set of namespaces
+use crate::db::traits::authz::{AuthzSubject, scope_allows};
+pub trait UserPermissions: AuthzSubject {
+    /// ## Check if a subject has a set of permissions in a set of namespaces
     ///
     /// All permissions must be present in all namespaces for the function to return true.
     ///
@@ -9,15 +10,17 @@ pub trait UserPermissions: SelfAccessors<User> + GroupAccessors + GroupMembershi
     /// * `pool` - A database connection pool
     /// * `permissions` - An iterable of permissions to check for
     /// * `namespaces` - An iterable of namespaces to check against
+    /// * `scopes` - The token scope set (`None` = unscoped/full authority)
     ///
     /// ### Returns
     ///
-    /// * Nothing if the user has the required permissions, or an ApiError::Forbidden if they do not.
+    /// * Nothing if the subject has the required permissions, or an ApiError::Forbidden if they do not.
     async fn can<P, N, I>(
         &self,
         pool: &DbPool,
         permissions: P,
         namespaces: I,
+        scopes: Option<&[Permissions]>,
     ) -> Result<(), ApiError>
     where
         P: IntoIterator<Item = Permissions>,
@@ -29,7 +32,16 @@ pub trait UserPermissions: SelfAccessors<User> + GroupAccessors + GroupMembershi
         use futures::stream::{self, StreamExt, TryStreamExt};
         use std::collections::HashSet;
 
-        if self.is_admin(pool).await? {
+        let requested: Vec<Permissions> = permissions.into_iter().collect();
+
+        // Fail-closed scope pre-filter, before the admin bypass.
+        if !scope_allows(scopes, &requested) {
+            return Err(ApiError::Forbidden(
+                "Token scope does not permit the requested action".to_string(),
+            ));
+        }
+
+        if AuthzSubject::is_admin(self, pool).await? {
             return Ok(());
         }
 
@@ -37,7 +49,7 @@ pub trait UserPermissions: SelfAccessors<User> + GroupAccessors + GroupMembershi
         let group_id_field = crate::schema::permissions::dsl::group_id;
         let namespace_id_field = crate::schema::permissions::dsl::namespace_id;
 
-        let group_id_subquery = self.group_ids_subquery_from_backend();
+        let group_id_subquery = self.group_ids_subquery();
 
         let namespace_ids: HashSet<i32> = stream::iter(namespaces)
             .map(|ns| async move { ns.namespace_id(pool).await.map(|nid| nid.id()) })
@@ -52,7 +64,7 @@ pub trait UserPermissions: SelfAccessors<User> + GroupAccessors + GroupMembershi
             .filter(group_id_field.eq_any(group_id_subquery));
 
         // Apply all permission filters
-        for perm in permissions {
+        for perm in requested {
             base_query = perm.create_boxed_filter(base_query, true);
         }
 
@@ -74,76 +86,6 @@ pub trait UserPermissions: SelfAccessors<User> + GroupAccessors + GroupMembershi
     }
 }
 
-impl UserPermissions for User {}
-impl UserPermissions for UserID {}
-
-pub trait GroupMemberships: SelfAccessors<User> {
-    /// At some point, we need to get the name of the admin group. Right now it's hard coded.
-    async fn admin_groupname(&self) -> Result<String, ApiError> {
-        Ok(crate::config::get_config()?.admin_groupname.clone())
-    }
-
-    /// Check if the user is in a group by name
-    ///
-    /// This function checks if the user is a member of a group with the specified name.
-    ///
-    /// ## Parameters
-    ///
-    /// * `groupname_queried` - The name of the group to check for membership.
-    /// * `pool` - The database connection pool.
-    ///
-    /// ## Returns
-    ///
-    /// * Ok(true) if the user is in the group
-    /// * Ok(false) if the user is not in the group
-    /// * Err(ApiError) if something failed.
-    async fn is_in_group_by_name(
-        &self,
-        groupname_queried: &str,
-        pool: &DbPool,
-    ) -> Result<bool, ApiError> {
-        use crate::schema::groups::dsl::{groupname, groups};
-        use crate::schema::user_groups::dsl::{user_groups, user_id as ug_user_id};
-        use diesel::dsl::{exists, select};
-
-        let is_in_group = with_connection(pool, |conn| {
-            select(exists(
-                user_groups
-                    .inner_join(groups)
-                    .filter(ug_user_id.eq(self.id()))
-                    .filter(groupname.eq(groupname_queried)),
-            ))
-            .get_result(conn)
-        })?;
-
-        trace!(
-            message = "Group by name check result",
-            user_id = self.id(),
-            groupname = groupname_queried,
-            is_in_group = is_in_group,
-        );
-
-        Ok(is_in_group)
-    }
-
-    /// Check if the user is an admin
-    ///
-    /// This function checks the user's admin status in the database, but checking if they are
-    /// a member of the group with the name "admin".
-    async fn is_admin(&self, pool: &DbPool) -> Result<bool, ApiError> {
-        let is_admin = self
-            .is_in_group_by_name(&self.admin_groupname().await?, pool)
-            .await?;
-
-        trace!(
-            message = "Admin check result",
-            user_id = self.id(),
-            is_admin = is_admin,
-        );
-
-        Ok(is_admin)
-    }
-}
-
-impl GroupMemberships for User {}
-impl GroupMemberships for UserID {}
+// `.can(...)` is available to every authorization subject — humans, service
+// accounts, and bare principals alike — via the identity-only contract.
+impl<T: AuthzSubject + ?Sized> UserPermissions for T {}

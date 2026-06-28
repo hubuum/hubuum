@@ -43,6 +43,7 @@ Probe paths bypass the client IP allowlist so platform health checks are not rej
 | -------- | ------- | ----------- |
 | `HUBUUM_DATABASE_URL` | `postgres://localhost` | PostgreSQL connection URL |
 | `HUBUUM_DB_POOL_SIZE` | `10` | Maximum number of database connections in the pool |
+| `HUBUUM_SKIP_MIGRATIONS` | `false` | If true, the container waits for the database but does not run Diesel migrations on startup |
 | `HUBUUM_DB_STATEMENT_TIMEOUT_MS` | `0` | Pool-global Postgres `statement_timeout` in ms (`0` disables). Cancels any query exceeding it server-side; applies to **all** DB work, not just reports |
 
 ### Task System Configuration
@@ -83,7 +84,7 @@ Probe paths bypass the client IP allowlist so platform health checks are not rej
 | `HUBUUM_ADMIN_GROUPNAME` | `admin` | Name of the admin group |
 | `HUBUUM_TOKEN_LIFETIME_HOURS` | `24` | Token lifetime in hours |
 | `HUBUUM_LOGIN_RATE_LIMIT_ENABLED` | `true` | Master switch for login throttling |
-| `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS` | `5` | Max failed attempts per `(username, IP)` per window |
+| `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS` | `5` | Max failed attempts per `(name, IP)` per window |
 | `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP` | `20` | Max failed attempts per client IP per window (`0` disables) |
 | `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET` | `100` | Max failed attempts per client subnet per window (`0` disables) |
 | `HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS` | `300` | Login rate-limit sliding window in seconds |
@@ -132,7 +133,7 @@ The application uses specific exit codes to indicate different failure modes, wh
 
 On first startup with an empty database, Hubuum automatically creates:
 
-- A default admin user (username: `admin`) with a randomly generated password
+- A default admin user (name: `admin`) with a randomly generated password
 - A default admin group (named as per `HUBUUM_ADMIN_GROUPNAME`, default: `admin`)
 - The admin user is added to the admin group
 
@@ -188,6 +189,7 @@ services:
 ## See Also
 
 - [Development Setup](development.md) - Git hooks, testing, and development workflow
+- [Authentication & Authorization Model](auth_model.md) - Principals, service accounts, tokens, and scopes
 - [Permissions](permissions.md) - Access control and authorization system
 - [Querying](querying.md) - API query syntax and filtering
 - [Unified search](search_api.md) - grouped search across namespaces, classes, and objects

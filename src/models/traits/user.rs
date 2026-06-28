@@ -1,6 +1,6 @@
 use std::iter::IntoIterator;
 
-use crate::models::search::{FilterField, QueryOptions, SortParam};
+use crate::models::search::QueryOptions;
 use crate::models::{
     ClassGraphRow, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
     HubuumObjectRelation, Namespace, Permissions, RelatedObjectForRootRow, RelatedObjectGraphRow,
@@ -14,25 +14,23 @@ use crate::db::traits::user::{
 };
 use crate::errors::ApiError;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
-use crate::traits::{
-    BackendContext, ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping,
-    CursorSqlType, CursorValue, GroupMemberships, SelfAccessors,
-};
+use crate::traits::{AuthzSubject, BackendContext, ClassAccessors, SelfAccessors};
 
 /// Search resources that are visible to a user.
 ///
 /// The methods on this trait delegate into backend search implementations while keeping the
 /// model-facing API expressed in terms of `User` / `UserID` style accessors.
-pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
+pub trait Search: UserNamespaceAccessors {
     async fn search_namespaces<C>(
         &self,
         backend: &C,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<Namespace>, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.search_namespaces_from_backend(backend.db_pool(), query_options)
+        self.search_namespaces_from_backend(backend.db_pool(), query_options, scopes)
             .await
     }
 
@@ -40,11 +38,12 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         backend: &C,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<i64, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.count_namespaces_from_backend(backend.db_pool(), query_options)
+        self.count_namespaces_from_backend(backend.db_pool(), query_options, scopes)
             .await
     }
 
@@ -52,11 +51,12 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         backend: &C,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.search_classes_from_backend(backend.db_pool(), query_options)
+        self.search_classes_from_backend(backend.db_pool(), query_options, scopes)
             .await
     }
 
@@ -64,11 +64,12 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         backend: &C,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<i64, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.count_classes_from_backend(backend.db_pool(), query_options)
+        self.count_classes_from_backend(backend.db_pool(), query_options, scopes)
             .await
     }
 
@@ -76,11 +77,12 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         backend: &C,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumObject>, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.search_objects_from_backend(backend.db_pool(), query_options)
+        self.search_objects_from_backend(backend.db_pool(), query_options, scopes)
             .await
     }
 
@@ -88,11 +90,12 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         backend: &C,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<i64, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.count_objects_from_backend(backend.db_pool(), query_options)
+        self.count_objects_from_backend(backend.db_pool(), query_options, scopes)
             .await
     }
 
@@ -100,11 +103,12 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         backend: &C,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumClassRelation>, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.search_class_relations_from_backend(backend.db_pool(), query_options)
+        self.search_class_relations_from_backend(backend.db_pool(), query_options, scopes)
             .await
     }
 
@@ -112,11 +116,12 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         backend: &C,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.class_relations_page_from_backend(backend.db_pool(), query_options)
+        self.class_relations_page_from_backend(backend.db_pool(), query_options, scopes)
             .await
     }
 
@@ -125,12 +130,13 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         backend: &C,
         class: K,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<ClassGraphRow>, ApiError>
     where
         C: BackendContext + ?Sized,
         K: SelfAccessors<HubuumClass>,
     {
-        self.search_classes_related_to_from_backend(backend.db_pool(), class, query_options)
+        self.search_classes_related_to_from_backend(backend.db_pool(), class, query_options, scopes)
             .await
     }
 
@@ -139,12 +145,13 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         backend: &C,
         class: K,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<(Vec<ClassGraphRow>, i64), ApiError>
     where
         C: BackendContext + ?Sized,
         K: SelfAccessors<HubuumClass>,
     {
-        self.classes_related_to_page_from_backend(backend.db_pool(), class, query_options)
+        self.classes_related_to_page_from_backend(backend.db_pool(), class, query_options, scopes)
             .await
     }
 
@@ -153,24 +160,31 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         backend: &C,
         class: K,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError>
     where
         C: BackendContext + ?Sized,
         K: SelfAccessors<HubuumClass>,
     {
-        self.class_relations_touching_page_from_backend(backend.db_pool(), class, query_options)
-            .await
+        self.class_relations_touching_page_from_backend(
+            backend.db_pool(),
+            class,
+            query_options,
+            scopes,
+        )
+        .await
     }
 
     async fn search_class_relations_between_ids<C>(
         &self,
         backend: &C,
         class_ids: &[i32],
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumClassRelation>, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.search_class_relations_between_ids_from_backend(backend.db_pool(), class_ids)
+        self.search_class_relations_between_ids_from_backend(backend.db_pool(), class_ids, scopes)
             .await
     }
 
@@ -178,11 +192,12 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         backend: &C,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.search_object_relations_from_backend(backend.db_pool(), query_options)
+        self.search_object_relations_from_backend(backend.db_pool(), query_options, scopes)
             .await
     }
 
@@ -190,11 +205,12 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         backend: &C,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.object_relations_page_from_backend(backend.db_pool(), query_options)
+        self.object_relations_page_from_backend(backend.db_pool(), query_options, scopes)
             .await
     }
 
@@ -203,13 +219,19 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         backend: &C,
         object: O,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<RelatedObjectGraphRow>, ApiError>
     where
         C: BackendContext + ?Sized,
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
-        self.search_objects_related_to_from_backend(backend.db_pool(), object, query_options)
-            .await
+        self.search_objects_related_to_from_backend(
+            backend.db_pool(),
+            object,
+            query_options,
+            scopes,
+        )
+        .await
     }
 
     async fn objects_related_to_page<C, O>(
@@ -217,12 +239,13 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         backend: &C,
         object: O,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<(Vec<RelatedObjectGraphRow>, i64), ApiError>
     where
         C: BackendContext + ?Sized,
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
-        self.objects_related_to_page_from_backend(backend.db_pool(), object, query_options)
+        self.objects_related_to_page_from_backend(backend.db_pool(), object, query_options, scopes)
             .await
     }
 
@@ -231,12 +254,18 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         backend: &C,
         root_object_ids: &[i32],
         include: ReportIncludeRelatedQuery,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.related_objects_for_roots_from_backend(backend.db_pool(), root_object_ids, include)
-            .await
+        self.related_objects_for_roots_from_backend(
+            backend.db_pool(),
+            root_object_ids,
+            include,
+            scopes,
+        )
+        .await
     }
 
     async fn bidirectionally_related_objects_for_roots<C>(
@@ -245,6 +274,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         root_object_ids: &[i32],
         max_depth: i32,
         per_root_cap: i32,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<RelatedObjectForRootRow>, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -254,6 +284,7 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
             root_object_ids,
             max_depth,
             per_root_cap,
+            scopes,
         )
         .await
     }
@@ -263,24 +294,31 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         backend: &C,
         object: O,
         query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
     ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError>
     where
         C: BackendContext + ?Sized,
         O: SelfAccessors<HubuumObject>,
     {
-        self.object_relations_touching_page_from_backend(backend.db_pool(), object, query_options)
-            .await
+        self.object_relations_touching_page_from_backend(
+            backend.db_pool(),
+            object,
+            query_options,
+            scopes,
+        )
+        .await
     }
 
     async fn search_object_relations_between_ids<C>(
         &self,
         backend: &C,
         object_ids: &[i32],
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.search_object_relations_between_ids_from_backend(backend.db_pool(), object_ids)
+        self.search_object_relations_between_ids_from_backend(backend.db_pool(), object_ids, scopes)
             .await
     }
 
@@ -288,11 +326,12 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         backend: &C,
         query: &UnifiedSearchSpec,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<Namespace>, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.search_unified_namespaces_from_backend(backend.db_pool(), query)
+        self.search_unified_namespaces_from_backend(backend.db_pool(), query, scopes)
             .await
     }
 
@@ -300,11 +339,12 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         backend: &C,
         query: &UnifiedSearchSpec,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.search_unified_classes_from_backend(backend.db_pool(), query)
+        self.search_unified_classes_from_backend(backend.db_pool(), query, scopes)
             .await
     }
 
@@ -312,17 +352,18 @@ pub trait Search: SelfAccessors<User> + UserNamespaceAccessors {
         &self,
         backend: &C,
         query: &UnifiedSearchSpec,
+        scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumObject>, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.search_unified_objects_from_backend(backend.db_pool(), query)
+        self.search_unified_objects_from_backend(backend.db_pool(), query, scopes)
             .await
     }
 }
 
 /// Access groups and related backend-backed filters for a user.
-pub trait GroupAccessors: SelfAccessors<User> {
+pub trait GroupAccessors: AuthzSubject {
     /// Return all groups that the user is a member of.
     #[allow(async_fn_in_trait, dead_code)]
     async fn groups<C>(&self, backend: &C) -> Result<Vec<Group>, ApiError>
@@ -347,7 +388,7 @@ pub trait GroupAccessors: SelfAccessors<User> {
 }
 
 /// Access namespaces that are visible to a user through direct or group-derived permissions.
-pub trait UserNamespaceAccessors: SelfAccessors<User> + GroupAccessors + GroupMemberships {
+pub trait UserNamespaceAccessors: GroupAccessors + AuthzSubject {
     /// Return all namespaces that the user has NamespacePermissions::ReadCollection on.
     #[allow(dead_code)] // Lazy-used in tests.
     async fn namespaces_read<C>(&self, backend: &C) -> Result<Vec<Namespace>, ApiError>
@@ -368,110 +409,25 @@ pub trait UserNamespaceAccessors: SelfAccessors<User> + GroupAccessors + GroupMe
         C: BackendContext + ?Sized,
         &'a I: IntoIterator<Item = &'a Permissions>,
     {
-        self.load_namespaces_with_permissions(backend.db_pool(), permissions_list)
+        // NOTE: scopes are passed as `None` here (unscoped). Live token-scope
+        // threading through the namespace/search visibility helpers is wired in
+        // the handler/search-scope pass; the admin fast path stays correct for
+        // the `None` case.
+        self.load_namespaces_with_permissions(backend.db_pool(), permissions_list, None)
             .await
     }
 }
 
-impl UserNamespaceAccessors for User {}
-impl UserNamespaceAccessors for UserID {}
+// Group/namespace accessors are available to every authorization subject (human
+// users, service accounts, bare principals) via the identity-only contract.
+impl<T: AuthzSubject + ?Sized> GroupAccessors for T {}
+impl<T: GroupAccessors + AuthzSubject + ?Sized> UserNamespaceAccessors for T {}
 
-impl GroupAccessors for User {}
-impl GroupAccessors for UserID {}
+impl<T: UserNamespaceAccessors + ?Sized> Search for T {}
 
-// `&T` gets `GroupAccessors` wherever `T` is a user accessor, mirroring the blanket reference impls
-// for the adapter traits in `crate::traits::accessors`. This subsumes the explicit `&User` /
-// `&UserID` impls that previously had to be written out one type at a time.
-impl<T> GroupAccessors for &T where T: IdAccessor + InstanceAdapter<User> {}
-
-impl Search for User {}
-impl Search for UserID {}
-
-fn string_or_null(value: Option<&str>) -> CursorValue {
-    match value {
-        Some(value) => CursorValue::String(value.to_string()),
-        None => CursorValue::Null,
-    }
-}
-
-impl CursorPaginated for User {
-    fn supports_sort(field: &FilterField) -> bool {
-        matches!(
-            field,
-            FilterField::Id
-                | FilterField::Name
-                | FilterField::Username
-                | FilterField::Email
-                | FilterField::CreatedAt
-                | FilterField::UpdatedAt
-        )
-    }
-
-    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorValue::Integer(self.id as i64),
-            FilterField::Name | FilterField::Username => CursorValue::String(self.username.clone()),
-            FilterField::Email => string_or_null(self.email.as_deref()),
-            FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
-            FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for users",
-                    field
-                )));
-            }
-        })
-    }
-
-    fn default_sort() -> Vec<SortParam> {
-        vec![SortParam {
-            field: FilterField::Id,
-            descending: false,
-        }]
-    }
-
-    fn tie_breaker_sort() -> Vec<SortParam> {
-        Self::default_sort()
-    }
-}
-
-impl CursorSqlMapping for User {
-    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
-        Ok(match field {
-            FilterField::Id => CursorSqlField {
-                column: "users.id",
-                sql_type: CursorSqlType::Integer,
-                nullable: false,
-            },
-            FilterField::Name | FilterField::Username => CursorSqlField {
-                column: "users.username",
-                sql_type: CursorSqlType::String,
-                nullable: false,
-            },
-            FilterField::Email => CursorSqlField {
-                column: "users.email",
-                sql_type: CursorSqlType::String,
-                nullable: true,
-            },
-            FilterField::CreatedAt => CursorSqlField {
-                column: "users.created_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            FilterField::UpdatedAt => CursorSqlField {
-                column: "users.updated_at",
-                sql_type: CursorSqlType::DateTime,
-                nullable: false,
-            },
-            _ => {
-                return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for users",
-                    field
-                )));
-            }
-        })
-    }
-}
+// User list/search cursoring lives on `UserWithName` (which carries the
+// principal name); `User` itself maps the `users` table and is not cursor-sorted
+// directly.
 
 impl IdAccessor for User {
     fn accessor_id(&self) -> i32 {
@@ -595,6 +551,7 @@ mod test {
             .search_namespaces(
                 &context.pool,
                 make_query_options_from_query_param(&read_namespace_param),
+                None,
             )
             .await
             .unwrap();
@@ -604,6 +561,7 @@ mod test {
             .search_namespaces(
                 &context.pool,
                 make_query_options_from_query_param(&read_namespace_param),
+                None,
             )
             .await
             .unwrap();
@@ -613,6 +571,7 @@ mod test {
             .search_classes(
                 &context.pool,
                 make_query_options_from_query_param(&read_class_param),
+                None,
             )
             .await
             .unwrap();
@@ -622,6 +581,7 @@ mod test {
             .search_classes(
                 &context.pool,
                 make_query_options_from_query_param(&read_class_param),
+                None,
             )
             .await
             .unwrap();
@@ -635,6 +595,7 @@ mod test {
             .search_namespaces(
                 &context.pool,
                 make_query_options_from_query_param(&read_namespace_param),
+                None,
             )
             .await
             .unwrap();
@@ -649,6 +610,7 @@ mod test {
                     limit: None,
                     cursor: None,
                 },
+                None,
             )
             .await
             .unwrap();
@@ -663,6 +625,7 @@ mod test {
             .search_classes(
                 &context.pool,
                 make_query_options_from_query_param(&read_class_param),
+                None,
             )
             .await
             .unwrap();
@@ -677,6 +640,7 @@ mod test {
             .search_classes(
                 &context.pool,
                 make_query_options_from_query_param(&read_class_param),
+                None,
             )
             .await
             .unwrap();
@@ -686,6 +650,7 @@ mod test {
             .search_namespaces(
                 &context.pool,
                 make_query_options_from_query_param(&read_class_param),
+                None,
             )
             .await
             .unwrap();
@@ -697,6 +662,7 @@ mod test {
             .search_namespaces(
                 &context.pool,
                 make_query_options_from_query_param(&read_namespace_param),
+                None,
             )
             .await
             .unwrap();

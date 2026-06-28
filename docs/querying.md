@@ -18,7 +18,7 @@ Query parameters are passed as standard query string parameters:
 Example:
 
 ```text
-/api/v1/iam/users?username__contains=alice&email__endswith=@example.org&sort=username.asc
+/api/v1/iam/users?name__contains=alice&email__endswith=@example.org&sort=name.asc
 ```
 
 ## Supported operators
@@ -74,7 +74,7 @@ You can negate an operator by prefixing it with `not_`.
 
 Examples:
 
-- `username__not_equals=alice`
+- `name__not_equals=alice`
 - `name__not_icontains=test`
 - `created_at__not_between=2026-01-01T00:00:00Z,2026-02-01T00:00:00Z`
 

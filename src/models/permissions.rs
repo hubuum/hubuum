@@ -323,13 +323,87 @@ pub struct Permission {
     pub has_create_template: bool,
     pub has_update_template: bool,
     pub has_delete_template: bool,
-    pub created_at: chrono::NaiveDateTime,
-    pub updated_at: chrono::NaiveDateTime,
     pub has_read_remote_target: bool,
     pub has_create_remote_target: bool,
     pub has_update_remote_target: bool,
     pub has_delete_remote_target: bool,
     pub has_execute_remote_target: bool,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+}
+
+impl Permission {
+    /// The set of permissions this row grants — the `has_*` flags that are `true`,
+    /// mapped to their [`Permissions`] variant.
+    pub fn granted(&self) -> Vec<Permissions> {
+        [
+            (self.has_read_namespace, Permissions::ReadCollection),
+            (self.has_update_namespace, Permissions::UpdateCollection),
+            (self.has_delete_namespace, Permissions::DeleteCollection),
+            (self.has_delegate_namespace, Permissions::DelegateCollection),
+            (self.has_create_class, Permissions::CreateClass),
+            (self.has_read_class, Permissions::ReadClass),
+            (self.has_update_class, Permissions::UpdateClass),
+            (self.has_delete_class, Permissions::DeleteClass),
+            (self.has_create_object, Permissions::CreateObject),
+            (self.has_read_object, Permissions::ReadObject),
+            (self.has_update_object, Permissions::UpdateObject),
+            (self.has_delete_object, Permissions::DeleteObject),
+            (
+                self.has_create_class_relation,
+                Permissions::CreateClassRelation,
+            ),
+            (self.has_read_class_relation, Permissions::ReadClassRelation),
+            (
+                self.has_update_class_relation,
+                Permissions::UpdateClassRelation,
+            ),
+            (
+                self.has_delete_class_relation,
+                Permissions::DeleteClassRelation,
+            ),
+            (
+                self.has_create_object_relation,
+                Permissions::CreateObjectRelation,
+            ),
+            (
+                self.has_read_object_relation,
+                Permissions::ReadObjectRelation,
+            ),
+            (
+                self.has_update_object_relation,
+                Permissions::UpdateObjectRelation,
+            ),
+            (
+                self.has_delete_object_relation,
+                Permissions::DeleteObjectRelation,
+            ),
+            (self.has_create_template, Permissions::CreateTemplate),
+            (self.has_read_template, Permissions::ReadTemplate),
+            (self.has_update_template, Permissions::UpdateTemplate),
+            (self.has_delete_template, Permissions::DeleteTemplate),
+            (
+                self.has_create_remote_target,
+                Permissions::CreateRemoteTarget,
+            ),
+            (self.has_read_remote_target, Permissions::ReadRemoteTarget),
+            (
+                self.has_update_remote_target,
+                Permissions::UpdateRemoteTarget,
+            ),
+            (
+                self.has_delete_remote_target,
+                Permissions::DeleteRemoteTarget,
+            ),
+            (
+                self.has_execute_remote_target,
+                Permissions::ExecuteRemoteTarget,
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(set, permission)| set.then_some(permission))
+        .collect()
+    }
 }
 
 // Insertable permission models.

@@ -2841,6 +2841,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Group still owns service accounts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2996,7 +3006,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/UserResponse"
+                    "$ref": "#/components/schemas/PrincipalMemberResponse"
                   }
                 }
               }
@@ -3030,14 +3040,14 @@
         ]
       }
     },
-    "/api/v1/iam/groups/{group_id}/members/{user_id}": {
+    "/api/v1/iam/groups/{group_id}/members/{principal_id}": {
       "post": {
         "tags": [
           "groups"
         ],
-        "summary": "Post Api V1 Iam Groups By Group Id Members By User Id",
-        "description": "Auto-generated documentation for POST /api/v1/iam/groups/{group_id}/members/{user_id}.",
-        "operationId": "postApiV1IamGroupsByGroupIdMembersByUserId",
+        "summary": "Post Api V1 Iam Groups By Group Id Members By Principal Id",
+        "description": "Auto-generated documentation for POST /api/v1/iam/groups/{group_id}/members/{principal_id}.",
+        "operationId": "postApiV1IamGroupsByGroupIdMembersByPrincipalId",
         "parameters": [
           {
             "name": "group_id",
@@ -3050,9 +3060,9 @@
             }
           },
           {
-            "name": "user_id",
+            "name": "principal_id",
             "in": "path",
-            "description": "User ID",
+            "description": "Principal ID",
             "required": true,
             "schema": {
               "type": "integer",
@@ -3095,9 +3105,9 @@
         "tags": [
           "groups"
         ],
-        "summary": "Delete Api V1 Iam Groups By Group Id Members By User Id",
-        "description": "Auto-generated documentation for DELETE /api/v1/iam/groups/{group_id}/members/{user_id}.",
-        "operationId": "deleteApiV1IamGroupsByGroupIdMembersByUserId",
+        "summary": "Delete Api V1 Iam Groups By Group Id Members By Principal Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/iam/groups/{group_id}/members/{principal_id}.",
+        "operationId": "deleteApiV1IamGroupsByGroupIdMembersByPrincipalId",
         "parameters": [
           {
             "name": "group_id",
@@ -3110,9 +3120,9 @@
             }
           },
           {
-            "name": "user_id",
+            "name": "principal_id",
             "in": "path",
-            "description": "User ID",
+            "description": "Principal ID",
             "required": true,
             "schema": {
               "type": "integer",
@@ -3136,6 +3146,859 @@
           },
           "404": {
             "description": "User or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/principals/{principal_id}/groups": {
+      "get": {
+        "tags": [
+          "principals"
+        ],
+        "summary": "Get Api V1 Iam Principals By Principal Id Groups",
+        "description": "Auto-generated documentation for GET /api/v1/iam/principals/{principal_id}/groups. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1IamPrincipalsByPrincipalIdGroups",
+        "parameters": [
+          {
+            "name": "principal_id",
+            "in": "path",
+            "description": "Principal id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Groups the principal belongs to The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Group"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/principals/{principal_id}/permissions": {
+      "get": {
+        "tags": [
+          "principals"
+        ],
+        "summary": "Get Api V1 Iam Principals By Principal Id Permissions",
+        "description": "Auto-generated documentation for GET /api/v1/iam/principals/{principal_id}/permissions.",
+        "operationId": "getApiV1IamPrincipalsByPrincipalIdPermissions",
+        "parameters": [
+          {
+            "name": "principal_id",
+            "in": "path",
+            "description": "Principal id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Effective permissions per namespace, grouped by granting group",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PrincipalNamespacePermissions"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/principals/{principal_id}/tokens": {
+      "get": {
+        "tags": [
+          "principals"
+        ],
+        "summary": "Get Api V1 Iam Principals By Principal Id Tokens",
+        "description": "Auto-generated documentation for GET /api/v1/iam/principals/{principal_id}/tokens. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1IamPrincipalsByPrincipalIdTokens",
+        "parameters": [
+          {
+            "name": "principal_id",
+            "in": "path",
+            "description": "Principal id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active token metadata The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PrincipalTokenMetadata"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "principals"
+        ],
+        "summary": "Post Api V1 Iam Principals By Principal Id Tokens",
+        "description": "Auto-generated documentation for POST /api/v1/iam/principals/{principal_id}/tokens.",
+        "operationId": "postApiV1IamPrincipalsByPrincipalIdTokens",
+        "parameters": [
+          {
+            "name": "principal_id",
+            "in": "path",
+            "description": "Principal id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Raw token (shown once)"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Service account disabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/principals/{principal_id}/tokens/{token_id}/revoke": {
+      "post": {
+        "tags": [
+          "principals"
+        ],
+        "summary": "Post Api V1 Iam Principals By Principal Id Tokens By Token Id Revoke",
+        "description": "Auto-generated documentation for POST /api/v1/iam/principals/{principal_id}/tokens/{token_id}/revoke.",
+        "operationId": "postApiV1IamPrincipalsByPrincipalIdTokensByTokenIdRevoke",
+        "parameters": [
+          {
+            "name": "principal_id",
+            "in": "path",
+            "description": "Principal id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "token_id",
+            "in": "path",
+            "description": "Token id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Token revoked"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Token not found for this principal",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/service-accounts": {
+      "get": {
+        "tags": [
+          "service-accounts"
+        ],
+        "summary": "Get Api V1 Iam Service Accounts",
+        "description": "Auto-generated documentation for GET /api/v1/iam/service-accounts. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1IamServiceAccounts",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Service accounts the caller may manage The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ServiceAccountResponse"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "service-accounts"
+        ],
+        "summary": "Post Api V1 Iam Service Accounts",
+        "description": "Auto-generated documentation for POST /api/v1/iam/service-accounts.",
+        "operationId": "postApiV1IamServiceAccounts",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewServiceAccount"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Service account created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceAccountResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/service-accounts/{service_account_id}": {
+      "get": {
+        "tags": [
+          "service-accounts"
+        ],
+        "summary": "Get Api V1 Iam Service Accounts By Service Account Id",
+        "description": "Auto-generated documentation for GET /api/v1/iam/service-accounts/{service_account_id}.",
+        "operationId": "getApiV1IamServiceAccountsByServiceAccountId",
+        "parameters": [
+          {
+            "name": "service_account_id",
+            "in": "path",
+            "description": "Service account id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Service account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceAccountResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "service-accounts"
+        ],
+        "summary": "Delete Api V1 Iam Service Accounts By Service Account Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/iam/service-accounts/{service_account_id}.",
+        "operationId": "deleteApiV1IamServiceAccountsByServiceAccountId",
+        "parameters": [
+          {
+            "name": "service_account_id",
+            "in": "path",
+            "description": "Service account id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Service account deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "service-accounts"
+        ],
+        "summary": "Patch Api V1 Iam Service Accounts By Service Account Id",
+        "description": "Auto-generated documentation for PATCH /api/v1/iam/service-accounts/{service_account_id}.",
+        "operationId": "patchApiV1IamServiceAccountsByServiceAccountId",
+        "parameters": [
+          {
+            "name": "service_account_id",
+            "in": "path",
+            "description": "Service account id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateServiceAccount"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated service account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceAccountResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/service-accounts/{service_account_id}/disable": {
+      "post": {
+        "tags": [
+          "service-accounts"
+        ],
+        "summary": "Post Api V1 Iam Service Accounts By Service Account Id Disable",
+        "description": "Auto-generated documentation for POST /api/v1/iam/service-accounts/{service_account_id}/disable.",
+        "operationId": "postApiV1IamServiceAccountsByServiceAccountIdDisable",
+        "parameters": [
+          {
+            "name": "service_account_id",
+            "in": "path",
+            "description": "Service account id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Service account disabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceAccountResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -3484,212 +4347,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "User not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/iam/users/{user_id}/groups": {
-      "get": {
-        "tags": [
-          "users"
-        ],
-        "summary": "Get Api V1 Iam Users By User Id Groups",
-        "description": "Auto-generated documentation for GET /api/v1/iam/users/{user_id}/groups. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
-        "operationId": "getApiV1IamUsersByUserIdGroups",
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "path",
-            "description": "User ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "name": "sort",
-            "in": "query",
-            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Groups of user The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
-            "headers": {
-              "X-Next-Cursor": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
-              },
-              "X-Total-Count": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Group"
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "User not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/iam/users/{user_id}/tokens": {
-      "get": {
-        "tags": [
-          "users"
-        ],
-        "summary": "Get Api V1 Iam Users By User Id Tokens",
-        "description": "Auto-generated documentation for GET /api/v1/iam/users/{user_id}/tokens. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
-        "operationId": "getApiV1IamUsersByUserIdTokens",
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "path",
-            "description": "User ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "name": "sort",
-            "in": "query",
-            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Active token metadata for user The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
-            "headers": {
-              "X-Next-Cursor": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
-              },
-              "X-Total-Count": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/UserTokenMetadata"
-                  }
                 }
               }
             }
@@ -4983,14 +5640,14 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace_id}/permissions/user/{user_id}": {
+    "/api/v1/namespaces/{namespace_id}/permissions/principal/{principal_id}": {
       "get": {
         "tags": [
           "namespaces"
         ],
-        "summary": "List all permissions for a user on a namespace",
-        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/permissions/user/{user_id}. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
-        "operationId": "getApiV1NamespacesByNamespaceIdPermissionsUserByUserId",
+        "summary": "List all permissions for a principal on a namespace",
+        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/permissions/principal/{principal_id}. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1NamespacesByNamespaceIdPermissionsPrincipalByPrincipalId",
         "parameters": [
           {
             "name": "namespace_id",
@@ -5003,9 +5660,9 @@
             }
           },
           {
-            "name": "user_id",
+            "name": "principal_id",
             "in": "path",
-            "description": "User ID",
+            "description": "Principal ID",
             "required": true,
             "schema": {
               "type": "integer",
@@ -5042,7 +5699,7 @@
         ],
         "responses": {
           "200": {
-            "description": "User permissions via group memberships The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Principal permissions via group memberships The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
@@ -7523,6 +8180,30 @@
           }
         }
       },
+      "GroupGrant": {
+        "type": "object",
+        "description": "One group's contribution to a principal's effective permissions on a namespace.",
+        "required": [
+          "group_id",
+          "groupname",
+          "permissions"
+        ],
+        "properties": {
+          "group_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "groupname": {
+            "type": "string"
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Permissions"
+            }
+          }
+        }
+      },
       "GroupKey": {
         "type": "object",
         "required": [
@@ -8470,22 +9151,22 @@
       },
       "LoginUser": {
         "type": "object",
-        "description": "Struct to log in a user.\n\nThe password is expected to be plaintext.",
+        "description": "Struct to log in a user.\n\nThe password is expected to be plaintext. `name` is the principal name.",
         "required": [
-          "username",
+          "name",
           "password"
         ],
         "properties": {
-          "password": {
+          "name": {
             "type": "string"
           },
-          "username": {
+          "password": {
             "type": "string"
           }
         },
         "example": {
-          "password": "correct-horse-battery-staple",
-          "username": "alice"
+          "name": "alice",
+          "password": "correct-horse-battery-staple"
         }
       },
       "LogoutTokenRequest": {
@@ -8943,11 +9624,73 @@
           "template": "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}"
         }
       },
+      "NewServiceAccount": {
+        "type": "object",
+        "description": "Request body to create a service account.",
+        "required": [
+          "name",
+          "owner_group_id"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner_group_id": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "example": {
+          "description": "Production DNS importer",
+          "name": "dns-sync",
+          "owner_group_id": 1
+        }
+      },
+      "NewTokenRequest": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scopes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Permissions"
+            },
+            "description": "Optional scope set. Omit for an unscoped token; an **empty** array is\nrejected (almost certainly a client bug, not \"grant nothing\")."
+          }
+        }
+      },
       "NewUser": {
         "type": "object",
-        "description": "Struct to create a new user.\n\nThe password is expected to be plaintext.",
+        "description": "Struct to create a new user.\n\nThe password is expected to be plaintext. `name` is the principal name.",
         "required": [
-          "username",
+          "name",
           "password"
         ],
         "properties": {
@@ -8957,17 +9700,24 @@
               "null"
             ]
           },
+          "name": {
+            "type": "string"
+          },
           "password": {
             "type": "string"
           },
-          "username": {
-            "type": "string"
+          "proper_name": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "example": {
           "email": "alice@example.com",
+          "name": "alice",
           "password": "correct-horse-battery-staple",
-          "username": "alice"
+          "proper_name": "Alice Doe"
         }
       },
       "ObjectKey": {
@@ -9044,13 +9794,13 @@
           "has_create_template",
           "has_update_template",
           "has_delete_template",
-          "created_at",
-          "updated_at",
           "has_read_remote_target",
           "has_create_remote_target",
           "has_update_remote_target",
           "has_delete_remote_target",
-          "has_execute_remote_target"
+          "has_execute_remote_target",
+          "created_at",
+          "updated_at"
         ],
         "properties": {
           "created_at": {
@@ -9195,6 +9945,175 @@
           "DeleteRemoteTarget",
           "ExecuteRemoteTarget"
         ]
+      },
+      "PrincipalMemberResponse": {
+        "type": "object",
+        "description": "Public representation of a group member (a principal of either kind).",
+        "required": [
+          "principal_id",
+          "kind",
+          "name"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "principal_id": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "PrincipalNamespacePermissions": {
+        "type": "object",
+        "description": "A principal's effective permissions on a single namespace, broken down by the\ngroup that grants them.",
+        "required": [
+          "namespace_id",
+          "namespace_name",
+          "grants"
+        ],
+        "properties": {
+          "grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupGrant"
+            }
+          },
+          "namespace_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "namespace_name": {
+            "type": "string"
+          }
+        }
+      },
+      "PrincipalToken": {
+        "type": "object",
+        "description": "A persisted bearer token, keyed to a principal, with a full lifecycle. The\n`token` field stores the HMAC hash, never the raw value.",
+        "required": [
+          "id",
+          "token",
+          "principal_id",
+          "issued",
+          "scoped"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "issued": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "principal_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "scoped": {
+            "type": "boolean"
+          },
+          "token": {
+            "type": "string"
+          }
+        }
+      },
+      "PrincipalTokenMetadata": {
+        "type": "object",
+        "description": "Public, hash-free projection of a token for listing.",
+        "required": [
+          "id",
+          "principal_id",
+          "issued",
+          "scoped"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "issued": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "principal_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "scoped": {
+            "type": "boolean"
+          }
+        }
       },
       "ProbeResponse": {
         "type": "object",
@@ -10238,6 +11157,56 @@
           "path": "item.data.owner"
         }
       },
+      "ServiceAccountResponse": {
+        "type": "object",
+        "description": "Public response shape, combining the service-account row with its principal\nname (the name lives on `principals`).",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "owner_group_id",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "description": {
+            "type": "string"
+          },
+          "disabled_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner_group_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "TaskDetails": {
         "type": "object",
         "properties": {
@@ -11035,9 +12004,28 @@
           "template": "{% for item in items %}{{ item.name }}\n{% endfor %}"
         }
       },
+      "UpdateServiceAccount": {
+        "type": "object",
+        "description": "Mutable fields on a service account.",
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "owner_group_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
       "UpdateUser": {
         "type": "object",
-        "description": "Struct to update a user.\n\nThe password, if present, is expected to be plaintext.",
+        "description": "Struct to update a user.\n\nThe password, if present, is expected to be plaintext. The name lives on the\nprincipal; renaming is handled via the principal, not here.",
         "properties": {
           "email": {
             "type": [
@@ -11051,7 +12039,7 @@
               "null"
             ]
           },
-          "username": {
+          "proper_name": {
             "type": [
               "string",
               "null"
@@ -11061,14 +12049,15 @@
         "example": {
           "email": "alice@example.com",
           "password": "new-password",
-          "username": "alice"
+          "proper_name": "Alice Doe"
         }
       },
       "UserResponse": {
         "type": "object",
+        "description": "Public representation of a user, including the name resolved from the\nprincipal (the name authority).",
         "required": [
           "id",
-          "username",
+          "name",
           "created_at",
           "updated_at"
         ],
@@ -11087,50 +12076,18 @@
             "type": "integer",
             "format": "int32"
           },
+          "name": {
+            "type": "string"
+          },
+          "proper_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time"
-          },
-          "username": {
-            "type": "string"
-          }
-        }
-      },
-      "UserToken": {
-        "type": "object",
-        "required": [
-          "token",
-          "user_id",
-          "issued"
-        ],
-        "properties": {
-          "issued": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "token": {
-            "type": "string"
-          },
-          "user_id": {
-            "type": "integer",
-            "format": "int32"
-          }
-        }
-      },
-      "UserTokenMetadata": {
-        "type": "object",
-        "required": [
-          "user_id",
-          "issued"
-        ],
-        "properties": {
-          "issued": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "user_id": {
-            "type": "integer",
-            "format": "int32"
           }
         }
       }
@@ -11154,6 +12111,14 @@
     {
       "name": "users",
       "description": "User management endpoints"
+    },
+    {
+      "name": "service-accounts",
+      "description": "Service-account (non-human principal) management endpoints"
+    },
+    {
+      "name": "principals",
+      "description": "Principal-scoped token, group, and permission endpoints (human users and service accounts)"
     },
     {
       "name": "groups",

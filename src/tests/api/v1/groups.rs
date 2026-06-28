@@ -3,8 +3,9 @@ mod tests {
     use actix_web::{http::StatusCode, test};
     use rstest::rstest;
 
+    use crate::models::PrincipalMemberResponse;
     use crate::models::group::{Group, NewGroup, UpdateGroup};
-    use crate::models::user::{NewUser, User, UserResponse};
+    use crate::models::user::{NewUser, User};
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
@@ -13,7 +14,7 @@ mod tests {
     };
 
     const GROUPS_ENDPOINT: &str = "/api/v1/iam/groups";
-    const USERS_ENDPOINT: &str = "/api/v1/iam/users";
+    const PRINCIPALS_ENDPOINT: &str = "/api/v1/iam/principals";
 
     async fn check_show_group(
         context: &TestContext,
@@ -223,9 +224,9 @@ mod tests {
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
 
-        let members: Vec<UserResponse> = test::read_body_json(resp).await;
+        let members: Vec<PrincipalMemberResponse> = test::read_body_json(resp).await;
         assert_eq!(members.len(), 1);
-        assert_eq!(members[0].id, user.id);
+        assert_eq!(members[0].principal_id, user.id);
 
         let resp = delete_request(
             &context.pool,
@@ -243,7 +244,7 @@ mod tests {
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
 
-        let members: Vec<UserResponse> = test::read_body_json(resp).await;
+        let members: Vec<PrincipalMemberResponse> = test::read_body_json(resp).await;
         assert_eq!(members.len(), 0);
 
         user.delete(&context.pool).await.unwrap();
@@ -266,7 +267,7 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{}/{}/groups?sort=id", USERS_ENDPOINT, user.id),
+            &format!("{}/{}/groups?sort=id", PRINCIPALS_ENDPOINT, user.id),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
@@ -292,7 +293,7 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let first_group_members: Vec<UserResponse> = test::read_body_json(resp).await;
+        let first_group_members: Vec<PrincipalMemberResponse> = test::read_body_json(resp).await;
         assert_eq!(first_group_members.len(), 0);
 
         let resp = get_request(
@@ -302,14 +303,14 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let second_group_members: Vec<UserResponse> = test::read_body_json(resp).await;
+        let second_group_members: Vec<PrincipalMemberResponse> = test::read_body_json(resp).await;
         assert_eq!(second_group_members.len(), 1);
-        assert_eq!(second_group_members[0].id, user.id);
+        assert_eq!(second_group_members[0].principal_id, user.id);
 
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{}/{}/groups?sort=id", USERS_ENDPOINT, user.id),
+            &format!("{}/{}/groups?sort=id", PRINCIPALS_ENDPOINT, user.id),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
@@ -466,7 +467,7 @@ mod tests {
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
-        let members: Vec<UserResponse> = test::read_body_json(resp).await;
+        let members: Vec<PrincipalMemberResponse> = test::read_body_json(resp).await;
 
         assert_eq!(members.len(), 1);
         assert!(next_cursor.is_some());
@@ -483,7 +484,7 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let members: Vec<UserResponse> = test::read_body_json(resp).await;
+        let members: Vec<PrincipalMemberResponse> = test::read_body_json(resp).await;
         assert_eq!(members.len(), 1);
     }
 
@@ -493,16 +494,18 @@ mod tests {
         let context = test_context;
         let group = create_test_group(&context.pool).await;
         let matching_user = NewUser {
-            username: format!("filter-group-member-match-{}", group.id),
+            name: format!("filter-group-member-match-{}", group.id),
             password: "testpassword".to_string(),
+            proper_name: Some("Matching Member".to_string()),
             email: Some(format!("match-{}@example.com", group.id)),
         }
         .save(&context.pool)
         .await
         .unwrap();
         let other_user = NewUser {
-            username: format!("filter-group-member-other-{}", group.id),
+            name: format!("filter-group-member-other-{}", group.id),
             password: "testpassword".to_string(),
+            proper_name: Some("Other Member".to_string()),
             email: Some(format!("other-{}@example.com", group.id)),
         }
         .save(&context.pool)
@@ -519,15 +522,15 @@ mod tests {
             &context.pool,
             &context.admin_token,
             &format!(
-                "{}/{}/members?username__contains=filter-group-member-match&sort=id",
+                "{}/{}/members?name__contains=filter-group-member-match&sort=id",
                 GROUPS_ENDPOINT, group.id
             ),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let members: Vec<UserResponse> = test::read_body_json(resp).await;
+        let members: Vec<PrincipalMemberResponse> = test::read_body_json(resp).await;
 
         assert_eq!(members.len(), 1);
-        assert_eq!(members[0].id, matching_user.id);
+        assert_eq!(members[0].principal_id, matching_user.id);
     }
 }

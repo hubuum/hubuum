@@ -5,7 +5,6 @@ use utoipa::ToSchema;
 
 use crate::db::traits::namespace as namespace_backend;
 use crate::models::group::Group;
-use crate::models::user::{User, UserID};
 
 use crate::schema::namespaces;
 
@@ -16,7 +15,7 @@ use crate::models::search::QueryOptions;
 use crate::models::{Permission, Permissions};
 
 use crate::models::traits::GroupAccessors;
-use crate::traits::{BackendContext, NamespaceAccessors, SelfAccessors};
+use crate::traits::{BackendContext, NamespaceAccessors};
 
 #[derive(Serialize, Deserialize, Queryable, PartialEq, Debug, Clone, Selectable, ToSchema)]
 #[diesel(table_name = namespaces)]
@@ -101,31 +100,46 @@ where
 /// * Ok(Vec(Group, NamespacePermissions)) - List of groups and their permissions
 /// * Err(ApiError) - On query errors only.
 #[allow(dead_code)]
-pub async fn user_on<C, T>(
+pub async fn principal_on<C, S, T>(
     backend: &C,
-    user_id: UserID,
+    principal: S,
     namespace_ref: T,
 ) -> Result<Vec<GroupPermission>, ApiError>
 where
     C: BackendContext + ?Sized,
+    S: crate::db::traits::authz::AuthzSubject,
     T: NamespaceAccessors,
 {
-    namespace_backend::user_on_from_backend(backend.db_pool(), user_id, namespace_ref).await
+    namespace_backend::principal_on_from_backend(backend.db_pool(), principal, namespace_ref).await
 }
 
-pub async fn user_on_paginated_with_total_count<C, T>(
+/// All of a principal's effective permissions across every namespace, as
+/// `(namespace, group, permission-row)` tuples.
+pub async fn principal_all_permissions<C, S>(
     backend: &C,
-    user_id: UserID,
+    principal: S,
+) -> Result<Vec<(Namespace, Group, Permission)>, ApiError>
+where
+    C: BackendContext + ?Sized,
+    S: crate::db::traits::authz::AuthzSubject,
+{
+    namespace_backend::principal_all_permissions_from_backend(backend.db_pool(), principal).await
+}
+
+pub async fn principal_on_paginated_with_total_count<C, S, T>(
+    backend: &C,
+    principal: S,
     namespace_ref: T,
     query_options: &QueryOptions,
 ) -> Result<(Vec<GroupPermission>, i64), ApiError>
 where
     C: BackendContext + ?Sized,
+    S: crate::db::traits::authz::AuthzSubject,
     T: NamespaceAccessors,
 {
-    namespace_backend::user_on_paginated_with_total_count_from_backend(
+    namespace_backend::principal_on_paginated_with_total_count_from_backend(
         backend.db_pool(),
-        user_id,
+        principal,
         namespace_ref,
         query_options,
     )
@@ -143,18 +157,23 @@ where
 /// * Ok(Vec<Namespace>) - List of namespaces the user has the requested permission for.
 ///   If no matching namespaces are found, an empty list is returned
 /// * Err(ApiError) - On query errors only.
-#[allow(dead_code)]
 pub async fn user_can_on_any<C, U>(
     backend: &C,
     user_id: U,
     permission_type: Permissions,
+    scopes: Option<&[Permissions]>,
 ) -> Result<Vec<Namespace>, ApiError>
 where
     C: BackendContext + ?Sized,
-    U: SelfAccessors<User> + GroupAccessors,
+    U: GroupAccessors + crate::db::traits::authz::AuthzSubject,
 {
-    namespace_backend::user_can_on_any_from_backend(backend.db_pool(), user_id, permission_type)
-        .await
+    namespace_backend::user_can_on_any_from_backend(
+        backend.db_pool(),
+        user_id,
+        permission_type,
+        scopes,
+    )
+    .await
 }
 
 /// Check if a group has a specific permission to a given namespace ID

@@ -7,7 +7,7 @@ use crate::db::{DbPool, with_transaction};
 use crate::errors::ApiError;
 use crate::models::{
     ImportAtomicity, ImportCollisionPolicy, ImportMode, ImportPermissionPolicy, ImportRequest,
-    NewTaskEventRecord, TaskRecord, TaskStatus, User,
+    NewTaskEventRecord, TaskRecord, TaskStatus,
 };
 
 use super::helpers::{
@@ -28,7 +28,8 @@ use crate::db::traits::task_import::{
 pub(super) async fn execute_import_task(
     pool: &DbPool,
     task: &TaskRecord,
-    user: &User,
+    user: &impl crate::db::traits::authz::AuthzSubject,
+    scopes: Option<&[crate::models::Permissions]>,
 ) -> Result<(), ApiError> {
     let payload = task
         .request_payload
@@ -47,7 +48,7 @@ pub(super) async fn execute_import_task(
         "import_task",
         task_id = task.id,
         task_kind = %task.kind,
-        submitted_by = user.id,
+        submitted_by = user.principal_id(),
         total_items = task.total_items,
         dry_run = request.dry_run(),
         atomicity = ?atomicity,
@@ -58,7 +59,7 @@ pub(super) async fn execute_import_task(
     async {
         let total_start = Instant::now();
         let planning_start = Instant::now();
-        let planning = plan_import(pool, user, &request)
+        let planning = plan_import(pool, user, scopes, &request)
             .instrument(info_span!("import_planning"))
             .await;
         let planning_time = planning_start.elapsed();

@@ -1,7 +1,7 @@
 use crate::api::openapi::{ApiErrorResponse, LoginResponse, MessageResponse};
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::extractors::{AdminAccess, UserAccess};
+use crate::extractors::{AdminAccess, Authenticated, ManagementAccess};
 use crate::middlewares::rate_limit::{
     clear_login_failures, client_ip_for_request, login_is_rate_limited, record_login_failure,
 };
@@ -41,14 +41,14 @@ pub async fn login(
     req_input: web::Json<LoginUser>,
 ) -> Result<impl Responder, ApiError> {
     let login = req_input.into_inner();
-    let username = login.username.clone();
+    let name = login.name.clone();
     let client_ip = client_ip_for_request(&req);
     let client_ip_log = client_ip.map(|ip| ip.to_string());
 
-    if login_is_rate_limited(&username, client_ip).await {
+    if login_is_rate_limited(&name, client_ip).await {
         warn!(
             message = "Login throttled",
-            user = username,
+            user = name,
             client_ip = client_ip_log.as_deref()
         );
         return Ok(json_response(
@@ -57,18 +57,18 @@ pub async fn login(
         ));
     }
 
-    debug!(message = "Login started", user = username);
+    debug!(message = "Login started", user = name);
     let user = match login.login(&pool).await {
         Ok(user) => user,
         Err(e) => {
             if let ApiError::Unauthorized(_) = &e {
-                record_login_failure(&username, client_ip).await;
+                record_login_failure(&name, client_ip).await;
             }
             return Err(e);
         }
     };
 
-    clear_login_failures(&username, client_ip).await;
+    clear_login_failures(&name, client_ip).await;
 
     let token_generation_result = user.create_token(&pool).await;
 
@@ -77,7 +77,7 @@ pub async fn login(
         Err(e) => {
             warn!(
                 message = "Login failed (token generation failed)",
-                user = user.username,
+                user = name,
                 error = e.to_string()
             );
             return Err(ApiError::InternalServerError(
@@ -88,7 +88,7 @@ pub async fn login(
 
     debug!(
         message = "Login successful",
-        username = user.username,
+        name = name,
         user_id = user.id,
         token = token.obfuscate()
     );
@@ -113,9 +113,9 @@ pub async fn login(
 #[post("/logout")]
 pub async fn logout(
     pool: web::Data<DbPool>,
-    user_access: UserAccess,
+    requestor: Authenticated,
 ) -> Result<impl Responder, ApiError> {
-    let token = user_access.token;
+    let token = requestor.token;
 
     debug!(message = "Logging out token.", token = token.obfuscate());
 
@@ -153,7 +153,7 @@ pub async fn logout(
 #[post("/logout_all")]
 pub async fn logout_all(
     pool: web::Data<DbPool>,
-    user_access: UserAccess,
+    user_access: ManagementAccess,
 ) -> Result<impl Responder, ApiError> {
     debug!(
         message = "Logging out all tokens for {}.",
@@ -288,10 +288,10 @@ pub async fn logout_other(
     )
 )]
 #[get("/validate")]
-pub async fn validate_token(user_access: UserAccess) -> Result<impl Responder, ApiError> {
+pub async fn validate_token(user_access: Authenticated) -> Result<impl Responder, ApiError> {
     debug!(
         message = "Token validation successful",
-        user_id = user_access.user.id,
+        principal_id = user_access.principal.id,
         token = user_access.token.obfuscate()
     );
 

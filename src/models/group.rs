@@ -1,22 +1,23 @@
 // src/models/group.rs
 
 use crate::db::traits::group::{
-    DeleteGroupRecord, GroupMembersBackend, LoadGroupRecord, SaveGroupRecord, UpdateGroupRecord,
+    DeleteGroupRecord, GroupMembersBackend, LoadGroupRecord, SaveGroupRecord,
+    SavePrincipalGroupRecord, UpdateGroupRecord,
 };
 use crate::errors::ApiError;
+use crate::models::principal::Principal;
+use crate::models::principal_group::NewPrincipalGroup;
 use crate::models::search::{FilterField, QueryOptions, SortParam};
-use crate::models::user_group::NewUserGroup;
 use crate::schema::groups;
 
-use crate::models::user::User;
+use crate::traits::PrincipalIdAccessor;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{
-    BackendContext, CanSave, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType,
-    CursorValue,
+    BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
 
 use crate::db::DbPool;
@@ -80,7 +81,7 @@ impl InstanceAdapter<Group> for Group {
 }
 
 impl Group {
-    pub async fn members<C>(&self, backend: &C) -> Result<Vec<User>, ApiError>
+    pub async fn members<C>(&self, backend: &C) -> Result<Vec<Principal>, ApiError>
     where
         C: BackendContext + ?Sized,
     {
@@ -91,7 +92,7 @@ impl Group {
         &self,
         backend: &C,
         query_options: &QueryOptions,
-    ) -> Result<Vec<User>, ApiError>
+    ) -> Result<Vec<Principal>, ApiError>
     where
         C: BackendContext + ?Sized,
     {
@@ -122,25 +123,27 @@ impl Group {
     /// * `Err(ApiError)` if the user was not added to the group
     ///
     /// If the user is already a member of the group, this function is a safe noop.
-    pub async fn add_member<C>(&self, backend: &C, user: &User) -> Result<(), ApiError>
+    pub async fn add_member<C, P>(&self, backend: &C, member: &P) -> Result<(), ApiError>
     where
         C: BackendContext + ?Sized,
+        P: PrincipalIdAccessor,
     {
-        NewUserGroup {
-            user_id: user.id,
+        NewPrincipalGroup {
+            principal_id: member.principal_id(),
             group_id: self.id,
         }
-        .save(backend)
+        .save_principal_group_record(backend.db_pool())
         .await?;
 
         Ok(())
     }
 
-    pub async fn remove_member<C>(&self, user: &User, backend: &C) -> Result<(), ApiError>
+    pub async fn remove_member<C, P>(&self, member: &P, backend: &C) -> Result<(), ApiError>
     where
         C: BackendContext + ?Sized,
+        P: PrincipalIdAccessor,
     {
-        self.remove_group_member_from_backend(user, backend.db_pool())
+        self.remove_group_member_from_backend(member.principal_id(), backend.db_pool())
             .await
     }
 

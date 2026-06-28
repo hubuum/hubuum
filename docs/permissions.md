@@ -8,6 +8,11 @@ Permissions within Hubuum are based on the following principles:
 - Permissions are granted on collections. Permissions are never granted to individual classes or objects.
 - Permissions are not inherited from any structure to any other. If a user (through a group membership) has read access to a class, they do not automatically have read access to the objects of that class.
 
+Group membership is principal-centric: both human users and service accounts are
+**principals** and gain a group's permissions by being members of it. For the
+identity model, tokens, and how token **scopes** narrow these permissions for
+automated callers, see [auth_model.md](auth_model.md).
+
 ## Permission types
 
 There are three types of permissions for each collection:
@@ -21,14 +26,14 @@ There are three types of permissions for each collection:
 The following permissions are available for collections:
 
 | Permission | Description |
-| ---------- | ----------- |
-| `read_collection`     | Allows reading data about the collection, ie its members or the permissions associated with it. |
-| `update_collection`   | Allows updating the collection (changing its name). |
-| `delete_collection`   | Allows deleting the collection. |
-| `create_collection`   | Allows creating collections within the collection. |
-| `create_class`        | Allows creating classes within the collection. |
-| `create_object`       | Allows creating objects within the collection. |
-| `create_relationship` | Allows creating relationships of classes within the collection. |
+| --- | --- |
+| `ReadCollection` | Allows reading data about the collection, ie its members or the permissions associated with it. |
+| `UpdateCollection` | Allows updating the collection (changing its name). |
+| `DeleteCollection` | Allows deleting the collection. |
+| `DelegateCollection` | Allows delegating permissions for the collection. |
+| `CreateClass` | Allows creating classes within the collection. |
+| `CreateObject` | Allows creating objects within the collection. |
+| `CreateClassRelation` | Allows creating relationships of classes within the collection. |
 
 The permission to grant groups (or users) access to the collection itself is done by the parent collection. Every collection has a parent collection and the root collection is created when the Hubuum instance is created.
 
@@ -37,43 +42,43 @@ The permission to grant groups (or users) access to the collection itself is don
 The following permissions are available for classes:
 
 | Permission | Description |
-| ---------- | ----------- |
-| `read_class`     | Allows reading the class. |
-| `update_class`   | Allows updating the class (ie, change its name, its definition, validation requirements, etc). |
-| `delete_class`   | Allows deleting the class. Note that deleting a class deletes all objects belonging to that class. |
-| `create_object`  | Allows creating new objects of the class. |
+| --- | --- |
+| `ReadClass` | Allows reading the class. |
+| `UpdateClass` | Allows updating the class (ie, change its name, its definition, validation requirements, etc). |
+| `DeleteClass` | Allows deleting the class. Note that deleting a class deletes all objects belonging to that class. |
+| `CreateObject` | Allows creating new objects of the class. |
 
 ### Permissions for objects
 
 The following permissions are available for objects:
 
 | Permission | Description |
-| ---------- | ----------- |
-| `read_object`     | Allows reading the object. |
-| `update_object`   | Allows updating the object. |
-| `delete_object`   | Allows deleting the object. |
+| --- | --- |
+| `ReadObject` | Allows reading the object. |
+| `UpdateObject` | Allows updating the object. |
+| `DeleteObject` | Allows deleting the object. |
 
 ### Permissions for class relationships
 
 The following permissions are available for relationships between classes:
 
 | Permission | Description |
-| ---------- | ----------- |
-| `read_class_relationship`     | Allows reading the relationship. |
-| `update_class_relationship`   | Allows updating the relationship. |
-| `delete_class_relationship`   | Allows deleting the relationship. |
-| `create_object_relationship`   | Allows creating relationships between objects adhering of the class relationship. |
+| --- | --- |
+| `ReadClassRelation` | Allows reading the relationship. |
+| `UpdateClassRelation` | Allows updating the relationship. |
+| `DeleteClassRelation` | Allows deleting the relationship. |
+| `CreateObjectRelation` | Allows creating relationships between objects adhering of the class relationship. |
 
 ### Permissions for templates
 
 Report templates are used to format report output and are scoped to namespaces. The following permissions control access to templates:
 
 | Permission | Description |
-| ---------- | ----------- |
-| `read_template`     | Allows reading templates and using them in report generation. Required to view template definitions or to reference a template when running a report. |
-| `create_template`   | Allows creating new templates within the namespace. Also required when moving a template to a different namespace (as the target namespace permission). |
-| `update_template`   | Allows modifying existing templates (name, description, template content, namespace). Required when moving a template to a different namespace (as the source namespace permission). |
-| `delete_template`   | Allows deleting templates from the namespace. |
+| --- | --- |
+| `ReadTemplate` | Allows reading templates and using them in report generation. Required to view template definitions or to reference a template when running a report. |
+| `CreateTemplate` | Allows creating new templates within the namespace. Also required when moving a template to a different namespace (as the target namespace permission). |
+| `UpdateTemplate` | Allows modifying existing templates (name, description, template content, namespace). Required when moving a template to a different namespace (as the source namespace permission). |
+| `DeleteTemplate` | Allows deleting templates from the namespace. |
 
 **Important notes about template permissions:**
 
@@ -89,7 +94,7 @@ Remote targets define outbound subject actions and are scoped to namespaces. The
 control target management and invocation:
 
 | Permission | Description |
-| ---------- | ----------- |
+| --- | --- |
 | `ReadRemoteTarget` | Allows listing and reading remote target definitions in the namespace. |
 | `CreateRemoteTarget` | Allows creating remote targets in the namespace. Also required when moving a target into a namespace. |
 | `UpdateRemoteTarget` | Allows modifying existing targets in the namespace. Required on the source namespace when moving a target. |

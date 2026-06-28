@@ -49,21 +49,26 @@ where
 /// ### Arguments
 ///
 /// * `pool` - A database connection pool.
-/// * `user` - The user (impl [`UserPermissions`]) to check permissions for.
+/// * `subject` - The principal (impl [`UserPermissions`]) to check permissions for.
+/// * `scopes` - The token scope set as `Option<&[Permissions]>`. `None` = unscoped
+///   (full authority); `Some(..)` intersects the check with the scopes (fail-closed,
+///   applied even to admins). This argument is **required** — request handlers pass
+///   `requestor.scopes()`; truly unscoped internal callers pass `None` explicitly.
 /// * `[permissions]` - An iterable of [`Permissions`] to check for.
 ///   All permissions must be present in all namespaces.
 /// * `objects+`- Objects to check permissions on (impl [`NamespaceAccessors`]).
 ///
 /// ### Returns
 ///
-/// * Nothing if the user has the required permissions, or an [`ApiError::Forbidden`] if they do not.
+/// * Nothing if the subject has the required permissions, or an [`ApiError::Forbidden`] if they do not.
 ///
 /// ### Example
 ///
 /// ```ignore
 /// use hubuum::can;
-/// can!(pool, user, [Permissions::ReadCollection], namespace, class, object);
-/// can!(pool, user, [Permissions::ReadCollection, Permissions::UpdateCollection], namespace, class1, class2);
+/// // `scopes` is `Option<&[Permissions]>` — e.g. `requestor.scopes()` or `None`.
+/// can!(pool, subject, scopes, [Permissions::ReadCollection], namespace, class, object);
+/// can!(pool, subject, scopes, [Permissions::ReadCollection, Permissions::UpdateCollection], namespace, class1, class2);
 /// ```
 ///
 /// [`UserPermissions::can`]: crate::db::traits::UserPermissions::can
@@ -72,8 +77,13 @@ where
 /// [`Permissions`]: crate::models::Permissions
 /// [`ApiError::Forbidden`]: crate::errors::ApiError::Forbidden
 macro_rules! can {
-    ($pool:expr, $user:expr, [$($perm:expr),+], $($namespace:expr),+) => {{
-        $user.can(
+    // Scope is a REQUIRED argument — `$scopes: Option<&[Permissions]>`. There is
+    // deliberately no convenience form that defaults to `None`, so a missed
+    // migration to scope-aware authorization is a compile error, not a silent
+    // scope bypass. Resource/task handlers pass `requestor.scopes()`; truly
+    // unscoped internal callers pass `None` explicitly.
+    ($pool:expr, $subject:expr, $scopes:expr, [$($perm:expr),+], $($namespace:expr),+) => {{
+        $subject.can(
             $pool,
             vec![$($perm),+],
             vec![
@@ -81,60 +91,9 @@ macro_rules! can {
                 // which is a field lookup returning a `NamespaceID`. There is no database interaction
                 // here but the trait definition requires the pool to be passed.
                 $($namespace.namespace_id($pool).await?),+
-            ]
+            ],
+            $scopes,
         ).await?
-    }};
-}
-
-#[macro_export]
-/// Check permissions for a user on a namespace, class, or object.
-///
-/// ## Arguments
-///
-/// * `request_obj` - The request object (namespace, class, or object).
-/// * `pool` - The database pool.
-/// * `user` - The user to check permissions for (will be cloned).
-/// * `permission+` - The permissions to check for, one or more.
-///
-/// ## Returns
-///
-/// This macro causes a return with a `ApiError::Forbidden` if the user does
-/// not have the specified permission.
-///
-/// ## Example
-///
-/// ```ignore
-/// use hubuum::check_permissions;
-/// check_permissions!(namespace, pool, requestor.user, Permissions::ReadCollection);
-/// check_permissions!(namespace, pool, requestor.user, Permissions::ReadCollection, Permissions::UpdateCollection);
-///
-/// ```
-macro_rules! check_permissions {
-    // Captures any number of permissions passed after the user argument and converts them into a vector
-    ($request_obj:expr, $pool:expr, $user:expr, $($permissions:expr),+ $(,)?) => {{
-        use $crate::errors::ApiError;
-        use $crate::traits::{NamespaceAccessors, SelfAccessors, PermissionController};
-        use tracing::warn;
-
-        let permissions_vec = vec![$($permissions),+];
-
-        if !$request_obj
-            .user_can_all(&$pool, $user.clone(), permissions_vec.clone())
-            .await?
-        {
-            let namespace_id = $request_obj.namespace_id(&$pool).await?;
-            let user_id = $user.id();
-            warn!(
-                message = "Permission denied",
-                user_id = user_id,
-                namespace_id = namespace_id,
-                permissions = ?permissions_vec,
-            );
-            return Err(ApiError::Forbidden(format!(
-                "User {} does not have permissions {:?} on namespace {}",
-                user_id, permissions_vec, namespace_id
-            )));
-        }
     }};
 }
 

@@ -15,7 +15,7 @@ use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     HubuumClassID, HubuumClassRelationID, HubuumObjectID, HubuumObjectRelationID, Namespace,
-    NamespaceID, Permissions, User,
+    NamespaceID, Permissions,
 };
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
@@ -658,17 +658,20 @@ impl RemoteTarget {
 
 pub async fn authorize_remote_invocation(
     pool: &DbPool,
-    user: &User,
+    actor: &impl crate::db::traits::authz::AuthzSubject,
+    scopes: Option<&[Permissions]>,
     target: &RemoteTarget,
     subject: &RemoteInvocationSubject,
 ) -> Result<ResolvedRemoteInvocationSubject, ApiError> {
     let target_namespace_id = NamespaceID::new(target.namespace_id)?;
-    user.can(
-        pool,
-        [Permissions::ExecuteRemoteTarget],
-        [target_namespace_id],
-    )
-    .await?;
+    actor
+        .can(
+            pool,
+            [Permissions::ExecuteRemoteTarget],
+            [target_namespace_id],
+            scopes,
+        )
+        .await?;
 
     if !target.enabled {
         return Err(ApiError::BadRequest(
@@ -699,12 +702,14 @@ pub async fn authorize_remote_invocation(
             "Remote target not found for invocation subject".to_string(),
         ));
     }
-    user.can(
-        pool,
-        [resolved.required_read_permission],
-        resolved.namespaces.clone(),
-    )
-    .await?;
+    actor
+        .can(
+            pool,
+            [resolved.required_read_permission],
+            resolved.namespaces.clone(),
+            scopes,
+        )
+        .await?;
 
     Ok(resolved)
 }

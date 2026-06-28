@@ -1,4 +1,5 @@
 use super::*;
+use crate::db::traits::authz::AuthzSubject;
 fn permission_filter_sql(permission: Permissions, target: bool) -> &'static str {
     match (permission, target) {
         (Permissions::ReadCollection, true) => "permissions.has_read_namespace = TRUE",
@@ -88,9 +89,9 @@ pub async fn total_namespace_count_from_backend(pool: &DbPool) -> Result<i64, Ap
     with_connection(pool, |conn| namespaces.count().get_result::<i64>(conn))
 }
 
-pub async fn user_on_from_backend<T: NamespaceAccessors>(
+pub async fn principal_on_from_backend<S: AuthzSubject, T: NamespaceAccessors>(
     pool: &DbPool,
-    user_id: UserID,
+    principal: S,
     namespace_ref: T,
 ) -> Result<Vec<GroupPermission>, ApiError> {
     use crate::models::traits::output::FromTuple;
@@ -98,7 +99,7 @@ pub async fn user_on_from_backend<T: NamespaceAccessors>(
     use crate::schema::permissions::dsl::{group_id, namespace_id, permissions};
 
     let namespace_target_id = namespace_ref.namespace_id(pool).await?.id();
-    let group_ids_subquery = user_id.group_ids_subquery_from_backend();
+    let group_ids_subquery = principal.group_ids_subquery();
     let rows = with_connection(pool, |conn| {
         groups
             .inner_join(permissions.on(group_table_id.eq(group_id)))
@@ -111,9 +112,38 @@ pub async fn user_on_from_backend<T: NamespaceAccessors>(
     Ok(rows.into_iter().map(GroupPermission::from_tuple).collect())
 }
 
-pub async fn user_on_paginated_with_total_count_from_backend<T: NamespaceAccessors>(
+/// All of a principal's effective permissions across every namespace, as
+/// `(namespace, group, permission-row)` tuples — one per `(namespace, group)`
+/// where a group the principal belongs to holds a permission. The handler folds
+/// these into a per-namespace, per-group report.
+pub async fn principal_all_permissions_from_backend<S: AuthzSubject>(
     pool: &DbPool,
-    user_id: UserID,
+    principal: S,
+) -> Result<Vec<(Namespace, Group, Permission)>, ApiError> {
+    use crate::schema::permissions::dsl::{group_id, permissions};
+    use diesel::SelectableHelper;
+
+    let group_ids_subquery = principal.group_ids_subquery();
+    with_connection(pool, |conn| {
+        permissions
+            .inner_join(crate::schema::groups::table)
+            .inner_join(crate::schema::namespaces::table)
+            .filter(group_id.eq_any(group_ids_subquery))
+            .select((
+                Namespace::as_select(),
+                Group::as_select(),
+                Permission::as_select(),
+            ))
+            .load::<(Namespace, Group, Permission)>(conn)
+    })
+}
+
+pub async fn principal_on_paginated_with_total_count_from_backend<
+    S: AuthzSubject,
+    T: NamespaceAccessors,
+>(
+    pool: &DbPool,
+    principal: S,
     namespace_ref: T,
     query_options: &QueryOptions,
 ) -> Result<(Vec<GroupPermission>, i64), ApiError> {
@@ -127,7 +157,7 @@ pub async fn user_on_paginated_with_total_count_from_backend<T: NamespaceAccesso
 
     let namespace_target_id = namespace_ref.namespace_id(pool).await?.id();
     let build_query = || -> Result<_, ApiError> {
-        let group_ids_subquery = user_id.group_ids_subquery_from_backend();
+        let group_ids_subquery = principal.group_ids_subquery();
         let mut query = groups
             .inner_join(permissions.on(group_table_id.eq(group_id)))
             .filter(namespace_id.eq(namespace_target_id))
@@ -179,21 +209,31 @@ pub async fn user_on_paginated_with_total_count_from_backend<T: NamespaceAccesso
     ))
 }
 
-pub async fn user_can_on_any_from_backend<U: SelfAccessors<User> + GroupAccessors>(
+pub async fn user_can_on_any_from_backend<U: GroupAccessors + AuthzSubject>(
     pool: &DbPool,
     user_id: U,
     permission_type: Permissions,
+    scopes: Option<&[Permissions]>,
 ) -> Result<Vec<Namespace>, ApiError> {
+    use crate::db::traits::authz::scope_allows;
     use crate::schema::permissions::dsl::*;
 
-    if user_id.instance(pool).await?.is_admin(pool).await? {
+    // Fail-closed scope pre-filter: a scoped token that does not include the
+    // requested permission can see nothing, before any grant/admin check.
+    if !scope_allows(scopes, &[permission_type]) {
+        return Ok(vec![]);
+    }
+
+    // The admin "all namespaces" fast path applies only to unscoped tokens; a
+    // scoped admin token falls through to the scoped grant query below.
+    if scopes.is_none() && AuthzSubject::is_admin(&user_id, pool).await? {
         return with_connection(pool, |conn| {
             crate::schema::namespaces::table.load::<Namespace>(conn)
         });
     }
 
     let base_query = {
-        let group_ids_subquery = user_id.group_ids_subquery_from_backend();
+        let group_ids_subquery = user_id.group_ids_subquery();
 
         permissions
             .into_boxed()

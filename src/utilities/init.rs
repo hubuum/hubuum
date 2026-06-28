@@ -69,8 +69,9 @@ pub async fn init(pool: DbPool) -> InitResult {
     let default_password = generate_random_password(32);
 
     let adm_user = match (NewUser {
-        username: "admin".to_string(),
+        name: "admin".to_string(),
         email: None,
+        proper_name: Some("Administrator".to_string()),
         password: default_password.clone(),
     }
     .save(&pool))
@@ -98,8 +99,9 @@ pub async fn init(pool: DbPool) -> InitResult {
 
     warn!(
         message = "Created default admin user; reset password with hubuum-admin",
-        username = adm_user.username,
-        reset_command = format!("hubuum-admin --reset-password {}", adm_user.username)
+        username = "admin",
+        reset_command = "hubuum-admin --reset-password admin"
     );
+    let _ = &adm_user;
     Ok(())
 }

@@ -37,6 +37,9 @@ pub(super) struct ObjectResolution {
 pub(super) struct PlanningState {
     pub(super) next_temp_id: i32,
     pub(super) is_admin: Option<bool>,
+    /// Submitting token's scope boundary (`None` = unscoped). Threaded into the
+    /// per-namespace permission checks so a scoped import cannot exceed it.
+    pub(super) scopes: Option<Vec<crate::models::Permissions>>,
     pub(super) planned_namespace_names: HashSet<String>,
     pub(super) planned_class_keys: HashSet<(i32, String)>,
     pub(super) planned_object_keys: HashSet<(i32, String)>,

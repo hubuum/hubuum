@@ -157,7 +157,7 @@ mod test {
 
         let result = context
             .admin_user
-            .search_class_relations(&context.pool, query)
+            .search_class_relations(&context.pool, query, None)
             .await
             .unwrap();
 

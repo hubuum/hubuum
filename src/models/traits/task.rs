@@ -8,26 +8,28 @@
 use crate::db::DbPool;
 use crate::db::traits::task::TaskBackend;
 use crate::errors::ApiError;
-use crate::models::{TaskID, TaskKind, TaskRecord, User};
-use crate::traits::GroupMemberships;
+use crate::models::service_account::{is_human_owner_group_member, load_service_account_by_id};
+use crate::models::{TaskID, TaskKind, TaskRecord};
+use crate::traits::AuthzSubject;
 
 impl TaskID {
-    /// Load this task for `user`, enforcing ownership-or-admin authorization.
+    /// Load this task for `requestor`, enforcing principal-centric authorization.
     pub async fn load_authorized(
         &self,
         pool: &DbPool,
-        user: &User,
+        requestor: &impl AuthzSubject,
     ) -> Result<TaskRecord, ApiError> {
-        self.load_authorized_of_kind(pool, user, None, "Task").await
+        self.load_authorized_of_kind(pool, requestor, None, "Task")
+            .await
     }
 
     /// Load this task, additionally requiring it to be a report task.
     pub async fn load_authorized_report(
         &self,
         pool: &DbPool,
-        user: &User,
+        requestor: &impl AuthzSubject,
     ) -> Result<TaskRecord, ApiError> {
-        self.load_authorized_of_kind(pool, user, Some(TaskKind::Report), "Report task")
+        self.load_authorized_of_kind(pool, requestor, Some(TaskKind::Report), "Report task")
             .await
     }
 
@@ -35,16 +37,20 @@ impl TaskID {
     pub async fn load_authorized_import(
         &self,
         pool: &DbPool,
-        user: &User,
+        requestor: &impl AuthzSubject,
     ) -> Result<TaskRecord, ApiError> {
-        self.load_authorized_of_kind(pool, user, Some(TaskKind::Import), "Import task")
+        self.load_authorized_of_kind(pool, requestor, Some(TaskKind::Import), "Import task")
             .await
     }
 
+    /// Authorization (denial returns `404` to avoid revealing other principals'
+    /// tasks): an **admin**, the **submitting principal itself**, or — when the
+    /// task was submitted by a service account — a **human member of that SA's
+    /// owner group**.
     async fn load_authorized_of_kind(
         &self,
         pool: &DbPool,
-        user: &User,
+        requestor: &impl AuthzSubject,
         kind: Option<TaskKind>,
         label: &str,
     ) -> Result<TaskRecord, ApiError> {
@@ -59,10 +65,29 @@ impl TaskID {
             )));
         }
 
-        if task.submitted_by == Some(user.id) || user.is_admin(pool).await? {
-            Ok(task)
-        } else {
-            Err(ApiError::NotFound(format!("{label} not found")))
+        let not_found = || ApiError::NotFound(format!("{label} not found"));
+
+        if requestor.is_admin(pool).await? {
+            return Ok(task);
         }
+
+        let Some(submitter_id) = task.submitted_by else {
+            return Err(not_found());
+        };
+
+        // Submitting principal itself.
+        if submitter_id == requestor.principal_id() {
+            return Ok(task);
+        }
+
+        // SA-submitted task: a human member of the SA's owner group may manage it.
+        if let Ok(sa) = load_service_account_by_id(pool, submitter_id).await
+            && is_human_owner_group_member(pool, requestor.principal_id(), sa.owner_group_id)
+                .await?
+        {
+            return Ok(task);
+        }
+
+        Err(not_found())
     }
 }

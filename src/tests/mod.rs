@@ -23,6 +23,7 @@ use crate::db::{init_pool, with_connection};
 use crate::errors::ApiError;
 use crate::models::group::{Group, NewGroup};
 use crate::models::namespace::{Namespace, NewNamespaceWithAssignee};
+use crate::models::token::create_principal_token;
 use crate::models::user::{NewUser, User};
 use crate::models::{HubuumClass, HubuumObject, NewHubuumClass, NewHubuumObject};
 
@@ -413,8 +414,9 @@ pub(crate) async fn create_object_fixture(
 
 pub async fn create_user_with_params(pool: &DbPool, username: &str, password: &str) -> User {
     let result = NewUser {
-        username: username.to_string(),
+        name: username.to_string(),
         password: password.to_string(),
+        proper_name: None,
         email: None,
     }
     .save(pool)
@@ -450,6 +452,50 @@ pub async fn create_test_admin(pool: &DbPool) -> User {
     } else {
         panic!("Failed to add user to admin group: {:?}", result.err())
     }
+}
+
+/// Create a test service account owned by `owner_group`. `created_by` records the
+/// human principal that created it (or `None`).
+pub async fn create_test_service_account(
+    pool: &DbPool,
+    owner_group: &Group,
+    created_by: Option<i32>,
+) -> crate::models::ServiceAccount {
+    let name = "sa-".to_string() + &generate_random_password(16);
+    crate::models::NewServiceAccount {
+        name,
+        description: Some("test service account".to_string()),
+        owner_group_id: owner_group.id,
+    }
+    .save(pool, created_by)
+    .await
+    .expect("failed to create test service account")
+}
+
+/// Mint a scoped token for a principal id; returns the raw token string.
+pub async fn scoped_token(
+    pool: &DbPool,
+    principal_id: i32,
+    scopes: &[crate::models::Permissions],
+) -> String {
+    create_principal_token(pool, principal_id, None, None, None, Some(scopes))
+        .await
+        .expect("failed to mint scoped token")
+        .get_token()
+}
+
+/// Mint a token for a service account with optional scopes and expiry; returns
+/// the raw token string.
+pub async fn service_account_token(
+    pool: &DbPool,
+    sa: &crate::models::ServiceAccount,
+    scopes: Option<&[crate::models::Permissions]>,
+    expires_at: Option<chrono::NaiveDateTime>,
+) -> String {
+    create_principal_token(pool, sa.id, None, None, expires_at, scopes)
+        .await
+        .expect("failed to mint service account token")
+        .get_token()
 }
 
 /// Create a test group with a random name
@@ -488,19 +534,14 @@ pub async fn create_groups_with_prefix(
 }
 
 pub async fn ensure_user(pool: &DbPool, uname: &str) -> User {
-    use crate::schema::users::dsl::*;
-
-    let result = with_connection(pool, |conn| {
-        users.filter(username.eq(uname)).first::<User>(conn)
-    });
-
-    if let Ok(user) = result {
+    if let Ok(user) = User::get_by_name(pool, uname).await {
         return user;
     }
 
     let result = NewUser {
-        username: uname.to_string(),
+        name: uname.to_string(),
         password: "testpassword".to_string(),
+        proper_name: None,
         email: None,
     }
     .save(pool)
@@ -509,10 +550,9 @@ pub async fn ensure_user(pool: &DbPool, uname: &str) -> User {
     if let Err(e) = result {
         match e {
             ApiError::Conflict(_) => {
-                return with_connection(pool, |conn| {
-                    users.filter(username.eq(uname)).first::<User>(conn)
-                })
-                .expect("Failed to fetch user after conflict");
+                return User::get_by_name(pool, uname)
+                    .await
+                    .expect("Failed to fetch user after conflict");
             }
             _ => panic!("Failed to create user '{uname}': {e:?}"),
         }

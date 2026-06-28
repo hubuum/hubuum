@@ -1,31 +1,63 @@
-use crate::db::DbPool;
-use crate::db::traits::user::GroupMemberships;
+use crate::db::traits::Status;
+use crate::db::traits::authz::{AuthzSubject, load_token_scopes};
+use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
-use crate::models::token::Token;
+use crate::models::permissions::Permissions;
+use crate::models::principal::{Principal, load_principal_by_id};
+use crate::models::token::{PrincipalToken, Token};
 use crate::models::user::User;
-use crate::utilities::iam::get_user_by_id;
 
 use actix_web::{FromRequest, HttpRequest, dev::Payload, web::Data};
+use diesel::prelude::*;
 use futures_util::future::{self, FutureExt};
 use std::pin::Pin;
 use tracing::debug;
 
+/// The principal-centric authenticated context for resource and task flows.
+///
+/// This is the ONLY extractor that accepts scoped tokens — every authority
+/// decision downstream threads `scopes()` into the authz pre-filter. Humans and
+/// service accounts both authenticate here.
+pub struct Authenticated {
+    /// The raw bearer token (e.g. for current-token logout).
+    pub token: Token,
+    pub token_meta: PrincipalToken,
+    pub principal: Principal,
+    /// `None` = unscoped (full principal authority); `Some(..)` = the token's
+    /// scope set (possibly empty = deny-all).
+    pub scopes: Option<Vec<Permissions>>,
+}
+
+impl Authenticated {
+    /// The token scope set as a slice, for passing into authz entry points.
+    pub fn scopes(&self) -> Option<&[Permissions]> {
+        self.scopes.as_deref()
+    }
+}
+
+/// A human user with a valid, **unscoped** token. Scoped tokens and service
+/// accounts are rejected.
+pub struct UserAccess {
+    pub user: User,
+}
+
+/// A human admin with a valid, unscoped token.
 pub struct AdminAccess {
     pub token: Token,
     pub user: User,
 }
 
-#[allow(dead_code)]
+/// A human admin, or the human user named by the `{principal_id}`/`{user_id}`
+/// path segment, with a valid unscoped token.
 pub struct AdminOrSelfAccess {
-    pub token: Token,
     pub user: User,
 }
 
-/// A user with a valid token
-///
-/// This is a user that has a valid token, but is not necessarily an admin. In
-/// the user variable, we have the entire user record.
-pub struct UserAccess {
+/// A human user with a valid unscoped token, for IAM / credential-management
+/// endpoints (service-account CRUD, principal token management, admin logout).
+/// Per-operation authorization (admin or owner-group) is decided in the handler.
+/// Scoped automation tokens can never manage SAs, users, groups, or credentials.
+pub struct ManagementAccess {
     pub token: Token,
     pub user: User,
 }
@@ -43,32 +75,98 @@ fn extract_token(req: &HttpRequest) -> Result<Token, ApiError> {
         .ok_or_else(|| ApiError::Unauthorized("No token provided".to_string()))
 }
 
-async fn extract_user_from_token(pool: &DbPool, token: &Token) -> Result<User, ApiError> {
-    use crate::db::traits::Status;
-    let user_token = token.is_valid(pool).await?;
-
-    get_user_by_id(pool, user_token.user_id)
-        .map_err(|_| ApiError::Unauthorized("Invalid token".to_string()))
+fn pool_from_req(req: &HttpRequest) -> Result<Data<DbPool>, ApiError> {
+    req.app_data::<Data<DbPool>>()
+        .cloned()
+        .ok_or_else(|| ApiError::InternalServerError("Pool not found".to_string()))
 }
 
-async fn get_user_and_path(
-    path: &actix_web::dev::Path<actix_web::dev::Url>,
-    pool: &DbPool,
-) -> Result<(User, String), ApiError> {
-    let user_id = match path.query("user_id").parse::<i32>() {
-        Ok(id) => id,
-        Err(_) => {
-            return Err(ApiError::InternalServerError(
-                "Failed to parse user_id".into(),
-            ));
-        }
+/// Build the full authenticated context (accepts scoped tokens).
+async fn build_authenticated(pool: &DbPool, token: Token) -> Result<Authenticated, ApiError> {
+    let token_meta = token.is_valid(pool).await?;
+    let principal = load_principal_by_id(pool, token_meta.principal_id).await?;
+    let scopes = if token_meta.scoped {
+        Some(load_token_scopes(pool, token_meta.id).await?)
+    } else {
+        None
     };
+    Ok(Authenticated {
+        token,
+        token_meta,
+        principal,
+        scopes,
+    })
+}
 
-    let path = path.as_str().to_string();
+/// Gate for human/IAM extractors: the token must be valid, **unscoped**, and
+/// owned by a **human** principal. Returns the resolved `User`.
+///
+/// This is the privilege-separation keystone — it runs before any admin/self
+/// decision, so a service account (even one in the admin group, even with an
+/// unscoped token) can never act through a human/IAM extractor.
+async fn human_unscoped_user(pool: &DbPool, token: &Token) -> Result<User, ApiError> {
+    let token_meta = token.is_valid(pool).await?;
 
-    let user = get_user_by_id(pool, user_id)?;
+    if token_meta.scoped {
+        return Err(ApiError::Forbidden(
+            "Scoped tokens cannot be used on human/management endpoints".to_string(),
+        ));
+    }
 
-    Ok((user, path))
+    // Single round trip: fetch the principal and (when human) its `users` row
+    // together, rather than a separate principal load followed by a user load.
+    let (principal, user) = load_principal_with_user(pool, token_meta.principal_id).await?;
+    if !principal.is_human() {
+        return Err(ApiError::Forbidden(
+            "Service accounts cannot use human/management endpoints".to_string(),
+        ));
+    }
+
+    user.ok_or_else(|| ApiError::Unauthorized("Invalid token".to_string()))
+}
+
+/// Load a principal and, when it is human, its `users` row in one left-joined
+/// query. A service account simply has no `users` row, so the user is `None`.
+async fn load_principal_with_user(
+    pool: &DbPool,
+    principal_id: i32,
+) -> Result<(Principal, Option<User>), ApiError> {
+    use crate::schema::{principals, users};
+
+    with_connection(pool, |conn| {
+        principals::table
+            .left_join(users::table.on(users::id.eq(principals::id)))
+            .filter(principals::id.eq(principal_id))
+            .select((Principal::as_select(), Option::<User>::as_select()))
+            .first::<(Principal, Option<User>)>(conn)
+    })
+}
+
+/// Resolve the self-target principal id from the path (`principal_id` preferred,
+/// `user_id` accepted for not-yet-renamed routes).
+fn self_target_id(path: &actix_web::dev::Path<actix_web::dev::Url>) -> Result<i32, ApiError> {
+    if let Ok(id) = path.query("principal_id").parse::<i32>() {
+        return Ok(id);
+    }
+    path.query("user_id")
+        .parse::<i32>()
+        .map_err(|_| ApiError::InternalServerError("Failed to parse principal id".into()))
+}
+
+impl FromRequest for Authenticated {
+    type Error = ApiError;
+    type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
+
+    fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
+        let pool = pool_from_req(req);
+        let token_result = extract_token(req);
+        async move {
+            let pool = pool?;
+            let token = token_result?;
+            build_authenticated(&pool, token).await
+        }
+        .boxed_local()
+    }
 }
 
 impl FromRequest for UserAccess {
@@ -76,23 +174,30 @@ impl FromRequest for UserAccess {
     type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
-        let pool = match req.app_data::<Data<DbPool>>() {
-            Some(data) => data.clone(),
-            None => {
-                return future::ready(Err(ApiError::InternalServerError(
-                    "Pool not found".to_string(),
-                )))
-                .boxed_local();
-            }
-        };
-
+        let pool = pool_from_req(req);
         let token_result = extract_token(req);
-
         async move {
+            let pool = pool?;
             let token = token_result?;
-            let user = extract_user_from_token(&pool, &token).await?;
+            let user = human_unscoped_user(&pool, &token).await?;
+            Ok(UserAccess { user })
+        }
+        .boxed_local()
+    }
+}
 
-            Ok(UserAccess { token, user })
+impl FromRequest for ManagementAccess {
+    type Error = ApiError;
+    type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
+
+    fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
+        let pool = pool_from_req(req);
+        let token_result = extract_token(req);
+        async move {
+            let pool = pool?;
+            let token = token_result?;
+            let user = human_unscoped_user(&pool, &token).await?;
+            Ok(ManagementAccess { token, user })
         }
         .boxed_local()
     }
@@ -103,21 +208,12 @@ impl FromRequest for AdminAccess {
     type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
-        let pool = match req.app_data::<Data<DbPool>>() {
-            Some(data) => data.clone(),
-            None => {
-                return future::ready(Err(ApiError::InternalServerError(
-                    "Pool not found".to_string(),
-                )))
-                .boxed_local();
-            }
-        };
-
+        let pool = pool_from_req(req);
         let token_result = extract_token(req);
-
         async move {
+            let pool = pool?;
             let token = token_result?;
-            let user = extract_user_from_token(&pool, &token).await?;
+            let user = human_unscoped_user(&pool, &token).await?;
 
             if user.is_admin(&pool).await? {
                 Ok(AdminAccess { token, user })
@@ -134,35 +230,23 @@ impl FromRequest for AdminOrSelfAccess {
     type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
-        let pool = match req.app_data::<Data<DbPool>>() {
-            Some(data) => data.clone(),
-            None => {
-                return future::ready(Err(ApiError::InternalServerError(
-                    "Pool not found".to_string(),
-                )))
-                .boxed_local();
-            }
-        };
-
+        let pool = pool_from_req(req);
         let token_result = extract_token(req);
-
-        // Extract necessary information from `req` here
         let path_info = req.match_info().clone();
 
         async move {
+            let pool = pool?;
             let token = token_result?;
-            let user = extract_user_from_token(&pool, &token).await?;
+            let user = human_unscoped_user(&pool, &token).await?;
+            let target_id = self_target_id(&path_info)?;
 
-            // Use the extracted information instead of `req`
-            let (user_from_path, path) = get_user_and_path(&path_info, &pool).await?;
-
-            if user.is_admin(&pool).await? || user.id == user_from_path.id {
-                Ok(AdminOrSelfAccess { token, user })
+            if user.is_admin(&pool).await? || user.id == target_id {
+                Ok(AdminOrSelfAccess { user })
             } else {
                 debug! {
-                    message = "User attempted to access an admin-only resource.",
+                    message = "User attempted to access an admin-or-self resource.",
                     user_id = user.id,
-                    path = path,
+                    target_id = target_id,
                 };
                 Err(ApiError::Forbidden("Permission denied".to_string()))
             }
