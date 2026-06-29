@@ -14,10 +14,12 @@ use uuid::Uuid;
 use crate::db::{with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{
-    Action, ActorKind, EntityType, Event, NewEvent, RequestProvenance, emit_event,
+    Action, ActorKind, EntityType, Event, EventContext, NewEvent, RequestProvenance, emit_event,
 };
+use crate::models::namespace::{NewNamespaceWithAssignee, UpdateNamespace};
 use crate::schema::events::dsl::events;
-use crate::tests::test_scope;
+use crate::tests::{TestScope, test_scope};
+use crate::traits::{CanDelete, CanSave, CanUpdate};
 
 /// Count event rows for a given `event_id` (0 or 1, since `event_id` is UNIQUE).
 fn count_events_for(conn: &mut PgConnection, target: Uuid) -> i64 {
@@ -152,6 +154,76 @@ fn fanout_backlog_index_exists() {
         Ok::<_, diesel::result::Error>(())
     })
     .unwrap();
+}
+
+#[actix_web::test]
+async fn namespace_writes_emit_lifecycle_events_in_transaction() {
+    let scope = test_scope();
+    let fixture = scope.with_namespace().await;
+    let context = EventContext::user(7, Some(Uuid::new_v4()), Some("audit-correlation".into()));
+    let namespace_name = scope.scoped_name("audited_namespace");
+
+    let namespace = NewNamespaceWithAssignee {
+        name: namespace_name.clone(),
+        description: "before".to_string(),
+        group_id: fixture.owner_group.id,
+    }
+    .save_with_context(&scope.pool, Some(&context))
+    .await
+    .unwrap();
+
+    let updated = UpdateNamespace {
+        name: Some(namespace_name.clone()),
+        description: Some("after".to_string()),
+    }
+    .update_with_context(&scope.pool, namespace.id, Some(&context))
+    .await
+    .unwrap();
+
+    updated
+        .delete_with_context(&scope.pool, Some(&context))
+        .await
+        .unwrap();
+
+    let rows = namespace_events_for(&scope, namespace.id);
+    assert_eq!(rows.len(), 3);
+
+    assert_eq!(rows[0].action, "created");
+    assert_eq!(
+        rows[0].entity_name.as_deref(),
+        Some(namespace_name.as_str())
+    );
+    assert_eq!(rows[0].namespace_id, Some(namespace.id));
+    assert_eq!(rows[0].actor_user_id, Some(7));
+    assert_eq!(rows[0].correlation_id.as_deref(), Some("audit-correlation"));
+    assert_eq!(rows[0].after.as_ref().unwrap()["description"], "before");
+    assert_eq!(
+        rows[0].metadata["assignee_group_id"],
+        serde_json::json!(fixture.owner_group.id)
+    );
+
+    assert_eq!(rows[1].action, "updated");
+    assert_eq!(rows[1].before.as_ref().unwrap()["description"], "before");
+    assert_eq!(rows[1].after.as_ref().unwrap()["description"], "after");
+
+    assert_eq!(rows[2].action, "deleted");
+    assert_eq!(rows[2].before.as_ref().unwrap()["description"], "after");
+    assert!(rows[2].after.is_none());
+
+    fixture.cleanup().await.unwrap();
+}
+
+fn namespace_events_for(scope: &TestScope, namespace_id: i32) -> Vec<Event> {
+    use crate::schema::events::dsl::{entity_id, entity_type, id};
+
+    with_connection(&scope.pool, |conn| {
+        events
+            .filter(entity_type.eq("namespace"))
+            .filter(entity_id.eq(namespace_id))
+            .order(id.asc())
+            .load::<Event>(conn)
+    })
+    .unwrap()
 }
 
 #[derive(diesel::QueryableByName)]

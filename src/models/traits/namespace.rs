@@ -4,6 +4,7 @@ use crate::db::traits::namespace::{
     UpdateNamespaceRecord,
 };
 use crate::errors::ApiError;
+use crate::events::EventContext;
 use crate::models::group::GroupID;
 use crate::models::namespace::{
     Namespace, NamespaceID, NewNamespace, NewNamespaceWithAssignee, UpdateNamespace,
@@ -26,17 +27,49 @@ impl SaveAdapter for Namespace {
         };
         updated_namespace.update(pool, self.id).await
     }
+
+    async fn save_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<Self::Output, ApiError> {
+        let updated_namespace = UpdateNamespace {
+            name: Some(self.name.clone()),
+            description: Some(self.description.clone()),
+        };
+        updated_namespace
+            .update_namespace_record_with_context(pool, self.id, context)
+            .await
+    }
 }
 
 impl DeleteAdapter for Namespace {
     async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
         self.delete_namespace_record(pool).await
     }
+
+    async fn delete_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<(), ApiError> {
+        self.delete_namespace_record_with_context(pool, context)
+            .await
+    }
 }
 
 impl DeleteAdapter for NamespaceID {
     async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
         self.delete_namespace_record(pool).await
+    }
+
+    async fn delete_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<(), ApiError> {
+        self.delete_namespace_record_with_context(pool, context)
+            .await
     }
 }
 
@@ -46,6 +79,16 @@ impl UpdateAdapter for UpdateNamespace {
     async fn update_adapter(&self, pool: &DbPool, nid: i32) -> Result<Self::Output, ApiError> {
         self.update_namespace_record(pool, nid).await
     }
+
+    async fn update_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        nid: i32,
+        context: Option<&EventContext>,
+    ) -> Result<Self::Output, ApiError> {
+        self.update_namespace_record_with_context(pool, nid, context)
+            .await
+    }
 }
 
 impl SaveAdapter for NewNamespaceWithAssignee {
@@ -53,6 +96,15 @@ impl SaveAdapter for NewNamespaceWithAssignee {
 
     async fn save_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
         self.save_namespace_with_assignee_record(pool).await
+    }
+
+    async fn save_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<Namespace, ApiError> {
+        self.save_namespace_with_assignee_record_with_context(pool, context)
+            .await
     }
 }
 
