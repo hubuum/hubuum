@@ -3,6 +3,7 @@ use serde::Serialize;
 use crate::db::traits::authz::AuthzSubject;
 use crate::db::traits::permissions::PermissionControllerBackend;
 use crate::errors::ApiError;
+use crate::events::EventContext;
 use crate::models::{Permission, Permissions, PermissionsList};
 
 use super::{BackendContext, NamespaceAccessors};
@@ -161,6 +162,26 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
             .await
     }
 
+    async fn grant_with_context<C>(
+        &self,
+        backend: &C,
+        group_id_for_grant: i32,
+        permission_list: PermissionsList<Permissions>,
+        context: Option<&EventContext>,
+    ) -> Result<Permission, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.apply_permissions_with_context(
+            backend,
+            group_id_for_grant,
+            permission_list,
+            false,
+            context,
+        )
+        .await
+    }
+
     /// Apply permissions to a group, optionally replacing existing permissions.
     ///
     /// - When `replace_existing` is false, no permissions are removed from the group.
@@ -180,6 +201,27 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
             group_id_for_grant,
             permission_list,
             replace_existing,
+        )
+        .await
+    }
+
+    async fn apply_permissions_with_context<C>(
+        &self,
+        backend: &C,
+        group_id_for_grant: i32,
+        permission_list: PermissionsList<Permissions>,
+        replace_existing: bool,
+        context: Option<&EventContext>,
+    ) -> Result<Permission, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.apply_permissions_from_backend_with_context(
+            backend.db_pool(),
+            group_id_for_grant,
+            permission_list,
+            replace_existing,
+            context,
         )
         .await
     }
@@ -216,6 +258,25 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
             backend.db_pool(),
             group_id_for_revoke,
             permission_list,
+        )
+        .await
+    }
+
+    async fn revoke_with_context<C>(
+        &self,
+        backend: &C,
+        group_id_for_revoke: i32,
+        permission_list: PermissionsList<Permissions>,
+        context: Option<&EventContext>,
+    ) -> Result<Permission, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.revoke_permissions_from_backend_with_context(
+            backend.db_pool(),
+            group_id_for_revoke,
+            permission_list,
+            context,
         )
         .await
     }
@@ -324,6 +385,26 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
             .await
     }
 
+    async fn set_permissions_with_context<C>(
+        &self,
+        backend: &C,
+        group_identifier: i32,
+        permission_list: PermissionsList<Permissions>,
+        context: Option<&EventContext>,
+    ) -> Result<Permission, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.apply_permissions_with_context(
+            backend,
+            group_identifier,
+            permission_list,
+            true,
+            context,
+        )
+        .await
+    }
+
     /// Revoke all permissions from a group.
     ///
     /// - If the group previously had any permissions, these are removed.
@@ -343,6 +424,19 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
         C: BackendContext + ?Sized,
     {
         self.revoke_all_from_backend(backend.db_pool(), group_id_for_revoke)
+            .await
+    }
+
+    async fn revoke_all_with_context<C>(
+        &self,
+        backend: &C,
+        group_id_for_revoke: i32,
+        context: Option<&EventContext>,
+    ) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.revoke_all_from_backend_with_context(backend.db_pool(), group_id_for_revoke, context)
             .await
     }
 }
