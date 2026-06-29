@@ -793,12 +793,19 @@ impl DeleteClassRelationRecord for HubuumClassRelationID {
             return self.delete_class_relation_record(pool).await;
         };
 
+        use crate::schema::hubuumclass::dsl::{hubuumclass, id as class_id};
         use crate::schema::hubuumclass_relation::dsl::{hubuumclass_relation, id};
 
         with_transaction(pool, |conn| -> Result<(), ApiError> {
             let relation = hubuumclass_relation
                 .filter(id.eq(self.id()))
                 .first::<HubuumClassRelation>(conn)?;
+            let from_class = hubuumclass
+                .filter(class_id.eq(relation.from_hubuum_class_id))
+                .first::<HubuumClass>(conn)?;
+            let to_class = hubuumclass
+                .filter(class_id.eq(relation.to_hubuum_class_id))
+                .first::<HubuumClass>(conn)?;
             diesel::delete(hubuumclass_relation.filter(id.eq(self.id()))).execute(conn)?;
 
             let event = NewEvent::new(
@@ -813,10 +820,7 @@ impl DeleteClassRelationRecord for HubuumClassRelationID {
             .with_context(context)
             .with_entity_id(relation.id)
             .with_before(class_relation_snapshot(&relation))
-            .with_metadata(serde_json::json!({
-                "from_class_id": relation.from_hubuum_class_id,
-                "to_class_id": relation.to_hubuum_class_id,
-            }));
+            .with_metadata(class_relation_metadata(&from_class, &to_class));
             emit_event(conn, &event)?;
             Ok(())
         })

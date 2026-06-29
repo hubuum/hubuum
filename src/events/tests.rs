@@ -19,7 +19,7 @@ use crate::events::{
 use crate::models::class::{NewHubuumClass, UpdateHubuumClass};
 use crate::models::namespace::{NewNamespaceWithAssignee, UpdateNamespace};
 use crate::models::object::{NewHubuumObject, UpdateHubuumObject};
-use crate::models::{NewHubuumClassRelation, NewHubuumObjectRelation};
+use crate::models::{HubuumClassRelationID, NewHubuumClassRelation, NewHubuumObjectRelation};
 use crate::schema::events::dsl::events;
 use crate::tests::{TestScope, test_scope};
 use crate::traits::{CanDelete, CanSave, CanUpdate};
@@ -386,7 +386,8 @@ async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
     .await
     .unwrap();
 
-    relation
+    HubuumClassRelationID::new(relation.id)
+        .unwrap()
         .delete_with_context(&scope.pool, Some(&context))
         .await
         .unwrap();
@@ -418,6 +419,10 @@ async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
     );
 
     assert_eq!(rows[1].action, "deleted");
+    assert_eq!(
+        rows[1].metadata["related_namespace_ids"],
+        serde_json::json!([fixture.namespace.id, fixture.namespace.id])
+    );
     assert_eq!(
         rows[1].before.as_ref().unwrap()["reverse_template_alias"],
         "parents"
