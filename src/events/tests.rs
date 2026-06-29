@@ -17,11 +17,14 @@ use crate::events::{
     Action, ActorKind, EntityType, Event, EventContext, NewEvent, RequestProvenance, emit_event,
 };
 use crate::models::class::{NewHubuumClass, UpdateHubuumClass};
+use crate::models::group::{NewGroup, UpdateGroup};
 use crate::models::namespace::{NewNamespaceWithAssignee, UpdateNamespace};
 use crate::models::object::{NewHubuumObject, UpdateHubuumObject};
-use crate::models::{HubuumClassRelationID, NewHubuumClassRelation, NewHubuumObjectRelation};
+use crate::models::{
+    GroupID, HubuumClassRelationID, NewHubuumClassRelation, NewHubuumObjectRelation,
+};
 use crate::schema::events::dsl::events;
-use crate::tests::{TestScope, test_scope};
+use crate::tests::{TestScope, create_test_user, test_scope};
 use crate::traits::{CanDelete, CanSave, CanUpdate};
 
 /// Count event rows for a given `event_id` (0 or 1, since `event_id` is UNIQUE).
@@ -550,6 +553,126 @@ async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
     fixture.cleanup().await.unwrap();
 }
 
+#[actix_web::test]
+async fn group_writes_emit_lifecycle_events_in_transaction() {
+    let scope = test_scope();
+    let context = EventContext::user(21, Some(Uuid::new_v4()), Some("group-correlation".into()));
+
+    let group = NewGroup {
+        groupname: scope.scoped_name("event_group"),
+        description: Some("before".to_string()),
+    }
+    .save_with_context(&scope.pool, Some(&context))
+    .await
+    .unwrap();
+
+    let updated = UpdateGroup {
+        groupname: Some(scope.scoped_name("event_group_after")),
+    }
+    .save_with_context(group.id, &scope.pool, Some(&context))
+    .await
+    .unwrap();
+
+    GroupID::new(updated.id)
+        .unwrap()
+        .delete_with_context(&scope.pool, Some(&context))
+        .await
+        .unwrap();
+
+    let rows = events_for(&scope, "group", group.id);
+    assert_eq!(rows.len(), 3);
+
+    assert_eq!(rows[0].action, "created");
+    assert_eq!(rows[0].actor_user_id, Some(21));
+    assert_eq!(rows[0].correlation_id.as_deref(), Some("group-correlation"));
+    assert_eq!(
+        rows[0].entity_name.as_deref(),
+        Some(group.groupname.as_str())
+    );
+    assert_eq!(
+        rows[0].after.as_ref().unwrap()["description"],
+        serde_json::json!("before")
+    );
+
+    assert_eq!(rows[1].action, "updated");
+    assert_eq!(
+        rows[1].before.as_ref().unwrap()["groupname"],
+        serde_json::json!(group.groupname)
+    );
+    assert_eq!(
+        rows[1].after.as_ref().unwrap()["groupname"],
+        serde_json::json!(updated.groupname)
+    );
+
+    assert_eq!(rows[2].action, "deleted");
+    assert_eq!(
+        rows[2].before.as_ref().unwrap()["groupname"],
+        serde_json::json!(updated.groupname)
+    );
+    assert!(rows[2].after.is_none());
+}
+
+#[actix_web::test]
+async fn group_membership_writes_emit_added_removed_events_when_changed() {
+    let scope = test_scope();
+    let context = EventContext::user(
+        22,
+        Some(Uuid::new_v4()),
+        Some("membership-correlation".into()),
+    );
+
+    let group = NewGroup {
+        groupname: scope.scoped_name("event_membership_group"),
+        description: Some("membership group".to_string()),
+    }
+    .save(&scope.pool)
+    .await
+    .unwrap();
+    let user = create_test_user(&scope.pool).await;
+
+    group
+        .add_member_with_context(&scope.pool, &user, Some(&context))
+        .await
+        .unwrap();
+    group
+        .add_member_with_context(&scope.pool, &user, Some(&context))
+        .await
+        .unwrap();
+    group
+        .remove_member_with_context(&user, &scope.pool, Some(&context))
+        .await
+        .unwrap();
+    group
+        .remove_member_with_context(&user, &scope.pool, Some(&context))
+        .await
+        .unwrap();
+
+    let rows = events_for_type(&scope, "user_group")
+        .into_iter()
+        .filter(|row| {
+            row.metadata["principal_id"] == serde_json::json!(user.id)
+                && row.metadata["group_id"] == serde_json::json!(group.id)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 2);
+
+    assert_eq!(rows[0].action, "added");
+    assert_eq!(rows[0].actor_user_id, Some(22));
+    assert_eq!(
+        rows[0].correlation_id.as_deref(),
+        Some("membership-correlation")
+    );
+    assert_eq!(rows[0].metadata["principal_id"], serde_json::json!(user.id));
+    assert_eq!(rows[0].metadata["group_id"], serde_json::json!(group.id));
+
+    assert_eq!(rows[1].action, "removed");
+    assert_eq!(rows[1].metadata["principal_id"], serde_json::json!(user.id));
+    assert_eq!(rows[1].metadata["group_id"], serde_json::json!(group.id));
+
+    group.delete(&scope.pool).await.unwrap();
+    user.delete(&scope.pool).await.unwrap();
+}
+
 fn events_for(scope: &TestScope, event_entity_type: &str, event_entity_id: i32) -> Vec<Event> {
     use crate::schema::events::dsl::{entity_id, entity_type, id};
 
@@ -557,6 +680,18 @@ fn events_for(scope: &TestScope, event_entity_type: &str, event_entity_id: i32) 
         events
             .filter(entity_type.eq(event_entity_type))
             .filter(entity_id.eq(event_entity_id))
+            .order(id.asc())
+            .load::<Event>(conn)
+    })
+    .unwrap()
+}
+
+fn events_for_type(scope: &TestScope, event_entity_type: &str) -> Vec<Event> {
+    use crate::schema::events::dsl::{entity_type, id};
+
+    with_connection(&scope.pool, |conn| {
+        events
+            .filter(entity_type.eq(event_entity_type))
             .order(id.asc())
             .load::<Event>(conn)
     })
