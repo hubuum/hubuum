@@ -16,6 +16,7 @@ use crate::errors::ApiError;
 use crate::events::{
     Action, ActorKind, EntityType, Event, EventContext, NewEvent, RequestProvenance, emit_event,
 };
+use crate::models::class::{NewHubuumClass, UpdateHubuumClass};
 use crate::models::namespace::{NewNamespaceWithAssignee, UpdateNamespace};
 use crate::schema::events::dsl::events;
 use crate::tests::{TestScope, test_scope};
@@ -185,7 +186,7 @@ async fn namespace_writes_emit_lifecycle_events_in_transaction() {
         .await
         .unwrap();
 
-    let rows = namespace_events_for(&scope, namespace.id);
+    let rows = events_for(&scope, "namespace", namespace.id);
     assert_eq!(rows.len(), 3);
 
     assert_eq!(rows[0].action, "created");
@@ -213,13 +214,70 @@ async fn namespace_writes_emit_lifecycle_events_in_transaction() {
     fixture.cleanup().await.unwrap();
 }
 
-fn namespace_events_for(scope: &TestScope, namespace_id: i32) -> Vec<Event> {
+#[actix_web::test]
+async fn class_writes_emit_lifecycle_events_in_transaction() {
+    let scope = test_scope();
+    let fixture = scope.with_namespace().await;
+    let context = EventContext::user(9, Some(Uuid::new_v4()), Some("class-correlation".into()));
+    let class_name = scope.scoped_name("audited_class");
+
+    let class = NewHubuumClass {
+        name: class_name.clone(),
+        namespace_id: fixture.namespace.id,
+        json_schema: Some(serde_json::json!({"type": "object"})),
+        validate_schema: Some(true),
+        description: "before".to_string(),
+    }
+    .save_with_context(&scope.pool, Some(&context))
+    .await
+    .unwrap();
+
+    let updated = UpdateHubuumClass {
+        name: Some(class_name.clone()),
+        namespace_id: None,
+        json_schema: Some(serde_json::json!({"type": "object", "additionalProperties": true})),
+        validate_schema: Some(false),
+        description: Some("after".to_string()),
+    }
+    .update_with_context(&scope.pool, class.id, Some(&context))
+    .await
+    .unwrap();
+
+    updated
+        .delete_with_context(&scope.pool, Some(&context))
+        .await
+        .unwrap();
+
+    let rows = events_for(&scope, "class", class.id);
+    assert_eq!(rows.len(), 3);
+
+    assert_eq!(rows[0].action, "created");
+    assert_eq!(rows[0].entity_name.as_deref(), Some(class_name.as_str()));
+    assert_eq!(rows[0].namespace_id, Some(fixture.namespace.id));
+    assert_eq!(rows[0].actor_user_id, Some(9));
+    assert_eq!(rows[0].correlation_id.as_deref(), Some("class-correlation"));
+    assert_eq!(rows[0].after.as_ref().unwrap()["description"], "before");
+    assert_eq!(rows[0].after.as_ref().unwrap()["validate_schema"], true);
+
+    assert_eq!(rows[1].action, "updated");
+    assert_eq!(rows[1].before.as_ref().unwrap()["description"], "before");
+    assert_eq!(rows[1].after.as_ref().unwrap()["description"], "after");
+    assert_eq!(rows[1].after.as_ref().unwrap()["validate_schema"], false);
+
+    assert_eq!(rows[2].action, "deleted");
+    assert_eq!(rows[2].before.as_ref().unwrap()["description"], "after");
+    assert!(rows[2].after.is_none());
+
+    fixture.cleanup().await.unwrap();
+}
+
+fn events_for(scope: &TestScope, event_entity_type: &str, event_entity_id: i32) -> Vec<Event> {
     use crate::schema::events::dsl::{entity_id, entity_type, id};
 
     with_connection(&scope.pool, |conn| {
         events
-            .filter(entity_type.eq("namespace"))
-            .filter(entity_id.eq(namespace_id))
+            .filter(entity_type.eq(event_entity_type))
+            .filter(entity_id.eq(event_entity_id))
             .order(id.asc())
             .load::<Event>(conn)
     })

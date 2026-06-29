@@ -6,6 +6,7 @@ use crate::db::traits::class::{
     ClassNamespaceLookup, CreateClassRecord, DeleteClassRecord, LoadClassRecord, UpdateClassRecord,
 };
 use crate::errors::ApiError;
+use crate::events::EventContext;
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 
 use crate::models::{
@@ -26,11 +27,37 @@ impl SaveAdapter for HubuumClass {
 
         update.update(pool, self.id).await
     }
+
+    async fn save_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<Self::Output, ApiError> {
+        let update = UpdateHubuumClass {
+            name: Some(self.name.clone()),
+            namespace_id: Some(self.namespace_id),
+            json_schema: self.json_schema.clone(),
+            validate_schema: Some(self.validate_schema),
+            description: Some(self.description.clone()),
+        };
+
+        update
+            .update_class_record_with_context(pool, self.id, context)
+            .await
+    }
 }
 
 impl DeleteAdapter for HubuumClass {
     async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
         self.delete_class_record(pool).await
+    }
+
+    async fn delete_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<(), ApiError> {
+        self.delete_class_record_with_context(pool, context).await
     }
 }
 
@@ -40,6 +67,14 @@ impl SaveAdapter for NewHubuumClass {
     async fn save_adapter(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
         self.create_class_record(pool).await
     }
+
+    async fn save_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumClass, ApiError> {
+        self.create_class_record_with_context(pool, context).await
+    }
 }
 
 impl UpdateAdapter for UpdateHubuumClass {
@@ -47,6 +82,16 @@ impl UpdateAdapter for UpdateHubuumClass {
 
     async fn update_adapter(&self, pool: &DbPool, class_id: i32) -> Result<HubuumClass, ApiError> {
         self.update_class_record(pool, class_id).await
+    }
+
+    async fn update_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        class_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumClass, ApiError> {
+        self.update_class_record_with_context(pool, class_id, context)
+            .await
     }
 }
 
