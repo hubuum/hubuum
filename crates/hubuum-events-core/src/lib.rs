@@ -200,6 +200,7 @@ pub enum Action {
     Failed,
     PartiallySucceeded,
     Cancelled,
+    Cleanup,
 }
 
 impl Action {
@@ -221,6 +222,7 @@ impl Action {
             Action::Failed => "failed",
             Action::PartiallySucceeded => "partially_succeeded",
             Action::Cancelled => "cancelled",
+            Action::Cleanup => "cleanup",
         }
     }
 
@@ -242,6 +244,7 @@ impl Action {
             "failed" => Ok(Action::Failed),
             "partially_succeeded" => Ok(Action::PartiallySucceeded),
             "cancelled" => Ok(Action::Cancelled),
+            "cleanup" => Ok(Action::Cleanup),
             other => Err(EventCatalogError::UnknownAction(other.to_string())),
         }
     }
@@ -272,6 +275,7 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
             A::Failed,
             A::PartiallySucceeded,
             A::Cancelled,
+            A::Cleanup,
         ],
     }
 }
@@ -363,6 +367,7 @@ mod tests {
             Action::Failed,
             Action::PartiallySucceeded,
             Action::Cancelled,
+            Action::Cleanup,
         ];
         for a in all {
             assert_eq!(Action::from_db(a.as_str()).unwrap(), a);
@@ -411,6 +416,7 @@ mod tests {
     fn task_is_lifecycle_only() {
         assert!(is_valid_pair(EntityType::Task, Action::Queued));
         assert!(is_valid_pair(EntityType::Task, Action::Succeeded));
+        assert!(is_valid_pair(EntityType::Task, Action::Cleanup));
         assert!(!is_valid_pair(EntityType::Task, Action::Created));
         assert!(!is_valid_pair(EntityType::Task, Action::Updated));
     }

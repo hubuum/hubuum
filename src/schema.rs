@@ -272,17 +272,6 @@ diesel::table! {
 }
 
 diesel::table! {
-    task_events (id) {
-        id -> Int4,
-        task_id -> Int4,
-        event_type -> Varchar,
-        message -> Text,
-        data -> Nullable<Jsonb>,
-        created_at -> Timestamp,
-    }
-}
-
-diesel::table! {
     tasks (id) {
         id -> Int4,
         kind -> Varchar,
@@ -360,7 +349,6 @@ diesel::joinable!(report_task_outputs -> tasks (task_id));
 diesel::joinable!(report_templates -> hubuumclass (class_id));
 diesel::joinable!(report_templates -> namespaces (namespace_id));
 diesel::joinable!(service_accounts -> groups (owner_group_id));
-diesel::joinable!(task_events -> tasks (task_id));
 diesel::joinable!(tasks -> tokens (submitted_token_id));
 diesel::joinable!(token_scopes -> tokens (token_id));
 diesel::joinable!(tokens -> principals (principal_id));
@@ -383,7 +371,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     report_task_outputs,
     report_templates,
     service_accounts,
-    task_events,
     tasks,
     token_scopes,
     tokens,

@@ -4,8 +4,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::errors::ApiError;
+use crate::events::Event;
 use crate::models::search::{FilterField, SortParam};
-use crate::schema::{import_task_results, report_task_outputs, task_events, tasks};
+use crate::schema::{import_task_results, report_task_outputs, tasks};
 use crate::traits::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
@@ -180,10 +181,9 @@ pub struct NewTaskRecord {
     pub finished_at: Option<NaiveDateTime>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable)]
-#[diesel(table_name = task_events)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskEventRecord {
-    pub id: i32,
+    pub id: i64,
     pub task_id: i32,
     pub event_type: String,
     pub message: String,
@@ -191,8 +191,7 @@ pub struct TaskEventRecord {
     pub created_at: NaiveDateTime,
 }
 
-#[derive(Debug, Insertable)]
-#[diesel(table_name = task_events)]
+#[derive(Debug)]
 pub struct NewTaskEventRecord {
     pub task_id: i32,
     pub event_type: String,
@@ -289,7 +288,7 @@ pub struct TaskResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct TaskEventResponse {
-    pub id: i32,
+    pub id: i64,
     pub task_id: i32,
     pub event_type: String,
     pub message: String,
@@ -486,6 +485,31 @@ impl From<TaskEventRecord> for TaskEventResponse {
     }
 }
 
+impl TryFrom<Event> for TaskEventRecord {
+    type Error = ApiError;
+
+    fn try_from(value: Event) -> Result<Self, Self::Error> {
+        let Some(task_id) = value.entity_id else {
+            return Err(ApiError::InternalServerError(
+                "Task event is missing task id".to_string(),
+            ));
+        };
+        let data = match value.metadata.get("data") {
+            Some(serde_json::Value::Null) | None => None,
+            Some(data) => Some(data.clone()),
+        };
+
+        Ok(Self {
+            id: value.id,
+            task_id,
+            event_type: value.action,
+            message: value.summary,
+            data,
+            created_at: value.occurred_at,
+        })
+    }
+}
+
 impl From<ImportTaskResultRecord> for ImportTaskResultResponse {
     fn from(value: ImportTaskResultRecord) -> Self {
         Self {
@@ -609,7 +633,7 @@ impl CursorPaginated for TaskEventResponse {
 
     fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
         match field {
-            FilterField::Id => Ok(CursorValue::Integer(self.id as i64)),
+            FilterField::Id => Ok(CursorValue::Integer(self.id)),
             _ => Err(ApiError::BadRequest(format!(
                 "Unsupported sort field '{}' for task events",
                 field
