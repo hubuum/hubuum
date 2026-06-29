@@ -106,3 +106,62 @@ async fn cascade_delete_records_history() {
     assert!(ops.contains(&"I".to_string()), "insert should be recorded");
     assert!(ops.contains(&"D".to_string()), "cascade delete should be recorded");
 }
+
+use crate::db::with_actor_scope;
+
+#[actix_rt::test]
+async fn actor_scope_sets_actor_and_default_is_null() {
+    use crate::models::NewHubuumClass;
+    use crate::traits::CanSave;
+
+    let scope = TestScope::new();
+    let pool = scope.pool.clone();
+    let ns = scope.namespace_fixture("actor_scope").await;
+    let ns_id = ns.namespace.id;
+
+    // Inside a scope -> actor recorded.
+    let in_name = format!("actor_in_{}", scope.scope_id);
+    let in_class = with_actor_scope(Some(4242), async {
+        NewHubuumClass {
+            name: in_name.clone(),
+            namespace_id: ns_id,
+            json_schema: None,
+            validate_schema: Some(false),
+            description: "d".into(),
+        }
+        .save(&pool)
+        .await
+    })
+    .await
+    .unwrap();
+
+    // Outside any scope -> actor NULL.
+    let out_name = format!("actor_out_{}", scope.scope_id);
+    let out_class = NewHubuumClass {
+        name: out_name.clone(),
+        namespace_id: ns_id,
+        json_schema: None,
+        validate_schema: Some(false),
+        description: "d".into(),
+    }
+    .save(&pool)
+    .await
+    .unwrap();
+
+    let read_actor = |id: i32| {
+        with_connection(&pool, move |conn| {
+            use crate::schema::hubuumclass_history::dsl as h;
+            h::hubuumclass_history
+                .filter(h::id.eq(id))
+                .order(h::history_id.desc())
+                .select(h::actor_id)
+                .first::<Option<i32>>(conn)
+        })
+        .unwrap()
+    };
+
+    assert_eq!(read_actor(in_class.id), Some(4242));
+    assert_eq!(read_actor(out_class.id), None);
+
+    ns.cleanup().await.unwrap();
+}
