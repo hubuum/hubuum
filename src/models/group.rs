@@ -59,12 +59,13 @@ impl GroupID {
     pub async fn delete_with_context<C>(
         &self,
         backend: &C,
-        _context: Option<&EventContext>,
+        context: Option<&EventContext>,
     ) -> Result<usize, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.delete(backend).await
+        self.delete_group_record_with_context(backend.db_pool(), context)
+            .await
     }
 }
 
@@ -154,13 +155,20 @@ impl Group {
         &self,
         backend: &C,
         member: &P,
-        _context: Option<&EventContext>,
+        context: Option<&EventContext>,
     ) -> Result<(), ApiError>
     where
         C: BackendContext + ?Sized,
         P: PrincipalIdAccessor,
     {
-        self.add_member(backend, member).await
+        NewPrincipalGroup {
+            principal_id: member.principal_id(),
+            group_id: self.id,
+        }
+        .save_principal_group_record_with_context(backend.db_pool(), context)
+        .await?;
+
+        Ok(())
     }
 
     pub async fn remove_member<C, P>(&self, member: &P, backend: &C) -> Result<(), ApiError>
@@ -176,13 +184,18 @@ impl Group {
         &self,
         member: &P,
         backend: &C,
-        _context: Option<&EventContext>,
+        context: Option<&EventContext>,
     ) -> Result<(), ApiError>
     where
         C: BackendContext + ?Sized,
         P: PrincipalIdAccessor,
     {
-        self.remove_member(member, backend).await
+        self.remove_group_member_from_backend_with_context(
+            member.principal_id(),
+            backend.db_pool(),
+            context,
+        )
+        .await
     }
 
     pub async fn delete<C>(&self, backend: &C) -> Result<usize, ApiError>
@@ -219,12 +232,13 @@ impl NewGroup {
     pub async fn save_with_context<C>(
         &self,
         backend: &C,
-        _context: Option<&EventContext>,
+        context: Option<&EventContext>,
     ) -> Result<Group, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.save(backend).await
+        self.save_group_record_with_context(backend.db_pool(), context)
+            .await
     }
 }
 
@@ -247,12 +261,13 @@ impl UpdateGroup {
         &self,
         group_id: i32,
         backend: &C,
-        _context: Option<&EventContext>,
+        context: Option<&EventContext>,
     ) -> Result<Group, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.save(group_id, backend).await
+        self.update_group_record_with_context(group_id, backend.db_pool(), context)
+            .await
     }
 }
 
