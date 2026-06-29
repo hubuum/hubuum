@@ -1,6 +1,31 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    events (id) {
+        id -> Int8,
+        event_id -> Uuid,
+        occurred_at -> Timestamp,
+        entity_type -> Text,
+        entity_id -> Nullable<Int4>,
+        entity_name -> Nullable<Text>,
+        namespace_id -> Nullable<Int4>,
+        action -> Text,
+        actor_user_id -> Nullable<Int4>,
+        actor_kind -> Text,
+        request_id -> Nullable<Uuid>,
+        correlation_id -> Nullable<Text>,
+        summary -> Text,
+        before -> Nullable<Jsonb>,
+        after -> Nullable<Jsonb>,
+        metadata -> Jsonb,
+        schema_version -> Int4,
+        dispatched_at -> Nullable<Timestamp>,
+        fanout_locked_until -> Nullable<Timestamp>,
+        fanout_claim_token -> Nullable<Uuid>,
+    }
+}
+
+diesel::table! {
     group_memberships (principal_id, group_id) {
         principal_id -> Int4,
         group_id -> Int4,
@@ -341,6 +366,7 @@ diesel::joinable!(token_scopes -> tokens (token_id));
 diesel::joinable!(tokens -> principals (principal_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    events,
     group_memberships,
     groups,
     hubuumclass,

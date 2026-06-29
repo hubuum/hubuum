@@ -83,6 +83,7 @@ pub async fn create_namespace(
     pool: web::Data<DbPool>,
     new_namespace_request: web::Json<NewNamespaceWithAssignee>,
     requestor: AdminAccess,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let new_namespace_request = new_namespace_request.into_inner();
     debug!(
@@ -91,7 +92,10 @@ pub async fn create_namespace(
         new_namespace = new_namespace_request.name
     );
 
-    let created_namespace = new_namespace_request.save(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    let created_namespace = new_namespace_request
+        .save_with_context(&pool, Some(&event_context))
+        .await?;
 
     Ok(json_response_created(
         &created_namespace,
@@ -160,6 +164,7 @@ pub async fn update_namespace(
     requestor: Authenticated,
     namespace_id: web::Path<NamespaceID>,
     update_data: web::Json<UpdateNamespace>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     debug!(
         message = "Namespace update requested",
@@ -177,7 +182,11 @@ pub async fn update_namespace(
         namespace
     );
 
-    let updated_namespace = update_data.into_inner().update(&pool, namespace.id).await?;
+    let event_context = requestor.event_context(&req);
+    let updated_namespace = update_data
+        .into_inner()
+        .update_with_context(&pool, namespace.id, Some(&event_context))
+        .await?;
     Ok(json_response(updated_namespace, StatusCode::ACCEPTED))
 }
 
@@ -200,6 +209,7 @@ pub async fn delete_namespace(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     namespace_id: web::Path<NamespaceID>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     debug!(
         message = "Namespace delete requested",
@@ -216,7 +226,10 @@ pub async fn delete_namespace(
         namespace
     );
 
-    namespace.delete(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    namespace
+        .delete_with_context(&pool, Some(&event_context))
+        .await?;
     Ok(json_response(json!(()), StatusCode::NO_CONTENT))
 }
 

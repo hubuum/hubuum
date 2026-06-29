@@ -929,6 +929,7 @@ dependencies = [
  "pq-sys",
  "r2d2",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -1458,6 +1459,7 @@ dependencies = [
  "futures",
  "futures-util",
  "hmac",
+ "hubuum-events-core",
  "hubuum-outbound-http",
  "hubuum-templates",
  "iai-callgrind",
@@ -1484,6 +1486,14 @@ dependencies = [
  "urlparse",
  "utoipa",
  "utoipa-swagger-ui",
+ "uuid",
+]
+
+[[package]]
+name = "hubuum-events-core"
+version = "0.0.1"
+dependencies = [
+ "serde",
  "uuid",
 ]
 
@@ -3588,6 +3598,7 @@ checksum = "144d6b123cef80b301b8f72a9e2ca4370ddec21950d0a103dd22c437006d2db7"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
+ "serde_core",
  "wasm-bindgen",
 ]
 

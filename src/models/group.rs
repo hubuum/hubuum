@@ -5,6 +5,7 @@ use crate::db::traits::group::{
     SavePrincipalGroupRecord, UpdateGroupRecord,
 };
 use crate::errors::ApiError;
+use crate::events::EventContext;
 use crate::models::principal::Principal;
 use crate::models::principal_group::NewPrincipalGroup;
 use crate::models::search::{FilterField, QueryOptions, SortParam};
@@ -53,6 +54,17 @@ impl GroupID {
         C: BackendContext + ?Sized,
     {
         self.delete_group_record(backend.db_pool()).await
+    }
+
+    pub async fn delete_with_context<C>(
+        &self,
+        backend: &C,
+        _context: Option<&EventContext>,
+    ) -> Result<usize, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.delete(backend).await
     }
 }
 
@@ -138,6 +150,19 @@ impl Group {
         Ok(())
     }
 
+    pub async fn add_member_with_context<C, P>(
+        &self,
+        backend: &C,
+        member: &P,
+        _context: Option<&EventContext>,
+    ) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized,
+        P: PrincipalIdAccessor,
+    {
+        self.add_member(backend, member).await
+    }
+
     pub async fn remove_member<C, P>(&self, member: &P, backend: &C) -> Result<(), ApiError>
     where
         C: BackendContext + ?Sized,
@@ -145,6 +170,19 @@ impl Group {
     {
         self.remove_group_member_from_backend(member.principal_id(), backend.db_pool())
             .await
+    }
+
+    pub async fn remove_member_with_context<C, P>(
+        &self,
+        member: &P,
+        backend: &C,
+        _context: Option<&EventContext>,
+    ) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized,
+        P: PrincipalIdAccessor,
+    {
+        self.remove_member(member, backend).await
     }
 
     pub async fn delete<C>(&self, backend: &C) -> Result<usize, ApiError>
@@ -177,6 +215,17 @@ impl NewGroup {
     {
         self.save_group_record(backend.db_pool()).await
     }
+
+    pub async fn save_with_context<C>(
+        &self,
+        backend: &C,
+        _context: Option<&EventContext>,
+    ) -> Result<Group, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.save(backend).await
+    }
 }
 
 #[derive(Deserialize, Serialize, AsChangeset, ToSchema)]
@@ -192,6 +241,18 @@ impl UpdateGroup {
         C: BackendContext + ?Sized,
     {
         self.update_group_record(group_id, backend.db_pool()).await
+    }
+
+    pub async fn save_with_context<C>(
+        &self,
+        group_id: i32,
+        backend: &C,
+        _context: Option<&EventContext>,
+    ) -> Result<Group, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.save(group_id, backend).await
     }
 }
 

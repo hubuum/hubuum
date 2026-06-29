@@ -14,7 +14,7 @@ categories = ["web-programming::http-server"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [workspace]
-members = ["crates/hubuum-outbound-http", "crates/hubuum-templates"]
+members = ["crates/hubuum-outbound-http", "crates/hubuum-templates", "crates/hubuum-events-core"]
 
 [dependencies]
 actix-rt = "2"
@@ -32,6 +32,7 @@ diesel = { version = "2", features = [
     "r2d2",
     "chrono",
     "64-column-tables",
+    "uuid",
 ] }
 ipnet = "2.12"
 futures = "0.3"
@@ -46,6 +47,7 @@ sha2 = "0.11"
 hmac = "0.13"
 hubuum-outbound-http = { path = "crates/hubuum-outbound-http" }
 hubuum-templates = { path = "crates/hubuum-templates" }
+hubuum-events-core = { path = "crates/hubuum-events-core" }
 minijinja = { version = "2", features = ["loader", "fuel"] }
 tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "net", "io-util"] }
 tracing = "0.1"
@@ -61,7 +63,7 @@ utoipa-swagger-ui = { version = "9", features = [
     "vendored",
 ], optional = true }
 urlparse = "0.7"
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "serde"] }
 percent-encoding = "2"
 rustls = { version = "0.23", features = ["aws-lc-rs", "ring"], optional = true }
 openssl = { version = "0.10.80", optional = true }
