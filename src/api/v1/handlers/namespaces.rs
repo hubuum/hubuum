@@ -365,6 +365,7 @@ pub async fn grant_namespace_group_permissions(
     requestor: Authenticated,
     params: web::Path<(NamespaceID, GroupID)>,
     permissions: web::Json<Vec<Permissions>>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let (namespace_id, group_id) = params.into_inner();
     let permissions = PermissionsList::new(permissions.into_inner());
@@ -386,7 +387,10 @@ pub async fn grant_namespace_group_permissions(
         namespace
     );
 
-    namespace.grant(&pool, group_id.id(), permissions).await?;
+    let event_context = requestor.event_context(&req);
+    namespace
+        .grant_with_context(&pool, group_id.id(), permissions, Some(&event_context))
+        .await?;
 
     Ok(json_response((), StatusCode::CREATED))
 }
@@ -416,6 +420,7 @@ pub async fn replace_namespace_group_permissions(
     requestor: Authenticated,
     params: web::Path<(NamespaceID, GroupID)>,
     permissions: web::Json<Vec<Permissions>>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let (namespace_id, group_id) = params.into_inner();
     let permissions = PermissionsList::new(permissions.into_inner());
@@ -444,8 +449,9 @@ pub async fn replace_namespace_group_permissions(
         ));
     }
 
+    let event_context = requestor.event_context(&req);
     namespace
-        .set_permissions(&pool, group_id.id(), permissions)
+        .set_permissions_with_context(&pool, group_id.id(), permissions, Some(&event_context))
         .await?;
 
     Ok(json_response((), StatusCode::OK))
@@ -472,6 +478,7 @@ pub async fn revoke_namespace_group_permissions(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     params: web::Path<(NamespaceID, GroupID)>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let (namespace_id, group_id) = params.into_inner();
 
@@ -491,7 +498,10 @@ pub async fn revoke_namespace_group_permissions(
         namespace
     );
 
-    namespace.revoke_all(&pool, group_id.id()).await?;
+    let event_context = requestor.event_context(&req);
+    namespace
+        .revoke_all_with_context(&pool, group_id.id(), Some(&event_context))
+        .await?;
 
     Ok(json_response((), StatusCode::NO_CONTENT))
 }
@@ -568,6 +578,7 @@ pub async fn grant_namespace_group_permission(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     params: web::Path<(NamespaceID, GroupID, Permissions)>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let (namespace_id, group_id, permission) = params.into_inner();
 
@@ -588,8 +599,14 @@ pub async fn grant_namespace_group_permission(
         namespace
     );
 
+    let event_context = requestor.event_context(&req);
     namespace
-        .grant(&pool, group_id.id(), PermissionsList::new([permission]))
+        .grant_with_context(
+            &pool,
+            group_id.id(),
+            PermissionsList::new([permission]),
+            Some(&event_context),
+        )
         .await?;
 
     Ok(json_response((), StatusCode::CREATED))
@@ -617,6 +634,7 @@ pub async fn revoke_namespace_group_permission(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     params: web::Path<(NamespaceID, GroupID, Permissions)>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let (namespace_id, group_id, permission) = params.into_inner();
 
@@ -637,8 +655,14 @@ pub async fn revoke_namespace_group_permission(
         namespace
     );
 
+    let event_context = requestor.event_context(&req);
     namespace
-        .revoke(&pool, group_id.id(), PermissionsList::new([permission]))
+        .revoke_with_context(
+            &pool,
+            group_id.id(),
+            PermissionsList::new([permission]),
+            Some(&event_context),
+        )
         .await?;
 
     Ok(json_response((), StatusCode::NO_CONTENT))

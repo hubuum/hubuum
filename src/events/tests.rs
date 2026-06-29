@@ -25,11 +25,11 @@ use crate::models::token::{
 };
 use crate::models::{
     GroupID, HubuumClassRelationID, NewHubuumClassRelation, NewHubuumObjectRelation, NewUser,
-    PrincipalToken, Token, UpdateUser,
+    Permissions, PermissionsList, PrincipalToken, Token, UpdateUser,
 };
 use crate::schema::events::dsl::events;
 use crate::tests::{TestScope, create_test_user, test_scope};
-use crate::traits::{CanDelete, CanSave, CanUpdate};
+use crate::traits::{CanDelete, CanSave, CanUpdate, PermissionController};
 
 /// Count event rows for a given `event_id` (0 or 1, since `event_id` is UNIQUE).
 fn count_events_for(conn: &mut PgConnection, target: Uuid) -> i64 {
@@ -801,6 +801,99 @@ async fn token_writes_emit_created_revoked_events_without_token_material() {
     assert!(rows[1].after.as_ref().unwrap().get("token").is_none());
 
     user.delete(&scope.pool).await.unwrap();
+}
+
+#[actix_web::test]
+async fn permission_writes_emit_granted_revoked_events() {
+    let scope = test_scope();
+    let fixture = scope.with_namespace().await;
+    let context = EventContext::user(
+        25,
+        Some(Uuid::new_v4()),
+        Some("permission-correlation".into()),
+    );
+    let group = NewGroup {
+        groupname: scope.scoped_name("event_permission_group"),
+        description: Some("permission group".to_string()),
+    }
+    .save(&scope.pool)
+    .await
+    .unwrap();
+
+    let permission = fixture
+        .namespace
+        .grant_with_context(
+            &scope.pool,
+            group.id,
+            PermissionsList::new([Permissions::ReadCollection, Permissions::CreateClass]),
+            Some(&context),
+        )
+        .await
+        .unwrap();
+
+    fixture
+        .namespace
+        .revoke_with_context(
+            &scope.pool,
+            group.id,
+            PermissionsList::new([Permissions::CreateClass]),
+            Some(&context),
+        )
+        .await
+        .unwrap();
+
+    fixture
+        .namespace
+        .revoke_all_with_context(&scope.pool, group.id, Some(&context))
+        .await
+        .unwrap();
+
+    let rows = events_for(&scope, "permission", permission.id);
+    assert_eq!(rows.len(), 3);
+
+    assert_eq!(rows[0].action, "granted");
+    assert_eq!(rows[0].actor_user_id, Some(25));
+    assert_eq!(
+        rows[0].correlation_id.as_deref(),
+        Some("permission-correlation")
+    );
+    assert_eq!(
+        rows[0].metadata["namespace_id"],
+        serde_json::json!(fixture.namespace.id)
+    );
+    assert_eq!(rows[0].metadata["group_id"], serde_json::json!(group.id));
+    assert_eq!(
+        rows[0].metadata["requested_permissions"],
+        serde_json::json!(["ReadCollection", "CreateClass"])
+    );
+    assert_eq!(
+        rows[0].after.as_ref().unwrap()["granted_permissions"],
+        serde_json::json!(["ReadCollection", "CreateClass"])
+    );
+
+    assert_eq!(rows[1].action, "revoked");
+    assert_eq!(
+        rows[1].metadata["requested_permissions"],
+        serde_json::json!(["CreateClass"])
+    );
+    assert_eq!(
+        rows[1].before.as_ref().unwrap()["granted_permissions"],
+        serde_json::json!(["ReadCollection", "CreateClass"])
+    );
+    assert_eq!(
+        rows[1].after.as_ref().unwrap()["granted_permissions"],
+        serde_json::json!(["ReadCollection"])
+    );
+
+    assert_eq!(rows[2].action, "revoked");
+    assert_eq!(
+        rows[2].metadata["requested_permissions"],
+        serde_json::json!(["ReadCollection"])
+    );
+    assert!(rows[2].after.is_none());
+
+    group.delete(&scope.pool).await.unwrap();
+    fixture.cleanup().await.unwrap();
 }
 
 fn events_for(scope: &TestScope, event_entity_type: &str, event_entity_id: i32) -> Vec<Event> {
