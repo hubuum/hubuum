@@ -18,6 +18,7 @@ use crate::events::{
 };
 use crate::models::class::{NewHubuumClass, UpdateHubuumClass};
 use crate::models::namespace::{NewNamespaceWithAssignee, UpdateNamespace};
+use crate::models::object::{NewHubuumObject, UpdateHubuumObject};
 use crate::schema::events::dsl::events;
 use crate::tests::{TestScope, test_scope};
 use crate::traits::{CanDelete, CanSave, CanUpdate};
@@ -268,6 +269,78 @@ async fn class_writes_emit_lifecycle_events_in_transaction() {
     assert_eq!(rows[2].before.as_ref().unwrap()["description"], "after");
     assert!(rows[2].after.is_none());
 
+    fixture.cleanup().await.unwrap();
+}
+
+#[actix_web::test]
+async fn object_writes_emit_lifecycle_events_in_transaction() {
+    let scope = test_scope();
+    let fixture = scope.with_namespace().await;
+    let context = EventContext::user(11, Some(Uuid::new_v4()), Some("object-correlation".into()));
+    let class_name = scope.scoped_name("object_event_class");
+    let object_name = scope.scoped_name("audited_object");
+
+    let class = NewHubuumClass {
+        name: class_name,
+        namespace_id: fixture.namespace.id,
+        json_schema: None,
+        validate_schema: Some(false),
+        description: "class".to_string(),
+    }
+    .save(&scope.pool)
+    .await
+    .unwrap();
+
+    let object = NewHubuumObject {
+        name: object_name.clone(),
+        namespace_id: fixture.namespace.id,
+        hubuum_class_id: class.id,
+        data: serde_json::json!({"state": "before"}),
+        description: "before".to_string(),
+    }
+    .save_with_context(&scope.pool, Some(&context))
+    .await
+    .unwrap();
+
+    let updated = UpdateHubuumObject {
+        name: Some(object_name.clone()),
+        namespace_id: None,
+        hubuum_class_id: None,
+        data: Some(serde_json::json!({"state": "after"})),
+        description: Some("after".to_string()),
+    }
+    .update_with_context(&scope.pool, object.id, Some(&context))
+    .await
+    .unwrap();
+
+    updated
+        .delete_with_context(&scope.pool, Some(&context))
+        .await
+        .unwrap();
+
+    let rows = events_for(&scope, "object", object.id);
+    assert_eq!(rows.len(), 3);
+
+    assert_eq!(rows[0].action, "created");
+    assert_eq!(rows[0].entity_name.as_deref(), Some(object_name.as_str()));
+    assert_eq!(rows[0].namespace_id, Some(fixture.namespace.id));
+    assert_eq!(rows[0].actor_user_id, Some(11));
+    assert_eq!(
+        rows[0].correlation_id.as_deref(),
+        Some("object-correlation")
+    );
+    assert_eq!(rows[0].metadata["class_id"], serde_json::json!(class.id));
+    assert_eq!(rows[0].after.as_ref().unwrap()["data"]["state"], "before");
+
+    assert_eq!(rows[1].action, "updated");
+    assert_eq!(rows[1].before.as_ref().unwrap()["data"]["state"], "before");
+    assert_eq!(rows[1].after.as_ref().unwrap()["data"]["state"], "after");
+
+    assert_eq!(rows[2].action, "deleted");
+    assert_eq!(rows[2].before.as_ref().unwrap()["description"], "after");
+    assert!(rows[2].after.is_none());
+
+    class.delete(&scope.pool).await.unwrap();
     fixture.cleanup().await.unwrap();
 }
 

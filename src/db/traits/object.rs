@@ -4,14 +4,44 @@ use jsonschema;
 use serde_json;
 
 use crate::db::traits::GetObject;
-use crate::db::{DbPool, with_connection};
+use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
+use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::{
     HubuumClass, HubuumClassID, HubuumObject, HubuumObjectID, HubuumObjectRelation,
     HubuumObjectRelationID, Namespace, NewHubuumObject, NewHubuumObjectRelation, ObjectsByClass,
     UpdateHubuumObject,
 };
 use crate::traits::{ClassAccessors, SelfAccessors};
+
+fn object_snapshot(object: &HubuumObject) -> serde_json::Value {
+    serde_json::json!({
+        "id": object.id,
+        "name": object.name,
+        "namespace_id": object.namespace_id,
+        "hubuum_class_id": object.hubuum_class_id,
+        "data": object.data,
+        "description": object.description,
+        "created_at": object.created_at,
+        "updated_at": object.updated_at,
+    })
+}
+
+fn object_event(
+    object: &HubuumObject,
+    action: Action,
+    context: &EventContext,
+    summary: impl Into<String>,
+) -> Result<NewEvent, ApiError> {
+    Ok(
+        NewEvent::new(EntityType::Object, action, context.actor_kind(), summary)?
+            .with_context(context)
+            .with_entity_id(object.id)
+            .with_entity_name(object.name.clone())
+            .with_namespace_id(object.namespace_id)
+            .with_metadata(serde_json::json!({ "class_id": object.hubuum_class_id })),
+    )
+}
 
 impl GetObject<(HubuumObject, HubuumObject)> for HubuumObjectRelationID {
     async fn object_from_backend(
@@ -124,6 +154,15 @@ impl LoadObjectRecord for HubuumObjectID {
 
 pub trait CreateObjectRecord {
     async fn create_object_record(&self, pool: &DbPool) -> Result<HubuumObject, ApiError>;
+
+    async fn create_object_record_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumObject, ApiError> {
+        let _ = context;
+        self.create_object_record(pool).await
+    }
 }
 
 impl CreateObjectRecord for NewHubuumObject {
@@ -134,6 +173,33 @@ impl CreateObjectRecord for NewHubuumObject {
             diesel::insert_into(hubuumobject)
                 .values(self)
                 .get_result::<HubuumObject>(conn)
+        })
+    }
+
+    async fn create_object_record_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumObject, ApiError> {
+        let Some(context) = context else {
+            return self.create_object_record(pool).await;
+        };
+
+        use crate::schema::hubuumobject::dsl::hubuumobject;
+
+        with_transaction(pool, |conn| -> Result<HubuumObject, ApiError> {
+            let object = diesel::insert_into(hubuumobject)
+                .values(self)
+                .get_result::<HubuumObject>(conn)?;
+            let event = object_event(
+                &object,
+                Action::Created,
+                context,
+                format!("Object '{}' created", object.name),
+            )?
+            .with_after(object_snapshot(&object));
+            emit_event(conn, &event)?;
+            Ok(object)
         })
     }
 }
@@ -226,6 +292,15 @@ impl ValidateObjectRecord for (&UpdateHubuumObject, i32) {
 
 pub trait SaveObjectRecord {
     async fn save_object_record(&self, pool: &DbPool) -> Result<HubuumObject, ApiError>;
+
+    async fn save_object_record_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumObject, ApiError> {
+        let _ = context;
+        self.save_object_record(pool).await
+    }
 }
 
 impl SaveObjectRecord for HubuumObject {
@@ -243,12 +318,42 @@ impl SaveObjectRecord for HubuumObject {
             .await?;
         updated_object.update_object_record(pool, self.id).await
     }
+
+    async fn save_object_record_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumObject, ApiError> {
+        let updated_object = UpdateHubuumObject {
+            name: Some(self.name.clone()),
+            namespace_id: Some(self.namespace_id),
+            hubuum_class_id: Some(self.hubuum_class_id),
+            data: Some(self.data.clone()),
+            description: Some(self.description.clone()),
+        };
+
+        (&updated_object, self.id)
+            .validate_object_record(pool)
+            .await?;
+        updated_object
+            .update_object_record_with_context(pool, self.id, context)
+            .await
+    }
 }
 
 impl SaveObjectRecord for NewHubuumObject {
     async fn save_object_record(&self, pool: &DbPool) -> Result<HubuumObject, ApiError> {
         self.validate_object_record(pool).await?;
         self.create_object_record(pool).await
+    }
+
+    async fn save_object_record_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumObject, ApiError> {
+        self.validate_object_record(pool).await?;
+        self.create_object_record_with_context(pool, context).await
     }
 }
 
@@ -258,6 +363,16 @@ pub trait UpdateObjectRecord {
         pool: &DbPool,
         object_id: i32,
     ) -> Result<HubuumObject, ApiError>;
+
+    async fn update_object_record_with_context(
+        &self,
+        pool: &DbPool,
+        object_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumObject, ApiError> {
+        let _ = context;
+        self.update_object_record(pool, object_id).await
+    }
 }
 
 impl UpdateObjectRecord for UpdateHubuumObject {
@@ -275,10 +390,51 @@ impl UpdateObjectRecord for UpdateHubuumObject {
                 .get_result::<HubuumObject>(conn)
         })
     }
+
+    async fn update_object_record_with_context(
+        &self,
+        pool: &DbPool,
+        object_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumObject, ApiError> {
+        let Some(context) = context else {
+            return self.update_object_record(pool, object_id).await;
+        };
+
+        use crate::schema::hubuumobject::dsl::{hubuumobject, id};
+
+        with_transaction(pool, |conn| -> Result<HubuumObject, ApiError> {
+            let before = hubuumobject
+                .filter(id.eq(object_id))
+                .first::<HubuumObject>(conn)?;
+            let updated = diesel::update(hubuumobject.filter(id.eq(object_id)))
+                .set(self)
+                .get_result::<HubuumObject>(conn)?;
+            let event = object_event(
+                &updated,
+                Action::Updated,
+                context,
+                format!("Object '{}' updated", updated.name),
+            )?
+            .with_before(object_snapshot(&before))
+            .with_after(object_snapshot(&updated));
+            emit_event(conn, &event)?;
+            Ok(updated)
+        })
+    }
 }
 
 pub trait DeleteObjectRecord {
     async fn delete_object_record(&self, pool: &DbPool) -> Result<(), ApiError>;
+
+    async fn delete_object_record_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<(), ApiError> {
+        let _ = context;
+        self.delete_object_record(pool).await
+    }
 }
 
 impl DeleteObjectRecord for HubuumObject {
@@ -289,6 +445,31 @@ impl DeleteObjectRecord for HubuumObject {
             diesel::delete(hubuumobject.filter(id.eq(self.id))).execute(conn)
         })?;
         Ok(())
+    }
+
+    async fn delete_object_record_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<(), ApiError> {
+        let Some(context) = context else {
+            return self.delete_object_record(pool).await;
+        };
+
+        use crate::schema::hubuumobject::dsl::{hubuumobject, id};
+
+        with_transaction(pool, |conn| -> Result<(), ApiError> {
+            diesel::delete(hubuumobject.filter(id.eq(self.id))).execute(conn)?;
+            let event = object_event(
+                self,
+                Action::Deleted,
+                context,
+                format!("Object '{}' deleted", self.name),
+            )?
+            .with_before(object_snapshot(self));
+            emit_event(conn, &event)?;
+            Ok(())
+        })
     }
 }
 
