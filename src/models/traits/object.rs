@@ -4,6 +4,7 @@ use crate::db::traits::object::{
     SaveObjectRecord, UpdateObjectRecord, ValidateObjectRecord, ValidateObjectSchema,
 };
 use crate::errors::ApiError;
+use crate::events::EventContext;
 
 use crate::models::class::{HubuumClass, HubuumClassID};
 use crate::models::namespace::{Namespace, NamespaceID};
@@ -99,6 +100,14 @@ impl SaveAdapter for HubuumObject {
     async fn save_adapter(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
         self.save_object_record(pool).await
     }
+
+    async fn save_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<Self::Output, ApiError> {
+        self.save_object_record_with_context(pool, context).await
+    }
 }
 
 impl SaveAdapter for NewHubuumObject {
@@ -106,6 +115,14 @@ impl SaveAdapter for NewHubuumObject {
 
     async fn save_adapter(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
         self.save_object_record(pool).await
+    }
+
+    async fn save_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<Self::Output, ApiError> {
+        self.save_object_record_with_context(pool, context).await
     }
 }
 
@@ -120,11 +137,30 @@ impl UpdateAdapter for UpdateHubuumObject {
         (self, object_id).validate_object_record(pool).await?;
         self.update_object_record(pool, object_id).await
     }
+
+    async fn update_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        object_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<Self::Output, ApiError> {
+        (self, object_id).validate_object_record(pool).await?;
+        self.update_object_record_with_context(pool, object_id, context)
+            .await
+    }
 }
 
 impl DeleteAdapter for HubuumObject {
     async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
         self.delete_object_record(pool).await
+    }
+
+    async fn delete_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<(), ApiError> {
+        self.delete_object_record_with_context(pool, context).await
     }
 }
 
