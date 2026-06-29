@@ -11,6 +11,10 @@ use diesel::prelude::*;
 use rstest::rstest;
 use uuid::Uuid;
 
+use crate::db::traits::remote_target::{
+    DeleteRemoteTargetRecord, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
+    emit_remote_target_invoked_event,
+};
 use crate::db::{with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{
@@ -25,8 +29,9 @@ use crate::models::token::{
 };
 use crate::models::{
     GroupID, HubuumClassRelationID, NewHubuumClassRelation, NewHubuumObjectRelation,
-    NewReportTemplate, NewUser, Permissions, PermissionsList, PrincipalToken, ReportContentType,
-    ReportTemplateID, ReportTemplateKind, Token, UpdateReportTemplate, UpdateUser,
+    NewRemoteTargetRow, NewReportTemplate, NewUser, Permissions, PermissionsList, PrincipalToken,
+    RemoteTargetID, ReportContentType, ReportTemplateID, ReportTemplateKind, Token,
+    UpdateRemoteTargetRow, UpdateReportTemplate, UpdateUser,
 };
 use crate::schema::events::dsl::events;
 use crate::tests::{TestScope, create_test_user, test_scope};
@@ -970,6 +975,118 @@ async fn report_template_writes_emit_lifecycle_events() {
     assert_eq!(rows[2].action, "deleted");
     assert_eq!(rows[2].before.as_ref().unwrap()["description"], "after");
     assert!(rows[2].after.is_none());
+
+    fixture.cleanup().await.unwrap();
+}
+
+#[actix_web::test]
+async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_auth() {
+    let scope = test_scope();
+    let fixture = scope.with_namespace().await;
+    let context = EventContext::user(
+        27,
+        Some(Uuid::new_v4()),
+        Some("remote-target-correlation".into()),
+    );
+
+    let row = NewRemoteTargetRow {
+        namespace_id: fixture.namespace.id,
+        class_id: None,
+        name: scope.scoped_name("event_remote_target"),
+        description: "before".to_string(),
+        method: "get".to_string(),
+        url_template: "https://example.invalid/{{ subject.id }}".to_string(),
+        headers_template: serde_json::json!({}),
+        body_template: None,
+        auth_config: serde_json::json!({
+            "type": "api_key_secret",
+            "header": "X-Api-Key",
+            "secret": "super-secret"
+        }),
+        allowed_subject_types: serde_json::json!(["namespace"]),
+        timeout_ms: 1000,
+        enabled: true,
+    }
+    .save_remote_target_record_with_context(&scope.pool, Some(&context))
+    .await
+    .unwrap();
+
+    let updated = UpdateRemoteTargetRow {
+        namespace_id: None,
+        class_id: None,
+        name: None,
+        description: Some("after".to_string()),
+        method: None,
+        url_template: None,
+        headers_template: None,
+        body_template: None,
+        auth_config: None,
+        allowed_subject_types: None,
+        timeout_ms: None,
+        enabled: None,
+    }
+    .update_remote_target_record_with_context(&scope.pool, row.id, Some(&context))
+    .await
+    .unwrap();
+    let target = updated.clone().try_into().unwrap();
+
+    emit_remote_target_invoked_event(
+        &scope.pool,
+        &target,
+        &context,
+        12345,
+        "namespace",
+        fixture.namespace.id,
+    )
+    .await
+    .unwrap();
+
+    RemoteTargetID::new(row.id)
+        .unwrap()
+        .delete_remote_target_record_with_context(&scope.pool, Some(&context))
+        .await
+        .unwrap();
+
+    let rows = events_for(&scope, "remote_target", row.id);
+    assert_eq!(rows.len(), 4);
+
+    assert_eq!(rows[0].action, "created");
+    assert_eq!(rows[0].actor_user_id, Some(27));
+    assert_eq!(
+        rows[0].correlation_id.as_deref(),
+        Some("remote-target-correlation")
+    );
+    assert_eq!(rows[0].namespace_id, Some(fixture.namespace.id));
+    assert_eq!(rows[0].after.as_ref().unwrap()["description"], "before");
+    assert_eq!(
+        rows[0].after.as_ref().unwrap()["auth_config"],
+        serde_json::json!("<redacted>")
+    );
+
+    assert_eq!(rows[1].action, "updated");
+    assert_eq!(rows[1].before.as_ref().unwrap()["description"], "before");
+    assert_eq!(rows[1].after.as_ref().unwrap()["description"], "after");
+    assert_eq!(
+        rows[1].before.as_ref().unwrap()["auth_config"],
+        serde_json::json!("<redacted>")
+    );
+
+    assert_eq!(rows[2].action, "invoked");
+    assert_eq!(rows[2].metadata["task_id"], serde_json::json!(12345));
+    assert_eq!(rows[2].metadata["subject_type"], "namespace");
+    assert_eq!(
+        rows[2].metadata["subject_id"],
+        serde_json::json!(fixture.namespace.id)
+    );
+    assert!(rows[2].before.is_none());
+    assert!(rows[2].after.is_none());
+
+    assert_eq!(rows[3].action, "deleted");
+    assert_eq!(rows[3].before.as_ref().unwrap()["description"], "after");
+    assert_eq!(
+        rows[3].before.as_ref().unwrap()["auth_config"],
+        serde_json::json!("<redacted>")
+    );
 
     fixture.cleanup().await.unwrap();
 }

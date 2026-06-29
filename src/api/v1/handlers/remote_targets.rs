@@ -10,10 +10,11 @@ use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
 use crate::db::traits::remote_target::{
     DeleteRemoteTargetRecord, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
+    emit_remote_target_invoked_event,
 };
 use crate::db::traits::task::{TaskCreateRequest, TaskScopeSnapshot};
 use crate::errors::ApiError;
-use crate::extractors::Authenticated;
+use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::namespace::user_can_on_any;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
@@ -48,6 +49,7 @@ pub async fn create_remote_target(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     target: web::Json<NewRemoteTarget>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let target = target.into_inner();
@@ -65,9 +67,10 @@ pub async fn create_remote_target(
     )
     .await?;
 
+    let event_context = requestor.event_context(&req);
     let created: RemoteTarget = target
         .into_row()?
-        .save_remote_target_record(&pool)
+        .save_remote_target_record_with_context(&pool, Some(&event_context))
         .await?
         .try_into()?;
     let location = api_locations::remote_target(created.id)?;
@@ -165,6 +168,7 @@ pub async fn patch_remote_target(
     requestor: Authenticated,
     target_id: web::Path<RemoteTargetID>,
     update: web::Json<UpdateRemoteTarget>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let target_id = target_id.into_inner();
@@ -204,8 +208,9 @@ pub async fn patch_remote_target(
     validate_remote_target_class_scope(&pool, effective_namespace_id, effective_class_id).await?;
 
     let row = update.into_row(&existing)?;
+    let event_context = requestor.event_context(&req);
     let updated: RemoteTarget = row
-        .update_remote_target_record(&pool, existing.id)
+        .update_remote_target_record_with_context(&pool, existing.id, Some(&event_context))
         .await?
         .try_into()?;
     Ok(ApiResponse::new(updated, StatusCode::OK))
@@ -246,6 +251,7 @@ pub async fn delete_remote_target(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     target_id: web::Path<RemoteTargetID>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let target_id = target_id.into_inner();
@@ -257,7 +263,10 @@ pub async fn delete_remote_target(
         [Permissions::DeleteRemoteTarget],
         NamespaceID::new(existing.namespace_id)?
     );
-    target_id.delete_remote_target_record(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    target_id
+        .delete_remote_target_record_with_context(&pool, Some(&event_context))
+        .await?;
     Ok(actix_web::HttpResponse::NoContent().finish())
 }
 
@@ -310,6 +319,16 @@ pub async fn invoke_remote_target(
         snapshot,
         idempotency_key_from_headers(req.headers())?,
         payload,
+    )
+    .await?;
+    let event_context = requestor.event_context(&req);
+    emit_remote_target_invoked_event(
+        &pool,
+        &target,
+        &event_context,
+        task.id,
+        resolved.subject_type.as_str(),
+        resolved.subject_id,
     )
     .await?;
     kick_task_worker(pool.get_ref().clone());
