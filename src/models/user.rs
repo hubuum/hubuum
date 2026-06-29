@@ -2,6 +2,7 @@ use crate::db::traits::user::{
     CreateUserRecord, DeleteUserRecord, OwnedUserTokenRecord, StoreUserTokenRecord,
     UpdateUserRecord,
 };
+use crate::events::EventContext;
 use crate::models::principal::load_principal_by_id;
 use crate::models::token::{PrincipalToken, Token};
 use crate::schema::users;
@@ -242,6 +243,18 @@ impl User {
     {
         self.delete_user_record(backend.db_pool()).await
     }
+
+    pub async fn delete_with_context<C>(
+        &self,
+        backend: &C,
+        context: Option<&EventContext>,
+    ) -> Result<usize, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.delete_user_record_with_context(backend.db_pool(), context)
+            .await
+    }
 }
 
 /// Struct to update a user.
@@ -280,6 +293,21 @@ impl UpdateUser {
         let hashed = self.hash_password()?;
         hashed.update_user_record(user_id, backend.db_pool()).await
     }
+
+    pub async fn save_with_context<C>(
+        self,
+        user_id: i32,
+        backend: &C,
+        context: Option<&EventContext>,
+    ) -> Result<User, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        let hashed = self.hash_password()?;
+        hashed
+            .update_user_record_with_context(user_id, backend.db_pool(), context)
+            .await
+    }
 }
 
 /// Struct to create a new user.
@@ -301,6 +329,20 @@ impl NewUser {
     {
         let hashed = self.hash_password()?;
         hashed.create_user_record(backend.db_pool()).await
+    }
+
+    pub async fn save_with_context<C>(
+        self,
+        backend: &C,
+        context: Option<&EventContext>,
+    ) -> Result<User, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        let hashed = self.hash_password()?;
+        hashed
+            .create_user_record_with_context(backend.db_pool(), context)
+            .await
     }
 
     pub fn hash_password(mut self) -> Result<Self, ApiError> {
@@ -329,11 +371,16 @@ impl UserID {
         self.load_user_record(backend.db_pool()).await
     }
 
-    pub async fn delete<C>(&self, backend: &C) -> Result<usize, ApiError>
+    pub async fn delete_with_context<C>(
+        &self,
+        backend: &C,
+        context: Option<&EventContext>,
+    ) -> Result<usize, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.delete_user_record(backend.db_pool()).await
+        self.delete_user_record_with_context(backend.db_pool(), context)
+            .await
     }
 }
 

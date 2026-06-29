@@ -21,7 +21,8 @@ use crate::models::group::{NewGroup, UpdateGroup};
 use crate::models::namespace::{NewNamespaceWithAssignee, UpdateNamespace};
 use crate::models::object::{NewHubuumObject, UpdateHubuumObject};
 use crate::models::{
-    GroupID, HubuumClassRelationID, NewHubuumClassRelation, NewHubuumObjectRelation,
+    GroupID, HubuumClassRelationID, NewHubuumClassRelation, NewHubuumObjectRelation, NewUser,
+    UpdateUser,
 };
 use crate::schema::events::dsl::events;
 use crate::tests::{TestScope, create_test_user, test_scope};
@@ -671,6 +672,74 @@ async fn group_membership_writes_emit_added_removed_events_when_changed() {
 
     group.delete(&scope.pool).await.unwrap();
     user.delete(&scope.pool).await.unwrap();
+}
+
+#[actix_web::test]
+async fn user_writes_emit_lifecycle_events_without_password_material() {
+    let scope = test_scope();
+    let context = EventContext::user(23, Some(Uuid::new_v4()), Some("user-correlation".into()));
+    let username = scope.scoped_name("event_user");
+
+    let user = NewUser {
+        name: username.clone(),
+        password: "initial-password".to_string(),
+        proper_name: Some("Before User".to_string()),
+        email: Some("before@example.invalid".to_string()),
+    }
+    .save_with_context(&scope.pool, Some(&context))
+    .await
+    .unwrap();
+
+    let updated = UpdateUser {
+        password: Some("updated-password".to_string()),
+        proper_name: Some("After User".to_string()),
+        email: Some("after@example.invalid".to_string()),
+    }
+    .save_with_context(user.id, &scope.pool, Some(&context))
+    .await
+    .unwrap();
+
+    updated
+        .delete_with_context(&scope.pool, Some(&context))
+        .await
+        .unwrap();
+
+    let rows = events_for(&scope, "user", user.id);
+    assert_eq!(rows.len(), 3);
+
+    assert_eq!(rows[0].action, "created");
+    assert_eq!(rows[0].actor_user_id, Some(23));
+    assert_eq!(rows[0].correlation_id.as_deref(), Some("user-correlation"));
+    assert_eq!(rows[0].entity_name.as_deref(), Some(username.as_str()));
+    assert_eq!(
+        rows[0].after.as_ref().unwrap()["proper_name"],
+        serde_json::json!("Before User")
+    );
+    assert!(rows[0].after.as_ref().unwrap().get("password").is_none());
+
+    assert_eq!(rows[1].action, "updated");
+    assert_eq!(
+        rows[1].metadata["password_changed"],
+        serde_json::json!(true)
+    );
+    assert_eq!(
+        rows[1].before.as_ref().unwrap()["email"],
+        serde_json::json!("before@example.invalid")
+    );
+    assert_eq!(
+        rows[1].after.as_ref().unwrap()["email"],
+        serde_json::json!("after@example.invalid")
+    );
+    assert!(rows[1].before.as_ref().unwrap().get("password").is_none());
+    assert!(rows[1].after.as_ref().unwrap().get("password").is_none());
+
+    assert_eq!(rows[2].action, "deleted");
+    assert_eq!(
+        rows[2].before.as_ref().unwrap()["proper_name"],
+        serde_json::json!("After User")
+    );
+    assert!(rows[2].before.as_ref().unwrap().get("password").is_none());
+    assert!(rows[2].after.is_none());
 }
 
 fn events_for(scope: &TestScope, event_entity_type: &str, event_entity_id: i32) -> Vec<Event> {
