@@ -142,6 +142,28 @@ pub(crate) struct RemoteTargetRow {
     pub updated_at: NaiveDateTime,
 }
 
+impl RemoteTargetRow {
+    pub(crate) fn audit_snapshot(&self) -> serde_json::Value {
+        serde_json::json!({
+            "id": self.id,
+            "namespace_id": self.namespace_id,
+            "class_id": self.class_id,
+            "name": self.name,
+            "description": self.description,
+            "method": self.method,
+            "url_template": self.url_template,
+            "headers_template": self.headers_template,
+            "body_template": self.body_template,
+            "auth_config": "<redacted>",
+            "allowed_subject_types": self.allowed_subject_types,
+            "timeout_ms": self.timeout_ms,
+            "enabled": self.enabled,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct RemoteTarget {
     pub id: i32,
