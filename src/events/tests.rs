@@ -24,8 +24,9 @@ use crate::models::token::{
     create_principal_token_with_context, revoke_token_by_id_for_principal_with_context,
 };
 use crate::models::{
-    GroupID, HubuumClassRelationID, NewHubuumClassRelation, NewHubuumObjectRelation, NewUser,
-    Permissions, PermissionsList, PrincipalToken, Token, UpdateUser,
+    GroupID, HubuumClassRelationID, NewHubuumClassRelation, NewHubuumObjectRelation,
+    NewReportTemplate, NewUser, Permissions, PermissionsList, PrincipalToken, ReportContentType,
+    ReportTemplateID, ReportTemplateKind, Token, UpdateReportTemplate, UpdateUser,
 };
 use crate::schema::events::dsl::events;
 use crate::tests::{TestScope, create_test_user, test_scope};
@@ -893,6 +894,83 @@ async fn permission_writes_emit_granted_revoked_events() {
     assert!(rows[2].after.is_none());
 
     group.delete(&scope.pool).await.unwrap();
+    fixture.cleanup().await.unwrap();
+}
+
+#[actix_web::test]
+async fn report_template_writes_emit_lifecycle_events() {
+    let scope = test_scope();
+    let fixture = scope.with_namespace().await;
+    let context = EventContext::user(
+        26,
+        Some(Uuid::new_v4()),
+        Some("report-template-correlation".into()),
+    );
+
+    let template = NewReportTemplate {
+        namespace_id: fixture.namespace.id,
+        name: scope.scoped_name("event_template"),
+        description: "before".to_string(),
+        content_type: ReportContentType::TextPlain,
+        template: "Hello {{ name }}".to_string(),
+        kind: ReportTemplateKind::Fragment,
+        scope_kind: None,
+        class_id: None,
+        default_query: None,
+        include: None,
+        relation_context: None,
+        default_missing_data_policy: None,
+        default_limits: None,
+    }
+    .save_with_context(&scope.pool, Some(&context))
+    .await
+    .unwrap();
+
+    let updated = UpdateReportTemplate {
+        namespace_id: None,
+        name: None,
+        description: Some("after".to_string()),
+        template: Some("Goodbye {{ name }}".to_string()),
+        kind: None,
+        scope_kind: None,
+        class_id: None,
+        default_query: None,
+        include: None,
+        relation_context: None,
+        default_missing_data_policy: None,
+        default_limits: None,
+    }
+    .update_with_context(&scope.pool, template.id, Some(&context))
+    .await
+    .unwrap();
+
+    ReportTemplateID::new(updated.id)
+        .unwrap()
+        .delete_with_context(&scope.pool, Some(&context))
+        .await
+        .unwrap();
+
+    let rows = events_for(&scope, "report_template", template.id);
+    assert_eq!(rows.len(), 3);
+
+    assert_eq!(rows[0].action, "created");
+    assert_eq!(rows[0].actor_user_id, Some(26));
+    assert_eq!(
+        rows[0].correlation_id.as_deref(),
+        Some("report-template-correlation")
+    );
+    assert_eq!(rows[0].namespace_id, Some(fixture.namespace.id));
+    assert_eq!(rows[0].entity_name.as_deref(), Some(template.name.as_str()));
+    assert_eq!(rows[0].after.as_ref().unwrap()["description"], "before");
+
+    assert_eq!(rows[1].action, "updated");
+    assert_eq!(rows[1].before.as_ref().unwrap()["description"], "before");
+    assert_eq!(rows[1].after.as_ref().unwrap()["description"], "after");
+
+    assert_eq!(rows[2].action, "deleted");
+    assert_eq!(rows[2].before.as_ref().unwrap()["description"], "after");
+    assert!(rows[2].after.is_none());
+
     fixture.cleanup().await.unwrap();
 }
 

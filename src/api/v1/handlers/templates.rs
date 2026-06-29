@@ -40,6 +40,7 @@ pub async fn create_template(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     template: web::Json<NewReportTemplate>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let template = template.into_inner();
@@ -59,7 +60,10 @@ pub async fn create_template(
         NamespaceID::new(template.namespace_id)?
     );
 
-    let created = template.save(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    let created = template
+        .save_with_context(&pool, Some(&event_context))
+        .await?;
 
     Ok(json_response_created(
         &created,
@@ -307,6 +311,7 @@ pub async fn delete_template(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     template_id: web::Path<ReportTemplateID>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let template_id = template_id.into_inner();
@@ -327,7 +332,10 @@ pub async fn delete_template(
         NamespaceID::new(template.namespace_id)?
     );
 
-    template_id.delete(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    template_id
+        .delete_with_context(&pool, Some(&event_context))
+        .await?;
 
     Ok(json_response((), StatusCode::NO_CONTENT))
 }

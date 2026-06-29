@@ -10,6 +10,7 @@ use crate::db::traits::report_template::{
     ReportTemplateNamespaceLookup, SaveReportTemplateRecord, UpdateReportTemplateRecord,
 };
 use crate::errors::ApiError;
+use crate::events::EventContext;
 use crate::models::search::{FilterField, QueryOptions, SortParam, parse_query_parameter};
 use crate::models::{
     Namespace, NamespaceID, ReportContentType, ReportInclude, ReportLimits,
@@ -74,6 +75,41 @@ pub(crate) struct ReportTemplateRow {
     default_limits: Option<serde_json::Value>,
     created_at: chrono::NaiveDateTime,
     updated_at: chrono::NaiveDateTime,
+}
+
+impl ReportTemplateRow {
+    pub(crate) fn id(&self) -> i32 {
+        self.id
+    }
+
+    pub(crate) fn namespace_id(&self) -> i32 {
+        self.namespace_id
+    }
+
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub(crate) fn audit_snapshot(&self) -> serde_json::Value {
+        serde_json::json!({
+            "id": self.id,
+            "namespace_id": self.namespace_id,
+            "name": self.name,
+            "description": self.description,
+            "content_type": self.content_type,
+            "template": self.template,
+            "kind": self.kind,
+            "scope_kind": self.scope_kind,
+            "class_id": self.class_id,
+            "default_query": self.default_query,
+            "include": self.include,
+            "relation_context": self.relation_context,
+            "default_missing_data_policy": self.default_missing_data_policy,
+            "default_limits": self.default_limits,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -437,6 +473,24 @@ impl SaveAdapter for NewReportTemplate {
     type Output = ReportTemplate;
 
     async fn save_adapter(&self, pool: &DbPool) -> Result<ReportTemplate, ApiError> {
+        self.save_report_template(pool, None).await
+    }
+
+    async fn save_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<ReportTemplate, ApiError> {
+        self.save_report_template(pool, context).await
+    }
+}
+
+impl NewReportTemplate {
+    async fn save_report_template(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<ReportTemplate, ApiError> {
         let new_row = self.clone().into_row()?;
         ensure_template_name_is_available(pool, new_row.namespace_id, &new_row.name, None).await?;
         validate_report_profile(
@@ -464,7 +518,9 @@ impl SaveAdapter for NewReportTemplate {
             &namespace_templates,
             ReportContentType::from_mime(&new_row.content_type)?,
         )?;
-        let row = new_row.save_report_template_record(pool).await?;
+        let row = new_row
+            .save_report_template_record_with_context(pool, context)
+            .await?;
 
         row.try_into()
     }
@@ -478,7 +534,16 @@ impl UpdateAdapter for UpdateReportTemplate {
         pool: &DbPool,
         entry_id: i32,
     ) -> Result<ReportTemplate, ApiError> {
-        apply_report_template_update(pool, entry_id, self.clone()).await
+        apply_report_template_update(pool, entry_id, self.clone(), None).await
+    }
+
+    async fn update_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        entry_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<ReportTemplate, ApiError> {
+        apply_report_template_update(pool, entry_id, self.clone(), context).await
     }
 }
 
@@ -486,6 +551,7 @@ async fn apply_report_template_update(
     pool: &DbPool,
     template_id: i32,
     update: UpdateReportTemplate,
+    context: Option<&EventContext>,
 ) -> Result<ReportTemplate, ApiError> {
     let current_row = ReportTemplateID::new(template_id)?
         .load_report_template_record(pool)
@@ -573,7 +639,7 @@ async fn apply_report_template_update(
         default_limits: Some(default_limits_json),
     };
     let row = changeset
-        .update_report_template_record(pool, template_id)
+        .update_report_template_record_with_context(pool, template_id, context)
         .await?;
 
     row.try_into()
@@ -657,6 +723,15 @@ fn resolve_report_profile(
 impl DeleteAdapter for ReportTemplateID {
     async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
         self.delete_report_template_record(pool).await
+    }
+
+    async fn delete_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<(), ApiError> {
+        self.delete_report_template_record_with_context(pool, context)
+            .await
     }
 }
 
