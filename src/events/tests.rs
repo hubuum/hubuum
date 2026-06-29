@@ -20,9 +20,12 @@ use crate::models::class::{NewHubuumClass, UpdateHubuumClass};
 use crate::models::group::{NewGroup, UpdateGroup};
 use crate::models::namespace::{NewNamespaceWithAssignee, UpdateNamespace};
 use crate::models::object::{NewHubuumObject, UpdateHubuumObject};
+use crate::models::token::{
+    create_principal_token_with_context, revoke_token_by_id_for_principal_with_context,
+};
 use crate::models::{
     GroupID, HubuumClassRelationID, NewHubuumClassRelation, NewHubuumObjectRelation, NewUser,
-    UpdateUser,
+    PrincipalToken, Token, UpdateUser,
 };
 use crate::schema::events::dsl::events;
 use crate::tests::{TestScope, create_test_user, test_scope};
@@ -742,6 +745,64 @@ async fn user_writes_emit_lifecycle_events_without_password_material() {
     assert!(rows[2].after.is_none());
 }
 
+#[actix_web::test]
+async fn token_writes_emit_created_revoked_events_without_token_material() {
+    let scope = test_scope();
+    let context = EventContext::user(24, Some(Uuid::new_v4()), Some("token-correlation".into()));
+
+    let user = NewUser {
+        name: scope.scoped_name("event_token_user"),
+        password: "token-user-password".to_string(),
+        proper_name: None,
+        email: None,
+    }
+    .save(&scope.pool)
+    .await
+    .unwrap();
+
+    let raw = create_principal_token_with_context(
+        &scope.pool,
+        user.id,
+        Some("automation"),
+        Some("for event tests"),
+        None,
+        None,
+        Some(&context),
+    )
+    .await
+    .unwrap();
+    let token = token_by_raw_value(&scope, &raw);
+
+    let revoked = revoke_token_by_id_for_principal_with_context(
+        &scope.pool,
+        token.id,
+        user.id,
+        Some(&context),
+    )
+    .await
+    .unwrap();
+    assert_eq!(revoked, 1);
+
+    let rows = events_for(&scope, "token", token.id);
+    assert_eq!(rows.len(), 2);
+
+    assert_eq!(rows[0].action, "created");
+    assert_eq!(rows[0].actor_user_id, Some(24));
+    assert_eq!(rows[0].correlation_id.as_deref(), Some("token-correlation"));
+    assert_eq!(rows[0].metadata["principal_id"], serde_json::json!(user.id));
+    assert_eq!(rows[0].after.as_ref().unwrap()["name"], "automation");
+    assert!(rows[0].after.as_ref().unwrap().get("token").is_none());
+
+    assert_eq!(rows[1].action, "revoked");
+    assert_eq!(rows[1].metadata["principal_id"], serde_json::json!(user.id));
+    assert!(rows[1].before.as_ref().unwrap()["revoked_at"].is_null());
+    assert!(!rows[1].after.as_ref().unwrap()["revoked_at"].is_null());
+    assert!(rows[1].before.as_ref().unwrap().get("token").is_none());
+    assert!(rows[1].after.as_ref().unwrap().get("token").is_none());
+
+    user.delete(&scope.pool).await.unwrap();
+}
+
 fn events_for(scope: &TestScope, event_entity_type: &str, event_entity_id: i32) -> Vec<Event> {
     use crate::schema::events::dsl::{entity_id, entity_type, id};
 
@@ -751,6 +812,17 @@ fn events_for(scope: &TestScope, event_entity_type: &str, event_entity_id: i32) 
             .filter(entity_id.eq(event_entity_id))
             .order(id.asc())
             .load::<Event>(conn)
+    })
+    .unwrap()
+}
+
+fn token_by_raw_value(scope: &TestScope, raw: &Token) -> PrincipalToken {
+    use crate::schema::tokens::dsl::{token, tokens};
+
+    with_connection(&scope.pool, |conn| {
+        tokens
+            .filter(token.eq(raw.storage_hash()))
+            .first::<PrincipalToken>(conn)
     })
     .unwrap()
 }

@@ -34,10 +34,6 @@ impl Authenticated {
     pub fn scopes(&self) -> Option<&[Permissions]> {
         self.scopes.as_deref()
     }
-
-    pub fn event_context(&self, req: &HttpRequest) -> EventContext {
-        user_event_context(req, self.principal.id)
-    }
 }
 
 /// A human user with a valid, **unscoped** token. Scoped tokens and service
@@ -67,8 +63,36 @@ pub struct ManagementAccess {
     pub user: User,
 }
 
-impl AdminAccess {
-    pub fn event_context(&self, req: &HttpRequest) -> EventContext {
+pub trait AccessEventContext {
+    fn event_context(&self, req: &HttpRequest) -> EventContext;
+}
+
+impl AccessEventContext for Authenticated {
+    fn event_context(&self, req: &HttpRequest) -> EventContext {
+        user_event_context(req, self.principal.id)
+    }
+}
+
+impl AccessEventContext for UserAccess {
+    fn event_context(&self, req: &HttpRequest) -> EventContext {
+        user_event_context(req, self.user.id)
+    }
+}
+
+impl AccessEventContext for AdminAccess {
+    fn event_context(&self, req: &HttpRequest) -> EventContext {
+        user_event_context(req, self.user.id)
+    }
+}
+
+impl AccessEventContext for AdminOrSelfAccess {
+    fn event_context(&self, req: &HttpRequest) -> EventContext {
+        user_event_context(req, self.user.id)
+    }
+}
+
+impl AccessEventContext for ManagementAccess {
+    fn event_context(&self, req: &HttpRequest) -> EventContext {
         user_event_context(req, self.user.id)
     }
 }

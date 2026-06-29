@@ -9,7 +9,7 @@ use crate::can;
 use crate::db::DbPool;
 use crate::db::traits::{ClassRelation, ObjectRelationMemberships, UserPermissions};
 use crate::errors::ApiError;
-use crate::extractors::Authenticated;
+use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::traits::{ExpandNamespace, ToHubuumObjects};
 use crate::pagination::{
     count_query_options, page_limits, prepare_db_pagination, validate_page_limit,

@@ -2,7 +2,7 @@ use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::extractors::{AdminAccess, Authenticated};
+use crate::extractors::{AccessEventContext, AdminAccess, Authenticated};
 use crate::models::{
     Group, GroupID, GroupPermission, Namespace, NamespaceID, NewNamespaceWithAssignee, Permission,
     Permissions, PermissionsList, UpdateNamespace,

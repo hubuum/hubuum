@@ -1,7 +1,7 @@
 use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::extractors::Authenticated;
+use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::search::parse_query_parameter;
 use crate::models::{
     HubuumClassRelation, HubuumClassRelationID, HubuumObjectRelation, HubuumObjectRelationID,

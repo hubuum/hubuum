@@ -9,6 +9,7 @@ use utoipa::ToSchema;
 use crate::config::token_hash_key_bytes;
 use crate::db::traits::user::DeleteTokenRecord;
 use crate::errors::ApiError;
+use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::search::{FilterField, SortParam};
 use crate::schema::tokens;
 use crate::traits::{
@@ -60,6 +61,38 @@ impl From<PrincipalToken> for PrincipalTokenMetadata {
             scoped: value.scoped,
         }
     }
+}
+
+fn token_snapshot(token: &PrincipalToken) -> serde_json::Value {
+    serde_json::json!({
+        "id": token.id,
+        "principal_id": token.principal_id,
+        "name": token.name,
+        "description": token.description,
+        "issued": token.issued,
+        "expires_at": token.expires_at,
+        "last_used_at": token.last_used_at,
+        "revoked_at": token.revoked_at,
+        "scoped": token.scoped,
+    })
+}
+
+fn token_event(
+    token: &PrincipalToken,
+    action: Action,
+    context: &EventContext,
+    summary: impl Into<String>,
+) -> Result<NewEvent, ApiError> {
+    Ok(
+        NewEvent::new(EntityType::Token, action, context.actor_kind(), summary)?
+            .with_context(context)
+            .with_entity_id(token.id)
+            .with_entity_name(token.name.clone().unwrap_or_else(|| token.id.to_string()))
+            .with_metadata(serde_json::json!({
+                "principal_id": token.principal_id,
+                "scoped": token.scoped,
+            })),
+    )
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -130,17 +163,96 @@ where
     })
 }
 
+pub async fn revoke_token_by_id_for_principal_with_context<C>(
+    backend: &C,
+    token_id: i32,
+    principal: i32,
+    context: Option<&EventContext>,
+) -> Result<usize, ApiError>
+where
+    C: BackendContext + ?Sized,
+{
+    let Some(context) = context else {
+        return revoke_token_by_id_for_principal(backend, token_id, principal).await;
+    };
+
+    use crate::db::with_transaction;
+    use crate::schema::tokens::dsl::{id, principal_id, revoked_at, tokens};
+
+    with_transaction(backend.db_pool(), |conn| -> Result<usize, ApiError> {
+        let before = tokens
+            .filter(id.eq(token_id))
+            .filter(principal_id.eq(principal))
+            .filter(revoked_at.is_null())
+            .first::<PrincipalToken>(conn)
+            .optional()?;
+
+        let updated = diesel::update(
+            tokens
+                .filter(id.eq(token_id))
+                .filter(principal_id.eq(principal))
+                .filter(revoked_at.is_null()),
+        )
+        .set(revoked_at.eq(diesel::dsl::now))
+        .get_result::<PrincipalToken>(conn)
+        .optional()?;
+
+        if let (Some(before), Some(after)) = (before, updated) {
+            let event = token_event(
+                &after,
+                Action::Revoked,
+                context,
+                format!(
+                    "Token {} revoked for principal {}",
+                    after.id, after.principal_id
+                ),
+            )?
+            .with_before(token_snapshot(&before))
+            .with_after(token_snapshot(&after));
+            emit_event(conn, &event)?;
+            Ok(1)
+        } else {
+            Ok(0)
+        }
+    })
+}
+
 /// Create a named/expiring/optionally-scoped token for a principal and return
 /// the raw value (shown once). Fail-closed: `scoped` is set in the same insert
 /// as the token row, before the scope rows, so a mid-transaction failure can
 /// never leave a `scoped = false` (full-authority) token with missing scopes.
-pub async fn create_principal_token<C>(
+pub async fn create_principal_token_with_context<C>(
     backend: &C,
     principal: i32,
     name: Option<&str>,
     description: Option<&str>,
     expires_at: Option<chrono::NaiveDateTime>,
     scopes: Option<&[crate::models::Permissions]>,
+    context: Option<&EventContext>,
+) -> Result<Token, ApiError>
+where
+    C: BackendContext + ?Sized,
+{
+    create_principal_token_inner(
+        backend,
+        principal,
+        name,
+        description,
+        expires_at,
+        scopes,
+        context,
+    )
+    .await
+}
+
+async fn create_principal_token_inner<C>(
+    backend: &C,
+    principal: i32,
+    name: Option<&str>,
+    description: Option<&str>,
+    expires_at: Option<chrono::NaiveDateTime>,
+    scopes: Option<&[crate::models::Permissions]>,
+    context: Option<&EventContext>,
 ) -> Result<Token, ApiError>
 where
     C: BackendContext + ?Sized,
@@ -180,7 +292,7 @@ where
             }
         }
 
-        let new_token_id: i32 = diesel::insert_into(tokens::table)
+        let token = diesel::insert_into(tokens::table)
             .values((
                 tokens::token.eq(&hash),
                 tokens::principal_id.eq(principal),
@@ -189,16 +301,28 @@ where
                 tokens::expires_at.eq(expires_at),
                 tokens::scoped.eq(scoped),
             ))
-            .returning(tokens::id)
-            .get_result(conn)?;
+            .get_result::<PrincipalToken>(conn)?;
 
         for permission in &scope_strings {
             diesel::insert_into(crate::schema::token_scopes::table)
                 .values((
-                    crate::schema::token_scopes::token_id.eq(new_token_id),
+                    crate::schema::token_scopes::token_id.eq(token.id),
                     crate::schema::token_scopes::permission.eq(permission),
                 ))
                 .execute(conn)?;
+        }
+        if let Some(context) = context {
+            let event = token_event(
+                &token,
+                Action::Created,
+                context,
+                format!(
+                    "Token {} created for principal {}",
+                    token.id, token.principal_id
+                ),
+            )?
+            .with_after(token_snapshot(&token));
+            emit_event(conn, &event)?;
         }
         Ok(())
     })?;

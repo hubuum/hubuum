@@ -23,7 +23,7 @@ use crate::db::{init_pool, with_connection};
 use crate::errors::ApiError;
 use crate::models::group::{Group, NewGroup};
 use crate::models::namespace::{Namespace, NewNamespaceWithAssignee};
-use crate::models::token::create_principal_token;
+use crate::models::token::create_principal_token_with_context;
 use crate::models::user::{NewUser, User};
 use crate::models::{HubuumClass, HubuumObject, NewHubuumClass, NewHubuumObject};
 
@@ -478,7 +478,7 @@ pub async fn scoped_token(
     principal_id: i32,
     scopes: &[crate::models::Permissions],
 ) -> String {
-    create_principal_token(pool, principal_id, None, None, None, Some(scopes))
+    create_principal_token_with_context(pool, principal_id, None, None, None, Some(scopes), None)
         .await
         .expect("failed to mint scoped token")
         .get_token()
@@ -492,7 +492,7 @@ pub async fn service_account_token(
     scopes: Option<&[crate::models::Permissions]>,
     expires_at: Option<chrono::NaiveDateTime>,
 ) -> String {
-    create_principal_token(pool, sa.id, None, None, expires_at, scopes)
+    create_principal_token_with_context(pool, sa.id, None, None, expires_at, scopes, None)
         .await
         .expect("failed to mint service account token")
         .get_token()

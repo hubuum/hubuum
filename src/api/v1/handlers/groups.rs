@@ -3,7 +3,7 @@ use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::extractors::{AdminAccess, UserAccess};
+use crate::extractors::{AccessEventContext, AdminAccess, UserAccess};
 use crate::models::group::{GroupID, NewGroup, UpdateGroup};
 use crate::models::search::parse_query_parameter;
 use crate::models::service_account::service_accounts_owned_by_group;
