@@ -11576,7 +11576,7 @@
           },
           "id": {
             "type": "integer",
-            "format": "int32"
+            "format": "int64"
           },
           "message": {
             "type": "string"
