@@ -6,7 +6,7 @@ use crate::can;
 use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
 use crate::errors::ApiError;
-use crate::extractors::Authenticated;
+use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::namespace::user_can_on_any;
 use crate::models::search::parse_query_parameter;
 use crate::models::{

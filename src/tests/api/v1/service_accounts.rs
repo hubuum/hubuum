@@ -27,7 +27,7 @@ mod tests {
     use crate::models::namespace::user_can_on_any;
     use crate::models::principal::load_principal_by_id;
     use crate::models::service_account::cancel_pending_tasks_for_principal;
-    use crate::models::token::{Token, create_principal_token};
+    use crate::models::token::{Token, create_principal_token_with_context};
     use crate::models::user::{LoginUser, NewUser};
     use crate::models::{
         NewServiceAccount, NewTaskRecord, Permissions, PrincipalID, PrincipalMemberResponse,
@@ -254,9 +254,17 @@ mod tests {
         let token = match offset_hours {
             Some(h) => {
                 let expiry = chrono::Utc::now().naive_utc() + chrono::Duration::hours(h);
-                create_principal_token(pool, user.id, None, None, Some(expiry), None)
-                    .await
-                    .unwrap()
+                create_principal_token_with_context(
+                    pool,
+                    user.id,
+                    None,
+                    None,
+                    Some(expiry),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap()
             }
             None => user.create_token(pool).await.unwrap(),
         };

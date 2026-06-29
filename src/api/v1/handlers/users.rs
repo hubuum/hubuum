@@ -1,7 +1,7 @@
 use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::extractors::{AdminAccess, AdminOrSelfAccess};
+use crate::extractors::{AccessEventContext, AdminAccess, AdminOrSelfAccess};
 use crate::models::search::parse_query_parameter;
 use crate::models::user::{NewUser, UpdateUser, UserID, UserResponse, UserWithName};
 use crate::pagination::{count_query_options, prepare_db_pagination};
