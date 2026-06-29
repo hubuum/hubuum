@@ -2,6 +2,7 @@ use crate::db::traits::Status;
 use crate::db::traits::authz::{AuthzSubject, load_token_scopes};
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
+use crate::events::{EventContext, RequestProvenance};
 use crate::models::permissions::Permissions;
 use crate::models::principal::{Principal, load_principal_by_id};
 use crate::models::token::{PrincipalToken, Token};
@@ -33,6 +34,10 @@ impl Authenticated {
     pub fn scopes(&self) -> Option<&[Permissions]> {
         self.scopes.as_deref()
     }
+
+    pub fn event_context(&self, req: &HttpRequest) -> EventContext {
+        user_event_context(req, self.principal.id)
+    }
 }
 
 /// A human user with a valid, **unscoped** token. Scoped tokens and service
@@ -60,6 +65,18 @@ pub struct AdminOrSelfAccess {
 pub struct ManagementAccess {
     pub token: Token,
     pub user: User,
+}
+
+impl AdminAccess {
+    pub fn event_context(&self, req: &HttpRequest) -> EventContext {
+        user_event_context(req, self.user.id)
+    }
+}
+
+fn user_event_context(req: &HttpRequest, actor_user_id: i32) -> EventContext {
+    RequestProvenance::from_request(req)
+        .map(|provenance| provenance.user_event_context(actor_user_id))
+        .unwrap_or_else(|| EventContext::user(actor_user_id, None, None))
 }
 
 fn extract_token(req: &HttpRequest) -> Result<Token, ApiError> {

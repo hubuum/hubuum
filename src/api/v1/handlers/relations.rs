@@ -122,6 +122,7 @@ async fn create_class_relation(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     relation: web::Json<NewHubuumClassRelation>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let relation = relation.into_inner();
     let user = &requestor.principal;
@@ -143,7 +144,10 @@ async fn create_class_relation(
         namespaces.1
     );
 
-    let relation = relation.save(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    let relation = relation
+        .save_with_context(&pool, Some(&event_context))
+        .await?;
 
     Ok(ApiResponse::new(relation, StatusCode::CREATED))
 }
@@ -167,6 +171,7 @@ async fn delete_class_relation(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     relation_id: web::Path<HubuumClassRelationID>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let relation_id = relation_id.into_inner();
@@ -187,7 +192,10 @@ async fn delete_class_relation(
         namespaces.1
     );
 
-    relation_id.delete(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    relation_id
+        .delete_with_context(&pool, Some(&event_context))
+        .await?;
 
     Ok(ApiResponse::no_content())
 }
@@ -293,6 +301,7 @@ async fn create_object_relation(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     relation: web::Json<NewHubuumObjectRelation>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let relation = relation.into_inner();
     let user = &requestor.principal;
@@ -314,7 +323,10 @@ async fn create_object_relation(
         namespaces.1
     );
 
-    let relation = relation.save(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    let relation = relation
+        .save_with_context(&pool, Some(&event_context))
+        .await?;
 
     Ok(ApiResponse::new(relation, StatusCode::CREATED))
 }
@@ -338,6 +350,7 @@ async fn delete_object_relation(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     relation_id: web::Path<HubuumObjectRelationID>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let relation_id = relation_id.into_inner();
@@ -358,7 +371,10 @@ async fn delete_object_relation(
         namespaces.1
     );
 
-    relation_id.delete(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    relation_id
+        .delete_with_context(&pool, Some(&event_context))
+        .await?;
 
     Ok(ApiResponse::no_content())
 }

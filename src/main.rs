@@ -2,6 +2,7 @@ mod api;
 mod config;
 mod db;
 mod errors;
+pub mod events;
 mod extractors;
 mod logger;
 mod macros;

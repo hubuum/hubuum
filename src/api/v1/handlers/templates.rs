@@ -239,6 +239,7 @@ pub async fn patch_template(
     requestor: Authenticated,
     template_id: web::Path<ReportTemplateID>,
     update: web::Json<UpdateReportTemplate>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let template_id = template_id.into_inner();
@@ -272,7 +273,10 @@ pub async fn patch_template(
         );
     }
 
-    let updated = update.update(&pool, existing.id).await?;
+    let event_context = requestor.event_context(&req);
+    let updated = update
+        .update_with_context(&pool, existing.id, Some(&event_context))
+        .await?;
 
     Ok(ApiResponse::new(updated, StatusCode::OK))
 }

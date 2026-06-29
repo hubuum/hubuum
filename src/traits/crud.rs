@@ -1,5 +1,6 @@
 use crate::db::DbPool;
 use crate::errors::ApiError;
+use crate::events::EventContext;
 
 use super::context::BackendContext;
 
@@ -9,6 +10,17 @@ use super::context::BackendContext;
 /// hidden adapter traits so implementations can stay thin.
 pub trait CanDelete {
     async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.delete_with_context(backend, None).await
+    }
+
+    async fn delete_with_context<C>(
+        &self,
+        backend: &C,
+        context: Option<&EventContext>,
+    ) -> Result<(), ApiError>
     where
         C: BackendContext + ?Sized;
 }
@@ -21,6 +33,17 @@ pub trait CanSave {
     type Output;
     async fn save<C>(&self, backend: &C) -> Result<Self::Output, ApiError>
     where
+        C: BackendContext + ?Sized,
+    {
+        self.save_with_context(backend, None).await
+    }
+
+    async fn save_with_context<C>(
+        &self,
+        backend: &C,
+        context: Option<&EventContext>,
+    ) -> Result<Self::Output, ApiError>
+    where
         C: BackendContext + ?Sized;
 }
 
@@ -32,23 +55,48 @@ pub trait CanUpdate {
     type Output;
     async fn update<C>(&self, backend: &C, entry_id: i32) -> Result<Self::Output, ApiError>
     where
+        C: BackendContext + ?Sized,
+    {
+        self.update_with_context(backend, entry_id, None).await
+    }
+
+    async fn update_with_context<C>(
+        &self,
+        backend: &C,
+        entry_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<Self::Output, ApiError>
+    where
         C: BackendContext + ?Sized;
 }
 
 #[doc(hidden)]
 pub trait DeleteAdapter {
     async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError>;
+
+    async fn delete_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        _context: Option<&EventContext>,
+    ) -> Result<(), ApiError> {
+        self.delete_adapter(pool).await
+    }
 }
 
 impl<T> CanDelete for T
 where
     T: DeleteAdapter,
 {
-    async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>
+    async fn delete_with_context<C>(
+        &self,
+        backend: &C,
+        context: Option<&EventContext>,
+    ) -> Result<(), ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.delete_adapter(backend.db_pool()).await
+        self.delete_adapter_with_context(backend.db_pool(), context)
+            .await
     }
 }
 
@@ -57,6 +105,14 @@ pub trait SaveAdapter {
     type Output;
 
     async fn save_adapter(&self, pool: &DbPool) -> Result<Self::Output, ApiError>;
+
+    async fn save_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        _context: Option<&EventContext>,
+    ) -> Result<Self::Output, ApiError> {
+        self.save_adapter(pool).await
+    }
 }
 
 impl<T> CanSave for T
@@ -65,11 +121,16 @@ where
 {
     type Output = T::Output;
 
-    async fn save<C>(&self, backend: &C) -> Result<Self::Output, ApiError>
+    async fn save_with_context<C>(
+        &self,
+        backend: &C,
+        context: Option<&EventContext>,
+    ) -> Result<Self::Output, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.save_adapter(backend.db_pool()).await
+        self.save_adapter_with_context(backend.db_pool(), context)
+            .await
     }
 }
 
@@ -78,6 +139,15 @@ pub trait UpdateAdapter {
     type Output;
 
     async fn update_adapter(&self, pool: &DbPool, entry_id: i32) -> Result<Self::Output, ApiError>;
+
+    async fn update_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        entry_id: i32,
+        _context: Option<&EventContext>,
+    ) -> Result<Self::Output, ApiError> {
+        self.update_adapter(pool, entry_id).await
+    }
 }
 
 impl<T> CanUpdate for T
@@ -86,11 +156,17 @@ where
 {
     type Output = T::Output;
 
-    async fn update<C>(&self, backend: &C, entry_id: i32) -> Result<Self::Output, ApiError>
+    async fn update_with_context<C>(
+        &self,
+        backend: &C,
+        entry_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<Self::Output, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.update_adapter(backend.db_pool(), entry_id).await
+        self.update_adapter_with_context(backend.db_pool(), entry_id, context)
+            .await
     }
 }
 
