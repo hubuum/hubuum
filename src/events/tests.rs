@@ -19,6 +19,7 @@ use crate::events::{
 use crate::models::class::{NewHubuumClass, UpdateHubuumClass};
 use crate::models::namespace::{NewNamespaceWithAssignee, UpdateNamespace};
 use crate::models::object::{NewHubuumObject, UpdateHubuumObject};
+use crate::models::{NewHubuumClassRelation, NewHubuumObjectRelation};
 use crate::schema::events::dsl::events;
 use crate::tests::{TestScope, test_scope};
 use crate::traits::{CanDelete, CanSave, CanUpdate};
@@ -341,6 +342,206 @@ async fn object_writes_emit_lifecycle_events_in_transaction() {
     assert!(rows[2].after.is_none());
 
     class.delete(&scope.pool).await.unwrap();
+    fixture.cleanup().await.unwrap();
+}
+
+#[actix_web::test]
+async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
+    let scope = test_scope();
+    let fixture = scope.with_namespace().await;
+    let context = EventContext::user(
+        13,
+        Some(Uuid::new_v4()),
+        Some("class-relation-correlation".into()),
+    );
+
+    let class_a = NewHubuumClass {
+        name: scope.scoped_name("relation_class_a"),
+        namespace_id: fixture.namespace.id,
+        json_schema: None,
+        validate_schema: Some(false),
+        description: "a".to_string(),
+    }
+    .save(&scope.pool)
+    .await
+    .unwrap();
+    let class_b = NewHubuumClass {
+        name: scope.scoped_name("relation_class_b"),
+        namespace_id: fixture.namespace.id,
+        json_schema: None,
+        validate_schema: Some(false),
+        description: "b".to_string(),
+    }
+    .save(&scope.pool)
+    .await
+    .unwrap();
+
+    let relation = NewHubuumClassRelation {
+        from_hubuum_class_id: class_a.id,
+        to_hubuum_class_id: class_b.id,
+        forward_template_alias: Some("children".to_string()),
+        reverse_template_alias: Some("parents".to_string()),
+    }
+    .save_with_context(&scope.pool, Some(&context))
+    .await
+    .unwrap();
+
+    relation
+        .delete_with_context(&scope.pool, Some(&context))
+        .await
+        .unwrap();
+
+    let rows = events_for(&scope, "class_relation", relation.id);
+    assert_eq!(rows.len(), 2);
+
+    assert_eq!(rows[0].action, "created");
+    assert_eq!(rows[0].actor_user_id, Some(13));
+    assert_eq!(
+        rows[0].correlation_id.as_deref(),
+        Some("class-relation-correlation")
+    );
+    assert_eq!(
+        rows[0].metadata["from_class_id"],
+        serde_json::json!(class_a.id)
+    );
+    assert_eq!(
+        rows[0].metadata["to_class_id"],
+        serde_json::json!(class_b.id)
+    );
+    assert_eq!(
+        rows[0].metadata["related_namespace_ids"],
+        serde_json::json!([fixture.namespace.id, fixture.namespace.id])
+    );
+    assert_eq!(
+        rows[0].after.as_ref().unwrap()["forward_template_alias"],
+        "children"
+    );
+
+    assert_eq!(rows[1].action, "deleted");
+    assert_eq!(
+        rows[1].before.as_ref().unwrap()["reverse_template_alias"],
+        "parents"
+    );
+    assert!(rows[1].after.is_none());
+
+    class_a.delete(&scope.pool).await.unwrap();
+    class_b.delete(&scope.pool).await.unwrap();
+    fixture.cleanup().await.unwrap();
+}
+
+#[actix_web::test]
+async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
+    let scope = test_scope();
+    let fixture = scope.with_namespace().await;
+    let context = EventContext::user(
+        15,
+        Some(Uuid::new_v4()),
+        Some("object-relation-correlation".into()),
+    );
+
+    let class_a = NewHubuumClass {
+        name: scope.scoped_name("object_relation_class_a"),
+        namespace_id: fixture.namespace.id,
+        json_schema: None,
+        validate_schema: Some(false),
+        description: "a".to_string(),
+    }
+    .save(&scope.pool)
+    .await
+    .unwrap();
+    let class_b = NewHubuumClass {
+        name: scope.scoped_name("object_relation_class_b"),
+        namespace_id: fixture.namespace.id,
+        json_schema: None,
+        validate_schema: Some(false),
+        description: "b".to_string(),
+    }
+    .save(&scope.pool)
+    .await
+    .unwrap();
+    let class_relation = NewHubuumClassRelation {
+        from_hubuum_class_id: class_a.id,
+        to_hubuum_class_id: class_b.id,
+        forward_template_alias: None,
+        reverse_template_alias: None,
+    }
+    .save(&scope.pool)
+    .await
+    .unwrap();
+
+    let object_a = NewHubuumObject {
+        name: scope.scoped_name("object_relation_object_a"),
+        namespace_id: fixture.namespace.id,
+        hubuum_class_id: class_a.id,
+        data: serde_json::json!({}),
+        description: "a".to_string(),
+    }
+    .save(&scope.pool)
+    .await
+    .unwrap();
+    let object_b = NewHubuumObject {
+        name: scope.scoped_name("object_relation_object_b"),
+        namespace_id: fixture.namespace.id,
+        hubuum_class_id: class_b.id,
+        data: serde_json::json!({}),
+        description: "b".to_string(),
+    }
+    .save(&scope.pool)
+    .await
+    .unwrap();
+
+    let relation = NewHubuumObjectRelation {
+        from_hubuum_object_id: object_a.id,
+        to_hubuum_object_id: object_b.id,
+        class_relation_id: class_relation.id,
+    }
+    .save_with_context(&scope.pool, Some(&context))
+    .await
+    .unwrap();
+
+    relation
+        .delete_with_context(&scope.pool, Some(&context))
+        .await
+        .unwrap();
+
+    let rows = events_for(&scope, "object_relation", relation.id);
+    assert_eq!(rows.len(), 2);
+
+    assert_eq!(rows[0].action, "created");
+    assert_eq!(rows[0].actor_user_id, Some(15));
+    assert_eq!(
+        rows[0].correlation_id.as_deref(),
+        Some("object-relation-correlation")
+    );
+    assert_eq!(
+        rows[0].metadata["class_relation_id"],
+        serde_json::json!(class_relation.id)
+    );
+    assert_eq!(
+        rows[0].metadata["from_object_id"],
+        serde_json::json!(object_a.id)
+    );
+    assert_eq!(
+        rows[0].metadata["to_object_id"],
+        serde_json::json!(object_b.id)
+    );
+    assert_eq!(
+        rows[0].after.as_ref().unwrap()["class_relation_id"],
+        class_relation.id
+    );
+
+    assert_eq!(rows[1].action, "deleted");
+    assert_eq!(
+        rows[1].before.as_ref().unwrap()["from_hubuum_object_id"],
+        object_a.id
+    );
+    assert!(rows[1].after.is_none());
+
+    object_a.delete(&scope.pool).await.unwrap();
+    object_b.delete(&scope.pool).await.unwrap();
+    class_relation.delete(&scope.pool).await.unwrap();
+    class_a.delete(&scope.pool).await.unwrap();
+    class_b.delete(&scope.pool).await.unwrap();
     fixture.cleanup().await.unwrap();
 }
 
