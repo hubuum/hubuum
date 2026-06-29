@@ -9,12 +9,10 @@ use super::context::BackendContext;
 /// This is the public model-facing delete API. The actual backend-specific work is delegated to
 /// hidden adapter traits so implementations can stay thin.
 pub trait CanDelete {
+    #[cfg_attr(not(test), allow(dead_code))]
     async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
-    {
-        self.delete_with_context(backend, None).await
-    }
+        C: BackendContext + ?Sized;
 
     async fn delete_with_context<C>(
         &self,
@@ -31,12 +29,10 @@ pub trait CanDelete {
 /// `Namespace`, while saving an existing value may also return the updated persisted value.
 pub trait CanSave {
     type Output;
+    #[cfg_attr(not(test), allow(dead_code))]
     async fn save<C>(&self, backend: &C) -> Result<Self::Output, ApiError>
     where
-        C: BackendContext + ?Sized,
-    {
-        self.save_with_context(backend, None).await
-    }
+        C: BackendContext + ?Sized;
 
     async fn save_with_context<C>(
         &self,
@@ -87,6 +83,13 @@ impl<T> CanDelete for T
 where
     T: DeleteAdapter,
 {
+    async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.delete_with_context(backend, None).await
+    }
+
     async fn delete_with_context<C>(
         &self,
         backend: &C,
@@ -120,6 +123,13 @@ where
     T: SaveAdapter,
 {
     type Output = T::Output;
+
+    async fn save<C>(&self, backend: &C) -> Result<Self::Output, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.save_with_context(backend, None).await
+    }
 
     async fn save_with_context<C>(
         &self,
