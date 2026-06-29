@@ -30,6 +30,16 @@ tokio::task_local! {
     static AMBIENT_STATEMENT_TIMEOUT: Option<StatementTimeoutMs>;
 }
 
+tokio::task_local! {
+    /// The acting user id for the current async task, if any. Set via
+    /// [`with_actor_scope`] and applied as a transaction-local
+    /// `SET LOCAL hubuum.actor_id` by [`with_connection_timeout`] /
+    /// [`with_transaction`], so the history trigger can attribute writes to a
+    /// user without threading the actor through every caller. Outside any scope
+    /// the lookup yields `None`, recorded as a NULL actor.
+    static AMBIENT_ACTOR: Option<i32>;
+}
+
 /// Run `future` with an ambient per-query `statement_timeout` in effect.
 ///
 /// While the future is being polled, every [`with_connection`] /
@@ -57,6 +67,29 @@ fn ambient_statement_timeout() -> Option<StatementTimeoutMs> {
     AMBIENT_STATEMENT_TIMEOUT
         .try_with(|timeout| *timeout)
         .unwrap_or(None)
+}
+
+/// Run `future` with an ambient actor id in effect (see [`AMBIENT_ACTOR`]).
+pub async fn with_actor_scope<F, R>(actor: Option<i32>, future: F) -> R
+where
+    F: std::future::Future<Output = R>,
+{
+    AMBIENT_ACTOR.scope(actor, future).await
+}
+
+/// The ambient actor id for the current task, or `None` outside any scope.
+fn ambient_actor() -> Option<i32> {
+    AMBIENT_ACTOR.try_with(|actor| *actor).unwrap_or(None)
+}
+
+/// Apply a transaction-local `SET LOCAL hubuum.actor_id`. Bound, not formatted,
+/// mirroring [`set_local_statement_timeout`]. Reverts at COMMIT/ROLLBACK.
+fn set_local_actor(conn: &mut PgConnection, actor: i32) -> Result<(), diesel::result::Error> {
+    use diesel::RunQueryDsl;
+    diesel::sql_query("SELECT set_config('hubuum.actor_id', $1, true)")
+        .bind::<diesel::sql_types::Text, _>(actor.to_string())
+        .execute(conn)?;
+    Ok(())
 }
 
 /// Apply a transaction-local `SET LOCAL statement_timeout` to the current
@@ -132,13 +165,20 @@ where
     F: FnOnce(&mut PgConnection) -> Result<R, E>,
     ApiError: From<E>,
 {
+    let actor = ambient_actor();
     let mut conn = acquire_connection(pool)?;
-    match statement_timeout {
-        None => f(&mut conn).map_err(ApiError::from),
-        Some(statement_timeout) => conn.transaction::<R, ApiError, _>(|conn| {
-            set_local_statement_timeout(conn, statement_timeout)?;
+    if statement_timeout.is_none() && actor.is_none() {
+        f(&mut conn).map_err(ApiError::from)
+    } else {
+        conn.transaction::<R, ApiError, _>(|conn| {
+            if let Some(statement_timeout) = statement_timeout {
+                set_local_statement_timeout(conn, statement_timeout)?;
+            }
+            if let Some(actor) = actor {
+                set_local_actor(conn, actor)?;
+            }
             f(conn).map_err(ApiError::from)
-        }),
+        })
     }
 }
 
@@ -167,10 +207,14 @@ where
     ApiError: From<E>,
 {
     let statement_timeout = ambient_statement_timeout();
+    let actor = ambient_actor();
     let mut conn = acquire_connection(pool)?;
     conn.transaction::<R, ApiError, _>(|conn| {
         if let Some(statement_timeout) = statement_timeout {
             set_local_statement_timeout(conn, statement_timeout)?;
+        }
+        if let Some(actor) = actor {
+            set_local_actor(conn, actor)?;
         }
         f(conn).map_err(ApiError::from)
     })
