@@ -19,6 +19,7 @@ use crate::utilities::auth::hash_password;
 
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
+use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 
 use crate::{date_search, numeric_search, string_search, trace_query};
 
