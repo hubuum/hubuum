@@ -3,6 +3,7 @@ use crate::db::traits::relations::{
     DeleteClassRelationRecord, LoadClassRelationRecord, SaveClassRelationRecord,
 };
 use crate::errors::ApiError;
+use crate::events::EventContext;
 
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
@@ -50,6 +51,15 @@ impl DeleteAdapter for HubuumClassRelation {
     async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
         self.delete_class_relation_record(pool).await
     }
+
+    async fn delete_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<(), ApiError> {
+        self.delete_class_relation_record_with_context(pool, context)
+            .await
+    }
 }
 
 impl SaveAdapter for NewHubuumClassRelation {
@@ -58,11 +68,29 @@ impl SaveAdapter for NewHubuumClassRelation {
     async fn save_adapter(&self, pool: &DbPool) -> Result<HubuumClassRelation, ApiError> {
         self.save_class_relation_record(pool).await
     }
+
+    async fn save_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumClassRelation, ApiError> {
+        self.save_class_relation_record_with_context(pool, context)
+            .await
+    }
 }
 
 impl DeleteAdapter for HubuumClassRelationID {
     async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
         self.delete_class_relation_record(pool).await
+    }
+
+    async fn delete_adapter_with_context(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<(), ApiError> {
+        self.delete_class_relation_record_with_context(pool, context)
+            .await
     }
 }
 
