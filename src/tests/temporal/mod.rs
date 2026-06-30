@@ -209,18 +209,28 @@ async fn anonymize_scrubs_pii_but_keeps_history_actor() {
     anonymize_user(&pool, user.id).await.unwrap();
 
     // PII scrubbed on the (non-versioned) users row.
-    let (username, email, anonymized_at): (String, Option<String>, Option<chrono::NaiveDateTime>) =
+    let (username, email, stored_password, anonymized_at): (String, Option<String>, String, Option<chrono::NaiveDateTime>) =
         with_connection(&pool, |conn| {
             use crate::schema::users::dsl as u;
             u::users
                 .filter(u::id.eq(user.id))
-                .select((u::username, u::email, u::anonymized_at))
+                .select((u::username, u::email, u::password, u::anonymized_at))
                 .first(conn)
         })
         .unwrap();
     assert_eq!(username, format!("anonymized-{}", user.id));
     assert_eq!(email, None);
     assert!(anonymized_at.is_some());
+
+    // Anonymized password cannot authenticate (neither the original password nor empty string).
+    assert!(
+        !crate::utilities::auth::verify_password("secret", &stored_password).unwrap(),
+        "original password must not verify"
+    );
+    assert!(
+        !crate::utilities::auth::verify_password("", &stored_password).unwrap(),
+        "empty password must not verify"
+    );
 
     // Tokens revoked.
     let token_count: i64 = with_connection(&pool, |conn| {
