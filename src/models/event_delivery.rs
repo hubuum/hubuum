@@ -102,6 +102,85 @@ pub struct EventDeliveryUpdateResponse {
     pub delivery: EventDelivery,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
+pub struct EventDeliveryStatusCounts {
+    pub total: i64,
+    pub pending: i64,
+    pub in_flight: i64,
+    pub succeeded: i64,
+    pub failed: i64,
+    pub dead: i64,
+    pub retryable: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct EventWorkerWakeupStats {
+    pub notifications_sent: u64,
+    pub notification_wakeups: u64,
+    pub poll_wakeups: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct EventWorkerHealth {
+    pub workers_configured: usize,
+    pub batch_size: usize,
+    pub poll_interval_ms: u64,
+    pub lock_timeout_ms: u64,
+    pub wakeups: EventWorkerWakeupStats,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct EventFanoutHealth {
+    pub pending_events: i64,
+    pub in_flight_events: i64,
+    pub stale_claims: i64,
+    pub oldest_pending_age_seconds: Option<i64>,
+    pub worker: EventWorkerHealth,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct EventDeliveryQueueHealth {
+    pub counts: EventDeliveryStatusCounts,
+    pub stale_claims: i64,
+    pub oldest_due_age_seconds: Option<i64>,
+    pub worker: EventWorkerHealth,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct EventSinkDeliveryHealth {
+    pub sink_id: i32,
+    pub sink_name: String,
+    pub sink_kind: String,
+    pub sink_enabled: bool,
+    pub subscription_count: i64,
+    pub counts: EventDeliveryStatusCounts,
+    pub stale_claims: i64,
+    pub oldest_due_age_seconds: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct EventSubscriptionDeliveryHealth {
+    pub subscription_id: i32,
+    pub subscription_name: String,
+    pub namespace_id: i32,
+    pub sink_id: i32,
+    pub sink_name: String,
+    pub sink_kind: String,
+    pub subscription_enabled: bool,
+    pub sink_enabled: bool,
+    pub counts: EventDeliveryStatusCounts,
+    pub stale_claims: i64,
+    pub oldest_due_age_seconds: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct EventDeliveryHealthResponse {
+    pub fanout: EventFanoutHealth,
+    pub delivery: EventDeliveryQueueHealth,
+    pub sinks: Vec<EventSinkDeliveryHealth>,
+    pub subscriptions: Vec<EventSubscriptionDeliveryHealth>,
+}
+
 impl CursorPaginated for EventDelivery {
     fn supports_sort(field: &FilterField) -> bool {
         matches!(

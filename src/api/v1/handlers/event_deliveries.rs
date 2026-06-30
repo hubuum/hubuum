@@ -6,11 +6,14 @@ use crate::db::traits::event_delivery::{
     list_event_deliveries_with_total_count, load_event_delivery, mark_event_delivery_dead,
     release_event_delivery_for_retry,
 };
+use crate::db::traits::event_observability::load_event_delivery_health;
 use crate::errors::ApiError;
 use crate::events::kick_event_delivery_worker;
 use crate::extractors::AdminAccess;
 use crate::models::search::parse_query_parameter;
-use crate::models::{EventDelivery, EventDeliveryID, EventDeliveryUpdateResponse};
+use crate::models::{
+    EventDelivery, EventDeliveryHealthResponse, EventDeliveryID, EventDeliveryUpdateResponse,
+};
 use crate::pagination::prepare_db_pagination;
 use crate::utilities::response::{json_response, paginated_json_response};
 
@@ -44,6 +47,28 @@ pub async fn get_event_deliveries(
     let (deliveries, total_count) =
         list_event_deliveries_with_total_count(&pool, &query_options).await?;
     paginated_json_response(deliveries, total_count, StatusCode::OK, &params)
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/event-deliveries/health",
+    tag = "event-deliveries",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Event delivery pipeline health", body = EventDeliveryHealthResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse)
+    )
+)]
+#[get("/health")]
+pub async fn get_event_delivery_health(
+    pool: web::Data<DbPool>,
+    _admin: AdminAccess,
+) -> Result<impl Responder, ApiError> {
+    Ok(json_response(
+        load_event_delivery_health(&pool).await?,
+        StatusCode::OK,
+    ))
 }
 
 #[utoipa::path(
@@ -127,6 +152,7 @@ pub async fn dead_letter_event_delivery(
 
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(get_event_deliveries)
+        .service(get_event_delivery_health)
         .service(get_event_delivery)
         .service(retry_event_delivery)
         .service(dead_letter_event_delivery);

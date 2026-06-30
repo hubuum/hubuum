@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Once, OnceLock};
 use std::thread;
 use std::time::Duration;
@@ -19,10 +20,13 @@ use crate::db::traits::event_delivery::{
 };
 use crate::errors::ApiError;
 use crate::events::sink::{DefaultSinkResolver, EventEnvelope, SinkResolver};
-use crate::models::{EventSink, EventSubscription};
+use crate::models::{EventSink, EventSubscription, EventWorkerWakeupStats};
 
 static EVENT_DELIVERY_WORKER: Once = Once::new();
 static EVENT_DELIVERY_NOTIFY: OnceLock<Notify> = OnceLock::new();
+static EVENT_DELIVERY_NOTIFICATIONS_SENT: AtomicU64 = AtomicU64::new(0);
+static EVENT_DELIVERY_NOTIFICATION_WAKEUPS: AtomicU64 = AtomicU64::new(0);
+static EVENT_DELIVERY_POLL_WAKEUPS: AtomicU64 = AtomicU64::new(0);
 static DEFAULT_SINK_RESOLVER: std::sync::LazyLock<DefaultSinkResolver> =
     std::sync::LazyLock::new(DefaultSinkResolver::default);
 
@@ -134,8 +138,12 @@ fn delivery_worker_should_continue(result: &Result<usize, ApiError>) -> bool {
 
 async fn wait_for_event_delivery_wakeup(poll_interval: Duration) {
     tokio::select! {
-        _ = sleep(poll_interval) => {}
-        _ = get_event_delivery_notify().notified() => {}
+        _ = sleep(poll_interval) => {
+            EVENT_DELIVERY_POLL_WAKEUPS.fetch_add(1, Ordering::Relaxed);
+        }
+        _ = get_event_delivery_notify().notified() => {
+            EVENT_DELIVERY_NOTIFICATION_WAKEUPS.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 
@@ -216,7 +224,16 @@ pub fn ensure_event_delivery_worker_running(pool: DbPool) {
 
 pub fn kick_event_delivery_worker(pool: DbPool) {
     ensure_event_delivery_worker_running(pool);
+    EVENT_DELIVERY_NOTIFICATIONS_SENT.fetch_add(1, Ordering::Relaxed);
     get_event_delivery_notify().notify_one();
+}
+
+pub fn event_delivery_wakeup_stats() -> EventWorkerWakeupStats {
+    EventWorkerWakeupStats {
+        notifications_sent: EVENT_DELIVERY_NOTIFICATIONS_SENT.load(Ordering::Relaxed),
+        notification_wakeups: EVENT_DELIVERY_NOTIFICATION_WAKEUPS.load(Ordering::Relaxed),
+        poll_wakeups: EVENT_DELIVERY_POLL_WAKEUPS.load(Ordering::Relaxed),
+    }
 }
 
 #[cfg(test)]

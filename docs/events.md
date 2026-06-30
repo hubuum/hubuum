@@ -177,6 +177,45 @@ deduplicating by `event_id`.
 Operators can inspect, retry, or dead-letter delivery rows through the
 `/api/v1/event-deliveries` admin endpoints.
 
+## Operational Health
+
+The admin endpoint `GET /api/v1/event-deliveries/health` returns a delivery
+pipeline snapshot for operators and dashboards. It includes:
+
+- Fan-out backlog: undispatched events, in-flight fan-out claims, stale fan-out
+  claims, oldest pending age, worker settings, and notification-versus-poll
+  wakeup counters.
+- Delivery backlog: status counts, retryable failed rows, stale delivery
+  claims, oldest due age, worker settings, and notification-versus-poll wakeup
+  counters.
+- Per-sink and per-subscription delivery counts, stale claims, retryable rows,
+  enabled flags, and oldest due age.
+
+Use the fields together to distinguish common failure modes:
+
+- `fanout.pending_events > 0` with rising `oldest_pending_age_seconds` means
+  events are being written but fan-out is not keeping up.
+- Fan-out `stale_claims > 0` means a worker claimed events but did not clear
+  them before the lock expired.
+- `delivery.counts.pending` or `delivery.counts.retryable` growing while
+  fan-out is clear means delivery workers are not keeping up or are disabled.
+- `delivery.stale_claims > 0` means a delivery worker claimed rows and did not
+  finish before the lock expired.
+- Per-sink `failed`, `dead`, or `retryable` growth with other sinks healthy
+  usually points to a sink configuration, credential, endpoint, or broker
+  problem.
+- Wakeup `notifications_sent` increasing while `notification_wakeups` stays
+  flat and backlog only drains on `poll_wakeups` points to worker wakeup
+  trouble or missing workers.
+
+Alert thresholds are deployment-specific, but a practical baseline is to page
+when fan-out or delivery oldest due age exceeds the poll interval by several
+minutes, when stale claims remain non-zero across multiple lock-timeout
+windows, or when dead-letter counts grow for a production sink. First confirm
+worker counts and lock/poll settings in the health response, then inspect the
+affected delivery rows, fix the sink or worker condition, and use the retry
+admin action for rows that should be released from `failed` or `dead`.
+
 ## Retention And Archival
 
 Event retention purge is available as an operational worker, but is disabled by

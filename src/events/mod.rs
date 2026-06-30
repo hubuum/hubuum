@@ -28,8 +28,12 @@ mod webhook;
 
 pub use context::RequestProvenance;
 pub use db::emit_event;
-pub use delivery::{ensure_event_delivery_worker_running, kick_event_delivery_worker};
-pub use fanout::{ensure_event_fanout_worker_running, kick_event_fanout_worker};
+pub use delivery::{
+    ensure_event_delivery_worker_running, event_delivery_wakeup_stats, kick_event_delivery_worker,
+};
+pub use fanout::{
+    ensure_event_fanout_worker_running, event_fanout_wakeup_stats, kick_event_fanout_worker,
+};
 pub use model::{Event, EventId, EventResponse, NewEvent};
 pub use retention::ensure_event_retention_worker_running;
 pub use sink::{
