@@ -2,7 +2,7 @@ use std::fmt;
 
 use chrono::NaiveDateTime;
 use futures::future::BoxFuture;
-#[cfg(any(feature = "amqp", feature = "valkey"))]
+#[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -103,6 +103,8 @@ impl SinkResolver for NoopSinkResolver {
 pub struct DefaultSinkResolver {
     #[cfg(feature = "amqp")]
     amqp: crate::events::amqp::AmqpSink,
+    #[cfg(feature = "email")]
+    email: crate::events::email::EmailSink,
     #[cfg(feature = "valkey")]
     valkey: crate::events::valkey::ValkeySink,
     webhook: WebhookSink,
@@ -113,9 +115,12 @@ impl SinkResolver for DefaultSinkResolver {
         match kind {
             #[cfg(feature = "amqp")]
             EventSinkKind::Amqp => Some(&self.amqp),
+            #[cfg(feature = "email")]
+            EventSinkKind::Email => Some(&self.email),
             #[cfg(feature = "valkey")]
             EventSinkKind::ValkeyStream => Some(&self.valkey),
             EventSinkKind::Webhook => Some(&self.webhook),
+            #[cfg(not(all(feature = "amqp", feature = "email", feature = "valkey")))]
             _ => None,
         }
     }
@@ -133,7 +138,7 @@ pub(crate) fn resolve_event_sink_secret(secret_ref: &str) -> Result<String, Sink
     })
 }
 
-#[cfg(any(feature = "amqp", feature = "valkey"))]
+#[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
 pub(crate) fn resolve_event_sink_secret_uri(
     uri: &str,
     secret_ref: Option<&str>,

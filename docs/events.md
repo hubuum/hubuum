@@ -117,6 +117,53 @@ Each `XADD` entry includes discrete fields for `event_id`, `entity_type`,
 `entity_name`, `action`, and `actor_kind`, plus the full JSON envelope in the
 `payload` field. Consumers should deduplicate by `event_id`.
 
+## Email / SMTP Sinks
+
+Email delivery is available when Hubuum is built with the `email` feature. This
+transport is intended for human-facing notifications, while the canonical event
+stream remains the source of truth for audit and retry state.
+
+The subscription `routing` object holds the message recipients:
+
+```json
+{
+  "routing": {
+    "recipients": ["Ops <ops@example.com>"],
+    "cc": ["audit@example.com"],
+    "bcc": ["archive@example.com"]
+  }
+}
+```
+
+`to` is accepted as an alias for `recipients`.
+
+The sink `config` holds the SMTP connection URL, sender, optional reply-to
+address, and MiniJinja templates for the subject and text body:
+
+```json
+{
+  "config": {
+    "uri": "smtps://hubuum:{secret}@smtp.example.com",
+    "from": "Hubuum <hubuum@example.com>",
+    "reply_to": "noreply@example.com",
+    "subject_template": "Hubuum {{ entity_type }} {{ action }}: {{ entity_name | default_if_empty(summary) }}",
+    "body_template": "{{ summary }}\n\nEvent: {{ event_id }}\nEntity: {{ entity_type }}\nAction: {{ action }}\n"
+  },
+  "secret_ref": "smtp_password"
+}
+```
+
+SMTP URLs use the normal `smtp://` and `smtps://` schemes supported by SMTP
+deployments. When `secret_ref` is set, the URI must contain `{secret}`. Hubuum
+reads `HUBUUM_EVENT_SINK_SECRET_<SECRET_REF>`, percent-encodes the value for
+URI userinfo use, and substitutes it into the URI. For the example above, the
+environment variable is `HUBUUM_EVENT_SINK_SECRET_SMTP_PASSWORD`.
+
+Template context exposes the event envelope fields at the top level, including
+`event_id`, `entity_type`, `entity_name`, `action`, `summary`, and
+`occurred_at`. The full envelope is also available as `event`. Subjects must
+render to a single non-empty line, and bodies must render to non-empty text.
+
 ## Delivery Semantics
 
 Delivery is at least once. A successful `2xx` webhook response marks the

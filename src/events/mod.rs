@@ -16,6 +16,8 @@ mod amqp;
 mod context;
 mod db;
 mod delivery;
+#[cfg(feature = "email")]
+mod email;
 mod fanout;
 mod model;
 mod sink;
