@@ -17,7 +17,7 @@ mod model;
 
 pub use context::RequestProvenance;
 pub use db::emit_event;
-pub use model::{Event, EventId, NewEvent};
+pub use model::{Event, EventId, EventResponse, NewEvent};
 
 pub use hubuum_events_core::{
     Action, ActorKind, EntityType, EventCatalogError, EventContext, is_valid_pair, valid_actions,

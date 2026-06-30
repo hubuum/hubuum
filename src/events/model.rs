@@ -10,9 +10,14 @@
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::errors::ApiError;
+use crate::models::search::{FilterField, SortParam};
+use crate::pagination::{
+    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+};
 use crate::schema::events;
 
 use super::{Action, ActorKind, EntityType, EventCatalogError, EventContext, is_valid_pair};
@@ -77,6 +82,27 @@ pub struct Event {
     pub fanout_claim_token: Option<Uuid>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct EventResponse {
+    pub id: i64,
+    pub event_id: Uuid,
+    pub occurred_at: NaiveDateTime,
+    pub entity_type: String,
+    pub entity_id: Option<i32>,
+    pub entity_name: Option<String>,
+    pub namespace_id: Option<i32>,
+    pub action: String,
+    pub actor_user_id: Option<i32>,
+    pub actor_kind: String,
+    pub request_id: Option<Uuid>,
+    pub correlation_id: Option<String>,
+    pub summary: String,
+    pub before: Option<serde_json::Value>,
+    pub after: Option<serde_json::Value>,
+    pub metadata: serde_json::Value,
+    pub schema_version: i32,
+}
+
 impl Event {
     /// Parse the stored `entity_type` text back into the typed catalog enum.
     pub fn entity_type(&self) -> Result<EntityType, EventCatalogError> {
@@ -91,6 +117,84 @@ impl Event {
     /// Parse the stored `actor_kind` text back into the typed enum.
     pub fn actor_kind(&self) -> Result<ActorKind, EventCatalogError> {
         ActorKind::from_db(&self.actor_kind)
+    }
+}
+
+impl From<Event> for EventResponse {
+    fn from(value: Event) -> Self {
+        Self {
+            id: value.id,
+            event_id: value.event_id,
+            occurred_at: value.occurred_at,
+            entity_type: value.entity_type,
+            entity_id: value.entity_id,
+            entity_name: value.entity_name,
+            namespace_id: value.namespace_id,
+            action: value.action,
+            actor_user_id: value.actor_user_id,
+            actor_kind: value.actor_kind,
+            request_id: value.request_id,
+            correlation_id: value.correlation_id,
+            summary: value.summary,
+            before: value.before,
+            after: value.after,
+            metadata: value.metadata,
+            schema_version: value.schema_version,
+        }
+    }
+}
+
+impl CursorPaginated for EventResponse {
+    fn supports_sort(field: &FilterField) -> bool {
+        matches!(field, FilterField::Id | FilterField::OccurredAt)
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        match field {
+            FilterField::Id => Ok(CursorValue::Integer(self.id)),
+            FilterField::OccurredAt => Ok(CursorValue::DateTime(self.occurred_at)),
+            _ => Err(ApiError::BadRequest(format!(
+                "Unsupported sort field '{}' for events",
+                field
+            ))),
+        }
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::OccurredAt,
+            descending: true,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: true,
+        }]
+    }
+}
+
+impl CursorSqlMapping for EventResponse {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorSqlField {
+                column: "events.id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::OccurredAt => CursorSqlField {
+                column: "events.occurred_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for events",
+                    field
+                )));
+            }
+        })
     }
 }
 

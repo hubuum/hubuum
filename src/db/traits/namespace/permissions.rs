@@ -80,6 +80,8 @@ fn permission_filter_sql(permission: Permissions, target: bool) -> &'static str 
         (Permissions::ExecuteRemoteTarget, false) => {
             "permissions.has_execute_remote_target = FALSE"
         }
+        (Permissions::ReadAudit, true) => "permissions.has_read_audit = TRUE",
+        (Permissions::ReadAudit, false) => "permissions.has_read_audit = FALSE",
     }
 }
 

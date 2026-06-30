@@ -164,6 +164,7 @@ diesel::table! {
         has_execute_remote_target -> Bool,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        has_read_audit -> Bool,
     }
 }
 

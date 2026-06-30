@@ -108,6 +108,7 @@ fn update_permission_for_grant(
             has_update_remote_target: Some(false),
             has_delete_remote_target: Some(false),
             has_execute_remote_target: Some(false),
+            has_read_audit: Some(false),
         }
     } else {
         UpdatePermission::default()
@@ -156,6 +157,7 @@ fn update_permission_for_grant(
             Permissions::UpdateRemoteTarget => update_perm.has_update_remote_target = Some(true),
             Permissions::DeleteRemoteTarget => update_perm.has_delete_remote_target = Some(true),
             Permissions::ExecuteRemoteTarget => update_perm.has_execute_remote_target = Some(true),
+            Permissions::ReadAudit => update_perm.has_read_audit = Some(true),
         }
     }
 
@@ -211,6 +213,7 @@ fn update_permission_for_revoke(
             Permissions::ExecuteRemoteTarget => {
                 update_perm.has_execute_remote_target = Some(false);
             }
+            Permissions::ReadAudit => update_perm.has_read_audit = Some(false),
         }
     }
     update_perm
@@ -253,6 +256,7 @@ fn new_permission_from_list(
         has_update_remote_target: permission_list.contains(&Permissions::UpdateRemoteTarget),
         has_delete_remote_target: permission_list.contains(&Permissions::DeleteRemoteTarget),
         has_execute_remote_target: permission_list.contains(&Permissions::ExecuteRemoteTarget),
+        has_read_audit: permission_list.contains(&Permissions::ReadAudit),
     }
 }
 
@@ -345,6 +349,7 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                             has_update_remote_target: Some(false),
                             has_delete_remote_target: Some(false),
                             has_execute_remote_target: Some(false),
+                            has_read_audit: Some(false),
                         }
                     } else {
                         UpdatePermission::default()
@@ -439,6 +444,9 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                             Permissions::ExecuteRemoteTarget => {
                                 update_perm.has_execute_remote_target = Some(true);
                             }
+                            Permissions::ReadAudit => {
+                                update_perm.has_read_audit = Some(true);
+                            }
                         }
                     }
 
@@ -497,6 +505,7 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                             .contains(&Permissions::DeleteRemoteTarget),
                         has_execute_remote_target: permission_list
                             .contains(&Permissions::ExecuteRemoteTarget),
+                        has_read_audit: permission_list.contains(&Permissions::ReadAudit),
                     };
 
                     Ok(diesel::insert_into(permissions)
@@ -685,6 +694,9 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                     }
                     Permissions::ExecuteRemoteTarget => {
                         update_perm.has_execute_remote_target = Some(false);
+                    }
+                    Permissions::ReadAudit => {
+                        update_perm.has_read_audit = Some(false);
                     }
                 }
             }

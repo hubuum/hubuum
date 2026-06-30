@@ -39,6 +39,7 @@ pub enum Permissions {
     UpdateRemoteTarget,
     DeleteRemoteTarget,
     ExecuteRemoteTarget,
+    ReadAudit,
 }
 
 impl Permissions {
@@ -82,6 +83,7 @@ impl Permissions {
             "UpdateRemoteTarget" => Ok(Permissions::UpdateRemoteTarget),
             "DeleteRemoteTarget" => Ok(Permissions::DeleteRemoteTarget),
             "ExecuteRemoteTarget" => Ok(Permissions::ExecuteRemoteTarget),
+            "ReadAudit" => Ok(Permissions::ReadAudit),
             _ => Err(ApiError::BadRequest(format!("Invalid permission: '{s}'"))),
         }
     }
@@ -121,6 +123,7 @@ impl Display for Permissions {
                 Permissions::UpdateRemoteTarget => "UpdateRemoteTarget",
                 Permissions::DeleteRemoteTarget => "DeleteRemoteTarget",
                 Permissions::ExecuteRemoteTarget => "ExecuteRemoteTarget",
+                Permissions::ReadAudit => "ReadAudit",
             }
         )
     }
@@ -289,6 +292,7 @@ impl<'a> PermissionFilter<'a, permissions::BoxedQuery<'a, diesel::pg::Pg>> for P
             Permissions::ExecuteRemoteTarget => {
                 query.filter(permissions::has_execute_remote_target.eq(target))
             }
+            Permissions::ReadAudit => query.filter(permissions::has_read_audit.eq(target)),
         }
     }
 }
@@ -330,6 +334,7 @@ pub struct Permission {
     pub has_execute_remote_target: bool,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+    pub has_read_audit: bool,
 }
 
 impl Permission {
@@ -399,6 +404,7 @@ impl Permission {
                 self.has_execute_remote_target,
                 Permissions::ExecuteRemoteTarget,
             ),
+            (self.has_read_audit, Permissions::ReadAudit),
         ]
         .into_iter()
         .filter_map(|(set, permission)| set.then_some(permission))
@@ -441,6 +447,7 @@ pub struct NewPermission {
     pub has_update_remote_target: bool,
     pub has_delete_remote_target: bool,
     pub has_execute_remote_target: bool,
+    pub has_read_audit: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, AsChangeset, Default)]
@@ -475,6 +482,7 @@ pub struct UpdatePermission {
     pub has_update_remote_target: Option<bool>,
     pub has_delete_remote_target: Option<bool>,
     pub has_execute_remote_target: Option<bool>,
+    pub has_read_audit: Option<bool>,
 }
 
 #[cfg(test)]

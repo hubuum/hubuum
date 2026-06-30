@@ -1,8 +1,9 @@
 use crate::api::handlers::{auth, meta, probes};
 use crate::api::v1::handlers::{
-    classes, groups, imports, me, namespaces, principals, relations, remote_targets, reports,
-    search, service_accounts, tasks, templates, users,
+    classes, events, groups, imports, me, namespaces, principals, relations, remote_targets,
+    reports, search, service_accounts, tasks, templates, users,
 };
+use crate::events::EventResponse;
 use crate::models::{
     ClassKey, Group, GroupKey, GroupPermission, HubuumClass, HubuumClassExpanded,
     HubuumClassRelation, HubuumClassWithPath, HubuumObject, HubuumObjectRelation,
@@ -118,6 +119,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         tasks::get_tasks,
         tasks::get_task,
         tasks::get_task_events,
+        events::get_events,
         imports::create_import,
         imports::get_import,
         imports::get_import_results,
@@ -221,6 +223,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             TaskDetails,
             TaskResponse,
             TaskEventResponse,
+            EventResponse,
             ImportTaskResultResponse,
             ImportAtomicity,
             ImportCollisionPolicy,
@@ -764,6 +767,7 @@ mod tests {
             "/api/v1/tasks",
             "/api/v1/tasks/{task_id}",
             "/api/v1/tasks/{task_id}/events",
+            "/api/v1/events",
             "/api/v1/templates",
             "/api/v1/templates/{template_id}",
             "/api/v1/templates/{template_id}/reports",
