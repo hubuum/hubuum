@@ -35,7 +35,7 @@ use crate::errors::{
     EXIT_CODE_CONFIG_ERROR, EXIT_CODE_INIT_ERROR, EXIT_CODE_TLS_ERROR, fatal_error,
     json_error_handler,
 };
-use crate::events::ensure_event_fanout_worker_running;
+use crate::events::{ensure_event_delivery_worker_running, ensure_event_fanout_worker_running};
 use crate::tasks::ensure_task_worker_running;
 use crate::utilities::is_valid_log_level;
 
@@ -104,6 +104,7 @@ async fn main() -> std::io::Result<()> {
 
     ensure_task_worker_running(pool.clone());
     ensure_event_fanout_worker_running(pool.clone());
+    ensure_event_delivery_worker_running(pool.clone());
 
     let client_allowlist = config.client_allowlist.clone();
     let proxy_trust = middlewares::ProxyTrust::from_config(&config);

@@ -2583,6 +2583,313 @@
         ]
       }
     },
+    "/api/v1/event-deliveries": {
+      "get": {
+        "tags": [
+          "event-deliveries"
+        ],
+        "summary": "Get Api V1 Event Deliveries",
+        "description": "Auto-generated documentation for GET /api/v1/event-deliveries.",
+        "operationId": "getApiV1EventDeliveries",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Cursor page size",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Supported fields: id, status, created_at, updated_at, next_attempt_at",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor token from X-Next-Cursor",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event deliveries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventDelivery"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/event-deliveries/{delivery_id}": {
+      "get": {
+        "tags": [
+          "event-deliveries"
+        ],
+        "summary": "Get Api V1 Event Deliveries By Delivery Id",
+        "description": "Auto-generated documentation for GET /api/v1/event-deliveries/{delivery_id}.",
+        "operationId": "getApiV1EventDeliveriesByDeliveryId",
+        "parameters": [
+          {
+            "name": "delivery_id",
+            "in": "path",
+            "description": "Event delivery ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event delivery",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventDelivery"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event delivery not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/event-deliveries/{delivery_id}/dead": {
+      "post": {
+        "tags": [
+          "event-deliveries"
+        ],
+        "summary": "Post Api V1 Event Deliveries By Delivery Id Dead",
+        "description": "Auto-generated documentation for POST /api/v1/event-deliveries/{delivery_id}/dead.",
+        "operationId": "postApiV1EventDeliveriesByDeliveryIdDead",
+        "parameters": [
+          {
+            "name": "delivery_id",
+            "in": "path",
+            "description": "Event delivery ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event delivery marked dead",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventDeliveryUpdateResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event delivery not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/event-deliveries/{delivery_id}/retry": {
+      "post": {
+        "tags": [
+          "event-deliveries"
+        ],
+        "summary": "Post Api V1 Event Deliveries By Delivery Id Retry",
+        "description": "Auto-generated documentation for POST /api/v1/event-deliveries/{delivery_id}/retry.",
+        "operationId": "postApiV1EventDeliveriesByDeliveryIdRetry",
+        "parameters": [
+          {
+            "name": "delivery_id",
+            "in": "path",
+            "description": "Event delivery ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event delivery released for retry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventDeliveryUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event delivery not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/event-sinks": {
       "get": {
         "tags": [
@@ -9397,6 +9704,93 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "EventDelivery": {
+        "type": "object",
+        "required": [
+          "id",
+          "event_id",
+          "subscription_id",
+          "status",
+          "attempts",
+          "next_attempt_at",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "attempts": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "claim_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "event_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "locked_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "next_attempt_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string"
+          },
+          "subscription_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "EventDeliveryStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "in_flight",
+          "succeeded",
+          "failed",
+          "dead"
+        ]
+      },
+      "EventDeliveryUpdateResponse": {
+        "type": "object",
+        "required": [
+          "delivery"
+        ],
+        "properties": {
+          "delivery": {
+            "$ref": "#/components/schemas/EventDelivery"
           }
         }
       },

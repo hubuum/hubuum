@@ -7,10 +7,17 @@
 
 #![cfg(test)]
 
+use std::sync::OnceLock;
+
 use diesel::prelude::*;
 use rstest::rstest;
 use uuid::Uuid;
 
+use super::delivery::process_claimed_event_delivery;
+use crate::db::traits::event_delivery::{
+    EventDeliverySettings, claim_event_deliveries, claim_event_delivery_by_id,
+    mark_event_delivery_dead, mark_event_delivery_failed,
+};
 use crate::db::traits::event_fanout::{
     EventFanoutSettings, claim_events_for_fanout, count_event_deliveries_for_event, fanout_event,
 };
@@ -32,7 +39,8 @@ use crate::models::token::{
     create_principal_token_with_context, revoke_token_by_id_for_principal_with_context,
 };
 use crate::models::{
-    EventSinkID, EventSinkKind, GroupID, HubuumClassRelationID, NamespaceID, NewEventSink,
+    EventDelivery, EventDeliveryID, EventDeliveryStatus, EventSink as EventSinkModel, EventSinkID,
+    EventSinkKind, EventSubscription, GroupID, HubuumClassRelationID, NamespaceID, NewEventSink,
     NewEventSubscription, NewHubuumClassRelation, NewHubuumObjectRelation, NewRemoteTargetRow,
     NewReportTemplate, NewUser, Permissions, PermissionsList, PrincipalToken, RemoteTargetID,
     ReportContentType, ReportTemplateID, ReportTemplateKind, Token, UpdateRemoteTargetRow,
@@ -41,6 +49,15 @@ use crate::models::{
 use crate::schema::events::dsl::events;
 use crate::tests::{TestScope, create_test_user, test_scope};
 use crate::traits::{CanDelete, CanSave, CanUpdate, PermissionController};
+
+static EVENT_DELIVERY_TEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+async fn event_delivery_test_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    EVENT_DELIVERY_TEST_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await
+}
 
 /// Count event rows for a given `event_id` (0 or 1, since `event_id` is UNIQUE).
 fn count_events_for(conn: &mut PgConnection, target: Uuid) -> i64 {
@@ -228,6 +245,89 @@ fn emit_namespace_created_event(scope: &TestScope, namespace_id: i32) -> Event {
     with_connection(&scope.pool, |conn| emit_event(conn, &event)).unwrap()
 }
 
+fn delivery_for_event(scope: &TestScope, event_id_value: i64) -> EventDelivery {
+    use crate::schema::event_deliveries::dsl::{event_deliveries, event_id};
+
+    with_connection(&scope.pool, |conn| {
+        event_deliveries
+            .filter(event_id.eq(event_id_value))
+            .first::<EventDelivery>(conn)
+    })
+    .unwrap()
+}
+
+fn expire_delivery_claim(scope: &TestScope, delivery_id: i64) {
+    use crate::schema::event_deliveries::dsl::{event_deliveries, id, locked_until};
+
+    with_connection(&scope.pool, |conn| {
+        diesel::update(event_deliveries.filter(id.eq(delivery_id)))
+            .set(locked_until.eq(Some(
+                chrono::Utc::now().naive_utc() - chrono::Duration::seconds(1),
+            )))
+            .execute(conn)
+    })
+    .unwrap();
+}
+
+fn make_delivery_settings(max_attempts: i32) -> EventDeliverySettings {
+    EventDeliverySettings {
+        batch_size: 100_000,
+        lock_timeout_ms: 30_000,
+        retry_backoff_base_ms: 1_000,
+        retry_backoff_max_ms: 10_000,
+        max_attempts,
+    }
+}
+
+struct StaticSinkResolver<'a> {
+    sink: &'a dyn crate::events::Sink,
+}
+
+impl crate::events::SinkResolver for StaticSinkResolver<'_> {
+    fn resolve(&self, kind: EventSinkKind) -> Option<&dyn crate::events::Sink> {
+        (kind == EventSinkKind::Webhook).then_some(self.sink)
+    }
+}
+
+struct SuccessfulSink;
+
+impl crate::events::Sink for SuccessfulSink {
+    fn deliver<'a>(
+        &'a self,
+        envelope: &'a crate::events::EventEnvelope,
+        subscription: &'a EventSubscription,
+        sink: &'a EventSinkModel,
+    ) -> futures::future::BoxFuture<'a, Result<(), crate::events::SinkError>> {
+        use futures::FutureExt;
+
+        async move {
+            assert_eq!(envelope.entity_type, EntityType::Namespace.as_str());
+            assert_eq!(
+                subscription.entity_types,
+                vec![EntityType::Namespace.as_str().to_string()]
+            );
+            assert_eq!(sink.kind, EventSinkKind::Webhook);
+            Ok(())
+        }
+        .boxed()
+    }
+}
+
+struct FailingSink;
+
+impl crate::events::Sink for FailingSink {
+    fn deliver<'a>(
+        &'a self,
+        _envelope: &'a crate::events::EventEnvelope,
+        _subscription: &'a EventSubscription,
+        _sink: &'a EventSinkModel,
+    ) -> futures::future::BoxFuture<'a, Result<(), crate::events::SinkError>> {
+        use futures::FutureExt;
+
+        async { Err(crate::events::SinkError::new("delivery failed")) }.boxed()
+    }
+}
+
 #[actix_web::test]
 async fn event_fanout_creates_delivery_for_each_matching_subscription_once() {
     let scope = test_scope();
@@ -309,6 +409,139 @@ async fn event_fanout_reclaims_expired_claims() {
         .await
         .unwrap();
     assert!(reclaimed.iter().any(|claimed| claimed.id == event.id));
+}
+
+#[actix_web::test]
+async fn event_delivery_worker_marks_successful_delivery_succeeded() {
+    let _lock = event_delivery_test_lock().await;
+    let scope = test_scope();
+    let fixture = scope.with_namespace().await;
+    create_namespace_event_subscription(&scope, fixture.namespace.id, "delivery_success", true)
+        .await;
+    let event = emit_namespace_created_event(&scope, fixture.namespace.id);
+    fanout_event(&scope.pool, event.id).await.unwrap();
+    let sink = SuccessfulSink;
+    let resolver = StaticSinkResolver { sink: &sink };
+
+    let delivery = delivery_for_event(&scope, event.id);
+    let settings = make_delivery_settings(3);
+    let claimed = claim_event_delivery_by_id(&scope.pool, delivery.id, settings)
+        .await
+        .unwrap();
+    process_claimed_event_delivery(&scope.pool, settings, &resolver, claimed)
+        .await
+        .unwrap();
+
+    let delivery = delivery_for_event(&scope, event.id);
+    assert_eq!(delivery.status, EventDeliveryStatus::Succeeded.as_str());
+    assert_eq!(delivery.attempts, 0);
+    assert!(delivery.claim_token.is_none());
+    assert!(delivery.locked_until.is_none());
+    assert!(delivery.last_error.is_none());
+}
+
+#[actix_web::test]
+async fn event_delivery_worker_retries_with_backoff_then_marks_dead() {
+    let _lock = event_delivery_test_lock().await;
+    let scope = test_scope();
+    let fixture = scope.with_namespace().await;
+    create_namespace_event_subscription(&scope, fixture.namespace.id, "delivery_retry", true).await;
+    let event = emit_namespace_created_event(&scope, fixture.namespace.id);
+    fanout_event(&scope.pool, event.id).await.unwrap();
+    let sink = FailingSink;
+    let resolver = StaticSinkResolver { sink: &sink };
+    let settings = make_delivery_settings(2);
+
+    let delivery = delivery_for_event(&scope, event.id);
+    let claimed = claim_event_delivery_by_id(&scope.pool, delivery.id, settings)
+        .await
+        .unwrap();
+    process_claimed_event_delivery(&scope.pool, settings, &resolver, claimed)
+        .await
+        .unwrap();
+    let first_failure = delivery_for_event(&scope, event.id);
+    assert_eq!(first_failure.status, EventDeliveryStatus::Failed.as_str());
+    assert_eq!(first_failure.attempts, 1);
+    assert_eq!(first_failure.last_error.as_deref(), Some("delivery failed"));
+    assert!(first_failure.next_attempt_at > chrono::Utc::now().naive_utc());
+
+    with_connection(&scope.pool, |conn| {
+        use crate::schema::event_deliveries::dsl::{event_deliveries, id, next_attempt_at};
+
+        diesel::update(event_deliveries.filter(id.eq(first_failure.id)))
+            .set(next_attempt_at.eq(chrono::Utc::now().naive_utc() - chrono::Duration::seconds(1)))
+            .execute(conn)
+    })
+    .unwrap();
+
+    let claimed = claim_event_delivery_by_id(&scope.pool, first_failure.id, settings)
+        .await
+        .unwrap();
+    process_claimed_event_delivery(&scope.pool, settings, &resolver, claimed)
+        .await
+        .unwrap();
+    let dead = delivery_for_event(&scope, event.id);
+    assert_eq!(dead.status, EventDeliveryStatus::Dead.as_str());
+    assert_eq!(dead.attempts, 2);
+    assert!(dead.claim_token.is_none());
+    assert!(dead.locked_until.is_none());
+}
+
+#[actix_web::test]
+async fn event_delivery_claims_expired_in_flight_rows_again() {
+    let _lock = event_delivery_test_lock().await;
+    let scope = test_scope();
+    let fixture = scope.with_namespace().await;
+    create_namespace_event_subscription(&scope, fixture.namespace.id, "delivery_reclaim", true)
+        .await;
+    let event = emit_namespace_created_event(&scope, fixture.namespace.id);
+    fanout_event(&scope.pool, event.id).await.unwrap();
+    let settings = make_delivery_settings(3);
+
+    let claimed = claim_event_deliveries(&scope.pool, settings).await.unwrap();
+    let delivery_id = claimed
+        .iter()
+        .find(|claimed| claimed.delivery.event_id == event.id)
+        .map(|claimed| claimed.delivery.id)
+        .expect("test delivery should be claimed");
+
+    let blocked = claim_event_deliveries(&scope.pool, settings).await.unwrap();
+    assert!(
+        !blocked
+            .iter()
+            .any(|claimed| claimed.delivery.id == delivery_id)
+    );
+
+    expire_delivery_claim(&scope, delivery_id);
+
+    let reclaimed = claim_event_deliveries(&scope.pool, settings).await.unwrap();
+    assert!(
+        reclaimed
+            .iter()
+            .any(|claimed| claimed.delivery.id == delivery_id)
+    );
+}
+
+#[actix_web::test]
+async fn event_delivery_failed_mark_respects_claim_token() {
+    let _lock = event_delivery_test_lock().await;
+    let scope = test_scope();
+    let fixture = scope.with_namespace().await;
+    create_namespace_event_subscription(&scope, fixture.namespace.id, "delivery_claim_token", true)
+        .await;
+    let event = emit_namespace_created_event(&scope, fixture.namespace.id);
+    fanout_event(&scope.pool, event.id).await.unwrap();
+    let settings = make_delivery_settings(3);
+    let mut claimed = claim_event_deliveries(&scope.pool, settings).await.unwrap();
+    let mut delivery = claimed.remove(0).delivery;
+    delivery.claim_token = Some(Uuid::new_v4());
+
+    let error = mark_event_delivery_failed(&scope.pool, &delivery, settings, "wrong claim").await;
+
+    assert!(matches!(error, Err(ApiError::NotFound(_))));
+    mark_event_delivery_dead(&scope.pool, EventDeliveryID::new(delivery.id).unwrap())
+        .await
+        .unwrap();
 }
 
 #[actix_web::test]

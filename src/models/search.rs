@@ -1818,6 +1818,7 @@ filter_fields!(
     (CreatedAt, "created_at"),
     (UpdatedAt, "updated_at"),
     (OccurredAt, "occurred_at"),
+    (NextAttemptAt, "next_attempt_at"),
     (StartedAt, "started_at"),
     (FinishedAt, "finished_at"),
     (IssuedAt, "issued_at"),
