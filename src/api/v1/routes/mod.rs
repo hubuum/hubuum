@@ -1,4 +1,4 @@
-use crate::api::v1::handlers::me;
+use crate::api::v1::handlers::{events, me};
 use actix_web::web;
 
 pub mod classes;
@@ -30,6 +30,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(web::scope("/search").configure(search::config))
         .service(web::scope("/reports").configure(reports::config))
         .service(web::scope("/tasks").configure(tasks::config))
+        .service(web::scope("/events").configure(events::config))
         .service(web::scope("/templates").configure(templates::config))
         .service(web::scope("/remote-targets").configure(remote_targets::config))
         .service(web::scope("/relations").configure(relations::config));

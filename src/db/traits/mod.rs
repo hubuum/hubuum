@@ -1,6 +1,7 @@
 pub mod active_tokens;
 pub mod authz;
 pub mod class;
+pub mod events;
 pub mod group;
 pub mod is_active;
 pub mod namespace;

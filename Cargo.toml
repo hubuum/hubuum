@@ -57,7 +57,7 @@ tracing-subscriber = { version = "0.3", features = [
     "chrono",
     "json",
 ] }
-utoipa = { version = "5", features = ["actix_extras", "chrono"] }
+utoipa = { version = "5", features = ["actix_extras", "chrono", "uuid"] }
 utoipa-swagger-ui = { version = "9", features = [
     "actix-web",
     "vendored",

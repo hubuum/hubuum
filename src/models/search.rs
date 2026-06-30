@@ -1817,6 +1817,7 @@ filter_fields!(
     (ClassId, "class_id"),
     (CreatedAt, "created_at"),
     (UpdatedAt, "updated_at"),
+    (OccurredAt, "occurred_at"),
     (StartedAt, "started_at"),
     (FinishedAt, "finished_at"),
     (IssuedAt, "issued_at"),

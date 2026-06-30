@@ -2583,6 +2583,161 @@
         ]
       }
     },
+    "/api/v1/events": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Get Api V1 Events",
+        "description": "Auto-generated documentation for GET /api/v1/events.",
+        "operationId": "getApiV1Events",
+        "parameters": [
+          {
+            "name": "entity_type",
+            "in": "query",
+            "description": "Optional event entity type filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "entity_id",
+            "in": "query",
+            "description": "Optional event entity id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "description": "Optional action filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_kind",
+            "in": "query",
+            "description": "Optional actor kind filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_user_id",
+            "in": "query",
+            "description": "Optional actor principal id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "namespace_id",
+            "in": "query",
+            "description": "Optional namespace id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "occurred_after",
+            "in": "query",
+            "description": "Optional lower occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "occurred_before",
+            "in": "query",
+            "description": "Optional upper occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Cursor page size",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Supported fields: id, occurred_at",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor token from X-Next-Cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Visible audit events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/iam/groups": {
       "get": {
         "tags": [
@@ -8466,6 +8621,93 @@
           }
         }
       },
+      "EventResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "event_id",
+          "occurred_at",
+          "entity_type",
+          "action",
+          "actor_kind",
+          "summary",
+          "metadata",
+          "schema_version"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "actor_kind": {
+            "type": "string"
+          },
+          "actor_user_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "after": {},
+          "before": {},
+          "correlation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "entity_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "entity_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "entity_type": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "metadata": {},
+          "namespace_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "summary": {
+            "type": "string"
+          }
+        }
+      },
       "Group": {
         "type": "object",
         "required": [
@@ -10131,7 +10373,8 @@
           "has_delete_remote_target",
           "has_execute_remote_target",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "has_read_audit"
         ],
         "properties": {
           "created_at": {
@@ -10185,6 +10428,9 @@
             "type": "boolean"
           },
           "has_execute_remote_target": {
+            "type": "boolean"
+          },
+          "has_read_audit": {
             "type": "boolean"
           },
           "has_read_class": {
@@ -10274,7 +10520,8 @@
           "CreateRemoteTarget",
           "UpdateRemoteTarget",
           "DeleteRemoteTarget",
-          "ExecuteRemoteTarget"
+          "ExecuteRemoteTarget",
+          "ReadAudit"
         ]
       },
       "PrincipalMemberResponse": {

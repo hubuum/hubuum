@@ -1,0 +1,2 @@
+ALTER TABLE permissions
+    ADD COLUMN has_read_audit BOOLEAN NOT NULL DEFAULT FALSE;

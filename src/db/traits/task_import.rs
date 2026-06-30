@@ -464,6 +464,7 @@ pub fn apply_permissions_db(
                     has_update_remote_target: Some(false),
                     has_delete_remote_target: Some(false),
                     has_execute_remote_target: Some(false),
+                    has_read_audit: Some(false),
                 }
             } else {
                 UpdatePermission::default()
@@ -523,6 +524,7 @@ pub fn apply_permissions_db(
                     .contains(&Permissions::DeleteRemoteTarget),
                 has_execute_remote_target: permission_list
                     .contains(&Permissions::ExecuteRemoteTarget),
+                has_read_audit: permission_list.contains(&Permissions::ReadAudit),
             };
 
             diesel::insert_into(permissions_table)
@@ -573,6 +575,7 @@ fn apply_permission_list_to_update(update: &mut UpdatePermission, permissions: &
             Permissions::UpdateRemoteTarget => update.has_update_remote_target = Some(true),
             Permissions::DeleteRemoteTarget => update.has_delete_remote_target = Some(true),
             Permissions::ExecuteRemoteTarget => update.has_execute_remote_target = Some(true),
+            Permissions::ReadAudit => update.has_read_audit = Some(true),
         }
     }
 }

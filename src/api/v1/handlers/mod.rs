@@ -1,4 +1,5 @@
 pub mod classes;
+pub mod events;
 pub mod groups;
 pub mod imports;
 pub mod me;
