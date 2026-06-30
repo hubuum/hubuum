@@ -1,4 +1,4 @@
-use crate::api::v1::handlers::{event_sinks, event_subscriptions, events, me};
+use crate::api::v1::handlers::{event_deliveries, event_sinks, event_subscriptions, events, me};
 use actix_web::web;
 
 pub mod classes;
@@ -33,6 +33,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(web::scope("/classes").configure(classes::config))
         .service(web::scope("/search").configure(search::config))
         .service(web::scope("/reports").configure(reports::config))
+        .service(web::scope("/event-deliveries").configure(event_deliveries::config))
         .service(web::scope("/event-sinks").configure(event_sinks::config))
         .service(web::scope("/tasks").configure(tasks::config))
         .service(web::scope("/events").configure(events::config))
