@@ -53,6 +53,34 @@ Probe paths bypass the client IP allowlist so platform health checks are not rej
 | `HUBUUM_TASK_WORKERS` | About half the detected CPU count, minimum `1` | Number of background task workers |
 | `HUBUUM_TASK_POLL_INTERVAL_MS` | `200` | Idle polling interval for background task workers |
 
+### Event And Audit Configuration
+
+| Variable | Default | Description |
+| -------- | ------- | ----------- |
+| `HUBUUM_EVENT_FANOUT_WORKERS` | `1` | Number of background workers that fan matching audit events out to delivery rows |
+| `HUBUUM_EVENT_FANOUT_BATCH_SIZE` | `100` | Number of events a fan-out worker claims per batch |
+| `HUBUUM_EVENT_FANOUT_POLL_INTERVAL_MS` | `250` | Idle polling interval for fan-out workers |
+| `HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS` | `30000` | Fan-out claim lock timeout before another worker may retry |
+| `HUBUUM_EVENT_DELIVERY_WORKERS` | `0` | Number of background workers that deliver rows to external sinks; `0` disables transport delivery |
+| `HUBUUM_EVENT_DELIVERY_BATCH_SIZE` | `100` | Number of delivery rows a delivery worker claims per batch |
+| `HUBUUM_EVENT_DELIVERY_POLL_INTERVAL_MS` | `500` | Idle polling interval for delivery workers |
+| `HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS` | `30000` | Delivery claim lock timeout before another worker may retry |
+| `HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS` | `1000` | Initial delivery retry backoff |
+| `HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS` | `300000` | Maximum delivery retry backoff |
+| `HUBUUM_EVENT_DELIVERY_MAX_ATTEMPTS` | `10` | Attempts before a delivery row moves to dead-letter status |
+| `HUBUUM_EVENT_RETENTION_PURGE_ENABLED` | `false` | Enables destructive audit event retention purge |
+| `HUBUUM_EVENT_RETENTION_DAYS` | `365` | Age threshold for purging eligible audit events |
+| `HUBUUM_EVENT_DELIVERY_RETENTION_DAYS` | `30` | Age threshold for purging terminal delivery rows |
+| `HUBUUM_EVENT_RETENTION_PURGE_INTERVAL_SECONDS` | `3600` | Retention worker interval |
+| `HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE` | `1000` | Maximum event rows selected per purge batch |
+| `HUBUUM_EVENT_RETENTION_ARCHIVE_PATH` | *(empty)* | Optional JSON Lines archive path written before deleting eligible events |
+
+**Event note**: The canonical audit stream is always stored in the `events`
+table. External delivery workers default to disabled, and retention purge
+defaults to disabled because it deletes audit rows. See
+[Event And Audit](events.md) for audit querying, sink/subscription setup,
+delivery semantics, operational health, and retention behavior.
+
 ### Report and Template Execution Configuration
 
 | Variable | Default | Description |
@@ -194,6 +222,7 @@ services:
 - [Querying](querying.md) - API query syntax and filtering
 - [Unified search](search_api.md) - grouped search across namespaces, classes, and objects
 - [Query Support Matrix](query_support_matrix.md) - Endpoint-by-endpoint filter and sort support
+- [Event And Audit](events.md) - Audit log, event delivery, sink subscriptions, retention, and operational health
 - [Relationships](relationship_endpoints.md) - Working with object relationships
 - [Task System](task_system.md) - Background workers, queue claiming, and task execution flow
 - [Report API](report_api.md) - Server-side report execution and templated output
