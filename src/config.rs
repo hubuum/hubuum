@@ -28,6 +28,11 @@ pub const DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS: u64 = 30_000;
 pub const DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS: u64 = 1_000;
 pub const DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS: u64 = 300_000;
 pub const DEFAULT_EVENT_DELIVERY_MAX_ATTEMPTS: i32 = 10;
+pub const DEFAULT_EVENT_RETENTION_PURGE_ENABLED: bool = false;
+pub const DEFAULT_EVENT_RETENTION_DAYS: i64 = 365;
+pub const DEFAULT_EVENT_DELIVERY_RETENTION_DAYS: i64 = 30;
+pub const DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS: u64 = 3_600;
+pub const DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE: usize = 1_000;
 pub const DEFAULT_REPORT_OUTPUT_RETENTION_HOURS: i64 = 24 * 7;
 pub const DEFAULT_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS: u64 = 300;
 pub const DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER: usize = 100;
@@ -247,6 +252,54 @@ pub struct AppConfig {
         default_value_t = DEFAULT_EVENT_DELIVERY_MAX_ATTEMPTS
     )]
     pub event_delivery_max_attempts: i32,
+
+    /// Enable the destructive event retention purge worker.
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_RETENTION_PURGE_ENABLED",
+        default_value_t = DEFAULT_EVENT_RETENTION_PURGE_ENABLED
+    )]
+    pub event_retention_purge_enabled: bool,
+
+    /// How long audit/event rows are retained before purge eligibility.
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_RETENTION_DAYS",
+        default_value_t = DEFAULT_EVENT_RETENTION_DAYS
+    )]
+    pub event_retention_days: i64,
+
+    /// How long terminal event delivery rows are retained before purge eligibility.
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_DELIVERY_RETENTION_DAYS",
+        default_value_t = DEFAULT_EVENT_DELIVERY_RETENTION_DAYS
+    )]
+    pub event_delivery_retention_days: i64,
+
+    /// How often the event retention purge worker wakes up when enabled.
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_RETENTION_PURGE_INTERVAL_SECONDS",
+        default_value_t = DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS
+    )]
+    pub event_retention_purge_interval_seconds: u64,
+
+    /// Maximum events deleted in one retention purge transaction.
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE",
+        default_value_t = DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE
+    )]
+    pub event_retention_purge_batch_size: usize,
+
+    /// Optional JSONL archive path for events selected by the retention purge.
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_RETENTION_ARCHIVE_PATH",
+        default_value = None
+    )]
+    pub event_retention_archive_path: Option<String>,
 
     /// How long successful stored report outputs remain available for refetch.
     #[clap(
@@ -657,6 +710,30 @@ impl AppConfig {
             ));
         }
 
+        if self.event_retention_days <= 0 {
+            return Err(ApiError::BadRequest(
+                "event_retention_days must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.event_delivery_retention_days <= 0 {
+            return Err(ApiError::BadRequest(
+                "event_delivery_retention_days must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.event_retention_purge_interval_seconds == 0 {
+            return Err(ApiError::BadRequest(
+                "event_retention_purge_interval_seconds must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.event_retention_purge_batch_size == 0 {
+            return Err(ApiError::BadRequest(
+                "event_retention_purge_batch_size must be greater than 0".to_string(),
+            ));
+        }
+
         if self.report_output_retention_hours <= 0 {
             return Err(ApiError::BadRequest(
                 "report_output_retention_hours must be greater than 0".to_string(),
@@ -1034,6 +1111,32 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_EVENT_DELIVERY_MAX_ATTEMPTS),
+        event_retention_purge_enabled: env::var("HUBUUM_EVENT_RETENTION_PURGE_ENABLED")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_RETENTION_PURGE_ENABLED),
+        event_retention_days: env::var("HUBUUM_EVENT_RETENTION_DAYS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_RETENTION_DAYS),
+        event_delivery_retention_days: env::var("HUBUUM_EVENT_DELIVERY_RETENTION_DAYS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_DELIVERY_RETENTION_DAYS),
+        event_retention_purge_interval_seconds: env::var(
+            "HUBUUM_EVENT_RETENTION_PURGE_INTERVAL_SECONDS",
+        )
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS),
+        event_retention_purge_batch_size: env::var("HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE),
+        event_retention_archive_path: env_or_default_opt(
+            "HUBUUM_EVENT_RETENTION_ARCHIVE_PATH",
+            None,
+        ),
         report_output_retention_hours: env::var("HUBUUM_REPORT_OUTPUT_RETENTION_HOURS")
             .ok()
             .and_then(|value| value.parse().ok())
@@ -1343,16 +1446,18 @@ mod tests {
     use super::{
         AppConfig, DEFAULT_EVENT_DELIVERY_BATCH_SIZE, DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS,
         DEFAULT_EVENT_DELIVERY_MAX_ATTEMPTS, DEFAULT_EVENT_DELIVERY_POLL_INTERVAL_MS,
-        DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS, DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS,
-        DEFAULT_EVENT_DELIVERY_WORKERS, DEFAULT_EVENT_FANOUT_BATCH_SIZE,
-        DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS, DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS,
-        DEFAULT_EVENT_FANOUT_WORKERS, DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS,
-        DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS, DEFAULT_PAGE_LIMIT,
-        DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER, DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER,
-        DEFAULT_REPORT_MAX_OUTPUT_BYTES, DEFAULT_TASK_POLL_INTERVAL_MS,
-        DEFAULT_TOKEN_LIFETIME_HOURS, MAX_PAGE_LIMIT, TEST_ENV_LOCK, TlsBackend,
-        default_actix_workers, default_task_workers, get_config_from_env, token_hash_key_bytes,
-        token_hash_key_is_ephemeral,
+        DEFAULT_EVENT_DELIVERY_RETENTION_DAYS, DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS,
+        DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS, DEFAULT_EVENT_DELIVERY_WORKERS,
+        DEFAULT_EVENT_FANOUT_BATCH_SIZE, DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS,
+        DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS, DEFAULT_EVENT_FANOUT_WORKERS,
+        DEFAULT_EVENT_RETENTION_DAYS, DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE,
+        DEFAULT_EVENT_RETENTION_PURGE_ENABLED, DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS,
+        DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS, DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+        DEFAULT_PAGE_LIMIT, DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER,
+        DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER, DEFAULT_REPORT_MAX_OUTPUT_BYTES,
+        DEFAULT_TASK_POLL_INTERVAL_MS, DEFAULT_TOKEN_LIFETIME_HOURS, MAX_PAGE_LIMIT, TEST_ENV_LOCK,
+        TlsBackend, default_actix_workers, default_task_workers, get_config_from_env,
+        token_hash_key_bytes, token_hash_key_is_ephemeral,
     };
 
     struct EnvVarGuard {
@@ -1532,6 +1637,57 @@ mod tests {
     }
 
     #[test]
+    fn event_retention_settings_are_parsed_from_env() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _enabled_guard = EnvVarGuard::set("HUBUUM_EVENT_RETENTION_PURGE_ENABLED", Some("true"));
+        let _event_days_guard = EnvVarGuard::set("HUBUUM_EVENT_RETENTION_DAYS", Some("90"));
+        let _delivery_days_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_RETENTION_DAYS", Some("14"));
+        let _interval_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_RETENTION_PURGE_INTERVAL_SECONDS", Some("600"));
+        let _batch_guard = EnvVarGuard::set("HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE", Some("250"));
+        let _archive_guard = EnvVarGuard::set(
+            "HUBUUM_EVENT_RETENTION_ARCHIVE_PATH",
+            Some("/tmp/hubuum-events.jsonl"),
+        );
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert!(parsed.event_retention_purge_enabled);
+        assert_eq!(parsed.event_retention_days, 90);
+        assert_eq!(parsed.event_delivery_retention_days, 14);
+        assert_eq!(parsed.event_retention_purge_interval_seconds, 600);
+        assert_eq!(parsed.event_retention_purge_batch_size, 250);
+        assert_eq!(
+            parsed.event_retention_archive_path.as_deref(),
+            Some("/tmp/hubuum-events.jsonl")
+        );
+        assert!(loaded.event_retention_purge_enabled);
+        assert_eq!(loaded.event_retention_days, 90);
+        assert_eq!(loaded.event_delivery_retention_days, 14);
+        assert_eq!(loaded.event_retention_purge_interval_seconds, 600);
+        assert_eq!(loaded.event_retention_purge_batch_size, 250);
+        assert_eq!(
+            loaded.event_retention_archive_path.as_deref(),
+            Some("/tmp/hubuum-events.jsonl")
+        );
+    }
+
+    #[test]
+    fn event_retention_settings_are_validated() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE", Some("0"));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "event_retention_purge_batch_size must be greater than 0"
+        );
+    }
+
+    #[test]
     fn worker_defaults_scale_from_detected_cpu_count() {
         let _lock = TEST_ENV_LOCK.lock().unwrap();
         let _actix_guard = EnvVarGuard::set("HUBUUM_ACTIX_WORKERS", None);
@@ -1550,6 +1706,17 @@ mod tests {
         let _delivery_max_guard =
             EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS", None);
         let _delivery_attempts_guard = EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_MAX_ATTEMPTS", None);
+        let _retention_enabled_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_RETENTION_PURGE_ENABLED", None);
+        let _retention_days_guard = EnvVarGuard::set("HUBUUM_EVENT_RETENTION_DAYS", None);
+        let _retention_delivery_days_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_RETENTION_DAYS", None);
+        let _retention_interval_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_RETENTION_PURGE_INTERVAL_SECONDS", None);
+        let _retention_batch_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE", None);
+        let _retention_archive_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_RETENTION_ARCHIVE_PATH", None);
 
         let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
         let loaded = get_config_from_env().unwrap();
@@ -1598,6 +1765,24 @@ mod tests {
             parsed.event_delivery_max_attempts,
             DEFAULT_EVENT_DELIVERY_MAX_ATTEMPTS
         );
+        assert_eq!(
+            parsed.event_retention_purge_enabled,
+            DEFAULT_EVENT_RETENTION_PURGE_ENABLED
+        );
+        assert_eq!(parsed.event_retention_days, DEFAULT_EVENT_RETENTION_DAYS);
+        assert_eq!(
+            parsed.event_delivery_retention_days,
+            DEFAULT_EVENT_DELIVERY_RETENTION_DAYS
+        );
+        assert_eq!(
+            parsed.event_retention_purge_interval_seconds,
+            DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS
+        );
+        assert_eq!(
+            parsed.event_retention_purge_batch_size,
+            DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE
+        );
+        assert_eq!(parsed.event_retention_archive_path, None);
         assert_eq!(loaded.actix_workers, default_actix_workers());
         assert_eq!(loaded.task_workers, default_task_workers());
         assert_eq!(loaded.task_poll_interval_ms, DEFAULT_TASK_POLL_INTERVAL_MS);
@@ -1642,6 +1827,24 @@ mod tests {
             loaded.event_delivery_max_attempts,
             DEFAULT_EVENT_DELIVERY_MAX_ATTEMPTS
         );
+        assert_eq!(
+            loaded.event_retention_purge_enabled,
+            DEFAULT_EVENT_RETENTION_PURGE_ENABLED
+        );
+        assert_eq!(loaded.event_retention_days, DEFAULT_EVENT_RETENTION_DAYS);
+        assert_eq!(
+            loaded.event_delivery_retention_days,
+            DEFAULT_EVENT_DELIVERY_RETENTION_DAYS
+        );
+        assert_eq!(
+            loaded.event_retention_purge_interval_seconds,
+            DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS
+        );
+        assert_eq!(
+            loaded.event_retention_purge_batch_size,
+            DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE
+        );
+        assert_eq!(loaded.event_retention_archive_path, None);
     }
 
     #[test]

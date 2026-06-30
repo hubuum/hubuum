@@ -21,6 +21,9 @@ use crate::db::traits::event_delivery::{
 use crate::db::traits::event_fanout::{
     EventFanoutSettings, claim_events_for_fanout, count_event_deliveries_for_event, fanout_event,
 };
+use crate::db::traits::event_retention::{
+    EventRetentionSettings, purge_event_retention_without_archive,
+};
 use crate::db::traits::event_subscription::{SaveEventSinkRecord, SaveEventSubscriptionRecord};
 use crate::db::traits::remote_target::{
     DeleteRemoteTargetRecord, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
@@ -245,6 +248,35 @@ fn emit_namespace_created_event(scope: &TestScope, namespace_id: i32) -> Event {
     with_connection(&scope.pool, |conn| emit_event(conn, &event)).unwrap()
 }
 
+fn insert_namespace_created_event_at(
+    scope: &TestScope,
+    namespace_id: i32,
+    occurred_at_value: chrono::NaiveDateTime,
+) -> Event {
+    use crate::schema::events::dsl::{
+        action, actor_kind, entity_id, entity_name, entity_type, event_id, events, metadata,
+        namespace_id as event_namespace_id, occurred_at, summary,
+    };
+
+    with_connection(&scope.pool, |conn| {
+        diesel::insert_into(events)
+            .values((
+                event_id.eq(Uuid::new_v4()),
+                occurred_at.eq(occurred_at_value),
+                entity_type.eq(EntityType::Namespace.as_str()),
+                entity_id.eq(Some(namespace_id)),
+                entity_name.eq(Some(scope.scoped_name("retention_namespace"))),
+                event_namespace_id.eq(Some(namespace_id)),
+                action.eq(Action::Created.as_str()),
+                actor_kind.eq(ActorKind::System.as_str()),
+                summary.eq("namespace retention test"),
+                metadata.eq(serde_json::json!({})),
+            ))
+            .get_result::<Event>(conn)
+    })
+    .unwrap()
+}
+
 fn delivery_for_event(scope: &TestScope, event_id_value: i64) -> EventDelivery {
     use crate::schema::event_deliveries::dsl::{event_deliveries, event_id};
 
@@ -276,6 +308,14 @@ fn make_delivery_settings(max_attempts: i32) -> EventDeliverySettings {
         retry_backoff_base_ms: 1_000,
         retry_backoff_max_ms: 10_000,
         max_attempts,
+    }
+}
+
+fn make_retention_settings() -> EventRetentionSettings {
+    EventRetentionSettings {
+        event_retention_days: 365,
+        delivery_retention_days: 30,
+        batch_size: 100,
     }
 }
 
@@ -409,6 +449,128 @@ async fn event_fanout_reclaims_expired_claims() {
         .await
         .unwrap();
     assert!(reclaimed.iter().any(|claimed| claimed.id == event.id));
+}
+
+#[actix_web::test]
+async fn ordinary_event_delete_is_rejected_by_append_only_trigger() {
+    let scope = test_scope();
+    let event = emit_namespace_created_event(&scope, 1);
+
+    let error = with_connection(&scope.pool, |conn| {
+        diesel::delete(events.filter(crate::schema::events::dsl::id.eq(event.id))).execute(conn)
+    })
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("events table is append-only: DELETE is not permitted"),
+        "unexpected delete error: {error}"
+    );
+}
+
+#[actix_web::test]
+async fn event_retention_purge_deletes_old_events_through_guarded_path() {
+    let scope = test_scope();
+    let old_event = insert_namespace_created_event_at(
+        &scope,
+        1,
+        chrono::Utc::now().naive_utc() - chrono::Duration::days(400),
+    );
+
+    let summary = purge_event_retention_without_archive(&scope.pool, make_retention_settings())
+        .await
+        .unwrap();
+
+    assert_eq!(summary.purged_events, 1);
+    let remaining = with_connection(&scope.pool, |conn| {
+        events
+            .filter(crate::schema::events::dsl::id.eq(old_event.id))
+            .count()
+            .get_result::<i64>(conn)
+    })
+    .unwrap();
+    assert_eq!(remaining, 0);
+}
+
+#[actix_web::test]
+async fn event_retention_purge_keeps_events_with_active_deliveries() {
+    let scope = test_scope();
+    let fixture = scope.with_namespace().await;
+    create_namespace_event_subscription(&scope, fixture.namespace.id, "retention_active", true)
+        .await;
+    let old_event = insert_namespace_created_event_at(
+        &scope,
+        fixture.namespace.id,
+        chrono::Utc::now().naive_utc() - chrono::Duration::days(400),
+    );
+    fanout_event(&scope.pool, old_event.id).await.unwrap();
+
+    let summary = purge_event_retention_without_archive(&scope.pool, make_retention_settings())
+        .await
+        .unwrap();
+
+    assert_eq!(summary.purged_events, 0);
+    let remaining = with_connection(&scope.pool, |conn| {
+        events
+            .filter(crate::schema::events::dsl::id.eq(old_event.id))
+            .count()
+            .get_result::<i64>(conn)
+    })
+    .unwrap();
+    assert_eq!(remaining, 1);
+}
+
+#[actix_web::test]
+async fn event_retention_purge_deletes_old_terminal_deliveries_without_deleting_event() {
+    let scope = test_scope();
+    let fixture = scope.with_namespace().await;
+    let subscription_id = create_namespace_event_subscription(
+        &scope,
+        fixture.namespace.id,
+        "retention_terminal",
+        true,
+    )
+    .await;
+    let event = emit_namespace_created_event(&scope, fixture.namespace.id);
+    let old_timestamp = chrono::Utc::now().naive_utc() - chrono::Duration::days(40);
+    use crate::schema::event_deliveries::dsl::{
+        created_at, event_deliveries, event_id, status,
+        subscription_id as delivery_subscription_id, updated_at,
+    };
+    with_connection(&scope.pool, |conn| {
+        diesel::insert_into(event_deliveries)
+            .values((
+                event_id.eq(event.id),
+                delivery_subscription_id.eq(subscription_id),
+                status.eq(EventDeliveryStatus::Succeeded.as_str()),
+                created_at.eq(old_timestamp),
+                updated_at.eq(old_timestamp),
+            ))
+            .execute(conn)
+    })
+    .unwrap();
+
+    let summary = purge_event_retention_without_archive(&scope.pool, make_retention_settings())
+        .await
+        .unwrap();
+
+    assert_eq!(summary.purged_events, 0);
+    assert_eq!(summary.purged_terminal_deliveries, 1);
+    assert_eq!(
+        count_event_deliveries_for_event(&scope.pool, event.id)
+            .await
+            .unwrap(),
+        0
+    );
+    let remaining_events = with_connection(&scope.pool, |conn| {
+        events
+            .filter(crate::schema::events::dsl::id.eq(event.id))
+            .count()
+            .get_result::<i64>(conn)
+    })
+    .unwrap();
+    assert_eq!(remaining_events, 1);
 }
 
 #[actix_web::test]
