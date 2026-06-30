@@ -9,7 +9,7 @@ use crate::config::{
     DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS, DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES,
     DEFAULT_REMOTE_CALL_TIMEOUT_MS, get_config,
 };
-use crate::events::sink::{EventEnvelope, Sink, SinkError};
+use crate::events::sink::{EventEnvelope, Sink, SinkError, resolve_event_sink_secret};
 use crate::models::{EventSink, EventSubscription};
 
 #[derive(Debug, Default)]
@@ -130,18 +130,6 @@ fn webhook_headers(
     }
 
     Ok(headers)
-}
-
-fn resolve_event_sink_secret(secret_ref: &str) -> Result<String, SinkError> {
-    let key = format!(
-        "HUBUUM_EVENT_SINK_SECRET_{}",
-        secret_ref.to_ascii_uppercase()
-    );
-    std::env::var(&key).map_err(|_| {
-        SinkError::new(format!(
-            "Event sink secret reference '{secret_ref}' is not configured"
-        ))
-    })
 }
 
 fn bounded_timeout_ms(requested: Option<u64>) -> u64 {

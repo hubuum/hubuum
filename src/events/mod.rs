@@ -11,6 +11,8 @@
 //! free of Diesel/Actix/app concerns so the producer, the audit read API, and
 //! the fan-out worker share one authoritative definition.
 
+#[cfg(feature = "amqp")]
+mod amqp;
 mod context;
 mod db;
 mod delivery;
