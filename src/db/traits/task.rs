@@ -1098,7 +1098,7 @@ mod tests {
         )
         .unwrap();
 
-        block_on(task_owner.delete_user_record(&context.pool)).unwrap();
+        block_on(task_owner.delete_user_record_without_events(&context.pool)).unwrap();
 
         let stored = block_on(task.find_record(&context.pool)).unwrap();
         assert_eq!(stored.submitted_by, None);

@@ -38,7 +38,7 @@ mod test {
                 json_schema: None,
                 validate_schema: None,
             };
-            let class = class.save(pool).await.unwrap();
+            let class = class.save_without_events(pool).await.unwrap();
             classes.push(class);
         }
 
@@ -49,7 +49,7 @@ mod test {
             forward_template_alias: None,
             reverse_template_alias: None,
         }
-        .save(pool)
+        .save_without_events(pool)
         .await
         .unwrap();
 
@@ -59,7 +59,7 @@ mod test {
             forward_template_alias: None,
             reverse_template_alias: None,
         }
-        .save(pool)
+        .save_without_events(pool)
         .await
         .unwrap();
 
@@ -183,6 +183,9 @@ mod test {
             _ => {}
         }
 
-        namespace.delete(&context.pool).await.unwrap();
+        namespace
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
     }
 }

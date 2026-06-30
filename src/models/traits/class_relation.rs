@@ -48,49 +48,49 @@ impl InstanceAdapter<HubuumClassRelation> for HubuumClassRelation {
 }
 
 impl DeleteAdapter for HubuumClassRelation {
-    async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
-        self.delete_class_relation_record(pool).await
+    async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
+        self.delete_class_relation_record_without_events(pool).await
     }
 
-    async fn delete_adapter_with_context(
+    async fn delete_adapter(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
-        self.delete_class_relation_record_with_context(pool, context)
-            .await
+        self.delete_class_relation_record(pool, context).await
     }
 }
 
 impl SaveAdapter for NewHubuumClassRelation {
     type Output = HubuumClassRelation;
 
-    async fn save_adapter(&self, pool: &DbPool) -> Result<HubuumClassRelation, ApiError> {
-        self.save_class_relation_record(pool).await
+    async fn save_adapter_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<HubuumClassRelation, ApiError> {
+        self.save_class_relation_record_without_events(pool).await
     }
 
-    async fn save_adapter_with_context(
+    async fn save_adapter(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumClassRelation, ApiError> {
-        self.save_class_relation_record_with_context(pool, context)
-            .await
+        self.save_class_relation_record(pool, context).await
     }
 }
 
 impl DeleteAdapter for HubuumClassRelationID {
-    async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
-        self.delete_class_relation_record(pool).await
+    async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
+        self.delete_class_relation_record_without_events(pool).await
     }
 
-    async fn delete_adapter_with_context(
+    async fn delete_adapter(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
-        self.delete_class_relation_record_with_context(pool, context)
-            .await
+        self.delete_class_relation_record(pool, context).await
     }
 }
 

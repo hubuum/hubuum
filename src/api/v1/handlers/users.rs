@@ -84,7 +84,7 @@ pub async fn create_user(
     let event_context = requestor.event_context(&req);
     let user = new_user
         .into_inner()
-        .save_with_context(&pool, Some(&event_context))
+        .save(&pool, Some(&event_context))
         .await?;
     let response = user.to_response(&pool).await?;
 
@@ -162,7 +162,7 @@ pub async fn update_user(
     let event_context = requestor.event_context(&req);
     let user = updated_user
         .into_inner()
-        .save_with_context(user.id, &pool, Some(&event_context))
+        .save(user.id, &pool, Some(&event_context))
         .await?;
     Ok(json_response(
         user.to_response(&pool).await?,
@@ -198,9 +198,7 @@ pub async fn delete_user(
     );
 
     let event_context = requestor.event_context(&req);
-    let delete_result = user_id
-        .delete_with_context(&pool, Some(&event_context))
-        .await;
+    let delete_result = user_id.delete(&pool, Some(&event_context)).await;
 
     match delete_result {
         Ok(elements) => Ok(json_response(json!(elements), StatusCode::NO_CONTENT)),

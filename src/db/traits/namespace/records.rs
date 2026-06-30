@@ -27,20 +27,20 @@ fn namespace_event(
 }
 
 pub trait DeleteNamespaceRecord {
-    async fn delete_namespace_record(&self, pool: &DbPool) -> Result<(), ApiError>;
+    async fn delete_namespace_record_without_events(&self, pool: &DbPool) -> Result<(), ApiError>;
 
-    async fn delete_namespace_record_with_context(
+    async fn delete_namespace_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let _ = context;
-        self.delete_namespace_record(pool).await
+        self.delete_namespace_record_without_events(pool).await
     }
 }
 
 impl DeleteNamespaceRecord for Namespace {
-    async fn delete_namespace_record(&self, pool: &DbPool) -> Result<(), ApiError> {
+    async fn delete_namespace_record_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::namespaces::dsl::{id, namespaces};
 
         with_connection(pool, |conn| {
@@ -49,13 +49,13 @@ impl DeleteNamespaceRecord for Namespace {
         Ok(())
     }
 
-    async fn delete_namespace_record_with_context(
+    async fn delete_namespace_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let Some(context) = context else {
-            return self.delete_namespace_record(pool).await;
+            return self.delete_namespace_record_without_events(pool).await;
         };
 
         use crate::schema::namespaces::dsl::{id, namespaces};
@@ -76,7 +76,7 @@ impl DeleteNamespaceRecord for Namespace {
 }
 
 impl DeleteNamespaceRecord for NamespaceID {
-    async fn delete_namespace_record(&self, pool: &DbPool) -> Result<(), ApiError> {
+    async fn delete_namespace_record_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::namespaces::dsl::{id, namespaces};
 
         with_connection(pool, |conn| {
@@ -85,13 +85,13 @@ impl DeleteNamespaceRecord for NamespaceID {
         Ok(())
     }
 
-    async fn delete_namespace_record_with_context(
+    async fn delete_namespace_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let Some(context) = context else {
-            return self.delete_namespace_record(pool).await;
+            return self.delete_namespace_record_without_events(pool).await;
         };
 
         use crate::schema::namespaces::dsl::{id, namespaces};
@@ -115,25 +115,26 @@ impl DeleteNamespaceRecord for NamespaceID {
 }
 
 pub trait UpdateNamespaceRecord {
-    async fn update_namespace_record(
+    async fn update_namespace_record_without_events(
         &self,
         pool: &DbPool,
         namespace_id: i32,
     ) -> Result<Namespace, ApiError>;
 
-    async fn update_namespace_record_with_context(
+    async fn update_namespace_record(
         &self,
         pool: &DbPool,
         namespace_id: i32,
         context: Option<&EventContext>,
     ) -> Result<Namespace, ApiError> {
         let _ = context;
-        self.update_namespace_record(pool, namespace_id).await
+        self.update_namespace_record_without_events(pool, namespace_id)
+            .await
     }
 }
 
 impl UpdateNamespaceRecord for UpdateNamespace {
-    async fn update_namespace_record(
+    async fn update_namespace_record_without_events(
         &self,
         pool: &DbPool,
         namespace_id: i32,
@@ -148,14 +149,16 @@ impl UpdateNamespaceRecord for UpdateNamespace {
         })
     }
 
-    async fn update_namespace_record_with_context(
+    async fn update_namespace_record(
         &self,
         pool: &DbPool,
         namespace_id: i32,
         context: Option<&EventContext>,
     ) -> Result<Namespace, ApiError> {
         let Some(context) = context else {
-            return self.update_namespace_record(pool, namespace_id).await;
+            return self
+                .update_namespace_record_without_events(pool, namespace_id)
+                .await;
         };
 
         use crate::schema::namespaces::dsl::{id, namespaces};
@@ -182,23 +185,24 @@ impl UpdateNamespaceRecord for UpdateNamespace {
 }
 
 pub trait SaveNamespaceWithAssigneeRecord {
-    async fn save_namespace_with_assignee_record(
+    async fn save_namespace_with_assignee_record_without_events(
         &self,
         pool: &DbPool,
     ) -> Result<Namespace, ApiError>;
 
-    async fn save_namespace_with_assignee_record_with_context(
+    async fn save_namespace_with_assignee_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<Namespace, ApiError> {
         let _ = context;
-        self.save_namespace_with_assignee_record(pool).await
+        self.save_namespace_with_assignee_record_without_events(pool)
+            .await
     }
 }
 
 impl SaveNamespaceWithAssigneeRecord for NewNamespaceWithAssignee {
-    async fn save_namespace_with_assignee_record(
+    async fn save_namespace_with_assignee_record_without_events(
         &self,
         pool: &DbPool,
     ) -> Result<Namespace, ApiError> {
@@ -208,11 +212,11 @@ impl SaveNamespaceWithAssigneeRecord for NewNamespaceWithAssignee {
         };
 
         new_namespace
-            .save_namespace_for_group_record(pool, self.group_id)
+            .save_namespace_for_group_record_without_events(pool, self.group_id)
             .await
     }
 
-    async fn save_namespace_with_assignee_record_with_context(
+    async fn save_namespace_with_assignee_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
@@ -223,31 +227,32 @@ impl SaveNamespaceWithAssigneeRecord for NewNamespaceWithAssignee {
         };
 
         new_namespace
-            .save_namespace_for_group_record_with_context(pool, self.group_id, context)
+            .save_namespace_for_group_record(pool, self.group_id, context)
             .await
     }
 }
 
 pub trait SaveNamespaceForGroupRecord {
-    async fn save_namespace_for_group_record(
+    async fn save_namespace_for_group_record_without_events(
         &self,
         pool: &DbPool,
         group_id: i32,
     ) -> Result<Namespace, ApiError>;
 
-    async fn save_namespace_for_group_record_with_context(
+    async fn save_namespace_for_group_record(
         &self,
         pool: &DbPool,
         group_id: i32,
         context: Option<&EventContext>,
     ) -> Result<Namespace, ApiError> {
         let _ = context;
-        self.save_namespace_for_group_record(pool, group_id).await
+        self.save_namespace_for_group_record_without_events(pool, group_id)
+            .await
     }
 }
 
 impl SaveNamespaceForGroupRecord for NewNamespace {
-    async fn save_namespace_for_group_record(
+    async fn save_namespace_for_group_record_without_events(
         &self,
         pool: &DbPool,
         group_id: i32,
@@ -304,14 +309,16 @@ impl SaveNamespaceForGroupRecord for NewNamespace {
         })
     }
 
-    async fn save_namespace_for_group_record_with_context(
+    async fn save_namespace_for_group_record(
         &self,
         pool: &DbPool,
         group_id: i32,
         context: Option<&EventContext>,
     ) -> Result<Namespace, ApiError> {
         let Some(context) = context else {
-            return self.save_namespace_for_group_record(pool, group_id).await;
+            return self
+                .save_namespace_for_group_record_without_events(pool, group_id)
+                .await;
         };
 
         use crate::schema::namespaces::dsl::namespaces;

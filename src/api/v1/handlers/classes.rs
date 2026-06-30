@@ -257,7 +257,7 @@ async fn create_class(
 
     let event_context = requestor.event_context(&req);
     let class = class_data
-        .save_with_context(&pool, Some(&event_context))
+        .save(&pool, Some(&event_context))
         .await?
         .expand_namespace(&pool)
         .await?;
@@ -367,7 +367,7 @@ async fn update_class(
 
     let event_context = requestor.event_context(&req);
     let class = class_data
-        .update_with_context(&pool, class.id, Some(&event_context))
+        .update(&pool, class.id, Some(&event_context))
         .await?
         .expand_namespace(&pool)
         .await?;
@@ -414,9 +414,7 @@ async fn delete_class(
     );
 
     let event_context = requestor.event_context(&req);
-    class
-        .delete_with_context(&pool, Some(&event_context))
-        .await?;
+    class.delete(&pool, Some(&event_context)).await?;
     Ok(json_response((), StatusCode::NO_CONTENT))
 }
 
@@ -599,9 +597,7 @@ async fn create_class_relation(
     );
 
     let event_context = requestor.event_context(&req);
-    let relation = relation
-        .save_with_context(&pool, Some(&event_context))
-        .await?;
+    let relation = relation.save(&pool, Some(&event_context)).await?;
 
     Ok(json_response_created(
         &relation,
@@ -666,9 +662,7 @@ async fn delete_class_relation(
         || relation.to_hubuum_class_id == class_id.id()
     {
         let event_context = requestor.event_context(&req);
-        relation
-            .delete_with_context(&pool, Some(&event_context))
-            .await?;
+        relation.delete(&pool, Some(&event_context)).await?;
         Ok(json_response((), StatusCode::NO_CONTENT))
     } else {
         info!(
@@ -896,9 +890,7 @@ async fn create_object_in_class(
     ensure_new_object_matches_path_class(&object_data, &class)?;
 
     let event_context = requestor.event_context(&req);
-    let object = object_data
-        .save_with_context(&pool, Some(&event_context))
-        .await?;
+    let object = object_data.save(&pool, Some(&event_context)).await?;
 
     Ok(json_response_created(
         &object,
@@ -999,7 +991,7 @@ async fn patch_object_in_class(
 
     let event_context = requestor.event_context(&req);
     let object = object_data
-        .update_with_context(&pool, object.id, Some(&event_context))
+        .update(&pool, object.id, Some(&event_context))
         .await?;
     Ok(json_response(object, StatusCode::OK))
 }
@@ -1047,9 +1039,7 @@ async fn delete_object_in_class(
     );
 
     let event_context = requestor.event_context(&req);
-    object
-        .delete_with_context(&pool, Some(&event_context))
-        .await?;
+    object.delete(&pool, Some(&event_context)).await?;
     Ok(json_response((), StatusCode::NO_CONTENT))
 }
 
@@ -1404,9 +1394,7 @@ async fn delete_object_relation(
     );
 
     let event_context = requestor.event_context(&req);
-    relation
-        .delete_with_context(&pool, Some(&event_context))
-        .await?;
+    relation.delete(&pool, Some(&event_context)).await?;
     Ok(json_response((), StatusCode::NO_CONTENT))
 }
 
@@ -1482,9 +1470,7 @@ async fn create_object_relation(
     };
 
     let event_context = requestor.event_context(&req);
-    let relation = relation
-        .save_with_context(&pool, Some(&event_context))
-        .await?;
+    let relation = relation.save(&pool, Some(&event_context)).await?;
 
     Ok(json_response_created(
         relation,

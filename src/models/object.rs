@@ -193,7 +193,7 @@ pub mod tests {
             data: object_data,
             description: "Test object".to_string(),
         };
-        object.save(pool).await
+        object.save_without_events(pool).await
     }
 
     pub async fn get_object(pool: &DbPool, object_id: i32) -> HubuumObject {
@@ -228,10 +228,10 @@ pub mod tests {
         assert_eq!(fetched_object, object);
         assert_eq!(fetched_object.data, object_data);
 
-        fetched_object.delete(&pool).await.unwrap();
+        fetched_object.delete_without_events(&pool).await.unwrap();
         verify_no_such_object(&pool, object.id).await;
 
-        class.delete(&pool).await.unwrap();
+        class.delete_without_events(&pool).await.unwrap();
         verify_no_such_class(&pool, class.id).await;
 
         namespace.cleanup().await.unwrap();

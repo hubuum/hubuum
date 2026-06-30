@@ -27,7 +27,7 @@ mod tests {
     use crate::models::namespace::user_can_on_any;
     use crate::models::principal::load_principal_by_id;
     use crate::models::service_account::cancel_pending_tasks_for_principal;
-    use crate::models::token::{Token, create_principal_token_with_context};
+    use crate::models::token::{Token, create_principal_token};
     use crate::models::user::{LoginUser, NewUser};
     use crate::models::{
         NewServiceAccount, NewTaskRecord, Permissions, PrincipalID, PrincipalMemberResponse,
@@ -99,7 +99,7 @@ mod tests {
                 proper_name: None,
                 email: None,
             }
-            .save(pool)
+            .save_without_events(pool)
             .await
             .map(|_| ())
         };
@@ -193,11 +193,13 @@ mod tests {
 
         let user = create_test_user(pool).await;
         let group = create_test_group(pool).await;
-        group.add_member(pool, &user).await.unwrap();
+        group.add_member_without_events(pool, &user).await.unwrap();
         user.create_token(pool).await.unwrap();
         let pid = user.id;
 
-        user.delete(pool).await.expect("user delete should succeed");
+        user.delete_without_events(pool)
+            .await
+            .expect("user delete should succeed");
 
         let remaining: i64 = match facet {
             CascadeFacet::Principal => with_connection(pool, |conn| {
@@ -254,17 +256,9 @@ mod tests {
         let token = match offset_hours {
             Some(h) => {
                 let expiry = chrono::Utc::now().naive_utc() + chrono::Duration::hours(h);
-                create_principal_token_with_context(
-                    pool,
-                    user.id,
-                    None,
-                    None,
-                    Some(expiry),
-                    None,
-                    None,
-                )
-                .await
-                .unwrap()
+                create_principal_token(pool, user.id, None, None, Some(expiry), None, None)
+                    .await
+                    .unwrap()
             }
             None => user.create_token(pool).await.unwrap(),
         };
@@ -520,7 +514,11 @@ mod tests {
         let sa = create_test_service_account(pool, &fixture.owner_group, None).await;
 
         if in_group {
-            fixture.owner_group.add_member(pool, &sa).await.unwrap();
+            fixture
+                .owner_group
+                .add_member_without_events(pool, &sa)
+                .await
+                .unwrap();
         }
 
         let token = service_account_token(pool, &sa, None, None).await;
@@ -542,7 +540,11 @@ mod tests {
         let pool = &context.pool;
         let fixture = context.with_namespace().await;
         let sa = create_test_service_account(pool, &fixture.owner_group, None).await;
-        fixture.owner_group.add_member(pool, &sa).await.unwrap();
+        fixture
+            .owner_group
+            .add_member_without_events(pool, &sa)
+            .await
+            .unwrap();
 
         let token = scoped_token(pool, sa.id, &[Permissions::ReadCollection]).await;
         let resp = get_request(
@@ -563,7 +565,11 @@ mod tests {
         let pool = &context.pool;
         let fixture = context.with_namespace().await;
         let sa = create_test_service_account(pool, &fixture.owner_group, None).await;
-        fixture.owner_group.add_member(pool, &sa).await.unwrap();
+        fixture
+            .owner_group
+            .add_member_without_events(pool, &sa)
+            .await
+            .unwrap();
 
         let token = scoped_token(pool, sa.id, &[Permissions::ReadCollection]).await;
         let resp = patch_request(
@@ -609,7 +615,10 @@ mod tests {
                 let admin_group = ensure_admin_group(pool).await;
                 let group = create_test_group(pool).await;
                 let sa = create_test_service_account(pool, &group, None).await;
-                admin_group.add_member(pool, &sa).await.unwrap();
+                admin_group
+                    .add_member_without_events(pool, &sa)
+                    .await
+                    .unwrap();
                 service_account_token(pool, &sa, None, None).await
             }
         };
@@ -646,7 +655,10 @@ mod tests {
             TokenManager::Admin => context.admin_token.clone(),
             TokenManager::OwnerGroupMember => {
                 let member = create_test_user(pool).await;
-                group.add_member(pool, &member).await.unwrap();
+                group
+                    .add_member_without_events(pool, &member)
+                    .await
+                    .unwrap();
                 member.create_token(pool).await.unwrap().get_token()
             }
             TokenManager::Outsider => {
@@ -730,7 +742,7 @@ mod tests {
 
         let (token, target_principal) = match caller {
             NonManager::ServiceAccountInOwnGroup => {
-                group.add_member(pool, &sa).await.unwrap();
+                group.add_member_without_events(pool, &sa).await.unwrap();
                 (service_account_token(pool, &sa, None, None).await, sa.id)
             }
             NonManager::ScopedHuman => {
@@ -759,7 +771,7 @@ mod tests {
         let pool = &context.pool;
         let group = create_test_group(pool).await;
         let sa = create_test_service_account(pool, &group, None).await;
-        group.add_member(pool, &sa).await.unwrap();
+        group.add_member_without_events(pool, &sa).await.unwrap();
 
         let resp = get_request(
             pool,
@@ -800,7 +812,7 @@ mod tests {
         let group = create_test_group(pool).await;
         let other_group = create_test_group(pool).await;
         let sa = create_test_service_account(pool, &group, None).await;
-        group.add_member(pool, &sa).await.unwrap();
+        group.add_member_without_events(pool, &sa).await.unwrap();
         let token = service_account_token(pool, &sa, None, None).await;
 
         let resp = get_request(pool, &token, &format!("{ME_ENDPOINT}/groups")).await;
@@ -820,7 +832,11 @@ mod tests {
         let pool = &context.pool;
         let fixture = context.with_namespace().await;
         let sa = create_test_service_account(pool, &fixture.owner_group, None).await;
-        fixture.owner_group.add_member(pool, &sa).await.unwrap();
+        fixture
+            .owner_group
+            .add_member_without_events(pool, &sa)
+            .await
+            .unwrap();
         let token = service_account_token(pool, &sa, None, None).await;
 
         let resp = get_request(pool, &token, &format!("{ME_ENDPOINT}/permissions")).await;
@@ -877,7 +893,11 @@ mod tests {
         let pool = &context.pool;
         let fixture = context.with_namespace().await;
         let sa = create_test_service_account(pool, &fixture.owner_group, None).await;
-        fixture.owner_group.add_member(pool, &sa).await.unwrap();
+        fixture
+            .owner_group
+            .add_member_without_events(pool, &sa)
+            .await
+            .unwrap();
 
         let resp = get_request(
             pool,
@@ -934,7 +954,11 @@ mod tests {
         let pool = &context.pool;
         let fixture = context.with_namespace().await;
         let sa = create_test_service_account(pool, &fixture.owner_group, None).await;
-        fixture.owner_group.add_member(pool, &sa).await.unwrap();
+        fixture
+            .owner_group
+            .add_member_without_events(pool, &sa)
+            .await
+            .unwrap();
 
         let resp = get_request(
             pool,
@@ -968,8 +992,8 @@ mod tests {
         let group = create_test_group(pool).await;
         let human = create_test_user(pool).await;
         let sa = create_test_service_account(pool, &group, None).await;
-        group.add_member(pool, &human).await.unwrap();
-        group.add_member(pool, &sa).await.unwrap();
+        group.add_member_without_events(pool, &human).await.unwrap();
+        group.add_member_without_events(pool, &sa).await.unwrap();
 
         let resp = get_request(
             pool,
@@ -1091,7 +1115,10 @@ mod tests {
             TaskViewer::ServiceAccountItself => sa.id,
             TaskViewer::OwnerGroupMember => {
                 let member = create_test_user(pool).await;
-                group.add_member(pool, &member).await.unwrap();
+                group
+                    .add_member_without_events(pool, &member)
+                    .await
+                    .unwrap();
                 member.id
             }
             TaskViewer::Unrelated => create_test_user(pool).await.id,
@@ -1185,7 +1212,7 @@ mod tests {
             .await
             .unwrap();
         let sa = create_test_service_account(pool, &group, None).await;
-        group.add_member(pool, &sa).await.unwrap();
+        group.add_member_without_events(pool, &sa).await.unwrap();
 
         let visible = user_can_on_any(pool, &sa, Permissions::ReadTemplate, scope.as_deref())
             .await
@@ -1242,7 +1269,7 @@ mod tests {
             .await
             .unwrap();
         let sa = create_test_service_account(pool, &group, None).await;
-        group.add_member(pool, &sa).await.unwrap();
+        group.add_member_without_events(pool, &sa).await.unwrap();
         let token = service_account_token(pool, &sa, None, None).await;
 
         let resp = get_request(pool, &token, NAMESPACES_ENDPOINT).await;
@@ -1312,13 +1339,22 @@ mod tests {
             Reassigner::Admin => context.admin_token.clone(),
             Reassigner::MemberOfBothGroups => {
                 let user = create_test_user(pool).await;
-                current_group.add_member(pool, &user).await.unwrap();
-                target_group.add_member(pool, &user).await.unwrap();
+                current_group
+                    .add_member_without_events(pool, &user)
+                    .await
+                    .unwrap();
+                target_group
+                    .add_member_without_events(pool, &user)
+                    .await
+                    .unwrap();
                 user.create_token(pool).await.unwrap().get_token()
             }
             Reassigner::MemberOfCurrentGroupOnly => {
                 let user = create_test_user(pool).await;
-                current_group.add_member(pool, &user).await.unwrap();
+                current_group
+                    .add_member_without_events(pool, &user)
+                    .await
+                    .unwrap();
                 user.create_token(pool).await.unwrap().get_token()
             }
         };
@@ -1371,7 +1407,10 @@ mod tests {
         let owned_group = create_test_group(pool).await;
         let other_group = create_test_group(pool).await;
         let member = create_test_user(pool).await;
-        owned_group.add_member(pool, &member).await.unwrap();
+        owned_group
+            .add_member_without_events(pool, &member)
+            .await
+            .unwrap();
 
         let visible_sa = create_test_service_account(pool, &owned_group, None).await;
         let hidden_sa = create_test_service_account(pool, &other_group, None).await;

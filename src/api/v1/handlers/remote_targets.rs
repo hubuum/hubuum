@@ -71,7 +71,7 @@ pub async fn create_remote_target(
     let event_context = requestor.event_context(&req);
     let created: RemoteTarget = target
         .into_row()?
-        .save_remote_target_record_with_context(&pool, Some(&event_context))
+        .save_remote_target_record(&pool, Some(&event_context))
         .await?
         .try_into()?;
     Ok(json_response_created(
@@ -213,7 +213,7 @@ pub async fn patch_remote_target(
     let row = update.into_row(&existing)?;
     let event_context = requestor.event_context(&req);
     let updated: RemoteTarget = row
-        .update_remote_target_record_with_context(&pool, existing.id, Some(&event_context))
+        .update_remote_target_record(&pool, existing.id, Some(&event_context))
         .await?
         .try_into()?;
     Ok(json_response(updated, StatusCode::OK))
@@ -268,7 +268,7 @@ pub async fn delete_remote_target(
     );
     let event_context = requestor.event_context(&req);
     target_id
-        .delete_remote_target_record_with_context(&pool, Some(&event_context))
+        .delete_remote_target_record(&pool, Some(&event_context))
         .await?;
     Ok(actix_web::HttpResponse::NoContent().finish())
 }

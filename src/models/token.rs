@@ -141,7 +141,7 @@ impl Token {
 /// Soft-revoke a token by id, scoped to the owning principal. Filtering on BOTH
 /// ids prevents a manager of principal A from revoking principal B's token by
 /// guessing its id. Returns the number of rows updated (0 = not found / not theirs).
-pub async fn revoke_token_by_id_for_principal<C>(
+pub async fn revoke_token_by_id_for_principal_without_events<C>(
     backend: &C,
     token_id: i32,
     principal: i32,
@@ -163,7 +163,7 @@ where
     })
 }
 
-pub async fn revoke_token_by_id_for_principal_with_context<C>(
+pub async fn revoke_token_by_id_for_principal<C>(
     backend: &C,
     token_id: i32,
     principal: i32,
@@ -173,7 +173,7 @@ where
     C: BackendContext + ?Sized,
 {
     let Some(context) = context else {
-        return revoke_token_by_id_for_principal(backend, token_id, principal).await;
+        return revoke_token_by_id_for_principal_without_events(backend, token_id, principal).await;
     };
 
     use crate::db::with_transaction;
@@ -221,7 +221,7 @@ where
 /// the raw value (shown once). Fail-closed: `scoped` is set in the same insert
 /// as the token row, before the scope rows, so a mid-transaction failure can
 /// never leave a `scoped = false` (full-authority) token with missing scopes.
-pub async fn create_principal_token_with_context<C>(
+pub async fn create_principal_token<C>(
     backend: &C,
     principal: i32,
     name: Option<&str>,

@@ -237,14 +237,15 @@ impl User {
         self.delete_all_user_tokens_record(backend.db_pool()).await
     }
 
-    pub async fn delete<C>(&self, backend: &C) -> Result<usize, ApiError>
+    pub async fn delete_without_events<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.delete_user_record(backend.db_pool()).await
+        self.delete_user_record_without_events(backend.db_pool())
+            .await
     }
 
-    pub async fn delete_with_context<C>(
+    pub async fn delete<C>(
         &self,
         backend: &C,
         context: Option<&EventContext>,
@@ -252,8 +253,7 @@ impl User {
     where
         C: BackendContext + ?Sized,
     {
-        self.delete_user_record_with_context(backend.db_pool(), context)
-            .await
+        self.delete_user_record(backend.db_pool(), context).await
     }
 }
 
@@ -286,15 +286,17 @@ impl UpdateUser {
         Ok(self)
     }
 
-    pub async fn save<C>(self, user_id: i32, backend: &C) -> Result<User, ApiError>
+    pub async fn save_without_events<C>(self, user_id: i32, backend: &C) -> Result<User, ApiError>
     where
         C: BackendContext + ?Sized,
     {
         let hashed = self.hash_password()?;
-        hashed.update_user_record(user_id, backend.db_pool()).await
+        hashed
+            .update_user_record_without_events(user_id, backend.db_pool())
+            .await
     }
 
-    pub async fn save_with_context<C>(
+    pub async fn save<C>(
         self,
         user_id: i32,
         backend: &C,
@@ -305,7 +307,7 @@ impl UpdateUser {
     {
         let hashed = self.hash_password()?;
         hashed
-            .update_user_record_with_context(user_id, backend.db_pool(), context)
+            .update_user_record(user_id, backend.db_pool(), context)
             .await
     }
 }
@@ -323,15 +325,17 @@ pub struct NewUser {
 }
 
 impl NewUser {
-    pub async fn save<C>(self, backend: &C) -> Result<User, ApiError>
+    pub async fn save_without_events<C>(self, backend: &C) -> Result<User, ApiError>
     where
         C: BackendContext + ?Sized,
     {
         let hashed = self.hash_password()?;
-        hashed.create_user_record(backend.db_pool()).await
+        hashed
+            .create_user_record_without_events(backend.db_pool())
+            .await
     }
 
-    pub async fn save_with_context<C>(
+    pub async fn save<C>(
         self,
         backend: &C,
         context: Option<&EventContext>,
@@ -340,9 +344,7 @@ impl NewUser {
         C: BackendContext + ?Sized,
     {
         let hashed = self.hash_password()?;
-        hashed
-            .create_user_record_with_context(backend.db_pool(), context)
-            .await
+        hashed.create_user_record(backend.db_pool(), context).await
     }
 
     pub fn hash_password(mut self) -> Result<Self, ApiError> {
@@ -371,7 +373,7 @@ impl UserID {
         self.load_user_record(backend.db_pool()).await
     }
 
-    pub async fn delete_with_context<C>(
+    pub async fn delete<C>(
         &self,
         backend: &C,
         context: Option<&EventContext>,
@@ -379,8 +381,7 @@ impl UserID {
     where
         C: BackendContext + ?Sized,
     {
-        self.delete_user_record_with_context(backend.db_pool(), context)
-            .await
+        self.delete_user_record(backend.db_pool(), context).await
     }
 }
 

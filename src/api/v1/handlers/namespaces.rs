@@ -94,7 +94,7 @@ pub async fn create_namespace(
 
     let event_context = requestor.event_context(&req);
     let created_namespace = new_namespace_request
-        .save_with_context(&pool, Some(&event_context))
+        .save(&pool, Some(&event_context))
         .await?;
 
     Ok(json_response_created(
@@ -185,7 +185,7 @@ pub async fn update_namespace(
     let event_context = requestor.event_context(&req);
     let updated_namespace = update_data
         .into_inner()
-        .update_with_context(&pool, namespace.id, Some(&event_context))
+        .update(&pool, namespace.id, Some(&event_context))
         .await?;
     Ok(json_response(updated_namespace, StatusCode::ACCEPTED))
 }
@@ -227,9 +227,7 @@ pub async fn delete_namespace(
     );
 
     let event_context = requestor.event_context(&req);
-    namespace
-        .delete_with_context(&pool, Some(&event_context))
-        .await?;
+    namespace.delete(&pool, Some(&event_context)).await?;
     Ok(json_response(json!(()), StatusCode::NO_CONTENT))
 }
 
@@ -389,7 +387,7 @@ pub async fn grant_namespace_group_permissions(
 
     let event_context = requestor.event_context(&req);
     namespace
-        .grant_with_context(&pool, group_id.id(), permissions, Some(&event_context))
+        .grant(&pool, group_id.id(), permissions, Some(&event_context))
         .await?;
 
     Ok(json_response((), StatusCode::CREATED))
@@ -451,7 +449,7 @@ pub async fn replace_namespace_group_permissions(
 
     let event_context = requestor.event_context(&req);
     namespace
-        .set_permissions_with_context(&pool, group_id.id(), permissions, Some(&event_context))
+        .set_permissions(&pool, group_id.id(), permissions, Some(&event_context))
         .await?;
 
     Ok(json_response((), StatusCode::OK))
@@ -500,7 +498,7 @@ pub async fn revoke_namespace_group_permissions(
 
     let event_context = requestor.event_context(&req);
     namespace
-        .revoke_all_with_context(&pool, group_id.id(), Some(&event_context))
+        .revoke_all(&pool, group_id.id(), Some(&event_context))
         .await?;
 
     Ok(json_response((), StatusCode::NO_CONTENT))
@@ -601,7 +599,7 @@ pub async fn grant_namespace_group_permission(
 
     let event_context = requestor.event_context(&req);
     namespace
-        .grant_with_context(
+        .grant(
             &pool,
             group_id.id(),
             PermissionsList::new([permission]),
@@ -657,7 +655,7 @@ pub async fn revoke_namespace_group_permission(
 
     let event_context = requestor.event_context(&req);
     namespace
-        .revoke_with_context(
+        .revoke(
             &pool,
             group_id.id(),
             PermissionsList::new([permission]),

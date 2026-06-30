@@ -38,8 +38,8 @@ pub struct NewPrincipalGroup {
 impl SaveAdapter for NewPrincipalGroup {
     type Output = PrincipalGroup;
 
-    async fn save_adapter(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
-        self.save_principal_group_record(pool).await
+    async fn save_adapter_without_events(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
+        self.save_principal_group_record_without_events(pool).await
     }
 }
 
@@ -62,7 +62,8 @@ impl PrincipalGroup {
     where
         C: BackendContext + ?Sized,
     {
-        self.save_principal_group_record(backend.db_pool()).await
+        self.save_principal_group_record_without_events(backend.db_pool())
+            .await
     }
 
     pub async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>
