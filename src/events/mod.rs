@@ -13,10 +13,12 @@
 
 mod context;
 mod db;
+mod fanout;
 mod model;
 
 pub use context::RequestProvenance;
 pub use db::emit_event;
+pub use fanout::{ensure_event_fanout_worker_running, kick_event_fanout_worker};
 pub use model::{Event, EventId, EventResponse, NewEvent};
 
 pub use hubuum_events_core::{

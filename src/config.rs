@@ -17,6 +17,10 @@ use crate::errors::ApiError;
 pub const DEFAULT_PAGE_LIMIT: usize = 100;
 pub const MAX_PAGE_LIMIT: usize = 250;
 pub const DEFAULT_TASK_POLL_INTERVAL_MS: u64 = 200;
+pub const DEFAULT_EVENT_FANOUT_WORKERS: usize = 1;
+pub const DEFAULT_EVENT_FANOUT_BATCH_SIZE: usize = 100;
+pub const DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS: u64 = 250;
+pub const DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS: u64 = 30_000;
 pub const DEFAULT_REPORT_OUTPUT_RETENTION_HOURS: i64 = 24 * 7;
 pub const DEFAULT_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS: u64 = 300;
 pub const DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER: usize = 100;
@@ -148,6 +152,38 @@ pub struct AppConfig {
         default_value_t = DEFAULT_TASK_POLL_INTERVAL_MS
     )]
     pub task_poll_interval_ms: u64,
+
+    /// Number of background event fan-out workers
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_FANOUT_WORKERS",
+        default_value_t = DEFAULT_EVENT_FANOUT_WORKERS
+    )]
+    pub event_fanout_workers: usize,
+
+    /// Number of events an event fan-out worker claims per batch
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_FANOUT_BATCH_SIZE",
+        default_value_t = DEFAULT_EVENT_FANOUT_BATCH_SIZE
+    )]
+    pub event_fanout_batch_size: usize,
+
+    /// How long idle event fan-out workers sleep between queue polls
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_FANOUT_POLL_INTERVAL_MS",
+        default_value_t = DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS
+    )]
+    pub event_fanout_poll_interval_ms: u64,
+
+    /// How long event fan-out claims remain locked before another worker may retry
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS",
+        default_value_t = DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS
+    )]
+    pub event_fanout_lock_timeout_ms: u64,
 
     /// How long successful stored report outputs remain available for refetch.
     #[clap(
@@ -491,6 +527,30 @@ impl AppConfig {
             ));
         }
 
+        if self.event_fanout_workers == 0 {
+            return Err(ApiError::BadRequest(
+                "event_fanout_workers must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.event_fanout_batch_size == 0 {
+            return Err(ApiError::BadRequest(
+                "event_fanout_batch_size must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.event_fanout_poll_interval_ms == 0 {
+            return Err(ApiError::BadRequest(
+                "event_fanout_poll_interval_ms must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.event_fanout_lock_timeout_ms == 0 {
+            return Err(ApiError::BadRequest(
+                "event_fanout_lock_timeout_ms must be greater than 0".to_string(),
+            ));
+        }
+
         if self.report_output_retention_hours <= 0 {
             return Err(ApiError::BadRequest(
                 "report_output_retention_hours must be greater than 0".to_string(),
@@ -822,6 +882,22 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_TASK_POLL_INTERVAL_MS),
+        event_fanout_workers: env::var("HUBUUM_EVENT_FANOUT_WORKERS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_FANOUT_WORKERS),
+        event_fanout_batch_size: env::var("HUBUUM_EVENT_FANOUT_BATCH_SIZE")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_FANOUT_BATCH_SIZE),
+        event_fanout_poll_interval_ms: env::var("HUBUUM_EVENT_FANOUT_POLL_INTERVAL_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS),
+        event_fanout_lock_timeout_ms: env::var("HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS),
         report_output_retention_hours: env::var("HUBUUM_REPORT_OUTPUT_RETENTION_HOURS")
             .ok()
             .and_then(|value| value.parse().ok())
@@ -1129,7 +1205,9 @@ mod tests {
     use clap::Parser;
 
     use super::{
-        AppConfig, DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS, DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+        AppConfig, DEFAULT_EVENT_FANOUT_BATCH_SIZE, DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS,
+        DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS, DEFAULT_EVENT_FANOUT_WORKERS,
+        DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS, DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS,
         DEFAULT_PAGE_LIMIT, DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER,
         DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER, DEFAULT_REPORT_MAX_OUTPUT_BYTES,
         DEFAULT_TASK_POLL_INTERVAL_MS, DEFAULT_TOKEN_LIFETIME_HOURS, MAX_PAGE_LIMIT, TEST_ENV_LOCK,
@@ -1261,11 +1339,36 @@ mod tests {
     }
 
     #[test]
+    fn event_fanout_worker_settings_are_parsed_from_env() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _workers_guard = EnvVarGuard::set("HUBUUM_EVENT_FANOUT_WORKERS", Some("2"));
+        let _batch_guard = EnvVarGuard::set("HUBUUM_EVENT_FANOUT_BATCH_SIZE", Some("50"));
+        let _poll_guard = EnvVarGuard::set("HUBUUM_EVENT_FANOUT_POLL_INTERVAL_MS", Some("500"));
+        let _lock_guard = EnvVarGuard::set("HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS", Some("45000"));
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(parsed.event_fanout_workers, 2);
+        assert_eq!(parsed.event_fanout_batch_size, 50);
+        assert_eq!(parsed.event_fanout_poll_interval_ms, 500);
+        assert_eq!(parsed.event_fanout_lock_timeout_ms, 45000);
+        assert_eq!(loaded.event_fanout_workers, 2);
+        assert_eq!(loaded.event_fanout_batch_size, 50);
+        assert_eq!(loaded.event_fanout_poll_interval_ms, 500);
+        assert_eq!(loaded.event_fanout_lock_timeout_ms, 45000);
+    }
+
+    #[test]
     fn worker_defaults_scale_from_detected_cpu_count() {
         let _lock = TEST_ENV_LOCK.lock().unwrap();
         let _actix_guard = EnvVarGuard::set("HUBUUM_ACTIX_WORKERS", None);
         let _task_guard = EnvVarGuard::set("HUBUUM_TASK_WORKERS", None);
         let _interval_guard = EnvVarGuard::set("HUBUUM_TASK_POLL_INTERVAL_MS", None);
+        let _fanout_workers_guard = EnvVarGuard::set("HUBUUM_EVENT_FANOUT_WORKERS", None);
+        let _fanout_batch_guard = EnvVarGuard::set("HUBUUM_EVENT_FANOUT_BATCH_SIZE", None);
+        let _fanout_poll_guard = EnvVarGuard::set("HUBUUM_EVENT_FANOUT_POLL_INTERVAL_MS", None);
+        let _fanout_lock_guard = EnvVarGuard::set("HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS", None);
 
         let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
         let loaded = get_config_from_env().unwrap();
@@ -1273,9 +1376,35 @@ mod tests {
         assert_eq!(parsed.actix_workers, default_actix_workers());
         assert_eq!(parsed.task_workers, default_task_workers());
         assert_eq!(parsed.task_poll_interval_ms, DEFAULT_TASK_POLL_INTERVAL_MS);
+        assert_eq!(parsed.event_fanout_workers, DEFAULT_EVENT_FANOUT_WORKERS);
+        assert_eq!(
+            parsed.event_fanout_batch_size,
+            DEFAULT_EVENT_FANOUT_BATCH_SIZE
+        );
+        assert_eq!(
+            parsed.event_fanout_poll_interval_ms,
+            DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS
+        );
+        assert_eq!(
+            parsed.event_fanout_lock_timeout_ms,
+            DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS
+        );
         assert_eq!(loaded.actix_workers, default_actix_workers());
         assert_eq!(loaded.task_workers, default_task_workers());
         assert_eq!(loaded.task_poll_interval_ms, DEFAULT_TASK_POLL_INTERVAL_MS);
+        assert_eq!(loaded.event_fanout_workers, DEFAULT_EVENT_FANOUT_WORKERS);
+        assert_eq!(
+            loaded.event_fanout_batch_size,
+            DEFAULT_EVENT_FANOUT_BATCH_SIZE
+        );
+        assert_eq!(
+            loaded.event_fanout_poll_interval_ms,
+            DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS
+        );
+        assert_eq!(
+            loaded.event_fanout_lock_timeout_ms,
+            DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS
+        );
     }
 
     #[test]
