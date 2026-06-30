@@ -1,8 +1,103 @@
-# Event Delivery
+# Event And Audit
 
 Hubuum stores one canonical event stream in `events`. Audit reads query that
 stream directly, while external delivery fans matching events out through
 `event_subscriptions` and `event_deliveries`.
+
+The event stream is append-only during normal application operation. Domain
+changes emit events in the same database transaction as the state change, so an
+event exists only if the change commits.
+
+## Audit Log
+
+Audit readers query the canonical stream with `GET /api/v1/events`. The
+endpoint is cursor-paginated and supports the normal pagination headers:
+
+```http
+GET /api/v1/events?entity_type=namespace&action=created&limit=50&sort=-occurred_at
+Authorization: Bearer <token>
+```
+
+Supported audit filters are:
+
+| Filter | Meaning |
+| ------ | ------- |
+| `entity_type` | Event entity type, such as `namespace`, `class`, `object`, or `task` |
+| `entity_id` | Integer id of the affected entity |
+| `action` | Event action for the entity type, such as `created`, `updated`, or `deleted` |
+| `actor_kind` | Actor class, such as `user`, `service_account`, or `system` |
+| `actor_user_id` | Principal id for user or service-account actors |
+| `namespace_id` | Namespace directly attached to the event |
+| `occurred_after` | Lower `occurred_at` bound; accepts RFC 3339 or `YYYY-MM-DD` |
+| `occurred_before` | Upper `occurred_at` bound; accepts RFC 3339 or `YYYY-MM-DD` |
+
+Supported sorts are `id` and `occurred_at`, with `-` for descending order.
+For example, `sort=-occurred_at` returns the newest visible events first.
+
+Audit visibility is namespace-scoped:
+
+- A caller sees namespace events only for namespaces where the caller has
+  `ReadAudit`.
+- Events that reference related namespaces in event metadata are visible to a
+  caller with `ReadAudit` on one of those related namespaces.
+- Namespace-less events are visible only to unscoped admins.
+- Scoped tokens are constrained by both their token scope and the caller's
+  underlying permissions.
+
+Task lifecycle history is also stored in `events`. User-facing task reads
+should usually use `GET /api/v1/tasks/{task_id}/events`, which applies the task
+authorization model and returns task-focused history.
+
+## Sinks And Subscriptions
+
+External delivery is configured in two layers:
+
+- Event sinks are global transport definitions. Admins manage them through
+  `/api/v1/event-sinks`.
+- Event subscriptions are namespace-scoped routing rules. Callers need
+  `ManageEventSubscription` on the namespace and manage them through
+  `/api/v1/namespaces/{namespace_id}/event-subscriptions`.
+
+A sink describes how to deliver. A subscription describes which events should
+be delivered to a sink. Subscription filters are `entity_types` and `actions`;
+Hubuum validates these against the event catalog and rejects impossible
+entity/action pairs at write time.
+
+Example sink:
+
+```json
+{
+  "name": "inventory-webhook",
+  "kind": "webhook",
+  "config": {
+    "headers": {
+      "X-Integration": "inventory"
+    }
+  },
+  "secret_ref": "inventory_webhook",
+  "enabled": true
+}
+```
+
+Example namespace subscription:
+
+```json
+{
+  "sink_id": 1,
+  "name": "namespace-lifecycle-to-inventory",
+  "description": "Send namespace lifecycle events to inventory",
+  "entity_types": ["namespace"],
+  "actions": ["created", "updated", "deleted"],
+  "routing": {
+    "url": "https://inventory.example/hubuum/events"
+  },
+  "enabled": true
+}
+```
+
+Both the sink and the subscription must be enabled for matching events to fan
+out to delivery rows. Disabling either one stops new matching deliveries
+without deleting historical events or existing delivery rows.
 
 ## Webhook Sinks
 
@@ -166,16 +261,41 @@ render to a single non-empty line, and bodies must render to non-empty text.
 
 ## Delivery Semantics
 
-Delivery is at least once. A successful `2xx` webhook response marks the
-delivery `succeeded`; transport errors or non-success status codes are retried
-with backoff until the configured attempt limit, then marked `dead`.
+Delivery is at least once. A successful transport-specific acknowledgement
+marks the delivery `succeeded`; transport errors or failed acknowledgements are
+retried with backoff until the configured attempt limit, then marked `dead`.
+For webhooks, any `2xx` response is successful and non-`2xx` responses are
+retried.
 
 Hubuum does not guarantee ordering across events. Consumers that need ordering
 should reconcile with `occurred_at` and the internal monotonic `id`, while still
 deduplicating by `event_id`.
 
-Operators can inspect, retry, or dead-letter delivery rows through the
-`/api/v1/event-deliveries` admin endpoints.
+Operators can inspect delivery rows through `GET /api/v1/event-deliveries` and
+`GET /api/v1/event-deliveries/{delivery_id}`. Admins can release a failed or
+dead delivery with `POST /api/v1/event-deliveries/{delivery_id}/retry`, or move
+a row to the dead-letter state with
+`POST /api/v1/event-deliveries/{delivery_id}/dead`.
+
+Delivery workers are configurable and default-disabled:
+
+```text
+HUBUUM_EVENT_FANOUT_WORKERS=1
+HUBUUM_EVENT_FANOUT_BATCH_SIZE=100
+HUBUUM_EVENT_FANOUT_POLL_INTERVAL_MS=250
+HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS=30000
+HUBUUM_EVENT_DELIVERY_WORKERS=0
+HUBUUM_EVENT_DELIVERY_BATCH_SIZE=100
+HUBUUM_EVENT_DELIVERY_POLL_INTERVAL_MS=500
+HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS=30000
+HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS=1000
+HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS=300000
+HUBUUM_EVENT_DELIVERY_MAX_ATTEMPTS=10
+```
+
+Keep delivery workers at `0` when the deployment uses the audit log only or
+when sink credentials are not ready. Set `HUBUUM_EVENT_DELIVERY_WORKERS` above
+zero once operators are ready for external transport delivery.
 
 ## Operational Health
 
