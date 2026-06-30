@@ -705,4 +705,50 @@ pub mod tests {
 
         cleanup(&created_classes).await;
     }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_api_create_records_actor(#[future(awt)] test_context: TestContext) {
+        use crate::db::with_connection;
+        use diesel::prelude::*;
+
+        let context = test_context;
+        let ns = context.namespace_fixture("actor_history").await;
+
+        let new_class = NewHubuumClass {
+            name: format!("{}_class", ns.namespace.name),
+            description: "d".to_string(),
+            namespace_id: ns.namespace.id,
+            json_schema: None,
+            validate_schema: Some(false),
+        };
+
+        let resp = post_request(&context.pool, &context.admin_token, CLASSES_ENDPOINT, &new_class).await;
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let created: HubuumClassExpanded = test::read_body_json(resp).await;
+
+        // The user behind admin_token, resolved straight from the tokens table.
+        let token_hash = crate::models::token::Token::storage_hash_from_raw(&context.admin_token);
+        let expected_actor: i32 = with_connection(&context.pool, |conn| {
+            use crate::schema::tokens::dsl as t;
+            t::tokens
+                .filter(t::token.eq(&token_hash))
+                .select(t::user_id)
+                .first::<i32>(conn)
+        })
+        .unwrap();
+
+        let actor: Option<i32> = with_connection(&context.pool, |conn| {
+            use crate::schema::hubuumclass_history::dsl as h;
+            h::hubuumclass_history
+                .filter(h::id.eq(created.id))
+                .order(h::history_id.desc())
+                .select(h::actor_id)
+                .first::<Option<i32>>(conn)
+        })
+        .unwrap();
+
+        assert_eq!(actor, Some(expected_actor), "history must attribute the create to the requestor");
+        ns.cleanup().await.unwrap();
+    }
 }
