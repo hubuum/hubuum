@@ -24,11 +24,13 @@ pub struct HistoryResponse<T: Serialize> {
 /// Parse the required `at=<rfc3339>` query parameter for the as-of endpoint.
 #[allow(dead_code)]
 pub fn parse_as_of(query_string: &str) -> Result<DateTime<Utc>, ApiError> {
-    let at = url::form_urlencoded::parse(query_string.as_bytes())
-        .find(|(k, _)| k == "at")
-        .map(|(_, v)| v.into_owned())
+    let (_opts, passthrough) =
+        crate::models::search::parse_query_parameter_with_passthrough(query_string, &["at"])?;
+    let at = passthrough
+        .get("at")
+        .and_then(|values| values.first())
         .ok_or_else(|| ApiError::BadRequest("missing required 'at' parameter".into()))?;
-    DateTime::parse_from_rfc3339(&at)
+    DateTime::parse_from_rfc3339(at)
         .map(|dt| dt.with_timezone(&Utc))
         .map_err(|_| ApiError::BadRequest(format!("invalid rfc3339 timestamp: {at}")))
 }
