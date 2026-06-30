@@ -18,12 +18,13 @@ use crate::db::traits::event_delivery::{
     mark_event_delivery_failed, mark_event_delivery_succeeded,
 };
 use crate::errors::ApiError;
-use crate::events::sink::{EventEnvelope, NoopSinkResolver, SinkResolver};
+use crate::events::sink::{DefaultSinkResolver, EventEnvelope, SinkResolver};
 use crate::models::{EventSink, EventSubscription};
 
 static EVENT_DELIVERY_WORKER: Once = Once::new();
 static EVENT_DELIVERY_NOTIFY: OnceLock<Notify> = OnceLock::new();
-static DEFAULT_SINK_RESOLVER: NoopSinkResolver = NoopSinkResolver;
+static DEFAULT_SINK_RESOLVER: std::sync::LazyLock<DefaultSinkResolver> =
+    std::sync::LazyLock::new(DefaultSinkResolver::default);
 
 fn get_event_delivery_notify() -> &'static Notify {
     EVENT_DELIVERY_NOTIFY.get_or_init(Notify::new)
@@ -207,7 +208,7 @@ pub fn ensure_event_delivery_worker_running(pool: DbPool) {
                 settings,
                 poll_interval,
                 worker_index,
-                &DEFAULT_SINK_RESOLVER,
+                &*DEFAULT_SINK_RESOLVER,
             );
         }
     });
@@ -222,7 +223,7 @@ pub fn kick_event_delivery_worker(pool: DbPool) {
 mod tests {
     use futures::FutureExt;
 
-    use crate::events::sink::{EventEnvelope, Sink, SinkError};
+    use crate::events::sink::{EventEnvelope, NoopSinkResolver, Sink, SinkError};
     use crate::models::EventSinkKind;
 
     use super::*;

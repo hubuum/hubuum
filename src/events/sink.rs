@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::events::Event;
+use crate::events::webhook::WebhookSink;
 use crate::models::{EventSink, EventSinkKind, EventSubscription};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -93,6 +94,20 @@ pub struct NoopSinkResolver;
 impl SinkResolver for NoopSinkResolver {
     fn resolve(&self, _kind: EventSinkKind) -> Option<&dyn Sink> {
         None
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct DefaultSinkResolver {
+    webhook: WebhookSink,
+}
+
+impl SinkResolver for DefaultSinkResolver {
+    fn resolve(&self, kind: EventSinkKind) -> Option<&dyn Sink> {
+        match kind {
+            EventSinkKind::Webhook => Some(&self.webhook),
+            _ => None,
+        }
     }
 }
 
