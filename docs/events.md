@@ -77,6 +77,46 @@ The routing key is always `{entity_type}.{action}`, such as
 UUID and enables publisher confirms for each delivery attempt. Consumers should
 deduplicate by `event_id` or `message_id`.
 
+## Valkey Stream Sinks
+
+Valkey stream delivery is available when Hubuum is built with the `valkey`
+feature. Hubuum uses the mature Redis protocol client for this transport, so
+the connection URL uses the standard `redis://` form accepted by Redis and
+Valkey deployments.
+
+The subscription `routing` object selects the stream key:
+
+```json
+{
+  "routing": {
+    "stream": "hubuum:events"
+  }
+}
+```
+
+The sink `config` holds the Valkey connection URL and optional stream trim
+settings:
+
+```json
+{
+  "config": {
+    "uri": "redis://default:{secret}@valkey.example/0",
+    "max_len": 100000,
+    "approximate_trim": true
+  },
+  "secret_ref": "valkey_password"
+}
+```
+
+When `secret_ref` is set, the URI must contain `{secret}`. Hubuum reads
+`HUBUUM_EVENT_SINK_SECRET_<SECRET_REF>`, percent-encodes the value for URI
+userinfo use, and substitutes it into the URI. For the example above, the
+environment variable is `HUBUUM_EVENT_SINK_SECRET_VALKEY_PASSWORD`.
+
+Each `XADD` entry includes discrete fields for `event_id`, `entity_type`,
+`entity_name`, `action`, and `actor_kind`, plus the full JSON envelope in the
+`payload` field. Consumers should deduplicate by `event_id`.
+
 ## Delivery Semantics
 
 Delivery is at least once. A successful `2xx` webhook response marks the

@@ -2,6 +2,8 @@ use std::fmt;
 
 use chrono::NaiveDateTime;
 use futures::future::BoxFuture;
+#[cfg(any(feature = "amqp", feature = "valkey"))]
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -101,6 +103,8 @@ impl SinkResolver for NoopSinkResolver {
 pub struct DefaultSinkResolver {
     #[cfg(feature = "amqp")]
     amqp: crate::events::amqp::AmqpSink,
+    #[cfg(feature = "valkey")]
+    valkey: crate::events::valkey::ValkeySink,
     webhook: WebhookSink,
 }
 
@@ -109,6 +113,8 @@ impl SinkResolver for DefaultSinkResolver {
         match kind {
             #[cfg(feature = "amqp")]
             EventSinkKind::Amqp => Some(&self.amqp),
+            #[cfg(feature = "valkey")]
+            EventSinkKind::ValkeyStream => Some(&self.valkey),
             EventSinkKind::Webhook => Some(&self.webhook),
             _ => None,
         }
@@ -125,6 +131,31 @@ pub(crate) fn resolve_event_sink_secret(secret_ref: &str) -> Result<String, Sink
             "Event sink secret reference '{secret_ref}' is not configured"
         ))
     })
+}
+
+#[cfg(any(feature = "amqp", feature = "valkey"))]
+pub(crate) fn resolve_event_sink_secret_uri(
+    uri: &str,
+    secret_ref: Option<&str>,
+    sink_label: &str,
+) -> Result<String, SinkError> {
+    let contains_secret_placeholder = uri.contains("{secret}");
+    match secret_ref {
+        Some(secret_ref) => {
+            if !contains_secret_placeholder {
+                return Err(SinkError::new(format!(
+                    "Invalid {sink_label} config: uri must include {{secret}} when secret_ref is set"
+                )));
+            }
+            let secret = resolve_event_sink_secret(secret_ref)?;
+            let encoded = utf8_percent_encode(&secret, NON_ALPHANUMERIC).to_string();
+            Ok(uri.replace("{secret}", &encoded))
+        }
+        None if contains_secret_placeholder => Err(SinkError::new(format!(
+            "Invalid {sink_label} config: uri includes {{secret}} without secret_ref"
+        ))),
+        None => Ok(uri.to_string()),
+    }
 }
 
 #[cfg(test)]
