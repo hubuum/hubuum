@@ -90,7 +90,7 @@ CREATE TRIGGER hubuumclass_history_trg AFTER INSERT OR UPDATE OR DELETE ON hubuu
 
 - **Cascade-safe**: The trigger fires after the base operation, so constraint cascades are honored.
 - **Transaction-local actor**: The trigger reads `hubuum.actor_id` from a PostgreSQL GUC (session configuration), which is set to transaction-local scope so it reverts at commit/rollback.
-- **NULL actor = system**: When `actor_id` is not set, it defaults to `NULL` in the history row, indicating a system or background operation.
+- **NULL actor = system OR background task**: When `actor_id` is not set, it defaults to `NULL` in the history row. This covers writes outside any request context (migrations, schema changes), **and also async background workers** (notably imports and other `src/tasks` work) that currently run WITHOUT `with_actor_scope`, even when the task was user-initiated. **Planned future enhancement (Plan 2)**: threading the originating user through task execution so background work can be attributed correctly.
 - **Dynamic table name**: Using `TG_TABLE_NAME`, the function adapts to whichever table it's attached to, avoiding trigger duplication.
 
 ## Actor Capture
@@ -180,6 +180,18 @@ When you add, remove, or modify a column in a versioned base table (e.g., `hubuu
 ALTER TABLE hubuumclass ADD COLUMN color varchar;
 ALTER TABLE hubuumclass_history ADD COLUMN color varchar;
 ```
+
+### History Closure and ID Reuse
+
+The trigger's `UPDATE` logic (lines 64, 70) that closes old history versions relies on a critical assumption:
+
+```sql
+UPDATE <table>_history SET valid_to = <ts> WHERE id = <id> AND valid_to IS NULL
+```
+
+This assumes **at most ONE open history version exists per base-table `id`** at any given time. This holds for the normal lifecycle of tables with serial primary keys where `id` values are never recycled.
+
+**Future onboarding**: If a new versioned table reuses or recycles `id` values (for example, a table with a composite key or a non-monotonic primary key), this trigger will incorrectly close ALL open versions with that `id`, breaking the history integrity. Any such table would require a modified trigger that includes additional discriminating columns in the `WHERE` clause.
 
 ### Adding a New Versioned Table
 
@@ -298,9 +310,20 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO hubuum_app;
 
 ### History Table Protections
 
-- **Do not grant** `UPDATE` or `DELETE` on `_history` tables to the application role in production.
-- Triggers insert into history tables; the application should only **read** them.
-- This prevents accidental or malicious modification of audit records by the application.
+**DEPLOYMENT CHECKLIST REQUIREMENT**: History integrity depends on database-level enforcement. In production:
+
+- **MUST NOT grant** `UPDATE` or `DELETE` on `_history` tables to the application role.
+- Triggers insert into history tables; the application role should only have **SELECT** grants.
+- This is the **only** defense against accidental or malicious modification of audit records by the application layer.
+
+Verify in production:
+```sql
+SELECT grantee, privilege_type
+FROM information_schema.role_table_grants
+WHERE table_schema = 'public' AND table_name LIKE '%_history'
+  AND grantee = 'hubuum_app';
+-- Should show ONLY SELECT grants, NOT UPDATE or DELETE.
+```
 
 ### Trigger Auditing Limitations
 

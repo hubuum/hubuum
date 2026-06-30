@@ -42,28 +42,32 @@ async fn trigger_records_ops_and_actor() {
     .unwrap();
 
     // Read back the history for that class, oldest first.
-    let rows: Vec<(String, Option<DateTime<Utc>>, Option<i32>)> = with_connection(&pool, |conn| {
-        use crate::schema::hubuumclass::dsl as c;
+    type HistRow = (String, DateTime<Utc>, Option<DateTime<Utc>>, Option<i32>);
+    let rows: Vec<HistRow> = with_connection(&pool, |conn| {
         use crate::schema::hubuumclass_history::dsl as h;
-        let cid: i32 = c::hubuumclass
-            .filter(c::name.eq(&cname))
-            .select(c::id)
-            .first(conn)
-            .optional()?
-            .unwrap_or(-1);
         // The class itself is deleted; find history by the name snapshot instead.
-        let _ = cid;
         h::hubuumclass_history
             .filter(h::name.eq(&cname))
             .order(h::history_id.asc())
-            .select((h::op, h::valid_to, h::actor_id))
+            .select((h::op, h::valid_from, h::valid_to, h::actor_id))
             .load(conn)
     })
     .unwrap();
 
-    let ops: Vec<&str> = rows.iter().map(|(op, _, _)| op.as_str()).collect();
+    let ops: Vec<&str> = rows.iter().map(|(op, _, _, _)| op.as_str()).collect();
     assert_eq!(ops, vec!["I", "U", "D"], "expected insert/update/delete history");
-    assert!(rows.iter().all(|(_, _, actor)| *actor == Some(4242)), "actor must be 4242 on every row");
+    assert!(
+        rows.iter().all(|(_, _, _, actor)| *actor == Some(4242)),
+        "actor must be 4242 on every row"
+    );
+
+    // The DELETE row must be a zero-width tombstone.
+    let delete_row = rows.iter().find(|(op, _, _, _)| op == "D").unwrap();
+    let (_, valid_from, valid_to, _) = delete_row;
+    assert_eq!(
+        valid_from, valid_to.as_ref().unwrap(),
+        "DELETE tombstone must have valid_from == valid_to"
+    );
 
     ns.cleanup().await.unwrap();
 }
@@ -103,8 +107,11 @@ async fn cascade_delete_records_history() {
     })
     .unwrap();
 
-    assert!(ops.contains(&"I".to_string()), "insert should be recorded");
-    assert!(ops.contains(&"D".to_string()), "cascade delete should be recorded");
+    assert_eq!(
+        ops,
+        vec!["I".to_string(), "D".to_string()],
+        "expected insert then cascade delete"
+    );
 }
 
 use crate::db::with_actor_scope;
