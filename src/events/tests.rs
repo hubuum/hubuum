@@ -11,6 +11,10 @@ use diesel::prelude::*;
 use rstest::rstest;
 use uuid::Uuid;
 
+use crate::db::traits::event_fanout::{
+    EventFanoutSettings, claim_events_for_fanout, count_event_deliveries_for_event, fanout_event,
+};
+use crate::db::traits::event_subscription::{SaveEventSinkRecord, SaveEventSubscriptionRecord};
 use crate::db::traits::remote_target::{
     DeleteRemoteTargetRecord, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
     emit_remote_target_invoked_event,
@@ -28,10 +32,11 @@ use crate::models::token::{
     create_principal_token_with_context, revoke_token_by_id_for_principal_with_context,
 };
 use crate::models::{
-    GroupID, HubuumClassRelationID, NewHubuumClassRelation, NewHubuumObjectRelation,
-    NewRemoteTargetRow, NewReportTemplate, NewUser, Permissions, PermissionsList, PrincipalToken,
-    RemoteTargetID, ReportContentType, ReportTemplateID, ReportTemplateKind, Token,
-    UpdateRemoteTargetRow, UpdateReportTemplate, UpdateUser,
+    EventSinkID, EventSinkKind, GroupID, HubuumClassRelationID, NamespaceID, NewEventSink,
+    NewEventSubscription, NewHubuumClassRelation, NewHubuumObjectRelation, NewRemoteTargetRow,
+    NewReportTemplate, NewUser, Permissions, PermissionsList, PrincipalToken, RemoteTargetID,
+    ReportContentType, ReportTemplateID, ReportTemplateKind, Token, UpdateRemoteTargetRow,
+    UpdateReportTemplate, UpdateUser,
 };
 use crate::schema::events::dsl::events;
 use crate::tests::{TestScope, create_test_user, test_scope};
@@ -170,6 +175,140 @@ fn fanout_backlog_index_exists() {
         Ok::<_, diesel::result::Error>(())
     })
     .unwrap();
+}
+
+async fn create_namespace_event_subscription(
+    scope: &TestScope,
+    namespace_id: i32,
+    label: &str,
+    enabled: bool,
+) -> i32 {
+    let sink = NewEventSink {
+        name: scope.scoped_name(&format!("{label}_sink")),
+        kind: EventSinkKind::Webhook,
+        config: serde_json::json!({}),
+        secret_ref: None,
+        enabled: true,
+    }
+    .into_row()
+    .unwrap()
+    .save_event_sink_record(&scope.pool)
+    .await
+    .unwrap();
+
+    NewEventSubscription {
+        sink_id: EventSinkID::new(sink.id).unwrap(),
+        name: scope.scoped_name(&format!("{label}_subscription")),
+        description: String::new(),
+        entity_types: vec![EntityType::Namespace.as_str().to_string()],
+        actions: vec![Action::Created.as_str().to_string()],
+        routing: serde_json::json!({}),
+        enabled,
+    }
+    .into_row(NamespaceID::new(namespace_id).unwrap())
+    .unwrap()
+    .save_event_subscription_record(&scope.pool)
+    .await
+    .unwrap()
+    .id
+}
+
+fn emit_namespace_created_event(scope: &TestScope, namespace_id: i32) -> Event {
+    let event = NewEvent::new(
+        EntityType::Namespace,
+        Action::Created,
+        ActorKind::System,
+        "namespace fanout test",
+    )
+    .unwrap()
+    .with_namespace_id(namespace_id)
+    .with_entity_id(namespace_id)
+    .with_entity_name(scope.scoped_name("fanout_namespace"));
+
+    with_connection(&scope.pool, |conn| emit_event(conn, &event)).unwrap()
+}
+
+#[actix_web::test]
+async fn event_fanout_creates_delivery_for_each_matching_subscription_once() {
+    let scope = test_scope();
+    let fixture = scope.with_namespace().await;
+    create_namespace_event_subscription(&scope, fixture.namespace.id, "fanout_one", true).await;
+    create_namespace_event_subscription(&scope, fixture.namespace.id, "fanout_two", true).await;
+    let event = emit_namespace_created_event(&scope, fixture.namespace.id);
+
+    let inserted = fanout_event(&scope.pool, event.id).await.unwrap();
+    assert_eq!(inserted, 2);
+    assert_eq!(
+        count_event_deliveries_for_event(&scope.pool, event.id)
+            .await
+            .unwrap(),
+        2
+    );
+
+    let inserted_again = fanout_event(&scope.pool, event.id).await.unwrap();
+    assert_eq!(inserted_again, 0);
+    assert_eq!(
+        count_event_deliveries_for_event(&scope.pool, event.id)
+            .await
+            .unwrap(),
+        2
+    );
+}
+
+#[actix_web::test]
+async fn event_fanout_skips_disabled_subscriptions() {
+    let scope = test_scope();
+    let fixture = scope.with_namespace().await;
+    create_namespace_event_subscription(&scope, fixture.namespace.id, "fanout_disabled", false)
+        .await;
+    let event = emit_namespace_created_event(&scope, fixture.namespace.id);
+
+    let inserted = fanout_event(&scope.pool, event.id).await.unwrap();
+
+    assert_eq!(inserted, 0);
+    assert_eq!(
+        count_event_deliveries_for_event(&scope.pool, event.id)
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+#[actix_web::test]
+async fn event_fanout_reclaims_expired_claims() {
+    let scope = test_scope();
+    let fixture = scope.with_namespace().await;
+    let event = emit_namespace_created_event(&scope, fixture.namespace.id);
+    let settings = EventFanoutSettings {
+        batch_size: 100_000,
+        lock_timeout_ms: 30_000,
+    };
+
+    let claimed = claim_events_for_fanout(&scope.pool, settings)
+        .await
+        .unwrap();
+    assert!(claimed.iter().any(|claimed| claimed.id == event.id));
+
+    let blocked = claim_events_for_fanout(&scope.pool, settings)
+        .await
+        .unwrap();
+    assert!(!blocked.iter().any(|claimed| claimed.id == event.id));
+
+    with_connection(&scope.pool, |conn| {
+        use crate::schema::events::dsl::{events, fanout_locked_until, id};
+
+        diesel::update(events.filter(id.eq(event.id)))
+            .set(fanout_locked_until.eq(Some(
+                chrono::Utc::now().naive_utc() - chrono::Duration::seconds(1),
+            )))
+            .execute(conn)
+    })
+    .unwrap();
+
+    let reclaimed = claim_events_for_fanout(&scope.pool, settings)
+        .await
+        .unwrap();
+    assert!(reclaimed.iter().any(|claimed| claimed.id == event.id));
 }
 
 #[actix_web::test]

@@ -1,6 +1,22 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    event_deliveries (id) {
+        id -> Int8,
+        event_id -> Int8,
+        subscription_id -> Int4,
+        status -> Varchar,
+        attempts -> Int4,
+        next_attempt_at -> Timestamp,
+        last_error -> Nullable<Text>,
+        locked_until -> Nullable<Timestamp>,
+        claim_token -> Nullable<Uuid>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     event_sinks (id) {
         id -> Int4,
         name -> Varchar,
@@ -363,6 +379,8 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(event_deliveries -> event_subscriptions (subscription_id));
+diesel::joinable!(event_deliveries -> events (event_id));
 diesel::joinable!(event_subscriptions -> event_sinks (sink_id));
 diesel::joinable!(event_subscriptions -> namespaces (namespace_id));
 diesel::joinable!(group_memberships -> groups (group_id));
@@ -387,6 +405,7 @@ diesel::joinable!(token_scopes -> tokens (token_id));
 diesel::joinable!(tokens -> principals (principal_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    event_deliveries,
     event_sinks,
     event_subscriptions,
     events,

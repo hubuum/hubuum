@@ -1,5 +1,6 @@
 #![allow(ambiguous_glob_reexports)] // We have several test modules, should be fine
 pub mod class;
+pub mod event_delivery;
 pub mod event_subscription;
 pub mod group;
 pub mod import;
@@ -23,6 +24,7 @@ pub mod user;
 pub mod traits;
 
 pub use crate::models::class::*;
+pub use crate::models::event_delivery::*;
 pub use crate::models::event_subscription::*;
 pub use crate::models::group::*;
 pub use crate::models::import::*;
