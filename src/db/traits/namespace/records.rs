@@ -293,6 +293,7 @@ impl SaveNamespaceForGroupRecord for NewNamespace {
                 has_delete_remote_target: true,
                 has_execute_remote_target: true,
                 has_read_audit: true,
+                has_manage_event_subscription: true,
             };
 
             diesel::insert_into(permissions)
@@ -354,6 +355,7 @@ impl SaveNamespaceForGroupRecord for NewNamespace {
                 has_delete_remote_target: true,
                 has_execute_remote_target: true,
                 has_read_audit: true,
+                has_manage_event_subscription: true,
             };
 
             diesel::insert_into(permissions)

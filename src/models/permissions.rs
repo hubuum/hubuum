@@ -40,6 +40,7 @@ pub enum Permissions {
     DeleteRemoteTarget,
     ExecuteRemoteTarget,
     ReadAudit,
+    ManageEventSubscription,
 }
 
 impl Permissions {
@@ -84,6 +85,7 @@ impl Permissions {
             "DeleteRemoteTarget" => Ok(Permissions::DeleteRemoteTarget),
             "ExecuteRemoteTarget" => Ok(Permissions::ExecuteRemoteTarget),
             "ReadAudit" => Ok(Permissions::ReadAudit),
+            "ManageEventSubscription" => Ok(Permissions::ManageEventSubscription),
             _ => Err(ApiError::BadRequest(format!("Invalid permission: '{s}'"))),
         }
     }
@@ -124,6 +126,7 @@ impl Display for Permissions {
                 Permissions::DeleteRemoteTarget => "DeleteRemoteTarget",
                 Permissions::ExecuteRemoteTarget => "ExecuteRemoteTarget",
                 Permissions::ReadAudit => "ReadAudit",
+                Permissions::ManageEventSubscription => "ManageEventSubscription",
             }
         )
     }
@@ -293,6 +296,9 @@ impl<'a> PermissionFilter<'a, permissions::BoxedQuery<'a, diesel::pg::Pg>> for P
                 query.filter(permissions::has_execute_remote_target.eq(target))
             }
             Permissions::ReadAudit => query.filter(permissions::has_read_audit.eq(target)),
+            Permissions::ManageEventSubscription => {
+                query.filter(permissions::has_manage_event_subscription.eq(target))
+            }
         }
     }
 }
@@ -335,6 +341,7 @@ pub struct Permission {
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
     pub has_read_audit: bool,
+    pub has_manage_event_subscription: bool,
 }
 
 impl Permission {
@@ -405,6 +412,10 @@ impl Permission {
                 Permissions::ExecuteRemoteTarget,
             ),
             (self.has_read_audit, Permissions::ReadAudit),
+            (
+                self.has_manage_event_subscription,
+                Permissions::ManageEventSubscription,
+            ),
         ]
         .into_iter()
         .filter_map(|(set, permission)| set.then_some(permission))
@@ -448,6 +459,7 @@ pub struct NewPermission {
     pub has_delete_remote_target: bool,
     pub has_execute_remote_target: bool,
     pub has_read_audit: bool,
+    pub has_manage_event_subscription: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, AsChangeset, Default)]
@@ -483,6 +495,7 @@ pub struct UpdatePermission {
     pub has_delete_remote_target: Option<bool>,
     pub has_execute_remote_target: Option<bool>,
     pub has_read_audit: Option<bool>,
+    pub has_manage_event_subscription: Option<bool>,
 }
 
 #[cfg(test)]

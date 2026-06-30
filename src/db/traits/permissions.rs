@@ -109,6 +109,7 @@ fn update_permission_for_grant(
             has_delete_remote_target: Some(false),
             has_execute_remote_target: Some(false),
             has_read_audit: Some(false),
+            has_manage_event_subscription: Some(false),
         }
     } else {
         UpdatePermission::default()
@@ -158,6 +159,9 @@ fn update_permission_for_grant(
             Permissions::DeleteRemoteTarget => update_perm.has_delete_remote_target = Some(true),
             Permissions::ExecuteRemoteTarget => update_perm.has_execute_remote_target = Some(true),
             Permissions::ReadAudit => update_perm.has_read_audit = Some(true),
+            Permissions::ManageEventSubscription => {
+                update_perm.has_manage_event_subscription = Some(true);
+            }
         }
     }
 
@@ -214,6 +218,9 @@ fn update_permission_for_revoke(
                 update_perm.has_execute_remote_target = Some(false);
             }
             Permissions::ReadAudit => update_perm.has_read_audit = Some(false),
+            Permissions::ManageEventSubscription => {
+                update_perm.has_manage_event_subscription = Some(false);
+            }
         }
     }
     update_perm
@@ -257,6 +264,8 @@ fn new_permission_from_list(
         has_delete_remote_target: permission_list.contains(&Permissions::DeleteRemoteTarget),
         has_execute_remote_target: permission_list.contains(&Permissions::ExecuteRemoteTarget),
         has_read_audit: permission_list.contains(&Permissions::ReadAudit),
+        has_manage_event_subscription: permission_list
+            .contains(&Permissions::ManageEventSubscription),
     }
 }
 
@@ -350,6 +359,7 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                             has_delete_remote_target: Some(false),
                             has_execute_remote_target: Some(false),
                             has_read_audit: Some(false),
+                            has_manage_event_subscription: Some(false),
                         }
                     } else {
                         UpdatePermission::default()
@@ -447,6 +457,9 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                             Permissions::ReadAudit => {
                                 update_perm.has_read_audit = Some(true);
                             }
+                            Permissions::ManageEventSubscription => {
+                                update_perm.has_manage_event_subscription = Some(true);
+                            }
                         }
                     }
 
@@ -506,6 +519,8 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                         has_execute_remote_target: permission_list
                             .contains(&Permissions::ExecuteRemoteTarget),
                         has_read_audit: permission_list.contains(&Permissions::ReadAudit),
+                        has_manage_event_subscription: permission_list
+                            .contains(&Permissions::ManageEventSubscription),
                     };
 
                     Ok(diesel::insert_into(permissions)
@@ -697,6 +712,9 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                     }
                     Permissions::ReadAudit => {
                         update_perm.has_read_audit = Some(false);
+                    }
+                    Permissions::ManageEventSubscription => {
+                        update_perm.has_manage_event_subscription = Some(false);
                     }
                 }
             }
