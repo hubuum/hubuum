@@ -165,3 +165,82 @@ async fn actor_scope_sets_actor_and_default_is_null() {
 
     ns.cleanup().await.unwrap();
 }
+
+#[actix_rt::test]
+async fn anonymize_scrubs_pii_but_keeps_history_actor() {
+    use crate::db::{with_actor_scope, with_connection};
+    use crate::models::{NewHubuumClass, NewUser};
+    use crate::traits::CanSave;
+    use crate::utilities::iam::anonymize_user;
+    use diesel::prelude::*;
+
+    let scope = TestScope::new();
+    let pool = scope.pool.clone();
+    let ns = scope.namespace_fixture("anon").await;
+
+    // A user who will make a change and then be anonymized.
+    let uname = format!("anon_user_{}", scope.scope_id);
+    let user = NewUser {
+        username: uname.clone(),
+        password: "secret".into(),
+        email: Some("a@example.com".into()),
+    }
+    .save(&pool)
+    .await
+    .unwrap();
+    let token = user.create_token(&pool).await.unwrap();
+    let _ = token;
+
+    let cname = format!("anon_class_{}", scope.scope_id);
+    let class = with_actor_scope(Some(user.id), async {
+        NewHubuumClass {
+            name: cname.clone(),
+            namespace_id: ns.namespace.id,
+            json_schema: None,
+            validate_schema: Some(false),
+            description: "d".into(),
+        }
+        .save(&pool)
+        .await
+    })
+    .await
+    .unwrap();
+
+    anonymize_user(&pool, user.id).await.unwrap();
+
+    // PII scrubbed on the (non-versioned) users row.
+    let (username, email, anonymized_at): (String, Option<String>, Option<chrono::NaiveDateTime>) =
+        with_connection(&pool, |conn| {
+            use crate::schema::users::dsl as u;
+            u::users
+                .filter(u::id.eq(user.id))
+                .select((u::username, u::email, u::anonymized_at))
+                .first(conn)
+        })
+        .unwrap();
+    assert_eq!(username, format!("anonymized-{}", user.id));
+    assert_eq!(email, None);
+    assert!(anonymized_at.is_some());
+
+    // Tokens revoked.
+    let token_count: i64 = with_connection(&pool, |conn| {
+        use crate::schema::tokens::dsl as t;
+        t::tokens.filter(t::user_id.eq(user.id)).count().get_result(conn)
+    })
+    .unwrap();
+    assert_eq!(token_count, 0);
+
+    // History still attributes the change to the (now pseudonymous) id.
+    let actor: Option<i32> = with_connection(&pool, |conn| {
+        use crate::schema::hubuumclass_history::dsl as h;
+        h::hubuumclass_history
+            .filter(h::id.eq(class.id))
+            .order(h::history_id.desc())
+            .select(h::actor_id)
+            .first::<Option<i32>>(conn)
+    })
+    .unwrap();
+    assert_eq!(actor, Some(user.id));
+
+    ns.cleanup().await.unwrap();
+}

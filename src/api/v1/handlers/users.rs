@@ -8,7 +8,7 @@ use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::utilities::response::{
     json_response, json_response_created, paginated_json_mapped_response,
 };
-use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, routes, web};
+use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 use serde_json::json;
 use tracing::debug;
 
@@ -192,4 +192,33 @@ pub async fn delete_user(
         Ok(elements) => Ok(json_response(json!(elements), StatusCode::NO_CONTENT)),
         Err(e) => Err(e),
     }
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/iam/users/{user_id}/anonymize",
+    tag = "users",
+    security(("bearer_auth" = [])),
+    params(("user_id" = i32, Path, description = "User ID")),
+    responses(
+        (status = 204, description = "User anonymized"),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 404, description = "User not found", body = ApiErrorResponse)
+    )
+)]
+#[post("/{user_id}/anonymize")]
+pub async fn anonymize_user(
+    pool: web::Data<DbPool>,
+    user_id: web::Path<UserID>,
+    requestor: AdminAccess,
+) -> Result<impl Responder, ApiError> {
+    let target_id = user_id.id();
+    debug!(
+        message = "User anonymize requested",
+        target = target_id,
+        requestor = requestor.user.id
+    );
+    crate::utilities::iam::anonymize_user(&pool, target_id).await?;
+    Ok(json_response(json!({}), StatusCode::NO_CONTENT))
 }

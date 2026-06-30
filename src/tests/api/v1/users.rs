@@ -659,4 +659,40 @@ mod tests {
         assert_eq!(tokens[0].name.as_deref(), Some(matching_name.as_str()));
         assert_eq!(tokens[0].issued, expected_issued);
     }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_api_anonymize_user(#[future(awt)] test_context: TestContext) {
+        use crate::db::with_connection;
+        use diesel::prelude::*;
+
+        let context = test_context;
+
+        // Create a throwaway user to anonymize.
+        let uname = format!("api_anon_{}", context.scope.scope_id);
+        let new_user = crate::models::NewUser {
+            username: uname.clone(),
+            password: "secret".into(),
+            email: Some("x@example.com".into()),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/iam/users/{}/anonymize", new_user.id),
+            &serde_json::json!({}),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::NO_CONTENT).await;
+
+        let username: String = with_connection(&context.pool, |conn| {
+            use crate::schema::users::dsl as u;
+            u::users.filter(u::id.eq(new_user.id)).select(u::username).first(conn)
+        })
+        .unwrap();
+        assert_eq!(username, format!("anonymized-{}", new_user.id));
+    }
 }
