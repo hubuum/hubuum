@@ -2673,6 +2673,53 @@
         ]
       }
     },
+    "/api/v1/event-deliveries/health": {
+      "get": {
+        "tags": [
+          "event-deliveries"
+        ],
+        "summary": "Get Api V1 Event Deliveries Health",
+        "description": "Auto-generated documentation for GET /api/v1/event-deliveries/health.",
+        "operationId": "getApiV1EventDeliveriesHealth",
+        "responses": {
+          "200": {
+            "description": "Event delivery pipeline health",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventDeliveryHealthResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/event-deliveries/{delivery_id}": {
       "get": {
         "tags": [
@@ -9773,6 +9820,62 @@
           }
         }
       },
+      "EventDeliveryHealthResponse": {
+        "type": "object",
+        "required": [
+          "fanout",
+          "delivery",
+          "sinks",
+          "subscriptions"
+        ],
+        "properties": {
+          "delivery": {
+            "$ref": "#/components/schemas/EventDeliveryQueueHealth"
+          },
+          "fanout": {
+            "$ref": "#/components/schemas/EventFanoutHealth"
+          },
+          "sinks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventSinkDeliveryHealth"
+            }
+          },
+          "subscriptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventSubscriptionDeliveryHealth"
+            }
+          }
+        }
+      },
+      "EventDeliveryQueueHealth": {
+        "type": "object",
+        "required": [
+          "counts",
+          "stale_claims",
+          "worker"
+        ],
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/EventDeliveryStatusCounts"
+          },
+          "oldest_due_age_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "stale_claims": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "worker": {
+            "$ref": "#/components/schemas/EventWorkerHealth"
+          }
+        }
+      },
       "EventDeliveryStatus": {
         "type": "string",
         "enum": [
@@ -9783,6 +9886,48 @@
           "dead"
         ]
       },
+      "EventDeliveryStatusCounts": {
+        "type": "object",
+        "required": [
+          "total",
+          "pending",
+          "in_flight",
+          "succeeded",
+          "failed",
+          "dead",
+          "retryable"
+        ],
+        "properties": {
+          "dead": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "in_flight": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "retryable": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "succeeded": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "EventDeliveryUpdateResponse": {
         "type": "object",
         "required": [
@@ -9791,6 +9936,39 @@
         "properties": {
           "delivery": {
             "$ref": "#/components/schemas/EventDelivery"
+          }
+        }
+      },
+      "EventFanoutHealth": {
+        "type": "object",
+        "required": [
+          "pending_events",
+          "in_flight_events",
+          "stale_claims",
+          "worker"
+        ],
+        "properties": {
+          "in_flight_events": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "oldest_pending_age_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "pending_events": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "stale_claims": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "worker": {
+            "$ref": "#/components/schemas/EventWorkerHealth"
           }
         }
       },
@@ -9923,6 +10101,51 @@
           }
         }
       },
+      "EventSinkDeliveryHealth": {
+        "type": "object",
+        "required": [
+          "sink_id",
+          "sink_name",
+          "sink_kind",
+          "sink_enabled",
+          "subscription_count",
+          "counts",
+          "stale_claims"
+        ],
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/EventDeliveryStatusCounts"
+          },
+          "oldest_due_age_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "sink_enabled": {
+            "type": "boolean"
+          },
+          "sink_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "sink_kind": {
+            "type": "string"
+          },
+          "sink_name": {
+            "type": "string"
+          },
+          "stale_claims": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "subscription_count": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "EventSinkID": {
         "type": "integer",
         "format": "int32",
@@ -9994,6 +10217,122 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "EventSubscriptionDeliveryHealth": {
+        "type": "object",
+        "required": [
+          "subscription_id",
+          "subscription_name",
+          "namespace_id",
+          "sink_id",
+          "sink_name",
+          "sink_kind",
+          "subscription_enabled",
+          "sink_enabled",
+          "counts",
+          "stale_claims"
+        ],
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/EventDeliveryStatusCounts"
+          },
+          "namespace_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "oldest_due_age_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "sink_enabled": {
+            "type": "boolean"
+          },
+          "sink_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "sink_kind": {
+            "type": "string"
+          },
+          "sink_name": {
+            "type": "string"
+          },
+          "stale_claims": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "subscription_enabled": {
+            "type": "boolean"
+          },
+          "subscription_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "subscription_name": {
+            "type": "string"
+          }
+        }
+      },
+      "EventWorkerHealth": {
+        "type": "object",
+        "required": [
+          "workers_configured",
+          "batch_size",
+          "poll_interval_ms",
+          "lock_timeout_ms",
+          "wakeups"
+        ],
+        "properties": {
+          "batch_size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lock_timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "poll_interval_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "wakeups": {
+            "$ref": "#/components/schemas/EventWorkerWakeupStats"
+          },
+          "workers_configured": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "EventWorkerWakeupStats": {
+        "type": "object",
+        "required": [
+          "notifications_sent",
+          "notification_wakeups",
+          "poll_wakeups"
+        ],
+        "properties": {
+          "notification_wakeups": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "notifications_sent": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "poll_wakeups": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },

@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Once, OnceLock};
 use std::thread;
 use std::time::Duration;
@@ -13,9 +14,13 @@ use crate::config::{
 use crate::db::DbPool;
 use crate::db::traits::event_fanout::{EventFanoutSettings, process_event_fanout_batch};
 use crate::errors::ApiError;
+use crate::models::EventWorkerWakeupStats;
 
 static EVENT_FANOUT_WORKER: Once = Once::new();
 static EVENT_FANOUT_NOTIFY: OnceLock<Notify> = OnceLock::new();
+static EVENT_FANOUT_NOTIFICATIONS_SENT: AtomicU64 = AtomicU64::new(0);
+static EVENT_FANOUT_NOTIFICATION_WAKEUPS: AtomicU64 = AtomicU64::new(0);
+static EVENT_FANOUT_POLL_WAKEUPS: AtomicU64 = AtomicU64::new(0);
 
 fn get_event_fanout_notify() -> &'static Notify {
     EVENT_FANOUT_NOTIFY.get_or_init(Notify::new)
@@ -58,8 +63,12 @@ pub(super) fn fanout_worker_should_continue(result: &Result<usize, ApiError>) ->
 
 async fn wait_for_event_fanout_wakeup(poll_interval: Duration) {
     tokio::select! {
-        _ = sleep(poll_interval) => {}
-        _ = get_event_fanout_notify().notified() => {}
+        _ = sleep(poll_interval) => {
+            EVENT_FANOUT_POLL_WAKEUPS.fetch_add(1, Ordering::Relaxed);
+        }
+        _ = get_event_fanout_notify().notified() => {
+            EVENT_FANOUT_NOTIFICATION_WAKEUPS.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 
@@ -120,5 +129,14 @@ pub fn ensure_event_fanout_worker_running(pool: DbPool) {
 
 pub fn kick_event_fanout_worker(pool: DbPool) {
     ensure_event_fanout_worker_running(pool);
+    EVENT_FANOUT_NOTIFICATIONS_SENT.fetch_add(1, Ordering::Relaxed);
     get_event_fanout_notify().notify_one();
+}
+
+pub fn event_fanout_wakeup_stats() -> EventWorkerWakeupStats {
+    EventWorkerWakeupStats {
+        notifications_sent: EVENT_FANOUT_NOTIFICATIONS_SENT.load(Ordering::Relaxed),
+        notification_wakeups: EVENT_FANOUT_NOTIFICATION_WAKEUPS.load(Ordering::Relaxed),
+        poll_wakeups: EVENT_FANOUT_POLL_WAKEUPS.load(Ordering::Relaxed),
+    }
 }
