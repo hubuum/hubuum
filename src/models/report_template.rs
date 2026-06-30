@@ -472,11 +472,11 @@ impl<T: NamespaceAccessors> NamespaceReportTemplates for T {}
 impl SaveAdapter for NewReportTemplate {
     type Output = ReportTemplate;
 
-    async fn save_adapter(&self, pool: &DbPool) -> Result<ReportTemplate, ApiError> {
+    async fn save_adapter_without_events(&self, pool: &DbPool) -> Result<ReportTemplate, ApiError> {
         self.save_report_template(pool, None).await
     }
 
-    async fn save_adapter_with_context(
+    async fn save_adapter(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
@@ -518,9 +518,7 @@ impl NewReportTemplate {
             &namespace_templates,
             ReportContentType::from_mime(&new_row.content_type)?,
         )?;
-        let row = new_row
-            .save_report_template_record_with_context(pool, context)
-            .await?;
+        let row = new_row.save_report_template_record(pool, context).await?;
 
         row.try_into()
     }
@@ -529,7 +527,7 @@ impl NewReportTemplate {
 impl UpdateAdapter for UpdateReportTemplate {
     type Output = ReportTemplate;
 
-    async fn update_adapter(
+    async fn update_adapter_without_events(
         &self,
         pool: &DbPool,
         entry_id: i32,
@@ -537,7 +535,7 @@ impl UpdateAdapter for UpdateReportTemplate {
         apply_report_template_update(pool, entry_id, self.clone(), None).await
     }
 
-    async fn update_adapter_with_context(
+    async fn update_adapter(
         &self,
         pool: &DbPool,
         entry_id: i32,
@@ -639,7 +637,7 @@ async fn apply_report_template_update(
         default_limits: Some(default_limits_json),
     };
     let row = changeset
-        .update_report_template_record_with_context(pool, template_id, context)
+        .update_report_template_record(pool, template_id, context)
         .await?;
 
     row.try_into()
@@ -721,17 +719,17 @@ fn resolve_report_profile(
 }
 
 impl DeleteAdapter for ReportTemplateID {
-    async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
-        self.delete_report_template_record(pool).await
+    async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
+        self.delete_report_template_record_without_events(pool)
+            .await
     }
 
-    async fn delete_adapter_with_context(
+    async fn delete_adapter(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
-        self.delete_report_template_record_with_context(pool, context)
-            .await
+        self.delete_report_template_record(pool, context).await
     }
 }
 

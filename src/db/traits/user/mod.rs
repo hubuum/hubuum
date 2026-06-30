@@ -111,12 +111,18 @@ mod tests {
             create_user_with_params(&pool, &format!("test_user_can_u2_{suffix}"), "foo").await,
         ];
 
-        groups[0].add_member(&pool, &users[0]).await.unwrap();
-        groups[1].add_member(&pool, &users[1]).await.unwrap();
+        groups[0]
+            .add_member_without_events(&pool, &users[0])
+            .await
+            .unwrap();
+        groups[1]
+            .add_member_without_events(&pool, &users[1])
+            .await
+            .unwrap();
 
         namespaces[0]
             .namespace
-            .grant(
+            .grant_without_events(
                 &pool,
                 groups[0].id,
                 PL::new(vec![P::CreateClass, P::ReadClass]),
@@ -125,7 +131,7 @@ mod tests {
             .unwrap();
         namespaces[1]
             .namespace
-            .grant(
+            .grant_without_events(
                 &pool,
                 groups[0].id,
                 PL::new(vec![P::CreateClass, P::DeleteClass]),
@@ -135,7 +141,7 @@ mod tests {
 
         namespaces[0]
             .namespace
-            .grant(
+            .grant_without_events(
                 &pool,
                 groups[1].id,
                 PL::new(vec![P::CreateObject, P::ReadObject]),
@@ -144,7 +150,7 @@ mod tests {
             .unwrap();
         namespaces[1]
             .namespace
-            .grant(
+            .grant_without_events(
                 &pool,
                 groups[1].id,
                 PL::new(vec![P::CreateObject, P::DeleteObject]),

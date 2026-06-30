@@ -80,7 +80,7 @@ mod tests {
             json_schema: None,
             validate_schema: Some(false),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let object = NewHubuumObject {
@@ -90,7 +90,7 @@ mod tests {
             hubuum_class_id: class.id,
             data: serde_json::json!({"hostname": "other-host"}),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -202,7 +202,7 @@ mod tests {
             forward_template_alias: None,
             reverse_template_alias: None,
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let object_relation = NewHubuumObjectRelation {
@@ -210,7 +210,7 @@ mod tests {
             to_hubuum_object_id: to_object_id,
             class_relation_id: class_relation.id,
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -453,7 +453,7 @@ mod tests {
         // After granting CreateRemoteTarget on the object's namespace, the request succeeds.
         let group = create_test_group(&context.pool).await;
         group
-            .add_member(&context.pool, &context.normal_user)
+            .add_member_without_events(&context.pool, &context.normal_user)
             .await
             .unwrap();
         let namespace = crate::models::NamespaceID::new(namespace_id)
@@ -462,7 +462,7 @@ mod tests {
             .await
             .unwrap();
         namespace
-            .grant(
+            .grant_without_events(
                 &context.pool,
                 group.id,
                 PermissionsList::new([Permissions::CreateRemoteTarget]),
@@ -620,7 +620,10 @@ mod tests {
         // cannot move the target.
         let group = create_test_group(&context.pool).await;
         let user = create_test_user(&context.pool).await;
-        group.add_member(&context.pool, &user).await.unwrap();
+        group
+            .add_member_without_events(&context.pool, &user)
+            .await
+            .unwrap();
         let user_token = user.create_token(&context.pool).await.unwrap().get_token();
 
         let source_namespace = crate::models::NamespaceID::new(source_ns)
@@ -629,7 +632,7 @@ mod tests {
             .await
             .unwrap();
         source_namespace
-            .grant(
+            .grant_without_events(
                 &context.pool,
                 group.id,
                 PermissionsList::new([Permissions::UpdateRemoteTarget]),
@@ -654,7 +657,7 @@ mod tests {
         // Granting CreateRemoteTarget on the target namespace unblocks the move.
         target_namespace
             .namespace
-            .grant(
+            .grant_without_events(
                 &context.pool,
                 group.id,
                 PermissionsList::new([Permissions::CreateRemoteTarget]),
@@ -1055,7 +1058,7 @@ mod tests {
         // Grant only ReadObject (not ExecuteRemoteTarget) to a normal user's group.
         let group = create_test_group(&context.pool).await;
         group
-            .add_member(&context.pool, &context.normal_user)
+            .add_member_without_events(&context.pool, &context.normal_user)
             .await
             .unwrap();
         let namespace = crate::models::NamespaceID::new(namespace_id)
@@ -1064,7 +1067,7 @@ mod tests {
             .await
             .unwrap();
         namespace
-            .grant(
+            .grant_without_events(
                 &context.pool,
                 group.id,
                 PermissionsList::new([Permissions::ReadObject]),
@@ -1151,7 +1154,7 @@ mod tests {
 
         let group = create_test_group(&context.pool).await;
         group
-            .add_member(&context.pool, &context.normal_user)
+            .add_member_without_events(&context.pool, &context.normal_user)
             .await
             .unwrap();
         let from_namespace = crate::models::NamespaceID::new(from_namespace_id)
@@ -1160,7 +1163,7 @@ mod tests {
             .await
             .unwrap();
         from_namespace
-            .grant(
+            .grant_without_events(
                 &context.pool,
                 group.id,
                 PermissionsList::new([

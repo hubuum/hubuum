@@ -55,20 +55,20 @@ impl LoadGroupRecord for GroupID {
 }
 
 pub trait DeleteGroupRecord {
-    async fn delete_group_record(&self, pool: &DbPool) -> Result<usize, ApiError>;
+    async fn delete_group_record_without_events(&self, pool: &DbPool) -> Result<usize, ApiError>;
 
-    async fn delete_group_record_with_context(
+    async fn delete_group_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<usize, ApiError> {
         let _ = context;
-        self.delete_group_record(pool).await
+        self.delete_group_record_without_events(pool).await
     }
 }
 
 impl DeleteGroupRecord for GroupID {
-    async fn delete_group_record(&self, pool: &DbPool) -> Result<usize, ApiError> {
+    async fn delete_group_record_without_events(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::groups::dsl::{groups, id};
 
         with_connection(pool, |conn| {
@@ -76,13 +76,13 @@ impl DeleteGroupRecord for GroupID {
         })
     }
 
-    async fn delete_group_record_with_context(
+    async fn delete_group_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<usize, ApiError> {
         let Some(context) = context else {
-            return self.delete_group_record(pool).await;
+            return self.delete_group_record_without_events(pool).await;
         };
 
         use crate::schema::groups::dsl::{groups, id};
@@ -104,7 +104,7 @@ impl DeleteGroupRecord for GroupID {
 }
 
 impl DeleteGroupRecord for Group {
-    async fn delete_group_record(&self, pool: &DbPool) -> Result<usize, ApiError> {
+    async fn delete_group_record_without_events(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::groups::dsl::{groups, id};
 
         with_connection(pool, |conn| {
@@ -112,13 +112,13 @@ impl DeleteGroupRecord for Group {
         })
     }
 
-    async fn delete_group_record_with_context(
+    async fn delete_group_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<usize, ApiError> {
         let Some(context) = context else {
-            return self.delete_group_record(pool).await;
+            return self.delete_group_record_without_events(pool).await;
         };
 
         use crate::schema::groups::dsl::{groups, id};
@@ -140,20 +140,20 @@ impl DeleteGroupRecord for Group {
 }
 
 pub trait SaveGroupRecord {
-    async fn save_group_record(&self, pool: &DbPool) -> Result<Group, ApiError>;
+    async fn save_group_record_without_events(&self, pool: &DbPool) -> Result<Group, ApiError>;
 
-    async fn save_group_record_with_context(
+    async fn save_group_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<Group, ApiError> {
         let _ = context;
-        self.save_group_record(pool).await
+        self.save_group_record_without_events(pool).await
     }
 }
 
 impl SaveGroupRecord for NewGroup {
-    async fn save_group_record(&self, pool: &DbPool) -> Result<Group, ApiError> {
+    async fn save_group_record_without_events(&self, pool: &DbPool) -> Result<Group, ApiError> {
         use crate::schema::groups::dsl::groups;
 
         with_connection(pool, |conn| {
@@ -163,13 +163,13 @@ impl SaveGroupRecord for NewGroup {
         })
     }
 
-    async fn save_group_record_with_context(
+    async fn save_group_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<Group, ApiError> {
         let Some(context) = context else {
-            return self.save_group_record(pool).await;
+            return self.save_group_record_without_events(pool).await;
         };
 
         use crate::schema::groups::dsl::groups;
@@ -192,21 +192,30 @@ impl SaveGroupRecord for NewGroup {
 }
 
 pub trait UpdateGroupRecord {
-    async fn update_group_record(&self, group_id: i32, pool: &DbPool) -> Result<Group, ApiError>;
+    async fn update_group_record_without_events(
+        &self,
+        group_id: i32,
+        pool: &DbPool,
+    ) -> Result<Group, ApiError>;
 
-    async fn update_group_record_with_context(
+    async fn update_group_record(
         &self,
         group_id: i32,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<Group, ApiError> {
         let _ = context;
-        self.update_group_record(group_id, pool).await
+        self.update_group_record_without_events(group_id, pool)
+            .await
     }
 }
 
 impl UpdateGroupRecord for UpdateGroup {
-    async fn update_group_record(&self, group_id: i32, pool: &DbPool) -> Result<Group, ApiError> {
+    async fn update_group_record_without_events(
+        &self,
+        group_id: i32,
+        pool: &DbPool,
+    ) -> Result<Group, ApiError> {
         use crate::schema::groups::dsl::{groups, id};
 
         with_connection(pool, |conn| {
@@ -216,14 +225,16 @@ impl UpdateGroupRecord for UpdateGroup {
         })
     }
 
-    async fn update_group_record_with_context(
+    async fn update_group_record(
         &self,
         group_id: i32,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<Group, ApiError> {
         let Some(context) = context else {
-            return self.update_group_record(group_id, pool).await;
+            return self
+                .update_group_record_without_events(group_id, pool)
+                .await;
         };
 
         use crate::schema::groups::dsl::{groups, id};
@@ -265,20 +276,20 @@ pub trait GroupMembersBackend {
         query_options: &QueryOptions,
     ) -> Result<i64, ApiError>;
 
-    async fn remove_group_member_from_backend(
+    async fn remove_group_member_from_backend_without_events(
         &self,
         member_principal_id: i32,
         pool: &DbPool,
     ) -> Result<(), ApiError>;
 
-    async fn remove_group_member_from_backend_with_context(
+    async fn remove_group_member_from_backend(
         &self,
         member_principal_id: i32,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let _ = context;
-        self.remove_group_member_from_backend(member_principal_id, pool)
+        self.remove_group_member_from_backend_without_events(member_principal_id, pool)
             .await
     }
 }
@@ -368,7 +379,7 @@ impl GroupMembersBackend for Group {
         with_connection(pool, |conn| base_query.count().get_result::<i64>(conn))
     }
 
-    async fn remove_group_member_from_backend(
+    async fn remove_group_member_from_backend_without_events(
         &self,
         member_principal_id: i32,
         pool: &DbPool,
@@ -388,7 +399,7 @@ impl GroupMembersBackend for Group {
         Ok(())
     }
 
-    async fn remove_group_member_from_backend_with_context(
+    async fn remove_group_member_from_backend(
         &self,
         member_principal_id: i32,
         pool: &DbPool,
@@ -396,7 +407,7 @@ impl GroupMembersBackend for Group {
     ) -> Result<(), ApiError> {
         let Some(context) = context else {
             return self
-                .remove_group_member_from_backend(member_principal_id, pool)
+                .remove_group_member_from_backend_without_events(member_principal_id, pool)
                 .await;
         };
 
@@ -442,20 +453,26 @@ impl GroupMembersBackend for Group {
 }
 
 pub trait SavePrincipalGroupRecord {
-    async fn save_principal_group_record(&self, pool: &DbPool) -> Result<PrincipalGroup, ApiError>;
+    async fn save_principal_group_record_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<PrincipalGroup, ApiError>;
 
-    async fn save_principal_group_record_with_context(
+    async fn save_principal_group_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<PrincipalGroup, ApiError> {
         let _ = context;
-        self.save_principal_group_record(pool).await
+        self.save_principal_group_record_without_events(pool).await
     }
 }
 
 impl SavePrincipalGroupRecord for NewPrincipalGroup {
-    async fn save_principal_group_record(&self, pool: &DbPool) -> Result<PrincipalGroup, ApiError> {
+    async fn save_principal_group_record_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<PrincipalGroup, ApiError> {
         use crate::schema::group_memberships::dsl::group_memberships;
 
         with_connection(pool, |conn| {
@@ -474,13 +491,13 @@ impl SavePrincipalGroupRecord for NewPrincipalGroup {
         })
     }
 
-    async fn save_principal_group_record_with_context(
+    async fn save_principal_group_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<PrincipalGroup, ApiError> {
         let Some(context) = context else {
-            return self.save_principal_group_record(pool).await;
+            return self.save_principal_group_record_without_events(pool).await;
         };
 
         use crate::schema::group_memberships::dsl::group_memberships;
@@ -521,7 +538,10 @@ impl SavePrincipalGroupRecord for NewPrincipalGroup {
 }
 
 impl SavePrincipalGroupRecord for PrincipalGroup {
-    async fn save_principal_group_record(&self, pool: &DbPool) -> Result<PrincipalGroup, ApiError> {
+    async fn save_principal_group_record_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<PrincipalGroup, ApiError> {
         use crate::schema::group_memberships::dsl::group_memberships;
 
         with_connection(pool, |conn| {
@@ -534,13 +554,13 @@ impl SavePrincipalGroupRecord for PrincipalGroup {
         })
     }
 
-    async fn save_principal_group_record_with_context(
+    async fn save_principal_group_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<PrincipalGroup, ApiError> {
         let Some(context) = context else {
-            return self.save_principal_group_record(pool).await;
+            return self.save_principal_group_record_without_events(pool).await;
         };
 
         use crate::schema::group_memberships::dsl::group_memberships;

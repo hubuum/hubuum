@@ -38,9 +38,7 @@ use crate::models::class::{NewHubuumClass, UpdateHubuumClass};
 use crate::models::group::{NewGroup, UpdateGroup};
 use crate::models::namespace::{NewNamespaceWithAssignee, UpdateNamespace};
 use crate::models::object::{NewHubuumObject, UpdateHubuumObject};
-use crate::models::token::{
-    create_principal_token_with_context, revoke_token_by_id_for_principal_with_context,
-};
+use crate::models::token::{create_principal_token, revoke_token_by_id_for_principal};
 use crate::models::{
     EventDelivery, EventDeliveryID, EventDeliveryStatus, EventSink as EventSinkModel, EventSinkID,
     EventSinkKind, EventSubscription, GroupID, HubuumClassRelationID, NamespaceID, NewEventSink,
@@ -718,7 +716,7 @@ async fn namespace_writes_emit_lifecycle_events_in_transaction() {
         description: "before".to_string(),
         group_id: fixture.owner_group.id,
     }
-    .save_with_context(&scope.pool, Some(&context))
+    .save(&scope.pool, Some(&context))
     .await
     .unwrap();
 
@@ -726,14 +724,11 @@ async fn namespace_writes_emit_lifecycle_events_in_transaction() {
         name: Some(namespace_name.clone()),
         description: Some("after".to_string()),
     }
-    .update_with_context(&scope.pool, namespace.id, Some(&context))
+    .update(&scope.pool, namespace.id, Some(&context))
     .await
     .unwrap();
 
-    updated
-        .delete_with_context(&scope.pool, Some(&context))
-        .await
-        .unwrap();
+    updated.delete(&scope.pool, Some(&context)).await.unwrap();
 
     let rows = events_for(&scope, "namespace", namespace.id);
     assert_eq!(rows.len(), 3);
@@ -777,7 +772,7 @@ async fn class_writes_emit_lifecycle_events_in_transaction() {
         validate_schema: Some(true),
         description: "before".to_string(),
     }
-    .save_with_context(&scope.pool, Some(&context))
+    .save(&scope.pool, Some(&context))
     .await
     .unwrap();
 
@@ -788,14 +783,11 @@ async fn class_writes_emit_lifecycle_events_in_transaction() {
         validate_schema: Some(false),
         description: Some("after".to_string()),
     }
-    .update_with_context(&scope.pool, class.id, Some(&context))
+    .update(&scope.pool, class.id, Some(&context))
     .await
     .unwrap();
 
-    updated
-        .delete_with_context(&scope.pool, Some(&context))
-        .await
-        .unwrap();
+    updated.delete(&scope.pool, Some(&context)).await.unwrap();
 
     let rows = events_for(&scope, "class", class.id);
     assert_eq!(rows.len(), 3);
@@ -835,7 +827,7 @@ async fn object_writes_emit_lifecycle_events_in_transaction() {
         validate_schema: Some(false),
         description: "class".to_string(),
     }
-    .save(&scope.pool)
+    .save_without_events(&scope.pool)
     .await
     .unwrap();
 
@@ -846,7 +838,7 @@ async fn object_writes_emit_lifecycle_events_in_transaction() {
         data: serde_json::json!({"state": "before"}),
         description: "before".to_string(),
     }
-    .save_with_context(&scope.pool, Some(&context))
+    .save(&scope.pool, Some(&context))
     .await
     .unwrap();
 
@@ -857,14 +849,11 @@ async fn object_writes_emit_lifecycle_events_in_transaction() {
         data: Some(serde_json::json!({"state": "after"})),
         description: Some("after".to_string()),
     }
-    .update_with_context(&scope.pool, object.id, Some(&context))
+    .update(&scope.pool, object.id, Some(&context))
     .await
     .unwrap();
 
-    updated
-        .delete_with_context(&scope.pool, Some(&context))
-        .await
-        .unwrap();
+    updated.delete(&scope.pool, Some(&context)).await.unwrap();
 
     let rows = events_for(&scope, "object", object.id);
     assert_eq!(rows.len(), 3);
@@ -888,7 +877,7 @@ async fn object_writes_emit_lifecycle_events_in_transaction() {
     assert_eq!(rows[2].before.as_ref().unwrap()["description"], "after");
     assert!(rows[2].after.is_none());
 
-    class.delete(&scope.pool).await.unwrap();
+    class.delete_without_events(&scope.pool).await.unwrap();
     fixture.cleanup().await.unwrap();
 }
 
@@ -909,7 +898,7 @@ async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
         validate_schema: Some(false),
         description: "a".to_string(),
     }
-    .save(&scope.pool)
+    .save_without_events(&scope.pool)
     .await
     .unwrap();
     let class_b = NewHubuumClass {
@@ -919,7 +908,7 @@ async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
         validate_schema: Some(false),
         description: "b".to_string(),
     }
-    .save(&scope.pool)
+    .save_without_events(&scope.pool)
     .await
     .unwrap();
 
@@ -929,13 +918,13 @@ async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
         forward_template_alias: Some("children".to_string()),
         reverse_template_alias: Some("parents".to_string()),
     }
-    .save_with_context(&scope.pool, Some(&context))
+    .save(&scope.pool, Some(&context))
     .await
     .unwrap();
 
     HubuumClassRelationID::new(relation.id)
         .unwrap()
-        .delete_with_context(&scope.pool, Some(&context))
+        .delete(&scope.pool, Some(&context))
         .await
         .unwrap();
 
@@ -976,8 +965,8 @@ async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
     );
     assert!(rows[1].after.is_none());
 
-    class_a.delete(&scope.pool).await.unwrap();
-    class_b.delete(&scope.pool).await.unwrap();
+    class_a.delete_without_events(&scope.pool).await.unwrap();
+    class_b.delete_without_events(&scope.pool).await.unwrap();
     fixture.cleanup().await.unwrap();
 }
 
@@ -998,7 +987,7 @@ async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
         validate_schema: Some(false),
         description: "a".to_string(),
     }
-    .save(&scope.pool)
+    .save_without_events(&scope.pool)
     .await
     .unwrap();
     let class_b = NewHubuumClass {
@@ -1008,7 +997,7 @@ async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
         validate_schema: Some(false),
         description: "b".to_string(),
     }
-    .save(&scope.pool)
+    .save_without_events(&scope.pool)
     .await
     .unwrap();
     let class_relation = NewHubuumClassRelation {
@@ -1017,7 +1006,7 @@ async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
         forward_template_alias: None,
         reverse_template_alias: None,
     }
-    .save(&scope.pool)
+    .save_without_events(&scope.pool)
     .await
     .unwrap();
 
@@ -1028,7 +1017,7 @@ async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
         data: serde_json::json!({}),
         description: "a".to_string(),
     }
-    .save(&scope.pool)
+    .save_without_events(&scope.pool)
     .await
     .unwrap();
     let object_b = NewHubuumObject {
@@ -1038,7 +1027,7 @@ async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
         data: serde_json::json!({}),
         description: "b".to_string(),
     }
-    .save(&scope.pool)
+    .save_without_events(&scope.pool)
     .await
     .unwrap();
 
@@ -1047,14 +1036,11 @@ async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
         to_hubuum_object_id: object_b.id,
         class_relation_id: class_relation.id,
     }
-    .save_with_context(&scope.pool, Some(&context))
+    .save(&scope.pool, Some(&context))
     .await
     .unwrap();
 
-    relation
-        .delete_with_context(&scope.pool, Some(&context))
-        .await
-        .unwrap();
+    relation.delete(&scope.pool, Some(&context)).await.unwrap();
 
     let rows = events_for(&scope, "object_relation", relation.id);
     assert_eq!(rows.len(), 2);
@@ -1089,11 +1075,14 @@ async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
     );
     assert!(rows[1].after.is_none());
 
-    object_a.delete(&scope.pool).await.unwrap();
-    object_b.delete(&scope.pool).await.unwrap();
-    class_relation.delete(&scope.pool).await.unwrap();
-    class_a.delete(&scope.pool).await.unwrap();
-    class_b.delete(&scope.pool).await.unwrap();
+    object_a.delete_without_events(&scope.pool).await.unwrap();
+    object_b.delete_without_events(&scope.pool).await.unwrap();
+    class_relation
+        .delete_without_events(&scope.pool)
+        .await
+        .unwrap();
+    class_a.delete_without_events(&scope.pool).await.unwrap();
+    class_b.delete_without_events(&scope.pool).await.unwrap();
     fixture.cleanup().await.unwrap();
 }
 
@@ -1106,20 +1095,20 @@ async fn group_writes_emit_lifecycle_events_in_transaction() {
         groupname: scope.scoped_name("event_group"),
         description: Some("before".to_string()),
     }
-    .save_with_context(&scope.pool, Some(&context))
+    .save(&scope.pool, Some(&context))
     .await
     .unwrap();
 
     let updated = UpdateGroup {
         groupname: Some(scope.scoped_name("event_group_after")),
     }
-    .save_with_context(group.id, &scope.pool, Some(&context))
+    .save(group.id, &scope.pool, Some(&context))
     .await
     .unwrap();
 
     GroupID::new(updated.id)
         .unwrap()
-        .delete_with_context(&scope.pool, Some(&context))
+        .delete(&scope.pool, Some(&context))
         .await
         .unwrap();
 
@@ -1169,25 +1158,25 @@ async fn group_membership_writes_emit_added_removed_events_when_changed() {
         groupname: scope.scoped_name("event_membership_group"),
         description: Some("membership group".to_string()),
     }
-    .save(&scope.pool)
+    .save_without_events(&scope.pool)
     .await
     .unwrap();
     let user = create_test_user(&scope.pool).await;
 
     group
-        .add_member_with_context(&scope.pool, &user, Some(&context))
+        .add_member(&scope.pool, &user, Some(&context))
         .await
         .unwrap();
     group
-        .add_member_with_context(&scope.pool, &user, Some(&context))
+        .add_member(&scope.pool, &user, Some(&context))
         .await
         .unwrap();
     group
-        .remove_member_with_context(&user, &scope.pool, Some(&context))
+        .remove_member(&user, &scope.pool, Some(&context))
         .await
         .unwrap();
     group
-        .remove_member_with_context(&user, &scope.pool, Some(&context))
+        .remove_member(&user, &scope.pool, Some(&context))
         .await
         .unwrap();
 
@@ -1213,8 +1202,8 @@ async fn group_membership_writes_emit_added_removed_events_when_changed() {
     assert_eq!(rows[1].metadata["principal_id"], serde_json::json!(user.id));
     assert_eq!(rows[1].metadata["group_id"], serde_json::json!(group.id));
 
-    group.delete(&scope.pool).await.unwrap();
-    user.delete(&scope.pool).await.unwrap();
+    group.delete_without_events(&scope.pool).await.unwrap();
+    user.delete_without_events(&scope.pool).await.unwrap();
 }
 
 #[actix_web::test]
@@ -1229,7 +1218,7 @@ async fn user_writes_emit_lifecycle_events_without_password_material() {
         proper_name: Some("Before User".to_string()),
         email: Some("before@example.invalid".to_string()),
     }
-    .save_with_context(&scope.pool, Some(&context))
+    .save(&scope.pool, Some(&context))
     .await
     .unwrap();
 
@@ -1238,14 +1227,11 @@ async fn user_writes_emit_lifecycle_events_without_password_material() {
         proper_name: Some("After User".to_string()),
         email: Some("after@example.invalid".to_string()),
     }
-    .save_with_context(user.id, &scope.pool, Some(&context))
+    .save(user.id, &scope.pool, Some(&context))
     .await
     .unwrap();
 
-    updated
-        .delete_with_context(&scope.pool, Some(&context))
-        .await
-        .unwrap();
+    updated.delete(&scope.pool, Some(&context)).await.unwrap();
 
     let rows = events_for(&scope, "user", user.id);
     assert_eq!(rows.len(), 3);
@@ -1296,11 +1282,11 @@ async fn token_writes_emit_created_revoked_events_without_token_material() {
         proper_name: None,
         email: None,
     }
-    .save(&scope.pool)
+    .save_without_events(&scope.pool)
     .await
     .unwrap();
 
-    let raw = create_principal_token_with_context(
+    let raw = create_principal_token(
         &scope.pool,
         user.id,
         Some("automation"),
@@ -1313,14 +1299,9 @@ async fn token_writes_emit_created_revoked_events_without_token_material() {
     .unwrap();
     let token = token_by_raw_value(&scope, &raw);
 
-    let revoked = revoke_token_by_id_for_principal_with_context(
-        &scope.pool,
-        token.id,
-        user.id,
-        Some(&context),
-    )
-    .await
-    .unwrap();
+    let revoked = revoke_token_by_id_for_principal(&scope.pool, token.id, user.id, Some(&context))
+        .await
+        .unwrap();
     assert_eq!(revoked, 1);
 
     let rows = events_for(&scope, "token", token.id);
@@ -1340,7 +1321,7 @@ async fn token_writes_emit_created_revoked_events_without_token_material() {
     assert!(rows[1].before.as_ref().unwrap().get("token").is_none());
     assert!(rows[1].after.as_ref().unwrap().get("token").is_none());
 
-    user.delete(&scope.pool).await.unwrap();
+    user.delete_without_events(&scope.pool).await.unwrap();
 }
 
 #[actix_web::test]
@@ -1356,13 +1337,13 @@ async fn permission_writes_emit_granted_revoked_events() {
         groupname: scope.scoped_name("event_permission_group"),
         description: Some("permission group".to_string()),
     }
-    .save(&scope.pool)
+    .save_without_events(&scope.pool)
     .await
     .unwrap();
 
     let permission = fixture
         .namespace
-        .grant_with_context(
+        .grant(
             &scope.pool,
             group.id,
             PermissionsList::new([Permissions::ReadCollection, Permissions::CreateClass]),
@@ -1373,7 +1354,7 @@ async fn permission_writes_emit_granted_revoked_events() {
 
     fixture
         .namespace
-        .revoke_with_context(
+        .revoke(
             &scope.pool,
             group.id,
             PermissionsList::new([Permissions::CreateClass]),
@@ -1384,7 +1365,7 @@ async fn permission_writes_emit_granted_revoked_events() {
 
     fixture
         .namespace
-        .revoke_all_with_context(&scope.pool, group.id, Some(&context))
+        .revoke_all(&scope.pool, group.id, Some(&context))
         .await
         .unwrap();
 
@@ -1432,7 +1413,7 @@ async fn permission_writes_emit_granted_revoked_events() {
     );
     assert!(rows[2].after.is_none());
 
-    group.delete(&scope.pool).await.unwrap();
+    group.delete_without_events(&scope.pool).await.unwrap();
     fixture.cleanup().await.unwrap();
 }
 
@@ -1461,7 +1442,7 @@ async fn report_template_writes_emit_lifecycle_events() {
         default_missing_data_policy: None,
         default_limits: None,
     }
-    .save_with_context(&scope.pool, Some(&context))
+    .save(&scope.pool, Some(&context))
     .await
     .unwrap();
 
@@ -1479,13 +1460,13 @@ async fn report_template_writes_emit_lifecycle_events() {
         default_missing_data_policy: None,
         default_limits: None,
     }
-    .update_with_context(&scope.pool, template.id, Some(&context))
+    .update(&scope.pool, template.id, Some(&context))
     .await
     .unwrap();
 
     ReportTemplateID::new(updated.id)
         .unwrap()
-        .delete_with_context(&scope.pool, Some(&context))
+        .delete(&scope.pool, Some(&context))
         .await
         .unwrap();
 
@@ -1541,7 +1522,7 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
         timeout_ms: 1000,
         enabled: true,
     }
-    .save_remote_target_record_with_context(&scope.pool, Some(&context))
+    .save_remote_target_record(&scope.pool, Some(&context))
     .await
     .unwrap();
 
@@ -1559,7 +1540,7 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
         timeout_ms: None,
         enabled: None,
     }
-    .update_remote_target_record_with_context(&scope.pool, row.id, Some(&context))
+    .update_remote_target_record(&scope.pool, row.id, Some(&context))
     .await
     .unwrap();
     let target = updated.clone().try_into().unwrap();
@@ -1577,7 +1558,7 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
 
     RemoteTargetID::new(row.id)
         .unwrap()
-        .delete_remote_target_record_with_context(&scope.pool, Some(&context))
+        .delete_remote_target_record(&scope.pool, Some(&context))
         .await
         .unwrap();
 

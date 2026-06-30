@@ -81,7 +81,7 @@ mod tests {
             json_schema: None,
             validate_schema: None,
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -138,7 +138,7 @@ mod tests {
                 name: name.to_string(),
                 description: name.to_string(),
             }
-            .save(&context.pool)
+            .save_without_events(&context.pool)
             .await
             .unwrap();
         }
@@ -187,7 +187,7 @@ mod tests {
             json_schema: None,
             validate_schema: Some(false),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -240,7 +240,7 @@ mod tests {
                 name: name.to_string(),
                 description: name.to_string(),
             }
-            .save(&context.pool)
+            .save_without_events(&context.pool)
             .await
             .unwrap();
         }
@@ -290,7 +290,7 @@ mod tests {
             description: "test object description".to_string(),
         };
 
-        let object = object.save(&context.pool).await.unwrap();
+        let object = object.save_without_events(&context.pool).await.unwrap();
 
         let resp = get_request(
             &context.pool,
@@ -468,7 +468,7 @@ mod tests {
             name: "test object path class mismatch".to_string(),
             description: "test object path class mismatch".to_string(),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -525,7 +525,7 @@ mod tests {
             name: "test object move rejected".to_string(),
             description: "test object move rejected".to_string(),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -562,7 +562,7 @@ mod tests {
             json_schema: Some(get_schema(SchemaType::Geo).clone()),
             validate_schema: Some(true),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let object = NewHubuumObject {
@@ -572,7 +572,7 @@ mod tests {
             name: "valid geo object".to_string(),
             description: "valid geo object".to_string(),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -623,7 +623,7 @@ mod tests {
                 name: format!("test get objects {i}"),
                 description: format!("test object description {i}"),
             };
-            objects.push(object.save(&context.pool).await.unwrap());
+            objects.push(object.save_without_events(&context.pool).await.unwrap());
         }
 
         let resp = get_request(
@@ -738,7 +738,7 @@ mod tests {
             json_schema: None,
             validate_schema: None,
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -777,7 +777,7 @@ mod tests {
                 name: name.to_string(),
                 description: name.to_string(),
             }
-            .save(&context.pool)
+            .save_without_events(&context.pool)
             .await
             .unwrap();
         }
@@ -956,7 +956,7 @@ mod tests {
             json_schema: None,
             validate_schema: None,
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -969,7 +969,7 @@ mod tests {
             name: "network_filter_invalid_rhs".to_string(),
             description: "network_filter_invalid_rhs".to_string(),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -1005,7 +1005,7 @@ mod tests {
             json_schema: None,
             validate_schema: None,
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -1027,7 +1027,7 @@ mod tests {
                     name: name.clone(),
                     description: name,
                 }
-                .save(&context.pool)
+                .save_without_events(&context.pool)
                 .await
                 .unwrap();
             }
@@ -1056,7 +1056,7 @@ mod tests {
                 name: name.clone(),
                 description: name,
             }
-            .save(&context.pool)
+            .save_without_events(&context.pool)
             .await
             .unwrap();
         }
@@ -1180,7 +1180,7 @@ mod tests {
             json_schema: Some(schema.clone()),
             validate_schema: Some(true),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -1217,7 +1217,10 @@ mod tests {
             assert_eq!(object_from_api.data, object.data);
             assert_eq!(object_from_api.namespace_id, object.namespace_id);
             assert_eq!(object_from_api.hubuum_class_id, object.hubuum_class_id);
-            object_from_api.delete(&context.pool).await.unwrap();
+            object_from_api
+                .delete_without_events(&context.pool)
+                .await
+                .unwrap();
         } else {
             let error_message: serde_json::Value = test::read_body_json(resp).await;
             let error_text = error_message["error"].as_str().unwrap().to_lowercase();
@@ -1359,7 +1362,7 @@ mod tests {
             json_schema: None,
             validate_schema: Some(false),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -1412,7 +1415,7 @@ mod tests {
                 name: name.to_string(),
                 description: name.to_string(),
             }
-            .save(&context.pool)
+            .save_without_events(&context.pool)
             .await
             .unwrap();
         }

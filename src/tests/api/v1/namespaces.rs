@@ -314,7 +314,10 @@ mod tests {
         assert!(np.has_delete_template);
         assert_eq!(permissions[0].group, admin_group);
 
-        created_ns.delete(&context.pool).await.unwrap();
+        created_ns
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
     }
 
     #[rstest]
@@ -410,7 +413,10 @@ mod tests {
         let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;
 
         ns.cleanup().await.unwrap();
-        normal_group.delete(&context.pool).await.unwrap();
+        normal_group
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
     }
 
     #[rstest]
@@ -441,7 +447,10 @@ mod tests {
         let _ = assert_response_status(resp, http::StatusCode::BAD_REQUEST).await;
 
         ns.cleanup().await.unwrap();
-        normal_group.delete(&context.pool).await.unwrap();
+        normal_group
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
     }
 
     /// Test that after granting a permission to a group, the API allows us to perform
@@ -455,7 +464,7 @@ mod tests {
         let test_user = create_test_user(&context.pool).await;
 
         test_group
-            .add_member(&context.pool, &test_user)
+            .add_member_without_events(&context.pool, &test_user)
             .await
             .unwrap();
         let token = test_user
@@ -544,8 +553,14 @@ mod tests {
         let resp = get_request(&context.pool, &context.admin_token, ns_endpoint).await;
         let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;
 
-        test_group.delete(&context.pool).await.unwrap();
-        test_user.delete(&context.pool).await.unwrap();
+        test_group
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
+        test_user
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
     }
 
     #[rstest]
@@ -565,7 +580,7 @@ mod tests {
                 ns.namespace.id
             )),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let group_two = NewGroup {
@@ -575,7 +590,7 @@ mod tests {
                 ns.namespace.id
             )),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -620,8 +635,14 @@ mod tests {
         let limited_permissions: Vec<GroupPermission> = test::read_body_json(resp).await;
         assert_eq!(limited_permissions.len(), 1);
 
-        group_one.delete(&context.pool).await.unwrap();
-        group_two.delete(&context.pool).await.unwrap();
+        group_one
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
+        group_two
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
         ns.cleanup().await.unwrap();
     }
 
@@ -638,27 +659,33 @@ mod tests {
             groupname: format!("ns-total-count-group-a-{}", ns.namespace.id),
             description: Some("group a".to_string()),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let group_two = NewGroup {
             groupname: format!("ns-total-count-group-b-{}", ns.namespace.id),
             description: Some("group b".to_string()),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let group_three = NewGroup {
             groupname: format!("ns-total-count-group-c-{}", ns.namespace.id),
             description: Some("group c".to_string()),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let user = create_test_user(&context.pool).await;
 
-        group_one.add_member(&context.pool, &user).await.unwrap();
-        group_two.add_member(&context.pool, &user).await.unwrap();
+        group_one
+            .add_member_without_events(&context.pool, &user)
+            .await
+            .unwrap();
+        group_two
+            .add_member_without_events(&context.pool, &user)
+            .await
+            .unwrap();
 
         for group in [&group_one, &group_two, &group_three] {
             ns.namespace
@@ -726,10 +753,19 @@ mod tests {
         assert_eq!(groups_total, 3);
         assert_eq!(groups.len(), 3);
 
-        group_one.delete(&context.pool).await.unwrap();
-        group_two.delete(&context.pool).await.unwrap();
-        group_three.delete(&context.pool).await.unwrap();
-        user.delete(&context.pool).await.unwrap();
+        group_one
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
+        group_two
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
+        group_three
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
+        user.delete_without_events(&context.pool).await.unwrap();
         ns.cleanup().await.unwrap();
     }
 

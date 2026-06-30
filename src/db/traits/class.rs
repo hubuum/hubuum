@@ -148,20 +148,26 @@ impl LoadClassRecord for HubuumClassID {
 }
 
 pub trait CreateClassRecord {
-    async fn create_class_record(&self, pool: &DbPool) -> Result<HubuumClass, ApiError>;
+    async fn create_class_record_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<HubuumClass, ApiError>;
 
-    async fn create_class_record_with_context(
+    async fn create_class_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumClass, ApiError> {
         let _ = context;
-        self.create_class_record(pool).await
+        self.create_class_record_without_events(pool).await
     }
 }
 
 impl CreateClassRecord for NewHubuumClass {
-    async fn create_class_record(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
+    async fn create_class_record_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<HubuumClass, ApiError> {
         use crate::schema::hubuumclass::dsl::hubuumclass;
 
         with_connection(pool, |conn| {
@@ -171,13 +177,13 @@ impl CreateClassRecord for NewHubuumClass {
         })
     }
 
-    async fn create_class_record_with_context(
+    async fn create_class_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumClass, ApiError> {
         let Some(context) = context else {
-            return self.create_class_record(pool).await;
+            return self.create_class_record_without_events(pool).await;
         };
 
         use crate::schema::hubuumclass::dsl::hubuumclass;
@@ -200,25 +206,26 @@ impl CreateClassRecord for NewHubuumClass {
 }
 
 pub trait UpdateClassRecord {
-    async fn update_class_record(
+    async fn update_class_record_without_events(
         &self,
         pool: &DbPool,
         class_id: i32,
     ) -> Result<HubuumClass, ApiError>;
 
-    async fn update_class_record_with_context(
+    async fn update_class_record(
         &self,
         pool: &DbPool,
         class_id: i32,
         context: Option<&EventContext>,
     ) -> Result<HubuumClass, ApiError> {
         let _ = context;
-        self.update_class_record(pool, class_id).await
+        self.update_class_record_without_events(pool, class_id)
+            .await
     }
 }
 
 impl UpdateClassRecord for UpdateHubuumClass {
-    async fn update_class_record(
+    async fn update_class_record_without_events(
         &self,
         pool: &DbPool,
         class_id: i32,
@@ -232,14 +239,16 @@ impl UpdateClassRecord for UpdateHubuumClass {
         })
     }
 
-    async fn update_class_record_with_context(
+    async fn update_class_record(
         &self,
         pool: &DbPool,
         class_id: i32,
         context: Option<&EventContext>,
     ) -> Result<HubuumClass, ApiError> {
         let Some(context) = context else {
-            return self.update_class_record(pool, class_id).await;
+            return self
+                .update_class_record_without_events(pool, class_id)
+                .await;
         };
 
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
@@ -266,20 +275,20 @@ impl UpdateClassRecord for UpdateHubuumClass {
 }
 
 pub trait DeleteClassRecord {
-    async fn delete_class_record(&self, pool: &DbPool) -> Result<(), ApiError>;
+    async fn delete_class_record_without_events(&self, pool: &DbPool) -> Result<(), ApiError>;
 
-    async fn delete_class_record_with_context(
+    async fn delete_class_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let _ = context;
-        self.delete_class_record(pool).await
+        self.delete_class_record_without_events(pool).await
     }
 }
 
 impl DeleteClassRecord for HubuumClass {
-    async fn delete_class_record(&self, pool: &DbPool) -> Result<(), ApiError> {
+    async fn delete_class_record_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
 
         with_connection(pool, |conn| {
@@ -288,13 +297,13 @@ impl DeleteClassRecord for HubuumClass {
         Ok(())
     }
 
-    async fn delete_class_record_with_context(
+    async fn delete_class_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let Some(context) = context else {
-            return self.delete_class_record(pool).await;
+            return self.delete_class_record_without_events(pool).await;
         };
 
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};

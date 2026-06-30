@@ -15,9 +15,7 @@ use crate::models::search::parse_query_parameter;
 use crate::models::service_account::{
     is_human_owner_group_member, load_service_account_by_id, principal_is_disabled,
 };
-use crate::models::token::{
-    create_principal_token_with_context, revoke_token_by_id_for_principal_with_context,
-};
+use crate::models::token::{create_principal_token, revoke_token_by_id_for_principal};
 use crate::models::{Group, Permissions, PrincipalID, PrincipalToken, PrincipalTokenMetadata};
 use crate::pagination::prepare_db_pagination;
 use crate::traits::{AuthzSubject, GroupAccessors};
@@ -166,7 +164,7 @@ pub async fn create_token(
     );
 
     let event_context = requestor.event_context(&req);
-    let raw = create_principal_token_with_context(
+    let raw = create_principal_token(
         &pool,
         principal.id,
         body.name.as_deref(),
@@ -248,13 +246,9 @@ pub async fn revoke_token(
     ensure_can_manage_principal(&pool, &requestor, &principal).await?;
 
     let event_context = requestor.event_context(&req);
-    let revoked = revoke_token_by_id_for_principal_with_context(
-        &pool,
-        path.token_id,
-        principal.id,
-        Some(&event_context),
-    )
-    .await?;
+    let revoked =
+        revoke_token_by_id_for_principal(&pool, path.token_id, principal.id, Some(&event_context))
+            .await?;
     if revoked == 0 {
         return Err(ApiError::NotFound(
             "Token not found for this principal".to_string(),

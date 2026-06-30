@@ -712,20 +712,26 @@ impl LoadClassRelationRecord for HubuumClassRelationID {
 }
 
 pub trait DeleteClassRelationRecord {
-    async fn delete_class_relation_record(&self, pool: &DbPool) -> Result<(), ApiError>;
+    async fn delete_class_relation_record_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(), ApiError>;
 
-    async fn delete_class_relation_record_with_context(
+    async fn delete_class_relation_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let _ = context;
-        self.delete_class_relation_record(pool).await
+        self.delete_class_relation_record_without_events(pool).await
     }
 }
 
 impl DeleteClassRelationRecord for HubuumClassRelation {
-    async fn delete_class_relation_record(&self, pool: &DbPool) -> Result<(), ApiError> {
+    async fn delete_class_relation_record_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(), ApiError> {
         use crate::schema::hubuumclass_relation::dsl::{hubuumclass_relation, id};
 
         with_connection(pool, |conn| {
@@ -734,13 +740,13 @@ impl DeleteClassRelationRecord for HubuumClassRelation {
         Ok(())
     }
 
-    async fn delete_class_relation_record_with_context(
+    async fn delete_class_relation_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let Some(context) = context else {
-            return self.delete_class_relation_record(pool).await;
+            return self.delete_class_relation_record_without_events(pool).await;
         };
 
         use crate::schema::hubuumclass::dsl::{hubuumclass, id as class_id};
@@ -775,7 +781,10 @@ impl DeleteClassRelationRecord for HubuumClassRelation {
 }
 
 impl DeleteClassRelationRecord for HubuumClassRelationID {
-    async fn delete_class_relation_record(&self, pool: &DbPool) -> Result<(), ApiError> {
+    async fn delete_class_relation_record_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(), ApiError> {
         use crate::schema::hubuumclass_relation::dsl::{hubuumclass_relation, id};
 
         with_connection(pool, |conn| {
@@ -784,13 +793,13 @@ impl DeleteClassRelationRecord for HubuumClassRelationID {
         Ok(())
     }
 
-    async fn delete_class_relation_record_with_context(
+    async fn delete_class_relation_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let Some(context) = context else {
-            return self.delete_class_relation_record(pool).await;
+            return self.delete_class_relation_record_without_events(pool).await;
         };
 
         use crate::schema::hubuumclass::dsl::{hubuumclass, id as class_id};
@@ -828,23 +837,23 @@ impl DeleteClassRelationRecord for HubuumClassRelationID {
 }
 
 pub trait SaveClassRelationRecord {
-    async fn save_class_relation_record(
+    async fn save_class_relation_record_without_events(
         &self,
         pool: &DbPool,
     ) -> Result<HubuumClassRelation, ApiError>;
 
-    async fn save_class_relation_record_with_context(
+    async fn save_class_relation_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumClassRelation, ApiError> {
         let _ = context;
-        self.save_class_relation_record(pool).await
+        self.save_class_relation_record_without_events(pool).await
     }
 }
 
 impl SaveClassRelationRecord for NewHubuumClassRelation {
-    async fn save_class_relation_record(
+    async fn save_class_relation_record_without_events(
         &self,
         pool: &DbPool,
     ) -> Result<HubuumClassRelation, ApiError> {
@@ -880,13 +889,13 @@ impl SaveClassRelationRecord for NewHubuumClassRelation {
         })
     }
 
-    async fn save_class_relation_record_with_context(
+    async fn save_class_relation_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumClassRelation, ApiError> {
         let Some(context) = context else {
-            return self.save_class_relation_record(pool).await;
+            return self.save_class_relation_record_without_events(pool).await;
         };
 
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
@@ -971,20 +980,27 @@ impl LoadObjectRelationRecord for HubuumObjectRelationID {
 }
 
 pub trait DeleteObjectRelationRecord {
-    async fn delete_object_relation_record(&self, pool: &DbPool) -> Result<(), ApiError>;
+    async fn delete_object_relation_record_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(), ApiError>;
 
-    async fn delete_object_relation_record_with_context(
+    async fn delete_object_relation_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let _ = context;
-        self.delete_object_relation_record(pool).await
+        self.delete_object_relation_record_without_events(pool)
+            .await
     }
 }
 
 impl DeleteObjectRelationRecord for HubuumObjectRelation {
-    async fn delete_object_relation_record(&self, pool: &DbPool) -> Result<(), ApiError> {
+    async fn delete_object_relation_record_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(), ApiError> {
         use crate::schema::hubuumobject_relation::dsl::{hubuumobject_relation, id};
 
         with_connection(pool, |conn| {
@@ -993,13 +1009,15 @@ impl DeleteObjectRelationRecord for HubuumObjectRelation {
         Ok(())
     }
 
-    async fn delete_object_relation_record_with_context(
+    async fn delete_object_relation_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let Some(context) = context else {
-            return self.delete_object_relation_record(pool).await;
+            return self
+                .delete_object_relation_record_without_events(pool)
+                .await;
         };
 
         use crate::schema::hubuumobject::dsl::{hubuumobject, id as object_id};
@@ -1033,7 +1051,10 @@ impl DeleteObjectRelationRecord for HubuumObjectRelation {
 }
 
 impl DeleteObjectRelationRecord for HubuumObjectRelationID {
-    async fn delete_object_relation_record(&self, pool: &DbPool) -> Result<(), ApiError> {
+    async fn delete_object_relation_record_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(), ApiError> {
         use crate::schema::hubuumobject_relation::dsl::{hubuumobject_relation, id};
 
         with_connection(pool, |conn| {
@@ -1042,13 +1063,15 @@ impl DeleteObjectRelationRecord for HubuumObjectRelationID {
         Ok(())
     }
 
-    async fn delete_object_relation_record_with_context(
+    async fn delete_object_relation_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let Some(context) = context else {
-            return self.delete_object_relation_record(pool).await;
+            return self
+                .delete_object_relation_record_without_events(pool)
+                .await;
         };
 
         use crate::schema::hubuumobject::dsl::{hubuumobject, id as object_id};
@@ -1089,23 +1112,23 @@ impl DeleteObjectRelationRecord for HubuumObjectRelationID {
 }
 
 pub trait SaveObjectRelationRecord {
-    async fn save_object_relation_record(
+    async fn save_object_relation_record_without_events(
         &self,
         pool: &DbPool,
     ) -> Result<HubuumObjectRelation, ApiError>;
 
-    async fn save_object_relation_record_with_context(
+    async fn save_object_relation_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumObjectRelation, ApiError> {
         let _ = context;
-        self.save_object_relation_record(pool).await
+        self.save_object_relation_record_without_events(pool).await
     }
 }
 
 impl SaveObjectRelationRecord for NewHubuumObjectRelation {
-    async fn save_object_relation_record(
+    async fn save_object_relation_record_without_events(
         &self,
         pool: &DbPool,
     ) -> Result<HubuumObjectRelation, ApiError> {
@@ -1155,13 +1178,13 @@ impl SaveObjectRelationRecord for NewHubuumObjectRelation {
         })
     }
 
-    async fn save_object_relation_record_with_context(
+    async fn save_object_relation_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<HubuumObjectRelation, ApiError> {
         let Some(context) = context else {
-            return self.save_object_relation_record(pool).await;
+            return self.save_object_relation_record_without_events(pool).await;
         };
 
         use crate::schema::hubuumobject_relation::dsl::hubuumobject_relation;

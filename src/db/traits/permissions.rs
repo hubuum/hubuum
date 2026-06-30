@@ -307,7 +307,7 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
         Ok(result.is_some())
     }
 
-    async fn apply_permissions_from_backend(
+    async fn apply_permissions_from_backend_without_events(
         &self,
         pool: &DbPool,
         group_id_for_grant: i32,
@@ -531,7 +531,7 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
         })
     }
 
-    async fn apply_permissions_from_backend_with_context(
+    async fn apply_permissions_from_backend(
         &self,
         pool: &DbPool,
         group_id_for_grant: i32,
@@ -541,7 +541,7 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
     ) -> Result<Permission, ApiError> {
         let Some(context) = context else {
             return self
-                .apply_permissions_from_backend(
+                .apply_permissions_from_backend_without_events(
                     pool,
                     group_id_for_grant,
                     permission_list,
@@ -604,7 +604,7 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
         })
     }
 
-    async fn revoke_permissions_from_backend(
+    async fn revoke_permissions_from_backend_without_events(
         &self,
         pool: &DbPool,
         group_id_for_revoke: i32,
@@ -727,7 +727,7 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
         })
     }
 
-    async fn revoke_permissions_from_backend_with_context(
+    async fn revoke_permissions_from_backend(
         &self,
         pool: &DbPool,
         group_id_for_revoke: i32,
@@ -736,7 +736,11 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
     ) -> Result<Permission, ApiError> {
         let Some(context) = context else {
             return self
-                .revoke_permissions_from_backend(pool, group_id_for_revoke, permission_list)
+                .revoke_permissions_from_backend_without_events(
+                    pool,
+                    group_id_for_revoke,
+                    permission_list,
+                )
                 .await;
         };
 
@@ -776,7 +780,7 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
         })
     }
 
-    async fn revoke_all_from_backend(
+    async fn revoke_all_from_backend_without_events(
         &self,
         pool: &DbPool,
         group_id_for_revoke: i32,
@@ -794,7 +798,7 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
         Ok(())
     }
 
-    async fn revoke_all_from_backend_with_context(
+    async fn revoke_all_from_backend(
         &self,
         pool: &DbPool,
         group_id_for_revoke: i32,
@@ -802,7 +806,7 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
     ) -> Result<(), ApiError> {
         let Some(context) = context else {
             return self
-                .revoke_all_from_backend(pool, group_id_for_revoke)
+                .revoke_all_from_backend_without_events(pool, group_id_for_revoke)
                 .await;
         };
 

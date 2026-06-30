@@ -171,35 +171,38 @@ impl OwnedUserTokenRecord for User {
 }
 
 pub trait DeleteUserRecord {
-    async fn delete_user_record(&self, pool: &DbPool) -> Result<usize, ApiError>;
+    async fn delete_user_record_without_events(&self, pool: &DbPool) -> Result<usize, ApiError>;
 
-    async fn delete_user_record_with_context(
+    async fn delete_user_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<usize, ApiError> {
         let _ = context;
-        self.delete_user_record(pool).await
+        self.delete_user_record_without_events(pool).await
     }
 }
 
 /// Delete a user by removing its principal row, which cascades to the `users`
 /// row, group memberships, and tokens. (The FK cascades principal → subtype, so
 /// deleting the `users` row alone would orphan the principal.)
-fn delete_principal(pool: &DbPool, principal_id_value: i32) -> Result<usize, ApiError> {
+fn delete_principal_without_events(
+    pool: &DbPool,
+    principal_id_value: i32,
+) -> Result<usize, ApiError> {
     use crate::schema::principals::dsl::{id, principals};
     with_connection(pool, |conn| {
         diesel::delete(principals.filter(id.eq(principal_id_value))).execute(conn)
     })
 }
 
-fn delete_principal_with_context(
+fn delete_principal(
     pool: &DbPool,
     principal_id_value: i32,
     context: Option<&EventContext>,
 ) -> Result<usize, ApiError> {
     let Some(context) = context else {
-        return delete_principal(pool, principal_id_value);
+        return delete_principal_without_events(pool, principal_id_value);
     };
 
     use crate::schema::principals::dsl::{id, principals};
@@ -221,50 +224,50 @@ fn delete_principal_with_context(
 }
 
 impl DeleteUserRecord for User {
-    async fn delete_user_record(&self, pool: &DbPool) -> Result<usize, ApiError> {
-        delete_principal(pool, self.id)
+    async fn delete_user_record_without_events(&self, pool: &DbPool) -> Result<usize, ApiError> {
+        delete_principal_without_events(pool, self.id)
     }
 
-    async fn delete_user_record_with_context(
+    async fn delete_user_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<usize, ApiError> {
-        delete_principal_with_context(pool, self.id, context)
+        delete_principal(pool, self.id, context)
     }
 }
 
 impl DeleteUserRecord for UserID {
-    async fn delete_user_record(&self, pool: &DbPool) -> Result<usize, ApiError> {
-        delete_principal(pool, self.id())
+    async fn delete_user_record_without_events(&self, pool: &DbPool) -> Result<usize, ApiError> {
+        delete_principal_without_events(pool, self.id())
     }
 
-    async fn delete_user_record_with_context(
+    async fn delete_user_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<usize, ApiError> {
-        delete_principal_with_context(pool, self.id(), context)
+        delete_principal(pool, self.id(), context)
     }
 }
 
 pub trait CreateUserRecord {
-    async fn create_user_record(&self, pool: &DbPool) -> Result<User, ApiError>;
+    async fn create_user_record_without_events(&self, pool: &DbPool) -> Result<User, ApiError>;
 
-    async fn create_user_record_with_context(
+    async fn create_user_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<User, ApiError> {
         let _ = context;
-        self.create_user_record(pool).await
+        self.create_user_record_without_events(pool).await
     }
 }
 
 impl CreateUserRecord for NewUser {
     /// Principal-first user creation: insert the `principals` row (kind=human,
     /// name) then the `users` row sharing the same id, in one transaction.
-    async fn create_user_record(&self, pool: &DbPool) -> Result<User, ApiError> {
+    async fn create_user_record_without_events(&self, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users;
 
         let name = self.name.clone();
@@ -292,13 +295,13 @@ impl CreateUserRecord for NewUser {
         })
     }
 
-    async fn create_user_record_with_context(
+    async fn create_user_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<User, ApiError> {
         let Some(context) = context else {
-            return self.create_user_record(pool).await;
+            return self.create_user_record_without_events(pool).await;
         };
 
         use crate::schema::users;
@@ -339,21 +342,29 @@ impl CreateUserRecord for NewUser {
 }
 
 pub trait UpdateUserRecord {
-    async fn update_user_record(&self, user_id: i32, pool: &DbPool) -> Result<User, ApiError>;
+    async fn update_user_record_without_events(
+        &self,
+        user_id: i32,
+        pool: &DbPool,
+    ) -> Result<User, ApiError>;
 
-    async fn update_user_record_with_context(
+    async fn update_user_record(
         &self,
         user_id: i32,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<User, ApiError> {
         let _ = context;
-        self.update_user_record(user_id, pool).await
+        self.update_user_record_without_events(user_id, pool).await
     }
 }
 
 impl UpdateUserRecord for UpdateUser {
-    async fn update_user_record(&self, user_id: i32, pool: &DbPool) -> Result<User, ApiError> {
+    async fn update_user_record_without_events(
+        &self,
+        user_id: i32,
+        pool: &DbPool,
+    ) -> Result<User, ApiError> {
         use crate::schema::users::dsl::{id, users};
 
         with_connection(pool, |conn| {
@@ -363,14 +374,14 @@ impl UpdateUserRecord for UpdateUser {
         })
     }
 
-    async fn update_user_record_with_context(
+    async fn update_user_record(
         &self,
         user_id: i32,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<User, ApiError> {
         let Some(context) = context else {
-            return self.update_user_record(user_id, pool).await;
+            return self.update_user_record_without_events(user_id, pool).await;
         };
 
         use crate::schema::users::dsl::{id, users};

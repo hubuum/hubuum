@@ -46,12 +46,12 @@ mod tests {
 
         let group = create_test_group(&context.pool).await;
         group
-            .add_member(&context.pool, &context.normal_user)
+            .add_member_without_events(&context.pool, &context.normal_user)
             .await
             .unwrap();
         namespace
             .namespace
-            .grant(
+            .grant_without_events(
                 &context.pool,
                 group.id,
                 PermissionsList::new([Permissions::ReadAudit]),
@@ -73,10 +73,13 @@ mod tests {
         let user = create_test_user(&context.pool).await;
         let user_token = user.create_token(&context.pool).await.unwrap().get_token();
         let group = create_test_group(&context.pool).await;
-        group.add_member(&context.pool, &user).await.unwrap();
+        group
+            .add_member_without_events(&context.pool, &user)
+            .await
+            .unwrap();
         namespace
             .namespace
-            .grant(
+            .grant_without_events(
                 &context.pool,
                 group.id,
                 PermissionsList::new([Permissions::ReadAudit]),
@@ -144,9 +147,12 @@ mod tests {
         let user = create_test_user(&context.pool).await;
         let user_token = user.create_token(&context.pool).await.unwrap().get_token();
         let group = create_test_group(&context.pool).await;
-        group.add_member(&context.pool, &user).await.unwrap();
+        group
+            .add_member_without_events(&context.pool, &user)
+            .await
+            .unwrap();
         related_namespace
-            .grant(
+            .grant_without_events(
                 &context.pool,
                 group.id,
                 PermissionsList::new([Permissions::ReadAudit]),

@@ -494,11 +494,11 @@ mod test {
         let test_group_2 = create_test_group(&context.pool).await;
 
         test_group_1
-            .add_member(&context.pool, &test_user_1)
+            .add_member_without_events(&context.pool, &test_user_1)
             .await
             .unwrap();
         test_group_2
-            .add_member(&context.pool, &test_user_2)
+            .add_member_without_events(&context.pool, &test_user_2)
             .await
             .unwrap();
 
@@ -517,12 +517,12 @@ mod test {
             validate_schema: None,
             namespace_id: ns.id,
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
         class
-            .grant(
+            .grant_without_events(
                 &context.pool,
                 test_group_1.id,
                 PermissionsList::new([
@@ -656,7 +656,9 @@ mod test {
             .unwrap();
         assert_contains!(&nslist, &ns);
 
-        ns.revoke_all(&context.pool, test_group_2.id).await.unwrap();
+        ns.revoke_all_without_events(&context.pool, test_group_2.id)
+            .await
+            .unwrap();
 
         let nslist = test_user_2
             .search_namespaces(
@@ -668,10 +670,22 @@ mod test {
             .unwrap();
         assert_not_contains!(&nslist, &ns);
 
-        test_user_1.delete(&context.pool).await.unwrap();
-        test_user_2.delete(&context.pool).await.unwrap();
-        test_group_1.delete(&context.pool).await.unwrap();
-        test_group_2.delete(&context.pool).await.unwrap();
-        ns.delete(&context.pool).await.unwrap();
+        test_user_1
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
+        test_user_2
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
+        test_group_1
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
+        test_group_2
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
+        ns.delete_without_events(&context.pool).await.unwrap();
     }
 }

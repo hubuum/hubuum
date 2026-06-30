@@ -90,9 +90,7 @@ pub async fn create_group(
     );
 
     let event_context = requestor.event_context(&req);
-    let group = new_group
-        .save_with_context(&pool, Some(&event_context))
-        .await?;
+    let group = new_group.save(&pool, Some(&event_context)).await?;
 
     let location = api_locations::group(group.id)?;
     Ok(ApiResponse::created(group, location))
@@ -164,7 +162,7 @@ pub async fn update_group(
     let event_context = requestor.event_context(&req);
     let updated = updated_group
         .into_inner()
-        .save_with_context(group.id, &pool, Some(&event_context))
+        .save(group.id, &pool, Some(&event_context))
         .await?;
     Ok(ApiResponse::new(updated, StatusCode::OK))
 }
@@ -212,9 +210,7 @@ pub async fn delete_group(
     }
 
     let event_context = requestor.event_context(&req);
-    group_id
-        .delete_with_context(&pool, Some(&event_context))
-        .await?;
+    group_id.delete(&pool, Some(&event_context)).await?;
     Ok(ApiResponse::no_content())
 }
 
@@ -296,7 +292,7 @@ pub async fn add_group_member(
 
     let event_context = requestor.event_context(&req);
     group
-        .add_member_with_context(&pool, &principal, Some(&event_context))
+        .add_member(&pool, &principal, Some(&event_context))
         .await?;
 
     Ok(ApiResponse::no_content())
@@ -336,7 +332,7 @@ pub async fn delete_group_member(
 
     let event_context = requestor.event_context(&req);
     group
-        .remove_member_with_context(&principal, &pool, Some(&event_context))
+        .remove_member(&principal, &pool, Some(&event_context))
         .await?;
     Ok(ApiResponse::no_content())
 }

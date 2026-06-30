@@ -65,7 +65,7 @@ mod test {
                     validate_schema: Some(false),
                     namespace_id: nid,
                 }
-                .save(&context.pool)
+                .save_without_events(&context.pool)
                 .await
                 .unwrap(),
             );
@@ -100,7 +100,7 @@ mod test {
 
     async fn cleanup(context: &TestContext, namespaces: Vec<Namespace>) {
         for ns in namespaces {
-            ns.delete(&context.pool).await.unwrap();
+            ns.delete_without_events(&context.pool).await.unwrap();
         }
     }
 

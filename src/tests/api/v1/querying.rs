@@ -98,7 +98,7 @@ mod tests {
             json_schema: None,
             validate_schema: Some(false),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -112,7 +112,7 @@ mod tests {
                     name: (*name).to_string(),
                     description: (*name).to_string(),
                 }
-                .save(&context.pool)
+                .save_without_events(&context.pool)
                 .await
                 .unwrap(),
             );
@@ -152,7 +152,7 @@ mod tests {
                 json_schema: None,
                 validate_schema: Some(validate_schema),
             }
-            .save(&context.pool)
+            .save_without_events(&context.pool)
             .await
             .unwrap();
         }
@@ -176,7 +176,7 @@ mod tests {
                     json_schema: None,
                     validate_schema: Some(false),
                 }
-                .save(&context.pool)
+                .save_without_events(&context.pool)
                 .await
                 .unwrap(),
             );
@@ -188,7 +188,7 @@ mod tests {
             forward_template_alias: None,
             reverse_template_alias: None,
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let relation_bc = NewHubuumClassRelation {
@@ -197,7 +197,7 @@ mod tests {
             forward_template_alias: None,
             reverse_template_alias: None,
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -211,7 +211,7 @@ mod tests {
                     name: format!("{label}-object-{index}"),
                     description: format!("{label}-object-{index}"),
                 }
-                .save(&context.pool)
+                .save_without_events(&context.pool)
                 .await
                 .unwrap(),
             );
@@ -222,7 +222,7 @@ mod tests {
             to_hubuum_object_id: objects[1].id,
             class_relation_id: relation_ab.id,
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         NewHubuumObjectRelation {
@@ -230,7 +230,7 @@ mod tests {
             to_hubuum_object_id: objects[2].id,
             class_relation_id: relation_bc.id,
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -608,7 +608,7 @@ mod tests {
             description: "querying-sort-description-z".to_string(),
             group_id: admin_group.id,
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let namespace_a = NewNamespaceWithAssignee {
@@ -616,7 +616,7 @@ mod tests {
             description: "querying-sort-description-a".to_string(),
             group_id: admin_group.id,
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let namespace_m = NewNamespaceWithAssignee {
@@ -624,7 +624,7 @@ mod tests {
             description: "querying-sort-description-m".to_string(),
             group_id: admin_group.id,
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -657,7 +657,7 @@ mod tests {
             json_schema: None,
             validate_schema: Some(false),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         NewHubuumClass {
@@ -667,7 +667,7 @@ mod tests {
             json_schema: None,
             validate_schema: Some(false),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         NewHubuumClass {
@@ -677,7 +677,7 @@ mod tests {
             json_schema: None,
             validate_schema: Some(false),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -713,7 +713,7 @@ mod tests {
             json_schema: None,
             validate_schema: Some(false),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -724,7 +724,7 @@ mod tests {
             name: "querying_sort_description_object_z".to_string(),
             description: "querying-sort-description-z".to_string(),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         NewHubuumObject {
@@ -734,7 +734,7 @@ mod tests {
             name: "querying_sort_description_object_a".to_string(),
             description: "querying-sort-description-a".to_string(),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         NewHubuumObject {
@@ -744,7 +744,7 @@ mod tests {
             name: "querying_sort_description_object_m".to_string(),
             description: "querying-sort-description-m".to_string(),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -773,9 +773,18 @@ mod tests {
             ]
         );
 
-        namespace_a.delete(&context.pool).await.unwrap();
-        namespace_m.delete(&context.pool).await.unwrap();
-        namespace_z.delete(&context.pool).await.unwrap();
+        namespace_a
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
+        namespace_m
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
+        namespace_z
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
     }
 
     #[rstest]
@@ -789,7 +798,7 @@ mod tests {
             description: "z-description".to_string(),
             group_id: admin_group.id,
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let ns_a = NewNamespaceWithAssignee {
@@ -797,7 +806,7 @@ mod tests {
             description: "a-description".to_string(),
             group_id: admin_group.id,
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let ns_m = NewNamespaceWithAssignee {
@@ -805,7 +814,7 @@ mod tests {
             description: "m-description".to_string(),
             group_id: admin_group.id,
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -827,8 +836,8 @@ mod tests {
             vec!["z-description", "m-description", "a-description",]
         );
 
-        ns_a.delete(&context.pool).await.unwrap();
-        ns_m.delete(&context.pool).await.unwrap();
-        ns_z.delete(&context.pool).await.unwrap();
+        ns_a.delete_without_events(&context.pool).await.unwrap();
+        ns_m.delete_without_events(&context.pool).await.unwrap();
+        ns_z.delete_without_events(&context.pool).await.unwrap();
     }
 }
