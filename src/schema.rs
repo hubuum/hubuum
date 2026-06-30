@@ -1,6 +1,35 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    event_sinks (id) {
+        id -> Int4,
+        name -> Varchar,
+        kind -> Varchar,
+        config -> Jsonb,
+        secret_ref -> Nullable<Varchar>,
+        enabled -> Bool,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    event_subscriptions (id) {
+        id -> Int4,
+        namespace_id -> Int4,
+        sink_id -> Int4,
+        name -> Varchar,
+        description -> Varchar,
+        entity_types -> Jsonb,
+        actions -> Jsonb,
+        routing -> Jsonb,
+        enabled -> Bool,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     events (id) {
         id -> Int8,
         event_id -> Uuid,
@@ -165,6 +194,7 @@ diesel::table! {
         created_at -> Timestamp,
         updated_at -> Timestamp,
         has_read_audit -> Bool,
+        has_manage_event_subscription -> Bool,
     }
 }
 
@@ -333,6 +363,8 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(event_subscriptions -> event_sinks (sink_id));
+diesel::joinable!(event_subscriptions -> namespaces (namespace_id));
 diesel::joinable!(group_memberships -> groups (group_id));
 diesel::joinable!(group_memberships -> principals (principal_id));
 diesel::joinable!(hubuumclass -> namespaces (namespace_id));
@@ -355,6 +387,8 @@ diesel::joinable!(token_scopes -> tokens (token_id));
 diesel::joinable!(tokens -> principals (principal_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    event_sinks,
+    event_subscriptions,
     events,
     group_memberships,
     groups,

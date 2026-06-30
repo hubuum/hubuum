@@ -78,9 +78,12 @@ tokio-rustls = "0.26"
 
 [features]
 default = ["swagger-ui"]
+amqp = []
+email = []
 swagger-ui = ["dep:utoipa-swagger-ui"]
 tls-rustls = ["dep:rustls", "actix-web/rustls-0_23"]
 tls-openssl = ["dep:openssl", "actix-web/openssl"]
+valkey = []
 
 [profile.release]
 codegen-units = 1
