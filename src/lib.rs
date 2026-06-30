@@ -5,6 +5,7 @@ pub mod config;
 pub mod db;
 pub mod errors;
 pub mod extractors;
+pub mod extractors_path;
 pub mod logger;
 pub mod macros;
 pub mod middlewares;
