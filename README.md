@@ -58,6 +58,7 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/iam/users
 - Stored template examples are documented in [docs/template_guide.md](docs/template_guide.md).
 - Remote target actions are documented in [docs/remote_targets.md](docs/remote_targets.md).
 - Event audit and delivery behavior is documented in [docs/events.md](docs/events.md).
+- Temporal history, actor capture, and GDPR anonymization are documented in [docs/temporal_history.md](docs/temporal_history.md).
 
 ### Production Behavior
 
