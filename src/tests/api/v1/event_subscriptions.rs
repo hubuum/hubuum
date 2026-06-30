@@ -22,6 +22,18 @@ mod tests {
         }
     }
 
+    fn disabled_sink_kind_for_feature_set() -> Option<EventSinkKind> {
+        if !cfg!(feature = "amqp") {
+            Some(EventSinkKind::Amqp)
+        } else if !cfg!(feature = "valkey") {
+            Some(EventSinkKind::ValkeyStream)
+        } else if !cfg!(feature = "email") {
+            Some(EventSinkKind::Email)
+        } else {
+            None
+        }
+    }
+
     async fn create_sink(context: &TestContext, label: &str) -> EventSink {
         let payload = new_webhook_sink(context.scoped_name(label));
         let resp = post_request(
@@ -70,21 +82,23 @@ mod tests {
         let fetched: EventSink = test::read_body_json(resp).await;
         assert_eq!(fetched.id, created.id);
 
-        let disabled_kind = NewEventSink {
-            name: context.scoped_name("sink_amqp"),
-            kind: EventSinkKind::Amqp,
-            config: json!({}),
-            secret_ref: None,
-            enabled: true,
-        };
-        let resp = post_request(
-            &context.pool,
-            &context.admin_token,
-            SINKS_ENDPOINT,
-            &disabled_kind,
-        )
-        .await;
-        assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+        if let Some(kind) = disabled_sink_kind_for_feature_set() {
+            let disabled_kind = NewEventSink {
+                name: context.scoped_name("sink_disabled"),
+                kind,
+                config: json!({}),
+                secret_ref: None,
+                enabled: true,
+            };
+            let resp = post_request(
+                &context.pool,
+                &context.admin_token,
+                SINKS_ENDPOINT,
+                &disabled_kind,
+            )
+            .await;
+            assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+        }
 
         let resp = delete_request(
             &context.pool,

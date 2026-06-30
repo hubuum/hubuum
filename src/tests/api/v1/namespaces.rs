@@ -40,7 +40,15 @@ mod tests {
         let _ = assert_response_status(resp, http::StatusCode::UNAUTHORIZED).await;
 
         let created_namespace1 = context.namespace_fixture("test_namespace_lookup1").await;
-        let resp = get_request(&context.pool, &context.admin_token, NAMESPACE_ENDPOINT).await;
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{NAMESPACE_ENDPOINT}?name__equals={}",
+                created_namespace1.namespace.name
+            ),
+        )
+        .await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
         let namespaces: Vec<crate::models::namespace::Namespace> = test::read_body_json(resp).await;
         assert_contains!(&namespaces, &created_namespace1.namespace);
@@ -49,7 +57,7 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{NAMESPACE_ENDPOINT}/"),
+            &format!("{NAMESPACE_ENDPOINT}/?name__contains=test_namespace_lookup"),
         )
         .await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
