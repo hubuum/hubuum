@@ -1,5 +1,6 @@
 pub mod classes;
 pub mod groups;
+pub mod history;
 pub mod imports;
 pub mod me;
 pub mod namespaces;

@@ -1846,6 +1846,8 @@ filter_fields!(
     (ClassRelation, "class_relation"),
     (Depth, "depth"),
     (Path, "path"),
+    (ValidFrom, "valid_from"),
+    (HistoryId, "history_id"),
 );
 
 // TODO: Rewrite to use rstest cases...

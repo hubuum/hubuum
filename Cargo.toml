@@ -60,6 +60,7 @@ utoipa-swagger-ui = { version = "9", features = [
     "actix-web",
     "vendored",
 ], optional = true }
+url = "2"
 urlparse = "0.7"
 uuid = { version = "1", features = ["v4"] }
 percent-encoding = "2"
