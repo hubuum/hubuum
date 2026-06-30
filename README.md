@@ -57,6 +57,7 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/iam/users
 - The report endpoint is documented in [docs/report_api.md](docs/report_api.md).
 - Stored template examples are documented in [docs/template_guide.md](docs/template_guide.md).
 - Remote target actions are documented in [docs/remote_targets.md](docs/remote_targets.md).
+- Temporal history, actor capture, and GDPR anonymization are documented in [docs/temporal_history.md](docs/temporal_history.md).
 
 ### Production Behavior
 
