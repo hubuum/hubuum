@@ -512,6 +512,7 @@ diesel::table! {
         email -> Nullable<Varchar>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        anonymized_at -> Nullable<Timestamp>,
     }
 }
 
