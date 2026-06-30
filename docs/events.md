@@ -176,3 +176,39 @@ deduplicating by `event_id`.
 
 Operators can inspect, retry, or dead-letter delivery rows through the
 `/api/v1/event-deliveries` admin endpoints.
+
+## Retention And Archival
+
+Event retention purge is available as an operational worker, but is disabled by
+default because it deletes audit rows. Enable it only after choosing retention
+windows that match the deployment's audit requirements:
+
+```text
+HUBUUM_EVENT_RETENTION_PURGE_ENABLED=true
+HUBUUM_EVENT_RETENTION_DAYS=365
+HUBUUM_EVENT_DELIVERY_RETENTION_DAYS=30
+HUBUUM_EVENT_RETENTION_PURGE_INTERVAL_SECONDS=3600
+HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE=1000
+```
+
+The purge path is the only application path allowed to bypass the append-only
+`events` trigger. It sets the transaction-local `events.allow_purge` guard
+before deleting eligible event rows. Normal `DELETE` statements against
+`events` continue to fail.
+
+Events become purge-eligible after `HUBUUM_EVENT_RETENTION_DAYS`, but the purge
+will not delete an event while it has active `pending`, `failed`, or
+`in_flight` deliveries. Deleting an eligible event cascades to its remaining
+delivery rows. Terminal `succeeded` and `dead` delivery rows are also purged
+independently after `HUBUUM_EVENT_DELIVERY_RETENTION_DAYS`, using their
+`updated_at` timestamp so retention starts when the delivery reaches its
+terminal state.
+
+Optional archival writes selected event rows as JSON Lines before deletion:
+
+```text
+HUBUUM_EVENT_RETENTION_ARCHIVE_PATH=/var/lib/hubuum/event-archive.jsonl
+```
+
+Each archive line contains `archived_at` and the full event row. If archive
+writing fails, the worker does not delete that batch.
