@@ -17,13 +17,16 @@ mod delivery;
 mod fanout;
 mod model;
 mod sink;
+mod webhook;
 
 pub use context::RequestProvenance;
 pub use db::emit_event;
 pub use delivery::{ensure_event_delivery_worker_running, kick_event_delivery_worker};
 pub use fanout::{ensure_event_fanout_worker_running, kick_event_fanout_worker};
 pub use model::{Event, EventId, EventResponse, NewEvent};
-pub use sink::{EventEnvelope, NoopSinkResolver, Sink, SinkError, SinkResolver};
+pub use sink::{
+    DefaultSinkResolver, EventEnvelope, NoopSinkResolver, Sink, SinkError, SinkResolver,
+};
 
 pub use hubuum_events_core::{
     Action, ActorKind, EntityType, EventCatalogError, EventContext, is_valid_pair, valid_actions,
