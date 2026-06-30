@@ -19,6 +19,8 @@ mod delivery;
 mod fanout;
 mod model;
 mod sink;
+#[cfg(feature = "valkey")]
+mod valkey;
 mod webhook;
 
 pub use context::RequestProvenance;
