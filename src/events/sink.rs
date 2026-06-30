@@ -99,16 +99,32 @@ impl SinkResolver for NoopSinkResolver {
 
 #[derive(Debug, Default)]
 pub struct DefaultSinkResolver {
+    #[cfg(feature = "amqp")]
+    amqp: crate::events::amqp::AmqpSink,
     webhook: WebhookSink,
 }
 
 impl SinkResolver for DefaultSinkResolver {
     fn resolve(&self, kind: EventSinkKind) -> Option<&dyn Sink> {
         match kind {
+            #[cfg(feature = "amqp")]
+            EventSinkKind::Amqp => Some(&self.amqp),
             EventSinkKind::Webhook => Some(&self.webhook),
             _ => None,
         }
     }
+}
+
+pub(crate) fn resolve_event_sink_secret(secret_ref: &str) -> Result<String, SinkError> {
+    let key = format!(
+        "HUBUUM_EVENT_SINK_SECRET_{}",
+        secret_ref.to_ascii_uppercase()
+    );
+    std::env::var(&key).map_err(|_| {
+        SinkError::new(format!(
+            "Event sink secret reference '{secret_ref}' is not configured"
+        ))
+    })
 }
 
 #[cfg(test)]

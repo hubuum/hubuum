@@ -47,6 +47,36 @@ URLs, embedded credential rejection, DNS resolution and address screening, IP
 pinning, redirect refusal, timeout caps, response-size caps, and sensitive
 response-header redaction.
 
+## AMQP Sinks
+
+AMQP delivery is available when Hubuum is built with the `amqp` feature. An
+AMQP sink publishes the event envelope as JSON to the exchange in sink
+`config`:
+
+```json
+{
+  "config": {
+    "uri": "amqps://publisher:{secret}@rabbitmq.example/%2f",
+    "exchange": "hubuum.events",
+    "exchange_type": "topic",
+    "declare_exchange": true,
+    "durable": true,
+    "mandatory": true
+  },
+  "secret_ref": "rabbitmq_password"
+}
+```
+
+When `secret_ref` is set, the AMQP URI must contain `{secret}`. Hubuum reads
+`HUBUUM_EVENT_SINK_SECRET_<SECRET_REF>`, percent-encodes the value for URI
+userinfo use, and substitutes it into the URI. For the example above, the
+environment variable is `HUBUUM_EVENT_SINK_SECRET_RABBITMQ_PASSWORD`.
+
+The routing key is always `{entity_type}.{action}`, such as
+`namespace.created`. Hubuum sets the AMQP `message_id` property to the event
+UUID and enables publisher confirms for each delivery attempt. Consumers should
+deduplicate by `event_id` or `message_id`.
+
 ## Delivery Semantics
 
 Delivery is at least once. A successful `2xx` webhook response marks the
