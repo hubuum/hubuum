@@ -32,7 +32,13 @@ pub(crate) trait SaveEventSinkRecord {
     async fn save_event_sink_record(
         &self,
         pool: &DbPool,
-        event_context: Option<&EventContext>,
+        event_context: &EventContext,
+    ) -> Result<EventSinkRow, ApiError>;
+
+    #[cfg(test)]
+    async fn save_event_sink_record_without_events(
+        &self,
+        pool: &DbPool,
     ) -> Result<EventSinkRow, ApiError>;
 }
 
@@ -40,18 +46,34 @@ impl SaveEventSinkRecord for NewEventSinkRow {
     async fn save_event_sink_record(
         &self,
         pool: &DbPool,
-        event_context: Option<&EventContext>,
+        event_context: &EventContext,
     ) -> Result<EventSinkRow, ApiError> {
-        use crate::schema::event_sinks::dsl::event_sinks;
-
-        with_transaction(pool, |conn| -> Result<EventSinkRow, ApiError> {
-            let created = diesel::insert_into(event_sinks)
-                .values(self)
-                .get_result::<EventSinkRow>(conn)?;
-            emit_event_sink_audit(conn, Action::Created, event_context, None, &created)?;
-            Ok(created)
-        })
+        insert_event_sink_record(self, pool, Some(event_context)).await
     }
+
+    #[cfg(test)]
+    async fn save_event_sink_record_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<EventSinkRow, ApiError> {
+        insert_event_sink_record(self, pool, None).await
+    }
+}
+
+async fn insert_event_sink_record(
+    row: &NewEventSinkRow,
+    pool: &DbPool,
+    event_context: Option<&EventContext>,
+) -> Result<EventSinkRow, ApiError> {
+    use crate::schema::event_sinks::dsl::event_sinks;
+
+    with_transaction(pool, |conn| -> Result<EventSinkRow, ApiError> {
+        let created = diesel::insert_into(event_sinks)
+            .values(row)
+            .get_result::<EventSinkRow>(conn)?;
+        emit_event_sink_audit(conn, Action::Created, event_context, None, &created)?;
+        Ok(created)
+    })
 }
 
 pub(crate) trait UpdateEventSinkRecord {
@@ -59,7 +81,7 @@ pub(crate) trait UpdateEventSinkRecord {
         &self,
         pool: &DbPool,
         sink_id: i32,
-        event_context: Option<&EventContext>,
+        event_context: &EventContext,
     ) -> Result<EventSinkRow, ApiError>;
 }
 
@@ -68,34 +90,43 @@ impl UpdateEventSinkRecord for UpdateEventSinkRow {
         &self,
         pool: &DbPool,
         sink_id: i32,
-        event_context: Option<&EventContext>,
+        event_context: &EventContext,
     ) -> Result<EventSinkRow, ApiError> {
-        use crate::schema::event_sinks::dsl::{event_sinks, id};
-
-        with_transaction(pool, |conn| -> Result<EventSinkRow, ApiError> {
-            let before = event_sinks
-                .filter(id.eq(sink_id))
-                .first::<EventSinkRow>(conn)?;
-            let updated = diesel::update(event_sinks.filter(id.eq(sink_id)))
-                .set(self)
-                .get_result::<EventSinkRow>(conn)?;
-            emit_event_sink_audit(
-                conn,
-                Action::Updated,
-                event_context,
-                Some(&before),
-                &updated,
-            )?;
-            Ok(updated)
-        })
+        update_event_sink_record_impl(self, pool, sink_id, Some(event_context)).await
     }
+}
+
+async fn update_event_sink_record_impl(
+    row: &UpdateEventSinkRow,
+    pool: &DbPool,
+    sink_id: i32,
+    event_context: Option<&EventContext>,
+) -> Result<EventSinkRow, ApiError> {
+    use crate::schema::event_sinks::dsl::{event_sinks, id};
+
+    with_transaction(pool, |conn| -> Result<EventSinkRow, ApiError> {
+        let before = event_sinks
+            .filter(id.eq(sink_id))
+            .first::<EventSinkRow>(conn)?;
+        let updated = diesel::update(event_sinks.filter(id.eq(sink_id)))
+            .set(row)
+            .get_result::<EventSinkRow>(conn)?;
+        emit_event_sink_audit(
+            conn,
+            Action::Updated,
+            event_context,
+            Some(&before),
+            &updated,
+        )?;
+        Ok(updated)
+    })
 }
 
 pub(crate) trait DeleteEventSinkRecord {
     async fn delete_event_sink_record(
         &self,
         pool: &DbPool,
-        event_context: Option<&EventContext>,
+        event_context: &EventContext,
     ) -> Result<(), ApiError>;
 }
 
@@ -103,22 +134,30 @@ impl DeleteEventSinkRecord for EventSinkID {
     async fn delete_event_sink_record(
         &self,
         pool: &DbPool,
-        event_context: Option<&EventContext>,
+        event_context: &EventContext,
     ) -> Result<(), ApiError> {
-        use crate::schema::event_sinks::dsl::{event_sinks, id};
-
-        with_transaction(pool, |conn| -> Result<(), ApiError> {
-            let before = event_sinks
-                .filter(id.eq(self.id()))
-                .first::<EventSinkRow>(conn)?;
-            emit_event_sink_audit(conn, Action::Deleted, event_context, Some(&before), &before)?;
-            diesel::delete(event_sinks.filter(id.eq(self.id())))
-                .execute(conn)
-                .map_err(ApiError::from)?;
-            Ok(())
-        })?;
-        Ok(())
+        delete_event_sink_record_impl(self, pool, Some(event_context)).await
     }
+}
+
+async fn delete_event_sink_record_impl(
+    sink_id: &EventSinkID,
+    pool: &DbPool,
+    event_context: Option<&EventContext>,
+) -> Result<(), ApiError> {
+    use crate::schema::event_sinks::dsl::{event_sinks, id};
+
+    with_transaction(pool, |conn| -> Result<(), ApiError> {
+        let before = event_sinks
+            .filter(id.eq(sink_id.id()))
+            .first::<EventSinkRow>(conn)?;
+        emit_event_sink_audit(conn, Action::Deleted, event_context, Some(&before), &before)?;
+        diesel::delete(event_sinks.filter(id.eq(sink_id.id())))
+            .execute(conn)
+            .map_err(ApiError::from)?;
+        Ok(())
+    })?;
+    Ok(())
 }
 
 pub(crate) trait LoadEventSubscriptionRecord {
@@ -147,7 +186,13 @@ pub(crate) trait SaveEventSubscriptionRecord {
     async fn save_event_subscription_record(
         &self,
         pool: &DbPool,
-        event_context: Option<&EventContext>,
+        event_context: &EventContext,
+    ) -> Result<EventSubscriptionRow, ApiError>;
+
+    #[cfg(test)]
+    async fn save_event_subscription_record_without_events(
+        &self,
+        pool: &DbPool,
     ) -> Result<EventSubscriptionRow, ApiError>;
 }
 
@@ -155,18 +200,34 @@ impl SaveEventSubscriptionRecord for NewEventSubscriptionRow {
     async fn save_event_subscription_record(
         &self,
         pool: &DbPool,
-        event_context: Option<&EventContext>,
+        event_context: &EventContext,
     ) -> Result<EventSubscriptionRow, ApiError> {
-        use crate::schema::event_subscriptions::dsl::event_subscriptions;
-
-        with_transaction(pool, |conn| -> Result<EventSubscriptionRow, ApiError> {
-            let created = diesel::insert_into(event_subscriptions)
-                .values(self)
-                .get_result::<EventSubscriptionRow>(conn)?;
-            emit_event_subscription_audit(conn, Action::Created, event_context, None, &created)?;
-            Ok(created)
-        })
+        insert_event_subscription_record(self, pool, Some(event_context)).await
     }
+
+    #[cfg(test)]
+    async fn save_event_subscription_record_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<EventSubscriptionRow, ApiError> {
+        insert_event_subscription_record(self, pool, None).await
+    }
+}
+
+async fn insert_event_subscription_record(
+    row: &NewEventSubscriptionRow,
+    pool: &DbPool,
+    event_context: Option<&EventContext>,
+) -> Result<EventSubscriptionRow, ApiError> {
+    use crate::schema::event_subscriptions::dsl::event_subscriptions;
+
+    with_transaction(pool, |conn| -> Result<EventSubscriptionRow, ApiError> {
+        let created = diesel::insert_into(event_subscriptions)
+            .values(row)
+            .get_result::<EventSubscriptionRow>(conn)?;
+        emit_event_subscription_audit(conn, Action::Created, event_context, None, &created)?;
+        Ok(created)
+    })
 }
 
 pub(crate) trait UpdateEventSubscriptionRecord {
@@ -174,7 +235,7 @@ pub(crate) trait UpdateEventSubscriptionRecord {
         &self,
         pool: &DbPool,
         subscription_id: i32,
-        event_context: Option<&EventContext>,
+        event_context: &EventContext,
     ) -> Result<EventSubscriptionRow, ApiError>;
 }
 
@@ -183,34 +244,44 @@ impl UpdateEventSubscriptionRecord for UpdateEventSubscriptionRow {
         &self,
         pool: &DbPool,
         subscription_id: i32,
-        event_context: Option<&EventContext>,
+        event_context: &EventContext,
     ) -> Result<EventSubscriptionRow, ApiError> {
-        use crate::schema::event_subscriptions::dsl::{event_subscriptions, id};
-
-        with_transaction(pool, |conn| -> Result<EventSubscriptionRow, ApiError> {
-            let before = event_subscriptions
-                .filter(id.eq(subscription_id))
-                .first::<EventSubscriptionRow>(conn)?;
-            let updated = diesel::update(event_subscriptions.filter(id.eq(subscription_id)))
-                .set(self)
-                .get_result::<EventSubscriptionRow>(conn)?;
-            emit_event_subscription_audit(
-                conn,
-                Action::Updated,
-                event_context,
-                Some(&before),
-                &updated,
-            )?;
-            Ok(updated)
-        })
+        update_event_subscription_record_impl(self, pool, subscription_id, Some(event_context))
+            .await
     }
+}
+
+async fn update_event_subscription_record_impl(
+    row: &UpdateEventSubscriptionRow,
+    pool: &DbPool,
+    subscription_id: i32,
+    event_context: Option<&EventContext>,
+) -> Result<EventSubscriptionRow, ApiError> {
+    use crate::schema::event_subscriptions::dsl::{event_subscriptions, id};
+
+    with_transaction(pool, |conn| -> Result<EventSubscriptionRow, ApiError> {
+        let before = event_subscriptions
+            .filter(id.eq(subscription_id))
+            .first::<EventSubscriptionRow>(conn)?;
+        let updated = diesel::update(event_subscriptions.filter(id.eq(subscription_id)))
+            .set(row)
+            .get_result::<EventSubscriptionRow>(conn)?;
+        emit_event_subscription_audit(
+            conn,
+            Action::Updated,
+            event_context,
+            Some(&before),
+            &updated,
+        )?;
+        Ok(updated)
+    })
 }
 
 pub(crate) trait DeleteEventSubscriptionRecord {
     async fn delete_event_subscription_record(
         &self,
         pool: &DbPool,
-        event_context: Option<&EventContext>,
+        event_context: &EventContext,
     ) -> Result<(), ApiError>;
 }
 
@@ -218,28 +289,36 @@ impl DeleteEventSubscriptionRecord for EventSubscriptionID {
     async fn delete_event_subscription_record(
         &self,
         pool: &DbPool,
-        event_context: Option<&EventContext>,
+        event_context: &EventContext,
     ) -> Result<(), ApiError> {
-        use crate::schema::event_subscriptions::dsl::{event_subscriptions, id};
-
-        with_transaction(pool, |conn| -> Result<(), ApiError> {
-            let before = event_subscriptions
-                .filter(id.eq(self.id()))
-                .first::<EventSubscriptionRow>(conn)?;
-            emit_event_subscription_audit(
-                conn,
-                Action::Deleted,
-                event_context,
-                Some(&before),
-                &before,
-            )?;
-            diesel::delete(event_subscriptions.filter(id.eq(self.id())))
-                .execute(conn)
-                .map_err(ApiError::from)?;
-            Ok(())
-        })?;
-        Ok(())
+        delete_event_subscription_record_impl(self, pool, Some(event_context)).await
     }
+}
+
+async fn delete_event_subscription_record_impl(
+    subscription_id: &EventSubscriptionID,
+    pool: &DbPool,
+    event_context: Option<&EventContext>,
+) -> Result<(), ApiError> {
+    use crate::schema::event_subscriptions::dsl::{event_subscriptions, id};
+
+    with_transaction(pool, |conn| -> Result<(), ApiError> {
+        let before = event_subscriptions
+            .filter(id.eq(subscription_id.id()))
+            .first::<EventSubscriptionRow>(conn)?;
+        emit_event_subscription_audit(
+            conn,
+            Action::Deleted,
+            event_context,
+            Some(&before),
+            &before,
+        )?;
+        diesel::delete(event_subscriptions.filter(id.eq(subscription_id.id())))
+            .execute(conn)
+            .map_err(ApiError::from)?;
+        Ok(())
+    })?;
+    Ok(())
 }
 
 fn emit_event_sink_audit(

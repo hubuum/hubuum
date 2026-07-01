@@ -183,9 +183,34 @@ pub struct NewServiceAccount {
 }
 
 impl NewServiceAccount {
+    pub async fn save<C>(
+        &self,
+        backend: &C,
+        created_by: Option<i32>,
+        event_context: &EventContext,
+    ) -> Result<ServiceAccount, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.save_impl(backend, created_by, Some(event_context))
+            .await
+    }
+
+    #[cfg(test)]
+    pub async fn save_without_events<C>(
+        &self,
+        backend: &C,
+        created_by: Option<i32>,
+    ) -> Result<ServiceAccount, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.save_impl(backend, created_by, None).await
+    }
+
     /// Create the principal (kind=service_account) and service_account rows in a
     /// single transaction (principal-first id allocation).
-    pub async fn save<C>(
+    async fn save_impl<C>(
         &self,
         backend: &C,
         created_by: Option<i32>,
@@ -259,7 +284,7 @@ impl UpdateServiceAccount {
         &self,
         service_account_id: i32,
         backend: &C,
-        event_context: Option<&EventContext>,
+        event_context: &EventContext,
     ) -> Result<ServiceAccount, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -274,24 +299,22 @@ impl UpdateServiceAccount {
                 let updated = diesel::update(sa_table.filter(id.eq(service_account_id)))
                     .set(self)
                     .get_result::<ServiceAccount>(conn)?;
-                if let Some(event_context) = event_context {
-                    let name = load_principal_name_by_id(conn, updated.id)?;
-                    let event = NewEvent::new(
-                        EntityType::ServiceAccount,
-                        Action::Updated,
-                        event_context.actor_kind(),
-                        format!("Service account '{name}' updated"),
-                    )?
-                    .with_context(event_context)
-                    .with_entity_id(updated.id)
-                    .with_entity_name(&name)
-                    .with_before(service_account_snapshot(&before, &name))
-                    .with_after(service_account_snapshot(&updated, &name))
-                    .with_metadata(json!({
-                        "owner_group_id": updated.owner_group_id,
-                    }));
-                    emit_event(conn, &event)?;
-                }
+                let name = load_principal_name_by_id(conn, updated.id)?;
+                let event = NewEvent::new(
+                    EntityType::ServiceAccount,
+                    Action::Updated,
+                    event_context.actor_kind(),
+                    format!("Service account '{name}' updated"),
+                )?
+                .with_context(event_context)
+                .with_entity_id(updated.id)
+                .with_entity_name(&name)
+                .with_before(service_account_snapshot(&before, &name))
+                .with_after(service_account_snapshot(&updated, &name))
+                .with_metadata(json!({
+                    "owner_group_id": updated.owner_group_id,
+                }));
+                emit_event(conn, &event)?;
                 Ok(updated)
             },
         )
@@ -324,17 +347,28 @@ impl ServiceAccountID {
         load_service_account_by_id(backend.db_pool(), self.id()).await
     }
 
-    /// Mark the service account disabled. Token soft-revocation and queued-task
-    /// handling are performed by the caller/handler.
     #[cfg(test)]
-    pub async fn disable<C>(&self, backend: &C) -> Result<ServiceAccount, ApiError>
+    pub async fn disable_without_events<C>(&self, backend: &C) -> Result<ServiceAccount, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.disable_with_context(backend, None).await
+        self.disable_impl(backend, None).await
     }
 
-    pub async fn disable_with_context<C>(
+    /// Mark the service account disabled. Token soft-revocation and queued-task
+    /// handling are performed by the caller/handler.
+    pub async fn disable<C>(
+        &self,
+        backend: &C,
+        event_context: &EventContext,
+    ) -> Result<ServiceAccount, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.disable_impl(backend, Some(event_context)).await
+    }
+
+    async fn disable_impl<C>(
         &self,
         backend: &C,
         event_context: Option<&EventContext>,
@@ -381,7 +415,7 @@ impl ServiceAccountID {
     pub async fn delete<C>(
         &self,
         backend: &C,
-        event_context: Option<&EventContext>,
+        event_context: &EventContext,
     ) -> Result<usize, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -391,22 +425,20 @@ impl ServiceAccountID {
         with_transaction(backend.db_pool(), |conn| -> Result<usize, ApiError> {
             let sa = load_service_account_by_id_conn(conn, sa_id)?;
             let name = load_principal_name_by_id(conn, sa_id)?;
-            if let Some(event_context) = event_context {
-                let event = NewEvent::new(
-                    EntityType::ServiceAccount,
-                    Action::Deleted,
-                    event_context.actor_kind(),
-                    format!("Service account '{name}' deleted"),
-                )?
-                .with_context(event_context)
-                .with_entity_id(sa_id)
-                .with_entity_name(&name)
-                .with_before(service_account_snapshot(&sa, &name))
-                .with_metadata(json!({
-                    "owner_group_id": sa.owner_group_id,
-                }));
-                emit_event(conn, &event)?;
-            }
+            let event = NewEvent::new(
+                EntityType::ServiceAccount,
+                Action::Deleted,
+                event_context.actor_kind(),
+                format!("Service account '{name}' deleted"),
+            )?
+            .with_context(event_context)
+            .with_entity_id(sa_id)
+            .with_entity_name(&name)
+            .with_before(service_account_snapshot(&sa, &name))
+            .with_metadata(json!({
+                "owner_group_id": sa.owner_group_id,
+            }));
+            emit_event(conn, &event)?;
             diesel::delete(principals_table.filter(id.eq(sa_id)))
                 .execute(conn)
                 .map_err(ApiError::from)

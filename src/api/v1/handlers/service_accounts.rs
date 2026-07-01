@@ -99,7 +99,7 @@ pub async fn create_service_account(
 
     let event_context = requestor.event_context(&req);
     let sa = new_sa
-        .save(&pool, Some(requestor.user.id), Some(&event_context))
+        .save(&pool, Some(requestor.user.id), &event_context)
         .await?;
     let response = response_for(&pool, &sa).await?;
 
@@ -222,7 +222,7 @@ pub async fn update_service_account(
     }
 
     let event_context = requestor.event_context(&req);
-    let updated = update.save(id.id(), &pool, Some(&event_context)).await?;
+    let updated = update.save(id.id(), &pool, &event_context).await?;
     Ok(ApiResponse::new(
         response_for(&pool, &updated).await?,
         StatusCode::OK,
@@ -254,7 +254,7 @@ pub async fn disable_service_account(
     ensure_can_manage(&pool, &requestor, &sa).await?;
 
     let event_context = requestor.event_context(&req);
-    let disabled = id.disable_with_context(&pool, Some(&event_context)).await?;
+    let disabled = id.disable(&pool, &event_context).await?;
     // Immediately soft-revoke its tokens and cancel its pending work.
     revoke_all_tokens_for_principal(&pool, id.id()).await?;
     cancel_pending_tasks_for_principal(&pool, id.id()).await?;
@@ -295,6 +295,6 @@ pub async fn delete_service_account(
     let sa = id.service_account(&pool).await?;
     ensure_can_manage(&pool, &requestor, &sa).await?;
     let event_context = requestor.event_context(&req);
-    id.delete(&pool, Some(&event_context)).await?;
+    id.delete(&pool, &event_context).await?;
     Ok(ApiResponse::no_content())
 }

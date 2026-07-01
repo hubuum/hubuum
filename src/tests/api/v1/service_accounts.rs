@@ -110,7 +110,7 @@ mod tests {
                 description: None,
                 owner_group_id: group.id,
             }
-            .save(pool, None, None)
+            .save_without_events(pool, None)
             .await
             .map(|_| ())
         };
@@ -363,7 +363,7 @@ mod tests {
 
         ServiceAccountID::new(sa.id)
             .unwrap()
-            .disable(pool)
+            .disable_without_events(pool)
             .await
             .unwrap();
 
@@ -380,7 +380,7 @@ mod tests {
         let sa = create_test_service_account(pool, &group, None).await;
         ServiceAccountID::new(sa.id)
             .unwrap()
-            .disable(pool)
+            .disable_without_events(pool)
             .await
             .unwrap();
 
@@ -1537,7 +1537,7 @@ mod tests {
                 description: None,
                 owner_group_id: group.id,
             }
-            .save(pool, None, None)
+            .save_without_events(pool, None)
             .await
             .unwrap();
         }
