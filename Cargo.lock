@@ -1992,21 +1992,23 @@ dependencies = [
  "futures",
  "futures-util",
  "hmac 0.13.0",
+ "hubuum-event-sink-amqp",
+ "hubuum-event-sink-email",
+ "hubuum-event-sink-valkey",
+ "hubuum-event-sink-webhook",
+ "hubuum-event-sinks-common",
  "hubuum-events-core",
  "hubuum-outbound-http",
  "hubuum-templates",
  "iai-callgrind",
  "ipnet",
  "jsonschema",
- "lapin",
- "lettre",
  "lru",
  "minijinja",
  "openssl",
  "percent-encoding",
  "r2d2",
  "rand 0.10.1",
- "redis",
  "regex",
  "reqwest 0.12.28",
  "rstest",
@@ -2023,6 +2025,79 @@ dependencies = [
  "utoipa",
  "utoipa-swagger-ui",
  "uuid",
+]
+
+[[package]]
+name = "hubuum-event-sink-amqp"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "futures",
+ "hubuum-event-sinks-common",
+ "hubuum-events-core",
+ "lapin",
+ "serde",
+ "serde_json",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "hubuum-event-sink-email"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "futures",
+ "hubuum-event-sinks-common",
+ "hubuum-events-core",
+ "hubuum-templates",
+ "lettre",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "hubuum-event-sink-valkey"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "futures",
+ "hubuum-event-sinks-common",
+ "hubuum-events-core",
+ "redis",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "hubuum-event-sink-webhook"
+version = "0.0.1"
+dependencies = [
+ "base64",
+ "chrono",
+ "futures",
+ "hubuum-event-sinks-common",
+ "hubuum-events-core",
+ "hubuum-outbound-http",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "hubuum-event-sinks-common"
+version = "0.0.1"
+dependencies = [
+ "hubuum-events-core",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

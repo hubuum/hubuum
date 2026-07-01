@@ -11,20 +11,13 @@
 //! free of Diesel/Actix/app concerns so the producer, the audit read API, and
 //! the fan-out worker share one authoritative definition.
 
-#[cfg(feature = "amqp")]
-mod amqp;
 mod context;
 mod db;
 mod delivery;
-#[cfg(feature = "email")]
-mod email;
 mod fanout;
 mod model;
 mod retention;
 mod sink;
-#[cfg(feature = "valkey")]
-mod valkey;
-mod webhook;
 
 pub use context::RequestProvenance;
 pub use db::emit_event;

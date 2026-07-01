@@ -1,14 +1,11 @@
 use std::fmt;
 
-use futures::FutureExt;
+use hubuum_event_sinks_common::{
+    EventEnvelope, SinkDelivery, SinkError, UriConnectionPool, parse_sink_config,
+    parse_sink_routing, require_non_empty, require_tls_uri_scheme, resolve_event_sink_secret_uri,
+};
 use redis::Client;
 use serde::Deserialize;
-
-use crate::events::sink::{
-    EventEnvelope, Sink, SinkError, UriConnectionPool, parse_sink_config, parse_sink_routing,
-    require_non_empty, require_tls_uri_scheme, resolve_event_sink_secret_uri,
-};
-use crate::models::{EventSink, EventSubscription};
 
 #[derive(Default)]
 pub struct ValkeySink {
@@ -43,27 +40,15 @@ struct StreamEntry {
     fields: Vec<(&'static str, String)>,
 }
 
-impl Sink for ValkeySink {
-    fn deliver<'a>(
-        &'a self,
-        envelope: &'a EventEnvelope,
-        subscription: &'a EventSubscription,
-        sink: &'a EventSink,
-    ) -> futures::future::BoxFuture<'a, Result<(), SinkError>> {
-        async move { self.deliver_valkey(envelope, subscription, sink).await }.boxed()
-    }
-}
-
 impl ValkeySink {
-    async fn deliver_valkey(
+    pub async fn deliver(
         &self,
         envelope: &EventEnvelope,
-        subscription: &EventSubscription,
-        sink: &EventSink,
+        delivery: SinkDelivery<'_>,
     ) -> Result<(), SinkError> {
-        let config = parse_config(sink)?;
-        let routing = parse_routing(subscription)?;
-        let uri = resolve_event_sink_secret_uri(&config.uri, sink.secret_ref.as_deref(), "Valkey")?;
+        let config = parse_config(&delivery)?;
+        let routing = parse_routing(&delivery)?;
+        let uri = resolve_event_sink_secret_uri(&config.uri, delivery.secret_ref, "Valkey")?;
         require_tls_uri_scheme(&uri, "Valkey", &["rediss"])?;
         let client = self.client(&uri).await?;
         let entry = stream_entry(envelope, routing, config)?;
@@ -94,8 +79,8 @@ fn publish_stream_entry(client: Client, entry: StreamEntry) -> Result<(), SinkEr
     Ok(())
 }
 
-fn parse_config(sink: &EventSink) -> Result<ValkeyConfig, SinkError> {
-    let config: ValkeyConfig = parse_sink_config(sink, "Valkey")?;
+fn parse_config(delivery: &SinkDelivery<'_>) -> Result<ValkeyConfig, SinkError> {
+    let config: ValkeyConfig = parse_sink_config(delivery, "Valkey")?;
     require_non_empty(&config.uri, "Valkey config", "uri")?;
     if matches!(config.max_len, Some(0)) {
         return Err(SinkError::new(
@@ -105,8 +90,8 @@ fn parse_config(sink: &EventSink) -> Result<ValkeyConfig, SinkError> {
     Ok(config)
 }
 
-fn parse_routing(subscription: &EventSubscription) -> Result<ValkeyRouting, SinkError> {
-    let routing: ValkeyRouting = parse_sink_routing(subscription, "Valkey")?;
+fn parse_routing(delivery: &SinkDelivery<'_>) -> Result<ValkeyRouting, SinkError> {
+    let routing: ValkeyRouting = parse_sink_routing(delivery, "Valkey")?;
     require_non_empty(&routing.stream, "Valkey routing", "stream")?;
     Ok(routing)
 }
@@ -165,8 +150,6 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::models::EventSinkKind;
-
     fn envelope() -> EventEnvelope {
         EventEnvelope {
             id: 42,
@@ -189,40 +172,19 @@ mod tests {
         }
     }
 
-    fn sink(config: serde_json::Value, secret_ref: Option<&str>) -> EventSink {
-        let now = Utc::now().naive_utc();
-        EventSink {
-            id: 1,
-            name: "valkey".to_string(),
-            kind: EventSinkKind::ValkeyStream,
-            config,
-            secret_ref: secret_ref.map(str::to_string),
-            enabled: true,
-            created_at: now,
-            updated_at: now,
-        }
-    }
-
-    fn subscription(routing: serde_json::Value) -> EventSubscription {
-        let now = Utc::now().naive_utc();
-        EventSubscription {
-            id: 1,
-            namespace_id: 10,
-            sink_id: 1,
-            name: "subscription".to_string(),
-            description: String::new(),
-            entity_types: vec!["namespace".to_string()],
-            actions: vec!["created".to_string()],
-            routing,
-            enabled: true,
-            created_at: now,
-            updated_at: now,
-        }
+    fn delivery<'a>(
+        config: &'a serde_json::Value,
+        routing: &'a serde_json::Value,
+        secret_ref: Option<&'a str>,
+    ) -> SinkDelivery<'a> {
+        SinkDelivery::new(config, routing, secret_ref)
     }
 
     #[test]
     fn routing_requires_stream() {
-        let error = parse_routing(&subscription(serde_json::json!({"stream": ""}))).unwrap_err();
+        let config = serde_json::json!({});
+        let routing = serde_json::json!({"stream": ""});
+        let error = parse_routing(&delivery(&config, &routing, None)).unwrap_err();
         assert_eq!(
             error.to_string(),
             "Invalid Valkey routing: stream is required"
@@ -231,14 +193,12 @@ mod tests {
 
     #[test]
     fn config_requires_uri_and_valid_max_len() {
-        let error = parse_config(&sink(
-            serde_json::json!({
-                "uri": "redis://localhost/0",
-                "max_len": 0
-            }),
-            None,
-        ))
-        .unwrap_err();
+        let config = serde_json::json!({
+            "uri": "redis://localhost/0",
+            "max_len": 0
+        });
+        let routing = serde_json::json!({});
+        let error = parse_config(&delivery(&config, &routing, None)).unwrap_err();
         assert_eq!(
             error.to_string(),
             "Invalid Valkey config: max_len must be greater than zero"

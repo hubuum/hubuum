@@ -1,17 +1,14 @@
 use std::fmt;
 
-use futures::FutureExt;
+use hubuum_event_sinks_common::{
+    EventEnvelope, SinkDelivery, SinkError, UriConnectionPool, parse_sink_config,
+    parse_sink_routing, require_non_empty, require_tls_uri_scheme, resolve_event_sink_secret_uri,
+};
 use hubuum_templates::{TemplateLimits, prepare_template};
 use lettre::message::Mailbox;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use serde::Deserialize;
 use serde_json::{Map, Value};
-
-use crate::events::sink::{
-    EventEnvelope, Sink, SinkError, UriConnectionPool, parse_sink_config, parse_sink_routing,
-    require_non_empty, require_tls_uri_scheme, resolve_event_sink_secret_uri,
-};
-use crate::models::{EventSink, EventSubscription};
 
 #[derive(Default)]
 pub struct EmailSink {
@@ -52,27 +49,15 @@ struct RenderedEmail {
     body: String,
 }
 
-impl Sink for EmailSink {
-    fn deliver<'a>(
-        &'a self,
-        envelope: &'a EventEnvelope,
-        subscription: &'a EventSubscription,
-        sink: &'a EventSink,
-    ) -> futures::future::BoxFuture<'a, Result<(), SinkError>> {
-        async move { self.deliver_email(envelope, subscription, sink).await }.boxed()
-    }
-}
-
 impl EmailSink {
-    async fn deliver_email(
+    pub async fn deliver(
         &self,
         envelope: &EventEnvelope,
-        subscription: &EventSubscription,
-        sink: &EventSink,
+        delivery: SinkDelivery<'_>,
     ) -> Result<(), SinkError> {
-        let config = parse_config(sink)?;
-        let routing = parse_routing(subscription)?;
-        let uri = resolve_event_sink_secret_uri(&config.uri, sink.secret_ref.as_deref(), "email")?;
+        let config = parse_config(&delivery)?;
+        let routing = parse_routing(&delivery)?;
+        let uri = resolve_event_sink_secret_uri(&config.uri, delivery.secret_ref, "email")?;
         require_tls_uri_scheme(&uri, "email", &["smtps"])?;
         let rendered = render_email(envelope, &config)?;
         let message = build_message(&config, &routing, rendered)?;
@@ -96,8 +81,8 @@ impl EmailSink {
     }
 }
 
-fn parse_config(sink: &EventSink) -> Result<EmailConfig, SinkError> {
-    let config: EmailConfig = parse_sink_config(sink, "email")?;
+fn parse_config(delivery: &SinkDelivery<'_>) -> Result<EmailConfig, SinkError> {
+    let config: EmailConfig = parse_sink_config(delivery, "email")?;
     require_non_empty(&config.uri, "email config", "uri")?;
     require_non_empty(&config.from, "email config", "from")?;
     require_non_empty(&config.subject_template, "email config", "subject_template")?;
@@ -107,8 +92,8 @@ fn parse_config(sink: &EventSink) -> Result<EmailConfig, SinkError> {
     Ok(config)
 }
 
-fn parse_routing(subscription: &EventSubscription) -> Result<EmailRouting, SinkError> {
-    let routing: EmailRouting = parse_sink_routing(subscription, "email")?;
+fn parse_routing(delivery: &SinkDelivery<'_>) -> Result<EmailRouting, SinkError> {
+    let routing: EmailRouting = parse_sink_routing(delivery, "email")?;
     if routing.recipients.is_empty() {
         return Err(SinkError::new(
             "Invalid email routing: recipients is required",
@@ -252,8 +237,6 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::models::EventSinkKind;
-
     fn envelope() -> EventEnvelope {
         EventEnvelope {
             id: 42,
@@ -276,52 +259,28 @@ mod tests {
         }
     }
 
-    fn sink(config: Value, secret_ref: Option<&str>) -> EventSink {
-        let now = Utc::now().naive_utc();
-        EventSink {
-            id: 1,
-            name: "email".to_string(),
-            kind: EventSinkKind::Email,
-            config,
-            secret_ref: secret_ref.map(str::to_string),
-            enabled: true,
-            created_at: now,
-            updated_at: now,
-        }
-    }
-
-    fn subscription(routing: Value) -> EventSubscription {
-        let now = Utc::now().naive_utc();
-        EventSubscription {
-            id: 1,
-            namespace_id: 10,
-            sink_id: 1,
-            name: "subscription".to_string(),
-            description: String::new(),
-            entity_types: vec!["namespace".to_string()],
-            actions: vec!["created".to_string()],
-            routing,
-            enabled: true,
-            created_at: now,
-            updated_at: now,
-        }
+    fn delivery<'a>(
+        config: &'a Value,
+        routing: &'a Value,
+        secret_ref: Option<&'a str>,
+    ) -> SinkDelivery<'a> {
+        SinkDelivery::new(config, routing, secret_ref)
     }
 
     fn config() -> EmailConfig {
-        parse_config(&sink(
-            serde_json::json!({
-                "uri": "smtp://localhost:2525",
-                "from": "Hubuum <hubuum@example.invalid>"
-            }),
-            None,
-        ))
-        .unwrap()
+        let config = serde_json::json!({
+            "uri": "smtp://localhost:2525",
+            "from": "Hubuum <hubuum@example.invalid>"
+        });
+        let routing = serde_json::json!({});
+        parse_config(&delivery(&config, &routing, None)).unwrap()
     }
 
     #[test]
     fn routing_requires_recipients() {
-        let error =
-            parse_routing(&subscription(serde_json::json!({"recipients": []}))).unwrap_err();
+        let config = serde_json::json!({});
+        let routing = serde_json::json!({"recipients": []});
+        let error = parse_routing(&delivery(&config, &routing, None)).unwrap_err();
         assert_eq!(
             error.to_string(),
             "Invalid email routing: recipients is required"
@@ -330,33 +289,27 @@ mod tests {
 
     #[test]
     fn routing_accepts_to_alias() {
-        let routing = parse_routing(&subscription(
-            serde_json::json!({"to": ["ops@example.invalid"]}),
-        ))
-        .unwrap();
+        let config = serde_json::json!({});
+        let routing = serde_json::json!({"to": ["ops@example.invalid"]});
+        let routing = parse_routing(&delivery(&config, &routing, None)).unwrap();
         assert_eq!(routing.recipients, vec!["ops@example.invalid"]);
     }
 
     #[test]
     fn config_requires_uri_from_and_templates() {
-        let error = parse_config(&sink(
-            serde_json::json!({
-                "uri": "",
-                "from": "hubuum@example.invalid"
-            }),
-            None,
-        ))
-        .unwrap_err();
+        let config = serde_json::json!({
+            "uri": "",
+            "from": "hubuum@example.invalid"
+        });
+        let routing = serde_json::json!({});
+        let error = parse_config(&delivery(&config, &routing, None)).unwrap_err();
         assert_eq!(error.to_string(), "Invalid email config: uri is required");
 
-        let error = parse_config(&sink(
-            serde_json::json!({
-                "uri": "smtp://localhost:2525",
-                "from": ""
-            }),
-            None,
-        ))
-        .unwrap_err();
+        let config = serde_json::json!({
+            "uri": "smtp://localhost:2525",
+            "from": ""
+        });
+        let error = parse_config(&delivery(&config, &routing, None)).unwrap_err();
         assert_eq!(error.to_string(), "Invalid email config: from is required");
     }
 
@@ -385,12 +338,13 @@ mod tests {
 
     #[test]
     fn builds_message_with_recipients() {
-        let routing = parse_routing(&subscription(serde_json::json!({
+        let config_json = serde_json::json!({});
+        let routing = serde_json::json!({
             "recipients": ["Ops <ops@example.invalid>"],
             "cc": ["audit@example.invalid"],
             "bcc": ["archive@example.invalid"]
-        })))
-        .unwrap();
+        });
+        let routing = parse_routing(&delivery(&config_json, &routing, None)).unwrap();
         let message = build_message(
             &config(),
             &routing,
