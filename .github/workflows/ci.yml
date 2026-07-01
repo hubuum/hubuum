@@ -114,88 +114,22 @@ jobs:
           name: openapi-json
           path: openapi.json
 
-  feature-matrix:
-    name: Detect feature permutations
-    if: "!startsWith(github.ref, 'refs/tags/')"
-    runs-on: ubuntu-24.04
-    outputs:
-      matrix: ${{ steps.detect.outputs.matrix }}
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-      - name: Cache cargo & target directories
-        uses: Swatinem/rust-cache@v2
-      - name: Install feature build dependencies
-        run: |
-          sudo apt-get update --yes
-          sudo apt-get install --yes libssl-dev
-      - name: Detect valid feature permutations
-        id: detect
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          mapfile -t features < <(
-            cargo metadata --no-deps --format-version 1 \
-              | jq -r '.packages[] | select(.name=="hubuum") | .features | keys[]' \
-              | grep -v '^default$' \
-              | sort
-          )
-
-          combos=("")
-          for feature in "${features[@]}"; do
-            current=("${combos[@]}")
-            for combo in "${current[@]}"; do
-              if [[ -z "$combo" ]]; then
-                combos+=("$feature")
-              else
-                combos+=("$combo,$feature")
-              fi
-            done
-          done
-
-          matrix='[]'
-
-          add_if_valid () {
-            local name="$1"
-            local args="$2"
-            local -a args_arr=()
-            if [[ -n "$args" ]]; then
-              read -r -a args_arr <<<"$args"
-            fi
-
-            if cargo check --quiet --locked "${args_arr[@]}"; then
-              matrix="$(jq --arg name "$name" --arg args "$args" '. + [{name:$name,args:$args}]' <<<"$matrix")"
-            else
-              echo "Skipping invalid feature set: $name"
-            fi
-          }
-
-          add_if_valid "default" ""
-          add_if_valid "no-default-features" "--no-default-features"
-
-          for combo in "${combos[@]}"; do
-            [[ -z "$combo" ]] && continue
-            add_if_valid "$combo" "--no-default-features -F $combo"
-          done
-
-          echo "Detected feature matrix:"
-          echo "$matrix" | jq .
-          {
-            echo "matrix<<EOF"
-            echo "$matrix"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
   feature-permutations:
-    name: Feature matrix (${{ matrix.feature.name }})
+    name: Feature smoke (${{ matrix.feature.name }})
     if: "!startsWith(github.ref, 'refs/tags/')"
-    needs: feature-matrix
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        feature: ${{ fromJson(needs.feature-matrix.outputs.matrix) }}
+        feature:
+          - name: default
+            args: ""
+          - name: no-default-features
+            args: "--no-default-features"
+          - name: rustls-no-openssl
+            args: "--no-default-features -F tls-rustls"
+          - name: all-features
+            args: "--all-features"
     services:
       postgres:
         image: postgres
