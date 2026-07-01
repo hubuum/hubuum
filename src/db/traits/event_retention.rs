@@ -93,6 +93,7 @@ fn select_event_ids_for_retention_purge(
         "SELECT e.id
          FROM events e
          WHERE e.occurred_at < $1
+           AND e.dispatched_at IS NOT NULL
            AND NOT EXISTS (
              SELECT 1
              FROM event_deliveries d
@@ -137,6 +138,7 @@ fn purge_events_by_id(
     diesel::sql_query(
         "DELETE FROM events e
          WHERE e.id = ANY($1)
+           AND e.dispatched_at IS NOT NULL
            AND NOT EXISTS (
              SELECT 1
              FROM event_deliveries d

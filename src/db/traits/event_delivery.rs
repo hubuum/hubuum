@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::{Duration, Utc};
 use diesel::prelude::*;
 use uuid::Uuid;
@@ -6,7 +8,7 @@ use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::Event;
 use crate::models::event_subscription::{EventSinkRow, EventSubscriptionRow};
-use crate::models::search::QueryOptions;
+use crate::models::search::{FilterField, Operator, QueryOptions};
 use crate::models::{EventDelivery, EventDeliveryID, EventDeliveryStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,10 +79,7 @@ pub(crate) async fn claim_event_deliveries(
                     ))
                     .get_results::<EventDelivery>(conn)?;
 
-            claimed_deliveries
-                .into_iter()
-                .map(|delivery| load_claimed_delivery_context(conn, delivery))
-                .collect()
+            load_claimed_delivery_contexts(conn, claimed_deliveries)
         },
     )
 }
@@ -123,28 +122,86 @@ pub(crate) async fn claim_event_delivery_by_id(
     })
 }
 
+#[cfg(test)]
 fn load_claimed_delivery_context(
     conn: &mut PgConnection,
     delivery: EventDelivery,
 ) -> Result<ClaimedEventDelivery, ApiError> {
+    load_claimed_delivery_contexts(conn, vec![delivery])?
+        .into_iter()
+        .next()
+        .ok_or_else(|| ApiError::NotFound("Event delivery not found".to_string()))
+}
+
+fn load_claimed_delivery_contexts(
+    conn: &mut PgConnection,
+    deliveries: Vec<EventDelivery>,
+) -> Result<Vec<ClaimedEventDelivery>, ApiError> {
     use crate::schema::{event_sinks, event_subscriptions, events};
 
-    let event = events::table
-        .filter(events::id.eq(delivery.event_id))
-        .first::<Event>(conn)?;
-    let subscription = event_subscriptions::table
-        .filter(event_subscriptions::id.eq(delivery.subscription_id))
-        .first::<EventSubscriptionRow>(conn)?;
-    let sink = event_sinks::table
-        .filter(event_sinks::id.eq(subscription.sink_id))
-        .first::<EventSinkRow>(conn)?;
+    if deliveries.is_empty() {
+        return Ok(Vec::new());
+    }
 
-    Ok(ClaimedEventDelivery {
-        delivery,
-        event,
-        subscription,
-        sink,
-    })
+    let event_ids = deliveries
+        .iter()
+        .map(|delivery| delivery.event_id)
+        .collect::<Vec<_>>();
+    let subscription_ids = deliveries
+        .iter()
+        .map(|delivery| delivery.subscription_id)
+        .collect::<Vec<_>>();
+
+    let loaded_events = events::table
+        .filter(events::id.eq_any(&event_ids))
+        .load::<Event>(conn)?
+        .into_iter()
+        .map(|event| (event.id, event))
+        .collect::<HashMap<_, _>>();
+    let loaded_subscriptions = event_subscriptions::table
+        .filter(event_subscriptions::id.eq_any(&subscription_ids))
+        .load::<EventSubscriptionRow>(conn)?
+        .into_iter()
+        .map(|subscription| (subscription.id, subscription))
+        .collect::<HashMap<_, _>>();
+    let sink_ids = loaded_subscriptions
+        .values()
+        .map(|subscription| subscription.sink_id)
+        .collect::<Vec<_>>();
+    let loaded_sinks = event_sinks::table
+        .filter(event_sinks::id.eq_any(&sink_ids))
+        .load::<EventSinkRow>(conn)?
+        .into_iter()
+        .map(|sink| (sink.id, sink))
+        .collect::<HashMap<_, _>>();
+
+    deliveries
+        .into_iter()
+        .map(|delivery| {
+            let event = loaded_events
+                .get(&delivery.event_id)
+                .cloned()
+                .ok_or_else(|| ApiError::NotFound("Event for delivery not found".to_string()))?;
+            let subscription = loaded_subscriptions
+                .get(&delivery.subscription_id)
+                .cloned()
+                .ok_or_else(|| {
+                    ApiError::NotFound("Event subscription for delivery not found".to_string())
+                })?;
+            let sink = loaded_sinks
+                .get(&subscription.sink_id)
+                .cloned()
+                .ok_or_else(|| {
+                    ApiError::NotFound("Event sink for delivery subscription not found".to_string())
+                })?;
+            Ok(ClaimedEventDelivery {
+                delivery,
+                event,
+                subscription,
+                sink,
+            })
+        })
+        .collect()
 }
 
 pub async fn mark_event_delivery_succeeded(
@@ -254,15 +311,62 @@ pub async fn list_event_deliveries_with_total_count(
     pool: &DbPool,
     query_options: &QueryOptions,
 ) -> Result<(Vec<EventDelivery>, i64), ApiError> {
-    use crate::schema::event_deliveries::dsl::event_deliveries;
-
-    let mut query = event_deliveries.into_boxed();
+    let query = build_event_delivery_query(query_options)?;
+    let total_count = with_connection(pool, |conn| query.count().get_result::<i64>(conn))?;
+    let mut query = build_event_delivery_query(query_options)?;
     crate::apply_query_options!(query, query_options, EventDelivery);
     let deliveries = with_connection(pool, |conn| query.load::<EventDelivery>(conn))?;
-    let total_count = with_connection(pool, |conn| {
-        event_deliveries.count().get_result::<i64>(conn)
-    })?;
     Ok((deliveries, total_count))
+}
+
+fn build_event_delivery_query(
+    query_options: &QueryOptions,
+) -> Result<crate::schema::event_deliveries::BoxedQuery<'static, diesel::pg::Pg>, ApiError> {
+    use crate::schema::event_deliveries::dsl::{
+        created_at, event_deliveries, id, next_attempt_at, status, updated_at,
+    };
+
+    let mut query = event_deliveries.into_boxed();
+    for param in query_options.filters.clone() {
+        let operator = param.operator.clone();
+        match param.field {
+            FilterField::Id => {
+                let values = param
+                    .value_as_integer()?
+                    .into_iter()
+                    .map(i64::from)
+                    .collect::<Vec<_>>();
+                let (op, negated) = operator.op_and_neg();
+                match (op, negated) {
+                    (Operator::Equals, false) | (Operator::In, false) => {
+                        query = query.filter(id.eq_any(values))
+                    }
+                    (Operator::Equals, true) | (Operator::In, true) => {
+                        query = query.filter(diesel::dsl::not(id.eq_any(values)))
+                    }
+                    _ => {
+                        return Err(ApiError::OperatorMismatch(format!(
+                            "Operator '{operator:?}' not implemented for field '{}' (type: bigint)",
+                            param.field
+                        )));
+                    }
+                }
+            }
+            FilterField::Status => crate::string_search!(query, param, operator, status),
+            FilterField::CreatedAt => crate::date_search!(query, param, operator, created_at),
+            FilterField::UpdatedAt => crate::date_search!(query, param, operator, updated_at),
+            FilterField::NextAttemptAt => {
+                crate::date_search!(query, param, operator, next_attempt_at)
+            }
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not searchable for event deliveries",
+                    param.field
+                )));
+            }
+        }
+    }
+    Ok(query)
 }
 
 pub async fn release_event_delivery_for_retry(
@@ -302,13 +406,17 @@ pub async fn mark_event_delivery_dead(
     };
 
     with_connection(pool, |conn| {
-        diesel::update(event_deliveries.filter(id.eq(delivery_id.id())))
-            .set((
-                status.eq(EventDeliveryStatus::Dead.as_str()),
-                locked_until.eq::<Option<chrono::NaiveDateTime>>(None),
-                claim_token.eq::<Option<Uuid>>(None),
-                last_error.eq(Some("marked dead by operator".to_string())),
-            ))
-            .get_result::<EventDelivery>(conn)
+        diesel::update(
+            event_deliveries
+                .filter(id.eq(delivery_id.id()))
+                .filter(status.ne(EventDeliveryStatus::Succeeded.as_str())),
+        )
+        .set((
+            status.eq(EventDeliveryStatus::Dead.as_str()),
+            locked_until.eq::<Option<chrono::NaiveDateTime>>(None),
+            claim_token.eq::<Option<Uuid>>(None),
+            last_error.eq(Some("marked dead by operator".to_string())),
+        ))
+        .get_result::<EventDelivery>(conn)
     })
 }

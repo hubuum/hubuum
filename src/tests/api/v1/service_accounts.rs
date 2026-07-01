@@ -23,6 +23,7 @@ mod tests {
     use crate::db::traits::task::scope_snapshot_json;
     use crate::db::with_connection;
     use crate::errors::ApiError;
+    use crate::events::{Action, EntityType};
     use crate::models::Namespace;
     use crate::models::namespace::user_can_on_any;
     use crate::models::principal::load_principal_by_id;
@@ -109,7 +110,7 @@ mod tests {
                 description: None,
                 owner_group_id: group.id,
             }
-            .save(pool, None)
+            .save(pool, None, None)
             .await
             .map(|_| ())
         };
@@ -1339,6 +1340,73 @@ mod tests {
 
     const SERVICE_ACCOUNTS_ENDPOINT: &str = "/api/v1/iam/service-accounts";
 
+    fn service_account_audit_event_count(
+        context: &TestContext,
+        action_value: Action,
+        service_account_id: i32,
+    ) -> i64 {
+        with_connection(&context.pool, |conn| {
+            use crate::schema::events::dsl::{action, entity_id, entity_type, events};
+
+            events
+                .filter(entity_type.eq(EntityType::ServiceAccount.as_str()))
+                .filter(action.eq(action_value.as_str()))
+                .filter(entity_id.eq(service_account_id))
+                .count()
+                .get_result::<i64>(conn)
+        })
+        .unwrap()
+    }
+
+    #[actix_web::test]
+    async fn test_service_account_mutations_emit_audit_events() {
+        let context = TestContext::new().await;
+        let group = create_test_group(&context.pool).await;
+        let create = NewServiceAccount {
+            name: context.scoped_name("audited_sa"),
+            description: Some("audited".to_string()),
+            owner_group_id: group.id,
+        };
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            SERVICE_ACCOUNTS_ENDPOINT,
+            &create,
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let created: ServiceAccountResponse = test::read_body_json(resp).await;
+        assert_eq!(
+            service_account_audit_event_count(&context, Action::Created, created.id),
+            1
+        );
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{SERVICE_ACCOUNTS_ENDPOINT}/{}/disable", created.id),
+            serde_json::json!({}),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::OK).await;
+        assert_eq!(
+            service_account_audit_event_count(&context, Action::Disabled, created.id),
+            1
+        );
+
+        let resp = delete_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{SERVICE_ACCOUNTS_ENDPOINT}/{}", created.id),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::NO_CONTENT).await;
+        assert_eq!(
+            service_account_audit_event_count(&context, Action::Deleted, created.id),
+            1
+        );
+    }
+
     /// Reassigning an SA's owner group requires authority over the TARGET group:
     /// an admin may move it anywhere; a non-admin may move it only to a group they
     /// belong to (managing the current group alone is not enough).
@@ -1469,7 +1537,7 @@ mod tests {
                 description: None,
                 owner_group_id: group.id,
             }
-            .save(pool, None)
+            .save(pool, None, None)
             .await
             .unwrap();
         }

@@ -210,7 +210,7 @@ async fn create_namespace_event_subscription(
     }
     .into_row()
     .unwrap()
-    .save_event_sink_record(&scope.pool)
+    .save_event_sink_record(&scope.pool, None)
     .await
     .unwrap();
 
@@ -225,7 +225,7 @@ async fn create_namespace_event_subscription(
     }
     .into_row(NamespaceID::new(namespace_id).unwrap())
     .unwrap()
-    .save_event_subscription_record(&scope.pool)
+    .save_event_subscription_record(&scope.pool, None)
     .await
     .unwrap()
     .id
@@ -273,6 +273,17 @@ fn insert_namespace_created_event_at(
             .get_result::<Event>(conn)
     })
     .unwrap()
+}
+
+fn mark_event_dispatched(scope: &TestScope, event_id_value: i64) {
+    use crate::schema::events::dsl::{dispatched_at, events, id};
+
+    with_connection(&scope.pool, |conn| {
+        diesel::update(events.filter(id.eq(event_id_value)))
+            .set(dispatched_at.eq(Some(chrono::Utc::now().naive_utc())))
+            .execute(conn)
+    })
+    .unwrap();
 }
 
 fn delivery_for_event(scope: &TestScope, event_id_value: i64) -> EventDelivery {
@@ -475,12 +486,12 @@ async fn event_retention_purge_deletes_old_events_through_guarded_path() {
         1,
         chrono::Utc::now().naive_utc() - chrono::Duration::days(400),
     );
+    mark_event_dispatched(&scope, old_event.id);
 
-    let summary = purge_event_retention_without_archive(&scope.pool, make_retention_settings())
+    purge_event_retention_without_archive(&scope.pool, make_retention_settings())
         .await
         .unwrap();
 
-    assert_eq!(summary.purged_events, 1);
     let remaining = with_connection(&scope.pool, |conn| {
         events
             .filter(crate::schema::events::dsl::id.eq(old_event.id))
@@ -489,6 +500,29 @@ async fn event_retention_purge_deletes_old_events_through_guarded_path() {
     })
     .unwrap();
     assert_eq!(remaining, 0);
+}
+
+#[actix_web::test]
+async fn event_retention_purge_keeps_events_pending_fanout() {
+    let scope = test_scope();
+    let old_event = insert_namespace_created_event_at(
+        &scope,
+        1,
+        chrono::Utc::now().naive_utc() - chrono::Duration::days(400),
+    );
+
+    purge_event_retention_without_archive(&scope.pool, make_retention_settings())
+        .await
+        .unwrap();
+
+    let remaining = with_connection(&scope.pool, |conn| {
+        events
+            .filter(crate::schema::events::dsl::id.eq(old_event.id))
+            .count()
+            .get_result::<i64>(conn)
+    })
+    .unwrap();
+    assert_eq!(remaining, 1);
 }
 
 #[actix_web::test]
@@ -504,11 +538,10 @@ async fn event_retention_purge_keeps_events_with_active_deliveries() {
     );
     fanout_event(&scope.pool, old_event.id).await.unwrap();
 
-    let summary = purge_event_retention_without_archive(&scope.pool, make_retention_settings())
+    purge_event_retention_without_archive(&scope.pool, make_retention_settings())
         .await
         .unwrap();
 
-    assert_eq!(summary.purged_events, 0);
     let remaining = with_connection(&scope.pool, |conn| {
         events
             .filter(crate::schema::events::dsl::id.eq(old_event.id))

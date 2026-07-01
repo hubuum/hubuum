@@ -9,7 +9,10 @@ use crate::config::{
     DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS, DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES,
     DEFAULT_REMOTE_CALL_TIMEOUT_MS, get_config,
 };
-use crate::events::sink::{EventEnvelope, Sink, SinkError, resolve_event_sink_secret};
+use crate::events::sink::{
+    EventEnvelope, Sink, SinkError, parse_sink_config, parse_sink_routing, require_non_empty,
+    resolve_event_sink_secret,
+};
 use crate::models::{EventSink, EventSubscription};
 
 #[derive(Debug, Default)]
@@ -26,6 +29,8 @@ struct WebhookConfig {
     timeout_ms: Option<u64>,
     #[serde(default)]
     max_response_bytes: Option<usize>,
+    #[serde(default)]
+    max_request_bytes: Option<usize>,
     #[serde(default)]
     headers: Option<serde_json::Map<String, serde_json::Value>>,
 }
@@ -46,14 +51,10 @@ async fn deliver_webhook(
     subscription: &EventSubscription,
     sink: &EventSink,
 ) -> Result<(), SinkError> {
-    let routing: WebhookRouting = serde_json::from_value(subscription.routing.clone())
-        .map_err(|error| SinkError::new(format!("Invalid webhook routing: {error}")))?;
-    if routing.url.trim().is_empty() {
-        return Err(SinkError::new("Invalid webhook routing: url is required"));
-    }
+    let routing: WebhookRouting = parse_sink_routing(subscription, "webhook")?;
+    require_non_empty(&routing.url, "webhook routing", "url")?;
 
-    let config: WebhookConfig = serde_json::from_value(sink.config.clone())
-        .map_err(|error| SinkError::new(format!("Invalid webhook config: {error}")))?;
+    let config: WebhookConfig = parse_sink_config(sink, "webhook")?;
 
     let mut headers = webhook_headers(&config, sink.secret_ref.as_deref())?;
     headers
@@ -71,6 +72,13 @@ async fn deliver_webhook(
 
     let body = serde_json::to_string(envelope)
         .map_err(|error| SinkError::new(format!("Failed to serialize webhook payload: {error}")))?;
+    let max_request_bytes = bounded_request_bytes(config.max_request_bytes);
+    if body.len() > max_request_bytes {
+        return Err(SinkError::new(format!(
+            "Webhook payload is {} bytes, exceeding the configured limit of {max_request_bytes} bytes",
+            body.len()
+        )));
+    }
 
     #[cfg(test)]
     let dangerous_accept_invalid_certs = true;
@@ -148,6 +156,13 @@ fn bounded_timeout_ms(requested: Option<u64>) -> u64 {
 }
 
 fn bounded_response_bytes(requested: Option<usize>) -> usize {
+    let cap = get_config()
+        .map(|config| config.remote_call_max_response_bytes)
+        .unwrap_or(DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES);
+    requested.unwrap_or(cap).min(cap)
+}
+
+fn bounded_request_bytes(requested: Option<usize>) -> usize {
     let cap = get_config()
         .map(|config| config.remote_call_max_response_bytes)
         .unwrap_or(DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES);

@@ -1,4 +1,4 @@
-use actix_web::{Responder, delete, get, http::StatusCode, patch, routes, web};
+use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, routes, web};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::can;
@@ -8,7 +8,7 @@ use crate::db::traits::event_subscription::{
     DeleteEventSubscriptionRecord, SaveEventSubscriptionRecord, UpdateEventSubscriptionRecord,
 };
 use crate::errors::ApiError;
-use crate::extractors::Authenticated;
+use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::search::parse_query_parameter;
 use crate::models::{
     EventSubscription, EventSubscriptionID, NamespaceID, NewEventSubscription, Permissions,
@@ -40,6 +40,7 @@ use crate::utilities::response::{json_response, json_response_created, paginated
 pub async fn create_event_subscription(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
+    req: HttpRequest,
     namespace_id: web::Path<NamespaceID>,
     subscription: web::Json<NewEventSubscription>,
 ) -> Result<impl Responder, ApiError> {
@@ -52,10 +53,11 @@ pub async fn create_event_subscription(
         namespace_id
     );
     subscription.sink_id.instance(&pool).await?;
+    let event_context = requestor.event_context(&req);
     let created: EventSubscription = subscription
         .into_inner()
         .into_row(namespace_id)?
-        .save_event_subscription_record(&pool)
+        .save_event_subscription_record(&pool, Some(&event_context))
         .await?
         .try_into()?;
     Ok(json_response_created(
@@ -162,6 +164,7 @@ pub async fn get_event_subscription(
 pub async fn patch_event_subscription(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
+    req: HttpRequest,
     path: web::Path<(NamespaceID, EventSubscriptionID)>,
     update: web::Json<UpdateEventSubscription>,
 ) -> Result<impl Responder, ApiError> {
@@ -184,9 +187,10 @@ pub async fn patch_event_subscription(
     }
     let existing = subscription_id.instance(&pool).await?;
     ensure_subscription_namespace(&existing, namespace_id)?;
+    let event_context = requestor.event_context(&req);
     let updated: EventSubscription = update
         .into_row(&existing)?
-        .update_event_subscription_record(&pool, existing.id)
+        .update_event_subscription_record(&pool, existing.id, Some(&event_context))
         .await?
         .try_into()?;
     Ok(json_response(updated, StatusCode::OK))
@@ -212,6 +216,7 @@ pub async fn patch_event_subscription(
 pub async fn delete_event_subscription(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
+    req: HttpRequest,
     path: web::Path<(NamespaceID, EventSubscriptionID)>,
 ) -> Result<impl Responder, ApiError> {
     let (namespace_id, subscription_id) = path.into_inner();
@@ -224,8 +229,9 @@ pub async fn delete_event_subscription(
     );
     let existing = subscription_id.instance(&pool).await?;
     ensure_subscription_namespace(&existing, namespace_id)?;
+    let event_context = requestor.event_context(&req);
     subscription_id
-        .delete_event_subscription_record(&pool)
+        .delete_event_subscription_record(&pool, Some(&event_context))
         .await?;
     Ok(actix_web::HttpResponse::NoContent().finish())
 }
