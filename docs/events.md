@@ -63,9 +63,30 @@ External delivery is configured in two layers:
   `/api/v1/namespaces/{namespace_id}/event-subscriptions`.
 
 A sink describes how to deliver. A subscription describes which events should
-be delivered to a sink. Subscription filters are `entity_types` and `actions`;
-Hubuum validates these against the event catalog and rejects impossible
-entity/action pairs at write time.
+be delivered to a sink. The primary subscription filters are `entity_types` and
+`actions`; Hubuum validates these against the event catalog and rejects
+impossible entity/action pairs at write time. Subscriptions may also include a
+`filter` object that narrows matching by stable event-envelope fields before
+delivery rows are created.
+
+Supported `filter` fields are:
+
+| Field | Meaning |
+| ----- | ------- |
+| `namespace_ids` | Match events directly attached to one of these namespaces |
+| `related_namespace_ids` | Match events whose metadata references one of these related namespaces |
+| `entity_ids` | Match affected entity ids |
+| `entity_names` | Match affected entity names exactly |
+| `actor_kinds` | Match actor kinds: `user`, `system`, or `worker` |
+| `actor_user_ids` | Match actor principal ids |
+| `request_ids` | Match request UUIDs |
+| `correlation_ids` | Match correlation ids exactly |
+
+Each field is optional. Empty and omitted fields match all events for that
+dimension. Multiple populated fields are combined with AND; values inside one
+field are combined with OR. The filter can only narrow the subscription's
+namespace-scoped visibility. It cannot deliver unrelated namespace events to a
+subscription.
 
 Example sink:
 
@@ -92,8 +113,32 @@ Example namespace subscription:
   "description": "Send namespace lifecycle events to inventory",
   "entity_types": ["namespace"],
   "actions": ["created", "updated", "deleted"],
+  "filter": {
+    "actor_kinds": ["user"]
+  },
   "routing": {
     "url": "https://inventory.example/hubuum/events"
+  },
+  "enabled": true
+}
+```
+
+For email sinks, create narrow subscriptions rather than sending every audit
+event to human recipients. For example, this subscription sends only failed
+task lifecycle events from a namespace to the configured mailbox:
+
+```json
+{
+  "sink_id": 2,
+  "name": "task-failures-to-ops",
+  "description": "Email ops when namespace tasks fail",
+  "entity_types": ["task"],
+  "actions": ["failed"],
+  "filter": {
+    "actor_kinds": ["worker"]
+  },
+  "routing": {
+    "recipients": ["Ops <ops@example.com>"]
   },
   "enabled": true
 }

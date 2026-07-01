@@ -2108,6 +2108,7 @@ dependencies = [
  "percent-encoding",
  "serde",
  "serde_json",
+ "utoipa",
  "uuid",
 ]
 

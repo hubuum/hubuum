@@ -155,6 +155,7 @@ mod tests {
             description: "valid event subscription".to_string(),
             entity_types: vec!["namespace".to_string()],
             actions: vec!["created".to_string()],
+            filter: hubuum_events_core::EventSubscriptionFilter::default(),
             routing: json!({"url": "https://example.test/events"}),
             enabled: true,
         };
@@ -167,6 +168,10 @@ mod tests {
         assert_eq!(created.namespace_id, namespace.namespace.id);
         assert_eq!(created.entity_types, vec!["namespace"]);
         assert_eq!(created.actions, vec!["created"]);
+        assert_eq!(
+            created.filter,
+            hubuum_events_core::EventSubscriptionFilter::default()
+        );
         assert_eq!(
             audit_event_count(
                 &context,
@@ -183,6 +188,7 @@ mod tests {
             description: "invalid event subscription".to_string(),
             entity_types: vec!["object_relation".to_string()],
             actions: vec!["updated".to_string()],
+            filter: hubuum_events_core::EventSubscriptionFilter::default(),
             routing: json!({}),
             enabled: true,
         };
@@ -191,6 +197,28 @@ mod tests {
             &context.admin_token,
             &endpoint,
             &invalid_pair,
+        )
+        .await;
+        assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+
+        let invalid_filter = NewEventSubscription {
+            sink_id: crate::models::EventSinkID::new(sink.id).unwrap(),
+            name: context.scoped_name("subscription_invalid_filter"),
+            description: "invalid event subscription filter".to_string(),
+            entity_types: vec!["namespace".to_string()],
+            actions: vec!["created".to_string()],
+            filter: hubuum_events_core::EventSubscriptionFilter {
+                actor_kinds: vec!["anonymous".to_string()],
+                ..hubuum_events_core::EventSubscriptionFilter::default()
+            },
+            routing: json!({}),
+            enabled: true,
+        };
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &endpoint,
+            &invalid_filter,
         )
         .await;
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;

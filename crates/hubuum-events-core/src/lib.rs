@@ -17,6 +17,7 @@ use std::fmt;
 use chrono::NaiveDateTime;
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 /// The kind of actor that originated an event.
@@ -296,7 +297,7 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct EventEnvelope {
     pub id: i64,
     pub event_id: Uuid,
@@ -315,6 +316,213 @@ pub struct EventEnvelope {
     pub after: Option<serde_json::Value>,
     pub metadata: serde_json::Value,
     pub schema_version: i32,
+}
+
+impl EventEnvelope {
+    pub fn related_namespace_ids(&self) -> Vec<i32> {
+        self.metadata
+            .get("related_namespace_ids")
+            .and_then(serde_json::Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|value| {
+                        value
+                            .as_i64()
+                            .and_then(|value| i32::try_from(value).ok())
+                            .or_else(|| value.as_str().and_then(|value| value.parse::<i32>().ok()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
+/// Optional additional fan-out filter for an event subscription.
+///
+/// `entity_types` and `actions` remain first-class subscription fields because
+/// they drive catalog validation and coarse fan-out selection. This filter
+/// narrows those matches by stable event-envelope fields. Empty or omitted
+/// fields match all events for that dimension.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct EventSubscriptionFilter {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub namespace_ids: Vec<i32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub related_namespace_ids: Vec<i32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entity_ids: Vec<i32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entity_names: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actor_kinds: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actor_user_ids: Vec<i32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub request_ids: Vec<Uuid>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub correlation_ids: Vec<String>,
+}
+
+impl EventSubscriptionFilter {
+    pub fn matches(&self, event: &EventEnvelope) -> bool {
+        matches_optional_i32(&self.namespace_ids, event.namespace_id)
+            && matches_any_i32(&self.related_namespace_ids, &event.related_namespace_ids())
+            && matches_optional_i32(&self.entity_ids, event.entity_id)
+            && matches_optional_str(&self.entity_names, event.entity_name.as_deref())
+            && matches_str(&self.actor_kinds, &event.actor_kind)
+            && matches_optional_i32(&self.actor_user_ids, event.actor_user_id)
+            && matches_optional_uuid(&self.request_ids, event.request_id)
+            && matches_optional_str(&self.correlation_ids, event.correlation_id.as_deref())
+    }
+
+    pub fn validate(&self) -> Result<(), EventFilterError> {
+        ensure_unique_i32("namespace_ids", &self.namespace_ids)?;
+        ensure_unique_i32("related_namespace_ids", &self.related_namespace_ids)?;
+        ensure_unique_i32("entity_ids", &self.entity_ids)?;
+        ensure_unique_str("entity_names", &self.entity_names)?;
+        ensure_unique_str("actor_kinds", &self.actor_kinds)?;
+        ensure_unique_i32("actor_user_ids", &self.actor_user_ids)?;
+        ensure_unique_uuid("request_ids", &self.request_ids)?;
+        ensure_unique_str("correlation_ids", &self.correlation_ids)?;
+
+        for value in &self.namespace_ids {
+            ensure_positive("namespace_ids", *value)?;
+        }
+        for value in &self.related_namespace_ids {
+            ensure_positive("related_namespace_ids", *value)?;
+        }
+        for value in &self.entity_ids {
+            ensure_positive("entity_ids", *value)?;
+        }
+        for value in &self.actor_user_ids {
+            ensure_positive("actor_user_ids", *value)?;
+        }
+        for value in &self.entity_names {
+            ensure_non_empty("entity_names", value)?;
+        }
+        for value in &self.actor_kinds {
+            ensure_non_empty("actor_kinds", value)?;
+            ActorKind::from_db(value).map_err(|_| EventFilterError::InvalidActorKind {
+                value: value.clone(),
+            })?;
+        }
+        for value in &self.correlation_ids {
+            ensure_non_empty("correlation_ids", value)?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EventFilterError {
+    DuplicateValue { field: &'static str, value: String },
+    NonPositiveValue { field: &'static str, value: i32 },
+    EmptyString { field: &'static str },
+    InvalidActorKind { value: String },
+}
+
+impl fmt::Display for EventFilterError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateValue { field, value } => {
+                write!(f, "filter.{field} contains duplicate '{value}'")
+            }
+            Self::NonPositiveValue { field, value } => {
+                write!(f, "filter.{field} contains non-positive id {value}")
+            }
+            Self::EmptyString { field } => {
+                write!(f, "filter.{field} contains an empty string")
+            }
+            Self::InvalidActorKind { value } => {
+                write!(
+                    f,
+                    "filter.actor_kinds contains invalid actor kind '{value}'"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for EventFilterError {}
+
+fn matches_optional_i32(filter_values: &[i32], event_value: Option<i32>) -> bool {
+    filter_values.is_empty() || event_value.is_some_and(|value| filter_values.contains(&value))
+}
+
+fn matches_any_i32(filter_values: &[i32], event_values: &[i32]) -> bool {
+    filter_values.is_empty()
+        || event_values
+            .iter()
+            .any(|event_value| filter_values.contains(event_value))
+}
+
+fn matches_str(filter_values: &[String], event_value: &str) -> bool {
+    filter_values.is_empty() || filter_values.iter().any(|value| value == event_value)
+}
+
+fn matches_optional_str(filter_values: &[String], event_value: Option<&str>) -> bool {
+    filter_values.is_empty()
+        || event_value
+            .is_some_and(|event_value| filter_values.iter().any(|value| value == event_value))
+}
+
+fn matches_optional_uuid(filter_values: &[Uuid], event_value: Option<Uuid>) -> bool {
+    filter_values.is_empty() || event_value.is_some_and(|value| filter_values.contains(&value))
+}
+
+fn ensure_positive(field: &'static str, value: i32) -> Result<(), EventFilterError> {
+    if value <= 0 {
+        return Err(EventFilterError::NonPositiveValue { field, value });
+    }
+    Ok(())
+}
+
+fn ensure_non_empty(field: &'static str, value: &str) -> Result<(), EventFilterError> {
+    if value.trim().is_empty() {
+        return Err(EventFilterError::EmptyString { field });
+    }
+    Ok(())
+}
+
+fn ensure_unique_i32(field: &'static str, values: &[i32]) -> Result<(), EventFilterError> {
+    let mut seen = std::collections::HashSet::new();
+    for value in values {
+        if !seen.insert(*value) {
+            return Err(EventFilterError::DuplicateValue {
+                field,
+                value: value.to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn ensure_unique_str(field: &'static str, values: &[String]) -> Result<(), EventFilterError> {
+    let mut seen = std::collections::HashSet::new();
+    for value in values {
+        if !seen.insert(value.as_str()) {
+            return Err(EventFilterError::DuplicateValue {
+                field,
+                value: value.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn ensure_unique_uuid(field: &'static str, values: &[Uuid]) -> Result<(), EventFilterError> {
+    let mut seen = std::collections::HashSet::new();
+    for value in values {
+        if !seen.insert(*value) {
+            return Err(EventFilterError::DuplicateValue {
+                field,
+                value: value.to_string(),
+            });
+        }
+    }
+    Ok(())
 }
 
 pub fn resolve_event_sink_secret(secret_ref: &str) -> Result<String, EventSinkSecretError> {
@@ -532,5 +740,89 @@ mod tests {
             assert_eq!(ActorKind::from_db(k.as_str()).unwrap(), k);
         }
         assert!(ActorKind::from_db("anonymous").is_err());
+    }
+
+    #[test]
+    fn empty_subscription_filter_matches_any_event() {
+        assert!(EventSubscriptionFilter::default().matches(&envelope()));
+    }
+
+    #[test]
+    fn subscription_filter_matches_selected_dimensions() {
+        let request_id = Uuid::new_v4();
+        let event = EventEnvelope {
+            request_id: Some(request_id),
+            ..envelope()
+        };
+        let filter = EventSubscriptionFilter {
+            namespace_ids: vec![10],
+            related_namespace_ids: vec![20],
+            entity_ids: vec![30],
+            entity_names: vec!["test entity".to_string()],
+            actor_kinds: vec!["user".to_string()],
+            actor_user_ids: vec![40],
+            request_ids: vec![request_id],
+            correlation_ids: vec!["correlation".to_string()],
+        };
+
+        assert!(filter.matches(&event));
+    }
+
+    #[test]
+    fn subscription_filter_rejects_non_matching_dimension() {
+        let filter = EventSubscriptionFilter {
+            actor_user_ids: vec![999],
+            ..EventSubscriptionFilter::default()
+        };
+
+        assert!(!filter.matches(&envelope()));
+    }
+
+    #[test]
+    fn subscription_filter_validates_values() {
+        let filter = EventSubscriptionFilter {
+            actor_kinds: vec!["anonymous".to_string()],
+            ..EventSubscriptionFilter::default()
+        };
+
+        assert!(matches!(
+            filter.validate(),
+            Err(EventFilterError::InvalidActorKind { .. })
+        ));
+
+        let filter = EventSubscriptionFilter {
+            namespace_ids: vec![10, 10],
+            ..EventSubscriptionFilter::default()
+        };
+
+        assert!(matches!(
+            filter.validate(),
+            Err(EventFilterError::DuplicateValue { field, .. }) if field == "namespace_ids"
+        ));
+    }
+
+    fn envelope() -> EventEnvelope {
+        EventEnvelope {
+            id: 1,
+            event_id: Uuid::new_v4(),
+            occurred_at: chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            entity_type: "namespace".to_string(),
+            entity_id: Some(30),
+            entity_name: Some("test entity".to_string()),
+            namespace_id: Some(10),
+            action: "created".to_string(),
+            actor_user_id: Some(40),
+            actor_kind: "user".to_string(),
+            request_id: None,
+            correlation_id: Some("correlation".to_string()),
+            summary: "summary".to_string(),
+            before: None,
+            after: None,
+            metadata: serde_json::json!({"related_namespace_ids": [20, "21"]}),
+            schema_version: 1,
+        }
     }
 }
