@@ -27,13 +27,19 @@ pub async fn list_events_with_total_count(
     include_namespace_less: bool,
     filters: &EventListFilters,
     query_options: &QueryOptions,
-) -> Result<(Vec<Event>, i64), ApiError> {
+) -> Result<(Vec<EventResponse>, i64), ApiError> {
     let query = build_event_query(accessible_namespace_ids, include_namespace_less, filters)?;
     let total_count = with_connection(pool, |conn| query.count().get_result::<i64>(conn))?;
 
     let mut query = build_event_query(accessible_namespace_ids, include_namespace_less, filters)?;
     apply_query_options!(query, query_options, EventResponse);
     let rows = with_connection(pool, |conn| query.load::<Event>(conn))?;
+    let rows = rows
+        .into_iter()
+        .map(|event| {
+            event_response_for_visibility(event, accessible_namespace_ids, include_namespace_less)
+        })
+        .collect();
 
     Ok((rows, total_count))
 }
@@ -108,18 +114,35 @@ fn related_namespace_filter_sql(accessible_namespace_ids: &[i32]) -> String {
         return "FALSE".to_string();
     }
 
-    let ids = accessible_namespace_ids
+    accessible_namespace_ids
         .iter()
-        .map(i32::to_string)
+        .map(|id| {
+            let numeric_probe = serde_json::json!({ "related_namespace_ids": [id] });
+            let string_probe = serde_json::json!({ "related_namespace_ids": [id.to_string()] });
+            format!(
+                "events.metadata @> '{}'::jsonb OR events.metadata @> '{}'::jsonb",
+                numeric_probe, string_probe
+            )
+        })
         .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "EXISTS (
-            SELECT 1
-            FROM jsonb_array_elements_text(events.metadata->'related_namespace_ids') AS related(namespace_id)
-            WHERE related.namespace_id::integer IN ({ids})
-        )"
-    )
+        .join(" OR ")
+}
+
+fn event_response_for_visibility(
+    event: Event,
+    accessible_namespace_ids: &[i32],
+    include_namespace_less: bool,
+) -> EventResponse {
+    let is_directly_visible = event
+        .namespace_id
+        .is_some_and(|id| accessible_namespace_ids.contains(&id))
+        || (include_namespace_less && event.namespace_id.is_none());
+    let response = EventResponse::from(event);
+    if is_directly_visible {
+        response
+    } else {
+        response.redact_indirect_audit_payloads()
+    }
 }
 
 pub fn parse_event_filters(

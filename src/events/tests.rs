@@ -332,6 +332,7 @@ fn make_delivery_settings(max_attempts: i32) -> EventDeliverySettings {
     EventDeliverySettings {
         batch_size: 100_000,
         lock_timeout_ms: 30_000,
+        transport_timeout_ms: 25_000,
         retry_backoff_base_ms: 1_000,
         retry_backoff_max_ms: 10_000,
         max_attempts,
@@ -806,7 +807,7 @@ async fn namespace_writes_emit_lifecycle_events_in_transaction() {
         description: "before".to_string(),
         group_id: fixture.owner_group.id,
     }
-    .save(&scope.pool, Some(&context))
+    .save(&scope.pool, &context)
     .await
     .unwrap();
 
@@ -814,11 +815,11 @@ async fn namespace_writes_emit_lifecycle_events_in_transaction() {
         name: Some(namespace_name.clone()),
         description: Some("after".to_string()),
     }
-    .update(&scope.pool, namespace.id, Some(&context))
+    .update(&scope.pool, namespace.id, &context)
     .await
     .unwrap();
 
-    updated.delete(&scope.pool, Some(&context)).await.unwrap();
+    updated.delete(&scope.pool, &context).await.unwrap();
 
     let rows = events_for(&scope, "namespace", namespace.id);
     assert_eq!(rows.len(), 3);
@@ -862,7 +863,7 @@ async fn class_writes_emit_lifecycle_events_in_transaction() {
         validate_schema: Some(true),
         description: "before".to_string(),
     }
-    .save(&scope.pool, Some(&context))
+    .save(&scope.pool, &context)
     .await
     .unwrap();
 
@@ -873,11 +874,11 @@ async fn class_writes_emit_lifecycle_events_in_transaction() {
         validate_schema: Some(false),
         description: Some("after".to_string()),
     }
-    .update(&scope.pool, class.id, Some(&context))
+    .update(&scope.pool, class.id, &context)
     .await
     .unwrap();
 
-    updated.delete(&scope.pool, Some(&context)).await.unwrap();
+    updated.delete(&scope.pool, &context).await.unwrap();
 
     let rows = events_for(&scope, "class", class.id);
     assert_eq!(rows.len(), 3);
@@ -928,7 +929,7 @@ async fn object_writes_emit_lifecycle_events_in_transaction() {
         data: serde_json::json!({"state": "before"}),
         description: "before".to_string(),
     }
-    .save(&scope.pool, Some(&context))
+    .save(&scope.pool, &context)
     .await
     .unwrap();
 
@@ -939,11 +940,11 @@ async fn object_writes_emit_lifecycle_events_in_transaction() {
         data: Some(serde_json::json!({"state": "after"})),
         description: Some("after".to_string()),
     }
-    .update(&scope.pool, object.id, Some(&context))
+    .update(&scope.pool, object.id, &context)
     .await
     .unwrap();
 
-    updated.delete(&scope.pool, Some(&context)).await.unwrap();
+    updated.delete(&scope.pool, &context).await.unwrap();
 
     let rows = events_for(&scope, "object", object.id);
     assert_eq!(rows.len(), 3);
@@ -1008,13 +1009,13 @@ async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
         forward_template_alias: Some("children".to_string()),
         reverse_template_alias: Some("parents".to_string()),
     }
-    .save(&scope.pool, Some(&context))
+    .save(&scope.pool, &context)
     .await
     .unwrap();
 
     HubuumClassRelationID::new(relation.id)
         .unwrap()
-        .delete(&scope.pool, Some(&context))
+        .delete(&scope.pool, &context)
         .await
         .unwrap();
 
@@ -1126,11 +1127,11 @@ async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
         to_hubuum_object_id: object_b.id,
         class_relation_id: class_relation.id,
     }
-    .save(&scope.pool, Some(&context))
+    .save(&scope.pool, &context)
     .await
     .unwrap();
 
-    relation.delete(&scope.pool, Some(&context)).await.unwrap();
+    relation.delete(&scope.pool, &context).await.unwrap();
 
     let rows = events_for(&scope, "object_relation", relation.id);
     assert_eq!(rows.len(), 2);
@@ -1532,7 +1533,7 @@ async fn report_template_writes_emit_lifecycle_events() {
         default_missing_data_policy: None,
         default_limits: None,
     }
-    .save(&scope.pool, Some(&context))
+    .save(&scope.pool, &context)
     .await
     .unwrap();
 
@@ -1550,13 +1551,13 @@ async fn report_template_writes_emit_lifecycle_events() {
         default_missing_data_policy: None,
         default_limits: None,
     }
-    .update(&scope.pool, template.id, Some(&context))
+    .update(&scope.pool, template.id, &context)
     .await
     .unwrap();
 
     ReportTemplateID::new(updated.id)
         .unwrap()
-        .delete(&scope.pool, Some(&context))
+        .delete(&scope.pool, &context)
         .await
         .unwrap();
 

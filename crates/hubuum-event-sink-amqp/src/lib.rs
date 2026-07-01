@@ -2,8 +2,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use hubuum_event_sinks_common::{
-    EventEnvelope, SinkDelivery, SinkError, UriConnectionPool, parse_sink_config,
-    require_non_empty, require_tls_uri_scheme, resolve_event_sink_secret_uri,
+    DEFAULT_MAX_ENVELOPE_BYTES, EventEnvelope, SinkDelivery, SinkError, UriConnectionPool,
+    parse_sink_config, reject_literal_uri_credentials, require_non_empty, require_tls_uri_scheme,
+    resolve_event_sink_secret_uri, serialize_envelope_to_vec,
 };
 use lapin::options::{BasicPublishOptions, ConfirmSelectOptions, ExchangeDeclareOptions};
 use lapin::types::FieldTable;
@@ -36,6 +37,8 @@ struct AmqpConfig {
     durable: bool,
     #[serde(default)]
     mandatory: bool,
+    #[serde(default)]
+    max_payload_bytes: Option<usize>,
 }
 
 impl AmqpSink {
@@ -71,9 +74,13 @@ impl AmqpSink {
                 })?;
         }
 
-        let payload = serde_json::to_vec(envelope).map_err(|error| {
-            SinkError::new(format!("Failed to serialize AMQP payload: {error}"))
-        })?;
+        let payload = serialize_envelope_to_vec(
+            envelope,
+            "AMQP",
+            config
+                .max_payload_bytes
+                .unwrap_or(DEFAULT_MAX_ENVELOPE_BYTES),
+        )?;
         let routing_key = routing_key(envelope);
         let properties = message_properties(envelope);
         let confirmation = channel
@@ -134,6 +141,7 @@ impl AmqpSink {
 fn parse_config(delivery: &SinkDelivery<'_>) -> Result<AmqpConfig, SinkError> {
     let config: AmqpConfig = parse_sink_config(delivery, "AMQP")?;
     require_non_empty(&config.uri, "AMQP config", "uri")?;
+    reject_literal_uri_credentials(&config.uri, "AMQP")?;
     require_non_empty(&config.exchange, "AMQP config", "exchange")?;
     Ok(config)
 }
@@ -247,6 +255,20 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "Invalid AMQP config: uri includes {secret} without secret_ref"
+        );
+    }
+
+    #[test]
+    fn config_rejects_literal_uri_credentials() {
+        let config = serde_json::json!({
+            "uri": "amqps://publisher:password@example/%2f",
+            "exchange": "hubuum.events"
+        });
+        let routing = serde_json::json!({});
+        let error = parse_config(&delivery(&config, &routing, None)).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Invalid AMQP config: uri credentials must use {secret} with secret_ref"
         );
     }
 

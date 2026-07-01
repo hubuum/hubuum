@@ -31,14 +31,14 @@ impl SaveAdapter for Namespace {
     async fn save_adapter(
         &self,
         pool: &DbPool,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
         let updated_namespace = UpdateNamespace {
             name: Some(self.name.clone()),
             description: Some(self.description.clone()),
         };
         updated_namespace
-            .update_namespace_record(pool, self.id, context)
+            .update_namespace_record(pool, self.id, Some(context))
             .await
     }
 }
@@ -48,12 +48,8 @@ impl DeleteAdapter for Namespace {
         self.delete_namespace_record_without_events(pool).await
     }
 
-    async fn delete_adapter(
-        &self,
-        pool: &DbPool,
-        context: Option<&EventContext>,
-    ) -> Result<(), ApiError> {
-        self.delete_namespace_record(pool, context).await
+    async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
+        self.delete_namespace_record(pool, Some(context)).await
     }
 }
 
@@ -62,12 +58,8 @@ impl DeleteAdapter for NamespaceID {
         self.delete_namespace_record_without_events(pool).await
     }
 
-    async fn delete_adapter(
-        &self,
-        pool: &DbPool,
-        context: Option<&EventContext>,
-    ) -> Result<(), ApiError> {
-        self.delete_namespace_record(pool, context).await
+    async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
+        self.delete_namespace_record(pool, Some(context)).await
     }
 }
 
@@ -86,9 +78,9 @@ impl UpdateAdapter for UpdateNamespace {
         &self,
         pool: &DbPool,
         nid: i32,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
-        self.update_namespace_record(pool, nid, context).await
+        self.update_namespace_record(pool, nid, Some(context)).await
     }
 }
 
@@ -103,9 +95,9 @@ impl SaveAdapter for NewNamespaceWithAssignee {
     async fn save_adapter(
         &self,
         pool: &DbPool,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<Namespace, ApiError> {
-        self.save_namespace_with_assignee_record(pool, context)
+        self.save_namespace_with_assignee_record(pool, Some(context))
             .await
     }
 }

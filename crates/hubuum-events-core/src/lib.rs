@@ -17,6 +17,7 @@ use std::fmt;
 use chrono::NaiveDateTime;
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "schema")]
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -297,7 +298,8 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(ToSchema))]
 pub struct EventEnvelope {
     pub id: i64,
     pub event_id: Uuid,
@@ -344,7 +346,8 @@ impl EventEnvelope {
 /// they drive catalog validation and coarse fan-out selection. This filter
 /// narrows those matches by stable event-envelope fields. Empty or omitted
 /// fields match all events for that dimension.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(ToSchema))]
 pub struct EventSubscriptionFilter {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub namespace_ids: Vec<i32>,

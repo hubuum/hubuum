@@ -80,10 +80,6 @@ pub async fn get_events(
         &search_params,
     )
     .await?;
-    let events = events
-        .into_iter()
-        .map(EventResponse::from)
-        .collect::<Vec<_>>();
     paginated_json_response(events, total_count, StatusCode::OK, &params)
 }
 

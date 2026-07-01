@@ -40,10 +40,10 @@ Audit visibility is namespace-scoped:
   `ReadAudit`.
 - Events that reference related namespaces in event metadata are visible to a
   caller with `ReadAudit` on one of those related namespaces.
-  Related-namespace visibility intentionally returns the full event envelope,
-  including `before` and `after` snapshots, because these events describe a
-  cross-namespace relationship that the related namespace's auditor is allowed
-  to review.
+  Related-namespace-only visibility returns the event identity, actor, summary,
+  metadata, and schema version, but redacts `before` and `after` snapshots.
+  A caller sees snapshots only when they also have direct `ReadAudit` on the
+  event's own namespace.
 - Namespace-less events are visible only to unscoped admins.
 - Scoped tokens are constrained by both their token scope and the caller's
   underlying permissions.
@@ -175,7 +175,8 @@ delivery limits:
       "X-Integration": "inventory-sync"
     },
     "timeout_ms": 5000,
-    "max_response_bytes": 65536
+    "max_response_bytes": 65536,
+    "max_request_bytes": 1000000
   },
   "secret_ref": "inventory_webhook"
 }
@@ -205,7 +206,8 @@ AMQP sink publishes the event envelope as JSON to the exchange in sink
     "exchange_type": "topic",
     "declare_exchange": true,
     "durable": true,
-    "mandatory": true
+    "mandatory": true,
+    "max_payload_bytes": 1000000
   },
   "secret_ref": "rabbitmq_password"
 }
@@ -215,6 +217,8 @@ When `secret_ref` is set, the AMQP URI must contain `{secret}`. Hubuum reads
 `HUBUUM_EVENT_SINK_SECRET_<SECRET_REF>`, percent-encodes the value for URI
 userinfo use, and substitutes it into the URI. For the example above, the
 environment variable is `HUBUUM_EVENT_SINK_SECRET_RABBITMQ_PASSWORD`.
+Literal credentials in sink URIs are rejected; use `{secret}` plus `secret_ref`
+instead.
 
 The routing key is always `{entity_type}.{action}`, such as
 `namespace.created`. Hubuum sets the AMQP `message_id` property to the event
@@ -247,7 +251,9 @@ settings:
   "config": {
     "uri": "rediss://default:{secret}@valkey.example/0",
     "max_len": 100000,
-    "approximate_trim": true
+    "approximate_trim": true,
+    "max_payload_bytes": 1000000,
+    "io_timeout_ms": 25000
   },
   "secret_ref": "valkey_password"
 }
@@ -257,6 +263,9 @@ When `secret_ref` is set, the URI must contain `{secret}`. Hubuum reads
 `HUBUUM_EVENT_SINK_SECRET_<SECRET_REF>`, percent-encodes the value for URI
 userinfo use, and substitutes it into the URI. For the example above, the
 environment variable is `HUBUUM_EVENT_SINK_SECRET_VALKEY_PASSWORD`.
+Literal credentials in sink URIs are rejected; use `{secret}` plus `secret_ref`
+instead. `io_timeout_ms` bounds the Redis protocol connection and socket I/O
+for the blocking driver call and defaults to 25,000 ms.
 
 Each `XADD` entry includes discrete fields for `event_id`, `entity_type`,
 `entity_name`, `action`, and `actor_kind`, plus the full JSON envelope in the
@@ -291,6 +300,7 @@ address, and MiniJinja templates for the subject and text body:
     "uri": "smtps://hubuum:{secret}@smtp.example.com",
     "from": "Hubuum <hubuum@example.com>",
     "reply_to": "noreply@example.com",
+    "max_payload_bytes": 1000000,
     "subject_template": "Hubuum {{ entity_type }} {{ action }}: {{ entity_name | default_if_empty(summary) }}",
     "body_template": "{{ summary }}\n\nEvent: {{ event_id }}\nEntity: {{ entity_type }}\nAction: {{ action }}\n"
   },
@@ -303,11 +313,15 @@ must contain `{secret}`. Hubuum
 reads `HUBUUM_EVENT_SINK_SECRET_<SECRET_REF>`, percent-encodes the value for
 URI userinfo use, and substitutes it into the URI. For the example above, the
 environment variable is `HUBUUM_EVENT_SINK_SECRET_SMTP_PASSWORD`.
+Literal credentials in sink URIs are rejected; use `{secret}` plus `secret_ref`
+instead.
 
 Template context exposes the event envelope fields at the top level, including
 `event_id`, `entity_type`, `entity_name`, `action`, `summary`, and
 `occurred_at`. The full envelope is also available as `event`. Subjects must
 render to a single non-empty line, and bodies must render to non-empty text.
+Webhook `max_request_bytes` and the transport `max_payload_bytes` settings
+default to 1,000,000 bytes.
 
 ## Delivery Semantics
 
@@ -338,6 +352,7 @@ HUBUUM_EVENT_DELIVERY_WORKERS=0
 HUBUUM_EVENT_DELIVERY_BATCH_SIZE=100
 HUBUUM_EVENT_DELIVERY_POLL_INTERVAL_MS=500
 HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS=30000
+HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS=25000
 HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS=1000
 HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS=300000
 HUBUUM_EVENT_DELIVERY_MAX_ATTEMPTS=10
@@ -346,6 +361,9 @@ HUBUUM_EVENT_DELIVERY_MAX_ATTEMPTS=10
 Keep delivery workers at `0` when the deployment uses the audit log only or
 when sink credentials are not ready. Set `HUBUUM_EVENT_DELIVERY_WORKERS` above
 zero once operators are ready for external transport delivery.
+`HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS` must be less than
+`HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS`; this prevents a delivery attempt from
+running past its claim window and racing with a retry worker.
 
 ## Operational Health
 
@@ -413,11 +431,17 @@ independently after `HUBUUM_EVENT_DELIVERY_RETENTION_DAYS`, using their
 `updated_at` timestamp so retention starts when the delivery reaches its
 terminal state.
 
-Optional archival writes selected event rows as JSON Lines before deletion:
+Local file archival is opt-in. Most deployments should export or consume audit
+events through the database or event sinks instead of writing container-local
+files. Enable local JSON Lines archival only when the configured path is durable
+and access-controlled:
 
 ```text
+HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED=true
 HUBUUM_EVENT_RETENTION_ARCHIVE_PATH=/var/lib/hubuum/event-archive.jsonl
 ```
 
 Each archive line contains `archived_at` and the full event row. If archive
-writing fails, the worker does not delete that batch.
+writing fails, the worker does not delete that batch. On Unix, newly created
+archive files are created with mode `0600`; existing file permissions are not
+changed.

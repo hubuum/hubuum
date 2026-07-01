@@ -45,12 +45,9 @@ impl DeleteAdapter for HubuumObjectRelation {
             .await
     }
 
-    async fn delete_adapter(
-        &self,
-        pool: &DbPool,
-        context: Option<&EventContext>,
-    ) -> Result<(), ApiError> {
-        self.delete_object_relation_record(pool, context).await
+    async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
+        self.delete_object_relation_record(pool, Some(context))
+            .await
     }
 }
 
@@ -60,12 +57,9 @@ impl DeleteAdapter for HubuumObjectRelationID {
             .await
     }
 
-    async fn delete_adapter(
-        &self,
-        pool: &DbPool,
-        context: Option<&EventContext>,
-    ) -> Result<(), ApiError> {
-        self.delete_object_relation_record(pool, context).await
+    async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
+        self.delete_object_relation_record(pool, Some(context))
+            .await
     }
 }
 
@@ -82,9 +76,9 @@ impl SaveAdapter for NewHubuumObjectRelation {
     async fn save_adapter(
         &self,
         pool: &DbPool,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<HubuumObjectRelation, ApiError> {
-        self.save_object_relation_record(pool, context).await
+        self.save_object_relation_record(pool, Some(context)).await
     }
 }
 

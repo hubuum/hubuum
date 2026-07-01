@@ -1,11 +1,15 @@
 use std::fmt;
+use std::time::Duration;
 
 use hubuum_event_sinks_common::{
-    EventEnvelope, SinkDelivery, SinkError, UriConnectionPool, parse_sink_config,
-    parse_sink_routing, require_non_empty, require_tls_uri_scheme, resolve_event_sink_secret_uri,
+    DEFAULT_MAX_ENVELOPE_BYTES, EventEnvelope, SinkDelivery, SinkError, UriConnectionPool,
+    parse_sink_config, parse_sink_routing, reject_literal_uri_credentials, require_non_empty,
+    require_tls_uri_scheme, resolve_event_sink_secret_uri, serialize_envelope_to_string,
 };
 use redis::Client;
 use serde::Deserialize;
+
+const DEFAULT_VALKEY_IO_TIMEOUT_MS: u64 = 25_000;
 
 #[derive(Default)]
 pub struct ValkeySink {
@@ -25,6 +29,10 @@ struct ValkeyConfig {
     max_len: Option<usize>,
     #[serde(default = "default_true")]
     approximate_trim: bool,
+    #[serde(default)]
+    max_payload_bytes: Option<usize>,
+    #[serde(default)]
+    io_timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,6 +45,7 @@ struct StreamEntry {
     stream: String,
     max_len: Option<usize>,
     approximate_trim: bool,
+    io_timeout: Duration,
     fields: Vec<(&'static str, String)>,
 }
 
@@ -70,8 +79,14 @@ impl ValkeySink {
 
 fn publish_stream_entry(client: Client, entry: StreamEntry) -> Result<(), SinkError> {
     let mut connection = client
-        .get_connection()
+        .get_connection_with_timeout(entry.io_timeout)
         .map_err(|error| SinkError::new(format!("Valkey connection failed: {error}")))?;
+    connection
+        .set_read_timeout(Some(entry.io_timeout))
+        .map_err(|error| SinkError::new(format!("Valkey read timeout setup failed: {error}")))?;
+    connection
+        .set_write_timeout(Some(entry.io_timeout))
+        .map_err(|error| SinkError::new(format!("Valkey write timeout setup failed: {error}")))?;
     let command = xadd_command(&entry);
     let _: String = command
         .query(&mut connection)
@@ -82,9 +97,15 @@ fn publish_stream_entry(client: Client, entry: StreamEntry) -> Result<(), SinkEr
 fn parse_config(delivery: &SinkDelivery<'_>) -> Result<ValkeyConfig, SinkError> {
     let config: ValkeyConfig = parse_sink_config(delivery, "Valkey")?;
     require_non_empty(&config.uri, "Valkey config", "uri")?;
+    reject_literal_uri_credentials(&config.uri, "Valkey")?;
     if matches!(config.max_len, Some(0)) {
         return Err(SinkError::new(
             "Invalid Valkey config: max_len must be greater than zero",
+        ));
+    }
+    if matches!(config.io_timeout_ms, Some(0)) {
+        return Err(SinkError::new(
+            "Invalid Valkey config: io_timeout_ms must be greater than zero",
         ));
     }
     Ok(config)
@@ -101,12 +122,18 @@ fn stream_entry(
     routing: ValkeyRouting,
     config: ValkeyConfig,
 ) -> Result<StreamEntry, SinkError> {
-    let payload = serde_json::to_string(envelope)
-        .map_err(|error| SinkError::new(format!("Failed to serialize Valkey payload: {error}")))?;
+    let payload = serialize_envelope_to_string(
+        envelope,
+        "Valkey",
+        config
+            .max_payload_bytes
+            .unwrap_or(DEFAULT_MAX_ENVELOPE_BYTES),
+    )?;
     Ok(StreamEntry {
         stream: routing.stream,
         max_len: config.max_len,
         approximate_trim: config.approximate_trim,
+        io_timeout: valkey_io_timeout(&config)?,
         fields: vec![
             ("event_id", envelope.event_id.to_string()),
             ("entity_type", envelope.entity_type.clone()),
@@ -138,6 +165,16 @@ fn xadd_command(entry: &StreamEntry) -> redis::Cmd {
         command.arg(name).arg(value);
     }
     command
+}
+
+fn valkey_io_timeout(config: &ValkeyConfig) -> Result<Duration, SinkError> {
+    let timeout_ms = config.io_timeout_ms.unwrap_or(DEFAULT_VALKEY_IO_TIMEOUT_MS);
+    if timeout_ms == 0 {
+        return Err(SinkError::new(
+            "Invalid Valkey config: io_timeout_ms must be greater than zero",
+        ));
+    }
+    Ok(Duration::from_millis(timeout_ms))
 }
 
 fn default_true() -> bool {
@@ -206,6 +243,19 @@ mod tests {
     }
 
     #[test]
+    fn config_rejects_literal_uri_credentials() {
+        let config = serde_json::json!({
+            "uri": "rediss://:password@example/0"
+        });
+        let routing = serde_json::json!({});
+        let error = parse_config(&delivery(&config, &routing, None)).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Invalid Valkey config: uri credentials must use {secret} with secret_ref"
+        );
+    }
+
+    #[test]
     fn stream_entry_contains_filter_fields_event_id_and_payload() {
         let envelope = envelope();
         let entry = stream_entry(
@@ -217,12 +267,18 @@ mod tests {
                 uri: "redis://localhost/0".to_string(),
                 max_len: Some(1000),
                 approximate_trim: true,
+                max_payload_bytes: None,
+                io_timeout_ms: None,
             },
         )
         .unwrap();
 
         assert_eq!(entry.stream, "hubuum:events");
         assert_eq!(entry.max_len, Some(1000));
+        assert_eq!(
+            entry.io_timeout,
+            std::time::Duration::from_millis(DEFAULT_VALKEY_IO_TIMEOUT_MS)
+        );
         assert_eq!(
             entry.fields,
             vec![

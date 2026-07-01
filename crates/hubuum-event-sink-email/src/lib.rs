@@ -1,8 +1,10 @@
 use std::fmt;
 
 use hubuum_event_sinks_common::{
-    EventEnvelope, SinkDelivery, SinkError, UriConnectionPool, parse_sink_config,
-    parse_sink_routing, require_non_empty, require_tls_uri_scheme, resolve_event_sink_secret_uri,
+    DEFAULT_MAX_ENVELOPE_BYTES, EventEnvelope, SinkDelivery, SinkError, UriConnectionPool,
+    ensure_payload_within_limit, parse_sink_config, parse_sink_routing,
+    reject_literal_uri_credentials, require_non_empty, require_tls_uri_scheme,
+    resolve_event_sink_secret_uri,
 };
 use hubuum_templates::{TemplateLimits, prepare_template};
 use lettre::message::Mailbox;
@@ -31,6 +33,8 @@ struct EmailConfig {
     subject_template: String,
     #[serde(default = "default_body_template")]
     body_template: String,
+    #[serde(default)]
+    max_payload_bytes: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -84,6 +88,7 @@ impl EmailSink {
 fn parse_config(delivery: &SinkDelivery<'_>) -> Result<EmailConfig, SinkError> {
     let config: EmailConfig = parse_sink_config(delivery, "email")?;
     require_non_empty(&config.uri, "email config", "uri")?;
+    reject_literal_uri_credentials(&config.uri, "email")?;
     require_non_empty(&config.from, "email config", "from")?;
     require_non_empty(&config.subject_template, "email config", "subject_template")?;
     require_non_empty(&config.body_template, "email config", "body_template")?;
@@ -106,7 +111,12 @@ fn render_email(
     envelope: &EventEnvelope,
     config: &EmailConfig,
 ) -> Result<RenderedEmail, SinkError> {
-    let context = template_context(envelope)?;
+    let context = template_context(
+        envelope,
+        config
+            .max_payload_bytes
+            .unwrap_or(DEFAULT_MAX_ENVELOPE_BYTES),
+    )?;
     let subject = render_template("subject_template", &config.subject_template, &context)?;
     if subject.trim().is_empty() {
         return Err(SinkError::new(
@@ -153,12 +163,16 @@ fn build_message(
         .map_err(|error| SinkError::new(format!("Invalid email message: {error}")))
 }
 
-fn template_context(envelope: &EventEnvelope) -> Result<Value, SinkError> {
+fn template_context(
+    envelope: &EventEnvelope,
+    max_payload_bytes: usize,
+) -> Result<Value, SinkError> {
     let event = serde_json::to_value(envelope).map_err(|error| {
         SinkError::new(format!(
             "Failed to serialize email template context: {error}"
         ))
     })?;
+    ensure_payload_within_limit("email", event.to_string().len(), max_payload_bytes)?;
     let mut root = match event.clone() {
         Value::Object(map) => map,
         _ => Map::new(),
@@ -377,5 +391,19 @@ mod tests {
         unsafe {
             std::env::remove_var("HUBUUM_EVENT_SINK_SECRET_EMAIL_SINK_UNIT_TEST");
         }
+    }
+
+    #[test]
+    fn config_rejects_literal_uri_credentials() {
+        let config = serde_json::json!({
+            "uri": "smtps://user:password@smtp.example",
+            "from": "Hubuum <hubuum@example.invalid>"
+        });
+        let routing = serde_json::json!({});
+        let error = parse_config(&delivery(&config, &routing, None)).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Invalid email config: uri credentials must use {secret} with secret_ref"
+        );
     }
 }

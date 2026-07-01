@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use chrono::{Duration, Utc};
 use diesel::prelude::*;
 use uuid::Uuid;
@@ -93,11 +95,16 @@ pub async fn fanout_events(pool: &DbPool, event_ids: &[i64]) -> Result<usize, Ap
             return Ok(0);
         }
 
-        let subscriptions = load_enabled_subscriptions(conn)?;
+        let candidate_namespace_ids = candidate_subscription_namespace_ids(&claimed_events);
+        let subscriptions = load_enabled_subscriptions(conn, &candidate_namespace_ids)?
+            .into_iter()
+            .map(CompiledEventSubscription::try_from)
+            .collect::<Result<Vec<_>, _>>()?;
         let mut inserted = 0;
         let mut processed_event_ids = Vec::with_capacity(claimed_events.len());
         for event in &claimed_events {
-            let subscription_ids = matching_subscription_ids(&subscriptions, event);
+            let envelope = EventEnvelope::from(event.clone());
+            let subscription_ids = matching_subscription_ids(&subscriptions, event, &envelope);
             inserted += insert_delivery_rows(conn, event.id, &subscription_ids)?;
             processed_event_ids.push(event.id);
         }
@@ -116,58 +123,99 @@ pub async fn fanout_events(pool: &DbPool, event_ids: &[i64]) -> Result<usize, Ap
 
 fn load_enabled_subscriptions(
     conn: &mut PgConnection,
+    namespace_ids: &[i32],
 ) -> Result<Vec<crate::models::event_subscription::EventSubscriptionRow>, ApiError> {
     use crate::schema::{event_sinks, event_subscriptions};
+
+    if namespace_ids.is_empty() {
+        return Ok(Vec::new());
+    }
 
     event_subscriptions::table
         .inner_join(event_sinks::table.on(event_sinks::id.eq(event_subscriptions::sink_id)))
         .filter(event_subscriptions::enabled.eq(true))
         .filter(event_sinks::enabled.eq(true))
+        .filter(event_subscriptions::namespace_id.eq_any(namespace_ids))
         .select(event_subscriptions::all_columns)
         .load::<crate::models::event_subscription::EventSubscriptionRow>(conn)
         .map_err(ApiError::from)
 }
 
+fn candidate_subscription_namespace_ids(events: &[Event]) -> Vec<i32> {
+    let mut namespace_ids = HashSet::new();
+    for event in events {
+        if let Some(namespace_id) = event.namespace_id {
+            namespace_ids.insert(namespace_id);
+        }
+        let envelope = EventEnvelope::from(event.clone());
+        namespace_ids.extend(envelope.related_namespace_ids());
+    }
+    namespace_ids.into_iter().collect()
+}
+
 fn matching_subscription_ids(
-    subscriptions: &[crate::models::event_subscription::EventSubscriptionRow],
+    subscriptions: &[CompiledEventSubscription],
     event: &Event,
+    envelope: &EventEnvelope,
 ) -> Vec<i32> {
     subscriptions
         .iter()
-        .filter(|subscription| subscription_matches_event(subscription, event))
+        .filter(|subscription| subscription.matches_event(event, envelope))
         .map(|subscription| subscription.id)
         .collect()
 }
 
-fn subscription_matches_event(
-    subscription: &crate::models::event_subscription::EventSubscriptionRow,
-    event: &Event,
-) -> bool {
-    let entity_types = serde_json::from_value::<Vec<String>>(subscription.entity_types.clone())
-        .unwrap_or_default();
-    let actions =
-        serde_json::from_value::<Vec<String>>(subscription.actions.clone()).unwrap_or_default();
-
-    if !(entity_types.iter().any(|value| value == &event.entity_type)
-        && actions.iter().any(|value| value == &event.action)
-        && subscription_namespace_matches_event(subscription.namespace_id, event))
-    {
-        return false;
-    }
-
-    let filter = serde_json::from_value::<hubuum_events_core::EventSubscriptionFilter>(
-        subscription.filter.clone(),
-    )
-    .unwrap_or_default();
-    let envelope = EventEnvelope::from(event.clone());
-    filter.matches(&envelope)
+#[derive(Debug)]
+struct CompiledEventSubscription {
+    id: i32,
+    namespace_id: i32,
+    entity_types: HashSet<String>,
+    actions: HashSet<String>,
+    filter: hubuum_events_core::EventSubscriptionFilter,
 }
 
-fn subscription_namespace_matches_event(namespace_id: i32, event: &Event) -> bool {
+impl TryFrom<crate::models::event_subscription::EventSubscriptionRow>
+    for CompiledEventSubscription
+{
+    type Error = ApiError;
+
+    fn try_from(
+        subscription: crate::models::event_subscription::EventSubscriptionRow,
+    ) -> Result<Self, Self::Error> {
+        let entity_types = serde_json::from_value::<Vec<String>>(subscription.entity_types)
+            .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
+        let actions = serde_json::from_value::<Vec<String>>(subscription.actions)
+            .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
+        let filter = serde_json::from_value::<hubuum_events_core::EventSubscriptionFilter>(
+            subscription.filter,
+        )
+        .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
+        Ok(Self {
+            id: subscription.id,
+            namespace_id: subscription.namespace_id,
+            entity_types: entity_types.into_iter().collect(),
+            actions: actions.into_iter().collect(),
+            filter,
+        })
+    }
+}
+
+impl CompiledEventSubscription {
+    fn matches_event(&self, event: &Event, envelope: &EventEnvelope) -> bool {
+        self.entity_types.contains(&event.entity_type)
+            && self.actions.contains(&event.action)
+            && subscription_namespace_matches_event(self.namespace_id, event, envelope)
+            && self.filter.matches(envelope)
+    }
+}
+
+fn subscription_namespace_matches_event(
+    namespace_id: i32,
+    event: &Event,
+    envelope: &EventEnvelope,
+) -> bool {
     event.namespace_id == Some(namespace_id)
-        || EventEnvelope::from(event.clone())
-            .related_namespace_ids()
-            .contains(&namespace_id)
+        || envelope.related_namespace_ids().contains(&namespace_id)
 }
 
 fn insert_delivery_rows(

@@ -37,6 +37,45 @@ impl From<EventSinkSecretError> for SinkError {
     }
 }
 
+pub const DEFAULT_MAX_ENVELOPE_BYTES: usize = 1_000_000;
+
+pub fn serialize_envelope_to_string(
+    envelope: &EventEnvelope,
+    sink_label: &str,
+    max_bytes: usize,
+) -> Result<String, SinkError> {
+    let payload = serde_json::to_string(envelope).map_err(|error| {
+        SinkError::new(format!("Failed to serialize {sink_label} payload: {error}"))
+    })?;
+    ensure_payload_within_limit(sink_label, payload.len(), max_bytes)?;
+    Ok(payload)
+}
+
+pub fn serialize_envelope_to_vec(
+    envelope: &EventEnvelope,
+    sink_label: &str,
+    max_bytes: usize,
+) -> Result<Vec<u8>, SinkError> {
+    let payload = serde_json::to_vec(envelope).map_err(|error| {
+        SinkError::new(format!("Failed to serialize {sink_label} payload: {error}"))
+    })?;
+    ensure_payload_within_limit(sink_label, payload.len(), max_bytes)?;
+    Ok(payload)
+}
+
+pub fn ensure_payload_within_limit(
+    sink_label: &str,
+    payload_bytes: usize,
+    max_bytes: usize,
+) -> Result<(), SinkError> {
+    if payload_bytes > max_bytes {
+        return Err(SinkError::new(format!(
+            "{sink_label} payload is {payload_bytes} bytes, exceeding the configured limit of {max_bytes} bytes"
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct SinkDelivery<'a> {
     pub config: &'a Value,
@@ -101,6 +140,25 @@ pub fn require_tls_uri_scheme(
     Ok(())
 }
 
+pub fn reject_literal_uri_credentials(uri: &str, sink_label: &str) -> Result<(), SinkError> {
+    if let Some(userinfo) = uri_userinfo(uri)
+        && !userinfo.contains("{secret}")
+    {
+        return Err(SinkError::new(format!(
+            "Invalid {sink_label} config: uri credentials must use {{secret}} with secret_ref"
+        )));
+    }
+    Ok(())
+}
+
+fn uri_userinfo(uri: &str) -> Option<&str> {
+    let (_, rest) = uri.split_once("://")?;
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    let (userinfo, host) = authority.rsplit_once('@')?;
+    (!userinfo.is_empty() && !host.is_empty()).then_some(userinfo)
+}
+
 #[derive(Debug)]
 pub struct UriConnectionPool<K, V> {
     entries: Mutex<std::collections::HashMap<K, V>>,
@@ -124,14 +182,22 @@ where
         F: FnOnce(K) -> Fut,
         Fut: Future<Output = Result<V, SinkError>>,
     {
-        let mut entries = self.entries.lock().await;
-        if let Some(value) = entries.get(&key) {
-            return Ok(value.clone());
+        {
+            let entries = self.entries.lock().await;
+            if let Some(value) = entries.get(&key) {
+                return Ok(value.clone());
+            }
         }
 
-        let value = create(key.clone()).await?;
-        entries.insert(key, value.clone());
-        Ok(value)
+        let created = create(key.clone()).await?;
+
+        let mut entries = self.entries.lock().await;
+        if let Some(value) = entries.get(&key) {
+            Ok(value.clone())
+        } else {
+            entries.insert(key, created.clone());
+            Ok(created)
+        }
     }
 
     pub async fn remove(&self, key: &K) {

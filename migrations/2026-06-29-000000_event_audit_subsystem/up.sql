@@ -43,6 +43,7 @@ CREATE TABLE events (
 CREATE INDEX events_entity_idx          ON events (entity_type, entity_id);
 CREATE INDEX events_namespace_occurred_idx ON events (namespace_id, occurred_at);
 CREATE INDEX events_occurred_idx        ON events (occurred_at);
+CREATE INDEX events_metadata_gin_idx    ON events USING GIN (metadata jsonb_path_ops);
 -- Partial backlog index for the hot fan-out "undispatched events" query (#76)
 CREATE INDEX events_fanout_backlog_idx  ON events (occurred_at) WHERE dispatched_at IS NULL;
 
@@ -234,4 +235,3 @@ CREATE TRIGGER events_fanout_notify
 AFTER INSERT ON events
 FOR EACH ROW
 EXECUTE FUNCTION notify_events_fanout();
-

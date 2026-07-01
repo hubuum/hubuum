@@ -144,6 +144,14 @@ impl From<Event> for EventResponse {
     }
 }
 
+impl EventResponse {
+    pub fn redact_indirect_audit_payloads(mut self) -> Self {
+        self.before = None;
+        self.after = None;
+        self
+    }
+}
+
 impl CursorPaginated for EventResponse {
     fn supports_sort(field: &FilterField) -> bool {
         matches!(field, FilterField::Id | FilterField::OccurredAt)

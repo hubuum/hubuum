@@ -93,9 +93,7 @@ pub async fn create_namespace(
     );
 
     let event_context = requestor.event_context(&req);
-    let created_namespace = new_namespace_request
-        .save(&pool, Some(&event_context))
-        .await?;
+    let created_namespace = new_namespace_request.save(&pool, &event_context).await?;
 
     let location = api_locations::namespace(created_namespace.id)?;
     Ok(ApiResponse::created(created_namespace, location))
@@ -183,7 +181,7 @@ pub async fn update_namespace(
     let event_context = requestor.event_context(&req);
     let updated_namespace = update_data
         .into_inner()
-        .update(&pool, namespace.id, Some(&event_context))
+        .update(&pool, namespace.id, &event_context)
         .await?;
     Ok(ApiResponse::accepted(updated_namespace))
 }
@@ -225,7 +223,7 @@ pub async fn delete_namespace(
     );
 
     let event_context = requestor.event_context(&req);
-    namespace.delete(&pool, Some(&event_context)).await?;
+    namespace.delete(&pool, &event_context).await?;
     Ok(ApiResponse::no_content())
 }
 

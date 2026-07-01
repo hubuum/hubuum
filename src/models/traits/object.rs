@@ -104,9 +104,9 @@ impl SaveAdapter for HubuumObject {
     async fn save_adapter(
         &self,
         pool: &DbPool,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
-        self.save_object_record(pool, context).await
+        self.save_object_record(pool, Some(context)).await
     }
 }
 
@@ -120,9 +120,9 @@ impl SaveAdapter for NewHubuumObject {
     async fn save_adapter(
         &self,
         pool: &DbPool,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
-        self.save_object_record(pool, context).await
+        self.save_object_record(pool, Some(context)).await
     }
 }
 
@@ -143,10 +143,11 @@ impl UpdateAdapter for UpdateHubuumObject {
         &self,
         pool: &DbPool,
         object_id: i32,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
         (self, object_id).validate_object_record(pool).await?;
-        self.update_object_record(pool, object_id, context).await
+        self.update_object_record(pool, object_id, Some(context))
+            .await
     }
 }
 
@@ -155,12 +156,8 @@ impl DeleteAdapter for HubuumObject {
         self.delete_object_record_without_events(pool).await
     }
 
-    async fn delete_adapter(
-        &self,
-        pool: &DbPool,
-        context: Option<&EventContext>,
-    ) -> Result<(), ApiError> {
-        self.delete_object_record(pool, context).await
+    async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
+        self.delete_object_record(pool, Some(context)).await
     }
 }
 

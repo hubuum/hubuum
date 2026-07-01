@@ -1,8 +1,9 @@
 use std::time::Duration;
 
 use hubuum_event_sinks_common::{
-    EventEnvelope, SinkDelivery, SinkError, parse_sink_config, parse_sink_routing,
-    require_non_empty, resolve_event_sink_secret,
+    EventEnvelope, SinkDelivery, SinkError, ensure_payload_within_limit, parse_sink_config,
+    parse_sink_routing, reject_literal_uri_credentials, require_non_empty,
+    resolve_event_sink_secret,
 };
 use hubuum_outbound_http::{OutboundHeaders, OutboundMethod, OutboundRequest};
 use serde::Deserialize;
@@ -61,6 +62,7 @@ async fn deliver_webhook(
 ) -> Result<(), SinkError> {
     let routing: WebhookRouting = parse_sink_routing(&delivery, "webhook")?;
     require_non_empty(&routing.url, "webhook routing", "url")?;
+    reject_literal_uri_credentials(&routing.url, "webhook routing")?;
 
     let config: WebhookConfig = parse_sink_config(&delivery, "webhook")?;
 
@@ -81,12 +83,7 @@ async fn deliver_webhook(
     let body = serde_json::to_string(envelope)
         .map_err(|error| SinkError::new(format!("Failed to serialize webhook payload: {error}")))?;
     let max_request_bytes = bounded_request_bytes(config.max_request_bytes, settings);
-    if body.len() > max_request_bytes {
-        return Err(SinkError::new(format!(
-            "Webhook payload is {} bytes, exceeding the configured limit of {max_request_bytes} bytes",
-            body.len()
-        )));
-    }
+    ensure_payload_within_limit("webhook", body.len(), max_request_bytes)?;
 
     let response = OutboundRequest::new(
         OutboundMethod::Post,
@@ -343,5 +340,20 @@ mod tests {
 
         let _ = request_rx.await.unwrap();
         assert!(error.to_string().contains("HTTP 500 Internal Server Error"));
+    }
+
+    #[tokio::test]
+    async fn webhook_sink_rejects_url_credentials_before_delivery() {
+        let (config, routing) =
+            delivery("https://user:password@example.invalid/events".to_string());
+        let error = WebhookSink::new(settings())
+            .deliver(&envelope(), SinkDelivery::new(&config, &routing, None))
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Invalid webhook routing config: uri credentials must use {secret} with secret_ref"
+        );
     }
 }

@@ -15,6 +15,7 @@ use crate::models::{EventDelivery, EventDeliveryID, EventDeliveryStatus};
 pub struct EventDeliverySettings {
     pub batch_size: usize,
     pub lock_timeout_ms: u64,
+    pub transport_timeout_ms: u64,
     pub retry_backoff_base_ms: u64,
     pub retry_backoff_max_ms: u64,
     pub max_attempts: i32,

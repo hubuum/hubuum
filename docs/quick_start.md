@@ -65,6 +65,7 @@ Probe paths bypass the client IP allowlist so platform health checks are not rej
 | `HUBUUM_EVENT_DELIVERY_BATCH_SIZE` | `100` | Number of delivery rows a delivery worker claims per batch |
 | `HUBUUM_EVENT_DELIVERY_POLL_INTERVAL_MS` | `500` | Idle polling interval for delivery workers |
 | `HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS` | `30000` | Delivery claim lock timeout before another worker may retry |
+| `HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS` | `25000` | Wall-clock timeout for one external transport attempt; must be less than the delivery lock timeout |
 | `HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS` | `1000` | Initial delivery retry backoff |
 | `HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS` | `300000` | Maximum delivery retry backoff |
 | `HUBUUM_EVENT_DELIVERY_MAX_ATTEMPTS` | `10` | Attempts before a delivery row moves to dead-letter status |
@@ -73,7 +74,8 @@ Probe paths bypass the client IP allowlist so platform health checks are not rej
 | `HUBUUM_EVENT_DELIVERY_RETENTION_DAYS` | `30` | Age threshold for purging terminal delivery rows |
 | `HUBUUM_EVENT_RETENTION_PURGE_INTERVAL_SECONDS` | `3600` | Retention worker interval |
 | `HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE` | `1000` | Maximum event rows selected per purge batch |
-| `HUBUUM_EVENT_RETENTION_ARCHIVE_PATH` | *(empty)* | Optional JSON Lines archive path written before deleting eligible events |
+| `HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED` | `false` | Enables local JSON Lines archive writes before deleting eligible events |
+| `HUBUUM_EVENT_RETENTION_ARCHIVE_PATH` | *(empty)* | Local JSON Lines archive path; required when file archive writes are enabled |
 
 **Event note**: The canonical audit stream is always stored in the `events`
 table. External delivery workers default to disabled, and retention purge

@@ -384,11 +384,12 @@ fn emit_event_subscription_audit(
 }
 
 fn event_sink_snapshot(row: &EventSinkRow) -> serde_json::Value {
+    let config = crate::models::event_subscription::redact_event_sink_config(&row.config);
     json!({
         "id": row.id,
         "name": row.name,
         "kind": row.kind,
-        "config": row.config,
+        "config": config,
         "secret_ref": row.secret_ref,
         "enabled": row.enabled,
     })

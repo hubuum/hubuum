@@ -171,6 +171,8 @@ mod tests {
             .unwrap()
             .with_namespace_id(source_namespace.id)
             .with_entity_id(source_namespace.id)
+            .with_before(json!({"secret": "source-before"}))
+            .with_after(json!({"secret": "source-after"}))
             .with_metadata(json!({
                 "related_namespace_ids": [related_namespace.id],
             })),
@@ -179,6 +181,11 @@ mod tests {
         let resp = get_request(&context.pool, &user_token, EVENTS_ENDPOINT).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let rows: Vec<EventResponse> = test::read_body_json(resp).await;
-        assert!(rows.iter().any(|row| row.id == event.id));
+        let related_event = rows
+            .iter()
+            .find(|row| row.id == event.id)
+            .expect("related namespace audit event should be visible");
+        assert!(related_event.before.is_none());
+        assert!(related_event.after.is_none());
     }
 }

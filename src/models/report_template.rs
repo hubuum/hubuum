@@ -479,9 +479,9 @@ impl SaveAdapter for NewReportTemplate {
     async fn save_adapter(
         &self,
         pool: &DbPool,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<ReportTemplate, ApiError> {
-        self.save_report_template(pool, context).await
+        self.save_report_template(pool, Some(context)).await
     }
 }
 
@@ -539,9 +539,9 @@ impl UpdateAdapter for UpdateReportTemplate {
         &self,
         pool: &DbPool,
         entry_id: i32,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<ReportTemplate, ApiError> {
-        apply_report_template_update(pool, entry_id, self.clone(), context).await
+        apply_report_template_update(pool, entry_id, self.clone(), Some(context)).await
     }
 }
 
@@ -724,12 +724,9 @@ impl DeleteAdapter for ReportTemplateID {
             .await
     }
 
-    async fn delete_adapter(
-        &self,
-        pool: &DbPool,
-        context: Option<&EventContext>,
-    ) -> Result<(), ApiError> {
-        self.delete_report_template_record(pool, context).await
+    async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
+        self.delete_report_template_record(pool, Some(context))
+            .await
     }
 }
 

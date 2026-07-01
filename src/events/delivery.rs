@@ -11,7 +11,7 @@ use crate::config::{
     DEFAULT_EVENT_DELIVERY_BATCH_SIZE, DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS,
     DEFAULT_EVENT_DELIVERY_MAX_ATTEMPTS, DEFAULT_EVENT_DELIVERY_POLL_INTERVAL_MS,
     DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS, DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS,
-    DEFAULT_EVENT_DELIVERY_WORKERS, get_config,
+    DEFAULT_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS, DEFAULT_EVENT_DELIVERY_WORKERS, get_config,
 };
 use crate::db::DbPool;
 use crate::db::traits::event_delivery::{
@@ -52,6 +52,7 @@ fn configured_event_delivery_settings() -> EventDeliverySettings {
         .map(|config| EventDeliverySettings {
             batch_size: config.event_delivery_batch_size,
             lock_timeout_ms: config.event_delivery_lock_timeout_ms,
+            transport_timeout_ms: config.event_delivery_transport_timeout_ms,
             retry_backoff_base_ms: config.event_delivery_retry_backoff_base_ms,
             retry_backoff_max_ms: config.event_delivery_retry_backoff_max_ms,
             max_attempts: config.event_delivery_max_attempts,
@@ -59,6 +60,7 @@ fn configured_event_delivery_settings() -> EventDeliverySettings {
         .unwrap_or(EventDeliverySettings {
             batch_size: DEFAULT_EVENT_DELIVERY_BATCH_SIZE,
             lock_timeout_ms: DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS,
+            transport_timeout_ms: DEFAULT_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS,
             retry_backoff_base_ms: DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS,
             retry_backoff_max_ms: DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS,
             max_attempts: DEFAULT_EVENT_DELIVERY_MAX_ATTEMPTS,
@@ -91,7 +93,18 @@ pub(crate) async fn process_claimed_event_delivery(
     let envelope = EventEnvelope::from(claimed.event);
     let subscription = EventSubscription::try_from(claimed.subscription)?;
     let sink = EventSink::try_from(claimed.sink)?;
-    let result = deliver_one(resolver, &envelope, &subscription, &sink).await;
+    let result = tokio::time::timeout(
+        Duration::from_millis(settings.transport_timeout_ms),
+        deliver_one(resolver, &envelope, &subscription, &sink),
+    )
+    .await
+    .map_err(|_| {
+        crate::events::sink::SinkError::new(format!(
+            "Event delivery transport timed out after {} ms",
+            settings.transport_timeout_ms
+        ))
+    })
+    .and_then(|result| result);
 
     match result {
         Ok(()) => {
