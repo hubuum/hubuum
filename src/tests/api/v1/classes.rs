@@ -825,4 +825,97 @@ pub mod tests {
         .await;
         assert_response_status(resp, StatusCode::NOT_FOUND).await;
     }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_api_class_history_cursor_pagination(#[future(awt)] test_context: TestContext) {
+        use crate::models::UpdateHubuumClass;
+        use crate::traits::{CanSave, CanUpdate};
+
+        let context = test_context;
+        let ns = context.namespace_fixture("class_history_cursor").await;
+
+        // Create then update TWICE to have three history rows (I, U, U).
+        let created = NewHubuumClass {
+            name: "class_history_cursor".to_string(),
+            description: "v1".to_string(),
+            namespace_id: ns.namespace.id,
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        UpdateHubuumClass {
+            name: None,
+            namespace_id: None,
+            json_schema: None,
+            validate_schema: None,
+            description: Some("v2".to_string()),
+        }
+        .update(&context.pool, created.id)
+        .await
+        .unwrap();
+
+        UpdateHubuumClass {
+            name: None,
+            namespace_id: None,
+            json_schema: None,
+            validate_schema: None,
+            description: Some("v3".to_string()),
+        }
+        .update(&context.pool, created.id)
+        .await
+        .unwrap();
+
+        // Page 1: limit=2, should get the two newest versions (v3, v2), newest-first.
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{}/{}/history?limit=2", CLASSES_ENDPOINT, created.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+
+        let total_count =
+            header_value(&resp, TOTAL_COUNT_HEADER).and_then(|value| value.parse::<i64>().ok());
+        assert_eq!(total_count, Some(3), "total version count should be 3");
+
+        let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        assert!(next_cursor.is_some(), "page 1 should have a next cursor");
+
+        let page1: Vec<serde_json::Value> = test::read_body_json(resp).await;
+        assert_eq!(page1.len(), 2, "page 1 should have 2 items");
+        assert_eq!(page1[0]["description"], "v3", "first item should be v3");
+        assert_eq!(page1[1]["description"], "v2", "second item should be v2");
+
+        // Page 2: use the cursor to get the third (oldest) version (v1).
+        let cursor = next_cursor.unwrap();
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{}/{}/history?limit=2&cursor={}", CLASSES_ENDPOINT, created.id, cursor),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+
+        let next_cursor_page2 = header_value(&resp, NEXT_CURSOR_HEADER);
+        assert!(next_cursor_page2.is_none(), "page 2 (last page) should not have a next cursor");
+
+        let page2: Vec<serde_json::Value> = test::read_body_json(resp).await;
+        assert_eq!(page2.len(), 1, "page 2 should have 1 item");
+        assert_eq!(page2[0]["description"], "v1", "third item should be v1");
+        assert_eq!(page2[0]["op"], "I", "oldest version should be an insert");
+
+        // Verify no overlap: the history_id or valid_from must differ.
+        let page1_history_ids: Vec<i64> = page1.iter().map(|v| v["history_id"].as_i64().unwrap()).collect();
+        let page2_history_id = page2[0]["history_id"].as_i64().unwrap();
+        assert!(
+            !page1_history_ids.contains(&page2_history_id),
+            "page 2 history_id should not appear in page 1"
+        );
+
+        ns.cleanup().await.unwrap();
+    }
 }
