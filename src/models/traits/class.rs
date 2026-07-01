@@ -31,7 +31,7 @@ impl SaveAdapter for HubuumClass {
     async fn save_adapter(
         &self,
         pool: &DbPool,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
         let update = UpdateHubuumClass {
             name: Some(self.name.clone()),
@@ -41,7 +41,9 @@ impl SaveAdapter for HubuumClass {
             description: Some(self.description.clone()),
         };
 
-        update.update_class_record(pool, self.id, context).await
+        update
+            .update_class_record(pool, self.id, Some(context))
+            .await
     }
 }
 
@@ -50,12 +52,8 @@ impl DeleteAdapter for HubuumClass {
         self.delete_class_record_without_events(pool).await
     }
 
-    async fn delete_adapter(
-        &self,
-        pool: &DbPool,
-        context: Option<&EventContext>,
-    ) -> Result<(), ApiError> {
-        self.delete_class_record(pool, context).await
+    async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
+        self.delete_class_record(pool, Some(context)).await
     }
 }
 
@@ -69,9 +67,9 @@ impl SaveAdapter for NewHubuumClass {
     async fn save_adapter(
         &self,
         pool: &DbPool,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
-        self.create_class_record(pool, context).await
+        self.create_class_record(pool, Some(context)).await
     }
 }
 
@@ -91,9 +89,10 @@ impl UpdateAdapter for UpdateHubuumClass {
         &self,
         pool: &DbPool,
         class_id: i32,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
-        self.update_class_record(pool, class_id, context).await
+        self.update_class_record(pool, class_id, Some(context))
+            .await
     }
 }
 

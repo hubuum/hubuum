@@ -145,7 +145,7 @@ async fn create_class_relation(
     );
 
     let event_context = requestor.event_context(&req);
-    let relation = relation.save(&pool, Some(&event_context)).await?;
+    let relation = relation.save(&pool, &event_context).await?;
 
     Ok(json_response(relation, StatusCode::CREATED))
 }
@@ -191,7 +191,7 @@ async fn delete_class_relation(
     );
 
     let event_context = requestor.event_context(&req);
-    relation_id.delete(&pool, Some(&event_context)).await?;
+    relation_id.delete(&pool, &event_context).await?;
 
     Ok(json_response("{}", StatusCode::NO_CONTENT))
 }
@@ -320,7 +320,7 @@ async fn create_object_relation(
     );
 
     let event_context = requestor.event_context(&req);
-    let relation = relation.save(&pool, Some(&event_context)).await?;
+    let relation = relation.save(&pool, &event_context).await?;
 
     Ok(json_response(relation, StatusCode::CREATED))
 }
@@ -366,7 +366,7 @@ async fn delete_object_relation(
     );
 
     let event_context = requestor.event_context(&req);
-    relation_id.delete(&pool, Some(&event_context)).await?;
+    relation_id.delete(&pool, &event_context).await?;
 
     Ok(json_response("{}", StatusCode::NO_CONTENT))
 }

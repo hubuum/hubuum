@@ -1,5 +1,7 @@
 use std::fs::OpenOptions;
 use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::thread;
 use std::time::Duration;
@@ -10,8 +12,9 @@ use tracing::{error, info};
 
 use crate::config::{
     DEFAULT_EVENT_DELIVERY_RETENTION_DAYS, DEFAULT_EVENT_RETENTION_DAYS,
-    DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE, DEFAULT_EVENT_RETENTION_PURGE_ENABLED,
-    DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS, get_config,
+    DEFAULT_EVENT_RETENTION_FILE_ARCHIVE_ENABLED, DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE,
+    DEFAULT_EVENT_RETENTION_PURGE_ENABLED, DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS,
+    get_config,
 };
 use crate::db::DbPool;
 use crate::db::traits::event_retention::{
@@ -28,6 +31,7 @@ struct EventRetentionWorkerConfig {
     enabled: bool,
     settings: EventRetentionSettings,
     interval: Duration,
+    file_archive_enabled: bool,
     archive_path: Option<String>,
 }
 
@@ -47,6 +51,7 @@ fn configured_event_retention_worker() -> EventRetentionWorkerConfig {
                 batch_size: config.event_retention_purge_batch_size,
             },
             interval: Duration::from_secs(config.event_retention_purge_interval_seconds),
+            file_archive_enabled: config.event_retention_file_archive_enabled,
             archive_path: config.event_retention_archive_path.clone(),
         })
         .unwrap_or(EventRetentionWorkerConfig {
@@ -57,6 +62,7 @@ fn configured_event_retention_worker() -> EventRetentionWorkerConfig {
                 batch_size: DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE,
             },
             interval: Duration::from_secs(DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS),
+            file_archive_enabled: DEFAULT_EVENT_RETENTION_FILE_ARCHIVE_ENABLED,
             archive_path: None,
         })
 }
@@ -89,7 +95,7 @@ fn retention_worker_should_continue(result: &Result<EventRetentionPurgeSummary, 
 
 async fn event_retention_worker_loop(pool: DbPool, config: EventRetentionWorkerConfig) {
     loop {
-        let archive_path = config.archive_path.as_deref().map(Path::new);
+        let archive_path = config.file_archive_path().map(Path::new);
         let result = process_event_retention_batch(&pool, config.settings, archive_path).await;
         if retention_worker_should_continue(&result) {
             continue;
@@ -108,7 +114,8 @@ fn spawn_event_retention_worker_loop(pool: DbPool, config: EventRetentionWorkerC
                 delivery_retention_days = config.settings.delivery_retention_days,
                 batch_size = config.settings.batch_size,
                 interval = ?config.interval,
-                archive_enabled = config.archive_path.is_some()
+                file_archive_enabled = config.file_archive_enabled,
+                archive_path_configured = config.archive_path.is_some()
             );
             let system = actix_rt::System::new();
             system.block_on(event_retention_worker_loop(pool, config));
@@ -129,7 +136,8 @@ pub fn ensure_event_retention_worker_running(pool: DbPool) {
             delivery_retention_days = config.settings.delivery_retention_days,
             batch_size = config.settings.batch_size,
             interval = ?config.interval,
-            archive_enabled = config.archive_path.is_some()
+            file_archive_enabled = config.file_archive_enabled,
+            archive_path_configured = config.archive_path.is_some()
         );
         spawn_event_retention_worker_loop(pool, config);
     });
@@ -137,13 +145,13 @@ pub fn ensure_event_retention_worker_running(pool: DbPool) {
 
 fn append_event_archive(path: &Path, events: &[Event]) -> Result<(), ApiError> {
     let archived_at = chrono::Utc::now().naive_utc();
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|error| {
-            ApiError::InternalServerError(format!("Failed to open event archive: {error}"))
-        })?;
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(path).map_err(|error| {
+        ApiError::InternalServerError(format!("Failed to open event archive: {error}"))
+    })?;
 
     for event in events {
         let record = ArchivedEventRecord { archived_at, event };
@@ -158,6 +166,14 @@ fn append_event_archive(path: &Path, events: &[Event]) -> Result<(), ApiError> {
     file.flush().map_err(|error| {
         ApiError::InternalServerError(format!("Failed to flush event archive: {error}"))
     })
+}
+
+impl EventRetentionWorkerConfig {
+    fn file_archive_path(&self) -> Option<&str> {
+        self.file_archive_enabled
+            .then_some(self.archive_path.as_deref())
+            .flatten()
+    }
 }
 
 #[cfg(test)]

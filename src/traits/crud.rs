@@ -14,7 +14,7 @@ pub trait CanDelete {
     where
         C: BackendContext + ?Sized;
 
-    async fn delete<C>(&self, backend: &C, context: Option<&EventContext>) -> Result<(), ApiError>
+    async fn delete<C>(&self, backend: &C, context: &EventContext) -> Result<(), ApiError>
     where
         C: BackendContext + ?Sized;
 }
@@ -30,11 +30,7 @@ pub trait CanSave {
     where
         C: BackendContext + ?Sized;
 
-    async fn save<C>(
-        &self,
-        backend: &C,
-        context: Option<&EventContext>,
-    ) -> Result<Self::Output, ApiError>
+    async fn save<C>(&self, backend: &C, context: &EventContext) -> Result<Self::Output, ApiError>
     where
         C: BackendContext + ?Sized;
 }
@@ -51,16 +47,13 @@ pub trait CanUpdate {
         entry_id: i32,
     ) -> Result<Self::Output, ApiError>
     where
-        C: BackendContext + ?Sized,
-    {
-        self.update(backend, entry_id, None).await
-    }
+        C: BackendContext + ?Sized;
 
     async fn update<C>(
         &self,
         backend: &C,
         entry_id: i32,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<Self::Output, ApiError>
     where
         C: BackendContext + ?Sized;
@@ -70,11 +63,7 @@ pub trait CanUpdate {
 pub trait DeleteAdapter {
     async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError>;
 
-    async fn delete_adapter(
-        &self,
-        pool: &DbPool,
-        _context: Option<&EventContext>,
-    ) -> Result<(), ApiError> {
+    async fn delete_adapter(&self, pool: &DbPool, _context: &EventContext) -> Result<(), ApiError> {
         self.delete_adapter_without_events(pool).await
     }
 }
@@ -87,10 +76,10 @@ where
     where
         C: BackendContext + ?Sized,
     {
-        self.delete(backend, None).await
+        self.delete_adapter_without_events(backend.db_pool()).await
     }
 
-    async fn delete<C>(&self, backend: &C, context: Option<&EventContext>) -> Result<(), ApiError>
+    async fn delete<C>(&self, backend: &C, context: &EventContext) -> Result<(), ApiError>
     where
         C: BackendContext + ?Sized,
     {
@@ -107,7 +96,7 @@ pub trait SaveAdapter {
     async fn save_adapter(
         &self,
         pool: &DbPool,
-        _context: Option<&EventContext>,
+        _context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
         self.save_adapter_without_events(pool).await
     }
@@ -123,14 +112,10 @@ where
     where
         C: BackendContext + ?Sized,
     {
-        self.save(backend, None).await
+        self.save_adapter_without_events(backend.db_pool()).await
     }
 
-    async fn save<C>(
-        &self,
-        backend: &C,
-        context: Option<&EventContext>,
-    ) -> Result<Self::Output, ApiError>
+    async fn save<C>(&self, backend: &C, context: &EventContext) -> Result<Self::Output, ApiError>
     where
         C: BackendContext + ?Sized,
     {
@@ -152,7 +137,7 @@ pub trait UpdateAdapter {
         &self,
         pool: &DbPool,
         entry_id: i32,
-        _context: Option<&EventContext>,
+        _context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
         self.update_adapter_without_events(pool, entry_id).await
     }
@@ -164,11 +149,23 @@ where
 {
     type Output = T::Output;
 
+    async fn update_without_events<C>(
+        &self,
+        backend: &C,
+        entry_id: i32,
+    ) -> Result<Self::Output, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.update_adapter_without_events(backend.db_pool(), entry_id)
+            .await
+    }
+
     async fn update<C>(
         &self,
         backend: &C,
         entry_id: i32,
-        context: Option<&EventContext>,
+        context: &EventContext,
     ) -> Result<Self::Output, ApiError>
     where
         C: BackendContext + ?Sized,

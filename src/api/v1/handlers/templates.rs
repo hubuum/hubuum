@@ -61,7 +61,7 @@ pub async fn create_template(
     );
 
     let event_context = requestor.event_context(&req);
-    let created = template.save(&pool, Some(&event_context)).await?;
+    let created = template.save(&pool, &event_context).await?;
 
     Ok(json_response_created(
         &created,
@@ -282,9 +282,7 @@ pub async fn patch_template(
     }
 
     let event_context = requestor.event_context(&req);
-    let updated = update
-        .update(&pool, existing.id, Some(&event_context))
-        .await?;
+    let updated = update.update(&pool, existing.id, &event_context).await?;
 
     Ok(json_response(updated, StatusCode::OK))
 }
@@ -331,7 +329,7 @@ pub async fn delete_template(
     );
 
     let event_context = requestor.event_context(&req);
-    template_id.delete(&pool, Some(&event_context)).await?;
+    template_id.delete(&pool, &event_context).await?;
 
     Ok(json_response((), StatusCode::NO_CONTENT))
 }

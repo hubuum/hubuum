@@ -3,7 +3,7 @@ use std::str::FromStr;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use hubuum_events_core::EventSubscriptionFilter;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use utoipa::ToSchema;
 
 use crate::errors::ApiError;
@@ -93,6 +93,7 @@ pub struct EventSink {
     pub id: i32,
     pub name: String,
     pub kind: EventSinkKind,
+    #[serde(serialize_with = "serialize_redacted_event_sink_config")]
     pub config: serde_json::Value,
     pub secret_ref: Option<String>,
     pub enabled: bool,
@@ -484,6 +485,69 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
 
 fn empty_json_object() -> serde_json::Value {
     serde_json::json!({})
+}
+
+pub fn redact_event_sink_config(config: &serde_json::Value) -> serde_json::Value {
+    match config {
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.iter()
+                .map(|(key, value)| {
+                    let redacted = if is_sensitive_config_key(key) {
+                        serde_json::Value::String("[redacted]".to_string())
+                    } else if key.eq_ignore_ascii_case("uri") || key.eq_ignore_ascii_case("url") {
+                        redact_uri_value(value)
+                    } else {
+                        redact_event_sink_config(value)
+                    };
+                    (key.clone(), redacted)
+                })
+                .collect(),
+        ),
+        serde_json::Value::Array(values) => serde_json::Value::Array(
+            values
+                .iter()
+                .map(redact_event_sink_config)
+                .collect::<Vec<_>>(),
+        ),
+        value => value.clone(),
+    }
+}
+
+fn serialize_redacted_event_sink_config<S>(
+    config: &serde_json::Value,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    redact_event_sink_config(config).serialize(serializer)
+}
+
+fn is_sensitive_config_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "password" | "token" | "secret" | "authorization" | "auth" | "api_key" | "apikey"
+    )
+}
+
+fn redact_uri_value(value: &serde_json::Value) -> serde_json::Value {
+    let Some(uri) = value.as_str() else {
+        return redact_event_sink_config(value);
+    };
+    serde_json::Value::String(redact_uri_userinfo(uri))
+}
+
+fn redact_uri_userinfo(uri: &str) -> String {
+    let Some((scheme, rest)) = uri.split_once("://") else {
+        return uri.to_string();
+    };
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    let Some((_, host)) = authority.rsplit_once('@') else {
+        return uri.to_string();
+    };
+    format!("{scheme}://[redacted]@{host}{}", &rest[authority_end..])
 }
 
 fn default_enabled() -> bool {

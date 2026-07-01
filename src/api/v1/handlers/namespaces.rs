@@ -93,9 +93,7 @@ pub async fn create_namespace(
     );
 
     let event_context = requestor.event_context(&req);
-    let created_namespace = new_namespace_request
-        .save(&pool, Some(&event_context))
-        .await?;
+    let created_namespace = new_namespace_request.save(&pool, &event_context).await?;
 
     Ok(json_response_created(
         &created_namespace,
@@ -185,7 +183,7 @@ pub async fn update_namespace(
     let event_context = requestor.event_context(&req);
     let updated_namespace = update_data
         .into_inner()
-        .update(&pool, namespace.id, Some(&event_context))
+        .update(&pool, namespace.id, &event_context)
         .await?;
     Ok(json_response(updated_namespace, StatusCode::ACCEPTED))
 }
@@ -227,7 +225,7 @@ pub async fn delete_namespace(
     );
 
     let event_context = requestor.event_context(&req);
-    namespace.delete(&pool, Some(&event_context)).await?;
+    namespace.delete(&pool, &event_context).await?;
     Ok(json_response(json!(()), StatusCode::NO_CONTENT))
 }
 

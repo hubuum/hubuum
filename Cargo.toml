@@ -60,7 +60,7 @@ hubuum-event-sink-valkey = { path = "crates/hubuum-event-sink-valkey", optional 
 hubuum-event-sink-webhook = { path = "crates/hubuum-event-sink-webhook" }
 hubuum-event-sinks-common = { path = "crates/hubuum-event-sinks-common" }
 hubuum-templates = { path = "crates/hubuum-templates" }
-hubuum-events-core = { path = "crates/hubuum-events-core" }
+hubuum-events-core = { path = "crates/hubuum-events-core", features = ["schema"] }
 hubuum-outbound-http = { path = "crates/hubuum-outbound-http" }
 minijinja = { version = "2", features = ["loader", "fuel"] }
 tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "net", "io-util"] }
