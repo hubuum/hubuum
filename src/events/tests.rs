@@ -201,6 +201,23 @@ async fn create_namespace_event_subscription(
     label: &str,
     enabled: bool,
 ) -> i32 {
+    create_namespace_event_subscription_with_filter(
+        scope,
+        namespace_id,
+        label,
+        enabled,
+        hubuum_events_core::EventSubscriptionFilter::default(),
+    )
+    .await
+}
+
+async fn create_namespace_event_subscription_with_filter(
+    scope: &TestScope,
+    namespace_id: i32,
+    label: &str,
+    enabled: bool,
+    filter: hubuum_events_core::EventSubscriptionFilter,
+) -> i32 {
     let sink = NewEventSink {
         name: scope.scoped_name(&format!("{label}_sink")),
         kind: EventSinkKind::Webhook,
@@ -220,6 +237,7 @@ async fn create_namespace_event_subscription(
         description: String::new(),
         entity_types: vec![EntityType::Namespace.as_str().to_string()],
         actions: vec![Action::Created.as_str().to_string()],
+        filter,
         routing: serde_json::json!({}),
         enabled,
     }
@@ -420,6 +438,45 @@ async fn event_fanout_skips_disabled_subscriptions() {
             .await
             .unwrap(),
         0
+    );
+}
+
+#[actix_web::test]
+async fn event_fanout_applies_subscription_filter_before_creating_delivery() {
+    let scope = test_scope();
+    let fixture = scope.with_namespace().await;
+    create_namespace_event_subscription_with_filter(
+        &scope,
+        fixture.namespace.id,
+        "fanout_filter_match",
+        true,
+        hubuum_events_core::EventSubscriptionFilter {
+            entity_ids: vec![fixture.namespace.id],
+            ..hubuum_events_core::EventSubscriptionFilter::default()
+        },
+    )
+    .await;
+    create_namespace_event_subscription_with_filter(
+        &scope,
+        fixture.namespace.id,
+        "fanout_filter_miss",
+        true,
+        hubuum_events_core::EventSubscriptionFilter {
+            entity_ids: vec![fixture.namespace.id + 10_000],
+            ..hubuum_events_core::EventSubscriptionFilter::default()
+        },
+    )
+    .await;
+    let event = emit_namespace_created_event(&scope, fixture.namespace.id);
+
+    let inserted = fanout_event(&scope.pool, event.id).await.unwrap();
+
+    assert_eq!(inserted, 1);
+    assert_eq!(
+        count_event_deliveries_for_event(&scope.pool, event.id)
+            .await
+            .unwrap(),
+        1
     );
 }
 

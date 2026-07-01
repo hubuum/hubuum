@@ -10198,6 +10198,9 @@
               "type": "string"
             }
           },
+          "filter": {
+            "$ref": "#/components/schemas/EventSubscriptionFilter"
+          },
           "id": {
             "type": "integer",
             "format": "int32"
@@ -10275,6 +10278,65 @@
           },
           "subscription_name": {
             "type": "string"
+          }
+        }
+      },
+      "EventSubscriptionFilter": {
+        "type": "object",
+        "description": "Optional additional fan-out filter for an event subscription.\n\n`entity_types` and `actions` remain first-class subscription fields because\nthey drive catalog validation and coarse fan-out selection. This filter\nnarrows those matches by stable event-envelope fields. Empty or omitted\nfields match all events for that dimension.",
+        "properties": {
+          "actor_kinds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "actor_user_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          "correlation_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "entity_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          "entity_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "namespace_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          "related_namespace_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          "request_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         }
       },
@@ -11492,6 +11554,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "filter": {
+            "$ref": "#/components/schemas/EventSubscriptionFilter"
           },
           "name": {
             "type": "string"
@@ -14025,6 +14090,16 @@
             "items": {
               "type": "string"
             }
+          },
+          "filter": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EventSubscriptionFilter"
+              }
+            ]
           },
           "name": {
             "type": [

@@ -249,6 +249,7 @@ mod tests {
             description: String::new(),
             entity_types: vec!["namespace".to_string()],
             actions: vec!["created".to_string()],
+            filter: hubuum_events_core::EventSubscriptionFilter::default(),
             routing: serde_json::json!({}),
             enabled: true,
             created_at: envelope.occurred_at,

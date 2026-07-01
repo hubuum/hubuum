@@ -53,6 +53,7 @@ mod tests {
             description: String::new(),
             entity_types: vec![EntityType::Namespace.as_str().to_string()],
             actions: vec![Action::Created.as_str().to_string()],
+            filter: hubuum_events_core::EventSubscriptionFilter::default(),
             routing: json!({}),
             enabled: true,
         }

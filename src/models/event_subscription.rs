@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
+use hubuum_events_core::EventSubscriptionFilter;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -155,6 +156,7 @@ pub(crate) struct EventSubscriptionRow {
     pub description: String,
     pub entity_types: serde_json::Value,
     pub actions: serde_json::Value,
+    pub filter: serde_json::Value,
     pub routing: serde_json::Value,
     pub enabled: bool,
     pub created_at: NaiveDateTime,
@@ -170,6 +172,8 @@ pub struct EventSubscription {
     pub description: String,
     pub entity_types: Vec<String>,
     pub actions: Vec<String>,
+    #[serde(default)]
+    pub filter: EventSubscriptionFilter,
     pub routing: serde_json::Value,
     pub enabled: bool,
     pub created_at: NaiveDateTime,
@@ -184,6 +188,8 @@ pub struct NewEventSubscription {
     pub description: String,
     pub entity_types: Vec<String>,
     pub actions: Vec<String>,
+    #[serde(default)]
+    pub filter: EventSubscriptionFilter,
     #[serde(default = "empty_json_object")]
     pub routing: serde_json::Value,
     #[serde(default = "default_enabled")]
@@ -197,6 +203,7 @@ pub struct UpdateEventSubscription {
     pub description: Option<String>,
     pub entity_types: Option<Vec<String>>,
     pub actions: Option<Vec<String>>,
+    pub filter: Option<EventSubscriptionFilter>,
     pub routing: Option<serde_json::Value>,
     pub enabled: Option<bool>,
 }
@@ -210,6 +217,7 @@ pub(crate) struct NewEventSubscriptionRow {
     pub description: String,
     pub entity_types: serde_json::Value,
     pub actions: serde_json::Value,
+    pub filter: serde_json::Value,
     pub routing: serde_json::Value,
     pub enabled: bool,
 }
@@ -222,6 +230,7 @@ pub(crate) struct UpdateEventSubscriptionRow {
     pub description: Option<String>,
     pub entity_types: Option<serde_json::Value>,
     pub actions: Option<serde_json::Value>,
+    pub filter: Option<serde_json::Value>,
     pub routing: Option<serde_json::Value>,
     pub enabled: Option<bool>,
 }
@@ -255,6 +264,7 @@ impl TryFrom<EventSubscriptionRow> for EventSubscription {
             description: row.description,
             entity_types: serde_json::from_value(row.entity_types)?,
             actions: serde_json::from_value(row.actions)?,
+            filter: serde_json::from_value(row.filter)?,
             routing: row.routing,
             enabled: row.enabled,
             created_at: row.created_at,
@@ -311,7 +321,12 @@ impl NewEventSubscription {
         self,
         namespace_id: NamespaceID,
     ) -> Result<NewEventSubscriptionRow, ApiError> {
-        validate_subscription_parts(&self.entity_types, &self.actions, &self.routing)?;
+        validate_subscription_parts(
+            &self.entity_types,
+            &self.actions,
+            &self.filter,
+            &self.routing,
+        )?;
         Ok(NewEventSubscriptionRow {
             namespace_id: namespace_id.id(),
             sink_id: self.sink_id.id(),
@@ -319,6 +334,7 @@ impl NewEventSubscription {
             description: self.description,
             entity_types: serde_json::to_value(self.entity_types)?,
             actions: serde_json::to_value(self.actions)?,
+            filter: serde_json::to_value(self.filter)?,
             routing: self.routing,
             enabled: self.enabled,
         })
@@ -332,6 +348,7 @@ impl UpdateEventSubscription {
             && self.description.is_none()
             && self.entity_types.is_none()
             && self.actions.is_none()
+            && self.filter.is_none()
             && self.routing.is_none()
             && self.enabled.is_none()
     }
@@ -352,13 +369,18 @@ impl UpdateEventSubscription {
             .routing
             .clone()
             .unwrap_or_else(|| existing.routing.clone());
-        validate_subscription_parts(&entity_types, &actions, &routing)?;
+        let filter = self
+            .filter
+            .clone()
+            .unwrap_or_else(|| existing.filter.clone());
+        validate_subscription_parts(&entity_types, &actions, &filter, &routing)?;
         Ok(UpdateEventSubscriptionRow {
             sink_id: self.sink_id.map(EventSinkID::id),
             name: self.name,
             description: self.description,
             entity_types: self.entity_types.map(serde_json::to_value).transpose()?,
             actions: self.actions.map(serde_json::to_value).transpose()?,
+            filter: self.filter.map(serde_json::to_value).transpose()?,
             routing: self.routing,
             enabled: self.enabled,
         })
@@ -389,8 +411,12 @@ fn validate_sink_parts(
 pub fn validate_subscription_parts(
     entity_types: &[String],
     actions: &[String],
+    filter: &EventSubscriptionFilter,
     routing: &serde_json::Value,
 ) -> Result<(), ApiError> {
+    filter
+        .validate()
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     if !routing.is_object() {
         return Err(ApiError::BadRequest(
             "routing must be a JSON object".to_string(),

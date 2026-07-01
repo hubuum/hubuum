@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::db::with_connection;
 use crate::db::{DbPool, with_transaction};
 use crate::errors::ApiError;
-use crate::events::Event;
+use crate::events::{Event, EventEnvelope};
 use crate::models::EventDeliveryStatus;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,33 +148,26 @@ fn subscription_matches_event(
     let actions =
         serde_json::from_value::<Vec<String>>(subscription.actions.clone()).unwrap_or_default();
 
-    entity_types.iter().any(|value| value == &event.entity_type)
+    if !(entity_types.iter().any(|value| value == &event.entity_type)
         && actions.iter().any(|value| value == &event.action)
-        && subscription_namespace_matches_event(subscription.namespace_id, event)
+        && subscription_namespace_matches_event(subscription.namespace_id, event))
+    {
+        return false;
+    }
+
+    let filter = serde_json::from_value::<hubuum_events_core::EventSubscriptionFilter>(
+        subscription.filter.clone(),
+    )
+    .unwrap_or_default();
+    let envelope = EventEnvelope::from(event.clone());
+    filter.matches(&envelope)
 }
 
 fn subscription_namespace_matches_event(namespace_id: i32, event: &Event) -> bool {
     event.namespace_id == Some(namespace_id)
-        || event_related_namespace_ids(event).contains(&namespace_id)
-}
-
-fn event_related_namespace_ids(event: &Event) -> Vec<i32> {
-    event
-        .metadata
-        .get("related_namespace_ids")
-        .and_then(serde_json::Value::as_array)
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(|value| {
-                    value
-                        .as_i64()
-                        .and_then(|value| i32::try_from(value).ok())
-                        .or_else(|| value.as_str().and_then(|value| value.parse::<i32>().ok()))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+        || EventEnvelope::from(event.clone())
+            .related_namespace_ids()
+            .contains(&namespace_id)
 }
 
 fn insert_delivery_rows(

@@ -38,6 +38,7 @@ diesel::table! {
         description -> Varchar,
         entity_types -> Jsonb,
         actions -> Jsonb,
+        filter -> Jsonb,
         routing -> Jsonb,
         enabled -> Bool,
         created_at -> Timestamp,

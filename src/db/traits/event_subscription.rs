@@ -403,6 +403,7 @@ fn event_subscription_snapshot(row: &EventSubscriptionRow) -> serde_json::Value 
         "description": row.description,
         "entity_types": row.entity_types,
         "actions": row.actions,
+        "filter": row.filter,
         "routing": row.routing,
         "enabled": row.enabled,
     })
