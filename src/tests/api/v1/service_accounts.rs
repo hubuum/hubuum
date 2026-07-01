@@ -1022,8 +1022,27 @@ mod tests {
         idempotency_key: Option<String>,
         scopes: Option<&[Permissions]>,
     ) -> TaskRecord {
+        synthetic_task_of_kind(
+            pool,
+            TaskKind::Report,
+            submitted_by,
+            status,
+            idempotency_key,
+            scopes,
+        )
+        .await
+    }
+
+    async fn synthetic_task_of_kind(
+        pool: &crate::db::DbPool,
+        kind: TaskKind,
+        submitted_by: i32,
+        status: TaskStatus,
+        idempotency_key: Option<String>,
+        scopes: Option<&[Permissions]>,
+    ) -> TaskRecord {
         NewTaskRecord {
-            kind: TaskKind::Report.as_str().to_string(),
+            kind: kind.as_str().to_string(),
             status: status.as_str().to_string(),
             submitted_by: Some(submitted_by),
             submitted_token_id: None,
@@ -1137,7 +1156,17 @@ mod tests {
         let pool = &context.pool;
         let group = create_test_group(pool).await;
         let sa = create_test_service_account(pool, &group, None).await;
-        let task = synthetic_task(pool, sa.id, TaskStatus::Queued, None, None).await;
+        // Export is queued and cancelable, but not claimed by the current worker.
+        // That keeps this cancellation unit test out of the worker claim race.
+        let task = synthetic_task_of_kind(
+            pool,
+            TaskKind::Export,
+            sa.id,
+            TaskStatus::Queued,
+            None,
+            None,
+        )
+        .await;
 
         cancel_pending_tasks_for_principal(pool, sa.id)
             .await

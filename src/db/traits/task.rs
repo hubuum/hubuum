@@ -700,12 +700,21 @@ pub async fn insert_import_results(
     })
 }
 
+fn executable_task_kind_values() -> [&'static str; 3] {
+    [
+        TaskKind::Import.as_str(),
+        TaskKind::Report.as_str(),
+        TaskKind::RemoteCall.as_str(),
+    ]
+}
+
 pub async fn claim_next_queued_task(pool: &DbPool) -> Result<Option<TaskRecord>, ApiError> {
-    use crate::schema::tasks::dsl::{created_at, id, started_at, status, tasks, updated_at};
+    use crate::schema::tasks::dsl::{created_at, id, kind, started_at, status, tasks, updated_at};
 
     let record = with_transaction(pool, |conn| -> Result<Option<TaskRecord>, ApiError> {
         let Some(task_id_value) = tasks
             .filter(status.eq(TaskStatus::Queued.as_str()))
+            .filter(kind.eq_any(executable_task_kind_values()))
             .order(created_at.asc())
             .for_update()
             .skip_locked()
