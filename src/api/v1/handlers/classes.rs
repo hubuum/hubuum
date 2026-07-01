@@ -33,6 +33,13 @@ use crate::models::search::{
 };
 use crate::models::traits::class_relation::ToHubuumClasses;
 
+crate::history_db_fns!(
+    class_history_paginated_with_total_count,
+    class_as_of,
+    crate::schema::hubuumclass_history,
+    crate::models::HubuumClassHistory
+);
+
 fn object_with_root_path(object: &HubuumObject) -> HubuumObjectWithPath {
     HubuumObjectWithPath {
         id: object.id,
@@ -1465,4 +1472,58 @@ async fn create_object_relation(
         to_object.id(),
     )?;
     Ok(ApiResponse::created(relation, location))
+}
+
+#[get("/{class_id}/history")]
+async fn get_class_history(
+    pool: web::Data<DbPool>,
+    requestor: UserAccess,
+    class_id: web::Path<HubuumClassID>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    use crate::api::v1::handlers::history::{resolve_actor_usernames, HistoryResponse};
+
+    let user = requestor.user;
+    let instance = class_id.into_inner().instance(&pool).await?; // 404 if deleted
+    can!(&pool, user, [Permissions::ReadClass], instance);
+
+    let params = parse_query_parameter(req.query_string())?;
+    let search_params = prepare_db_pagination::<crate::models::HubuumClassHistory>(&params)?;
+    let (rows, total_count) =
+        class_history_paginated_with_total_count(instance.id, &pool, &search_params).await?;
+
+    let actor_ids = rows.iter().filter_map(|r| r.actor_id).collect();
+    let actor_map = resolve_actor_usernames(&pool, actor_ids).await?;
+
+    paginated_json_mapped_response(rows, total_count, StatusCode::OK, &params, move |rows| {
+        rows.into_iter()
+            .map(|row| {
+                let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
+                HistoryResponse { entry: row, actor_username }
+            })
+            .collect()
+    })
+}
+
+#[get("/{class_id}/history/as-of")]
+async fn get_class_as_of(
+    pool: web::Data<DbPool>,
+    requestor: UserAccess,
+    class_id: web::Path<HubuumClassID>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    use crate::api::v1::handlers::history::{parse_as_of, resolve_actor_usernames, HistoryResponse};
+
+    let user = requestor.user;
+    let instance = class_id.into_inner().instance(&pool).await?;
+    can!(&pool, user, [Permissions::ReadClass], instance);
+
+    let at = parse_as_of(req.query_string())?;
+    let row = class_as_of(instance.id, at, &pool)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("no version of class {} at {at}", instance.id)))?;
+
+    let actor_map = resolve_actor_usernames(&pool, row.actor_id.into_iter().collect()).await?;
+    let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
+    Ok(json_response(HistoryResponse { entry: row, actor_username }, StatusCode::OK))
 }

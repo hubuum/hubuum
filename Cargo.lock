@@ -2021,7 +2021,6 @@ dependencies = [
  "tracing",
  "tracing-serde",
  "tracing-subscriber",
- "url",
  "urlparse",
  "utoipa",
  "utoipa-swagger-ui",

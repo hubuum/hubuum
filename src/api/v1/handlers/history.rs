@@ -146,20 +146,21 @@ macro_rules! impl_history_pagination {
 /// `$schema` is the diesel schema module path, e.g. `crate::schema::hubuumclass_history`.
 #[macro_export]
 macro_rules! history_db_fns {
-    ($paginate_fn:ident, $as_of_fn:ident, $schema:path, $ty:ty) => {
+    ($paginate_fn:ident, $as_of_fn:ident, $($schema:tt)::+, $ty:ty) => {
         pub async fn $paginate_fn(
             entity_id: i32,
             pool: &$crate::db::DbPool,
             query_options: &$crate::models::search::QueryOptions,
         ) -> Result<(Vec<$ty>, i64), $crate::errors::ApiError> {
-            use $schema::dsl::*;
+            use diesel::prelude::*;
+            use $($schema)::+::dsl::*;
             let total = $crate::db::with_connection(pool, |conn| {
-                $schema::table
+                $($schema)::+::table
                     .filter(id.eq(entity_id))
                     .count()
                     .get_result::<i64>(conn)
             })?;
-            let mut query = $schema::table.into_boxed().filter(id.eq(entity_id));
+            let mut query = $($schema)::+::table.into_boxed().filter(id.eq(entity_id));
             $crate::apply_query_options!(query, query_options, $ty);
             let items =
                 $crate::db::with_connection(pool, |conn| query.load::<$ty>(conn))?;
@@ -171,9 +172,10 @@ macro_rules! history_db_fns {
             at: chrono::DateTime<chrono::Utc>,
             pool: &$crate::db::DbPool,
         ) -> Result<Option<$ty>, $crate::errors::ApiError> {
-            use $schema::dsl::*;
+            use diesel::prelude::*;
+            use $($schema)::+::dsl::*;
             $crate::db::with_connection(pool, |conn| {
-                $schema::table
+                $($schema)::+::table
                     .into_boxed()
                     .filter(id.eq(entity_id))
                     .filter(valid_from.le(at))
