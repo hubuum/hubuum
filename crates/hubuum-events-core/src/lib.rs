@@ -14,6 +14,8 @@
 
 use std::fmt;
 
+use chrono::NaiveDateTime;
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -135,6 +137,9 @@ pub enum EntityType {
     RemoteTarget,
     ReportTemplate,
     Task,
+    ServiceAccount,
+    EventSink,
+    EventSubscription,
 }
 
 impl EntityType {
@@ -153,6 +158,9 @@ impl EntityType {
             EntityType::RemoteTarget => "remote_target",
             EntityType::ReportTemplate => "report_template",
             EntityType::Task => "task",
+            EntityType::ServiceAccount => "service_account",
+            EntityType::EventSink => "event_sink",
+            EntityType::EventSubscription => "event_subscription",
         }
     }
 
@@ -171,6 +179,9 @@ impl EntityType {
             "remote_target" => Ok(EntityType::RemoteTarget),
             "report_template" => Ok(EntityType::ReportTemplate),
             "task" => Ok(EntityType::Task),
+            "service_account" => Ok(EntityType::ServiceAccount),
+            "event_sink" => Ok(EntityType::EventSink),
+            "event_subscription" => Ok(EntityType::EventSubscription),
             other => Err(EventCatalogError::UnknownEntityType(other.to_string())),
         }
     }
@@ -201,6 +212,7 @@ pub enum Action {
     PartiallySucceeded,
     Cancelled,
     Cleanup,
+    Disabled,
 }
 
 impl Action {
@@ -223,6 +235,7 @@ impl Action {
             Action::PartiallySucceeded => "partially_succeeded",
             Action::Cancelled => "cancelled",
             Action::Cleanup => "cleanup",
+            Action::Disabled => "disabled",
         }
     }
 
@@ -245,6 +258,7 @@ impl Action {
             "partially_succeeded" => Ok(Action::PartiallySucceeded),
             "cancelled" => Ok(Action::Cancelled),
             "cleanup" => Ok(Action::Cleanup),
+            "disabled" => Ok(Action::Disabled),
             other => Err(EventCatalogError::UnknownAction(other.to_string())),
         }
     }
@@ -261,6 +275,8 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
         E::Namespace | E::Class | E::Object | E::User | E::Group | E::ReportTemplate => {
             &[A::Created, A::Updated, A::Deleted]
         }
+        E::ServiceAccount => &[A::Created, A::Updated, A::Disabled, A::Deleted],
+        E::EventSink | E::EventSubscription => &[A::Created, A::Updated, A::Deleted],
         E::RemoteTarget => &[A::Created, A::Updated, A::Deleted, A::Invoked],
         E::ClassRelation | E::ObjectRelation => &[A::Created, A::Deleted],
         E::UserGroup => &[A::Added, A::Removed],
@@ -279,6 +295,91 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
         ],
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EventEnvelope {
+    pub id: i64,
+    pub event_id: Uuid,
+    pub occurred_at: NaiveDateTime,
+    pub entity_type: String,
+    pub entity_id: Option<i32>,
+    pub entity_name: Option<String>,
+    pub namespace_id: Option<i32>,
+    pub action: String,
+    pub actor_user_id: Option<i32>,
+    pub actor_kind: String,
+    pub request_id: Option<Uuid>,
+    pub correlation_id: Option<String>,
+    pub summary: String,
+    pub before: Option<serde_json::Value>,
+    pub after: Option<serde_json::Value>,
+    pub metadata: serde_json::Value,
+    pub schema_version: i32,
+}
+
+pub fn resolve_event_sink_secret(secret_ref: &str) -> Result<String, EventSinkSecretError> {
+    let key = format!(
+        "HUBUUM_EVENT_SINK_SECRET_{}",
+        secret_ref.to_ascii_uppercase()
+    );
+    std::env::var(&key).map_err(|_| EventSinkSecretError::MissingSecret {
+        secret_ref: secret_ref.to_string(),
+    })
+}
+
+pub fn resolve_event_sink_secret_uri(
+    uri: &str,
+    secret_ref: Option<&str>,
+    sink_label: &str,
+) -> Result<String, EventSinkSecretError> {
+    let contains_secret_placeholder = uri.contains("{secret}");
+    match secret_ref {
+        Some(secret_ref) => {
+            if !contains_secret_placeholder {
+                return Err(EventSinkSecretError::MissingSecretPlaceholder {
+                    sink_label: sink_label.to_string(),
+                });
+            }
+            let secret = resolve_event_sink_secret(secret_ref)?;
+            let encoded = utf8_percent_encode(&secret, NON_ALPHANUMERIC).to_string();
+            Ok(uri.replace("{secret}", &encoded))
+        }
+        None if contains_secret_placeholder => {
+            Err(EventSinkSecretError::UnexpectedSecretPlaceholder {
+                sink_label: sink_label.to_string(),
+            })
+        }
+        None => Ok(uri.to_string()),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EventSinkSecretError {
+    MissingSecret { secret_ref: String },
+    MissingSecretPlaceholder { sink_label: String },
+    UnexpectedSecretPlaceholder { sink_label: String },
+}
+
+impl fmt::Display for EventSinkSecretError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingSecret { secret_ref } => write!(
+                f,
+                "Event sink secret reference '{secret_ref}' is not configured"
+            ),
+            Self::MissingSecretPlaceholder { sink_label } => write!(
+                f,
+                "Invalid {sink_label} config: uri must include {{secret}} when secret_ref is set"
+            ),
+            Self::UnexpectedSecretPlaceholder { sink_label } => write!(
+                f,
+                "Invalid {sink_label} config: uri includes {{secret}} without secret_ref"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for EventSinkSecretError {}
 
 /// Validates that `action` is legal for `entity_type`.
 pub fn is_valid_pair(entity_type: EntityType, action: Action) -> bool {
@@ -341,6 +442,9 @@ mod tests {
             EntityType::RemoteTarget,
             EntityType::ReportTemplate,
             EntityType::Task,
+            EntityType::ServiceAccount,
+            EntityType::EventSink,
+            EntityType::EventSubscription,
         ];
         for t in all {
             assert_eq!(EntityType::from_db(t.as_str()).unwrap(), t);
@@ -368,6 +472,7 @@ mod tests {
             Action::PartiallySucceeded,
             Action::Cancelled,
             Action::Cleanup,
+            Action::Disabled,
         ];
         for a in all {
             assert_eq!(Action::from_db(a.as_str()).unwrap(), a);

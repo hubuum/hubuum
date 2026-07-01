@@ -1,17 +1,18 @@
-use std::collections::HashMap;
 use std::fmt;
 
 use futures::FutureExt;
 use redis::Client;
 use serde::Deserialize;
-use tokio::sync::Mutex;
 
-use crate::events::sink::{EventEnvelope, Sink, SinkError, resolve_event_sink_secret_uri};
+use crate::events::sink::{
+    EventEnvelope, Sink, SinkError, UriConnectionPool, parse_sink_config, parse_sink_routing,
+    require_non_empty, require_tls_uri_scheme, resolve_event_sink_secret_uri,
+};
 use crate::models::{EventSink, EventSubscription};
 
 #[derive(Default)]
 pub struct ValkeySink {
-    clients: Mutex<HashMap<String, Client>>,
+    clients: UriConnectionPool<String, Client>,
 }
 
 impl fmt::Debug for ValkeySink {
@@ -63,6 +64,7 @@ impl ValkeySink {
         let config = parse_config(sink)?;
         let routing = parse_routing(subscription)?;
         let uri = resolve_event_sink_secret_uri(&config.uri, sink.secret_ref.as_deref(), "Valkey")?;
+        require_tls_uri_scheme(&uri, "Valkey", &["rediss"])?;
         let client = self.client(&uri).await?;
         let entry = stream_entry(envelope, routing, config)?;
 
@@ -72,15 +74,12 @@ impl ValkeySink {
     }
 
     async fn client(&self, uri: &str) -> Result<Client, SinkError> {
-        let mut clients = self.clients.lock().await;
-        if let Some(client) = clients.get(uri) {
-            return Ok(client.clone());
-        }
-
-        let client = Client::open(uri.to_string())
-            .map_err(|error| SinkError::new(format!("Invalid Valkey config: {error}")))?;
-        clients.insert(uri.to_string(), client.clone());
-        Ok(client)
+        self.clients
+            .get_or_try_insert_with(uri.to_string(), |uri| async move {
+                Client::open(uri)
+                    .map_err(|error| SinkError::new(format!("Invalid Valkey config: {error}")))
+            })
+            .await
     }
 }
 
@@ -96,11 +95,8 @@ fn publish_stream_entry(client: Client, entry: StreamEntry) -> Result<(), SinkEr
 }
 
 fn parse_config(sink: &EventSink) -> Result<ValkeyConfig, SinkError> {
-    let config: ValkeyConfig = serde_json::from_value(sink.config.clone())
-        .map_err(|error| SinkError::new(format!("Invalid Valkey config: {error}")))?;
-    if config.uri.trim().is_empty() {
-        return Err(SinkError::new("Invalid Valkey config: uri is required"));
-    }
+    let config: ValkeyConfig = parse_sink_config(sink, "Valkey")?;
+    require_non_empty(&config.uri, "Valkey config", "uri")?;
     if matches!(config.max_len, Some(0)) {
         return Err(SinkError::new(
             "Invalid Valkey config: max_len must be greater than zero",
@@ -110,11 +106,8 @@ fn parse_config(sink: &EventSink) -> Result<ValkeyConfig, SinkError> {
 }
 
 fn parse_routing(subscription: &EventSubscription) -> Result<ValkeyRouting, SinkError> {
-    let routing: ValkeyRouting = serde_json::from_value(subscription.routing.clone())
-        .map_err(|error| SinkError::new(format!("Invalid Valkey routing: {error}")))?;
-    if routing.stream.trim().is_empty() {
-        return Err(SinkError::new("Invalid Valkey routing: stream is required"));
-    }
+    let routing: ValkeyRouting = parse_sink_routing(subscription, "Valkey")?;
+    require_non_empty(&routing.stream, "Valkey routing", "stream")?;
     Ok(routing)
 }
 

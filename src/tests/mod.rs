@@ -467,7 +467,7 @@ pub async fn create_test_service_account(
         description: Some("test service account".to_string()),
         owner_group_id: owner_group.id,
     }
-    .save(pool, created_by)
+    .save(pool, created_by, None)
     .await
     .expect("failed to create test service account")
 }

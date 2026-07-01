@@ -40,6 +40,10 @@ Audit visibility is namespace-scoped:
   `ReadAudit`.
 - Events that reference related namespaces in event metadata are visible to a
   caller with `ReadAudit` on one of those related namespaces.
+  Related-namespace visibility intentionally returns the full event envelope,
+  including `before` and `after` snapshots, because these events describe a
+  cross-namespace relationship that the related namespace's auditor is allowed
+  to review.
 - Namespace-less events are visible only to unscoped admins.
 - Scoped tokens are constrained by both their token scope and the caller's
   underlying permissions.
@@ -146,7 +150,7 @@ response-header redaction.
 
 AMQP delivery is available when Hubuum is built with the `amqp` feature. An
 AMQP sink publishes the event envelope as JSON to the exchange in sink
-`config`:
+`config`. AMQP event delivery requires TLS, so configure `amqps://` URLs:
 
 ```json
 {
@@ -176,8 +180,9 @@ deduplicate by `event_id` or `message_id`.
 
 Valkey stream delivery is available when Hubuum is built with the `valkey`
 feature. Hubuum uses the mature Redis protocol client for this transport, so
-the connection URL uses the standard `redis://` form accepted by Redis and
-Valkey deployments.
+the connection URL uses the standard Redis protocol URL form accepted by Redis
+and Valkey deployments. Event delivery requires TLS, so configure `rediss://`
+URLs.
 
 The subscription `routing` object selects the stream key:
 
@@ -195,7 +200,7 @@ settings:
 ```json
 {
   "config": {
-    "uri": "redis://default:{secret}@valkey.example/0",
+    "uri": "rediss://default:{secret}@valkey.example/0",
     "max_len": 100000,
     "approximate_trim": true
   },
@@ -248,8 +253,8 @@ address, and MiniJinja templates for the subject and text body:
 }
 ```
 
-SMTP URLs use the normal `smtp://` and `smtps://` schemes supported by SMTP
-deployments. When `secret_ref` is set, the URI must contain `{secret}`. Hubuum
+SMTP URLs must use the TLS `smtps://` scheme. When `secret_ref` is set, the URI
+must contain `{secret}`. Hubuum
 reads `HUBUUM_EVENT_SINK_SECRET_<SECRET_REF>`, percent-encodes the value for
 URI userinfo use, and substitutes it into the URI. For the example above, the
 environment variable is `HUBUUM_EVENT_SINK_SECRET_SMTP_PASSWORD`.

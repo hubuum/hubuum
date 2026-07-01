@@ -1,4 +1,4 @@
-use actix_web::{Responder, delete, get, http::StatusCode, patch, routes, web};
+use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, routes, web};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
@@ -6,7 +6,7 @@ use crate::db::traits::event_subscription::{
     DeleteEventSinkRecord, SaveEventSinkRecord, UpdateEventSinkRecord,
 };
 use crate::errors::ApiError;
-use crate::extractors::AdminAccess;
+use crate::extractors::{AccessEventContext, AdminAccess};
 use crate::models::search::parse_query_parameter;
 use crate::models::{EventSink, EventSinkID, NewEventSink, UpdateEventSink};
 use crate::pagination::prepare_db_pagination;
@@ -31,13 +31,15 @@ use crate::utilities::response::{json_response, json_response_created, paginated
 #[post("/")]
 pub async fn create_event_sink(
     pool: web::Data<DbPool>,
-    _admin: AdminAccess,
+    admin: AdminAccess,
+    req: HttpRequest,
     sink: web::Json<NewEventSink>,
 ) -> Result<impl Responder, ApiError> {
+    let event_context = admin.event_context(&req);
     let created: EventSink = sink
         .into_inner()
         .into_row()?
-        .save_event_sink_record(&pool)
+        .save_event_sink_record(&pool, Some(&event_context))
         .await?
         .try_into()?;
     Ok(json_response_created(
@@ -116,7 +118,8 @@ pub async fn get_event_sink(
 #[patch("/{sink_id}")]
 pub async fn patch_event_sink(
     pool: web::Data<DbPool>,
-    _admin: AdminAccess,
+    admin: AdminAccess,
+    req: HttpRequest,
     sink_id: web::Path<EventSinkID>,
     update: web::Json<UpdateEventSink>,
 ) -> Result<impl Responder, ApiError> {
@@ -128,9 +131,10 @@ pub async fn patch_event_sink(
         ));
     }
     let existing = sink_id.instance(&pool).await?;
+    let event_context = admin.event_context(&req);
     let updated: EventSink = update
         .into_row(&existing)?
-        .update_event_sink_record(&pool, existing.id)
+        .update_event_sink_record(&pool, existing.id, Some(&event_context))
         .await?
         .try_into()?;
     Ok(json_response(updated, StatusCode::OK))
@@ -152,10 +156,15 @@ pub async fn patch_event_sink(
 #[delete("/{sink_id}")]
 pub async fn delete_event_sink(
     pool: web::Data<DbPool>,
-    _admin: AdminAccess,
+    admin: AdminAccess,
+    req: HttpRequest,
     sink_id: web::Path<EventSinkID>,
 ) -> Result<impl Responder, ApiError> {
-    sink_id.into_inner().delete_event_sink_record(&pool).await?;
+    let event_context = admin.event_context(&req);
+    sink_id
+        .into_inner()
+        .delete_event_sink_record(&pool, Some(&event_context))
+        .await?;
     Ok(actix_web::HttpResponse::NoContent().finish())
 }
 

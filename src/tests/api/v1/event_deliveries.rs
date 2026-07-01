@@ -13,6 +13,7 @@ mod tests {
         EventDeliveryUpdateResponse, EventSinkID, EventSinkKind, NamespaceID, NewEventSink,
         NewEventSubscription,
     };
+    use crate::pagination::TOTAL_COUNT_HEADER;
     use crate::tests::TestContext;
     use crate::tests::api_operations::{get_request, post_request};
     use crate::tests::asserts::assert_response_status;
@@ -40,7 +41,7 @@ mod tests {
         }
         .into_row()
         .unwrap()
-        .save_event_sink_record(&context.pool)
+        .save_event_sink_record(&context.pool, None)
         .await
         .unwrap();
 
@@ -57,7 +58,7 @@ mod tests {
         }
         .into_row(namespace_id)
         .unwrap()
-        .save_event_subscription_record(&context.pool)
+        .save_event_subscription_record(&context.pool, None)
         .await
         .unwrap();
 
@@ -159,6 +160,68 @@ mod tests {
         assert_eq!(body.delivery.status, EventDeliveryStatus::Pending.as_str());
         assert!(body.delivery.last_error.is_none());
         assert!(body.delivery.claim_token.is_none());
+    }
+
+    #[actix_web::test]
+    async fn test_event_delivery_dead_letter_does_not_rewrite_succeeded_delivery() {
+        let context = TestContext::new().await;
+        let delivery = create_delivery(&context).await.delivery;
+        with_connection(&context.pool, |conn| {
+            use crate::schema::event_deliveries::dsl::{event_deliveries, id, status};
+
+            diesel::update(event_deliveries.filter(id.eq(delivery.id)))
+                .set(status.eq(EventDeliveryStatus::Succeeded.as_str()))
+                .execute(conn)
+        })
+        .unwrap();
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{DELIVERIES_ENDPOINT}/{}/dead", delivery.id),
+            json!({}),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::NOT_FOUND).await;
+    }
+
+    #[actix_web::test]
+    async fn test_event_delivery_list_applies_status_filter_to_rows_and_total() {
+        let context = TestContext::new().await;
+        let dead = create_delivery(&context).await.delivery;
+        with_connection(&context.pool, |conn| {
+            use crate::schema::event_deliveries::dsl::{event_deliveries, id, status};
+
+            diesel::update(event_deliveries.filter(id.eq(dead.id)))
+                .set(status.eq(EventDeliveryStatus::Dead.as_str()))
+                .execute(conn)
+        })
+        .unwrap();
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{DELIVERIES_ENDPOINT}?status=dead"),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let total_count = resp
+            .headers()
+            .get(TOTAL_COUNT_HEADER)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .parse::<usize>()
+            .unwrap();
+        let deliveries: Vec<EventDelivery> = test::read_body_json(resp).await;
+
+        assert_eq!(total_count, deliveries.len());
+        assert!(deliveries.iter().any(|delivery| delivery.id == dead.id));
+        assert!(
+            deliveries
+                .iter()
+                .all(|delivery| delivery.status == EventDeliveryStatus::Dead.as_str())
+        );
     }
 
     #[actix_web::test]

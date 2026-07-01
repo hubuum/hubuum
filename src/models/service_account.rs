@@ -1,9 +1,11 @@
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use utoipa::ToSchema;
 
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
+use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::principal::{NewPrincipal, Principal, PrincipalKind};
 use crate::models::search::{FilterField, QueryOptions, SortParam};
 use crate::schema::service_accounts;
@@ -187,6 +189,7 @@ impl NewServiceAccount {
         &self,
         backend: &C,
         created_by: Option<i32>,
+        event_context: Option<&EventContext>,
     ) -> Result<ServiceAccount, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -212,6 +215,30 @@ impl NewServiceAccount {
                         service_accounts::created_by.eq(created_by),
                     ))
                     .get_result::<ServiceAccount>(conn)?;
+                if let Some(event_context) = event_context {
+                    let event = NewEvent::new(
+                        EntityType::ServiceAccount,
+                        Action::Created,
+                        event_context.actor_kind(),
+                        format!("Service account '{name}' created"),
+                    )?
+                    .with_context(event_context)
+                    .with_entity_id(sa.id)
+                    .with_entity_name(&name)
+                    .with_after(json!({
+                        "id": sa.id,
+                        "name": name,
+                        "description": sa.description,
+                        "owner_group_id": sa.owner_group_id,
+                        "created_by": sa.created_by,
+                        "disabled_at": sa.disabled_at,
+                    }))
+                    .with_metadata(json!({
+                        "owner_group_id": sa.owner_group_id,
+                        "created_by": created_by,
+                    }));
+                    emit_event(conn, &event)?;
+                }
 
                 Ok(sa)
             },
@@ -232,16 +259,42 @@ impl UpdateServiceAccount {
         &self,
         service_account_id: i32,
         backend: &C,
+        event_context: Option<&EventContext>,
     ) -> Result<ServiceAccount, ApiError>
     where
         C: BackendContext + ?Sized,
     {
         use crate::schema::service_accounts::dsl::{id, service_accounts as sa_table};
-        with_connection(backend.db_pool(), |conn| {
-            diesel::update(sa_table.filter(id.eq(service_account_id)))
-                .set(self)
-                .get_result::<ServiceAccount>(conn)
-        })
+        with_transaction(
+            backend.db_pool(),
+            |conn| -> Result<ServiceAccount, ApiError> {
+                let before = sa_table
+                    .filter(id.eq(service_account_id))
+                    .first::<ServiceAccount>(conn)?;
+                let updated = diesel::update(sa_table.filter(id.eq(service_account_id)))
+                    .set(self)
+                    .get_result::<ServiceAccount>(conn)?;
+                if let Some(event_context) = event_context {
+                    let name = load_principal_name_by_id(conn, updated.id)?;
+                    let event = NewEvent::new(
+                        EntityType::ServiceAccount,
+                        Action::Updated,
+                        event_context.actor_kind(),
+                        format!("Service account '{name}' updated"),
+                    )?
+                    .with_context(event_context)
+                    .with_entity_id(updated.id)
+                    .with_entity_name(&name)
+                    .with_before(service_account_snapshot(&before, &name))
+                    .with_after(service_account_snapshot(&updated, &name))
+                    .with_metadata(json!({
+                        "owner_group_id": updated.owner_group_id,
+                    }));
+                    emit_event(conn, &event)?;
+                }
+                Ok(updated)
+            },
+        )
     }
 }
 
@@ -273,31 +326,127 @@ impl ServiceAccountID {
 
     /// Mark the service account disabled. Token soft-revocation and queued-task
     /// handling are performed by the caller/handler.
+    #[cfg(test)]
     pub async fn disable<C>(&self, backend: &C) -> Result<ServiceAccount, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.disable_with_context(backend, None).await
+    }
+
+    pub async fn disable_with_context<C>(
+        &self,
+        backend: &C,
+        event_context: Option<&EventContext>,
+    ) -> Result<ServiceAccount, ApiError>
     where
         C: BackendContext + ?Sized,
     {
         use crate::schema::service_accounts::dsl::{disabled_at, id, service_accounts as sa_table};
         let sa_id = self.id();
-        with_connection(backend.db_pool(), |conn| {
-            diesel::update(sa_table.filter(id.eq(sa_id)))
-                .set(disabled_at.eq(diesel::dsl::now))
-                .get_result::<ServiceAccount>(conn)
-        })
+        with_transaction(
+            backend.db_pool(),
+            |conn| -> Result<ServiceAccount, ApiError> {
+                let before = sa_table
+                    .filter(id.eq(sa_id))
+                    .first::<ServiceAccount>(conn)?;
+                let disabled = diesel::update(sa_table.filter(id.eq(sa_id)))
+                    .set(disabled_at.eq(diesel::dsl::now))
+                    .get_result::<ServiceAccount>(conn)?;
+                if let Some(event_context) = event_context {
+                    let name = load_principal_name_by_id(conn, disabled.id)?;
+                    let event = NewEvent::new(
+                        EntityType::ServiceAccount,
+                        Action::Disabled,
+                        event_context.actor_kind(),
+                        format!("Service account '{name}' disabled"),
+                    )?
+                    .with_context(event_context)
+                    .with_entity_id(disabled.id)
+                    .with_entity_name(&name)
+                    .with_before(service_account_snapshot(&before, &name))
+                    .with_after(service_account_snapshot(&disabled, &name))
+                    .with_metadata(json!({
+                        "owner_group_id": disabled.owner_group_id,
+                    }));
+                    emit_event(conn, &event)?;
+                }
+                Ok(disabled)
+            },
+        )
     }
 
     /// Delete the service account by removing its principal row (cascades to the
     /// service_accounts row, group memberships, and tokens).
-    pub async fn delete<C>(&self, backend: &C) -> Result<usize, ApiError>
+    pub async fn delete<C>(
+        &self,
+        backend: &C,
+        event_context: Option<&EventContext>,
+    ) -> Result<usize, ApiError>
     where
         C: BackendContext + ?Sized,
     {
         use crate::schema::principals::dsl::{id, principals as principals_table};
         let sa_id = self.id();
-        with_connection(backend.db_pool(), |conn| {
-            diesel::delete(principals_table.filter(id.eq(sa_id))).execute(conn)
+        with_transaction(backend.db_pool(), |conn| -> Result<usize, ApiError> {
+            let sa = load_service_account_by_id_conn(conn, sa_id)?;
+            let name = load_principal_name_by_id(conn, sa_id)?;
+            if let Some(event_context) = event_context {
+                let event = NewEvent::new(
+                    EntityType::ServiceAccount,
+                    Action::Deleted,
+                    event_context.actor_kind(),
+                    format!("Service account '{name}' deleted"),
+                )?
+                .with_context(event_context)
+                .with_entity_id(sa_id)
+                .with_entity_name(&name)
+                .with_before(service_account_snapshot(&sa, &name))
+                .with_metadata(json!({
+                    "owner_group_id": sa.owner_group_id,
+                }));
+                emit_event(conn, &event)?;
+            }
+            diesel::delete(principals_table.filter(id.eq(sa_id)))
+                .execute(conn)
+                .map_err(ApiError::from)
         })
     }
+}
+
+fn load_principal_name_by_id(
+    conn: &mut PgConnection,
+    principal_id_value: i32,
+) -> Result<String, ApiError> {
+    use crate::schema::principals::dsl::{id, name, principals};
+
+    principals
+        .filter(id.eq(principal_id_value))
+        .select(name)
+        .first::<String>(conn)
+        .map_err(ApiError::from)
+}
+
+fn load_service_account_by_id_conn(
+    conn: &mut PgConnection,
+    service_account_id: i32,
+) -> Result<ServiceAccount, ApiError> {
+    use crate::schema::service_accounts::dsl::{id, service_accounts as sa_table};
+    sa_table
+        .filter(id.eq(service_account_id))
+        .first::<ServiceAccount>(conn)
+        .map_err(ApiError::from)
+}
+
+fn service_account_snapshot(sa: &ServiceAccount, name: &str) -> serde_json::Value {
+    json!({
+        "id": sa.id,
+        "name": name,
+        "description": sa.description,
+        "owner_group_id": sa.owner_group_id,
+        "created_by": sa.created_by,
+        "disabled_at": sa.disabled_at,
+    })
 }
 
 /// Is `principal_id` a **human** member of `owner_group_id`?

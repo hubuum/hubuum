@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -9,15 +8,17 @@ use lapin::{
     BasicProperties, Channel, Confirmation, Connection, ConnectionProperties, ExchangeKind,
 };
 use serde::Deserialize;
-use tokio::sync::Mutex;
 use tracing::warn;
 
-use crate::events::sink::{EventEnvelope, Sink, SinkError, resolve_event_sink_secret_uri};
+use crate::events::sink::{
+    EventEnvelope, Sink, SinkError, UriConnectionPool, parse_sink_config, require_non_empty,
+    require_tls_uri_scheme, resolve_event_sink_secret_uri,
+};
 use crate::models::{EventSink, EventSubscription};
 
 #[derive(Default)]
 pub struct AmqpSink {
-    connections: Mutex<HashMap<String, Arc<Connection>>>,
+    connections: UriConnectionPool<String, Arc<Connection>>,
 }
 
 impl fmt::Debug for AmqpSink {
@@ -59,6 +60,7 @@ impl AmqpSink {
     ) -> Result<(), SinkError> {
         let config = parse_config(sink)?;
         let uri = resolve_event_sink_secret_uri(&config.uri, sink.secret_ref.as_deref(), "AMQP")?;
+        require_tls_uri_scheme(&uri, "AMQP", &["amqps"])?;
         let channel = self.channel(&uri).await?;
 
         channel
@@ -116,43 +118,37 @@ impl AmqpSink {
     }
 
     async fn channel(&self, uri: &str) -> Result<Channel, SinkError> {
-        let mut connections = self.connections.lock().await;
-        if let Some(connection) = connections.get(uri) {
-            match connection.create_channel().await {
-                Ok(channel) => return Ok(channel),
-                Err(error) => {
-                    warn!(
-                        message = "Dropping failed AMQP connection from sink pool",
-                        error = %error
-                    );
-                    connections.remove(uri);
-                }
+        let key = uri.to_string();
+        let connection = self
+            .connections
+            .get_or_try_insert_with(key.clone(), |uri| async move {
+                Connection::connect(&uri, ConnectionProperties::default().enable_auto_recover())
+                    .await
+                    .map(Arc::new)
+                    .map_err(|error| SinkError::new(format!("AMQP connection failed: {error}")))
+            })
+            .await?;
+
+        match connection.create_channel().await {
+            Ok(channel) => Ok(channel),
+            Err(error) => {
+                warn!(
+                    message = "Dropping failed AMQP connection from sink pool",
+                    error = %error
+                );
+                self.connections.remove(&key).await;
+                Err(SinkError::new(format!(
+                    "AMQP channel creation failed: {error}"
+                )))
             }
         }
-
-        let connection = Arc::new(
-            Connection::connect(uri, ConnectionProperties::default().enable_auto_recover())
-                .await
-                .map_err(|error| SinkError::new(format!("AMQP connection failed: {error}")))?,
-        );
-        let channel = connection
-            .create_channel()
-            .await
-            .map_err(|error| SinkError::new(format!("AMQP channel creation failed: {error}")))?;
-        connections.insert(uri.to_string(), connection);
-        Ok(channel)
     }
 }
 
 fn parse_config(sink: &EventSink) -> Result<AmqpConfig, SinkError> {
-    let config: AmqpConfig = serde_json::from_value(sink.config.clone())
-        .map_err(|error| SinkError::new(format!("Invalid AMQP config: {error}")))?;
-    if config.uri.trim().is_empty() {
-        return Err(SinkError::new("Invalid AMQP config: uri is required"));
-    }
-    if config.exchange.trim().is_empty() {
-        return Err(SinkError::new("Invalid AMQP config: exchange is required"));
-    }
+    let config: AmqpConfig = parse_sink_config(sink, "AMQP")?;
+    require_non_empty(&config.uri, "AMQP config", "uri")?;
+    require_non_empty(&config.exchange, "AMQP config", "exchange")?;
     Ok(config)
 }
 

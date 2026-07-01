@@ -1,36 +1,19 @@
 use std::fmt;
-
-use chrono::NaiveDateTime;
-use futures::future::BoxFuture;
 #[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
-use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+use std::future::Future;
+#[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
+use std::hash::Hash;
+
+use futures::future::BoxFuture;
+use serde::de::DeserializeOwned;
+#[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
+use tokio::sync::Mutex;
 
 use crate::events::Event;
 use crate::events::webhook::WebhookSink;
 use crate::models::{EventSink, EventSinkKind, EventSubscription};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct EventEnvelope {
-    pub id: i64,
-    pub event_id: Uuid,
-    pub occurred_at: NaiveDateTime,
-    pub entity_type: String,
-    pub entity_id: Option<i32>,
-    pub entity_name: Option<String>,
-    pub namespace_id: Option<i32>,
-    pub action: String,
-    pub actor_user_id: Option<i32>,
-    pub actor_kind: String,
-    pub request_id: Option<Uuid>,
-    pub correlation_id: Option<String>,
-    pub summary: String,
-    pub before: Option<serde_json::Value>,
-    pub after: Option<serde_json::Value>,
-    pub metadata: serde_json::Value,
-    pub schema_version: i32,
-}
+pub use hubuum_events_core::EventEnvelope;
 
 impl From<Event> for EventEnvelope {
     fn from(event: Event) -> Self {
@@ -76,6 +59,12 @@ impl fmt::Display for SinkError {
 }
 
 impl std::error::Error for SinkError {}
+
+impl From<hubuum_events_core::EventSinkSecretError> for SinkError {
+    fn from(error: hubuum_events_core::EventSinkSecretError) -> Self {
+        Self::new(error.to_string())
+    }
+}
 
 pub trait Sink: Send + Sync {
     fn deliver<'a>(
@@ -126,46 +115,108 @@ impl SinkResolver for DefaultSinkResolver {
     }
 }
 
-pub(crate) fn resolve_event_sink_secret(secret_ref: &str) -> Result<String, SinkError> {
-    let key = format!(
-        "HUBUUM_EVENT_SINK_SECRET_{}",
-        secret_ref.to_ascii_uppercase()
-    );
-    std::env::var(&key).map_err(|_| {
-        SinkError::new(format!(
-            "Event sink secret reference '{secret_ref}' is not configured"
-        ))
-    })
+pub(crate) use hubuum_events_core::resolve_event_sink_secret;
+#[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
+pub(crate) use hubuum_events_core::resolve_event_sink_secret_uri;
+
+pub(crate) fn parse_sink_config<T: DeserializeOwned>(
+    sink: &EventSink,
+    sink_label: &str,
+) -> Result<T, SinkError> {
+    serde_json::from_value(sink.config.clone())
+        .map_err(|error| SinkError::new(format!("Invalid {sink_label} config: {error}")))
+}
+
+pub(crate) fn parse_sink_routing<T: DeserializeOwned>(
+    subscription: &EventSubscription,
+    sink_label: &str,
+) -> Result<T, SinkError> {
+    serde_json::from_value(subscription.routing.clone())
+        .map_err(|error| SinkError::new(format!("Invalid {sink_label} routing: {error}")))
+}
+
+pub(crate) fn require_non_empty(value: &str, label: &str, field: &str) -> Result<(), SinkError> {
+    if value.trim().is_empty() {
+        return Err(SinkError::new(format!(
+            "Invalid {label}: {field} is required"
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
-pub(crate) fn resolve_event_sink_secret_uri(
+pub(crate) fn require_tls_uri_scheme(
     uri: &str,
-    secret_ref: Option<&str>,
     sink_label: &str,
-) -> Result<String, SinkError> {
-    let contains_secret_placeholder = uri.contains("{secret}");
-    match secret_ref {
-        Some(secret_ref) => {
-            if !contains_secret_placeholder {
-                return Err(SinkError::new(format!(
-                    "Invalid {sink_label} config: uri must include {{secret}} when secret_ref is set"
-                )));
-            }
-            let secret = resolve_event_sink_secret(secret_ref)?;
-            let encoded = utf8_percent_encode(&secret, NON_ALPHANUMERIC).to_string();
-            Ok(uri.replace("{secret}", &encoded))
+    tls_schemes: &[&str],
+) -> Result<(), SinkError> {
+    let Some((scheme, _)) = uri.split_once(':') else {
+        return Err(SinkError::new(format!(
+            "Invalid {sink_label} config: uri must include a scheme"
+        )));
+    };
+    if !tls_schemes
+        .iter()
+        .any(|allowed| scheme.eq_ignore_ascii_case(allowed))
+    {
+        return Err(SinkError::new(format!(
+            "Invalid {sink_label} config: uri must use a TLS scheme ({})",
+            tls_schemes.join(", ")
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
+#[derive(Debug)]
+pub(crate) struct UriConnectionPool<K, V> {
+    entries: Mutex<std::collections::HashMap<K, V>>,
+}
+
+#[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
+impl<K, V> Default for UriConnectionPool<K, V> {
+    fn default() -> Self {
+        Self {
+            entries: Mutex::new(std::collections::HashMap::new()),
         }
-        None if contains_secret_placeholder => Err(SinkError::new(format!(
-            "Invalid {sink_label} config: uri includes {{secret}} without secret_ref"
-        ))),
-        None => Ok(uri.to_string()),
+    }
+}
+
+#[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
+impl<K, V> UriConnectionPool<K, V>
+where
+    K: Eq + Hash + Clone,
+    V: Clone,
+{
+    pub(crate) async fn get_or_try_insert_with<F, Fut>(
+        &self,
+        key: K,
+        create: F,
+    ) -> Result<V, SinkError>
+    where
+        F: FnOnce(K) -> Fut,
+        Fut: Future<Output = Result<V, SinkError>>,
+    {
+        let mut entries = self.entries.lock().await;
+        if let Some(value) = entries.get(&key) {
+            return Ok(value.clone());
+        }
+
+        let value = create(key.clone()).await?;
+        entries.insert(key, value.clone());
+        Ok(value)
+    }
+
+    #[cfg(feature = "amqp")]
+    pub(crate) async fn remove(&self, key: &K) {
+        self.entries.lock().await.remove(key);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use futures::FutureExt;
+    use uuid::Uuid;
 
     use super::*;
 
@@ -237,5 +288,17 @@ mod tests {
             .deliver(&envelope, &subscription, &sink)
             .await
             .unwrap();
+    }
+
+    #[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
+    #[test]
+    fn tls_scheme_validator_rejects_cleartext_uris() {
+        let error =
+            require_tls_uri_scheme("redis://localhost/0", "Valkey", &["rediss"]).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Invalid Valkey config: uri must use a TLS scheme (rediss)"
+        );
+        require_tls_uri_scheme("rediss://localhost/0", "Valkey", &["rediss"]).unwrap();
     }
 }

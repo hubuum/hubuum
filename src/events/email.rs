@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt;
 
 use futures::FutureExt;
@@ -7,14 +6,16 @@ use lettre::message::Mailbox;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use serde::Deserialize;
 use serde_json::{Map, Value};
-use tokio::sync::Mutex;
 
-use crate::events::sink::{EventEnvelope, Sink, SinkError, resolve_event_sink_secret_uri};
+use crate::events::sink::{
+    EventEnvelope, Sink, SinkError, UriConnectionPool, parse_sink_config, parse_sink_routing,
+    require_non_empty, require_tls_uri_scheme, resolve_event_sink_secret_uri,
+};
 use crate::models::{EventSink, EventSubscription};
 
 #[derive(Default)]
 pub struct EmailSink {
-    transports: Mutex<HashMap<String, AsyncSmtpTransport<Tokio1Executor>>>,
+    transports: UriConnectionPool<String, AsyncSmtpTransport<Tokio1Executor>>,
 }
 
 impl fmt::Debug for EmailSink {
@@ -72,6 +73,7 @@ impl EmailSink {
         let config = parse_config(sink)?;
         let routing = parse_routing(subscription)?;
         let uri = resolve_event_sink_secret_uri(&config.uri, sink.secret_ref.as_deref(), "email")?;
+        require_tls_uri_scheme(&uri, "email", &["smtps"])?;
         let rendered = render_email(envelope, &config)?;
         let message = build_message(&config, &routing, rendered)?;
 
@@ -84,46 +86,29 @@ impl EmailSink {
     }
 
     async fn transport(&self, uri: &str) -> Result<AsyncSmtpTransport<Tokio1Executor>, SinkError> {
-        let mut transports = self.transports.lock().await;
-        if let Some(transport) = transports.get(uri) {
-            return Ok(transport.clone());
-        }
-
-        let transport = AsyncSmtpTransport::<Tokio1Executor>::from_url(uri)
-            .map_err(|error| SinkError::new(format!("Invalid email config: {error}")))?
-            .build();
-        transports.insert(uri.to_string(), transport.clone());
-        Ok(transport)
+        self.transports
+            .get_or_try_insert_with(uri.to_string(), |uri| async move {
+                AsyncSmtpTransport::<Tokio1Executor>::from_url(&uri)
+                    .map_err(|error| SinkError::new(format!("Invalid email config: {error}")))
+                    .map(|builder| builder.build())
+            })
+            .await
     }
 }
 
 fn parse_config(sink: &EventSink) -> Result<EmailConfig, SinkError> {
-    let config: EmailConfig = serde_json::from_value(sink.config.clone())
-        .map_err(|error| SinkError::new(format!("Invalid email config: {error}")))?;
-    if config.uri.trim().is_empty() {
-        return Err(SinkError::new("Invalid email config: uri is required"));
-    }
-    if config.from.trim().is_empty() {
-        return Err(SinkError::new("Invalid email config: from is required"));
-    }
-    if config.subject_template.trim().is_empty() {
-        return Err(SinkError::new(
-            "Invalid email config: subject_template is required",
-        ));
-    }
-    if config.body_template.trim().is_empty() {
-        return Err(SinkError::new(
-            "Invalid email config: body_template is required",
-        ));
-    }
+    let config: EmailConfig = parse_sink_config(sink, "email")?;
+    require_non_empty(&config.uri, "email config", "uri")?;
+    require_non_empty(&config.from, "email config", "from")?;
+    require_non_empty(&config.subject_template, "email config", "subject_template")?;
+    require_non_empty(&config.body_template, "email config", "body_template")?;
     validate_template("subject_template", &config.subject_template)?;
     validate_template("body_template", &config.body_template)?;
     Ok(config)
 }
 
 fn parse_routing(subscription: &EventSubscription) -> Result<EmailRouting, SinkError> {
-    let routing: EmailRouting = serde_json::from_value(subscription.routing.clone())
-        .map_err(|error| SinkError::new(format!("Invalid email routing: {error}")))?;
+    let routing: EmailRouting = parse_sink_routing(subscription, "email")?;
     if routing.recipients.is_empty() {
         return Err(SinkError::new(
             "Invalid email routing: recipients is required",

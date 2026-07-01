@@ -20,14 +20,8 @@ pub async fn process_event_fanout_batch(
     settings: EventFanoutSettings,
 ) -> Result<usize, ApiError> {
     let events = claim_events_for_fanout(pool, settings).await?;
-    let mut processed = 0;
-
-    for event in events {
-        fanout_event(pool, event.id).await?;
-        processed += 1;
-    }
-
-    Ok(processed)
+    let event_ids = events.iter().map(|event| event.id).collect::<Vec<_>>();
+    fanout_events(pool, &event_ids).await
 }
 
 pub async fn claim_events_for_fanout(
@@ -75,21 +69,40 @@ pub async fn claim_events_for_fanout(
     })
 }
 
+#[cfg(test)]
 pub async fn fanout_event(pool: &DbPool, event_id: i64) -> Result<usize, ApiError> {
+    fanout_events(pool, &[event_id]).await
+}
+
+pub async fn fanout_events(pool: &DbPool, event_ids: &[i64]) -> Result<usize, ApiError> {
     use crate::schema::events::dsl::{
         dispatched_at, events, fanout_claim_token, fanout_locked_until, id,
     };
 
+    if event_ids.is_empty() {
+        return Ok(0);
+    }
+
     with_transaction(pool, |conn| -> Result<usize, ApiError> {
-        let event = events.filter(id.eq(event_id)).first::<Event>(conn)?;
-        if event.dispatched_at.is_some() {
+        let claimed_events = events
+            .filter(id.eq_any(event_ids))
+            .filter(dispatched_at.is_null())
+            .order(id.asc())
+            .load::<Event>(conn)?;
+        if claimed_events.is_empty() {
             return Ok(0);
         }
 
-        let subscription_ids = matching_subscription_ids(conn, &event)?;
-        let inserted = insert_delivery_rows(conn, event.id, &subscription_ids)?;
+        let subscriptions = load_enabled_subscriptions(conn)?;
+        let mut inserted = 0;
+        let mut processed_event_ids = Vec::with_capacity(claimed_events.len());
+        for event in &claimed_events {
+            let subscription_ids = matching_subscription_ids(&subscriptions, event);
+            inserted += insert_delivery_rows(conn, event.id, &subscription_ids)?;
+            processed_event_ids.push(event.id);
+        }
         let now = Utc::now().naive_utc();
-        diesel::update(events.filter(id.eq(event.id)))
+        diesel::update(events.filter(id.eq_any(processed_event_ids)))
             .set((
                 dispatched_at.eq(Some(now)),
                 fanout_locked_until.eq::<Option<chrono::NaiveDateTime>>(None),
@@ -101,21 +114,29 @@ pub async fn fanout_event(pool: &DbPool, event_id: i64) -> Result<usize, ApiErro
     })
 }
 
-fn matching_subscription_ids(conn: &mut PgConnection, event: &Event) -> Result<Vec<i32>, ApiError> {
+fn load_enabled_subscriptions(
+    conn: &mut PgConnection,
+) -> Result<Vec<crate::models::event_subscription::EventSubscriptionRow>, ApiError> {
     use crate::schema::{event_sinks, event_subscriptions};
 
-    let rows = event_subscriptions::table
+    event_subscriptions::table
         .inner_join(event_sinks::table.on(event_sinks::id.eq(event_subscriptions::sink_id)))
         .filter(event_subscriptions::enabled.eq(true))
         .filter(event_sinks::enabled.eq(true))
         .select(event_subscriptions::all_columns)
-        .load::<crate::models::event_subscription::EventSubscriptionRow>(conn)?;
+        .load::<crate::models::event_subscription::EventSubscriptionRow>(conn)
+        .map_err(ApiError::from)
+}
 
-    Ok(rows
-        .into_iter()
+fn matching_subscription_ids(
+    subscriptions: &[crate::models::event_subscription::EventSubscriptionRow],
+    event: &Event,
+) -> Vec<i32> {
+    subscriptions
+        .iter()
         .filter(|subscription| subscription_matches_event(subscription, event))
         .map(|subscription| subscription.id)
-        .collect())
+        .collect()
 }
 
 fn subscription_matches_event(

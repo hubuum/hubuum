@@ -2029,7 +2029,10 @@ dependencies = [
 name = "hubuum-events-core"
 version = "0.0.1"
 dependencies = [
+ "chrono",
+ "percent-encoding",
  "serde",
+ "serde_json",
  "uuid",
 ]
 

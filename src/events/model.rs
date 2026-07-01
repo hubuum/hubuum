@@ -310,9 +310,19 @@ impl NewEvent {
         self
     }
 
+    pub fn with_before_opt(mut self, before: Option<serde_json::Value>) -> Self {
+        self.before = before;
+        self
+    }
+
     /// Curated "after" snapshot for create/update events.
     pub fn with_after(mut self, after: serde_json::Value) -> Self {
         self.after = Some(after);
+        self
+    }
+
+    pub fn with_after_opt(mut self, after: Option<serde_json::Value>) -> Self {
+        self.after = after;
         self
     }
 
