@@ -123,6 +123,26 @@ fn update_hubuum_class_example() -> UpdateHubuumClass {
     }
 }
 
+#[derive(serde::Serialize, diesel::Queryable, Clone, Debug)]
+#[diesel(table_name = crate::schema::hubuumclass_history)]
+pub struct HubuumClassHistory {
+    pub id: i32,
+    pub name: String,
+    pub namespace_id: i32,
+    pub json_schema: Option<serde_json::Value>,
+    pub validate_schema: bool,
+    pub description: String,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+    pub op: String,
+    pub valid_from: chrono::DateTime<chrono::Utc>,
+    pub valid_to: Option<chrono::DateTime<chrono::Utc>>,
+    pub actor_id: Option<i32>,
+    pub history_id: i64,
+}
+
+crate::impl_history_pagination!(HubuumClassHistory, "hubuumclass_history");
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
