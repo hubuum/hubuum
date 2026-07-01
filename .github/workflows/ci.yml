@@ -102,14 +102,14 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload OpenAPI drift diff
         if: steps.openapi_drift.outputs.drift == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openapi-diff
           path: /tmp/openapi.diff
       - name: Prepare OpenAPI artifact
         run: cp /tmp/openapi.json openapi.json
       - name: Upload OpenAPI artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openapi-json
           path: openapi.json
@@ -526,7 +526,7 @@ jobs:
           "$hash  $archive_name" | Out-File -FilePath "dist/$archive_name.sha256" -Encoding ascii
       
       - name: Upload release artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.platform.os_name }}
           path: dist/*
@@ -542,7 +542,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
       - name: Download release artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: release-*
           merge-multiple: true
@@ -662,7 +662,7 @@ jobs:
           $hash = (Get-FileHash "dist/$archive_name" -Algorithm SHA256).Hash.ToLower()
           "$hash  $archive_name" | Out-File -FilePath "dist/$archive_name.sha256" -Encoding ascii
       - name: Upload main artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: main-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}
           path: dist/*
@@ -676,7 +676,7 @@ jobs:
       contents: write
     steps:
       - name: Download main artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: main-*
           merge-multiple: true
