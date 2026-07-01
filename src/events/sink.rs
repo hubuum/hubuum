@@ -1,19 +1,16 @@
-use std::fmt;
-#[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
-use std::future::Future;
-#[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
-use std::hash::Hash;
-
+use futures::FutureExt;
 use futures::future::BoxFuture;
-use serde::de::DeserializeOwned;
-#[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
-use tokio::sync::Mutex;
+use hubuum_event_sink_webhook::WebhookSinkSettings;
+use hubuum_event_sinks_common::SinkDelivery;
 
+use crate::config::{
+    DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS, DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES,
+    DEFAULT_REMOTE_CALL_TIMEOUT_MS, get_config,
+};
 use crate::events::Event;
-use crate::events::webhook::WebhookSink;
 use crate::models::{EventSink, EventSinkKind, EventSubscription};
 
-pub use hubuum_events_core::EventEnvelope;
+pub use hubuum_event_sinks_common::{EventEnvelope, SinkError};
 
 impl From<Event> for EventEnvelope {
     fn from(event: Event) -> Self {
@@ -39,33 +36,6 @@ impl From<Event> for EventEnvelope {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SinkError {
-    message: String,
-}
-
-impl SinkError {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-        }
-    }
-}
-
-impl fmt::Display for SinkError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
-
-impl std::error::Error for SinkError {}
-
-impl From<hubuum_events_core::EventSinkSecretError> for SinkError {
-    fn from(error: hubuum_events_core::EventSinkSecretError) -> Self {
-        Self::new(error.to_string())
-    }
-}
-
 pub trait Sink: Send + Sync {
     fn deliver<'a>(
         &'a self,
@@ -88,15 +58,29 @@ impl SinkResolver for NoopSinkResolver {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct DefaultSinkResolver {
     #[cfg(feature = "amqp")]
-    amqp: crate::events::amqp::AmqpSink,
+    amqp: hubuum_event_sink_amqp::AmqpSink,
     #[cfg(feature = "email")]
-    email: crate::events::email::EmailSink,
+    email: hubuum_event_sink_email::EmailSink,
     #[cfg(feature = "valkey")]
-    valkey: crate::events::valkey::ValkeySink,
-    webhook: WebhookSink,
+    valkey: hubuum_event_sink_valkey::ValkeySink,
+    webhook: hubuum_event_sink_webhook::WebhookSink,
+}
+
+impl Default for DefaultSinkResolver {
+    fn default() -> Self {
+        Self {
+            #[cfg(feature = "amqp")]
+            amqp: hubuum_event_sink_amqp::AmqpSink::default(),
+            #[cfg(feature = "email")]
+            email: hubuum_event_sink_email::EmailSink::default(),
+            #[cfg(feature = "valkey")]
+            valkey: hubuum_event_sink_valkey::ValkeySink::default(),
+            webhook: hubuum_event_sink_webhook::WebhookSink::new(webhook_settings()),
+        }
+    }
 }
 
 impl SinkResolver for DefaultSinkResolver {
@@ -115,101 +99,98 @@ impl SinkResolver for DefaultSinkResolver {
     }
 }
 
-pub(crate) use hubuum_events_core::resolve_event_sink_secret;
-#[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
-pub(crate) use hubuum_events_core::resolve_event_sink_secret_uri;
-
-pub(crate) fn parse_sink_config<T: DeserializeOwned>(
-    sink: &EventSink,
-    sink_label: &str,
-) -> Result<T, SinkError> {
-    serde_json::from_value(sink.config.clone())
-        .map_err(|error| SinkError::new(format!("Invalid {sink_label} config: {error}")))
+fn sink_delivery<'a>(subscription: &'a EventSubscription, sink: &'a EventSink) -> SinkDelivery<'a> {
+    SinkDelivery::new(
+        &sink.config,
+        &subscription.routing,
+        sink.secret_ref.as_deref(),
+    )
 }
 
-pub(crate) fn parse_sink_routing<T: DeserializeOwned>(
-    subscription: &EventSubscription,
-    sink_label: &str,
-) -> Result<T, SinkError> {
-    serde_json::from_value(subscription.routing.clone())
-        .map_err(|error| SinkError::new(format!("Invalid {sink_label} routing: {error}")))
-}
-
-pub(crate) fn require_non_empty(value: &str, label: &str, field: &str) -> Result<(), SinkError> {
-    if value.trim().is_empty() {
-        return Err(SinkError::new(format!(
-            "Invalid {label}: {field} is required"
-        )));
+fn webhook_settings() -> WebhookSinkSettings {
+    let (max_timeout_ms, max_response_bytes, allow_private_targets) = get_config()
+        .map(|config| {
+            (
+                config.remote_call_timeout_ms,
+                config.remote_call_max_response_bytes,
+                config.remote_call_allow_private_targets,
+            )
+        })
+        .unwrap_or((
+            DEFAULT_REMOTE_CALL_TIMEOUT_MS,
+            DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES,
+            DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS,
+        ));
+    WebhookSinkSettings {
+        max_timeout_ms,
+        max_response_bytes,
+        max_request_bytes: max_response_bytes,
+        allow_private_targets,
+        dangerous_accept_invalid_certs: cfg!(test),
+        dangerous_allow_localhost: cfg!(test),
     }
-    Ok(())
 }
 
-#[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
-pub(crate) fn require_tls_uri_scheme(
-    uri: &str,
-    sink_label: &str,
-    tls_schemes: &[&str],
-) -> Result<(), SinkError> {
-    let Some((scheme, _)) = uri.split_once(':') else {
-        return Err(SinkError::new(format!(
-            "Invalid {sink_label} config: uri must include a scheme"
-        )));
-    };
-    if !tls_schemes
-        .iter()
-        .any(|allowed| scheme.eq_ignore_ascii_case(allowed))
-    {
-        return Err(SinkError::new(format!(
-            "Invalid {sink_label} config: uri must use a TLS scheme ({})",
-            tls_schemes.join(", ")
-        )));
-    }
-    Ok(())
-}
-
-#[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
-#[derive(Debug)]
-pub(crate) struct UriConnectionPool<K, V> {
-    entries: Mutex<std::collections::HashMap<K, V>>,
-}
-
-#[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
-impl<K, V> Default for UriConnectionPool<K, V> {
-    fn default() -> Self {
-        Self {
-            entries: Mutex::new(std::collections::HashMap::new()),
+impl Sink for hubuum_event_sink_webhook::WebhookSink {
+    fn deliver<'a>(
+        &'a self,
+        envelope: &'a EventEnvelope,
+        subscription: &'a EventSubscription,
+        sink: &'a EventSink,
+    ) -> BoxFuture<'a, Result<(), SinkError>> {
+        async move {
+            self.deliver(envelope, sink_delivery(subscription, sink))
+                .await
         }
+        .boxed()
     }
 }
 
-#[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
-impl<K, V> UriConnectionPool<K, V>
-where
-    K: Eq + Hash + Clone,
-    V: Clone,
-{
-    pub(crate) async fn get_or_try_insert_with<F, Fut>(
-        &self,
-        key: K,
-        create: F,
-    ) -> Result<V, SinkError>
-    where
-        F: FnOnce(K) -> Fut,
-        Fut: Future<Output = Result<V, SinkError>>,
-    {
-        let mut entries = self.entries.lock().await;
-        if let Some(value) = entries.get(&key) {
-            return Ok(value.clone());
+#[cfg(feature = "amqp")]
+impl Sink for hubuum_event_sink_amqp::AmqpSink {
+    fn deliver<'a>(
+        &'a self,
+        envelope: &'a EventEnvelope,
+        subscription: &'a EventSubscription,
+        sink: &'a EventSink,
+    ) -> BoxFuture<'a, Result<(), SinkError>> {
+        async move {
+            self.deliver(envelope, sink_delivery(subscription, sink))
+                .await
         }
-
-        let value = create(key.clone()).await?;
-        entries.insert(key, value.clone());
-        Ok(value)
+        .boxed()
     }
+}
 
-    #[cfg(feature = "amqp")]
-    pub(crate) async fn remove(&self, key: &K) {
-        self.entries.lock().await.remove(key);
+#[cfg(feature = "email")]
+impl Sink for hubuum_event_sink_email::EmailSink {
+    fn deliver<'a>(
+        &'a self,
+        envelope: &'a EventEnvelope,
+        subscription: &'a EventSubscription,
+        sink: &'a EventSink,
+    ) -> BoxFuture<'a, Result<(), SinkError>> {
+        async move {
+            self.deliver(envelope, sink_delivery(subscription, sink))
+                .await
+        }
+        .boxed()
+    }
+}
+
+#[cfg(feature = "valkey")]
+impl Sink for hubuum_event_sink_valkey::ValkeySink {
+    fn deliver<'a>(
+        &'a self,
+        envelope: &'a EventEnvelope,
+        subscription: &'a EventSubscription,
+        sink: &'a EventSink,
+    ) -> BoxFuture<'a, Result<(), SinkError>> {
+        async move {
+            self.deliver(envelope, sink_delivery(subscription, sink))
+                .await
+        }
+        .boxed()
     }
 }
 
@@ -293,12 +274,21 @@ mod tests {
     #[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
     #[test]
     fn tls_scheme_validator_rejects_cleartext_uris() {
-        let error =
-            require_tls_uri_scheme("redis://localhost/0", "Valkey", &["rediss"]).unwrap_err();
+        let error = hubuum_event_sinks_common::require_tls_uri_scheme(
+            "redis://localhost/0",
+            "Valkey",
+            &["rediss"],
+        )
+        .unwrap_err();
         assert_eq!(
             error.to_string(),
             "Invalid Valkey config: uri must use a TLS scheme (rediss)"
         );
-        require_tls_uri_scheme("rediss://localhost/0", "Valkey", &["rediss"]).unwrap();
+        hubuum_event_sinks_common::require_tls_uri_scheme(
+            "rediss://localhost/0",
+            "Valkey",
+            &["rediss"],
+        )
+        .unwrap();
     }
 }

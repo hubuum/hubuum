@@ -1,0 +1,20 @@
+[package]
+name = "hubuum-event-sink-amqp"
+version = "0.0.1"
+edition = "2024"
+description = "AMQP event sink transport for Hubuum."
+license = "MIT"
+repository = "https://github.com/hubuum/hubuum"
+
+[dependencies]
+futures = "0.3"
+hubuum-event-sinks-common = { path = "../hubuum-event-sinks-common" }
+hubuum-events-core = { path = "../hubuum-events-core" }
+lapin = "4.10.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+
+[dev-dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }

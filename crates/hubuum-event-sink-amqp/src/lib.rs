@@ -1,7 +1,10 @@
 use std::fmt;
 use std::sync::Arc;
 
-use futures::FutureExt;
+use hubuum_event_sinks_common::{
+    EventEnvelope, SinkDelivery, SinkError, UriConnectionPool, parse_sink_config,
+    require_non_empty, require_tls_uri_scheme, resolve_event_sink_secret_uri,
+};
 use lapin::options::{BasicPublishOptions, ConfirmSelectOptions, ExchangeDeclareOptions};
 use lapin::types::FieldTable;
 use lapin::{
@@ -9,12 +12,6 @@ use lapin::{
 };
 use serde::Deserialize;
 use tracing::warn;
-
-use crate::events::sink::{
-    EventEnvelope, Sink, SinkError, UriConnectionPool, parse_sink_config, require_non_empty,
-    require_tls_uri_scheme, resolve_event_sink_secret_uri,
-};
-use crate::models::{EventSink, EventSubscription};
 
 #[derive(Default)]
 pub struct AmqpSink {
@@ -41,25 +38,14 @@ struct AmqpConfig {
     mandatory: bool,
 }
 
-impl Sink for AmqpSink {
-    fn deliver<'a>(
-        &'a self,
-        envelope: &'a EventEnvelope,
-        _subscription: &'a EventSubscription,
-        sink: &'a EventSink,
-    ) -> futures::future::BoxFuture<'a, Result<(), SinkError>> {
-        async move { self.deliver_amqp(envelope, sink).await }.boxed()
-    }
-}
-
 impl AmqpSink {
-    async fn deliver_amqp(
+    pub async fn deliver(
         &self,
         envelope: &EventEnvelope,
-        sink: &EventSink,
+        delivery: SinkDelivery<'_>,
     ) -> Result<(), SinkError> {
-        let config = parse_config(sink)?;
-        let uri = resolve_event_sink_secret_uri(&config.uri, sink.secret_ref.as_deref(), "AMQP")?;
+        let config = parse_config(&delivery)?;
+        let uri = resolve_event_sink_secret_uri(&config.uri, delivery.secret_ref, "AMQP")?;
         require_tls_uri_scheme(&uri, "AMQP", &["amqps"])?;
         let channel = self.channel(&uri).await?;
 
@@ -145,8 +131,8 @@ impl AmqpSink {
     }
 }
 
-fn parse_config(sink: &EventSink) -> Result<AmqpConfig, SinkError> {
-    let config: AmqpConfig = parse_sink_config(sink, "AMQP")?;
+fn parse_config(delivery: &SinkDelivery<'_>) -> Result<AmqpConfig, SinkError> {
+    let config: AmqpConfig = parse_sink_config(delivery, "AMQP")?;
     require_non_empty(&config.uri, "AMQP config", "uri")?;
     require_non_empty(&config.exchange, "AMQP config", "exchange")?;
     Ok(config)
@@ -190,8 +176,6 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::models::EventSinkKind;
-
     fn envelope() -> EventEnvelope {
         EventEnvelope {
             id: 42,
@@ -214,18 +198,12 @@ mod tests {
         }
     }
 
-    fn sink(config: serde_json::Value, secret_ref: Option<&str>) -> EventSink {
-        let now = Utc::now().naive_utc();
-        EventSink {
-            id: 1,
-            name: "amqp".to_string(),
-            kind: EventSinkKind::Amqp,
-            config,
-            secret_ref: secret_ref.map(str::to_string),
-            enabled: true,
-            created_at: now,
-            updated_at: now,
-        }
+    fn delivery<'a>(
+        config: &'a serde_json::Value,
+        routing: &'a serde_json::Value,
+        secret_ref: Option<&'a str>,
+    ) -> SinkDelivery<'a> {
+        SinkDelivery::new(config, routing, secret_ref)
     }
 
     #[test]
@@ -235,14 +213,12 @@ mod tests {
 
     #[test]
     fn config_requires_uri_and_exchange() {
-        let error = parse_config(&sink(
-            serde_json::json!({
-                "uri": "amqp://localhost",
-                "exchange": ""
-            }),
-            None,
-        ))
-        .unwrap_err();
+        let config = serde_json::json!({
+            "uri": "amqp://localhost",
+            "exchange": ""
+        });
+        let routing = serde_json::json!({});
+        let error = parse_config(&delivery(&config, &routing, None)).unwrap_err();
         assert_eq!(
             error.to_string(),
             "Invalid AMQP config: exchange is required"
@@ -300,14 +276,12 @@ mod tests {
 
     #[test]
     fn default_exchange_type_is_topic() {
-        let parsed = parse_config(&sink(
-            serde_json::json!({
-                "uri": "amqp://localhost/%2f",
-                "exchange": "hubuum.events"
-            }),
-            None,
-        ))
-        .unwrap();
+        let config = serde_json::json!({
+            "uri": "amqp://localhost/%2f",
+            "exchange": "hubuum.events"
+        });
+        let routing = serde_json::json!({});
+        let parsed = parse_config(&delivery(&config, &routing, None)).unwrap();
 
         assert_eq!(parsed.exchange_type, "topic");
         assert!(parsed.declare_exchange);
