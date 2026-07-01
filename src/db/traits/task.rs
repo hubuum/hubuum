@@ -700,7 +700,7 @@ pub async fn insert_import_results(
     })
 }
 
-fn executable_task_kind_values() -> [&'static str; 3] {
+pub(crate) fn executable_task_kind_values() -> [&'static str; 3] {
     [
         TaskKind::Import.as_str(),
         TaskKind::Report.as_str(),
