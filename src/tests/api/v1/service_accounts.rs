@@ -1168,6 +1168,10 @@ mod tests {
             None,
         )
         .await;
+        assert!(
+            !crate::db::traits::task::executable_task_kind_values().contains(&task.kind.as_str()),
+            "synthetic task kind must stay outside the worker claim filter"
+        );
 
         cancel_pending_tasks_for_principal(pool, sa.id)
             .await
