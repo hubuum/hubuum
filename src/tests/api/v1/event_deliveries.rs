@@ -41,7 +41,7 @@ mod tests {
         }
         .into_row()
         .unwrap()
-        .save_event_sink_record(&context.pool, None)
+        .save_event_sink_record_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -58,7 +58,7 @@ mod tests {
         }
         .into_row(namespace_id)
         .unwrap()
-        .save_event_subscription_record(&context.pool, None)
+        .save_event_subscription_record_without_events(&context.pool)
         .await
         .unwrap();
 

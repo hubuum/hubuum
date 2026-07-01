@@ -210,7 +210,7 @@ async fn create_namespace_event_subscription(
     }
     .into_row()
     .unwrap()
-    .save_event_sink_record(&scope.pool, None)
+    .save_event_sink_record_without_events(&scope.pool)
     .await
     .unwrap();
 
@@ -225,7 +225,7 @@ async fn create_namespace_event_subscription(
     }
     .into_row(NamespaceID::new(namespace_id).unwrap())
     .unwrap()
-    .save_event_subscription_record(&scope.pool, None)
+    .save_event_subscription_record_without_events(&scope.pool)
     .await
     .unwrap()
     .id

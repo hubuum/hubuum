@@ -57,7 +57,7 @@ pub async fn create_event_subscription(
     let created: EventSubscription = subscription
         .into_inner()
         .into_row(namespace_id)?
-        .save_event_subscription_record(&pool, Some(&event_context))
+        .save_event_subscription_record(&pool, &event_context)
         .await?
         .try_into()?;
     Ok(json_response_created(
@@ -190,7 +190,7 @@ pub async fn patch_event_subscription(
     let event_context = requestor.event_context(&req);
     let updated: EventSubscription = update
         .into_row(&existing)?
-        .update_event_subscription_record(&pool, existing.id, Some(&event_context))
+        .update_event_subscription_record(&pool, existing.id, &event_context)
         .await?
         .try_into()?;
     Ok(json_response(updated, StatusCode::OK))
@@ -231,7 +231,7 @@ pub async fn delete_event_subscription(
     ensure_subscription_namespace(&existing, namespace_id)?;
     let event_context = requestor.event_context(&req);
     subscription_id
-        .delete_event_subscription_record(&pool, Some(&event_context))
+        .delete_event_subscription_record(&pool, &event_context)
         .await?;
     Ok(actix_web::HttpResponse::NoContent().finish())
 }

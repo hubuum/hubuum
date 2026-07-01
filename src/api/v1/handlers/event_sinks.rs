@@ -39,7 +39,7 @@ pub async fn create_event_sink(
     let created: EventSink = sink
         .into_inner()
         .into_row()?
-        .save_event_sink_record(&pool, Some(&event_context))
+        .save_event_sink_record(&pool, &event_context)
         .await?
         .try_into()?;
     Ok(json_response_created(
@@ -134,7 +134,7 @@ pub async fn patch_event_sink(
     let event_context = admin.event_context(&req);
     let updated: EventSink = update
         .into_row(&existing)?
-        .update_event_sink_record(&pool, existing.id, Some(&event_context))
+        .update_event_sink_record(&pool, existing.id, &event_context)
         .await?
         .try_into()?;
     Ok(json_response(updated, StatusCode::OK))
@@ -163,7 +163,7 @@ pub async fn delete_event_sink(
     let event_context = admin.event_context(&req);
     sink_id
         .into_inner()
-        .delete_event_sink_record(&pool, Some(&event_context))
+        .delete_event_sink_record(&pool, &event_context)
         .await?;
     Ok(actix_web::HttpResponse::NoContent().finish())
 }
