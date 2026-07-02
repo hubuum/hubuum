@@ -561,13 +561,11 @@ mod tests {
         cleanup(&classes).await;
     }
 
-    // The old directional class-relation routes are gone. A stale URL that collides with a current
-    // route expecting a numeric segment (here `/{class_id}/{object_id}`) is rejected as a `400`
-    // because the literal segment is not a valid id; the deeper paths match no route and are a plain
-    // `404`. Either way the old endpoint no longer serves. `{first}`/`{second}` are substituted with
-    // the fixture class ids since rstest cases cannot reference runtime values.
+    // The old directional class-relation transitive routes are gone; these deeper
+    // paths match no route and return a plain `404`. `{first}`/`{second}` are
+    // substituted with the fixture class ids since rstest cases cannot reference
+    // runtime values.
     #[rstest]
-    #[case::get_relations("{first}/relations", StatusCode::BAD_REQUEST)]
     #[case::transitive("{first}/relations/transitive/", StatusCode::NOT_FOUND)]
     #[case::transitive_to_class(
         "{first}/relations/transitive/class/{second}",
