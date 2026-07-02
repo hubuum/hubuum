@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::api::openapi::ApiErrorResponse;
+use crate::api::response::{JsonResponse, MappedPaginatedJsonResponse, PaginatedJsonResponse};
 use crate::api::v1::handlers::principals::{
     PrincipalNamespacePermissions, principal_permissions_response,
 };
@@ -14,9 +15,6 @@ use crate::models::search::parse_query_parameter;
 use crate::models::{Group, Permissions, PrincipalMemberResponse, PrincipalToken};
 use crate::pagination::prepare_db_pagination;
 use crate::traits::GroupAccessors;
-use crate::utilities::response::{
-    json_response, paginated_json_mapped_response, paginated_json_response,
-};
 
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(get_me)
@@ -68,7 +66,7 @@ pub async fn get_me(requestor: Authenticated) -> Result<impl Responder, ApiError
         scopes: requestor.scopes,
     };
 
-    Ok(json_response(
+    Ok(JsonResponse::new(
         MeResponse {
             principal: requestor.principal.into(),
             token,
@@ -101,7 +99,7 @@ pub async fn list_my_tokens(
         .tokens_paginated_with_total_count(&pool, &search_params)
         .await?;
 
-    paginated_json_mapped_response(tokens, total_count, StatusCode::OK, &params, |tokens| {
+    MappedPaginatedJsonResponse::new(tokens, total_count, StatusCode::OK, &params, |tokens| {
         tokens
             .into_iter()
             .map(crate::models::PrincipalTokenMetadata::from)
@@ -131,7 +129,7 @@ pub async fn list_my_groups(
         .principal
         .groups_paginated_with_total_count(&pool, &search_params)
         .await?;
-    paginated_json_response(groups, total_count, StatusCode::OK, &params)
+    PaginatedJsonResponse::new(groups, total_count, StatusCode::OK, &params)
 }
 
 #[utoipa::path(
@@ -150,5 +148,5 @@ pub async fn list_my_permissions(
     requestor: Authenticated,
 ) -> Result<impl Responder, ApiError> {
     let report = principal_permissions_response(&pool, &requestor.principal).await?;
-    Ok(json_response(report, StatusCode::OK))
+    Ok(JsonResponse::new(report, StatusCode::OK))
 }

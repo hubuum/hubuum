@@ -1,6 +1,7 @@
 use actix_web::{HttpRequest, Responder, get, http::StatusCode, routes, web};
 
 use crate::api::openapi::ApiErrorResponse;
+use crate::api::response::{JsonResponse, PaginatedJsonResponse};
 use crate::db::DbPool;
 use crate::db::traits::task::{
     TaskBackend, list_report_task_output_summaries, list_tasks_with_total_count,
@@ -14,7 +15,6 @@ use crate::models::{
 use crate::pagination::prepare_db_pagination;
 use crate::tasks::ensure_task_worker_running;
 use crate::traits::AuthzSubject;
-use crate::utilities::response::{json_response, paginated_json_response};
 
 #[derive(Debug, Default)]
 struct TaskListFilters {
@@ -148,7 +148,7 @@ pub async fn get_tasks(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    paginated_json_response(tasks, total_count, StatusCode::OK, &params)
+    PaginatedJsonResponse::new(tasks, total_count, StatusCode::OK, &params)
 }
 
 #[utoipa::path(
@@ -182,7 +182,7 @@ pub async fn get_task(
     } else {
         ReportOutputLookup::Missing
     };
-    Ok(json_response(
+    Ok(JsonResponse::new(
         task.to_response_with_report_output(report_output.as_ref())?,
         StatusCode::OK,
     ))
@@ -222,5 +222,5 @@ pub async fn get_task_events(
         .into_iter()
         .map(TaskEventResponse::from)
         .collect::<Vec<_>>();
-    paginated_json_response(events, total_count, StatusCode::OK, &params)
+    PaginatedJsonResponse::new(events, total_count, StatusCode::OK, &params)
 }
