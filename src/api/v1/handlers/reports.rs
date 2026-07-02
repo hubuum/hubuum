@@ -5,7 +5,9 @@ use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, pos
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
+use crate::api::response::JsonResponse;
 use crate::can;
 use crate::config::{
     DEFAULT_REPORT_DB_STATEMENT_TIMEOUT_MS, DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER,
@@ -37,7 +39,6 @@ use crate::tasks::{
 };
 use crate::traits::{AuthzSubject, NamespaceAccessors, SelfAccessors};
 use crate::utilities::reporting::{SizeLimitedWriter, render_template};
-use crate::utilities::response::{json_response, json_response_with_header};
 
 use super::check_if_object_in_class;
 
@@ -224,10 +225,13 @@ pub async fn run_report(
 
     let response = task.to_response()?;
     let mut headers = HashMap::new();
-    headers.insert("Location".to_string(), format!("/api/v1/tasks/{}", task.id));
+    headers.insert(
+        "Location".to_string(),
+        api_locations::task(task.id)?.as_str().to_string(),
+    );
     kick_task_worker(pool.get_ref().clone());
 
-    Ok(json_response_with_header(
+    Ok(JsonResponse::with_headers(
         response,
         StatusCode::ACCEPTED,
         Some(headers),
@@ -298,7 +302,7 @@ pub async fn get_report(
         .load_authorized_report(&pool, &requestor.principal)
         .await?;
     let output = task.find_report_output_summary(&pool).await?;
-    Ok(json_response(
+    Ok(JsonResponse::new(
         task.to_response_with_report_output(output.as_ref())?,
         StatusCode::OK,
     ))
@@ -836,11 +840,11 @@ fn render_report_task_output(output: ReportTaskOutputRecord) -> Result<HttpRespo
                         "Stored report JSON output is missing".to_string(),
                     )
                 })?)?;
-            Ok(json_response_with_header(
-                response,
-                StatusCode::OK,
-                Some(report_headers(warning_count, truncated)),
-            ))
+            let mut http_response = HttpResponse::build(StatusCode::OK);
+            for (key, value) in report_headers(warning_count, truncated) {
+                http_response.insert_header((key, value));
+            }
+            Ok(http_response.json(response))
         }
         ReportContentType::TextPlain | ReportContentType::TextHtml | ReportContentType::TextCsv => {
             let mut response = HttpResponse::build(StatusCode::OK);

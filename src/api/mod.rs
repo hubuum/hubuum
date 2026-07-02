@@ -1,7 +1,9 @@
 use actix_web::web::{self, PathConfig};
 
 pub mod handlers;
+pub mod locations;
 pub mod openapi;
+pub mod response;
 pub mod routes;
 pub mod v1;
 

@@ -308,13 +308,29 @@ pub struct ApiErrorResponse {
 #[derive(Serialize, ToSchema)]
 #[schema(example = message_response_example)]
 pub struct MessageResponse {
-    pub message: String,
+    message: String,
+}
+
+impl MessageResponse {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
 }
 
 #[derive(Serialize, ToSchema)]
 #[schema(example = login_response_example)]
 pub struct LoginResponse {
-    pub token: String,
+    token: String,
+}
+
+impl LoginResponse {
+    pub fn new(token: impl Into<String>) -> Self {
+        Self {
+            token: token.into(),
+        }
+    }
 }
 
 #[derive(Serialize, ToSchema)]
@@ -336,16 +352,12 @@ fn api_error_response_example() -> ApiErrorResponse {
 
 #[allow(dead_code)]
 fn message_response_example() -> MessageResponse {
-    MessageResponse {
-        message: "Token is valid.".to_string(),
-    }
+    MessageResponse::new("Token is valid.")
 }
 
 #[allow(dead_code)]
 fn login_response_example() -> LoginResponse {
-    LoginResponse {
-        token: "eyJhbGciOi...example-token".to_string(),
-    }
+    LoginResponse::new("eyJhbGciOi...example-token")
 }
 
 #[allow(dead_code)]

@@ -1,7 +1,9 @@
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 use tracing::{debug, info};
 
+use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
+use crate::api::response::{CreatedJsonResponse, JsonResponse, PaginatedJsonResponse};
 use crate::can;
 use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
@@ -15,9 +17,6 @@ use crate::models::{
 };
 use crate::pagination::prepare_db_pagination;
 use crate::traits::{CanDelete, CanSave, CanUpdate, NamespaceAccessors, SelfAccessors};
-use crate::utilities::response::{
-    json_response, json_response_created, json_response_with_header, paginated_json_response,
-};
 
 #[utoipa::path(
     post,
@@ -61,10 +60,8 @@ pub async fn create_template(
 
     let created = template.save(&pool).await?;
 
-    Ok(json_response_created(
-        &created,
-        &format!("/api/v1/templates/{}", created.id),
-    ))
+    let location = api_locations::template(created.id)?;
+    Ok(CreatedJsonResponse::new(created, location))
 }
 
 #[utoipa::path(
@@ -106,7 +103,7 @@ pub async fn get_templates(
         ReportTemplate::list_with_total_count(&pool, &allowed_namespace_ids, &search_params)
             .await?;
 
-    paginated_json_response(templates, total_count, StatusCode::OK, &params)
+    PaginatedJsonResponse::new(templates, total_count, StatusCode::OK, &params)
 }
 
 #[utoipa::path(
@@ -149,7 +146,7 @@ pub async fn get_template(
         NamespaceID::new(template.namespace_id)?
     );
 
-    Ok(json_response(template, StatusCode::OK))
+    Ok(JsonResponse::new(template, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -212,9 +209,12 @@ pub async fn run_template_report(
     .await?;
     let response = task.to_response()?;
     let mut headers = std::collections::HashMap::new();
-    headers.insert("Location".to_string(), format!("/api/v1/tasks/{}", task.id));
+    headers.insert(
+        "Location".to_string(),
+        api_locations::task(task.id)?.as_str().to_string(),
+    );
 
-    Ok(json_response_with_header(
+    Ok(JsonResponse::with_headers(
         response,
         StatusCode::ACCEPTED,
         Some(headers),
@@ -280,7 +280,7 @@ pub async fn patch_template(
 
     let updated = update.update(&pool, existing.id).await?;
 
-    Ok(json_response(updated, StatusCode::OK))
+    Ok(JsonResponse::new(updated, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -325,5 +325,5 @@ pub async fn delete_template(
 
     template_id.delete(&pool).await?;
 
-    Ok(json_response((), StatusCode::NO_CONTENT))
+    Ok(JsonResponse::no_content())
 }
