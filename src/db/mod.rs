@@ -134,6 +134,23 @@ where
     with_connection_timeout(pool, ambient_statement_timeout(), f)
 }
 
+/// Return an updated row, or fetch the current row when a temporal no-op trigger
+/// suppressed an unchanged `UPDATE`.
+///
+/// PostgreSQL `BEFORE UPDATE` triggers skip a row by returning `NULL`; an
+/// `UPDATE ... RETURNING` therefore returns no row even though the target row
+/// still exists. Centralizing that fallback keeps update call sites from
+/// encoding trigger behavior themselves.
+pub fn updated_or_current<T, E>(
+    updated: Result<Option<T>, E>,
+    select_current: impl FnOnce() -> Result<T, E>,
+) -> Result<T, E> {
+    match updated? {
+        Some(row) => Ok(row),
+        None => select_current(),
+    }
+}
+
 /// Run database work on a single pooled connection, optionally bounding it with
 /// an explicit per-query Postgres `statement_timeout`.
 ///

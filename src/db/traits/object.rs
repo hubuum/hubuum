@@ -402,15 +402,14 @@ impl UpdateObjectRecord for UpdateHubuumObject {
         use crate::schema::hubuumobject::dsl::{hubuumobject, id};
 
         with_connection(pool, |conn| {
-            let updated = diesel::update(hubuumobject)
-                .filter(id.eq(object_id))
-                .set(self)
-                .get_result::<HubuumObject>(conn)
-                .optional()?;
-            match updated {
-                Some(object) => Ok(object),
-                None => hubuumobject.filter(id.eq(object_id)).first(conn),
-            }
+            crate::db::updated_or_current(
+                diesel::update(hubuumobject)
+                    .filter(id.eq(object_id))
+                    .set(self)
+                    .get_result::<HubuumObject>(conn)
+                    .optional(),
+                || hubuumobject.filter(id.eq(object_id)).first(conn),
+            )
         })
     }
 

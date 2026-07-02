@@ -257,18 +257,14 @@ pub fn update_namespace_db(
         description: Some(input.description.clone()),
     };
 
-    let updated = diesel::update(namespaces.filter(id.eq(namespace_id_value)))
-        .set(&update)
-        .get_result::<Namespace>(conn)
-        .optional()
-        .map_err(ApiError::from)?;
-    match updated {
-        Some(namespace) => Ok(namespace),
-        None => namespaces
-            .filter(id.eq(namespace_id_value))
-            .first(conn)
-            .map_err(ApiError::from),
-    }
+    crate::db::updated_or_current(
+        diesel::update(namespaces.filter(id.eq(namespace_id_value)))
+            .set(&update)
+            .get_result::<Namespace>(conn)
+            .optional(),
+        || namespaces.filter(id.eq(namespace_id_value)).first(conn),
+    )
+    .map_err(ApiError::from)
 }
 
 pub fn create_class_db(
@@ -307,18 +303,14 @@ pub fn update_class_db(
         description: Some(input.description.clone()),
     };
 
-    let updated = diesel::update(hubuumclass.filter(id.eq(class_id_value)))
-        .set(&update)
-        .get_result::<HubuumClass>(conn)
-        .optional()
-        .map_err(ApiError::from)?;
-    match updated {
-        Some(class) => Ok(class),
-        None => hubuumclass
-            .filter(id.eq(class_id_value))
-            .first(conn)
-            .map_err(ApiError::from),
-    }
+    crate::db::updated_or_current(
+        diesel::update(hubuumclass.filter(id.eq(class_id_value)))
+            .set(&update)
+            .get_result::<HubuumClass>(conn)
+            .optional(),
+        || hubuumclass.filter(id.eq(class_id_value)).first(conn),
+    )
+    .map_err(ApiError::from)
 }
 
 pub fn create_object_db(
@@ -357,18 +349,14 @@ pub fn update_object_db(
         description: Some(input.description.clone()),
     };
 
-    let updated = diesel::update(hubuumobject.filter(id.eq(object_id_value)))
-        .set(&update)
-        .get_result::<HubuumObject>(conn)
-        .optional()
-        .map_err(ApiError::from)?;
-    match updated {
-        Some(object) => Ok(object),
-        None => hubuumobject
-            .filter(id.eq(object_id_value))
-            .first(conn)
-            .map_err(ApiError::from),
-    }
+    crate::db::updated_or_current(
+        diesel::update(hubuumobject.filter(id.eq(object_id_value)))
+            .set(&update)
+            .get_result::<HubuumObject>(conn)
+            .optional(),
+        || hubuumobject.filter(id.eq(object_id_value)).first(conn),
+    )
+    .map_err(ApiError::from)
 }
 
 pub fn create_class_relation_db(
