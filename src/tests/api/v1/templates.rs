@@ -1171,4 +1171,92 @@ mod tests {
         test_group.delete_without_events(&pool).await.unwrap();
         test_user.delete_without_events(&pool).await.unwrap();
     }
+
+    #[actix_web::test]
+    async fn test_api_template_history_list_and_as_of() {
+        use crate::models::{NewReportTemplate, UpdateReportTemplate};
+        use crate::traits::{CanSave, CanUpdate};
+
+        let (pool, admin_token, _normal_token) = setup_pool_and_tokens().await;
+        let namespace = create_namespace(&pool, "template_history_api").await;
+
+        // Create then update so there are two versions.
+        let created = NewReportTemplate {
+            namespace_id: namespace.id,
+            name: "template_history_api".to_string(),
+            description: "v1".to_string(),
+            content_type: crate::models::ReportContentType::TextPlain,
+            template: "content".to_string(),
+            kind: crate::models::ReportTemplateKind::Report,
+            scope_kind: None,
+            class_id: None,
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
+        }
+        .save(&pool)
+        .await
+        .unwrap();
+
+        UpdateReportTemplate {
+            namespace_id: None,
+            name: None,
+            description: Some("v2".to_string()),
+            template: None,
+            kind: None,
+            scope_kind: None,
+            class_id: None,
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
+        }
+        .update(&pool, created.id)
+        .await
+        .unwrap();
+
+        // List history newest-first.
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{}/{}/history", TEMPLATES_ENDPOINT, created.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let body: Vec<serde_json::Value> = test::read_body_json(resp).await;
+        assert_eq!(body.len(), 2, "expected two versions");
+        assert_eq!(body[0]["op"], "U");
+        assert_eq!(body[0]["description"], "v2");
+        assert_eq!(body[1]["op"], "I");
+        assert!(body[0].get("actor_username").is_some(), "actor_username key present");
+
+        // as-of just after the insert (before the update) -> v1.
+        let v1_from = body[1]["valid_from"].as_str().unwrap().to_string();
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{}/{}/history/as-of?at={}", TEMPLATES_ENDPOINT, created.id, &v1_from),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let snap: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(snap["description"], "v1");
+
+        namespace.delete(&pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_api_template_history_404_for_missing() {
+        let (pool, admin_token, _normal_token) = setup_pool_and_tokens().await;
+        let resp = get_request(
+            &pool,
+            &admin_token,
+            &format!("{}/2147483647/history", TEMPLATES_ENDPOINT),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::NOT_FOUND).await;
+    }
 }

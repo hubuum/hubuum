@@ -7,6 +7,8 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(templates::create_template)
         .service(templates::get_template)
         .service(events::get_report_template_events)
+        .service(templates::get_template_history)
+        .service(templates::get_template_as_of)
         .service(templates::run_template_report)
         .service(templates::patch_template)
         .service(templates::delete_template);

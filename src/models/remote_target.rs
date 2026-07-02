@@ -1190,3 +1190,30 @@ mod tests {
         );
     }
 }
+
+#[derive(serde::Serialize, diesel::Queryable, Clone, Debug)]
+#[diesel(table_name = crate::schema::remote_targets_history)]
+pub struct RemoteTargetHistory {
+    pub id: i32,
+    pub namespace_id: i32,
+    pub class_id: Option<i32>,
+    pub name: String,
+    pub description: String,
+    pub method: String,
+    pub url_template: String,
+    pub headers_template: serde_json::Value,
+    pub body_template: Option<String>,
+    pub auth_config: serde_json::Value,
+    pub allowed_subject_types: serde_json::Value,
+    pub timeout_ms: i32,
+    pub enabled: bool,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+    pub op: String,
+    pub valid_from: chrono::DateTime<chrono::Utc>,
+    pub valid_to: Option<chrono::DateTime<chrono::Utc>>,
+    pub actor_id: Option<i32>,
+    pub history_id: i64,
+}
+
+crate::impl_history_pagination!(RemoteTargetHistory, "remote_targets_history");
