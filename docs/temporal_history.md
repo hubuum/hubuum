@@ -95,6 +95,19 @@ CREATE TRIGGER hubuumclass_history_trg AFTER INSERT OR UPDATE OR DELETE ON hubuu
 - **NULL actor = system OR background task**: When `actor_id` is not set, it defaults to `NULL` in the history row. This covers writes outside any request context (migrations, schema changes), **and also async background workers** (notably imports and other `src/tasks` work) that currently run WITHOUT `with_actor_scope`, even when the task was user-initiated. **Planned future enhancement (Plan 2)**: threading the originating user through task execution so background work can be attributed correctly.
 - **Dynamic table name**: Using `TG_TABLE_NAME`, the function adapts to whichever table it's attached to, avoiding trigger duplication.
 
+### No-Op Updates
+
+For temporal domain tables (`hubuumclass`, `hubuumobject`, `namespaces`,
+`report_templates`, and `remote_targets`), an `UPDATE` whose domain data is
+identical to the existing row is suppressed by a `BEFORE UPDATE` trigger.
+`updated_at` is intentionally excluded from the comparison.
+
+This means `updated_at` records when the persisted data last changed. A repeated
+PATCH/import/update with the same values does not bump `updated_at`, does not
+create a `U` history row, and does not create a new temporal version boundary.
+If callers need to know when someone attempted an unchanged write, that belongs
+in an audit/event stream rather than in the row's temporal state.
+
 ## Actor Capture
 
 ### Ambient Actor Task-Local

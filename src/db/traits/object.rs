@@ -269,10 +269,15 @@ impl UpdateObjectRecord for UpdateHubuumObject {
         use crate::schema::hubuumobject::dsl::{hubuumobject, id};
 
         with_connection(pool, |conn| {
-            diesel::update(hubuumobject)
+            let updated = diesel::update(hubuumobject)
                 .filter(id.eq(object_id))
                 .set(self)
                 .get_result::<HubuumObject>(conn)
+                .optional()?;
+            match updated {
+                Some(object) => Ok(object),
+                None => hubuumobject.filter(id.eq(object_id)).first(conn),
+            }
         })
     }
 }

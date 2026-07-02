@@ -1,8 +1,10 @@
 use crate::db::with_connection;
+use crate::models::{NewHubuumClass, UpdateHubuumClass};
 use crate::tests::TestScope;
+use crate::traits::{CanSave, CanUpdate};
 use chrono::{DateTime, Utc};
 use diesel::prelude::*;
-use diesel::sql_types::{Integer, Text, Timestamptz};
+use diesel::sql_types::{Integer, Text, Timestamp, Timestamptz};
 
 /// Driving INSERT/UPDATE/DELETE on a base table through raw SQL (with the
 /// actor GUC set) must produce I/U/D history rows carrying that actor.
@@ -183,10 +185,78 @@ async fn trigger_timestamp_is_execution_time_not_transaction_start() {
     ns.cleanup().await.unwrap();
 }
 
+/// Idempotent updates to temporal domain rows are not data changes. They must
+/// not bump `updated_at` or add an artificial UPDATE history row.
+#[actix_rt::test]
+async fn unchanged_domain_update_is_noop() {
+    let scope = TestScope::new();
+    let pool = scope.pool.clone();
+    let ns = scope.namespace_fixture("noop_update").await;
+    let cname = format!("noop_update_class_{}", scope.scope_id);
+
+    let class = NewHubuumClass {
+        name: cname,
+        namespace_id: ns.namespace.id,
+        json_schema: None,
+        validate_schema: Some(false),
+        description: "d".into(),
+    }
+    .save(&pool)
+    .await
+    .unwrap();
+    let before_updated_at = class.updated_at;
+
+    with_connection(&pool, |conn| {
+        diesel::sql_query("SELECT pg_sleep(0.02)").execute(conn)
+    })
+    .unwrap();
+
+    let returned = UpdateHubuumClass {
+        name: Some(class.name.clone()),
+        namespace_id: Some(class.namespace_id),
+        json_schema: None,
+        validate_schema: Some(class.validate_schema),
+        description: Some(class.description.clone()),
+    }
+    .update(&pool, class.id)
+    .await
+    .unwrap();
+
+    let (after_updated_at, history_count): (chrono::NaiveDateTime, i64) =
+        with_connection(&pool, |conn| {
+            let after_updated_at =
+                diesel::sql_query("SELECT updated_at AS value FROM hubuumclass WHERE id = $1")
+                    .bind::<Integer, _>(class.id)
+                    .get_result::<SingleNaiveTimestamp>(conn)?
+                    .value;
+            let history_count = {
+                use crate::schema::hubuumclass_history::dsl as h;
+                h::hubuumclass_history
+                    .filter(h::id.eq(class.id))
+                    .count()
+                    .get_result::<i64>(conn)?
+            };
+            Ok::<_, diesel::result::Error>((after_updated_at, history_count))
+        })
+        .unwrap();
+
+    assert_eq!(returned.updated_at, before_updated_at);
+    assert_eq!(after_updated_at, before_updated_at);
+    assert_eq!(history_count, 1);
+
+    ns.cleanup().await.unwrap();
+}
+
 #[derive(QueryableByName)]
 struct SingleTimestamp {
     #[diesel(sql_type = Timestamptz)]
     value: DateTime<Utc>,
+}
+
+#[derive(QueryableByName)]
+struct SingleNaiveTimestamp {
+    #[diesel(sql_type = Timestamp)]
+    value: chrono::NaiveDateTime,
 }
 
 #[derive(QueryableByName)]

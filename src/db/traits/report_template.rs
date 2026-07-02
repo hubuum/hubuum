@@ -83,9 +83,14 @@ impl UpdateReportTemplateRecord for UpdateReportTemplateRow {
         use crate::schema::report_templates::dsl::{id, report_templates};
 
         with_connection(pool, |conn| {
-            diesel::update(report_templates.filter(id.eq(template_id)))
+            let updated = diesel::update(report_templates.filter(id.eq(template_id)))
                 .set(self)
                 .get_result::<ReportTemplateRow>(conn)
+                .optional()?;
+            match updated {
+                Some(template) => Ok(template),
+                None => report_templates.filter(id.eq(template_id)).first(conn),
+            }
         })
     }
 }
