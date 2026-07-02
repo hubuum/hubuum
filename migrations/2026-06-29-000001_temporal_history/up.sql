@@ -46,6 +46,17 @@ BEGIN
   END IF;
 END; $$;
 
+-- Temporal domain rows should only gain a new version when their represented
+-- data changes. This trigger suppresses no-op UPDATEs before updated_at/history
+-- triggers can turn an idempotent write into an artificial version boundary.
+CREATE FUNCTION hubuum_skip_unchanged_temporal_update() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF to_jsonb(OLD) - 'updated_at' = to_jsonb(NEW) - 'updated_at' THEN
+    RETURN NULL;
+  END IF;
+  RETURN NEW;
+END; $$;
+
 -- Create one history twin + sequence + indexes + trigger per in-scope table.
 DO $$
 DECLARE
@@ -79,5 +90,15 @@ BEGIN
        FROM %1$I base',
       t, 'I', t || '_history_seq')
       USING ts;
+  END LOOP;
+
+  FOREACH t IN ARRAY ARRAY[
+    'hubuumclass','hubuumobject','namespaces','report_templates','remote_targets'
+  ]
+  LOOP
+    EXECUTE format(
+      'CREATE TRIGGER %1$I_skip_unchanged_temporal_update_trg
+       BEFORE UPDATE ON %1$I
+       FOR EACH ROW EXECUTE FUNCTION hubuum_skip_unchanged_temporal_update()', t);
   END LOOP;
 END $$;

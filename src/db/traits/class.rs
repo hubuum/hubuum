@@ -233,9 +233,14 @@ impl UpdateClassRecord for UpdateHubuumClass {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
 
         with_connection(pool, |conn| {
-            diesel::update(hubuumclass.filter(id.eq(class_id)))
+            let updated = diesel::update(hubuumclass.filter(id.eq(class_id)))
                 .set(self)
                 .get_result(conn)
+                .optional()?;
+            match updated {
+                Some(class) => Ok(class),
+                None => hubuumclass.filter(id.eq(class_id)).first(conn),
+            }
         })
     }
 

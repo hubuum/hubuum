@@ -142,10 +142,15 @@ impl UpdateNamespaceRecord for UpdateNamespace {
         use crate::schema::namespaces::dsl::{id, namespaces};
 
         with_connection(pool, |conn| {
-            diesel::update(namespaces)
+            let updated = diesel::update(namespaces)
                 .filter(id.eq(namespace_id))
                 .set(self)
                 .get_result::<Namespace>(conn)
+                .optional()?;
+            match updated {
+                Some(namespace) => Ok(namespace),
+                None => namespaces.filter(id.eq(namespace_id)).first(conn),
+            }
         })
     }
 
