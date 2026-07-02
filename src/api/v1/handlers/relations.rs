@@ -360,5 +360,5 @@ async fn delete_object_relation(
 
     relation_id.delete(&pool).await?;
 
-    Ok(JsonResponse::new("{}", StatusCode::NO_CONTENT))
+    Ok(JsonResponse::no_content())
 }
