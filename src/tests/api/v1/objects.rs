@@ -1541,4 +1541,105 @@ mod tests {
         );
         assert_json_structure_filter_query(&context, &prefix, query, expected_names).await;
     }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_api_object_history_list_and_as_of(#[future(awt)] test_context: TestContext) {
+        use crate::traits::CanUpdate;
+
+        let context = test_context;
+        let ns = context.namespace_fixture("object_history_api").await;
+
+        // Create a class and an object.
+        let class = NewHubuumClass {
+            name: "object_history_class".to_string(),
+            description: "class for object history test".to_string(),
+            namespace_id: ns.namespace.id,
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let created = NewHubuumObject {
+            name: "object_history_api".to_string(),
+            description: "v1".to_string(),
+            namespace_id: ns.namespace.id,
+            hubuum_class_id: class.id,
+            data: serde_json::json!({"test": "v1"}),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        // Update to create a second version.
+        UpdateHubuumObject {
+            name: None,
+            namespace_id: None,
+            hubuum_class_id: None,
+            data: None,
+            description: Some("v2".to_string()),
+        }
+        .update(&context.pool, created.id)
+        .await
+        .unwrap();
+
+        // List history newest-first.
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{}/{}/{}/history", OBJECT_ENDPOINT, class.id, created.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let body: Vec<serde_json::Value> = test::read_body_json(resp).await;
+        assert_eq!(body.len(), 2, "expected two versions");
+        assert_eq!(body[0]["op"], "U");
+        assert_eq!(body[0]["description"], "v2");
+        assert_eq!(body[1]["op"], "I");
+        assert!(body[0].get("actor_username").is_some(), "actor_username key present");
+
+        // as-of just after the insert (before the update) -> v1.
+        let v1_from = body[1]["valid_from"].as_str().unwrap().to_string();
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{}/{}/{}/history/as-of?at={}", OBJECT_ENDPOINT, class.id, created.id, &v1_from),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let snap: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(snap["description"], "v1");
+
+        ns.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_api_object_history_404_for_missing(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let ns = context.namespace_fixture("object_history_404").await;
+
+        let class = NewHubuumClass {
+            name: "object_history_404_class".to_string(),
+            description: "class for 404 test".to_string(),
+            namespace_id: ns.namespace.id,
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{}/{}/2147483647/history", OBJECT_ENDPOINT, class.id),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::NOT_FOUND).await;
+
+        ns.cleanup().await.unwrap();
+    }
 }

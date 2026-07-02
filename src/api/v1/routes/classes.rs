@@ -13,6 +13,8 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(classes::get_class_permissions)
         .service(classes::get_object_in_class)
         .service(events::get_object_events)
+        .service(classes::get_object_history)
+        .service(classes::get_object_as_of)
         .service(classes::get_objects_in_class)
         .service(classes::patch_object_in_class)
         .service(classes::delete_object_in_class)
