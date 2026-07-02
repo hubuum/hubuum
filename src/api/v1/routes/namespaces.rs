@@ -5,6 +5,8 @@ pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(namespaces_handlers::get_namespaces)
         .service(namespaces_handlers::create_namespace)
         .service(namespaces_handlers::get_namespace)
+        .service(namespaces_handlers::get_namespace_history)
+        .service(namespaces_handlers::get_namespace_as_of)
         .service(namespaces_handlers::update_namespace)
         .service(namespaces_handlers::delete_namespace)
         .service(namespaces_handlers::get_namespace_permissions)

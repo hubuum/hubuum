@@ -1088,3 +1088,31 @@ fn update_report_template_example() -> UpdateReportTemplate {
         default_limits: None,
     }
 }
+
+#[derive(serde::Serialize, diesel::Queryable, Clone, Debug)]
+#[diesel(table_name = crate::schema::report_templates_history)]
+pub struct ReportTemplateHistory {
+    pub id: i32,
+    pub namespace_id: i32,
+    pub name: String,
+    pub description: String,
+    pub content_type: String,
+    pub template: String,
+    pub kind: String,
+    pub scope_kind: Option<String>,
+    pub class_id: Option<i32>,
+    pub default_query: Option<String>,
+    pub include: Option<serde_json::Value>,
+    pub relation_context: Option<serde_json::Value>,
+    pub default_missing_data_policy: Option<String>,
+    pub default_limits: Option<serde_json::Value>,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+    pub op: String,
+    pub valid_from: chrono::DateTime<chrono::Utc>,
+    pub valid_to: Option<chrono::DateTime<chrono::Utc>>,
+    pub actor_id: Option<i32>,
+    pub history_id: i64,
+}
+
+crate::impl_history_pagination!(ReportTemplateHistory, "report_templates_history");
