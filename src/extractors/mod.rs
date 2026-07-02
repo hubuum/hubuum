@@ -7,11 +7,13 @@ use crate::models::principal::{Principal, load_principal_by_id};
 use crate::models::token::{PrincipalToken, Token};
 use crate::models::user::User;
 
-use actix_web::{FromRequest, HttpRequest, dev::Payload, web::Data};
+use actix_web::{FromRequest, HttpMessage, HttpRequest, dev::Payload, web::Data};
 use diesel::prelude::*;
 use futures_util::future::{self, FutureExt};
 use std::pin::Pin;
 use tracing::debug;
+
+use crate::middlewares::actor_context::ResolvedAuth;
 
 /// The principal-centric authenticated context for resource and task flows.
 ///
@@ -84,6 +86,14 @@ fn pool_from_req(req: &HttpRequest) -> Result<Data<DbPool>, ApiError> {
 /// Build the full authenticated context (accepts scoped tokens).
 async fn build_authenticated(pool: &DbPool, token: Token) -> Result<Authenticated, ApiError> {
     let token_meta = token.is_valid(pool).await?;
+    build_authenticated_from_meta(pool, token, token_meta).await
+}
+
+async fn build_authenticated_from_meta(
+    pool: &DbPool,
+    token: Token,
+    token_meta: PrincipalToken,
+) -> Result<Authenticated, ApiError> {
     let principal = load_principal_by_id(pool, token_meta.principal_id).await?;
     let scopes = if token_meta.scoped {
         Some(load_token_scopes(pool, token_meta.id).await?)
@@ -98,15 +108,26 @@ async fn build_authenticated(pool: &DbPool, token: Token) -> Result<Authenticate
     })
 }
 
+fn resolved_auth(req: &HttpRequest, token: &Token) -> Option<PrincipalToken> {
+    match req.extensions().get::<ResolvedAuth>() {
+        Some(ResolvedAuth::Authenticated {
+            token: resolved_token,
+            token_meta,
+        }) if resolved_token.0 == token.0 => Some(token_meta.clone()),
+        _ => None,
+    }
+}
+
 /// Gate for human/IAM extractors: the token must be valid, **unscoped**, and
 /// owned by a **human** principal. Returns the resolved `User`.
 ///
 /// This is the privilege-separation keystone — it runs before any admin/self
 /// decision, so a service account (even one in the admin group, even with an
 /// unscoped token) can never act through a human/IAM extractor.
-async fn human_unscoped_user(pool: &DbPool, token: &Token) -> Result<User, ApiError> {
-    let token_meta = token.is_valid(pool).await?;
-
+async fn human_unscoped_user_from_meta(
+    pool: &DbPool,
+    token_meta: PrincipalToken,
+) -> Result<User, ApiError> {
     if token_meta.scoped {
         return Err(ApiError::Forbidden(
             "Scoped tokens cannot be used on human/management endpoints".to_string(),
@@ -123,6 +144,11 @@ async fn human_unscoped_user(pool: &DbPool, token: &Token) -> Result<User, ApiEr
     }
 
     user.ok_or_else(|| ApiError::Unauthorized("Invalid token".to_string()))
+}
+
+async fn human_unscoped_user(pool: &DbPool, token: &Token) -> Result<User, ApiError> {
+    let token_meta = token.is_valid(pool).await?;
+    human_unscoped_user_from_meta(pool, token_meta).await
 }
 
 /// Load a principal and, when it is human, its `users` row in one left-joined
@@ -160,10 +186,17 @@ impl FromRequest for Authenticated {
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
         let pool = pool_from_req(req);
         let token_result = extract_token(req);
+        let token_meta = token_result
+            .as_ref()
+            .ok()
+            .and_then(|token| resolved_auth(req, token));
         async move {
             let pool = pool?;
             let token = token_result?;
-            build_authenticated(&pool, token).await
+            match token_meta {
+                Some(token_meta) => build_authenticated_from_meta(&pool, token, token_meta).await,
+                None => build_authenticated(&pool, token).await,
+            }
         }
         .boxed_local()
     }
@@ -176,10 +209,17 @@ impl FromRequest for UserAccess {
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
         let pool = pool_from_req(req);
         let token_result = extract_token(req);
+        let token_meta = token_result
+            .as_ref()
+            .ok()
+            .and_then(|token| resolved_auth(req, token));
         async move {
             let pool = pool?;
             let token = token_result?;
-            let user = human_unscoped_user(&pool, &token).await?;
+            let user = match token_meta {
+                Some(token_meta) => human_unscoped_user_from_meta(&pool, token_meta).await?,
+                None => human_unscoped_user(&pool, &token).await?,
+            };
             Ok(UserAccess { user })
         }
         .boxed_local()
@@ -193,10 +233,17 @@ impl FromRequest for ManagementAccess {
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
         let pool = pool_from_req(req);
         let token_result = extract_token(req);
+        let token_meta = token_result
+            .as_ref()
+            .ok()
+            .and_then(|token| resolved_auth(req, token));
         async move {
             let pool = pool?;
             let token = token_result?;
-            let user = human_unscoped_user(&pool, &token).await?;
+            let user = match token_meta {
+                Some(token_meta) => human_unscoped_user_from_meta(&pool, token_meta).await?,
+                None => human_unscoped_user(&pool, &token).await?,
+            };
             Ok(ManagementAccess { token, user })
         }
         .boxed_local()
@@ -210,10 +257,17 @@ impl FromRequest for AdminAccess {
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
         let pool = pool_from_req(req);
         let token_result = extract_token(req);
+        let token_meta = token_result
+            .as_ref()
+            .ok()
+            .and_then(|token| resolved_auth(req, token));
         async move {
             let pool = pool?;
             let token = token_result?;
-            let user = human_unscoped_user(&pool, &token).await?;
+            let user = match token_meta {
+                Some(token_meta) => human_unscoped_user_from_meta(&pool, token_meta).await?,
+                None => human_unscoped_user(&pool, &token).await?,
+            };
 
             if user.is_admin(&pool).await? {
                 Ok(AdminAccess { token, user })
@@ -232,12 +286,19 @@ impl FromRequest for AdminOrSelfAccess {
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
         let pool = pool_from_req(req);
         let token_result = extract_token(req);
+        let token_meta = token_result
+            .as_ref()
+            .ok()
+            .and_then(|token| resolved_auth(req, token));
         let path_info = req.match_info().clone();
 
         async move {
             let pool = pool?;
             let token = token_result?;
-            let user = human_unscoped_user(&pool, &token).await?;
+            let user = match token_meta {
+                Some(token_meta) => human_unscoped_user_from_meta(&pool, token_meta).await?,
+                None => human_unscoped_user(&pool, &token).await?,
+            };
             let target_id = self_target_id(&path_info)?;
 
             if user.is_admin(&pool).await? || user.id == target_id {

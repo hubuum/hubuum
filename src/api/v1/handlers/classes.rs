@@ -34,6 +34,62 @@ use crate::models::search::{
 };
 use crate::models::traits::class_relation::ToHubuumClasses;
 
+crate::history_db_fns!(
+    class_history_paginated_with_total_count,
+    class_as_of,
+    crate::schema::hubuumclass_history,
+    crate::models::HubuumClassHistory
+);
+
+async fn object_history_paginated_with_total_count(
+    object_id: i32,
+    class_id: i32,
+    pool: &DbPool,
+    query_options: &QueryOptions,
+) -> Result<(Vec<crate::models::HubuumObjectHistory>, i64), ApiError> {
+    use crate::schema::hubuumobject_history::dsl as history;
+    use diesel::prelude::*;
+
+    let total = crate::db::with_connection(pool, |conn| {
+        history::hubuumobject_history
+            .filter(history::id.eq(object_id))
+            .filter(history::hubuum_class_id.eq(class_id))
+            .count()
+            .get_result::<i64>(conn)
+    })?;
+    let mut query = history::hubuumobject_history
+        .into_boxed()
+        .filter(history::id.eq(object_id))
+        .filter(history::hubuum_class_id.eq(class_id));
+    crate::apply_query_options!(query, query_options, crate::models::HubuumObjectHistory);
+    let items = crate::db::with_connection(pool, |conn| {
+        query.load::<crate::models::HubuumObjectHistory>(conn)
+    })?;
+    Ok((items, total))
+}
+
+async fn object_as_of(
+    object_id: i32,
+    class_id: i32,
+    at: chrono::DateTime<chrono::Utc>,
+    pool: &DbPool,
+) -> Result<Option<crate::models::HubuumObjectHistory>, ApiError> {
+    use crate::schema::hubuumobject_history::dsl as history;
+    use diesel::prelude::*;
+
+    crate::db::with_connection(pool, |conn| {
+        history::hubuumobject_history
+            .into_boxed()
+            .filter(history::id.eq(object_id))
+            .filter(history::hubuum_class_id.eq(class_id))
+            .filter(history::valid_from.le(at))
+            .filter(history::valid_to.is_null().or(history::valid_to.gt(at)))
+            .order(history::history_id.desc())
+            .first::<crate::models::HubuumObjectHistory>(conn)
+            .optional()
+    })
+}
+
 fn object_with_root_path(object: &HubuumObject) -> HubuumObjectWithPath {
     HubuumObjectWithPath {
         id: object.id,
@@ -1460,5 +1516,275 @@ async fn create_object_relation(
             to_object.id()
         )
         .as_str(),
+    ))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/classes/{class_id}/history",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(("class_id" = i32, Path, description = "Class ID")),
+    responses(
+        (status = 200, description = "Class history", body = [crate::api::v1::handlers::history::HistoryResponse<crate::models::HubuumClassHistory>]),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 404, description = "Class not found", body = ApiErrorResponse)
+    )
+)]
+#[get("/{class_id}/history")]
+async fn get_class_history(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+    class_id: web::Path<HubuumClassID>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    use crate::api::v1::handlers::history::{
+        HistoryResponse, can_read_deleted_history, resolve_actor_usernames,
+    };
+
+    let user = &requestor.principal;
+    let class_id = class_id.into_inner();
+    let (entity_id, require_history) = match class_id.instance(&pool).await {
+        Ok(instance) => {
+            can!(
+                &pool,
+                user,
+                requestor.scopes(),
+                [Permissions::ReadClass],
+                instance
+            );
+            (instance.id, false)
+        }
+        Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
+            (class_id.id(), true)
+        }
+        Err(err) => return Err(err),
+    };
+
+    let params = parse_query_parameter(req.query_string())?;
+    let search_params = prepare_db_pagination::<crate::models::HubuumClassHistory>(&params)?;
+    let (rows, total_count) =
+        class_history_paginated_with_total_count(entity_id, &pool, &search_params).await?;
+    if require_history && total_count == 0 {
+        return Err(ApiError::NotFound(format!("class {entity_id} not found")));
+    }
+
+    let actor_ids = rows.iter().filter_map(|r| r.actor_id).collect();
+    let actor_map = resolve_actor_usernames(&pool, actor_ids).await?;
+
+    paginated_json_mapped_response(rows, total_count, StatusCode::OK, &params, move |rows| {
+        rows.into_iter()
+            .map(|row| {
+                let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
+                HistoryResponse {
+                    entry: row,
+                    actor_username,
+                }
+            })
+            .collect()
+    })
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/classes/{class_id}/history/as-of",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Class ID"),
+        ("at" = String, Query, description = "RFC3339 timestamp")
+    ),
+    responses(
+        (status = 200, description = "Class version at timestamp", body = crate::api::v1::handlers::history::HistoryResponse<crate::models::HubuumClassHistory>),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 404, description = "Class or version not found", body = ApiErrorResponse)
+    )
+)]
+#[get("/{class_id}/history/as-of")]
+async fn get_class_as_of(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+    class_id: web::Path<HubuumClassID>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    use crate::api::v1::handlers::history::{
+        HistoryResponse, can_read_deleted_history, parse_as_of, resolve_actor_usernames,
+    };
+
+    let user = &requestor.principal;
+    let class_id = class_id.into_inner();
+    let entity_id = match class_id.instance(&pool).await {
+        Ok(instance) => {
+            can!(
+                &pool,
+                user,
+                requestor.scopes(),
+                [Permissions::ReadClass],
+                instance
+            );
+            instance.id
+        }
+        Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
+            class_id.id()
+        }
+        Err(err) => return Err(err),
+    };
+
+    let at = parse_as_of(req.query_string())?;
+    let row = class_as_of(entity_id, at, &pool)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("no version of class {entity_id} at {at}")))?;
+
+    let actor_map = resolve_actor_usernames(&pool, row.actor_id.into_iter().collect()).await?;
+    let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
+    Ok(json_response(
+        HistoryResponse {
+            entry: row,
+            actor_username,
+        },
+        StatusCode::OK,
+    ))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/classes/{class_id}/{object_id}/history",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Class ID"),
+        ("object_id" = i32, Path, description = "Object ID")
+    ),
+    responses(
+        (status = 200, description = "Object history", body = [crate::api::v1::handlers::history::HistoryResponse<crate::models::HubuumObjectHistory>]),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 404, description = "Class or object not found", body = ApiErrorResponse)
+    )
+)]
+#[get("/{class_id}/{object_id}/history")]
+async fn get_object_history(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+    paths: web::Path<(HubuumClassID, HubuumObjectID)>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    use crate::api::v1::handlers::history::{
+        HistoryResponse, can_read_deleted_history, resolve_actor_usernames,
+    };
+
+    let user = &requestor.principal;
+    let (class_id, object_id) = paths.into_inner();
+
+    let (entity_id, require_history) =
+        match check_if_object_in_class(&pool, &class_id, &object_id).await {
+            Ok(()) => {
+                let object = object_id.instance(&pool).await?;
+                can!(
+                    &pool,
+                    user,
+                    requestor.scopes(),
+                    [Permissions::ReadObject],
+                    object
+                );
+                (object.id, false)
+            }
+            Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
+                (object_id.id(), true)
+            }
+            Err(err) => return Err(err),
+        };
+
+    let params = parse_query_parameter(req.query_string())?;
+    let search_params = prepare_db_pagination::<crate::models::HubuumObjectHistory>(&params)?;
+    let (rows, total_count) =
+        object_history_paginated_with_total_count(entity_id, class_id.id(), &pool, &search_params)
+            .await?;
+    if require_history && total_count == 0 {
+        return Err(ApiError::NotFound(format!("object {entity_id} not found")));
+    }
+
+    let actor_ids = rows.iter().filter_map(|r| r.actor_id).collect();
+    let actor_map = resolve_actor_usernames(&pool, actor_ids).await?;
+
+    paginated_json_mapped_response(rows, total_count, StatusCode::OK, &params, move |rows| {
+        rows.into_iter()
+            .map(|row| {
+                let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
+                HistoryResponse {
+                    entry: row,
+                    actor_username,
+                }
+            })
+            .collect()
+    })
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/classes/{class_id}/{object_id}/history/as-of",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Class ID"),
+        ("object_id" = i32, Path, description = "Object ID"),
+        ("at" = String, Query, description = "RFC3339 timestamp")
+    ),
+    responses(
+        (status = 200, description = "Object version at timestamp", body = crate::api::v1::handlers::history::HistoryResponse<crate::models::HubuumObjectHistory>),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 404, description = "Class, object, or version not found", body = ApiErrorResponse)
+    )
+)]
+#[get("/{class_id}/{object_id}/history/as-of")]
+async fn get_object_as_of(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+    paths: web::Path<(HubuumClassID, HubuumObjectID)>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    use crate::api::v1::handlers::history::{
+        HistoryResponse, can_read_deleted_history, parse_as_of, resolve_actor_usernames,
+    };
+
+    let user = &requestor.principal;
+    let (class_id, object_id) = paths.into_inner();
+
+    let entity_id = match check_if_object_in_class(&pool, &class_id, &object_id).await {
+        Ok(()) => {
+            let object = object_id.instance(&pool).await?;
+            can!(
+                &pool,
+                user,
+                requestor.scopes(),
+                [Permissions::ReadObject],
+                object
+            );
+            object.id
+        }
+        Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
+            object_id.id()
+        }
+        Err(err) => return Err(err),
+    };
+
+    let at = parse_as_of(req.query_string())?;
+    let row = object_as_of(entity_id, class_id.id(), at, &pool)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("no version of object {entity_id} at {at}")))?;
+
+    let actor_map = resolve_actor_usernames(&pool, row.actor_id.into_iter().collect()).await?;
+    let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
+    Ok(json_response(
+        HistoryResponse {
+            entry: row,
+            actor_username,
+        },
+        StatusCode::OK,
     ))
 }

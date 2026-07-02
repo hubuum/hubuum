@@ -705,4 +705,286 @@ pub mod tests {
 
         cleanup(&created_classes).await;
     }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_api_create_records_actor(#[future(awt)] test_context: TestContext) {
+        use crate::db::with_connection;
+        use diesel::prelude::*;
+
+        let context = test_context;
+        let ns = context.namespace_fixture("actor_history").await;
+
+        let new_class = NewHubuumClass {
+            name: format!("{}_class", ns.namespace.name),
+            description: "d".to_string(),
+            namespace_id: ns.namespace.id,
+            json_schema: None,
+            validate_schema: Some(false),
+        };
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            CLASSES_ENDPOINT,
+            &new_class,
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let created: HubuumClassExpanded = test::read_body_json(resp).await;
+
+        // The user behind admin_token, resolved straight from the tokens table.
+        let token_hash = crate::models::token::Token::storage_hash_from_raw(&context.admin_token);
+        let expected_actor: i32 = with_connection(&context.pool, |conn| {
+            use crate::schema::tokens::dsl as t;
+            t::tokens
+                .filter(t::token.eq(&token_hash))
+                .select(t::principal_id)
+                .first::<i32>(conn)
+        })
+        .unwrap();
+
+        let actor: Option<i32> = with_connection(&context.pool, |conn| {
+            use crate::schema::hubuumclass_history::dsl as h;
+            h::hubuumclass_history
+                .filter(h::id.eq(created.id))
+                .order(h::history_id.desc())
+                .select(h::actor_id)
+                .first::<Option<i32>>(conn)
+        })
+        .unwrap();
+
+        assert_eq!(
+            actor,
+            Some(expected_actor),
+            "history must attribute the create to the requestor"
+        );
+        ns.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_api_class_history_list_and_as_of(#[future(awt)] test_context: TestContext) {
+        use crate::models::UpdateHubuumClass;
+        use crate::traits::{CanSave, CanUpdate};
+
+        let context = test_context;
+        let ns = context.namespace_fixture("class_history_api").await;
+
+        // Create then update so there are two versions.
+        let created = NewHubuumClass {
+            name: "class_history_api".to_string(),
+            description: "v1".to_string(),
+            namespace_id: ns.namespace.id,
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+        UpdateHubuumClass {
+            name: None,
+            namespace_id: None,
+            json_schema: None,
+            validate_schema: None,
+            description: Some("v2".to_string()),
+        }
+        .update(&context.pool, created.id)
+        .await
+        .unwrap();
+
+        // List history newest-first.
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{}/{}/history", CLASSES_ENDPOINT, created.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let body: Vec<serde_json::Value> = test::read_body_json(resp).await;
+        assert_eq!(body.len(), 2, "expected two versions");
+        assert_eq!(body[0]["op"], "U");
+        assert_eq!(body[0]["description"], "v2");
+        assert_eq!(body[1]["op"], "I");
+        assert!(
+            body[0].get("actor_username").is_some(),
+            "actor_username key present"
+        );
+
+        // as-of just after the insert (before the update) -> v1.
+        let v1_from = body[1]["valid_from"].as_str().unwrap().to_string();
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{}/{}/history/as-of?at={}",
+                CLASSES_ENDPOINT, created.id, &v1_from
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let snap: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(snap["description"], "v1");
+
+        ns.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_api_class_history_404_for_missing(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{}/2147483647/history", CLASSES_ENDPOINT),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::NOT_FOUND).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_admin_can_read_deleted_class_history(#[future(awt)] test_context: TestContext) {
+        use crate::traits::{CanDelete, CanSave};
+
+        let context = test_context;
+        let ns = context.namespace_fixture("deleted_class_history").await;
+        let class = NewHubuumClass {
+            name: "deleted_class_history".to_string(),
+            description: "v1".to_string(),
+            namespace_id: ns.namespace.id,
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+        let class_id = class.id;
+        class.delete(&context.pool).await.unwrap();
+
+        let normal_resp = get_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("{}/{}/history", CLASSES_ENDPOINT, class_id),
+        )
+        .await;
+        assert_response_status(normal_resp, StatusCode::NOT_FOUND).await;
+
+        let admin_resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{}/{}/history", CLASSES_ENDPOINT, class_id),
+        )
+        .await;
+        let admin_resp = assert_response_status(admin_resp, StatusCode::OK).await;
+        let body: Vec<serde_json::Value> = test::read_body_json(admin_resp).await;
+
+        assert_eq!(body.len(), 2);
+        assert_eq!(body[0]["op"], "D");
+        assert_eq!(body[1]["op"], "I");
+
+        ns.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_api_class_history_cursor_pagination(#[future(awt)] test_context: TestContext) {
+        use crate::models::UpdateHubuumClass;
+        use crate::traits::{CanSave, CanUpdate};
+
+        let context = test_context;
+        let ns = context.namespace_fixture("class_history_cursor").await;
+
+        // Create then update TWICE to have three history rows (I, U, U).
+        let created = NewHubuumClass {
+            name: "class_history_cursor".to_string(),
+            description: "v1".to_string(),
+            namespace_id: ns.namespace.id,
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+
+        UpdateHubuumClass {
+            name: None,
+            namespace_id: None,
+            json_schema: None,
+            validate_schema: None,
+            description: Some("v2".to_string()),
+        }
+        .update(&context.pool, created.id)
+        .await
+        .unwrap();
+
+        UpdateHubuumClass {
+            name: None,
+            namespace_id: None,
+            json_schema: None,
+            validate_schema: None,
+            description: Some("v3".to_string()),
+        }
+        .update(&context.pool, created.id)
+        .await
+        .unwrap();
+
+        // Page 1: limit=2, should get the two newest versions (v3, v2), newest-first.
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{}/{}/history?limit=2", CLASSES_ENDPOINT, created.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+
+        let total_count =
+            header_value(&resp, TOTAL_COUNT_HEADER).and_then(|value| value.parse::<i64>().ok());
+        assert_eq!(total_count, Some(3), "total version count should be 3");
+
+        let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
+        assert!(next_cursor.is_some(), "page 1 should have a next cursor");
+
+        let page1: Vec<serde_json::Value> = test::read_body_json(resp).await;
+        assert_eq!(page1.len(), 2, "page 1 should have 2 items");
+        assert_eq!(page1[0]["description"], "v3", "first item should be v3");
+        assert_eq!(page1[1]["description"], "v2", "second item should be v2");
+
+        // Page 2: use the cursor to get the third (oldest) version (v1).
+        let cursor = next_cursor.unwrap();
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{}/{}/history?limit=2&cursor={}",
+                CLASSES_ENDPOINT, created.id, cursor
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+
+        let next_cursor_page2 = header_value(&resp, NEXT_CURSOR_HEADER);
+        assert!(
+            next_cursor_page2.is_none(),
+            "page 2 (last page) should not have a next cursor"
+        );
+
+        let page2: Vec<serde_json::Value> = test::read_body_json(resp).await;
+        assert_eq!(page2.len(), 1, "page 2 should have 1 item");
+        assert_eq!(page2[0]["description"], "v1", "third item should be v1");
+        assert_eq!(page2[0]["op"], "I", "oldest version should be an insert");
+
+        // Verify no overlap: the history_id or valid_from must differ.
+        let page1_history_ids: Vec<i64> = page1
+            .iter()
+            .map(|v| v["history_id"].as_i64().unwrap())
+            .collect();
+        let page2_history_id = page2[0]["history_id"].as_i64().unwrap();
+        assert!(
+            !page1_history_ids.contains(&page2_history_id),
+            "page 2 history_id should not appear in page 1"
+        );
+
+        ns.cleanup().await.unwrap();
+    }
 }

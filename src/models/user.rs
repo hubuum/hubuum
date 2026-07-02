@@ -33,6 +33,7 @@ pub struct User {
     pub email: Option<String>,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+    pub anonymized_at: Option<chrono::NaiveDateTime>,
 }
 
 /// Public representation of a user, including the name resolved from the

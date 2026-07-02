@@ -1,30 +1,33 @@
 use crate::api::handlers::{auth, meta, probes};
+use crate::api::v1::handlers::history::HistoryResponse;
 use crate::api::v1::handlers::{
     classes, groups, imports, me, namespaces, principals, relations, remote_targets, reports,
     search, service_accounts, tasks, templates, users,
 };
 use crate::models::{
     ClassKey, Group, GroupKey, GroupPermission, HubuumClass, HubuumClassExpanded,
-    HubuumClassRelation, HubuumClassWithPath, HubuumObject, HubuumObjectRelation,
-    HubuumObjectWithPath, ImportAtomicity, ImportClassInput, ImportClassRelationInput,
-    ImportCollisionPolicy, ImportGraph, ImportMode, ImportNamespaceInput,
-    ImportNamespacePermissionInput, ImportObjectInput, ImportObjectRelationInput,
-    ImportPermissionPolicy, ImportRequest, ImportTaskDetails, ImportTaskResultResponse, LoginUser,
-    Namespace, NamespaceKey, NewGroup, NewHubuumClass, NewHubuumClassRelation,
-    NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation,
-    NewNamespaceWithAssignee, NewRemoteTarget, NewReportTemplate, NewServiceAccount, NewUser,
-    ObjectKey, ObjectsByClass, Permission, Permissions, PrincipalMemberResponse, PrincipalToken,
-    PrincipalTokenMetadata, RelatedClassGraph, RelatedObjectGraph, RemoteAuthConfig,
-    RemoteCallResult, RemoteHttpMethod, RemoteInvocationBodyOverride, RemoteInvocationParameters,
-    RemoteInvocationSubject, RemoteTarget, RemoteTargetID, RemoteTargetInvokeRequest,
+    HubuumClassHistory, HubuumClassRelation, HubuumClassWithPath, HubuumObject,
+    HubuumObjectHistory, HubuumObjectRelation, HubuumObjectWithPath, ImportAtomicity,
+    ImportClassInput, ImportClassRelationInput, ImportCollisionPolicy, ImportGraph, ImportMode,
+    ImportNamespaceInput, ImportNamespacePermissionInput, ImportObjectInput,
+    ImportObjectRelationInput, ImportPermissionPolicy, ImportRequest, ImportTaskDetails,
+    ImportTaskResultResponse, LoginUser, Namespace, NamespaceHistory, NamespaceKey, NewGroup,
+    NewHubuumClass, NewHubuumClassRelation, NewHubuumClassRelationFromClass, NewHubuumObject,
+    NewHubuumObjectRelation, NewNamespaceWithAssignee, NewRemoteTarget, NewReportTemplate,
+    NewServiceAccount, NewUser, ObjectKey, ObjectsByClass, Permission, Permissions,
+    PrincipalMemberResponse, PrincipalToken, PrincipalTokenMetadata, RelatedClassGraph,
+    RelatedObjectGraph, RemoteAuthConfig, RemoteCallResult, RemoteHttpMethod,
+    RemoteInvocationBodyOverride, RemoteInvocationParameters, RemoteInvocationSubject,
+    RemoteTarget, RemoteTargetHistory, RemoteTargetID, RemoteTargetInvokeRequest,
     RemoteTargetSubjectType, ReportContentType, ReportJsonResponse, ReportLimits, ReportMeta,
     ReportMissingDataPolicy, ReportRequest, ReportScope, ReportScopeKind, ReportTaskDetails,
-    ReportTemplate, ReportTemplateID, ReportTemplateKind, ReportTemplateRunRequest, ReportWarning,
-    ServiceAccountResponse, TaskDetails, TaskEventResponse, TaskKind, TaskLinks, TaskProgress,
-    TaskResponse, TaskStatus, UnifiedSearchBatchResponse, UnifiedSearchDoneEvent,
-    UnifiedSearchErrorEvent, UnifiedSearchKind, UnifiedSearchResponse, UnifiedSearchStartedEvent,
-    UpdateGroup, UpdateHubuumClass, UpdateHubuumObject, UpdateNamespace, UpdateRemoteTarget,
-    UpdateReportTemplate, UpdateServiceAccount, UpdateUser, UserResponse,
+    ReportTemplate, ReportTemplateHistory, ReportTemplateID, ReportTemplateKind,
+    ReportTemplateRunRequest, ReportWarning, ServiceAccountResponse, TaskDetails,
+    TaskEventResponse, TaskKind, TaskLinks, TaskProgress, TaskResponse, TaskStatus,
+    UnifiedSearchBatchResponse, UnifiedSearchDoneEvent, UnifiedSearchErrorEvent, UnifiedSearchKind,
+    UnifiedSearchResponse, UnifiedSearchStartedEvent, UpdateGroup, UpdateHubuumClass,
+    UpdateHubuumObject, UpdateNamespace, UpdateRemoteTarget, UpdateReportTemplate,
+    UpdateServiceAccount, UpdateUser, UserResponse,
 };
 use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER, page_limits_or_defaults};
 use actix_web::{HttpResponse, Responder};
@@ -64,6 +67,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         users::get_user,
         users::update_user,
         users::delete_user,
+        users::anonymize_user,
         groups::get_groups,
         groups::create_group,
         groups::get_group,
@@ -90,6 +94,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
         namespaces::get_namespaces,
         namespaces::create_namespace,
         namespaces::get_namespace,
+        namespaces::get_namespace_history,
+        namespaces::get_namespace_as_of,
         namespaces::update_namespace,
         namespaces::delete_namespace,
         namespaces::get_namespace_permissions,
@@ -124,18 +130,24 @@ use utoipa::{Modify, OpenApi, ToSchema};
         templates::get_templates,
         templates::create_template,
         templates::get_template,
+        templates::get_template_history,
+        templates::get_template_as_of,
         templates::run_template_report,
         templates::patch_template,
         templates::delete_template,
         remote_targets::get_remote_targets,
         remote_targets::create_remote_target,
         remote_targets::get_remote_target,
+        remote_targets::get_remote_target_history,
+        remote_targets::get_remote_target_as_of,
         remote_targets::patch_remote_target,
         remote_targets::delete_remote_target,
         remote_targets::invoke_remote_target,
         classes::get_classes,
         classes::create_class,
         classes::get_class,
+        classes::get_class_history,
+        classes::get_class_as_of,
         classes::update_class,
         classes::delete_class,
         classes::get_class_permissions,
@@ -147,6 +159,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
         classes::get_objects_in_class,
         classes::create_object_in_class,
         classes::get_object_in_class,
+        classes::get_object_history,
+        classes::get_object_as_of,
         classes::patch_object_in_class,
         classes::delete_object_in_class,
         classes::get_related_objects,
@@ -197,6 +211,12 @@ use utoipa::{Modify, OpenApi, ToSchema};
             Permission,
             GroupPermission,
             HubuumClass,
+            HubuumClassHistory,
+            HistoryResponse<HubuumClassHistory>,
+            HistoryResponse<HubuumObjectHistory>,
+            HistoryResponse<NamespaceHistory>,
+            HistoryResponse<ReportTemplateHistory>,
+            HistoryResponse<RemoteTargetHistory>,
             HubuumClassExpanded,
             HubuumClassWithPath,
             NewHubuumClass,
@@ -205,6 +225,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             NewHubuumClassRelation,
             NewHubuumClassRelationFromClass,
             HubuumObject,
+            HubuumObjectHistory,
             NewHubuumObject,
             UpdateHubuumObject,
             HubuumObjectWithPath,
@@ -227,6 +248,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             ImportPermissionPolicy,
             ImportMode,
             NamespaceKey,
+            NamespaceHistory,
             GroupKey,
             ClassKey,
             ObjectKey,
@@ -256,6 +278,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             ReportTemplateID,
             ReportTemplateKind,
             ReportTemplate,
+            ReportTemplateHistory,
             ReportTemplateRunRequest,
             NewReportTemplate,
             UpdateReportTemplate,
@@ -263,6 +286,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             RemoteHttpMethod,
             RemoteAuthConfig,
             RemoteTarget,
+            RemoteTargetHistory,
             NewRemoteTarget,
             UpdateRemoteTarget,
             RemoteTargetSubjectType,
@@ -425,18 +449,23 @@ fn is_cursor_paginated_get(path: &str, method: &str) -> bool {
                 | "/api/v1/iam/groups"
                 | "/api/v1/iam/groups/{group_id}/members"
                 | "/api/v1/namespaces"
+                | "/api/v1/namespaces/{namespace_id}/history"
                 | "/api/v1/namespaces/{namespace_id}/permissions"
                 | "/api/v1/namespaces/{namespace_id}/permissions/principal/{principal_id}"
                 | "/api/v1/namespaces/{namespace_id}/has_permissions/{permission}"
                 | "/api/v1/tasks"
                 | "/api/v1/templates"
+                | "/api/v1/templates/{template_id}/history"
+                | "/api/v1/remote-targets/{remote_target_id}/history"
                 | "/api/v1/relations/classes"
                 | "/api/v1/relations/objects"
                 | "/api/v1/classes"
+                | "/api/v1/classes/{class_id}/history"
                 | "/api/v1/classes/{class_id}/permissions"
                 | "/api/v1/classes/{class_id}/related/classes"
                 | "/api/v1/classes/{class_id}/related/relations"
                 | "/api/v1/classes/{class_id}/"
+                | "/api/v1/classes/{class_id}/{object_id}/history"
                 | "/api/v1/classes/{class_id}/objects/{object_id}/related/objects"
                 | "/api/v1/classes/{class_id}/objects/{object_id}/related/relations"
         )
@@ -731,6 +760,7 @@ mod tests {
             "/api/v0/meta/login-rate-limit/{id}",
             "/api/v1/iam/users",
             "/api/v1/iam/users/{user_id}",
+            "/api/v1/iam/users/{user_id}/anonymize",
             "/api/v1/iam/groups",
             "/api/v1/iam/groups/{group_id}",
             "/api/v1/iam/groups/{group_id}/members",
@@ -748,6 +778,8 @@ mod tests {
             "/api/v1/iam/principals/{principal_id}/permissions",
             "/api/v1/namespaces",
             "/api/v1/namespaces/{namespace_id}",
+            "/api/v1/namespaces/{namespace_id}/history",
+            "/api/v1/namespaces/{namespace_id}/history/as-of",
             "/api/v1/namespaces/{namespace_id}/permissions",
             "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}",
             "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}/{permission}",
@@ -766,8 +798,12 @@ mod tests {
             "/api/v1/tasks/{task_id}/events",
             "/api/v1/templates",
             "/api/v1/templates/{template_id}",
+            "/api/v1/templates/{template_id}/history",
+            "/api/v1/templates/{template_id}/history/as-of",
             "/api/v1/templates/{template_id}/reports",
             "/api/v1/remote-targets",
+            "/api/v1/remote-targets/{remote_target_id}/history",
+            "/api/v1/remote-targets/{remote_target_id}/history/as-of",
             "/api/v1/remote-targets/{target_id}",
             "/api/v1/remote-targets/{target_id}/invoke",
             "/api/v1/relations/classes",
@@ -776,6 +812,8 @@ mod tests {
             "/api/v1/relations/objects/{relation_id}",
             "/api/v1/classes",
             "/api/v1/classes/{class_id}",
+            "/api/v1/classes/{class_id}/history",
+            "/api/v1/classes/{class_id}/history/as-of",
             "/api/v1/classes/{class_id}/permissions",
             "/api/v1/classes/{class_id}/related/classes",
             "/api/v1/classes/{class_id}/related/relations",
@@ -784,6 +822,8 @@ mod tests {
             "/api/v1/classes/{class_id}/relations/{relation_id}",
             "/api/v1/classes/{class_id}/",
             "/api/v1/classes/{class_id}/{object_id}",
+            "/api/v1/classes/{class_id}/{object_id}/history",
+            "/api/v1/classes/{class_id}/{object_id}/history/as-of",
             "/api/v1/classes/{class_id}/objects/{object_id}/related/objects",
             "/api/v1/classes/{class_id}/objects/{object_id}/related/relations",
             "/api/v1/classes/{class_id}/objects/{object_id}/related/graph",

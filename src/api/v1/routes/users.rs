@@ -6,5 +6,6 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(users::get_users)
         .service(users::get_user)
         .service(users::update_user)
-        .service(users::delete_user);
+        .service(users::delete_user)
+        .service(users::anonymize_user);
 }

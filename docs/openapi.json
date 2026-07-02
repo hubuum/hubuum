@@ -1199,6 +1199,207 @@
         ]
       }
     },
+    "/api/v1/classes/{class_id}/history": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get Api V1 Classes By Class Id History",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/history. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1ClassesByClassIdHistory",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Class history The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HistoryResponse_HubuumClassHistory"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/history/as-of": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get Api V1 Classes By Class Id History As Of",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/history/as-of.",
+        "operationId": "getApiV1ClassesByClassIdHistoryAsOf",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "at",
+            "in": "query",
+            "description": "RFC3339 timestamp",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Class version at timestamp",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryResponse_HubuumClassHistory"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class or version not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/classes/{class_id}/objects/{object_id}/related/graph": {
       "get": {
         "tags": [
@@ -2567,6 +2768,227 @@
           },
           "404": {
             "description": "Object not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/{object_id}/history": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get Api V1 Classes By Class Id By Object Id History",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/{object_id}/history. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1ClassesByClassIdByObjectIdHistory",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "object_id",
+            "in": "path",
+            "description": "Object ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object history The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HistoryResponse_HubuumObjectHistory"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class or object not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/{object_id}/history/as-of": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get Api V1 Classes By Class Id By Object Id History As Of",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/{object_id}/history/as-of.",
+        "operationId": "getApiV1ClassesByClassIdByObjectIdHistoryAsOf",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "object_id",
+            "in": "path",
+            "description": "Object ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "at",
+            "in": "query",
+            "description": "RFC3339 timestamp",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object version at timestamp",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryResponse_HubuumObjectHistory"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class, object, or version not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -4632,6 +5054,68 @@
         ]
       }
     },
+    "/api/v1/iam/users/{user_id}/anonymize": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Post Api V1 Iam Users By User Id Anonymize",
+        "description": "Auto-generated documentation for POST /api/v1/iam/users/{user_id}/anonymize.",
+        "operationId": "postApiV1IamUsersByUserIdAnonymize",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "User ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "User anonymized"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/imports": {
       "post": {
         "tags": [
@@ -5280,6 +5764,207 @@
           },
           "404": {
             "description": "Namespace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace_id}/history": {
+      "get": {
+        "tags": [
+          "namespaces"
+        ],
+        "summary": "Get Api V1 Namespaces By Namespace Id History",
+        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/history. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1NamespacesByNamespaceIdHistory",
+        "parameters": [
+          {
+            "name": "namespace_id",
+            "in": "path",
+            "description": "Namespace ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Namespace history The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HistoryResponse_NamespaceHistory"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Namespace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace_id}/history/as-of": {
+      "get": {
+        "tags": [
+          "namespaces"
+        ],
+        "summary": "Get Api V1 Namespaces By Namespace Id History As Of",
+        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/history/as-of.",
+        "operationId": "getApiV1NamespacesByNamespaceIdHistoryAsOf",
+        "parameters": [
+          {
+            "name": "namespace_id",
+            "in": "path",
+            "description": "Namespace ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "at",
+            "in": "query",
+            "description": "RFC3339 timestamp",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Namespace version at timestamp",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryResponse_NamespaceHistory"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Namespace or version not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -6649,6 +7334,207 @@
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/remote-targets/{remote_target_id}/history": {
+      "get": {
+        "tags": [
+          "remote-targets"
+        ],
+        "summary": "Get Api V1 Remote Targets By Remote Target Id History",
+        "description": "Auto-generated documentation for GET /api/v1/remote-targets/{remote_target_id}/history. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1RemoteTargetsByRemoteTargetIdHistory",
+        "parameters": [
+          {
+            "name": "remote_target_id",
+            "in": "path",
+            "description": "Remote target ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Remote target history The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HistoryResponse_RemoteTargetHistory"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Remote target not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/remote-targets/{remote_target_id}/history/as-of": {
+      "get": {
+        "tags": [
+          "remote-targets"
+        ],
+        "summary": "Get Api V1 Remote Targets By Remote Target Id History As Of",
+        "description": "Auto-generated documentation for GET /api/v1/remote-targets/{remote_target_id}/history/as-of.",
+        "operationId": "getApiV1RemoteTargetsByRemoteTargetIdHistoryAsOf",
+        "parameters": [
+          {
+            "name": "remote_target_id",
+            "in": "path",
+            "description": "Remote target ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "at",
+            "in": "query",
+            "description": "RFC3339 timestamp",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Remote target version at timestamp",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryResponse_RemoteTargetHistory"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Remote target or version not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -8104,6 +8990,207 @@
         ]
       }
     },
+    "/api/v1/templates/{template_id}/history": {
+      "get": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "Get Api V1 Templates By Template Id History",
+        "description": "Auto-generated documentation for GET /api/v1/templates/{template_id}/history. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1TemplatesByTemplateIdHistory",
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Template ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Template history The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HistoryResponse_ReportTemplateHistory"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Template not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/templates/{template_id}/history/as-of": {
+      "get": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "Get Api V1 Templates By Template Id History As Of",
+        "description": "Auto-generated documentation for GET /api/v1/templates/{template_id}/history/as-of.",
+        "operationId": "getApiV1TemplatesByTemplateIdHistoryAsOf",
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Template ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "at",
+            "in": "query",
+            "description": "RFC3339 timestamp",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Template version at timestamp",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryResponse_ReportTemplateHistory"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Template or version not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/templates/{template_id}/reports": {
       "post": {
         "tags": [
@@ -8539,6 +9626,484 @@
           }
         }
       },
+      "HistoryResponse_HubuumClassHistory": {
+        "allOf": [
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "namespace_id",
+              "validate_schema",
+              "description",
+              "created_at",
+              "updated_at",
+              "op",
+              "valid_from",
+              "history_id"
+            ],
+            "properties": {
+              "actor_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32"
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "description": {
+                "type": "string"
+              },
+              "history_id": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "id": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "json_schema": {},
+              "name": {
+                "type": "string"
+              },
+              "namespace_id": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "op": {
+                "type": "string"
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "valid_from": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "valid_to": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "validate_schema": {
+                "type": "boolean"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "actor_username": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A serialized history row plus the resolved username of its actor (if any)."
+      },
+      "HistoryResponse_HubuumObjectHistory": {
+        "allOf": [
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "namespace_id",
+              "hubuum_class_id",
+              "data",
+              "description",
+              "created_at",
+              "updated_at",
+              "op",
+              "valid_from",
+              "history_id"
+            ],
+            "properties": {
+              "actor_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32"
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "data": {},
+              "description": {
+                "type": "string"
+              },
+              "history_id": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "hubuum_class_id": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "id": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "name": {
+                "type": "string"
+              },
+              "namespace_id": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "op": {
+                "type": "string"
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "valid_from": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "valid_to": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "actor_username": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A serialized history row plus the resolved username of its actor (if any)."
+      },
+      "HistoryResponse_NamespaceHistory": {
+        "allOf": [
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "description",
+              "created_at",
+              "updated_at",
+              "op",
+              "valid_from",
+              "history_id"
+            ],
+            "properties": {
+              "actor_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32"
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "description": {
+                "type": "string"
+              },
+              "history_id": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "id": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "name": {
+                "type": "string"
+              },
+              "op": {
+                "type": "string"
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "valid_from": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "valid_to": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "actor_username": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A serialized history row plus the resolved username of its actor (if any)."
+      },
+      "HistoryResponse_RemoteTargetHistory": {
+        "allOf": [
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "namespace_id",
+              "name",
+              "description",
+              "method",
+              "url_template",
+              "headers_template",
+              "auth_config",
+              "allowed_subject_types",
+              "timeout_ms",
+              "enabled",
+              "created_at",
+              "updated_at",
+              "op",
+              "valid_from",
+              "history_id"
+            ],
+            "properties": {
+              "actor_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32"
+              },
+              "allowed_subject_types": {},
+              "auth_config": {},
+              "body_template": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "class_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32"
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "description": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "headers_template": {},
+              "history_id": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "id": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "method": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "namespace_id": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "op": {
+                "type": "string"
+              },
+              "timeout_ms": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "url_template": {
+                "type": "string"
+              },
+              "valid_from": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "valid_to": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "actor_username": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A serialized history row plus the resolved username of its actor (if any)."
+      },
+      "HistoryResponse_ReportTemplateHistory": {
+        "allOf": [
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "namespace_id",
+              "name",
+              "description",
+              "content_type",
+              "template",
+              "kind",
+              "created_at",
+              "updated_at",
+              "op",
+              "valid_from",
+              "history_id"
+            ],
+            "properties": {
+              "actor_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32"
+              },
+              "class_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32"
+              },
+              "content_type": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "default_limits": {},
+              "default_missing_data_policy": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "default_query": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "description": {
+                "type": "string"
+              },
+              "history_id": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "id": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "include": {},
+              "kind": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "namespace_id": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "op": {
+                "type": "string"
+              },
+              "relation_context": {},
+              "scope_kind": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "template": {
+                "type": "string"
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "valid_from": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "valid_to": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "actor_username": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A serialized history row plus the resolved username of its actor (if any)."
+      },
       "HubuumClass": {
         "type": "object",
         "required": [
@@ -8611,6 +10176,74 @@
           },
           "updated_at": {
             "type": "string",
+            "format": "date-time"
+          },
+          "validate_schema": {
+            "type": "boolean"
+          }
+        }
+      },
+      "HubuumClassHistory": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "namespace_id",
+          "validate_schema",
+          "description",
+          "created_at",
+          "updated_at",
+          "op",
+          "valid_from",
+          "history_id"
+        ],
+        "properties": {
+          "actor_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "history_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "json_schema": {},
+          "name": {
+            "type": "string"
+          },
+          "namespace_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "op": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "valid_from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "valid_to": {
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "date-time"
           },
           "validate_schema": {
@@ -8758,6 +10391,76 @@
           },
           "updated_at": {
             "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "HubuumObjectHistory": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "namespace_id",
+          "hubuum_class_id",
+          "data",
+          "description",
+          "created_at",
+          "updated_at",
+          "op",
+          "valid_from",
+          "history_id"
+        ],
+        "properties": {
+          "actor_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "data": {},
+          "description": {
+            "type": "string"
+          },
+          "history_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "hubuum_class_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          },
+          "namespace_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "op": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "valid_from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "valid_to": {
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "date-time"
           }
         }
@@ -9544,6 +11247,64 @@
           },
           "updated_at": {
             "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "NamespaceHistory": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "created_at",
+          "updated_at",
+          "op",
+          "valid_from",
+          "history_id"
+        ],
+        "properties": {
+          "actor_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "history_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          },
+          "op": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "valid_from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "valid_to": {
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "date-time"
           }
         }
@@ -10845,6 +12606,105 @@
           }
         }
       },
+      "RemoteTargetHistory": {
+        "type": "object",
+        "required": [
+          "id",
+          "namespace_id",
+          "name",
+          "description",
+          "method",
+          "url_template",
+          "headers_template",
+          "auth_config",
+          "allowed_subject_types",
+          "timeout_ms",
+          "enabled",
+          "created_at",
+          "updated_at",
+          "op",
+          "valid_from",
+          "history_id"
+        ],
+        "properties": {
+          "actor_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "allowed_subject_types": {},
+          "auth_config": {},
+          "body_template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "class_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "headers_template": {},
+          "history_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "method": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "namespace_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "op": {
+            "type": "string"
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "url_template": {
+            "type": "string"
+          },
+          "valid_from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "valid_to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
       "RemoteTargetID": {
         "type": "integer",
         "format": "int32",
@@ -11393,6 +13253,109 @@
           "scope_kind": "objects_in_class",
           "template": "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}",
           "updated_at": "2026-03-06T12:00:00"
+        }
+      },
+      "ReportTemplateHistory": {
+        "type": "object",
+        "required": [
+          "id",
+          "namespace_id",
+          "name",
+          "description",
+          "content_type",
+          "template",
+          "kind",
+          "created_at",
+          "updated_at",
+          "op",
+          "valid_from",
+          "history_id"
+        ],
+        "properties": {
+          "actor_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "class_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "content_type": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "default_limits": {},
+          "default_missing_data_policy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "default_query": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "history_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "include": {},
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "namespace_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "op": {
+            "type": "string"
+          },
+          "relation_context": {},
+          "scope_kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "template": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "valid_from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "valid_to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
         }
       },
       "ReportTemplateID": {

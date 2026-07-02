@@ -28,6 +28,13 @@ use crate::utilities::response::{
     json_response, json_response_created, json_response_with_header, paginated_json_response,
 };
 
+crate::history_db_fns!(
+    remote_target_history_paginated_with_total_count,
+    remote_target_as_of,
+    crate::schema::remote_targets_history,
+    crate::models::RemoteTargetHistory
+);
+
 #[utoipa::path(
     post,
     path = "/api/v1/remote-targets",
@@ -402,4 +409,141 @@ fn max_active_remote_call_tasks_per_user() -> usize {
     get_config()
         .map(|config| config.remote_call_max_active_tasks_per_user)
         .unwrap_or(DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER)
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/remote-targets/{remote_target_id}/history",
+    tag = "remote-targets",
+    security(("bearer_auth" = [])),
+    params(("remote_target_id" = i32, Path, description = "Remote target ID")),
+    responses(
+        (status = 200, description = "Remote target history", body = [crate::api::v1::handlers::history::HistoryResponse<crate::models::RemoteTargetHistory>]),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 404, description = "Remote target not found", body = ApiErrorResponse)
+    )
+)]
+#[get("/{remote_target_id}/history")]
+pub async fn get_remote_target_history(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+    remote_target_id: web::Path<RemoteTargetID>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    use crate::api::v1::handlers::history::{
+        HistoryResponse, can_read_deleted_history, resolve_actor_usernames,
+    };
+    use crate::models::search::parse_query_parameter;
+    use crate::pagination::prepare_db_pagination;
+    use crate::utilities::response::paginated_json_mapped_response;
+
+    let user = &requestor.principal;
+    let remote_target_id = remote_target_id.into_inner();
+    let (entity_id, require_history) = match remote_target_id.instance(&pool).await {
+        Ok(instance) => {
+            can!(
+                &pool,
+                user,
+                requestor.scopes(),
+                [Permissions::ReadRemoteTarget],
+                NamespaceID::new(instance.namespace_id)?
+            );
+            (instance.id, false)
+        }
+        Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
+            (remote_target_id.id(), true)
+        }
+        Err(err) => return Err(err),
+    };
+
+    let params = parse_query_parameter(req.query_string())?;
+    let search_params = prepare_db_pagination::<crate::models::RemoteTargetHistory>(&params)?;
+    let (rows, total_count) =
+        remote_target_history_paginated_with_total_count(entity_id, &pool, &search_params).await?;
+    if require_history && total_count == 0 {
+        return Err(ApiError::NotFound(format!(
+            "remote target {entity_id} not found"
+        )));
+    }
+
+    let actor_ids = rows.iter().filter_map(|r| r.actor_id).collect();
+    let actor_map = resolve_actor_usernames(&pool, actor_ids).await?;
+
+    paginated_json_mapped_response(rows, total_count, StatusCode::OK, &params, move |rows| {
+        rows.into_iter()
+            .map(|row| {
+                let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
+                HistoryResponse {
+                    entry: row,
+                    actor_username,
+                }
+            })
+            .collect()
+    })
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/remote-targets/{remote_target_id}/history/as-of",
+    tag = "remote-targets",
+    security(("bearer_auth" = [])),
+    params(
+        ("remote_target_id" = i32, Path, description = "Remote target ID"),
+        ("at" = String, Query, description = "RFC3339 timestamp")
+    ),
+    responses(
+        (status = 200, description = "Remote target version at timestamp", body = crate::api::v1::handlers::history::HistoryResponse<crate::models::RemoteTargetHistory>),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 404, description = "Remote target or version not found", body = ApiErrorResponse)
+    )
+)]
+#[get("/{remote_target_id}/history/as-of")]
+pub async fn get_remote_target_as_of(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+    remote_target_id: web::Path<RemoteTargetID>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    use crate::api::v1::handlers::history::{
+        HistoryResponse, can_read_deleted_history, parse_as_of, resolve_actor_usernames,
+    };
+
+    let user = &requestor.principal;
+    let remote_target_id = remote_target_id.into_inner();
+    let entity_id = match remote_target_id.instance(&pool).await {
+        Ok(instance) => {
+            can!(
+                &pool,
+                user,
+                requestor.scopes(),
+                [Permissions::ReadRemoteTarget],
+                NamespaceID::new(instance.namespace_id)?
+            );
+            instance.id
+        }
+        Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
+            remote_target_id.id()
+        }
+        Err(err) => return Err(err),
+    };
+
+    let at = parse_as_of(req.query_string())?;
+    let row = remote_target_as_of(entity_id, at, &pool)
+        .await?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("no version of remote target {entity_id} at {at}"))
+        })?;
+
+    let actor_map = resolve_actor_usernames(&pool, row.actor_id.into_iter().collect()).await?;
+    let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
+    Ok(json_response(
+        HistoryResponse {
+            entry: row,
+            actor_username,
+        },
+        StatusCode::OK,
+    ))
 }

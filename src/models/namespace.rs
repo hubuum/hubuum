@@ -340,6 +340,23 @@ where
     namespace_backend::group_on_from_backend(backend.db_pool(), nid, gid).await
 }
 
+#[derive(serde::Serialize, diesel::Queryable, Clone, Debug, ToSchema)]
+#[diesel(table_name = crate::schema::namespaces_history)]
+pub struct NamespaceHistory {
+    pub id: i32,
+    pub name: String,
+    pub description: String,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+    pub op: String,
+    pub valid_from: chrono::DateTime<chrono::Utc>,
+    pub valid_to: Option<chrono::DateTime<chrono::Utc>>,
+    pub actor_id: Option<i32>,
+    pub history_id: i64,
+}
+
+crate::impl_history_pagination!(NamespaceHistory, "namespaces_history");
+
 #[cfg(test)]
 mod tests {
     use std::vec;
