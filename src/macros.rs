@@ -64,7 +64,7 @@ where
 ///
 /// ### Example
 ///
-/// ```ignore
+/// ```text
 /// use hubuum::can;
 /// // `scopes` is `Option<&[Permissions]>` — e.g. `requestor.scopes()` or `None`.
 /// can!(pool, subject, scopes, [Permissions::ReadCollection], namespace, class, object);
@@ -587,12 +587,17 @@ macro_rules! bind_transitive_filter_params {
 ///
 /// ### Example
 ///
-/// ```ignore
+/// ```
+/// use hubuum::int_id_newtype;
+///
 /// int_id_newtype! {
 ///     /// Identifier for a namespace.
 ///     pub struct NamespaceID;
 ///     noun = "namespace id";
 /// }
+///
+/// assert_eq!(NamespaceID::new(42).unwrap().id(), 42);
+/// assert!(NamespaceID::new(0).is_err());
 /// ```
 #[macro_export]
 macro_rules! int_id_newtype {

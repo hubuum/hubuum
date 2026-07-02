@@ -201,7 +201,7 @@ pub trait PermissionFilter<'a, Q> {
     ///
     /// ## Example
     ///
-    /// ```ignore
+    /// ```text
     /// use crate::models::Permissions;
     /// use crate::models::PermissionFilter;
     /// use crate::schema::permissions::dsl::{permissions, group_id, namespace_id};

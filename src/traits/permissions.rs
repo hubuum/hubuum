@@ -22,14 +22,14 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// If this is called on a *ID, a full class is created to extract
     /// the namespace_id. To avoid creating the class multiple times during use
     /// do this:
-    /// ```ignore
+    /// ```text
     /// class = class_id.class(backend).await?;
     /// if (class.user_can(backend, subject, Permissions::ReadClass, scopes).await?) {
     ///     return Ok(class);
     /// }
     /// ```
     /// And not this:
-    /// ```ignore
+    /// ```text
     /// if (class_id.user_can(backend, subject, Permissions::ReadClass, scopes).await?) {
     ///    return Ok(class_id.class(backend).await?);
     /// }
@@ -51,7 +51,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     ///
     /// ## Example
     ///
-    /// ```ignore
+    /// ```text
     /// if (hubuum_class_or_classid.user_can(backend, subject, Permissions::ReadClass, scopes).await?) {
     ///     // Do something
     /// }
@@ -82,7 +82,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// If this is called on a *ID, a full class is created to extract
     /// the namespace_id. To avoid creating the class multiple times during use
     /// do this:
-    /// ```ignore
+    /// ```text
     /// permissions = vec![Permissions::ReadClass, Permissions::UpdateClass];
     /// class = class_id.class(backend).await?;
     /// if (class.user_can_all(backend, subject, permissions, scopes).await?) {
@@ -90,7 +90,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// }
     /// ```
     /// And not this:
-    /// ```ignore
+    /// ```text
     /// permissions = vec![Permissions::ReadClass, Permissions::UpdateClass];
     /// if (class_id.user_can_all(backend, subject, permissions, scopes).await?) {
     ///    return Ok(class_id.class(backend).await?);
@@ -113,7 +113,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     ///
     /// ## Example
     ///
-    /// ```ignore
+    /// ```text
     /// if (hubuum_class_or_classid.user_can_all(backend, subject, permissions, scopes).await?) {
     ///     // Do something
     /// }
