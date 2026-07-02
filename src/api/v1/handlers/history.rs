@@ -10,8 +10,10 @@ use diesel::prelude::*;
 use serde::Serialize;
 use utoipa::ToSchema;
 
+use crate::db::traits::authz::AuthzSubject;
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
+use crate::extractors::Authenticated;
 
 /// A serialized history row plus the resolved username of its actor (if any).
 #[derive(Serialize, ToSchema)]
@@ -19,6 +21,19 @@ pub struct HistoryResponse<T: Serialize + ToSchema> {
     #[serde(flatten)]
     pub entry: T,
     pub actor_username: Option<String>,
+}
+
+/// Deleted resources have no live row to authorize against. Only unscoped
+/// admins may use the history endpoints as a compliance/audit surface for
+/// those tombstones; ordinary callers must pass the normal live-resource check.
+pub async fn can_read_deleted_history(
+    pool: &DbPool,
+    requestor: &Authenticated,
+) -> Result<bool, ApiError> {
+    if requestor.scopes().is_some() {
+        return Ok(false);
+    }
+    requestor.principal.is_admin(pool).await
 }
 
 /// Parse the required `at=<rfc3339>` query parameter for the as-of endpoint.

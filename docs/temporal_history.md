@@ -25,7 +25,7 @@ Each history row is a **full-row snapshot** with the following columns:
   - `'I'` - INSERT
   - `'U'` - UPDATE
   - `'D'` - DELETE
-- **`valid_from` (timestamptz)**: When this version became active. Uses `transaction_timestamp()` for precision.
+- **`valid_from` (timestamptz)**: When this version became active. Uses `clock_timestamp()` so long transactions record the trigger execution time.
 - **`valid_to` (timestamptz, nullable)**: When this version expired. NULL indicates the row is the current open version.
 - **`actor_id` (int, nullable)**: The user who performed the mutation. NULL when recorded outside a request scope (e.g., migrations, background work).
 - **`history_id` (bigint, PK)**: Surrogate primary key for the history row itself, auto-incremented per table.
@@ -55,23 +55,23 @@ CREATE FUNCTION hubuum_record_history() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
   hist  text        := quote_ident(TG_TABLE_NAME || '_history');
   seq   text        := quote_literal(TG_TABLE_NAME || '_history_seq');
-  ts    timestamptz := transaction_timestamp();
+  ts    timestamptz := clock_timestamp();
   actor int         := nullif(current_setting('hubuum.actor_id', true), '')::int;
 BEGIN
   IF TG_OP = 'INSERT' THEN
-    EXECUTE format('INSERT INTO %s SELECT ($1).*, %L, $2, NULL, $3, nextval(%s)', hist, 'I', seq)
+    EXECUTE format('INSERT INTO %s (<base columns>, op, valid_from, valid_to, actor_id, history_id) SELECT <base values>, %L, $2, NULL, $3, nextval(%s)', hist, 'I', seq)
       USING NEW, ts, actor;
     RETURN NEW;
   ELSIF TG_OP = 'UPDATE' THEN
     EXECUTE format('UPDATE %s SET valid_to=$1 WHERE id=$2 AND valid_to IS NULL', hist)
       USING ts, OLD.id;
-    EXECUTE format('INSERT INTO %s SELECT ($1).*, %L, $2, NULL, $3, nextval(%s)', hist, 'U', seq)
+    EXECUTE format('INSERT INTO %s (<base columns>, op, valid_from, valid_to, actor_id, history_id) SELECT <base values>, %L, $2, NULL, $3, nextval(%s)', hist, 'U', seq)
       USING NEW, ts, actor;
     RETURN NEW;
   ELSE  -- DELETE
     EXECUTE format('UPDATE %s SET valid_to=$1 WHERE id=$2 AND valid_to IS NULL', hist)
       USING ts, OLD.id;
-    EXECUTE format('INSERT INTO %s SELECT ($1).*, %L, $2, $2, $3, nextval(%s)', hist, 'D', seq)
+    EXECUTE format('INSERT INTO %s (<base columns>, op, valid_from, valid_to, actor_id, history_id) SELECT <base values>, %L, $2, $2, $3, nextval(%s)', hist, 'D', seq)
       USING OLD, ts, actor;
     RETURN OLD;
   END IF;
@@ -152,7 +152,7 @@ pub async fn actor_context(
 ) -> Result<ServiceResponse<BoxBody>, Error> {
     let resolved = resolve_auth(&req).await;
     let actor = match &resolved {
-        ResolvedAuth::Authenticated { user, .. } => Some(user.id),
+        ResolvedAuth::Authenticated { token_meta, .. } => Some(token_meta.principal_id),
         _ => None,
     };
     req.extensions_mut().insert(resolved);
@@ -163,8 +163,8 @@ pub async fn actor_context(
 
 ### Execution Flow
 
-1. **Request arrives** → middleware resolves the bearer token to a `User`.
-2. **Actor scope established** → `with_actor_scope(Some(user.id), ...)` wraps the request handler.
+1. **Request arrives** → middleware resolves the bearer token to a principal token.
+2. **Actor scope established** → `with_actor_scope(Some(token_meta.principal_id), ...)` wraps the request handler.
 3. **Handler executes** → any `with_connection()` or `with_transaction()` call inside reads the ambient actor.
 4. **SET LOCAL applied** → at the start of the database operation, `SET LOCAL hubuum.actor_id` is executed.
 5. **Trigger fires** → the history trigger reads `current_setting('hubuum.actor_id')` and records it.
@@ -222,7 +222,7 @@ END $$;
 ### The Anonymization Contract
 
 User PII (personally identifiable information) is **intentionally not versioned**. The `users` table does not have a history twin. This means:
-- Old usernames, emails, and password hashes are **never recorded** in a history table.
+- Old principal names, proper names, emails, and password hashes are **never recorded** in a history table.
 - When a user is anonymized, their old PII leaves no persistent trace.
 
 This achieves **pseudonymization** under GDPR Article 4(5): once a user is anonymized, history rows still reference them by a numeric actor ID, which is now divorced from any personal identity.
@@ -233,28 +233,38 @@ Located in `src/utilities/iam.rs`:
 
 ```rust
 pub async fn anonymize_user(pool: &DbPool, target_id: i32) -> Result<(), ApiError> {
+    use crate::schema::principals::dsl as p;
     use crate::schema::tokens::dsl as t;
     use crate::schema::users::dsl as u;
 
-    with_transaction(pool, |conn| -> Result<(), diesel::result::Error> {
+    with_transaction(pool, |conn| -> Result<(), ApiError> {
         diesel::update(u::users.filter(u::id.eq(target_id)))
             .set((
-                u::username.eq(format!("anonymized-{target_id}")),
+                u::proper_name.eq::<Option<String>>(None),
                 u::email.eq::<Option<String>>(None),
                 u::password.eq(ANONYMIZED_PASSWORD),  // "!anonymized-no-login"
                 u::anonymized_at.eq(diesel::dsl::now),
             ))
             .execute(conn)?;
-        diesel::delete(t::tokens.filter(t::user_id.eq(target_id))).execute(conn)?;
+        diesel::update(p::principals.filter(p::id.eq(target_id)))
+            .set(p::name.eq(format!("anonymized-{target_id}")))
+            .execute(conn)?;
+        diesel::update(
+            t::tokens
+                .filter(t::principal_id.eq(target_id))
+                .filter(t::revoked_at.is_null()),
+        )
+        .set(t::revoked_at.eq(diesel::dsl::now))
+        .execute(conn)?;
         Ok(())
     })
 }
 ```
 
 This function:
-1. **Tombstones PII**: Sets `username` to a placeholder, clears `email`, and sets `password` to a sentinel string that fails all authentication checks.
+1. **Tombstones PII**: Clears `proper_name` and `email`, renames the principal to `anonymized-{id}`, and sets `password` to a sentinel string that fails all authentication checks.
 2. **Stamps anonymization time**: Sets `anonymized_at` to the current timestamp.
-3. **Revokes tokens**: Deletes all bearer tokens for the user, forcing them to log out.
+3. **Revokes tokens**: Soft-revokes bearer tokens by setting `revoked_at`, forcing the user to log out while retaining token audit rows.
 4. **Executes atomically**: All three updates happen in a single transaction.
 
 ### The Anonymization Endpoint
@@ -338,9 +348,9 @@ WHERE table_schema = 'public' AND table_name LIKE '%_history'
 
 ### Actor Pseudonymization
 
-- `actor_id` is a **plain integer**, not a foreign key to the `users` table.
+- `actor_id` is a **plain integer**, not a foreign key to the `principals` or `users` table.
 - No PostgreSQL constraint links history rows to the users table.
-- Once a user is anonymized, their `actor_id` in history becomes a meaningless number.
+- Once a user is anonymized, their `actor_id` in history becomes a meaningless pseudonymous number.
 - This is **not** the same as deleting the user row; the user record persists (for token validation, session management) but is pseudonymous.
 
 ## History Read API
@@ -442,7 +452,7 @@ History read access mirrors the base resource's Read permission:
 - **Remote Targets**: Requires `Permissions::ReadRemoteTarget` on the remote target's parent namespace
 
 **Deleted Entity Handling:**
-If an entity has been deleted from the base table, both history endpoints return **404 Not Found**. Deleted-entity history auditing is not exposed through the API (but remains queryable at the database level for compliance purposes).
+If an entity has been deleted from the base table, normal callers receive **404 Not Found** because there is no live row to authorize against. Unscoped admins may still read the deleted entity's history and delete tombstone through the same history endpoints for compliance/audit purposes.
 
 **Known Limitation — Cross-Namespace History:**
 Because permission is checked against the entity's CURRENT namespace, and an entity's `namespace_id` can change over time, the returned history may include versions (and the `namespace_id`) from when the entity lived in a different namespace. This means the history is visible to anyone who can read the entity's current namespace, even if those historical versions reflect a time when the entity was in a different namespace. This is an accepted limitation of the current permission model.

@@ -6,12 +6,16 @@ use actix_web::{Error, HttpMessage};
 
 use crate::db::traits::Status;
 use crate::db::{DbPool, with_actor_scope};
-use crate::models::token::Token;
+use crate::models::token::{PrincipalToken, Token};
 
 /// Outcome of resolving the bearer token once per request. Stored in request
 /// extensions and consumed by the auth extractors so they never re-query.
-enum ResolvedAuth {
-    Authenticated { actor_id: i32 },
+#[derive(Clone)]
+pub(crate) enum ResolvedAuth {
+    Authenticated {
+        token: Token,
+        token_meta: PrincipalToken,
+    },
     Missing,
     Invalid,
 }
@@ -31,9 +35,7 @@ async fn resolve_auth(req: &ServiceRequest) -> ResolvedAuth {
         None => return ResolvedAuth::Invalid,
     };
     match token.is_valid(&pool).await {
-        Ok(token_meta) => ResolvedAuth::Authenticated {
-            actor_id: token_meta.principal_id,
-        },
+        Ok(token_meta) => ResolvedAuth::Authenticated { token, token_meta },
         Err(_) => ResolvedAuth::Invalid,
     }
 }
@@ -47,7 +49,7 @@ pub async fn actor_context(
 ) -> Result<ServiceResponse<BoxBody>, Error> {
     let resolved = resolve_auth(&req).await;
     let actor = match &resolved {
-        ResolvedAuth::Authenticated { actor_id, .. } => Some(*actor_id),
+        ResolvedAuth::Authenticated { token_meta, .. } => Some(token_meta.principal_id),
         _ => None,
     };
     req.extensions_mut().insert(resolved);
