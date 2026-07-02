@@ -32,17 +32,14 @@ pub fn hash_password(password: &str) -> Result<String, Box<dyn std::error::Error
 ///
 /// ## Example
 ///
-/// ```ignore
-/// use crate::utilities::auth::verify_password;
+/// ```
+/// use hubuum::utilities::auth::{hash_password, verify_password};
 ///
-/// let pwcheck = verify_password(plaintext_password, hashed_password);
+/// let hashed_password = hash_password("correct horse battery staple").unwrap();
 ///
-/// if pwcheck.is_ok() {
-///    println!("Password is valid!");
-/// } else {
-///   println!("Password is invalid!");
-/// }
-///```
+/// assert!(verify_password("correct horse battery staple", &hashed_password).unwrap());
+/// assert!(!verify_password("wrong password", &hashed_password).unwrap());
+/// ```
 pub fn verify_password(password: &str, hash: &str) -> Result<bool, argon2::Error> {
     let parsed_hash_result = PasswordHash::new(hash);
 
