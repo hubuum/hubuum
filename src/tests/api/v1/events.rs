@@ -138,6 +138,68 @@ mod tests {
     }
 
     #[actix_web::test]
+    async fn test_entity_events_endpoint_applies_route_entity_filter() {
+        let context = TestContext::new().await;
+        let namespace = context.namespace_fixture("audit_entity_route").await;
+
+        let group = create_test_group(&context.pool).await;
+        group
+            .add_member_without_events(&context.pool, &context.normal_user)
+            .await
+            .unwrap();
+        namespace
+            .namespace
+            .grant_without_events(
+                &context.pool,
+                group.id,
+                PermissionsList::new([Permissions::ReadAudit]),
+            )
+            .await
+            .unwrap();
+
+        let matching_event = emit_test_event(
+            &context.pool,
+            &NewEvent::new(
+                EntityType::Namespace,
+                Action::Created,
+                ActorKind::System,
+                "namespace route audit test",
+            )
+            .unwrap()
+            .with_namespace_id(namespace.namespace.id)
+            .with_entity_id(namespace.namespace.id)
+            .with_entity_name(&namespace.namespace.name),
+        );
+        let other_event = emit_test_event(
+            &context.pool,
+            &NewEvent::new(
+                EntityType::Object,
+                Action::Created,
+                ActorKind::System,
+                "object should not appear in namespace route",
+            )
+            .unwrap()
+            .with_namespace_id(namespace.namespace.id)
+            .with_entity_id(namespace.namespace.id)
+            .with_entity_name("not-the-namespace"),
+        );
+
+        let endpoint = format!("/api/v1/namespaces/{}/events", namespace.namespace.id);
+        let resp = get_request(&context.pool, &context.normal_token, &endpoint).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let rows: Vec<EventResponse> = test::read_body_json(resp).await;
+        assert!(rows.iter().any(|row| row.id == matching_event.id));
+        assert!(!rows.iter().any(|row| row.id == other_event.id));
+
+        let endpoint = format!(
+            "/api/v1/namespaces/{}/events?entity_type=object",
+            namespace.namespace.id
+        );
+        let resp = get_request(&context.pool, &context.normal_token, &endpoint).await;
+        assert_response_status(resp, StatusCode::BAD_REQUEST).await;
+    }
+
+    #[actix_web::test]
     async fn test_events_endpoint_includes_related_namespace_events() {
         let context = TestContext::new().await;
         let namespaces = context.namespace_fixtures("audit_related", 2).await;

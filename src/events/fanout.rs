@@ -17,6 +17,7 @@ use crate::errors::ApiError;
 use crate::models::EventWorkerWakeupStats;
 
 static EVENT_FANOUT_WORKER: Once = Once::new();
+static EVENT_FANOUT_LISTENER: Once = Once::new();
 static EVENT_FANOUT_NOTIFY: OnceLock<Notify> = OnceLock::new();
 static EVENT_FANOUT_NOTIFICATIONS_SENT: AtomicU64 = AtomicU64::new(0);
 static EVENT_FANOUT_NOTIFICATION_WAKEUPS: AtomicU64 = AtomicU64::new(0);
@@ -24,6 +25,10 @@ static EVENT_FANOUT_POLL_WAKEUPS: AtomicU64 = AtomicU64::new(0);
 
 fn get_event_fanout_notify() -> &'static Notify {
     EVENT_FANOUT_NOTIFY.get_or_init(Notify::new)
+}
+
+fn wake_event_fanout_worker_from_postgres() {
+    get_event_fanout_notify().notify_one();
 }
 
 fn configured_event_fanout_worker_count() -> usize {
@@ -110,8 +115,24 @@ fn spawn_event_fanout_worker_loop(
 
 pub fn ensure_event_fanout_worker_running(pool: DbPool) {
     let worker_count = configured_event_fanout_worker_count();
+    if worker_count == 0 {
+        return;
+    }
+
     let poll_interval = configured_event_fanout_poll_interval();
     let settings = configured_event_fanout_settings();
+
+    EVENT_FANOUT_LISTENER.call_once({
+        let pool = pool.clone();
+        move || {
+            super::pg_notify::spawn_postgres_notification_listener(
+                pool,
+                super::pg_notify::EVENT_FANOUT_CHANNEL,
+                "event-fanout-pg-listener",
+                wake_event_fanout_worker_from_postgres,
+            );
+        }
+    });
 
     EVENT_FANOUT_WORKER.call_once(move || {
         info!(

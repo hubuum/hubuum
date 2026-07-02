@@ -23,6 +23,7 @@ use crate::events::sink::{DefaultSinkResolver, EventEnvelope, SinkResolver};
 use crate::models::{EventSink, EventSubscription, EventWorkerWakeupStats};
 
 static EVENT_DELIVERY_WORKER: Once = Once::new();
+static EVENT_DELIVERY_LISTENER: Once = Once::new();
 static EVENT_DELIVERY_NOTIFY: OnceLock<Notify> = OnceLock::new();
 static EVENT_DELIVERY_NOTIFICATIONS_SENT: AtomicU64 = AtomicU64::new(0);
 static EVENT_DELIVERY_NOTIFICATION_WAKEUPS: AtomicU64 = AtomicU64::new(0);
@@ -32,6 +33,10 @@ static DEFAULT_SINK_RESOLVER: std::sync::LazyLock<DefaultSinkResolver> =
 
 fn get_event_delivery_notify() -> &'static Notify {
     EVENT_DELIVERY_NOTIFY.get_or_init(Notify::new)
+}
+
+fn wake_event_delivery_worker_from_postgres() {
+    get_event_delivery_notify().notify_one();
 }
 
 fn configured_event_delivery_worker_count() -> usize {
@@ -214,6 +219,18 @@ pub fn ensure_event_delivery_worker_running(pool: DbPool) {
 
     let poll_interval = configured_event_delivery_poll_interval();
     let settings = configured_event_delivery_settings();
+
+    EVENT_DELIVERY_LISTENER.call_once({
+        let pool = pool.clone();
+        move || {
+            super::pg_notify::spawn_postgres_notification_listener(
+                pool,
+                super::pg_notify::EVENT_DELIVERY_CHANNEL,
+                "event-delivery-pg-listener",
+                wake_event_delivery_worker_from_postgres,
+            );
+        }
+    });
 
     EVENT_DELIVERY_WORKER.call_once(move || {
         info!(

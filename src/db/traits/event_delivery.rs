@@ -378,24 +378,27 @@ pub async fn release_event_delivery_for_retry(
         claim_token, event_deliveries, id, last_error, locked_until, next_attempt_at, status,
     };
 
-    with_connection(pool, |conn| {
-        diesel::update(
-            event_deliveries
-                .filter(id.eq(delivery_id.id()))
-                .filter(status.eq_any([
+    with_connection(
+        pool,
+        |conn| -> Result<EventDelivery, diesel::result::Error> {
+            let delivery = diesel::update(event_deliveries.filter(id.eq(delivery_id.id())).filter(
+                status.eq_any([
                     EventDeliveryStatus::Failed.as_str(),
                     EventDeliveryStatus::Dead.as_str(),
-                ])),
-        )
-        .set((
-            status.eq(EventDeliveryStatus::Pending.as_str()),
-            next_attempt_at.eq(Utc::now().naive_utc()),
-            locked_until.eq::<Option<chrono::NaiveDateTime>>(None),
-            claim_token.eq::<Option<Uuid>>(None),
-            last_error.eq::<Option<String>>(None),
-        ))
-        .get_result::<EventDelivery>(conn)
-    })
+                ]),
+            ))
+            .set((
+                status.eq(EventDeliveryStatus::Pending.as_str()),
+                next_attempt_at.eq(Utc::now().naive_utc()),
+                locked_until.eq::<Option<chrono::NaiveDateTime>>(None),
+                claim_token.eq::<Option<Uuid>>(None),
+                last_error.eq::<Option<String>>(None),
+            ))
+            .get_result::<EventDelivery>(conn)?;
+            crate::events::notify_event_delivery(conn)?;
+            Ok(delivery)
+        },
+    )
 }
 
 pub async fn mark_event_delivery_dead(

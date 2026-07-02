@@ -52,6 +52,24 @@ Task lifecycle history is also stored in `events`. User-facing task reads
 should usually use `GET /api/v1/tasks/{task_id}/events`, which applies the task
 authorization model and returns task-focused history.
 
+Convenience audit routes are available for common resources. These routes are
+thin wrappers around `GET /api/v1/events`, apply the same `ReadAudit` scoping,
+and accept the same pagination, actor, action, namespace, and time filters:
+
+```http
+GET /api/v1/namespaces/12/events
+GET /api/v1/classes/34/events
+GET /api/v1/classes/34/56/events
+GET /api/v1/iam/users/78/events
+GET /api/v1/iam/groups/90/events
+GET /api/v1/templates/11/events
+GET /api/v1/remote-targets/22/events
+```
+
+Use the generic endpoint for relation, permission, token, sink, and
+subscription events where the useful identity is often in event metadata rather
+than a single resource path.
+
 ## Sinks And Subscriptions
 
 External delivery is configured in two layers:
@@ -364,6 +382,11 @@ zero once operators are ready for external transport delivery.
 `HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS` must be less than
 `HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS`; this prevents a delivery attempt from
 running past its claim window and racing with a retry worker.
+
+Workers use PostgreSQL `LISTEN`/`NOTIFY` for low-latency wakeups across
+processes and fall back to the configured poll intervals for eventual progress.
+Event writes notify the fan-out channel only after commit, and fan-out notifies
+delivery workers when it creates delivery rows.
 
 ## Operational Health
 
