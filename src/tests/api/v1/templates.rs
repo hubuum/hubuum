@@ -1167,7 +1167,7 @@ mod tests {
             content_type: crate::models::ReportContentType::TextPlain,
             template: "content".to_string(),
             kind: crate::models::ReportTemplateKind::Report,
-            scope_kind: None,
+            scope_kind: Some(crate::models::ReportScopeKind::Namespaces),
             class_id: None,
             default_query: None,
             include: None,
