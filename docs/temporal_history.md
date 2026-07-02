@@ -341,21 +341,120 @@ WHERE table_schema = 'public' AND table_name LIKE '%_history'
 - Once a user is anonymized, their `actor_id` in history becomes a meaningless number.
 - This is **not** the same as deleting the user row; the user record persists (for token validation, session management) but is pseudonymous.
 
-## Future Work
+## History Read API
 
-### Plan 2: Read Access to History
+The temporal history system now exposes read-only access to historical versions through two endpoints per resource:
 
-Time-travel queries and version listing are **deferred to a future release**. The foundation is in place:
-- All tables are versioned with `valid_from/valid_to` for temporal queries.
-- The `actor_id` is recorded for change attribution.
-- The infrastructure to filter by timestamp or list versions across time is not yet implemented.
+### Endpoints
 
-Future endpoints will likely include:
-- `GET /api/v1/<resources>?as_of=<timestamp>` - reconstruct the state at a point in time.
-- `GET /api/v1/<resource>/{id}/versions` - list all versions of a row with their operation, actor, and validity window.
-- `GET /api/v1/<resource>/{id}/history/{history_id}` - fetch a specific historical version.
+For each of the five versioned resources (classes, objects, namespaces, report templates, remote targets), two history endpoints are available:
 
-These will be added without modifying the data model, as the design already supports them.
+#### 1. List History Versions (Cursor-Paginated)
+
+Returns all historical versions for a specific entity, ordered newest-first by default.
+
+**Endpoints:**
+- `GET /api/v1/classes/{class_id}/history`
+- `GET /api/v1/classes/{class_id}/{object_id}/history`
+- `GET /api/v1/namespaces/{namespace_id}/history`
+- `GET /api/v1/templates/{template_id}/history`
+- `GET /api/v1/remote-targets/{remote_target_id}/history`
+
+**Query Parameters:**
+- `?sort=valid_from|history_id` - Sort order (default: `history_id` descending for newest-first)
+- `?limit=N` - Number of results per page (default: 50, max: 500)
+- `?cursor=<opaque>` - Pagination cursor from `X-Next-Cursor` header
+
+**Response Headers:**
+- `X-Total-Count` - Total number of history rows for this entity
+- `X-Next-Cursor` - Opaque cursor for the next page (omitted on last page)
+
+**Response Body:**
+Each history row is wrapped in a `HistoryResponse` containing:
+- All columns from the resource's base table (e.g., `id`, `name`, `created_at`, etc.)
+- `op` (string): Operation type - `'I'` (INSERT), `'U'` (UPDATE), or `'D'` (DELETE)
+- `valid_from` (timestamptz): When this version became active
+- `valid_to` (timestamptz, nullable): When this version expired (NULL for current/open version)
+- `actor_id` (int, nullable): User ID who performed the mutation (NULL for system/background writes)
+- `actor_username` (string, nullable): Resolved username for `actor_id` (NULL when unavailable or anonymized)
+- `history_id` (int64): Surrogate primary key for this history row
+
+**Example:**
+```json
+[
+  {
+    "id": 42,
+    "name": "updated-name",
+    "created_at": "2026-06-30T10:00:00Z",
+    "op": "U",
+    "valid_from": "2026-06-30T12:00:00Z",
+    "valid_to": null,
+    "actor_id": 7,
+    "actor_username": "alice",
+    "history_id": 1234
+  },
+  {
+    "id": 42,
+    "name": "original-name",
+    "created_at": "2026-06-30T10:00:00Z",
+    "op": "I",
+    "valid_from": "2026-06-30T10:00:00Z",
+    "valid_to": "2026-06-30T12:00:00Z",
+    "actor_id": 7,
+    "actor_username": "alice",
+    "history_id": 1200
+  }
+]
+```
+
+#### 2. Point-in-Time Snapshot (As-Of Query)
+
+Returns the historical version of an entity that was valid at a specific instant.
+
+**Endpoints:**
+- `GET /api/v1/classes/{class_id}/history/as-of?at=<rfc3339>`
+- `GET /api/v1/classes/{class_id}/{object_id}/history/as-of?at=<rfc3339>`
+- `GET /api/v1/namespaces/{namespace_id}/history/as-of?at=<rfc3339>`
+- `GET /api/v1/templates/{template_id}/history/as-of?at=<rfc3339>`
+- `GET /api/v1/remote-targets/{remote_target_id}/history/as-of?at=<rfc3339>`
+
+**Query Parameters:**
+- `at=<rfc3339>` (required) - RFC 3339 timestamp (e.g., `2026-06-30T12:00:00Z`)
+
+**Response:**
+Returns a single `HistoryResponse` object with the same structure as the list endpoint. Returns 404 if no version existed at the specified timestamp.
+
+**Example:**
+```bash
+GET /api/v1/classes/42/history/as-of?at=2026-06-30T11:00:00Z
+```
+
+### Access Control
+
+History read access mirrors the base resource's Read permission:
+
+- **Classes**: Requires `Permissions::ReadClass` on the class entity
+- **Objects**: Requires `Permissions::ReadObject` on the object entity
+- **Namespaces**: Requires `Permissions::ReadCollection` on the namespace entity
+- **Report Templates**: Requires `Permissions::ReadTemplate` on the template's parent namespace
+- **Remote Targets**: Requires `Permissions::ReadRemoteTarget` on the remote target's parent namespace
+
+**Deleted Entity Handling:**
+If an entity has been deleted from the base table, both history endpoints return **404 Not Found**. Deleted-entity history auditing is not exposed through the API (but remains queryable at the database level for compliance purposes).
+
+### Limitations and Future Work
+
+#### Relation History (Deferred to Plan 2b)
+
+The following relation tables are tracked in history but do NOT yet have read endpoints:
+- `hubuumclass_relation_history`
+- `hubuumobject_relation_history`
+
+Exposing relation history is planned for a future release (Plan 2b).
+
+#### Background Task Attribution
+
+Writes performed by background tasks (e.g., imports, async jobs in `src/tasks`) currently record `actor_id = NULL`, even when the task was initiated by a user. This is a known limitation carried over from Plan 1. Future work (Plan 2c) will thread the originating user through task execution for proper attribution.
 
 ## References
 
