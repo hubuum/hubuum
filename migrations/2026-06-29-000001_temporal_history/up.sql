@@ -29,7 +29,9 @@ END; $$;
 
 -- Create one history twin + sequence + indexes + trigger per in-scope table.
 DO $$
-DECLARE t text;
+DECLARE
+  t text;
+  ts timestamptz := transaction_timestamp();
 BEGIN
   FOREACH t IN ARRAY ARRAY[
     'hubuumclass','hubuumobject','namespaces','hubuumclass_relation',
@@ -52,5 +54,11 @@ BEGIN
     EXECUTE format(
       'CREATE TRIGGER %1$I_history_trg AFTER INSERT OR UPDATE OR DELETE ON %1$I
        FOR EACH ROW EXECUTE FUNCTION hubuum_record_history()', t);
+    EXECUTE format(
+      'INSERT INTO %1$I_history
+       SELECT base.*, %2$L, $1, NULL, NULL, nextval(%3$L)
+       FROM %1$I base',
+      t, 'I', t || '_history_seq')
+      USING ts;
   END LOOP;
 END $$;

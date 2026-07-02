@@ -119,7 +119,7 @@ fn update_hubuum_object_example() -> UpdateHubuumObject {
     }
 }
 
-#[derive(serde::Serialize, diesel::Queryable, Clone, Debug)]
+#[derive(serde::Serialize, diesel::Queryable, Clone, Debug, ToSchema)]
 #[diesel(table_name = crate::schema::hubuumobject_history)]
 pub struct HubuumObjectHistory {
     pub id: i32,

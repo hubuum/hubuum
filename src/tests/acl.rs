@@ -28,7 +28,9 @@ async fn test_endpoint_access() {
 
     let app = test::init_service(
         App::new()
-            .wrap(actix_web::middleware::from_fn(crate::middlewares::actor_context))
+            .wrap(actix_web::middleware::from_fn(
+                crate::middlewares::actor_context,
+            ))
             .app_data(Data::new(pool.clone()))
             .configure(crate::api::config),
     )

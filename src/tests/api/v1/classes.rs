@@ -723,7 +723,13 @@ pub mod tests {
             validate_schema: Some(false),
         };
 
-        let resp = post_request(&context.pool, &context.admin_token, CLASSES_ENDPOINT, &new_class).await;
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            CLASSES_ENDPOINT,
+            &new_class,
+        )
+        .await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
         let created: HubuumClassExpanded = test::read_body_json(resp).await;
 
@@ -733,7 +739,7 @@ pub mod tests {
             use crate::schema::tokens::dsl as t;
             t::tokens
                 .filter(t::token.eq(&token_hash))
-                .select(t::user_id)
+                .select(t::principal_id)
                 .first::<i32>(conn)
         })
         .unwrap();
@@ -748,7 +754,11 @@ pub mod tests {
         })
         .unwrap();
 
-        assert_eq!(actor, Some(expected_actor), "history must attribute the create to the requestor");
+        assert_eq!(
+            actor,
+            Some(expected_actor),
+            "history must attribute the create to the requestor"
+        );
         ns.cleanup().await.unwrap();
     }
 
@@ -796,14 +806,20 @@ pub mod tests {
         assert_eq!(body[0]["op"], "U");
         assert_eq!(body[0]["description"], "v2");
         assert_eq!(body[1]["op"], "I");
-        assert!(body[0].get("actor_username").is_some(), "actor_username key present");
+        assert!(
+            body[0].get("actor_username").is_some(),
+            "actor_username key present"
+        );
 
         // as-of just after the insert (before the update) -> v1.
         let v1_from = body[1]["valid_from"].as_str().unwrap().to_string();
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{}/{}/history/as-of?at={}", CLASSES_ENDPOINT, created.id, &v1_from),
+            &format!(
+                "{}/{}/history/as-of?at={}",
+                CLASSES_ENDPOINT, created.id, &v1_from
+            ),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
@@ -895,13 +911,19 @@ pub mod tests {
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{}/{}/history?limit=2&cursor={}", CLASSES_ENDPOINT, created.id, cursor),
+            &format!(
+                "{}/{}/history?limit=2&cursor={}",
+                CLASSES_ENDPOINT, created.id, cursor
+            ),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
 
         let next_cursor_page2 = header_value(&resp, NEXT_CURSOR_HEADER);
-        assert!(next_cursor_page2.is_none(), "page 2 (last page) should not have a next cursor");
+        assert!(
+            next_cursor_page2.is_none(),
+            "page 2 (last page) should not have a next cursor"
+        );
 
         let page2: Vec<serde_json::Value> = test::read_body_json(resp).await;
         assert_eq!(page2.len(), 1, "page 2 should have 1 item");
@@ -909,7 +931,10 @@ pub mod tests {
         assert_eq!(page2[0]["op"], "I", "oldest version should be an insert");
 
         // Verify no overlap: the history_id or valid_from must differ.
-        let page1_history_ids: Vec<i64> = page1.iter().map(|v| v["history_id"].as_i64().unwrap()).collect();
+        let page1_history_ids: Vec<i64> = page1
+            .iter()
+            .map(|v| v["history_id"].as_i64().unwrap())
+            .collect();
         let page2_history_id = page2[0]["history_id"].as_i64().unwrap();
         assert!(
             !page1_history_ids.contains(&page2_history_id),

@@ -36,7 +36,9 @@ mod tests {
 
         let app = test::init_service(
             App::new()
-                .wrap(actix_web::middleware::from_fn(crate::middlewares::actor_context))
+                .wrap(actix_web::middleware::from_fn(
+                    crate::middlewares::actor_context,
+                ))
                 .app_data(Data::new(pool.clone()))
                 .configure(api::config),
         )
@@ -146,7 +148,9 @@ mod tests {
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
             App::new()
-                .wrap(actix_web::middleware::from_fn(crate::middlewares::actor_context))
+                .wrap(actix_web::middleware::from_fn(
+                    crate::middlewares::actor_context,
+                ))
                 .app_data(Data::new(pool.clone()))
                 .configure(api::config),
         )
@@ -181,7 +185,9 @@ mod tests {
 
         let app = test::init_service(
             App::new()
-                .wrap(actix_web::middleware::from_fn(crate::middlewares::actor_context))
+                .wrap(actix_web::middleware::from_fn(
+                    crate::middlewares::actor_context,
+                ))
                 .app_data(Data::new(pool.clone()))
                 .configure(api::config),
         )
@@ -249,7 +255,9 @@ mod tests {
 
         let app = test::init_service(
             App::new()
-                .wrap(actix_web::middleware::from_fn(crate::middlewares::actor_context))
+                .wrap(actix_web::middleware::from_fn(
+                    crate::middlewares::actor_context,
+                ))
                 .app_data(Data::new(pool.clone()))
                 .configure(api::config),
         )
@@ -328,7 +336,9 @@ mod tests {
 
         let app = test::init_service(
             App::new()
-                .wrap(actix_web::middleware::from_fn(crate::middlewares::actor_context))
+                .wrap(actix_web::middleware::from_fn(
+                    crate::middlewares::actor_context,
+                ))
                 .app_data(Data::new(pool.clone()))
                 .configure(api::config),
         )
@@ -416,7 +426,9 @@ mod tests {
 
         let app = test::init_service(
             App::new()
-                .wrap(actix_web::middleware::from_fn(crate::middlewares::actor_context))
+                .wrap(actix_web::middleware::from_fn(
+                    crate::middlewares::actor_context,
+                ))
                 .app_data(Data::new(pool.clone()))
                 .configure(api::config),
         )
@@ -478,7 +490,9 @@ mod tests {
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
             App::new()
-                .wrap(actix_web::middleware::from_fn(crate::middlewares::actor_context))
+                .wrap(actix_web::middleware::from_fn(
+                    crate::middlewares::actor_context,
+                ))
                 .app_data(Data::new(config.clone()))
                 .app_data(Data::new(pool.clone()))
                 .configure(api::config),
@@ -534,7 +548,9 @@ mod tests {
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
             App::new()
-                .wrap(actix_web::middleware::from_fn(crate::middlewares::actor_context))
+                .wrap(actix_web::middleware::from_fn(
+                    crate::middlewares::actor_context,
+                ))
                 .app_data(Data::new(config.clone()))
                 .app_data(Data::new(pool.clone()))
                 .configure(api::config),
@@ -588,7 +604,9 @@ mod tests {
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
             App::new()
-                .wrap(actix_web::middleware::from_fn(crate::middlewares::actor_context))
+                .wrap(actix_web::middleware::from_fn(
+                    crate::middlewares::actor_context,
+                ))
                 .app_data(Data::new(config.clone()))
                 .app_data(Data::new(pool.clone()))
                 .configure(api::config),
@@ -639,7 +657,9 @@ mod tests {
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
             App::new()
-                .wrap(actix_web::middleware::from_fn(crate::middlewares::actor_context))
+                .wrap(actix_web::middleware::from_fn(
+                    crate::middlewares::actor_context,
+                ))
                 .app_data(Data::new(pool.clone()))
                 .configure(api::config),
         )

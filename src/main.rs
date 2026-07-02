@@ -3,7 +3,6 @@ mod config;
 mod db;
 mod errors;
 mod extractors;
-mod extractors_path;
 mod logger;
 mod macros;
 mod middlewares;
@@ -17,7 +16,13 @@ mod tls;
 mod traits;
 mod utilities;
 
-use actix_web::{App, HttpServer, middleware::{Logger, from_fn}, web, web::Data, web::JsonConfig};
+use actix_web::{
+    App, HttpServer,
+    middleware::{Logger, from_fn},
+    web,
+    web::Data,
+    web::JsonConfig,
+};
 use db::init_pool;
 #[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;

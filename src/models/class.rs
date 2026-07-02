@@ -123,7 +123,7 @@ fn update_hubuum_class_example() -> UpdateHubuumClass {
     }
 }
 
-#[derive(serde::Serialize, diesel::Queryable, Clone, Debug)]
+#[derive(serde::Serialize, diesel::Queryable, Clone, Debug, ToSchema)]
 #[diesel(table_name = crate::schema::hubuumclass_history)]
 pub struct HubuumClassHistory {
     pub id: i32,

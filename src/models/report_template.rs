@@ -1089,7 +1089,7 @@ fn update_report_template_example() -> UpdateReportTemplate {
     }
 }
 
-#[derive(serde::Serialize, diesel::Queryable, Clone, Debug)]
+#[derive(serde::Serialize, diesel::Queryable, Clone, Debug, ToSchema)]
 #[diesel(table_name = crate::schema::report_templates_history)]
 pub struct ReportTemplateHistory {
     pub id: i32,
