@@ -17,7 +17,8 @@ async fn trigger_records_ops_and_actor() {
     // All three DML statements in one transaction with the actor GUC set.
     with_connection(&pool, |conn| {
         conn.transaction::<(), diesel::result::Error, _>(|conn| {
-            diesel::sql_query("SELECT set_config('hubuum.actor_id', '4242', true)").execute(conn)?;
+            diesel::sql_query("SELECT set_config('hubuum.actor_id', '4242', true)")
+                .execute(conn)?;
             diesel::sql_query(
                 "INSERT INTO hubuumclass (name, namespace_id, validate_schema, description)
                  VALUES ($1, $2, false, 'd')",
@@ -28,7 +29,10 @@ async fn trigger_records_ops_and_actor() {
 
             let cid: i32 = {
                 use crate::schema::hubuumclass::dsl as c;
-                c::hubuumclass.filter(c::name.eq(&cname)).select(c::id).first(conn)?
+                c::hubuumclass
+                    .filter(c::name.eq(&cname))
+                    .select(c::id)
+                    .first(conn)?
             };
             diesel::sql_query("UPDATE hubuumclass SET description='d2' WHERE id=$1")
                 .bind::<Integer, _>(cid)
@@ -55,7 +59,11 @@ async fn trigger_records_ops_and_actor() {
     .unwrap();
 
     let ops: Vec<&str> = rows.iter().map(|(op, _, _, _)| op.as_str()).collect();
-    assert_eq!(ops, vec!["I", "U", "D"], "expected insert/update/delete history");
+    assert_eq!(
+        ops,
+        vec!["I", "U", "D"],
+        "expected insert/update/delete history"
+    );
     assert!(
         rows.iter().all(|(_, _, _, actor)| *actor == Some(4242)),
         "actor must be 4242 on every row"
@@ -65,7 +73,8 @@ async fn trigger_records_ops_and_actor() {
     let delete_row = rows.iter().find(|(op, _, _, _)| op == "D").unwrap();
     let (_, valid_from, valid_to, _) = delete_row;
     assert_eq!(
-        valid_from, valid_to.as_ref().unwrap(),
+        valid_from,
+        valid_to.as_ref().unwrap(),
         "DELETE tombstone must have valid_from == valid_to"
     );
 
@@ -188,8 +197,9 @@ async fn anonymize_scrubs_pii_but_keeps_history_actor() {
     // A user who will make a change and then be anonymized.
     let uname = format!("anon_user_{}", scope.scope_id);
     let user = NewUser {
-        username: uname.clone(),
+        name: uname.clone(),
         password: "secret".into(),
+        proper_name: Some("Anon User".into()),
         email: Some("a@example.com".into()),
     }
     .save(&pool)
@@ -216,18 +226,32 @@ async fn anonymize_scrubs_pii_but_keeps_history_actor() {
     anonymize_user(&pool, user.id).await.unwrap();
 
     // PII scrubbed on the (non-versioned) users row.
-    let (username, email, stored_password, anonymized_at): (String, Option<String>, String, Option<chrono::NaiveDateTime>) =
-        with_connection(&pool, |conn| {
-            use crate::schema::users::dsl as u;
-            u::users
-                .filter(u::id.eq(user.id))
-                .select((u::username, u::email, u::password, u::anonymized_at))
-                .first(conn)
-        })
-        .unwrap();
-    assert_eq!(username, format!("anonymized-{}", user.id));
+    let (proper_name, email, stored_password, anonymized_at): (
+        Option<String>,
+        Option<String>,
+        String,
+        Option<chrono::NaiveDateTime>,
+    ) = with_connection(&pool, |conn| {
+        use crate::schema::users::dsl as u;
+        u::users
+            .filter(u::id.eq(user.id))
+            .select((u::proper_name, u::email, u::password, u::anonymized_at))
+            .first(conn)
+    })
+    .unwrap();
+    assert_eq!(proper_name, None);
     assert_eq!(email, None);
     assert!(anonymized_at.is_some());
+
+    let principal_name: String = with_connection(&pool, |conn| {
+        use crate::schema::principals::dsl as p;
+        p::principals
+            .filter(p::id.eq(user.id))
+            .select(p::name)
+            .first(conn)
+    })
+    .unwrap();
+    assert_eq!(principal_name, format!("anonymized-{}", user.id));
 
     // Anonymized password cannot authenticate (neither the original password nor empty string).
     assert!(
@@ -242,7 +266,11 @@ async fn anonymize_scrubs_pii_but_keeps_history_actor() {
     // Tokens revoked.
     let token_count: i64 = with_connection(&pool, |conn| {
         use crate::schema::tokens::dsl as t;
-        t::tokens.filter(t::user_id.eq(user.id)).count().get_result(conn)
+        t::tokens
+            .filter(t::principal_id.eq(user.id))
+            .filter(t::revoked_at.is_null())
+            .count()
+            .get_result(conn)
     })
     .unwrap();
     assert_eq!(token_count, 0);

@@ -782,19 +782,37 @@ pub async fn get_namespace_groups_with_permission(
     ApiResponse::paginated(groups, total_count, &query_options)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/namespaces/{namespace_id}/history",
+    tag = "namespaces",
+    security(("bearer_auth" = [])),
+    params(("namespace_id" = i32, Path, description = "Namespace ID")),
+    responses(
+        (status = 200, description = "Namespace history", body = [crate::api::v1::handlers::history::HistoryResponse<crate::models::NamespaceHistory>]),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 404, description = "Namespace not found", body = ApiErrorResponse)
+    )
+)]
 #[get("/{namespace_id}/history")]
 pub async fn get_namespace_history(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     namespace_id: web::Path<NamespaceID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    use crate::api::v1::handlers::history::{resolve_actor_usernames, HistoryResponse};
-    use crate::utilities::response::paginated_json_mapped_response;
+    use crate::api::v1::handlers::history::{HistoryResponse, resolve_actor_usernames};
 
-    let user = requestor.user;
+    let user = &requestor.principal;
     let instance = namespace_id.into_inner().instance(&pool).await?;
-    can!(&pool, user, [Permissions::ReadCollection], instance);
+    can!(
+        &pool,
+        user,
+        requestor.scopes(),
+        [Permissions::ReadCollection],
+        instance
+    );
 
     let params = parse_query_parameter(req.query_string())?;
     let search_params = prepare_db_pagination::<crate::models::NamespaceHistory>(&params)?;
@@ -804,35 +822,68 @@ pub async fn get_namespace_history(
     let actor_ids = rows.iter().filter_map(|r| r.actor_id).collect();
     let actor_map = resolve_actor_usernames(&pool, actor_ids).await?;
 
-    paginated_json_mapped_response(rows, total_count, StatusCode::OK, &params, move |rows| {
+    ApiResponse::mapped_paginated(rows, total_count, &params, move |rows| {
         rows.into_iter()
             .map(|row| {
                 let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
-                HistoryResponse { entry: row, actor_username }
+                HistoryResponse {
+                    entry: row,
+                    actor_username,
+                }
             })
             .collect()
     })
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/namespaces/{namespace_id}/history/as-of",
+    tag = "namespaces",
+    security(("bearer_auth" = [])),
+    params(
+        ("namespace_id" = i32, Path, description = "Namespace ID"),
+        ("at" = String, Query, description = "RFC3339 timestamp")
+    ),
+    responses(
+        (status = 200, description = "Namespace version at timestamp", body = crate::api::v1::handlers::history::HistoryResponse<crate::models::NamespaceHistory>),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 404, description = "Namespace or version not found", body = ApiErrorResponse)
+    )
+)]
 #[get("/{namespace_id}/history/as-of")]
 pub async fn get_namespace_as_of(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     namespace_id: web::Path<NamespaceID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    use crate::api::v1::handlers::history::{parse_as_of, resolve_actor_usernames, HistoryResponse};
+    use crate::api::v1::handlers::history::{
+        HistoryResponse, parse_as_of, resolve_actor_usernames,
+    };
 
-    let user = requestor.user;
+    let user = &requestor.principal;
     let instance = namespace_id.into_inner().instance(&pool).await?;
-    can!(&pool, user, [Permissions::ReadCollection], instance);
+    can!(
+        &pool,
+        user,
+        requestor.scopes(),
+        [Permissions::ReadCollection],
+        instance
+    );
 
     let at = parse_as_of(req.query_string())?;
     let row = namespace_as_of(instance.id, at, &pool)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("no version of namespace {} at {at}", instance.id)))?;
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("no version of namespace {} at {at}", instance.id))
+        })?;
 
     let actor_map = resolve_actor_usernames(&pool, row.actor_id.into_iter().collect()).await?;
     let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
-    Ok(json_response(HistoryResponse { entry: row, actor_username }, StatusCode::OK))
+    Ok(ApiResponse::ok(HistoryResponse {
+            entry: row,
+            actor_username,
+    }))
 }

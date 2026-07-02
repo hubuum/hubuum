@@ -340,7 +340,7 @@ where
     namespace_backend::group_on_from_backend(backend.db_pool(), nid, gid).await
 }
 
-#[derive(serde::Serialize, diesel::Queryable, Clone, Debug)]
+#[derive(serde::Serialize, diesel::Queryable, Clone, Debug, ToSchema)]
 #[diesel(table_name = crate::schema::namespaces_history)]
 pub struct NamespaceHistory {
     pub id: i32,

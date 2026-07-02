@@ -942,14 +942,20 @@ mod tests {
         assert_eq!(body[0]["op"], "U");
         assert_eq!(body[0]["description"], "v2");
         assert_eq!(body[1]["op"], "I");
-        assert!(body[0].get("actor_username").is_some(), "actor_username key present");
+        assert!(
+            body[0].get("actor_username").is_some(),
+            "actor_username key present"
+        );
 
         // as-of just after the insert (before the update) -> v1.
         let v1_from = body[1]["valid_from"].as_str().unwrap().to_string();
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{}/{}/history/as-of?at={}", NAMESPACE_ENDPOINT, created.id, &v1_from),
+            &format!(
+                "{}/{}/history/as-of?at={}",
+                NAMESPACE_ENDPOINT, created.id, &v1_from
+            ),
         )
         .await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;

@@ -8,13 +8,14 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use diesel::prelude::*;
 use serde::Serialize;
+use utoipa::ToSchema;
 
-use crate::db::{with_connection, DbPool};
+use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 
 /// A serialized history row plus the resolved username of its actor (if any).
-#[derive(Serialize)]
-pub struct HistoryResponse<T: Serialize> {
+#[derive(Serialize, ToSchema)]
+pub struct HistoryResponse<T: Serialize + ToSchema> {
     #[serde(flatten)]
     pub entry: T,
     pub actor_username: Option<String>,
@@ -33,22 +34,22 @@ pub fn parse_as_of(query_string: &str) -> Result<DateTime<Utc>, ApiError> {
         .map_err(|_| ApiError::BadRequest(format!("invalid rfc3339 timestamp: {at}")))
 }
 
-/// Batch-resolve a set of actor ids to usernames (anonymized users keep their
-/// tombstoned username; ids with no matching user are simply absent).
+/// Batch-resolve a set of actor ids to principal names (anonymized users keep
+/// their tombstoned principal name; ids with no matching principal are absent).
 pub async fn resolve_actor_usernames(
     pool: &DbPool,
     mut actor_ids: Vec<i32>,
 ) -> Result<HashMap<i32, String>, ApiError> {
-    use crate::schema::users::dsl::{id, username, users};
+    use crate::schema::principals::dsl::{id, name, principals};
     actor_ids.sort_unstable();
     actor_ids.dedup();
     if actor_ids.is_empty() {
         return Ok(HashMap::new());
     }
     let rows: Vec<(i32, String)> = with_connection(pool, |conn| {
-        users
+        principals
             .filter(id.eq_any(&actor_ids))
-            .select((id, username))
+            .select((id, name))
             .load(conn)
     })?;
     Ok(rows.into_iter().collect())
@@ -77,7 +78,7 @@ macro_rules! impl_history_pagination {
                         return Err($crate::errors::ApiError::BadRequest(format!(
                             "Field '{}' is not orderable for history",
                             other
-                        )))
+                        )));
                     }
                 })
             }
@@ -113,7 +114,7 @@ macro_rules! impl_history_pagination {
                         return Err($crate::errors::ApiError::BadRequest(format!(
                             "Field '{}' is not orderable for history",
                             other
-                        )))
+                        )));
                     }
                 })
             }
@@ -178,16 +179,25 @@ mod tests {
     #[test]
     fn parse_as_of_reads_rfc3339() {
         let dt = parse_as_of("at=2026-01-02T03:04:05Z").unwrap();
-        assert_eq!(dt, DateTime::parse_from_rfc3339("2026-01-02T03:04:05Z").unwrap());
+        assert_eq!(
+            dt,
+            DateTime::parse_from_rfc3339("2026-01-02T03:04:05Z").unwrap()
+        );
     }
 
     #[test]
     fn parse_as_of_requires_param() {
-        assert!(matches!(parse_as_of("foo=bar"), Err(ApiError::BadRequest(_))));
+        assert!(matches!(
+            parse_as_of("foo=bar"),
+            Err(ApiError::BadRequest(_))
+        ));
     }
 
     #[test]
     fn parse_as_of_rejects_garbage() {
-        assert!(matches!(parse_as_of("at=not-a-date"), Err(ApiError::BadRequest(_))));
+        assert!(matches!(
+            parse_as_of("at=not-a-date"),
+            Err(ApiError::BadRequest(_))
+        ));
     }
 }

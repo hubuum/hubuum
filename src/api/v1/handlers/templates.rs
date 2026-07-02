@@ -335,59 +335,111 @@ pub async fn delete_template(
     Ok(ApiResponse::no_content())
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/templates/{template_id}/history",
+    tag = "templates",
+    security(("bearer_auth" = [])),
+    params(("template_id" = i32, Path, description = "Template ID")),
+    responses(
+        (status = 200, description = "Template history", body = [crate::api::v1::handlers::history::HistoryResponse<crate::models::ReportTemplateHistory>]),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 404, description = "Template not found", body = ApiErrorResponse)
+    )
+)]
 #[get("/{template_id}/history")]
 pub async fn get_template_history(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     template_id: web::Path<ReportTemplateID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    use crate::api::v1::handlers::history::{resolve_actor_usernames, HistoryResponse};
+    use crate::api::v1::handlers::history::{HistoryResponse, resolve_actor_usernames};
     use crate::models::search::parse_query_parameter;
     use crate::pagination::prepare_db_pagination;
-    use crate::utilities::response::paginated_json_mapped_response;
 
-    let user = requestor.user;
+    let user = &requestor.principal;
     let instance = template_id.into_inner().instance(&pool).await?;
-    can!(&pool, user, [Permissions::ReadTemplate], NamespaceID::new(instance.namespace_id)?);
+    can!(
+        &pool,
+        user,
+        requestor.scopes(),
+        [Permissions::ReadTemplate],
+        NamespaceID::new(instance.namespace_id)?
+    );
 
     let params = parse_query_parameter(req.query_string())?;
     let search_params = prepare_db_pagination::<crate::models::ReportTemplateHistory>(&params)?;
     let (rows, total_count) =
-        report_template_history_paginated_with_total_count(instance.id, &pool, &search_params).await?;
+        report_template_history_paginated_with_total_count(instance.id, &pool, &search_params)
+            .await?;
 
     let actor_ids = rows.iter().filter_map(|r| r.actor_id).collect();
     let actor_map = resolve_actor_usernames(&pool, actor_ids).await?;
 
-    paginated_json_mapped_response(rows, total_count, StatusCode::OK, &params, move |rows| {
+    ApiResponse::mapped_paginated(rows, total_count, &params, move |rows| {
         rows.into_iter()
             .map(|row| {
                 let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
-                HistoryResponse { entry: row, actor_username }
+                HistoryResponse {
+                    entry: row,
+                    actor_username,
+                }
             })
             .collect()
     })
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/templates/{template_id}/history/as-of",
+    tag = "templates",
+    security(("bearer_auth" = [])),
+    params(
+        ("template_id" = i32, Path, description = "Template ID"),
+        ("at" = String, Query, description = "RFC3339 timestamp")
+    ),
+    responses(
+        (status = 200, description = "Template version at timestamp", body = crate::api::v1::handlers::history::HistoryResponse<crate::models::ReportTemplateHistory>),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 404, description = "Template or version not found", body = ApiErrorResponse)
+    )
+)]
 #[get("/{template_id}/history/as-of")]
 pub async fn get_template_as_of(
     pool: web::Data<DbPool>,
-    requestor: UserAccess,
+    requestor: Authenticated,
     template_id: web::Path<ReportTemplateID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    use crate::api::v1::handlers::history::{parse_as_of, resolve_actor_usernames, HistoryResponse};
+    use crate::api::v1::handlers::history::{
+        HistoryResponse, parse_as_of, resolve_actor_usernames,
+    };
 
-    let user = requestor.user;
+    let user = &requestor.principal;
     let instance = template_id.into_inner().instance(&pool).await?;
-    can!(&pool, user, [Permissions::ReadTemplate], NamespaceID::new(instance.namespace_id)?);
+    can!(
+        &pool,
+        user,
+        requestor.scopes(),
+        [Permissions::ReadTemplate],
+        NamespaceID::new(instance.namespace_id)?
+    );
 
     let at = parse_as_of(req.query_string())?;
     let row = report_template_as_of(instance.id, at, &pool)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("no version of template {} at {at}", instance.id)))?;
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("no version of template {} at {at}", instance.id))
+        })?;
 
     let actor_map = resolve_actor_usernames(&pool, row.actor_id.into_iter().collect()).await?;
     let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
-    Ok(json_response(HistoryResponse { entry: row, actor_username }, StatusCode::OK))
+    Ok(ApiResponse::ok(HistoryResponse {
+            entry: row,
+            actor_username,
+    }))
 }

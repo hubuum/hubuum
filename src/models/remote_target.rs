@@ -1191,7 +1191,7 @@ mod tests {
     }
 }
 
-#[derive(serde::Serialize, diesel::Queryable, Clone, Debug)]
+#[derive(serde::Serialize, diesel::Queryable, Clone, Debug, ToSchema)]
 #[diesel(table_name = crate::schema::remote_targets_history)]
 pub struct RemoteTargetHistory {
     pub id: i32,

@@ -1,17 +1,6 @@
-use crate::db::{DbPool, with_connection, with_transaction};
-use crate::models::user::User;
-
-use diesel::prelude::*;
+use crate::db::{DbPool, with_transaction};
 
 use crate::errors::ApiError;
-
-pub fn get_user_by_id(pool: &DbPool, user_id: i32) -> Result<User, ApiError> {
-    use crate::schema::users::dsl::{id, users};
-
-    with_connection(pool, |conn| {
-        users.filter(id.eq(user_id)).first::<User>(conn)
-    })
-}
 
 /// Sentinel password value set during anonymization — not a valid Argon2 PHC hash,
 /// so verification can never succeed.
