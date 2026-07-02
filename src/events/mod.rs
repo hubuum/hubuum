@@ -16,6 +16,7 @@ mod db;
 mod delivery;
 mod fanout;
 mod model;
+mod pg_notify;
 mod retention;
 mod sink;
 
@@ -32,6 +33,8 @@ pub use retention::ensure_event_retention_worker_running;
 pub use sink::{
     DefaultSinkResolver, EventEnvelope, NoopSinkResolver, Sink, SinkError, SinkResolver,
 };
+
+pub(crate) use pg_notify::{notify_event_delivery, notify_event_fanout};
 
 pub use hubuum_events_core::{
     Action, ActorKind, EntityType, EventCatalogError, EventContext, is_valid_pair, valid_actions,

@@ -1,9 +1,10 @@
 use actix_web::web;
 
-use crate::api::v1::handlers::groups;
+use crate::api::v1::handlers::{events, groups};
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(groups::create_group)
         .service(groups::get_group)
+        .service(events::get_group_events)
         .service(groups::get_groups)
         .service(groups::update_group)
         .service(groups::delete_group)

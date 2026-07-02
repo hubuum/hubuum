@@ -116,6 +116,9 @@ pub async fn fanout_events(pool: &DbPool, event_ids: &[i64]) -> Result<usize, Ap
                 fanout_claim_token.eq::<Option<Uuid>>(None),
             ))
             .execute(conn)?;
+        if inserted > 0 {
+            crate::events::notify_event_delivery(conn)?;
+        }
 
         Ok(inserted)
     })

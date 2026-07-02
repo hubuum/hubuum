@@ -22,7 +22,9 @@ use super::{Event, NewEvent};
 /// Call this inside a `with_transaction(pool, |conn| { ...; emit_event(conn,
 /// &event) })` block so the event and the mutation commit atomically.
 pub fn emit_event(conn: &mut PgConnection, new_event: &NewEvent) -> Result<Event, DieselError> {
-    diesel::insert_into(events)
+    let event = diesel::insert_into(events)
         .values(new_event)
-        .get_result::<Event>(conn)
+        .get_result::<Event>(conn)?;
+    super::notify_event_fanout(conn)?;
+    Ok(event)
 }
