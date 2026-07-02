@@ -361,7 +361,7 @@ Returns all historical versions for a specific entity, ordered newest-first by d
 - `GET /api/v1/remote-targets/{remote_target_id}/history`
 
 **Query Parameters:**
-- `?sort=valid_from|history_id` - Sort order (default: `history_id` descending for newest-first)
+- `?sort=history_id` - Sort order (default: `history_id` descending for newest-first; ordering is chronological via the monotonic history_id)
 - `?limit=N` - Number of results per page (default: 50, max: 500)
 - `?cursor=<opaque>` - Pagination cursor from `X-Next-Cursor` header
 
@@ -441,6 +441,9 @@ History read access mirrors the base resource's Read permission:
 
 **Deleted Entity Handling:**
 If an entity has been deleted from the base table, both history endpoints return **404 Not Found**. Deleted-entity history auditing is not exposed through the API (but remains queryable at the database level for compliance purposes).
+
+**Known Limitation — Cross-Namespace History:**
+Because permission is checked against the entity's CURRENT namespace, and an entity's `namespace_id` can change over time, the returned history may include versions (and the `namespace_id`) from when the entity lived in a different namespace. This means the history is visible to anyone who can read the entity's current namespace, even if those historical versions reflect a time when the entity was in a different namespace. This is an accepted limitation of the current permission model.
 
 ### Limitations and Future Work
 

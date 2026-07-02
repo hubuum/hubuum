@@ -14,7 +14,6 @@ use crate::errors::ApiError;
 
 /// A serialized history row plus the resolved username of its actor (if any).
 #[derive(Serialize)]
-#[allow(dead_code)]
 pub struct HistoryResponse<T: Serialize> {
     #[serde(flatten)]
     pub entry: T,
@@ -22,7 +21,6 @@ pub struct HistoryResponse<T: Serialize> {
 }
 
 /// Parse the required `at=<rfc3339>` query parameter for the as-of endpoint.
-#[allow(dead_code)]
 pub fn parse_as_of(query_string: &str) -> Result<DateTime<Utc>, ApiError> {
     let (_opts, passthrough) =
         crate::models::search::parse_query_parameter_with_passthrough(query_string, &["at"])?;
@@ -37,7 +35,6 @@ pub fn parse_as_of(query_string: &str) -> Result<DateTime<Utc>, ApiError> {
 
 /// Batch-resolve a set of actor ids to usernames (anonymized users keep their
 /// tombstoned username; ids with no matching user are simply absent).
-#[allow(dead_code)]
 pub async fn resolve_actor_usernames(
     pool: &DbPool,
     mut actor_ids: Vec<i32>,
@@ -65,11 +62,7 @@ macro_rules! impl_history_pagination {
     ($ty:ty, $table:literal) => {
         impl $crate::traits::CursorPaginated for $ty {
             fn supports_sort(field: &$crate::models::search::FilterField) -> bool {
-                matches!(
-                    field,
-                    $crate::models::search::FilterField::ValidFrom
-                        | $crate::models::search::FilterField::HistoryId
-                )
+                matches!(field, $crate::models::search::FilterField::HistoryId)
             }
 
             fn cursor_value(
@@ -77,9 +70,6 @@ macro_rules! impl_history_pagination {
                 field: &$crate::models::search::FilterField,
             ) -> Result<$crate::traits::CursorValue, $crate::errors::ApiError> {
                 Ok(match field {
-                    $crate::models::search::FilterField::ValidFrom => {
-                        $crate::traits::CursorValue::DateTime(self.valid_from.naive_utc())
-                    }
                     $crate::models::search::FilterField::HistoryId => {
                         $crate::traits::CursorValue::Integer(self.history_id)
                     }
@@ -94,7 +84,7 @@ macro_rules! impl_history_pagination {
 
             fn default_sort() -> Vec<$crate::models::search::SortParam> {
                 vec![$crate::models::search::SortParam {
-                    field: $crate::models::search::FilterField::ValidFrom,
+                    field: $crate::models::search::FilterField::HistoryId,
                     descending: true,
                 }]
             }
@@ -112,13 +102,6 @@ macro_rules! impl_history_pagination {
                 field: &$crate::models::search::FilterField,
             ) -> Result<$crate::traits::CursorSqlField, $crate::errors::ApiError> {
                 Ok(match field {
-                    $crate::models::search::FilterField::ValidFrom => {
-                        $crate::traits::CursorSqlField {
-                            column: concat!($table, ".valid_from"),
-                            sql_type: $crate::traits::CursorSqlType::DateTime,
-                            nullable: false,
-                        }
-                    }
                     $crate::models::search::FilterField::HistoryId => {
                         $crate::traits::CursorSqlField {
                             column: concat!($table, ".history_id"),
