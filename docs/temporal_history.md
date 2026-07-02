@@ -1,3 +1,5 @@
+<!-- markdownlint-disable MD031 MD032 -->
+
 # Temporal History, Actor Capture, and GDPR Anonymization
 
 This document describes Hubuum's row-history mechanism, which records every data modification to seven core tables via a generic PostgreSQL trigger, attributes changes to a per-request actor (user), and enables GDPR-compliant user anonymization.
