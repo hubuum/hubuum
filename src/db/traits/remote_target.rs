@@ -59,14 +59,13 @@ impl UpdateRemoteTargetRecord for UpdateRemoteTargetRow {
         use crate::schema::remote_targets::dsl::{id, remote_targets};
 
         with_connection(pool, |conn| {
-            let updated = diesel::update(remote_targets.filter(id.eq(target_id)))
-                .set(self)
-                .get_result::<RemoteTargetRow>(conn)
-                .optional()?;
-            match updated {
-                Some(target) => Ok(target),
-                None => remote_targets.filter(id.eq(target_id)).first(conn),
-            }
+            crate::db::updated_or_current(
+                diesel::update(remote_targets.filter(id.eq(target_id)))
+                    .set(self)
+                    .get_result::<RemoteTargetRow>(conn)
+                    .optional(),
+                || remote_targets.filter(id.eq(target_id)).first(conn),
+            )
         })
     }
 }
