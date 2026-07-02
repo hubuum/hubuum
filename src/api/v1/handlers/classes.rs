@@ -41,6 +41,13 @@ crate::history_db_fns!(
     crate::models::HubuumClassHistory
 );
 
+crate::history_db_fns!(
+    object_history_paginated_with_total_count,
+    object_as_of,
+    crate::schema::hubuumobject_history,
+    crate::models::HubuumObjectHistory
+);
+
 fn object_with_root_path(object: &HubuumObject) -> HubuumObjectWithPath {
     HubuumObjectWithPath {
         id: object.id,
@@ -1518,6 +1525,66 @@ async fn get_class_as_of(
     let row = class_as_of(instance.id, at, &pool)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("no version of class {} at {at}", instance.id)))?;
+
+    let actor_map = resolve_actor_usernames(&pool, row.actor_id.into_iter().collect()).await?;
+    let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
+    Ok(json_response(HistoryResponse { entry: row, actor_username }, StatusCode::OK))
+}
+
+#[get("/{class_id}/{object_id}/history")]
+async fn get_object_history(
+    pool: web::Data<DbPool>,
+    requestor: UserAccess,
+    paths: web::Path<(HubuumClassID, HubuumObjectID)>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    use crate::api::v1::handlers::history::{resolve_actor_usernames, HistoryResponse};
+
+    let user = requestor.user;
+    let (class_id, object_id) = paths.into_inner();
+
+    check_if_object_in_class(&pool, &class_id, &object_id).await?;
+    let object = object_id.instance(&pool).await?;
+    can!(&pool, user, [Permissions::ReadObject], object);
+
+    let params = parse_query_parameter(req.query_string())?;
+    let search_params = prepare_db_pagination::<crate::models::HubuumObjectHistory>(&params)?;
+    let (rows, total_count) =
+        object_history_paginated_with_total_count(object.id, &pool, &search_params).await?;
+
+    let actor_ids = rows.iter().filter_map(|r| r.actor_id).collect();
+    let actor_map = resolve_actor_usernames(&pool, actor_ids).await?;
+
+    paginated_json_mapped_response(rows, total_count, StatusCode::OK, &params, move |rows| {
+        rows.into_iter()
+            .map(|row| {
+                let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
+                HistoryResponse { entry: row, actor_username }
+            })
+            .collect()
+    })
+}
+
+#[get("/{class_id}/{object_id}/history/as-of")]
+async fn get_object_as_of(
+    pool: web::Data<DbPool>,
+    requestor: UserAccess,
+    paths: web::Path<(HubuumClassID, HubuumObjectID)>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    use crate::api::v1::handlers::history::{parse_as_of, resolve_actor_usernames, HistoryResponse};
+
+    let user = requestor.user;
+    let (class_id, object_id) = paths.into_inner();
+
+    check_if_object_in_class(&pool, &class_id, &object_id).await?;
+    let object = object_id.instance(&pool).await?;
+    can!(&pool, user, [Permissions::ReadObject], object);
+
+    let at = parse_as_of(req.query_string())?;
+    let row = object_as_of(object.id, at, &pool)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("no version of object {} at {at}", object.id)))?;
 
     let actor_map = resolve_actor_usernames(&pool, row.actor_id.into_iter().collect()).await?;
     let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
