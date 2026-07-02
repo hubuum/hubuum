@@ -844,6 +844,50 @@ pub mod tests {
 
     #[rstest]
     #[actix_web::test]
+    async fn test_admin_can_read_deleted_class_history(#[future(awt)] test_context: TestContext) {
+        use crate::traits::{CanDelete, CanSave};
+
+        let context = test_context;
+        let ns = context.namespace_fixture("deleted_class_history").await;
+        let class = NewHubuumClass {
+            name: "deleted_class_history".to_string(),
+            description: "v1".to_string(),
+            namespace_id: ns.namespace.id,
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save(&context.pool)
+        .await
+        .unwrap();
+        let class_id = class.id;
+        class.delete(&context.pool).await.unwrap();
+
+        let normal_resp = get_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("{}/{}/history", CLASSES_ENDPOINT, class_id),
+        )
+        .await;
+        assert_response_status(normal_resp, StatusCode::NOT_FOUND).await;
+
+        let admin_resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{}/{}/history", CLASSES_ENDPOINT, class_id),
+        )
+        .await;
+        let admin_resp = assert_response_status(admin_resp, StatusCode::OK).await;
+        let body: Vec<serde_json::Value> = test::read_body_json(admin_resp).await;
+
+        assert_eq!(body.len(), 2);
+        assert_eq!(body[0]["op"], "D");
+        assert_eq!(body[1]["op"], "I");
+
+        ns.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
     async fn test_api_class_history_cursor_pagination(#[future(awt)] test_context: TestContext) {
         use crate::models::UpdateHubuumClass;
         use crate::traits::{CanSave, CanUpdate};

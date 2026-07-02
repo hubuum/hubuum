@@ -771,23 +771,39 @@ pub async fn get_namespace_history(
     namespace_id: web::Path<NamespaceID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    use crate::api::v1::handlers::history::{HistoryResponse, resolve_actor_usernames};
+    use crate::api::v1::handlers::history::{
+        HistoryResponse, can_read_deleted_history, resolve_actor_usernames,
+    };
     use crate::utilities::response::paginated_json_mapped_response;
 
     let user = &requestor.principal;
-    let instance = namespace_id.into_inner().instance(&pool).await?;
-    can!(
-        &pool,
-        user,
-        requestor.scopes(),
-        [Permissions::ReadCollection],
-        instance
-    );
+    let namespace_id = namespace_id.into_inner();
+    let (entity_id, require_history) = match namespace_id.instance(&pool).await {
+        Ok(instance) => {
+            can!(
+                &pool,
+                user,
+                requestor.scopes(),
+                [Permissions::ReadCollection],
+                instance
+            );
+            (instance.id, false)
+        }
+        Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
+            (namespace_id.id(), true)
+        }
+        Err(err) => return Err(err),
+    };
 
     let params = parse_query_parameter(req.query_string())?;
     let search_params = prepare_db_pagination::<crate::models::NamespaceHistory>(&params)?;
     let (rows, total_count) =
-        namespace_history_paginated_with_total_count(instance.id, &pool, &search_params).await?;
+        namespace_history_paginated_with_total_count(entity_id, &pool, &search_params).await?;
+    if require_history && total_count == 0 {
+        return Err(ApiError::NotFound(format!(
+            "namespace {entity_id} not found"
+        )));
+    }
 
     let actor_ids = rows.iter().filter_map(|r| r.actor_id).collect();
     let actor_map = resolve_actor_usernames(&pool, actor_ids).await?;
@@ -830,24 +846,33 @@ pub async fn get_namespace_as_of(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
-        HistoryResponse, parse_as_of, resolve_actor_usernames,
+        HistoryResponse, can_read_deleted_history, parse_as_of, resolve_actor_usernames,
     };
 
     let user = &requestor.principal;
-    let instance = namespace_id.into_inner().instance(&pool).await?;
-    can!(
-        &pool,
-        user,
-        requestor.scopes(),
-        [Permissions::ReadCollection],
-        instance
-    );
+    let namespace_id = namespace_id.into_inner();
+    let entity_id = match namespace_id.instance(&pool).await {
+        Ok(instance) => {
+            can!(
+                &pool,
+                user,
+                requestor.scopes(),
+                [Permissions::ReadCollection],
+                instance
+            );
+            instance.id
+        }
+        Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
+            namespace_id.id()
+        }
+        Err(err) => return Err(err),
+    };
 
     let at = parse_as_of(req.query_string())?;
-    let row = namespace_as_of(instance.id, at, &pool)
+    let row = namespace_as_of(entity_id, at, &pool)
         .await?
         .ok_or_else(|| {
-            ApiError::NotFound(format!("no version of namespace {} at {at}", instance.id))
+            ApiError::NotFound(format!("no version of namespace {entity_id} at {at}"))
         })?;
 
     let actor_map = resolve_actor_usernames(&pool, row.actor_id.into_iter().collect()).await?;

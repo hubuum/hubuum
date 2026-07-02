@@ -2,7 +2,7 @@ use crate::db::with_connection;
 use crate::tests::TestScope;
 use chrono::{DateTime, Utc};
 use diesel::prelude::*;
-use diesel::sql_types::{Integer, Text};
+use diesel::sql_types::{Integer, Text, Timestamptz};
 
 /// Driving INSERT/UPDATE/DELETE on a base table through raw SQL (with the
 /// actor GUC set) must produce I/U/D history rows carrying that actor.
@@ -79,6 +79,124 @@ async fn trigger_records_ops_and_actor() {
     );
 
     ns.cleanup().await.unwrap();
+}
+
+/// The generic trigger must insert by column name, not by physical column order.
+/// Future migrations may append mirrored columns in different positions; that
+/// should not silently shift base values into the wrong history fields.
+#[actix_rt::test]
+async fn trigger_inserts_history_by_column_name() {
+    let scope = TestScope::new();
+    let pool = scope.pool.clone();
+
+    let row: ColumnOrderHistoryRow = with_connection(&pool, |conn| {
+        conn.transaction::<_, diesel::result::Error, _>(|conn| {
+            diesel::sql_query(
+                "CREATE TEMP TABLE temporal_column_order (
+                    id int PRIMARY KEY,
+                    b text NOT NULL,
+                    a int NOT NULL
+                 )",
+            )
+            .execute(conn)?;
+            diesel::sql_query(
+                "CREATE TEMP TABLE temporal_column_order_history (
+                    a int NOT NULL,
+                    id int NOT NULL,
+                    b text NOT NULL,
+                    op varchar NOT NULL CHECK (op IN ('I','U','D')),
+                    valid_from timestamptz NOT NULL,
+                    valid_to timestamptz,
+                    actor_id int,
+                    history_id bigint NOT NULL
+                 )",
+            )
+            .execute(conn)?;
+            diesel::sql_query("CREATE TEMP SEQUENCE temporal_column_order_history_seq")
+                .execute(conn)?;
+            diesel::sql_query(
+                "CREATE TRIGGER temporal_column_order_history_trg
+                 AFTER INSERT OR UPDATE OR DELETE ON temporal_column_order
+                 FOR EACH ROW EXECUTE FUNCTION hubuum_record_history()",
+            )
+            .execute(conn)?;
+            diesel::sql_query("INSERT INTO temporal_column_order (id, b, a) VALUES (7, 'bee', 42)")
+                .execute(conn)?;
+            diesel::sql_query(
+                "SELECT id AS hist_id, a AS hist_a, b AS hist_b
+                 FROM temporal_column_order_history
+                 WHERE history_id = 1",
+            )
+            .get_result(conn)
+        })
+    })
+    .unwrap();
+
+    assert_eq!(
+        (row.hist_id, row.hist_a, row.hist_b),
+        (7, 42, "bee".to_string())
+    );
+}
+
+/// `valid_from` should reflect the actual trigger execution time, not the start
+/// of a long-running transaction.
+#[actix_rt::test]
+async fn trigger_timestamp_is_execution_time_not_transaction_start() {
+    let scope = TestScope::new();
+    let pool = scope.pool.clone();
+    let ns = scope.namespace_fixture("clock_timestamp").await;
+    let cname = format!("clock_timestamp_class_{}", scope.scope_id);
+
+    let (tx_start, valid_from): (DateTime<Utc>, DateTime<Utc>) = with_connection(&pool, |conn| {
+        conn.transaction::<_, diesel::result::Error, _>(|conn| {
+            let tx_start = diesel::sql_query("SELECT transaction_timestamp() AS value")
+                .get_result::<SingleTimestamp>(conn)?
+                .value;
+            diesel::sql_query("SELECT pg_sleep(0.02)").execute(conn)?;
+            diesel::sql_query(
+                "INSERT INTO hubuumclass (name, namespace_id, validate_schema, description)
+                     VALUES ($1, $2, false, 'd')",
+            )
+            .bind::<Text, _>(&cname)
+            .bind::<Integer, _>(ns.namespace.id)
+            .execute(conn)?;
+            let valid_from = diesel::sql_query(
+                "SELECT valid_from AS value
+                     FROM hubuumclass_history
+                     WHERE name = $1
+                     ORDER BY history_id DESC
+                     LIMIT 1",
+            )
+            .bind::<Text, _>(&cname)
+            .get_result::<SingleTimestamp>(conn)?
+            .value;
+            Ok((tx_start, valid_from))
+        })
+    })
+    .unwrap();
+
+    assert!(
+        valid_from > tx_start,
+        "history timestamp should advance after transaction start"
+    );
+
+    ns.cleanup().await.unwrap();
+}
+
+#[derive(QueryableByName)]
+struct SingleTimestamp {
+    #[diesel(sql_type = Timestamptz)]
+    value: DateTime<Utc>,
+}
+
+#[derive(QueryableByName)]
+struct ColumnOrderHistoryRow {
+    #[diesel(sql_type = Integer)]
+    hist_id: i32,
+    #[diesel(sql_type = Integer)]
+    hist_a: i32,
+    #[diesel(sql_type = Text)]
+    hist_b: String,
 }
 
 /// Deleting a namespace cascades to its classes; the AFTER trigger must still
