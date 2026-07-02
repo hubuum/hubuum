@@ -51,7 +51,7 @@ mod tests {
 
         let test_group = create_test_group(&context.pool).await;
         test_group
-            .add_member(&context.pool, &test_user)
+            .add_member_without_events(&context.pool, &test_user)
             .await
             .unwrap();
 
@@ -178,7 +178,7 @@ mod tests {
             groupname: groupname.clone(),
             description: Some(groupname.clone()),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -197,7 +197,7 @@ mod tests {
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].groupname, mygroup.groupname);
 
-        mygroup.delete(&context.pool).await.unwrap();
+        mygroup.delete_without_events(&context.pool).await.unwrap();
     }
 
     #[rstest]
@@ -247,8 +247,8 @@ mod tests {
         let members: Vec<PrincipalMemberResponse> = test::read_body_json(resp).await;
         assert_eq!(members.len(), 0);
 
-        user.delete(&context.pool).await.unwrap();
-        group.delete(&context.pool).await.unwrap();
+        user.delete_without_events(&context.pool).await.unwrap();
+        group.delete_without_events(&context.pool).await.unwrap();
     }
 
     #[rstest]
@@ -261,8 +261,14 @@ mod tests {
         let second_group = create_test_group(&context.pool).await;
         let user = create_test_user(&context.pool).await;
 
-        first_group.add_member(&context.pool, &user).await.unwrap();
-        second_group.add_member(&context.pool, &user).await.unwrap();
+        first_group
+            .add_member_without_events(&context.pool, &user)
+            .await
+            .unwrap();
+        second_group
+            .add_member_without_events(&context.pool, &user)
+            .await
+            .unwrap();
 
         let resp = get_request(
             &context.pool,
@@ -318,9 +324,15 @@ mod tests {
         assert_eq!(user_groups_after.len(), 1);
         assert_eq!(user_groups_after[0].id, second_group.id);
 
-        user.delete(&context.pool).await.unwrap();
-        first_group.delete(&context.pool).await.unwrap();
-        second_group.delete(&context.pool).await.unwrap();
+        user.delete_without_events(&context.pool).await.unwrap();
+        first_group
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
+        second_group
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
     }
 
     #[rstest]
@@ -343,7 +355,7 @@ mod tests {
                 groupname: format!("{prefix}_{i}"),
                 description: Some(format!("{prefix}_description_{i}")),
             }
-            .save(&context.pool)
+            .save_without_events(&context.pool)
             .await
             .unwrap();
             created_groups.push(group);
@@ -360,7 +372,7 @@ mod tests {
         assert_eq!(groups[2].id, created_groups[expected_order[2]].id);
 
         for group in created_groups {
-            group.delete(&context.pool).await.unwrap();
+            group.delete_without_events(&context.pool).await.unwrap();
         }
     }
 
@@ -382,7 +394,7 @@ mod tests {
                 groupname: format!("{prefix}_{i}"),
                 description: Some(format!("{prefix}_description_{i}")),
             }
-            .save(&context.pool)
+            .save_without_events(&context.pool)
             .await
             .unwrap();
             created_groups.push(group);
@@ -395,7 +407,7 @@ mod tests {
         assert_eq!(groups.len(), limit);
 
         for group in created_groups {
-            group.delete(&context.pool).await.unwrap();
+            group.delete_without_events(&context.pool).await.unwrap();
         }
     }
 
@@ -411,7 +423,7 @@ mod tests {
                 groupname: format!("{prefix}-{idx}"),
                 description: Some("cursor pagination".to_string()),
             }
-            .save(&context.pool)
+            .save_without_events(&context.pool)
             .await
             .unwrap();
             created_groups.push(group);
@@ -444,7 +456,7 @@ mod tests {
         assert!(!groups.is_empty());
 
         for group in created_groups {
-            group.delete(&context.pool).await.unwrap();
+            group.delete_without_events(&context.pool).await.unwrap();
         }
     }
 
@@ -456,8 +468,14 @@ mod tests {
         let user_one = create_test_user(&context.pool).await;
         let user_two = create_test_user(&context.pool).await;
 
-        group.add_member(&context.pool, &user_one).await.unwrap();
-        group.add_member(&context.pool, &user_two).await.unwrap();
+        group
+            .add_member_without_events(&context.pool, &user_one)
+            .await
+            .unwrap();
+        group
+            .add_member_without_events(&context.pool, &user_two)
+            .await
+            .unwrap();
 
         let resp = get_request(
             &context.pool,
@@ -499,7 +517,7 @@ mod tests {
             proper_name: Some("Matching Member".to_string()),
             email: Some(format!("match-{}@example.com", group.id)),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let other_user = NewUser {
@@ -508,15 +526,18 @@ mod tests {
             proper_name: Some("Other Member".to_string()),
             email: Some(format!("other-{}@example.com", group.id)),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
         group
-            .add_member(&context.pool, &matching_user)
+            .add_member_without_events(&context.pool, &matching_user)
             .await
             .unwrap();
-        group.add_member(&context.pool, &other_user).await.unwrap();
+        group
+            .add_member_without_events(&context.pool, &other_user)
+            .await
+            .unwrap();
 
         let resp = get_request(
             &context.pool,

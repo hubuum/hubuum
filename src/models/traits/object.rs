@@ -4,6 +4,7 @@ use crate::db::traits::object::{
     SaveObjectRecord, UpdateObjectRecord, ValidateObjectRecord, ValidateObjectSchema,
 };
 use crate::errors::ApiError;
+use crate::events::EventContext;
 
 use crate::models::class::{HubuumClass, HubuumClassID};
 use crate::models::namespace::{Namespace, NamespaceID};
@@ -96,35 +97,67 @@ impl Validate for (&UpdateHubuumObject, i32) {
 impl SaveAdapter for HubuumObject {
     type Output = HubuumObject;
 
-    async fn save_adapter(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
-        self.save_object_record(pool).await
+    async fn save_adapter_without_events(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
+        self.save_object_record_without_events(pool).await
+    }
+
+    async fn save_adapter(
+        &self,
+        pool: &DbPool,
+        context: &EventContext,
+    ) -> Result<Self::Output, ApiError> {
+        self.save_object_record(pool, Some(context)).await
     }
 }
 
 impl SaveAdapter for NewHubuumObject {
     type Output = HubuumObject;
 
-    async fn save_adapter(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
-        self.save_object_record(pool).await
+    async fn save_adapter_without_events(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
+        self.save_object_record_without_events(pool).await
+    }
+
+    async fn save_adapter(
+        &self,
+        pool: &DbPool,
+        context: &EventContext,
+    ) -> Result<Self::Output, ApiError> {
+        self.save_object_record(pool, Some(context)).await
     }
 }
 
 impl UpdateAdapter for UpdateHubuumObject {
     type Output = HubuumObject;
 
-    async fn update_adapter(
+    async fn update_adapter_without_events(
         &self,
         pool: &DbPool,
         object_id: i32,
     ) -> Result<Self::Output, ApiError> {
         (self, object_id).validate_object_record(pool).await?;
-        self.update_object_record(pool, object_id).await
+        self.update_object_record_without_events(pool, object_id)
+            .await
+    }
+
+    async fn update_adapter(
+        &self,
+        pool: &DbPool,
+        object_id: i32,
+        context: &EventContext,
+    ) -> Result<Self::Output, ApiError> {
+        (self, object_id).validate_object_record(pool).await?;
+        self.update_object_record(pool, object_id, Some(context))
+            .await
     }
 }
 
 impl DeleteAdapter for HubuumObject {
-    async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
-        self.delete_object_record(pool).await
+    async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
+        self.delete_object_record_without_events(pool).await
+    }
+
+    async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
+        self.delete_object_record(pool, Some(context)).await
     }
 }
 

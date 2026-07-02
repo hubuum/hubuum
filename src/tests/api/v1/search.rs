@@ -28,7 +28,7 @@ mod tests {
             validate_schema: Some(false),
             description: format!("{needle} inventory"),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -39,7 +39,7 @@ mod tests {
             data: serde_json::json!({"hostname": format!("{needle}-object")}),
             description: format!("{needle} object description"),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -87,7 +87,7 @@ mod tests {
             validate_schema: Some(false),
             description: "generic class".to_string(),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -130,7 +130,7 @@ mod tests {
             validate_schema: Some(false),
             description: "class for data search".to_string(),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -141,7 +141,7 @@ mod tests {
             data: serde_json::json!({"owner": "jsononlyneedle", "ignored_key": "value"}),
             description: "generic object".to_string(),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -183,7 +183,7 @@ mod tests {
                 validate_schema: Some(false),
                 description: "cursorclass description".to_string(),
             }
-            .save(&context.pool)
+            .save_without_events(&context.pool)
             .await
             .unwrap();
         }
@@ -225,7 +225,7 @@ mod tests {
 
         visible
             .owner_group
-            .add_member(&context.pool, &context.normal_user)
+            .add_member_without_events(&context.pool, &context.normal_user)
             .await
             .unwrap();
 
@@ -237,7 +237,7 @@ mod tests {
                 validate_schema: Some(false),
                 description: "permneedle class".to_string(),
             }
-            .save(&context.pool)
+            .save_without_events(&context.pool)
             .await
             .unwrap();
 
@@ -248,7 +248,7 @@ mod tests {
                 data: serde_json::json!({"tag": "permneedle"}),
                 description: "permneedle object".to_string(),
             }
-            .save(&context.pool)
+            .save_without_events(&context.pool)
             .await
             .unwrap();
         }
@@ -327,7 +327,7 @@ mod tests {
             validate_schema: Some(false),
             description: "streamneedle class".to_string(),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -338,7 +338,7 @@ mod tests {
             data: serde_json::json!({"label": "streamneedle"}),
             description: "streamneedle object".to_string(),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 

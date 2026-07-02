@@ -55,7 +55,7 @@ pub async fn init(pool: DbPool) -> InitResult {
         groupname: admin_groupname,
         description: Some("Default admin group.".to_string()),
     }
-    .save(&pool))
+    .save_without_events(&pool))
     .await
     {
         Ok(group) => group,
@@ -74,7 +74,7 @@ pub async fn init(pool: DbPool) -> InitResult {
         proper_name: Some("Administrator".to_string()),
         password: default_password.clone(),
     }
-    .save(&pool))
+    .save_without_events(&pool))
     .await
     {
         Ok(user) => user,
@@ -85,7 +85,7 @@ pub async fn init(pool: DbPool) -> InitResult {
         }
     };
 
-    match adm_group.add_member(&pool, &adm_user).await {
+    match adm_group.add_member_without_events(&pool, &adm_user).await {
         Ok(_) => {}
         Err(e) => {
             let err_msg = format!(

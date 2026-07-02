@@ -3,6 +3,7 @@ use serde::Serialize;
 use crate::db::traits::authz::AuthzSubject;
 use crate::db::traits::permissions::PermissionControllerBackend;
 use crate::errors::ApiError;
+use crate::events::EventContext;
 use crate::models::{Permission, Permissions, PermissionsList};
 
 use super::{BackendContext, NamespaceAccessors};
@@ -21,14 +22,14 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// If this is called on a *ID, a full class is created to extract
     /// the namespace_id. To avoid creating the class multiple times during use
     /// do this:
-    /// ```ignore
+    /// ```text
     /// class = class_id.class(backend).await?;
     /// if (class.user_can(backend, subject, Permissions::ReadClass, scopes).await?) {
     ///     return Ok(class);
     /// }
     /// ```
     /// And not this:
-    /// ```ignore
+    /// ```text
     /// if (class_id.user_can(backend, subject, Permissions::ReadClass, scopes).await?) {
     ///    return Ok(class_id.class(backend).await?);
     /// }
@@ -50,7 +51,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     ///
     /// ## Example
     ///
-    /// ```ignore
+    /// ```text
     /// if (hubuum_class_or_classid.user_can(backend, subject, Permissions::ReadClass, scopes).await?) {
     ///     // Do something
     /// }
@@ -81,7 +82,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// If this is called on a *ID, a full class is created to extract
     /// the namespace_id. To avoid creating the class multiple times during use
     /// do this:
-    /// ```ignore
+    /// ```text
     /// permissions = vec![Permissions::ReadClass, Permissions::UpdateClass];
     /// class = class_id.class(backend).await?;
     /// if (class.user_can_all(backend, subject, permissions, scopes).await?) {
@@ -89,7 +90,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// }
     /// ```
     /// And not this:
-    /// ```ignore
+    /// ```text
     /// permissions = vec![Permissions::ReadClass, Permissions::UpdateClass];
     /// if (class_id.user_can_all(backend, subject, permissions, scopes).await?) {
     ///    return Ok(class_id.class(backend).await?);
@@ -112,7 +113,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     ///
     /// ## Example
     ///
-    /// ```ignore
+    /// ```text
     /// if (hubuum_class_or_classid.user_can_all(backend, subject, permissions, scopes).await?) {
     ///     // Do something
     /// }
@@ -148,7 +149,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// ## Returns
     ///
     /// The permission object that holds the permissions for the group.
-    async fn grant<C>(
+    async fn grant_without_events<C>(
         &self,
         backend: &C,
         group_id_for_grant: i32,
@@ -157,7 +158,21 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.apply_permissions(backend, group_id_for_grant, permission_list, false)
+        self.apply_permissions_without_events(backend, group_id_for_grant, permission_list, false)
+            .await
+    }
+
+    async fn grant<C>(
+        &self,
+        backend: &C,
+        group_id_for_grant: i32,
+        permission_list: PermissionsList<Permissions>,
+        context: Option<&EventContext>,
+    ) -> Result<Permission, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.apply_permissions(backend, group_id_for_grant, permission_list, false, context)
             .await
     }
 
@@ -165,7 +180,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     ///
     /// - When `replace_existing` is false, no permissions are removed from the group.
     /// - When `replace_existing` is true, any existing permissions are cleared first.
-    async fn apply_permissions<C>(
+    async fn apply_permissions_without_events<C>(
         &self,
         backend: &C,
         group_id_for_grant: i32,
@@ -175,11 +190,32 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     where
         C: BackendContext + ?Sized,
     {
+        self.apply_permissions_from_backend_without_events(
+            backend.db_pool(),
+            group_id_for_grant,
+            permission_list,
+            replace_existing,
+        )
+        .await
+    }
+
+    async fn apply_permissions<C>(
+        &self,
+        backend: &C,
+        group_id_for_grant: i32,
+        permission_list: PermissionsList<Permissions>,
+        replace_existing: bool,
+        context: Option<&EventContext>,
+    ) -> Result<Permission, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
         self.apply_permissions_from_backend(
             backend.db_pool(),
             group_id_for_grant,
             permission_list,
             replace_existing,
+            context,
         )
         .await
     }
@@ -203,7 +239,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     ///
     /// The permission object that holds the permissions for the group. If the group
     /// did not have any permissions, an ApiError::NotFound is returned.
-    async fn revoke<C>(
+    async fn revoke_without_events<C>(
         &self,
         backend: &C,
         group_id_for_revoke: i32,
@@ -212,10 +248,29 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     where
         C: BackendContext + ?Sized,
     {
+        self.revoke_permissions_from_backend_without_events(
+            backend.db_pool(),
+            group_id_for_revoke,
+            permission_list,
+        )
+        .await
+    }
+
+    async fn revoke<C>(
+        &self,
+        backend: &C,
+        group_id_for_revoke: i32,
+        permission_list: PermissionsList<Permissions>,
+        context: Option<&EventContext>,
+    ) -> Result<Permission, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
         self.revoke_permissions_from_backend(
             backend.db_pool(),
             group_id_for_revoke,
             permission_list,
+            context,
         )
         .await
     }
@@ -249,7 +304,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.grant(
+        self.grant_without_events(
             backend,
             group_identifier,
             PermissionsList::new(vec![permission]),
@@ -285,7 +340,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.revoke(
+        self.revoke_without_events(
             backend,
             group_identifier,
             PermissionsList::new(vec![permission]),
@@ -311,7 +366,7 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// ## Returns
     ///
     /// The permission object that holds the permissions for the group.
-    async fn set_permissions<C>(
+    async fn set_permissions_without_events<C>(
         &self,
         backend: &C,
         group_identifier: i32,
@@ -320,7 +375,21 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.apply_permissions(backend, group_identifier, permission_list, true)
+        self.apply_permissions_without_events(backend, group_identifier, permission_list, true)
+            .await
+    }
+
+    async fn set_permissions<C>(
+        &self,
+        backend: &C,
+        group_identifier: i32,
+        permission_list: PermissionsList<Permissions>,
+        context: Option<&EventContext>,
+    ) -> Result<Permission, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.apply_permissions(backend, group_identifier, permission_list, true, context)
             .await
     }
 
@@ -338,11 +407,28 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// ## Returns
     ///
     /// An empty result.
-    async fn revoke_all<C>(&self, backend: &C, group_id_for_revoke: i32) -> Result<(), ApiError>
+    async fn revoke_all_without_events<C>(
+        &self,
+        backend: &C,
+        group_id_for_revoke: i32,
+    ) -> Result<(), ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.revoke_all_from_backend(backend.db_pool(), group_id_for_revoke)
+        self.revoke_all_from_backend_without_events(backend.db_pool(), group_id_for_revoke)
+            .await
+    }
+
+    async fn revoke_all<C>(
+        &self,
+        backend: &C,
+        group_id_for_revoke: i32,
+        context: Option<&EventContext>,
+    ) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.revoke_all_from_backend(backend.db_pool(), group_id_for_revoke, context)
             .await
     }
 }

@@ -368,7 +368,7 @@ pub mod tests {
             reverse_template_alias: None,
         };
 
-        let relation = relation.save(pool).await.unwrap();
+        let relation = relation.save_without_events(pool).await.unwrap();
 
         assert!(relation.from_hubuum_class_id < relation.to_hubuum_class_id);
 
@@ -417,7 +417,7 @@ pub mod tests {
             class_relation_id: class1.id,
         };
 
-        object_rel.save(pool).await.unwrap()
+        object_rel.save_without_events(pool).await.unwrap()
     }
 
     #[actix_rt::test]
@@ -442,7 +442,7 @@ pub mod tests {
             reverse_template_alias: None,
         };
 
-        match relation.save(&pool).await {
+        match relation.save_without_events(&pool).await {
             Err(ApiError::BadRequest(_)) => {}
             Err(e) => panic!("Unexpected error: {e:?}"),
             Ok(_) => panic!("Should not be able to create a relation with the same classes"),
@@ -469,7 +469,7 @@ pub mod tests {
             forward_template_alias: None,
             reverse_template_alias: None,
         };
-        match old_relation.save(&pool).await {
+        match old_relation.save_without_events(&pool).await {
             Err(ApiError::Conflict(_)) => {}
             Err(e) => panic!("Unexpected error: {e:?}"),
             Ok(_) => panic!("Should not be able to create a relation with the same classes"),
@@ -487,7 +487,7 @@ pub mod tests {
         let (namespace, class1, class2) = create_namespace_and_classes("delete_class").await;
         let relation = create_class_relation(&pool, &class1, &class2).await;
 
-        relation.delete(&pool).await.unwrap();
+        relation.delete_without_events(&pool).await.unwrap();
         verify_no_such_class_relation(&pool, relation.id).await;
 
         namespace.cleanup().await.unwrap();
@@ -560,7 +560,7 @@ pub mod tests {
             class_relation_id: class_rel.id,
         };
 
-        match reverse_relation.save(&pool).await {
+        match reverse_relation.save_without_events(&pool).await {
             Err(ApiError::Conflict(_)) => {}
             Err(e) => panic!("Unexpected error: {e:?}"),
             Ok(_) => panic!("Should not be able to create an inverse duplicate object relation"),
@@ -613,7 +613,7 @@ pub mod tests {
             class_relation_id: class_relation_13.id,
         };
 
-        match object_rel.save(&pool).await {
+        match object_rel.save_without_events(&pool).await {
             Err(ApiError::BadRequest(_)) => {}
             Err(e) => panic!("Unexpected error: {e:?}"),
             Ok(_) => panic!(
@@ -627,7 +627,7 @@ pub mod tests {
             class_relation_id: class_relation_13.id,
         };
 
-        match object_rel.save(&pool).await {
+        match object_rel.save_without_events(&pool).await {
             Err(ApiError::BadRequest(_)) => {}
             Err(e) => panic!("Unexpected error: {e:?}"),
             Ok(_) => panic!("Creating a relation should fail also when the order is flipped"),
@@ -639,7 +639,7 @@ pub mod tests {
             class_relation_id: 999999999,
         };
 
-        match object_rel.save(&pool).await {
+        match object_rel.save_without_events(&pool).await {
             Err(ApiError::NotFound(_)) => {}
             Err(e) => panic!("Unexpected error: {e:?}"),
             Ok(_) => panic!(
@@ -669,7 +669,7 @@ pub mod tests {
         let class_rel = create_class_relation(&pool, &class1, &class2).await;
         let object_rel = create_object_relation(&pool, &class_rel, &object1, &object2).await;
 
-        object_rel.delete(&pool).await.unwrap();
+        object_rel.delete_without_events(&pool).await.unwrap();
         verify_no_such_object_relation(&pool, object_rel.id).await;
 
         namespace.cleanup().await.unwrap();
@@ -695,7 +695,7 @@ pub mod tests {
         let class_rel = create_class_relation(&pool, &class1, &class2).await;
         let object_rel = create_object_relation(&pool, &class_rel, &object1, &object2).await;
 
-        class_rel.delete(&pool).await.unwrap();
+        class_rel.delete_without_events(&pool).await.unwrap();
         verify_no_such_object_relation(&pool, object_rel.id).await;
 
         namespace.cleanup().await.unwrap();
@@ -745,7 +745,7 @@ pub mod tests {
         assert_eq!(rels[0].target_object_id, object2.id);
         assert_eq!(rels[0].path, vec![object1.id, object2.id]);
 
-        class_rel.delete(pool).await.unwrap();
+        class_rel.delete_without_events(pool).await.unwrap();
         verify_no_such_object_relation(pool, object_rel.id).await;
 
         namespace.cleanup().await.unwrap();
@@ -887,7 +887,7 @@ pub mod tests {
             vec![Some(class_a.id), Some(class_b.id), Some(class_c.id)]
         );
 
-        rel_ab.delete(&pool).await.unwrap();
+        rel_ab.delete_without_events(&pool).await.unwrap();
 
         let after_delete = class_a.relations_to(&pool, &class_c).await.unwrap();
         assert_eq!(after_delete.len(), 1);
@@ -1034,7 +1034,7 @@ pub mod tests {
         let obj_rel_bc = create_object_relation(&pool, &rel_bc, &obj_b, &obj_c).await;
 
         // Delete class relation B↔C
-        rel_bc.delete(&pool).await.unwrap();
+        rel_bc.delete_without_events(&pool).await.unwrap();
 
         // oB-oC should be cleaned up
         verify_no_such_object_relation(&pool, obj_rel_bc.id).await;
@@ -1088,7 +1088,7 @@ pub mod tests {
         // oB-oC was created under rel_bc which is now deleted — so it should be
         // cleaned up via CASCADE (class_relation_id FK), regardless of transitive
         // reachability.
-        rel_bc.delete(&pool).await.unwrap();
+        rel_bc.delete_without_events(&pool).await.unwrap();
 
         // oA-oB should survive — its class relation A↔B still exists
         let surviving_ab = HubuumObjectRelationID(obj_rel_ab.id).instance(&pool).await;

@@ -9,8 +9,9 @@
 
 use diesel::prelude::*;
 
-use crate::db::{DbPool, with_connection};
+use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
+use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::namespace::NamespaceID;
 use crate::models::report_template::{
     NewReportTemplateRow, ReportTemplate, ReportTemplateID, ReportTemplateRow,
@@ -18,6 +19,24 @@ use crate::models::report_template::{
 };
 use crate::models::search::{FilterField, QueryOptions};
 use crate::{date_search, numeric_search, string_search};
+
+fn report_template_event(
+    row: &ReportTemplateRow,
+    action: Action,
+    context: &EventContext,
+    summary: impl Into<String>,
+) -> Result<NewEvent, ApiError> {
+    Ok(NewEvent::new(
+        EntityType::ReportTemplate,
+        action,
+        context.actor_kind(),
+        summary,
+    )?
+    .with_context(context)
+    .with_entity_id(row.id())
+    .with_entity_name(row.name().to_string())
+    .with_namespace_id(row.namespace_id()))
+}
 
 /// Load the report-template row identified by this id.
 pub(crate) trait LoadReportTemplateRecord {
@@ -44,14 +63,23 @@ impl LoadReportTemplateRecord for ReportTemplateID {
 
 /// Insert this new report-template row and return the persisted row.
 pub(crate) trait SaveReportTemplateRecord {
-    async fn save_report_template_record(
+    async fn save_report_template_record_without_events(
         &self,
         pool: &DbPool,
     ) -> Result<ReportTemplateRow, ApiError>;
+
+    async fn save_report_template_record(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<ReportTemplateRow, ApiError> {
+        let _ = context;
+        self.save_report_template_record_without_events(pool).await
+    }
 }
 
 impl SaveReportTemplateRecord for NewReportTemplateRow {
-    async fn save_report_template_record(
+    async fn save_report_template_record_without_events(
         &self,
         pool: &DbPool,
     ) -> Result<ReportTemplateRow, ApiError> {
@@ -63,19 +91,57 @@ impl SaveReportTemplateRecord for NewReportTemplateRow {
                 .get_result::<ReportTemplateRow>(conn)
         })
     }
+
+    async fn save_report_template_record(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<ReportTemplateRow, ApiError> {
+        let Some(context) = context else {
+            return self.save_report_template_record_without_events(pool).await;
+        };
+
+        use crate::schema::report_templates::dsl::report_templates;
+
+        with_transaction(pool, |conn| -> Result<ReportTemplateRow, ApiError> {
+            let row = diesel::insert_into(report_templates)
+                .values(self)
+                .get_result::<ReportTemplateRow>(conn)?;
+            let event = report_template_event(
+                &row,
+                Action::Created,
+                context,
+                format!("Report template '{}' created", row.name()),
+            )?
+            .with_after(row.audit_snapshot());
+            emit_event(conn, &event)?;
+            Ok(row)
+        })
+    }
 }
 
 /// Apply this changeset to the report-template row with the given id and return the updated row.
 pub(crate) trait UpdateReportTemplateRecord {
-    async fn update_report_template_record(
+    async fn update_report_template_record_without_events(
         &self,
         pool: &DbPool,
         template_id: i32,
     ) -> Result<ReportTemplateRow, ApiError>;
+
+    async fn update_report_template_record(
+        &self,
+        pool: &DbPool,
+        template_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<ReportTemplateRow, ApiError> {
+        let _ = context;
+        self.update_report_template_record_without_events(pool, template_id)
+            .await
+    }
 }
 
 impl UpdateReportTemplateRecord for UpdateReportTemplateRow {
-    async fn update_report_template_record(
+    async fn update_report_template_record_without_events(
         &self,
         pool: &DbPool,
         template_id: i32,
@@ -88,15 +154,65 @@ impl UpdateReportTemplateRecord for UpdateReportTemplateRow {
                 .get_result::<ReportTemplateRow>(conn)
         })
     }
+
+    async fn update_report_template_record(
+        &self,
+        pool: &DbPool,
+        template_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<ReportTemplateRow, ApiError> {
+        let Some(context) = context else {
+            return self
+                .update_report_template_record_without_events(pool, template_id)
+                .await;
+        };
+
+        use crate::schema::report_templates::dsl::{id, report_templates};
+
+        with_transaction(pool, |conn| -> Result<ReportTemplateRow, ApiError> {
+            let before = report_templates
+                .filter(id.eq(template_id))
+                .first::<ReportTemplateRow>(conn)?;
+            let after = diesel::update(report_templates.filter(id.eq(template_id)))
+                .set(self)
+                .get_result::<ReportTemplateRow>(conn)?;
+            let event = report_template_event(
+                &after,
+                Action::Updated,
+                context,
+                format!("Report template '{}' updated", after.name()),
+            )?
+            .with_before(before.audit_snapshot())
+            .with_after(after.audit_snapshot());
+            emit_event(conn, &event)?;
+            Ok(after)
+        })
+    }
 }
 
 /// Delete the report-template row identified by this id.
 pub(crate) trait DeleteReportTemplateRecord {
-    async fn delete_report_template_record(&self, pool: &DbPool) -> Result<(), ApiError>;
+    async fn delete_report_template_record_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(), ApiError>;
+
+    async fn delete_report_template_record(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<(), ApiError> {
+        let _ = context;
+        self.delete_report_template_record_without_events(pool)
+            .await
+    }
 }
 
 impl DeleteReportTemplateRecord for ReportTemplateID {
-    async fn delete_report_template_record(&self, pool: &DbPool) -> Result<(), ApiError> {
+    async fn delete_report_template_record_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(), ApiError> {
         use crate::schema::report_templates::dsl::{id, report_templates};
 
         with_connection(pool, |conn| {
@@ -104,6 +220,36 @@ impl DeleteReportTemplateRecord for ReportTemplateID {
         })?;
 
         Ok(())
+    }
+
+    async fn delete_report_template_record(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<(), ApiError> {
+        let Some(context) = context else {
+            return self
+                .delete_report_template_record_without_events(pool)
+                .await;
+        };
+
+        use crate::schema::report_templates::dsl::{id, report_templates};
+
+        with_transaction(pool, |conn| -> Result<(), ApiError> {
+            let before = report_templates
+                .filter(id.eq(self.id()))
+                .first::<ReportTemplateRow>(conn)?;
+            diesel::delete(report_templates.filter(id.eq(self.id()))).execute(conn)?;
+            let event = report_template_event(
+                &before,
+                Action::Deleted,
+                context,
+                format!("Report template '{}' deleted", before.name()),
+            )?
+            .with_before(before.audit_snapshot());
+            emit_event(conn, &event)?;
+            Ok(())
+        })
     }
 }
 

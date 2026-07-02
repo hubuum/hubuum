@@ -1,0 +1,20 @@
+[package]
+name = "hubuum-event-sink-valkey"
+version = "0.0.1"
+edition = "2024"
+description = "Valkey/Redis Streams event sink transport for Hubuum."
+license = "MIT"
+repository = "https://github.com/hubuum/hubuum"
+
+[dependencies]
+futures = "0.3"
+hubuum-event-sinks-common = { path = "../hubuum-event-sinks-common" }
+hubuum-events-core = { path = "../hubuum-events-core" }
+redis = { version = "1.3.0", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt"] }
+
+[dev-dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }

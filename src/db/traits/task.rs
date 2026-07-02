@@ -8,6 +8,7 @@ use crate::apply_query_options;
 use crate::config::get_config;
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
+use crate::events::{Action, ActorKind, EntityType, NewEvent, emit_event};
 use crate::models::search::QueryOptions;
 use crate::models::{
     ImportTaskResultRecord, NewImportTaskResultRecord, NewReportTaskOutputRecord,
@@ -126,7 +127,7 @@ pub trait TaskBackend: TaskIdentifier {
         pool: &DbPool,
         query_options: &QueryOptions,
     ) -> Result<(Vec<TaskEventRecord>, i64), ApiError> {
-        use crate::schema::task_events::dsl::{id, task_events, task_id};
+        use crate::schema::events::dsl::{entity_id, entity_type, events, id};
 
         let task_id_value = self.task_id();
         let limit = query_options
@@ -137,17 +138,21 @@ pub trait TaskBackend: TaskIdentifier {
             .first()
             .map(|sort| sort.descending)
             .unwrap_or(false);
-        let cursor_id = decode_history_cursor_id(query_options)?;
+        let cursor_id = decode_task_event_cursor_id(query_options)?;
 
         let total_count = with_connection(pool, |conn| {
-            task_events
-                .filter(task_id.eq(task_id_value))
+            events
+                .filter(entity_type.eq(EntityType::Task.as_str()))
+                .filter(entity_id.eq(Some(task_id_value)))
                 .count()
                 .get_result::<i64>(conn)
         })?;
 
         let items = with_connection(pool, |conn| {
-            let mut query = task_events.filter(task_id.eq(task_id_value)).into_boxed();
+            let mut query = events
+                .filter(entity_type.eq(EntityType::Task.as_str()))
+                .filter(entity_id.eq(Some(task_id_value)))
+                .into_boxed();
             if let Some(cursor_id) = cursor_id {
                 query = if descending {
                     query.filter(id.lt(cursor_id))
@@ -160,14 +165,17 @@ pub trait TaskBackend: TaskIdentifier {
                 query
                     .order(id.desc())
                     .limit(limit as i64)
-                    .load::<TaskEventRecord>(conn)
+                    .load::<crate::events::Event>(conn)
             } else {
                 query
                     .order(id.asc())
                     .limit(limit as i64)
-                    .load::<TaskEventRecord>(conn)
+                    .load::<crate::events::Event>(conn)
             }
-        })?;
+        })?
+        .into_iter()
+        .map(TaskEventRecord::try_from)
+        .collect::<Result<Vec<_>, _>>()?;
 
         Ok((items, total_count))
     }
@@ -188,7 +196,7 @@ pub trait TaskBackend: TaskIdentifier {
             .first()
             .map(|sort| sort.descending)
             .unwrap_or(false);
-        let cursor_id = decode_history_cursor_id(query_options)?;
+        let cursor_id = decode_int_history_cursor_id(query_options)?;
 
         let total_count = with_connection(pool, |conn| {
             import_task_results
@@ -340,19 +348,17 @@ pub trait TaskBackend: TaskIdentifier {
         update: TaskStateUpdate,
         event: NewTaskEventRecord,
     ) -> Result<TaskRecord, ApiError> {
-        use crate::schema::task_events::dsl::task_events;
         use crate::schema::tasks::dsl::{
             failed_items, finished_at, id, processed_items, request_payload, request_redacted_at,
             started_at, status, success_items, summary, tasks, updated_at,
         };
 
         let task_id_value = self.task_id();
-        let record = with_transaction(pool, |conn| {
-            let event_record = diesel::insert_into(task_events)
-                .values(event)
-                .get_result::<TaskEventRecord>(conn)?;
+        let record = with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
+            let event_record =
+                emit_task_lifecycle_event(conn, &event, ActorKind::Worker, None, None)?;
 
-            diesel::update(tasks.filter(id.eq(task_id_value)))
+            Ok(diesel::update(tasks.filter(id.eq(task_id_value)))
                 .set((
                     status.eq(update.status.as_str()),
                     summary.eq(update.summary),
@@ -360,12 +366,12 @@ pub trait TaskBackend: TaskIdentifier {
                     success_items.eq(update.success_items),
                     failed_items.eq(update.failed_items),
                     started_at.eq(update.started_at),
-                    finished_at.eq(Some(event_record.created_at)),
+                    finished_at.eq(Some(event_record.occurred_at)),
                     request_payload.eq::<Option<serde_json::Value>>(None),
-                    request_redacted_at.eq(event_record.created_at),
-                    updated_at.eq(event_record.created_at),
+                    request_redacted_at.eq(event_record.occurred_at),
+                    updated_at.eq(event_record.occurred_at),
                 ))
-                .get_result::<TaskRecord>(conn)
+                .get_result::<TaskRecord>(conn)?)
         })?;
 
         info!(
@@ -392,14 +398,13 @@ pub trait TaskBackend: TaskIdentifier {
         use crate::schema::report_task_outputs::dsl::{
             report_task_outputs, task_id as report_output_task_id,
         };
-        use crate::schema::task_events::dsl::task_events;
         use crate::schema::tasks::dsl::{
             failed_items, finished_at, id, processed_items, request_payload, request_redacted_at,
             started_at, status, success_items, summary, tasks, updated_at,
         };
 
         let task_id_value = self.task_id();
-        let record = with_transaction(pool, |conn| {
+        let record = with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
             // Idempotent so a future requeue / manual re-claim that re-finalizes the same task
             // cannot trip the `report_task_outputs.task_id` UNIQUE constraint and roll back the
             // transaction, which would otherwise leave the task stuck mid-flight.
@@ -409,11 +414,10 @@ pub trait TaskBackend: TaskIdentifier {
                 .do_nothing()
                 .execute(conn)?;
 
-            let event_record = diesel::insert_into(task_events)
-                .values(event)
-                .get_result::<TaskEventRecord>(conn)?;
+            let event_record =
+                emit_task_lifecycle_event(conn, &event, ActorKind::Worker, None, None)?;
 
-            diesel::update(tasks.filter(id.eq(task_id_value)))
+            Ok(diesel::update(tasks.filter(id.eq(task_id_value)))
                 .set((
                     status.eq(update.status.as_str()),
                     summary.eq(update.summary),
@@ -421,12 +425,12 @@ pub trait TaskBackend: TaskIdentifier {
                     success_items.eq(update.success_items),
                     failed_items.eq(update.failed_items),
                     started_at.eq(update.started_at),
-                    finished_at.eq(Some(event_record.created_at)),
+                    finished_at.eq(Some(event_record.occurred_at)),
                     request_payload.eq::<Option<serde_json::Value>>(None),
-                    request_redacted_at.eq(event_record.created_at),
-                    updated_at.eq(event_record.created_at),
+                    request_redacted_at.eq(event_record.occurred_at),
+                    updated_at.eq(event_record.occurred_at),
                 ))
-                .get_result::<TaskRecord>(conn)
+                .get_result::<TaskRecord>(conn)?)
         })?;
 
         info!(
@@ -550,7 +554,6 @@ pub async fn purge_expired_report_outputs(pool: &DbPool) -> Result<Vec<i32>, Api
     use crate::schema::report_task_outputs::dsl::{
         output_expires_at, report_task_outputs, task_id,
     };
-    use crate::schema::task_events::dsl::task_events;
 
     let now = Utc::now().naive_utc();
     let expired_task_ids = with_transaction(pool, |conn| {
@@ -560,23 +563,25 @@ pub async fn purge_expired_report_outputs(pool: &DbPool) -> Result<Vec<i32>, Api
                 .get_results::<i32>(conn)?;
 
         if !expired_task_ids.is_empty() {
-            let events = expired_task_ids
-                .iter()
-                .map(|expired_task_id| NewTaskEventRecord {
-                    task_id: *expired_task_id,
-                    event_type: "cleanup".to_string(),
-                    message: "Stored report output expired and was cleaned up".to_string(),
-                    data: Some(serde_json::json!({
-                        "cleaned_at": now,
-                    })),
-                })
-                .collect::<Vec<_>>();
-            diesel::insert_into(task_events)
-                .values(&events)
-                .execute(conn)?;
+            for expired_task_id in &expired_task_ids {
+                emit_task_lifecycle_event(
+                    conn,
+                    &NewTaskEventRecord {
+                        task_id: *expired_task_id,
+                        event_type: "cleanup".to_string(),
+                        message: "Stored report output expired and was cleaned up".to_string(),
+                        data: Some(serde_json::json!({
+                            "cleaned_at": now,
+                        })),
+                    },
+                    ActorKind::System,
+                    None,
+                    Some(TaskKind::Report.as_str()),
+                )?;
+            }
         }
 
-        Ok::<_, diesel::result::Error>(expired_task_ids)
+        Ok::<_, ApiError>(expired_task_ids)
     })?;
 
     if !expired_task_ids.is_empty() {
@@ -592,7 +597,21 @@ pub async fn purge_expired_report_outputs(pool: &DbPool) -> Result<Vec<i32>, Api
     Ok(expired_task_ids)
 }
 
-fn decode_history_cursor_id(query_options: &QueryOptions) -> Result<Option<i32>, ApiError> {
+fn decode_task_event_cursor_id(query_options: &QueryOptions) -> Result<Option<i64>, ApiError> {
+    let Some(cursor) = &query_options.cursor else {
+        return Ok(None);
+    };
+
+    let values = decode_cursor_values(cursor, &query_options.sort)?;
+    match values.as_slice() {
+        [CursorValue::Integer(value)] => Ok(Some(*value)),
+        _ => Err(ApiError::BadRequest(
+            "task history cursor does not match the current sort order".to_string(),
+        )),
+    }
+}
+
+fn decode_int_history_cursor_id(query_options: &QueryOptions) -> Result<Option<i32>, ApiError> {
     let Some(cursor) = &query_options.cursor else {
         return Ok(None);
     };
@@ -608,15 +627,58 @@ fn decode_history_cursor_id(query_options: &QueryOptions) -> Result<Option<i32>,
     }
 }
 
+fn task_event_action(event_type: &str) -> Result<Action, ApiError> {
+    Action::from_db(event_type).map_err(|_| {
+        ApiError::InternalServerError(format!("Unknown task event type '{event_type}'"))
+    })
+}
+
+fn task_lifecycle_event(
+    event: &NewTaskEventRecord,
+    actor_kind: ActorKind,
+    actor_user_id: Option<i32>,
+    task_kind: Option<&str>,
+) -> Result<NewEvent, ApiError> {
+    let mut metadata = serde_json::json!({
+        "task_id": event.task_id,
+    });
+    if let Some(task_kind) = task_kind {
+        metadata["task_kind"] = serde_json::json!(task_kind);
+    }
+    if let Some(data) = &event.data {
+        metadata["data"] = data.clone();
+    }
+
+    let mut lifecycle_event = NewEvent::new(
+        EntityType::Task,
+        task_event_action(&event.event_type)?,
+        actor_kind,
+        event.message.clone(),
+    )?
+    .with_entity_id(event.task_id)
+    .with_metadata(metadata);
+    if let Some(actor_user_id) = actor_user_id {
+        lifecycle_event = lifecycle_event.with_actor_user_id(actor_user_id);
+    }
+    Ok(lifecycle_event)
+}
+
+fn emit_task_lifecycle_event(
+    conn: &mut PgConnection,
+    event: &NewTaskEventRecord,
+    actor_kind: ActorKind,
+    actor_user_id: Option<i32>,
+    task_kind: Option<&str>,
+) -> Result<crate::events::Event, ApiError> {
+    let lifecycle_event = task_lifecycle_event(event, actor_kind, actor_user_id, task_kind)?;
+    emit_event(conn, &lifecycle_event).map_err(ApiError::from)
+}
+
 impl NewTaskEventRecord {
     /// Append this event to its task's history and return the persisted event.
     pub async fn append(self, pool: &DbPool) -> Result<TaskEventRecord, ApiError> {
-        use crate::schema::task_events::dsl::task_events;
-
-        with_connection(pool, |conn| {
-            diesel::insert_into(task_events)
-                .values(&self)
-                .get_result::<TaskEventRecord>(conn)
+        with_connection(pool, |conn| -> Result<TaskEventRecord, ApiError> {
+            emit_task_lifecycle_event(conn, &self, ActorKind::Worker, None, None)?.try_into()
         })
     }
 }
@@ -638,13 +700,21 @@ pub async fn insert_import_results(
     })
 }
 
+pub(crate) fn executable_task_kind_values() -> [&'static str; 3] {
+    [
+        TaskKind::Import.as_str(),
+        TaskKind::Report.as_str(),
+        TaskKind::RemoteCall.as_str(),
+    ]
+}
+
 pub async fn claim_next_queued_task(pool: &DbPool) -> Result<Option<TaskRecord>, ApiError> {
-    use crate::schema::task_events::dsl::task_events;
-    use crate::schema::tasks::dsl::{created_at, id, started_at, status, tasks, updated_at};
+    use crate::schema::tasks::dsl::{created_at, id, kind, started_at, status, tasks, updated_at};
 
     let record = with_transaction(pool, |conn| -> Result<Option<TaskRecord>, ApiError> {
         let Some(task_id_value) = tasks
             .filter(status.eq(TaskStatus::Queued.as_str()))
+            .filter(kind.eq_any(executable_task_kind_values()))
             .order(created_at.asc())
             .for_update()
             .skip_locked()
@@ -664,14 +734,18 @@ pub async fn claim_next_queued_task(pool: &DbPool) -> Result<Option<TaskRecord>,
             ))
             .get_result::<TaskRecord>(conn)?;
 
-        diesel::insert_into(task_events)
-            .values(NewTaskEventRecord {
+        emit_task_lifecycle_event(
+            conn,
+            &NewTaskEventRecord {
                 task_id: record.id,
                 event_type: "validating".to_string(),
                 message: "Task claimed for validation".to_string(),
                 data: None,
-            })
-            .execute(conn)?;
+            },
+            ActorKind::Worker,
+            None,
+            Some(record.kind.as_str()),
+        )?;
 
         Ok(Some(record))
     })?;
@@ -765,14 +839,15 @@ fn insert_queued_task_with_event(
     conn: &mut PgConnection,
     request: TaskCreateRequest,
 ) -> Result<TaskRecord, ApiError> {
-    use crate::schema::task_events::dsl::task_events;
     use crate::schema::tasks::dsl::tasks;
 
+    let submitted_by = request.submitted_by;
+    let task_kind = request.kind;
     let task = diesel::insert_into(tasks)
         .values(NewTaskRecord {
-            kind: request.kind.as_str().to_string(),
+            kind: task_kind.as_str().to_string(),
             status: TaskStatus::Queued.as_str().to_string(),
-            submitted_by: Some(request.submitted_by),
+            submitted_by: Some(submitted_by),
             idempotency_key: request.idempotency_key,
             request_hash: request.request_hash,
             request_payload: Some(request.request_payload),
@@ -790,14 +865,18 @@ fn insert_queued_task_with_event(
         })
         .get_result::<TaskRecord>(conn)?;
 
-    diesel::insert_into(task_events)
-        .values(NewTaskEventRecord {
+    emit_task_lifecycle_event(
+        conn,
+        &NewTaskEventRecord {
             task_id: task.id,
             event_type: "queued".to_string(),
             message: "Task queued".to_string(),
             data: None,
-        })
-        .execute(conn)?;
+        },
+        ActorKind::User,
+        Some(submitted_by),
+        Some(task_kind.as_str()),
+    )?;
 
     Ok(task)
 }
@@ -1028,7 +1107,7 @@ mod tests {
         )
         .unwrap();
 
-        block_on(task_owner.delete_user_record(&context.pool)).unwrap();
+        block_on(task_owner.delete_user_record_without_events(&context.pool)).unwrap();
 
         let stored = block_on(task.find_record(&context.pool)).unwrap();
         assert_eq!(stored.submitted_by, None);

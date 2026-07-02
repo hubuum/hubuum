@@ -24,7 +24,7 @@ mod tests {
             description: "template test namespace".to_string(),
             group_id: admin_group.id,
         }
-        .save(pool)
+        .save_without_events(pool)
         .await
         .unwrap()
     }
@@ -151,7 +151,7 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::NOT_FOUND).await;
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -217,7 +217,7 @@ mod tests {
             created_ids
         );
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -229,7 +229,7 @@ mod tests {
         let resp = post_request(&pool, &normal_token, TEMPLATES_ENDPOINT, &create_payload).await;
         assert_response_status(resp, StatusCode::FORBIDDEN).await;
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -256,7 +256,7 @@ mod tests {
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -302,7 +302,7 @@ mod tests {
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &child).await;
         assert_response_status(resp, StatusCode::CREATED).await;
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -329,7 +329,7 @@ mod tests {
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
         assert_response_status(resp, StatusCode::CREATED).await;
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -376,8 +376,8 @@ mod tests {
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &child).await;
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
 
-        source_namespace.delete(&pool).await.unwrap();
-        target_namespace.delete(&pool).await.unwrap();
+        source_namespace.delete_without_events(&pool).await.unwrap();
+        target_namespace.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -393,11 +393,14 @@ mod tests {
 
         let test_user = create_test_user(&pool).await;
         let test_group = create_test_group(&pool).await;
-        test_group.add_member(&pool, &test_user).await.unwrap();
+        test_group
+            .add_member_without_events(&pool, &test_user)
+            .await
+            .unwrap();
         let user_token = test_user.create_token(&pool).await.unwrap().get_token();
 
         source_namespace
-            .grant(
+            .grant_without_events(
                 &pool,
                 test_group.id,
                 PermissionsList::new([Permissions::UpdateTemplate]),
@@ -423,7 +426,7 @@ mod tests {
         assert_response_status(resp, StatusCode::FORBIDDEN).await;
 
         target_namespace
-            .grant(
+            .grant_without_events(
                 &pool,
                 test_group.id,
                 PermissionsList::new([Permissions::CreateTemplate]),
@@ -442,8 +445,8 @@ mod tests {
         let moved: ReportTemplate = test::read_body_json(resp).await;
         assert_eq!(moved.namespace_id, target_namespace.id);
 
-        source_namespace.delete(&pool).await.unwrap();
-        target_namespace.delete(&pool).await.unwrap();
+        source_namespace.delete_without_events(&pool).await.unwrap();
+        target_namespace.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -479,8 +482,8 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::CONFLICT).await;
 
-        source_namespace.delete(&pool).await.unwrap();
-        target_namespace.delete(&pool).await.unwrap();
+        source_namespace.delete_without_events(&pool).await.unwrap();
+        target_namespace.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -495,7 +498,7 @@ mod tests {
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
         assert_response_status(resp, StatusCode::CONFLICT).await;
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -531,7 +534,7 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::CONFLICT).await;
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -547,11 +550,14 @@ mod tests {
 
         let test_user = create_test_user(&pool).await;
         let test_group = create_test_group(&pool).await;
-        test_group.add_member(&pool, &test_user).await.unwrap();
+        test_group
+            .add_member_without_events(&pool, &test_user)
+            .await
+            .unwrap();
         let user_token = test_user.create_token(&pool).await.unwrap().get_token();
 
         target_namespace
-            .grant(
+            .grant_without_events(
                 &pool,
                 test_group.id,
                 PermissionsList::new([Permissions::CreateTemplate]),
@@ -576,10 +582,10 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::FORBIDDEN).await;
 
-        source_namespace.delete(&pool).await.unwrap();
-        target_namespace.delete(&pool).await.unwrap();
-        test_group.delete(&pool).await.unwrap();
-        test_user.delete(&pool).await.unwrap();
+        source_namespace.delete_without_events(&pool).await.unwrap();
+        target_namespace.delete_without_events(&pool).await.unwrap();
+        test_group.delete_without_events(&pool).await.unwrap();
+        test_user.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -601,11 +607,14 @@ mod tests {
 
         let test_user = create_test_user(&pool).await;
         let test_group = create_test_group(&pool).await;
-        test_group.add_member(&pool, &test_user).await.unwrap();
+        test_group
+            .add_member_without_events(&pool, &test_user)
+            .await
+            .unwrap();
         let user_token = test_user.create_token(&pool).await.unwrap().get_token();
 
         visible_namespace
-            .grant(
+            .grant_without_events(
                 &pool,
                 test_group.id,
                 PermissionsList::new([Permissions::ReadTemplate]),
@@ -628,10 +637,13 @@ mod tests {
                 .any(|template| template.id == hidden_template.id)
         );
 
-        visible_namespace.delete(&pool).await.unwrap();
-        hidden_namespace.delete(&pool).await.unwrap();
-        test_group.delete(&pool).await.unwrap();
-        test_user.delete(&pool).await.unwrap();
+        visible_namespace
+            .delete_without_events(&pool)
+            .await
+            .unwrap();
+        hidden_namespace.delete_without_events(&pool).await.unwrap();
+        test_group.delete_without_events(&pool).await.unwrap();
+        test_user.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -646,7 +658,7 @@ mod tests {
         let created: ReportTemplate = test::read_body_json(resp).await;
 
         namespace
-            .revoke(
+            .revoke_without_events(
                 &pool,
                 admin_group.id,
                 PermissionsList::new([
@@ -673,7 +685,7 @@ mod tests {
 
         assert!(listed.iter().any(|template| template.id == created.id));
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -702,7 +714,7 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::FORBIDDEN).await;
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -718,7 +730,7 @@ mod tests {
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -740,7 +752,7 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -755,7 +767,7 @@ mod tests {
             validate_schema: Some(false),
             description: "foreign class".to_string(),
         }
-        .save(&pool)
+        .save_without_events(&pool)
         .await
         .unwrap();
 
@@ -778,8 +790,11 @@ mod tests {
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
 
-        template_namespace.delete(&pool).await.unwrap();
-        class_namespace.delete(&pool).await.unwrap();
+        template_namespace
+            .delete_without_events(&pool)
+            .await
+            .unwrap();
+        class_namespace.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -793,7 +808,7 @@ mod tests {
             validate_schema: Some(false),
             description: "class".to_string(),
         }
-        .save(&pool)
+        .save_without_events(&pool)
         .await
         .unwrap();
 
@@ -835,7 +850,7 @@ mod tests {
         assert_eq!(patched.scope_kind, Some(ReportScopeKind::Namespaces));
         assert_eq!(patched.class_id, None);
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -849,7 +864,7 @@ mod tests {
             validate_schema: Some(false),
             description: "class".to_string(),
         }
-        .save(&pool)
+        .save_without_events(&pool)
         .await
         .unwrap();
 
@@ -871,7 +886,7 @@ mod tests {
                 max_output_bytes: Some(262_144),
             }),
         }
-        .save(&pool)
+        .save_without_events(&pool)
         .await
         .unwrap();
 
@@ -912,7 +927,7 @@ mod tests {
         assert_eq!(patched.scope_kind, Some(ReportScopeKind::ObjectsInClass));
         assert_eq!(patched.class_id, Some(class.id));
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -926,7 +941,7 @@ mod tests {
             validate_schema: Some(false),
             description: "class".to_string(),
         }
-        .save(&pool)
+        .save_without_events(&pool)
         .await
         .unwrap();
 
@@ -949,7 +964,7 @@ mod tests {
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -964,7 +979,7 @@ mod tests {
             validate_schema: Some(false),
             description: "class for kind filtering".to_string(),
         }
-        .save(&pool)
+        .save_without_events(&pool)
         .await
         .unwrap();
 
@@ -1024,7 +1039,7 @@ mod tests {
         );
         assert_eq!(fragments[0].name, "partial.kind-fragment");
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -1039,12 +1054,15 @@ mod tests {
 
         let test_user = create_test_user(&pool).await;
         let test_group = create_test_group(&pool).await;
-        test_group.add_member(&pool, &test_user).await.unwrap();
+        test_group
+            .add_member_without_events(&pool, &test_user)
+            .await
+            .unwrap();
         let user_token = test_user.create_token(&pool).await.unwrap().get_token();
 
         // Grant only ReadTemplate, not UpdateTemplate
         namespace
-            .grant(
+            .grant_without_events(
                 &pool,
                 test_group.id,
                 PermissionsList::new([Permissions::ReadTemplate]),
@@ -1071,7 +1089,7 @@ mod tests {
 
         // Now grant UpdateTemplate and verify it works
         namespace
-            .grant(
+            .grant_without_events(
                 &pool,
                 test_group.id,
                 PermissionsList::new([Permissions::UpdateTemplate]),
@@ -1090,9 +1108,9 @@ mod tests {
         let updated: ReportTemplate = test::read_body_json(resp).await;
         assert_eq!(updated.description, "updated description");
 
-        namespace.delete(&pool).await.unwrap();
-        test_group.delete(&pool).await.unwrap();
-        test_user.delete(&pool).await.unwrap();
+        namespace.delete_without_events(&pool).await.unwrap();
+        test_group.delete_without_events(&pool).await.unwrap();
+        test_user.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -1107,12 +1125,15 @@ mod tests {
 
         let test_user = create_test_user(&pool).await;
         let test_group = create_test_group(&pool).await;
-        test_group.add_member(&pool, &test_user).await.unwrap();
+        test_group
+            .add_member_without_events(&pool, &test_user)
+            .await
+            .unwrap();
         let user_token = test_user.create_token(&pool).await.unwrap().get_token();
 
         // Grant only ReadTemplate and UpdateTemplate, not DeleteTemplate
         namespace
-            .grant(
+            .grant_without_events(
                 &pool,
                 test_group.id,
                 PermissionsList::new([Permissions::ReadTemplate, Permissions::UpdateTemplate]),
@@ -1130,7 +1151,7 @@ mod tests {
 
         // Now grant DeleteTemplate and verify it works
         namespace
-            .grant(
+            .grant_without_events(
                 &pool,
                 test_group.id,
                 PermissionsList::new([Permissions::DeleteTemplate]),
@@ -1146,8 +1167,8 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::NO_CONTENT).await;
 
-        namespace.delete(&pool).await.unwrap();
-        test_group.delete(&pool).await.unwrap();
-        test_user.delete(&pool).await.unwrap();
+        namespace.delete_without_events(&pool).await.unwrap();
+        test_group.delete_without_events(&pool).await.unwrap();
+        test_user.delete_without_events(&pool).await.unwrap();
     }
 }

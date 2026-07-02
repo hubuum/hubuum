@@ -3,6 +3,7 @@ use crate::db::traits::relations::{
     DeleteClassRelationRecord, LoadClassRelationRecord, SaveClassRelationRecord,
 };
 use crate::errors::ApiError;
+use crate::events::EventContext;
 
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
@@ -47,22 +48,41 @@ impl InstanceAdapter<HubuumClassRelation> for HubuumClassRelation {
 }
 
 impl DeleteAdapter for HubuumClassRelation {
-    async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
-        self.delete_class_relation_record(pool).await
+    async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
+        self.delete_class_relation_record_without_events(pool).await
+    }
+
+    async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
+        self.delete_class_relation_record(pool, Some(context)).await
     }
 }
 
 impl SaveAdapter for NewHubuumClassRelation {
     type Output = HubuumClassRelation;
 
-    async fn save_adapter(&self, pool: &DbPool) -> Result<HubuumClassRelation, ApiError> {
-        self.save_class_relation_record(pool).await
+    async fn save_adapter_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<HubuumClassRelation, ApiError> {
+        self.save_class_relation_record_without_events(pool).await
+    }
+
+    async fn save_adapter(
+        &self,
+        pool: &DbPool,
+        context: &EventContext,
+    ) -> Result<HubuumClassRelation, ApiError> {
+        self.save_class_relation_record(pool, Some(context)).await
     }
 }
 
 impl DeleteAdapter for HubuumClassRelationID {
-    async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
-        self.delete_class_relation_record(pool).await
+    async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
+        self.delete_class_relation_record_without_events(pool).await
+    }
+
+    async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
+        self.delete_class_relation_record(pool, Some(context)).await
     }
 }
 

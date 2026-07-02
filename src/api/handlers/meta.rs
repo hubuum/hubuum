@@ -215,7 +215,7 @@ pub async fn get_task_queue_state(
           COUNT(*) FILTER (WHERE kind = 'report')::bigint AS report_tasks,
           COUNT(*) FILTER (WHERE kind = 'export')::bigint AS export_tasks,
           COUNT(*) FILTER (WHERE kind = 'reindex')::bigint AS reindex_tasks,
-          (SELECT COUNT(*) FROM task_events)::bigint AS total_task_events,
+          (SELECT COUNT(*) FROM events WHERE entity_type = 'task')::bigint AS total_task_events,
           (SELECT COUNT(*) FROM import_task_results)::bigint AS total_import_result_rows,
           MIN(created_at) FILTER (WHERE status = 'queued') AS oldest_queued_at,
           MIN(started_at) FILTER (WHERE status IN ('validating', 'running')) AS oldest_active_at

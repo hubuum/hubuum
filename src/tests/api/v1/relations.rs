@@ -69,7 +69,7 @@ mod tests {
             reverse_template_alias: None,
         };
 
-        relation.save(pool).await.unwrap()
+        relation.save_without_events(pool).await.unwrap()
     }
 
     async fn create_object_relation(
@@ -84,7 +84,7 @@ mod tests {
             class_relation_id: relation.id,
         };
 
-        relation.save(pool).await.unwrap()
+        relation.save_without_events(pool).await.unwrap()
     }
 
     async fn create_classes_and_relations(
@@ -191,7 +191,7 @@ mod tests {
                 data,
             };
 
-            objects.push(object.save(pool).await.unwrap());
+            objects.push(object.save_without_events(pool).await.unwrap());
         }
 
         objects
@@ -794,7 +794,10 @@ mod tests {
         let token = user.create_token(&context.pool).await.unwrap().get_token();
         let group = create_test_group(&context.pool).await;
 
-        group.add_member(&context.pool, &user).await.unwrap();
+        group
+            .add_member_without_events(&context.pool, &user)
+            .await
+            .unwrap();
 
         let (classes, relations) =
             create_classes_and_relations(&context, "get_class_relation_with_permissions").await;
@@ -855,7 +858,7 @@ mod tests {
             description: "hidden relation source".to_string(),
             data: serde_json::json!({"role": "source"}),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -866,7 +869,7 @@ mod tests {
             description: "hidden relation target".to_string(),
             data: serde_json::json!({"role": "target"}),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -1627,7 +1630,7 @@ mod tests {
             description: "machine_a".to_string(),
             data: serde_json::json!({"role": "machine_a"}),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let jack = NewHubuumObject {
@@ -1637,7 +1640,7 @@ mod tests {
             description: "jack".to_string(),
             data: serde_json::json!({"role": "jack"}),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let machine_b = NewHubuumObject {
@@ -1647,7 +1650,7 @@ mod tests {
             description: "machine_b".to_string(),
             data: serde_json::json!({"role": "machine_b"}),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let room = NewHubuumObject {
@@ -1657,7 +1660,7 @@ mod tests {
             description: "room".to_string(),
             data: serde_json::json!({"role": "room"}),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -1717,7 +1720,7 @@ mod tests {
             description: "machine".to_string(),
             data: serde_json::json!({"role": "machine"}),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let jack = NewHubuumObject {
@@ -1727,7 +1730,7 @@ mod tests {
             description: "jack".to_string(),
             data: serde_json::json!({"role": "jack"}),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let room = NewHubuumObject {
@@ -1737,7 +1740,7 @@ mod tests {
             description: "room".to_string(),
             data: serde_json::json!({"role": "room"}),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -1870,7 +1873,7 @@ mod tests {
         let context = test_context;
         let group = create_test_group(&context.pool).await;
         group
-            .add_member(&context.pool, &context.normal_user)
+            .add_member_without_events(&context.pool, &context.normal_user)
             .await
             .unwrap();
 
@@ -1935,7 +1938,7 @@ mod tests {
         assert_eq!(graph.objects[0].path, vec![objects[0].id]);
         assert!(graph.relations.is_empty());
 
-        group.delete(&context.pool).await.unwrap();
+        group.delete_without_events(&context.pool).await.unwrap();
         cleanup(&classes).await;
     }
 
@@ -1972,7 +1975,7 @@ mod tests {
         let context = test_context;
         let group = create_test_group(&context.pool).await;
         group
-            .add_member(&context.pool, &context.normal_user)
+            .add_member_without_events(&context.pool, &context.normal_user)
             .await
             .unwrap();
 
@@ -2091,7 +2094,7 @@ mod tests {
                 .any(|relation| relation.id == hidden_object_relation.id)
         );
 
-        group.delete(&context.pool).await.unwrap();
+        group.delete_without_events(&context.pool).await.unwrap();
         cleanup(&visible_classes).await;
         cleanup(&hidden_classes).await;
     }

@@ -420,7 +420,7 @@ pub mod tests {
             json_schema: Some(get_schema(SchemaType::Blog).clone()),
             validate_schema: None,
         };
-        let created_class = new_class.save(&context.pool).await.unwrap();
+        let created_class = new_class.save_without_events(&context.pool).await.unwrap();
 
         let update_class = UpdateHubuumClass {
             name: Some("api_patch_test_classes_2".to_string()),
@@ -486,12 +486,12 @@ pub mod tests {
             .await;
         let group = create_test_group(&context.pool).await;
         group
-            .add_member(&context.pool, &context.normal_user)
+            .add_member_without_events(&context.pool, &context.normal_user)
             .await
             .unwrap();
         source
             .namespace
-            .grant(
+            .grant_without_events(
                 &context.pool,
                 group.id,
                 PermissionsList::new([Permissions::UpdateClass]),
@@ -506,7 +506,7 @@ pub mod tests {
             json_schema: None,
             validate_schema: Some(false),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -524,7 +524,7 @@ pub mod tests {
 
         target
             .namespace
-            .grant(
+            .grant_without_events(
                 &context.pool,
                 group.id,
                 PermissionsList::new([Permissions::CreateClass]),
@@ -539,7 +539,7 @@ pub mod tests {
 
         source.cleanup().await.unwrap();
         target.cleanup().await.unwrap();
-        group.delete(&context.pool).await.unwrap();
+        group.delete_without_events(&context.pool).await.unwrap();
     }
 
     #[rstest]

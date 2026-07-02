@@ -1,6 +1,77 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    event_deliveries (id) {
+        id -> Int8,
+        event_id -> Int8,
+        subscription_id -> Int4,
+        status -> Varchar,
+        attempts -> Int4,
+        next_attempt_at -> Timestamp,
+        last_error -> Nullable<Text>,
+        locked_until -> Nullable<Timestamp>,
+        claim_token -> Nullable<Uuid>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    event_sinks (id) {
+        id -> Int4,
+        name -> Varchar,
+        kind -> Varchar,
+        config -> Jsonb,
+        secret_ref -> Nullable<Varchar>,
+        enabled -> Bool,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    event_subscriptions (id) {
+        id -> Int4,
+        namespace_id -> Int4,
+        sink_id -> Int4,
+        name -> Varchar,
+        description -> Varchar,
+        entity_types -> Jsonb,
+        actions -> Jsonb,
+        filter -> Jsonb,
+        routing -> Jsonb,
+        enabled -> Bool,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    events (id) {
+        id -> Int8,
+        event_id -> Uuid,
+        occurred_at -> Timestamp,
+        entity_type -> Text,
+        entity_id -> Nullable<Int4>,
+        entity_name -> Nullable<Text>,
+        namespace_id -> Nullable<Int4>,
+        action -> Text,
+        actor_user_id -> Nullable<Int4>,
+        actor_kind -> Text,
+        request_id -> Nullable<Uuid>,
+        correlation_id -> Nullable<Text>,
+        summary -> Text,
+        before -> Nullable<Jsonb>,
+        after -> Nullable<Jsonb>,
+        metadata -> Jsonb,
+        schema_version -> Int4,
+        dispatched_at -> Nullable<Timestamp>,
+        fanout_locked_until -> Nullable<Timestamp>,
+        fanout_claim_token -> Nullable<Uuid>,
+    }
+}
+
+diesel::table! {
     group_memberships (principal_id, group_id) {
         principal_id -> Int4,
         group_id -> Int4,
@@ -139,6 +210,8 @@ diesel::table! {
         has_execute_remote_target -> Bool,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        has_read_audit -> Bool,
+        has_manage_event_subscription -> Bool,
     }
 }
 
@@ -247,17 +320,6 @@ diesel::table! {
 }
 
 diesel::table! {
-    task_events (id) {
-        id -> Int4,
-        task_id -> Int4,
-        event_type -> Varchar,
-        message -> Text,
-        data -> Nullable<Jsonb>,
-        created_at -> Timestamp,
-    }
-}
-
-diesel::table! {
     tasks (id) {
         id -> Int4,
         kind -> Varchar,
@@ -318,6 +380,10 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(event_deliveries -> event_subscriptions (subscription_id));
+diesel::joinable!(event_deliveries -> events (event_id));
+diesel::joinable!(event_subscriptions -> event_sinks (sink_id));
+diesel::joinable!(event_subscriptions -> namespaces (namespace_id));
 diesel::joinable!(group_memberships -> groups (group_id));
 diesel::joinable!(group_memberships -> principals (principal_id));
 diesel::joinable!(hubuumclass -> namespaces (namespace_id));
@@ -335,12 +401,15 @@ diesel::joinable!(report_task_outputs -> tasks (task_id));
 diesel::joinable!(report_templates -> hubuumclass (class_id));
 diesel::joinable!(report_templates -> namespaces (namespace_id));
 diesel::joinable!(service_accounts -> groups (owner_group_id));
-diesel::joinable!(task_events -> tasks (task_id));
 diesel::joinable!(tasks -> tokens (submitted_token_id));
 diesel::joinable!(token_scopes -> tokens (token_id));
 diesel::joinable!(tokens -> principals (principal_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    event_deliveries,
+    event_sinks,
+    event_subscriptions,
+    events,
     group_memberships,
     groups,
     hubuumclass,
@@ -357,7 +426,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     report_task_outputs,
     report_templates,
     service_accounts,
-    task_events,
     tasks,
     token_scopes,
     tokens,

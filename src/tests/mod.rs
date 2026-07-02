@@ -55,8 +55,8 @@ impl NamespaceFixture {
     }
 
     pub async fn cleanup(&self) -> Result<(), ApiError> {
-        self.namespace.delete(&self.pool).await?;
-        self.owner_group.delete(&self.pool).await?;
+        self.namespace.delete_without_events(&self.pool).await?;
+        self.owner_group.delete_without_events(&self.pool).await?;
         Ok(())
     }
 
@@ -244,7 +244,7 @@ impl TestContext {
         let fixture = self.scope.namespace_fixture(label).await;
         fixture
             .owner_group
-            .add_member(&self.pool, &self.admin_user)
+            .add_member_without_events(&self.pool, &self.admin_user)
             .await
             .unwrap();
         fixture
@@ -256,7 +256,7 @@ impl TestContext {
         for fixture in &fixtures {
             fixture
                 .owner_group
-                .add_member(&self.pool, &self.admin_user)
+                .add_member_without_events(&self.pool, &self.admin_user)
                 .await
                 .unwrap();
         }
@@ -268,7 +268,7 @@ impl TestContext {
         let fixture = self.scope.with_namespace().await;
         fixture
             .owner_group
-            .add_member(&self.pool, &self.admin_user)
+            .add_member_without_events(&self.pool, &self.admin_user)
             .await
             .unwrap();
         fixture
@@ -280,7 +280,7 @@ impl TestContext {
         for fixture in &fixtures {
             fixture
                 .owner_group
-                .add_member(&self.pool, &self.admin_user)
+                .add_member_without_events(&self.pool, &self.admin_user)
                 .await
                 .unwrap();
         }
@@ -373,7 +373,7 @@ pub(crate) async fn create_class_fixture(
             namespace_id: namespace.namespace.id,
             ..class
         };
-        saved_classes.push(class.save(pool).await?);
+        saved_classes.push(class.save_without_events(pool).await?);
     }
 
     Ok(ClassFixture {
@@ -392,7 +392,7 @@ pub(crate) async fn create_object_fixture(
         namespace_id: namespace.namespace.id,
         ..class
     }
-    .save(pool)
+    .save_without_events(pool)
     .await?;
 
     let mut saved_objects = Vec::with_capacity(objects.len());
@@ -402,7 +402,7 @@ pub(crate) async fn create_object_fixture(
             hubuum_class_id: class.id,
             ..object
         };
-        saved_objects.push(object.save(pool).await?);
+        saved_objects.push(object.save_without_events(pool).await?);
     }
 
     Ok(ObjectFixture {
@@ -419,7 +419,7 @@ pub async fn create_user_with_params(pool: &DbPool, username: &str, password: &s
         proper_name: None,
         email: None,
     }
-    .save(pool)
+    .save_without_events(pool)
     .await;
 
     assert!(
@@ -445,7 +445,7 @@ pub async fn create_test_admin(pool: &DbPool) -> User {
     let user = create_user_with_params(pool, &username, "testadminpassword").await;
     let admin_group = ensure_admin_group(pool).await;
 
-    let result = admin_group.add_member(pool, &user).await;
+    let result = admin_group.add_member_without_events(pool, &user).await;
 
     if result.is_ok() {
         user
@@ -467,7 +467,7 @@ pub async fn create_test_service_account(
         description: Some("test service account".to_string()),
         owner_group_id: owner_group.id,
     }
-    .save(pool, created_by)
+    .save_without_events(pool, created_by)
     .await
     .expect("failed to create test service account")
 }
@@ -478,7 +478,7 @@ pub async fn scoped_token(
     principal_id: i32,
     scopes: &[crate::models::Permissions],
 ) -> String {
-    create_principal_token(pool, principal_id, None, None, None, Some(scopes))
+    create_principal_token(pool, principal_id, None, None, None, Some(scopes), None)
         .await
         .expect("failed to mint scoped token")
         .get_token()
@@ -492,7 +492,7 @@ pub async fn service_account_token(
     scopes: Option<&[crate::models::Permissions]>,
     expires_at: Option<chrono::NaiveDateTime>,
 ) -> String {
-    create_principal_token(pool, sa.id, None, None, expires_at, scopes)
+    create_principal_token(pool, sa.id, None, None, expires_at, scopes, None)
         .await
         .expect("failed to mint service account token")
         .get_token()
@@ -518,7 +518,7 @@ pub async fn create_groups_with_prefix(
             groupname: groupname.to_string(),
             description: Some(groupname.clone()),
         }
-        .save(pool)
+        .save_without_events(pool)
         .await;
 
         assert!(
@@ -544,7 +544,7 @@ pub async fn ensure_user(pool: &DbPool, uname: &str) -> User {
         proper_name: None,
         email: None,
     }
-    .save(pool)
+    .save_without_events(pool)
     .await;
 
     if let Err(e) = result {
@@ -566,7 +566,7 @@ pub async fn ensure_admin_user(pool: &DbPool) -> User {
 
     let admin_group = ensure_admin_group(pool).await;
 
-    let _ = admin_group.add_member(pool, &user).await;
+    let _ = admin_group.add_member_without_events(pool, &user).await;
 
     user
 }
@@ -595,7 +595,7 @@ pub async fn ensure_admin_group(pool: &DbPool) -> Group {
         groupname: admin_groupname.clone(),
         description: Some("Admin group".to_string()),
     }
-    .save(pool)
+    .save_without_events(pool)
     .await;
 
     if let Err(e) = result {
@@ -658,7 +658,7 @@ async fn create_namespace_for_group(
         description: "Test namespace".to_string(),
         group_id,
     }
-    .save(pool)
+    .save_without_events(pool)
     .await
 }
 
@@ -703,7 +703,10 @@ mod test {
             description: None,
         };
 
-        let updated_namespace = update.update(&pool, namespace.namespace.id).await.unwrap();
+        let updated_namespace = update
+            .update_without_events(&pool, namespace.namespace.id)
+            .await
+            .unwrap();
         let new_created_at = updated_namespace.created_at;
         let new_updated_at = updated_namespace.updated_at;
 

@@ -1,14 +1,33 @@
 use diesel::prelude::*;
 
 use crate::apply_query_options;
-use crate::db::{DbPool, with_connection};
+use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
+use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::remote_target::{
     NewRemoteCallResult, NewRemoteTargetRow, RemoteCallResult, RemoteTarget, RemoteTargetID,
     RemoteTargetRow, UpdateRemoteTargetRow,
 };
 use crate::models::search::{FilterField, QueryOptions};
 use crate::{date_search, numeric_search, string_search};
+
+fn remote_target_event(
+    row: &RemoteTargetRow,
+    action: Action,
+    context: &EventContext,
+    summary: impl Into<String>,
+) -> Result<NewEvent, ApiError> {
+    Ok(NewEvent::new(
+        EntityType::RemoteTarget,
+        action,
+        context.actor_kind(),
+        summary,
+    )?
+    .with_context(context)
+    .with_entity_id(row.id)
+    .with_entity_name(row.name.clone())
+    .with_namespace_id(row.namespace_id))
+}
 
 pub(crate) trait LoadRemoteTargetRecord {
     async fn load_remote_target_record(&self, pool: &DbPool) -> Result<RemoteTargetRow, ApiError>;
@@ -27,11 +46,26 @@ impl LoadRemoteTargetRecord for RemoteTargetID {
 }
 
 pub(crate) trait SaveRemoteTargetRecord {
-    async fn save_remote_target_record(&self, pool: &DbPool) -> Result<RemoteTargetRow, ApiError>;
+    async fn save_remote_target_record_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<RemoteTargetRow, ApiError>;
+
+    async fn save_remote_target_record(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<RemoteTargetRow, ApiError> {
+        let _ = context;
+        self.save_remote_target_record_without_events(pool).await
+    }
 }
 
 impl SaveRemoteTargetRecord for NewRemoteTargetRow {
-    async fn save_remote_target_record(&self, pool: &DbPool) -> Result<RemoteTargetRow, ApiError> {
+    async fn save_remote_target_record_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<RemoteTargetRow, ApiError> {
         use crate::schema::remote_targets::dsl::remote_targets;
 
         with_connection(pool, |conn| {
@@ -40,18 +74,56 @@ impl SaveRemoteTargetRecord for NewRemoteTargetRow {
                 .get_result::<RemoteTargetRow>(conn)
         })
     }
+
+    async fn save_remote_target_record(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<RemoteTargetRow, ApiError> {
+        let Some(context) = context else {
+            return self.save_remote_target_record_without_events(pool).await;
+        };
+
+        use crate::schema::remote_targets::dsl::remote_targets;
+
+        with_transaction(pool, |conn| -> Result<RemoteTargetRow, ApiError> {
+            let row = diesel::insert_into(remote_targets)
+                .values(self)
+                .get_result::<RemoteTargetRow>(conn)?;
+            let event = remote_target_event(
+                &row,
+                Action::Created,
+                context,
+                format!("Remote target '{}' created", row.name),
+            )?
+            .with_after(row.audit_snapshot());
+            emit_event(conn, &event)?;
+            Ok(row)
+        })
+    }
 }
 
 pub(crate) trait UpdateRemoteTargetRecord {
-    async fn update_remote_target_record(
+    async fn update_remote_target_record_without_events(
         &self,
         pool: &DbPool,
         target_id: i32,
     ) -> Result<RemoteTargetRow, ApiError>;
+
+    async fn update_remote_target_record(
+        &self,
+        pool: &DbPool,
+        target_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<RemoteTargetRow, ApiError> {
+        let _ = context;
+        self.update_remote_target_record_without_events(pool, target_id)
+            .await
+    }
 }
 
 impl UpdateRemoteTargetRecord for UpdateRemoteTargetRow {
-    async fn update_remote_target_record(
+    async fn update_remote_target_record_without_events(
         &self,
         pool: &DbPool,
         target_id: i32,
@@ -64,14 +136,63 @@ impl UpdateRemoteTargetRecord for UpdateRemoteTargetRow {
                 .get_result::<RemoteTargetRow>(conn)
         })
     }
+
+    async fn update_remote_target_record(
+        &self,
+        pool: &DbPool,
+        target_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<RemoteTargetRow, ApiError> {
+        let Some(context) = context else {
+            return self
+                .update_remote_target_record_without_events(pool, target_id)
+                .await;
+        };
+
+        use crate::schema::remote_targets::dsl::{id, remote_targets};
+
+        with_transaction(pool, |conn| -> Result<RemoteTargetRow, ApiError> {
+            let before = remote_targets
+                .filter(id.eq(target_id))
+                .first::<RemoteTargetRow>(conn)?;
+            let after = diesel::update(remote_targets.filter(id.eq(target_id)))
+                .set(self)
+                .get_result::<RemoteTargetRow>(conn)?;
+            let event = remote_target_event(
+                &after,
+                Action::Updated,
+                context,
+                format!("Remote target '{}' updated", after.name),
+            )?
+            .with_before(before.audit_snapshot())
+            .with_after(after.audit_snapshot());
+            emit_event(conn, &event)?;
+            Ok(after)
+        })
+    }
 }
 
 pub(crate) trait DeleteRemoteTargetRecord {
-    async fn delete_remote_target_record(&self, pool: &DbPool) -> Result<(), ApiError>;
+    async fn delete_remote_target_record_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(), ApiError>;
+
+    async fn delete_remote_target_record(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<(), ApiError> {
+        let _ = context;
+        self.delete_remote_target_record_without_events(pool).await
+    }
 }
 
 impl DeleteRemoteTargetRecord for RemoteTargetID {
-    async fn delete_remote_target_record(&self, pool: &DbPool) -> Result<(), ApiError> {
+    async fn delete_remote_target_record_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(), ApiError> {
         use crate::schema::remote_targets::dsl::{id, remote_targets};
 
         with_connection(pool, |conn| {
@@ -79,6 +200,63 @@ impl DeleteRemoteTargetRecord for RemoteTargetID {
         })?;
         Ok(())
     }
+
+    async fn delete_remote_target_record(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<(), ApiError> {
+        let Some(context) = context else {
+            return self.delete_remote_target_record_without_events(pool).await;
+        };
+
+        use crate::schema::remote_targets::dsl::{id, remote_targets};
+
+        with_transaction(pool, |conn| -> Result<(), ApiError> {
+            let before = remote_targets
+                .filter(id.eq(self.id()))
+                .first::<RemoteTargetRow>(conn)?;
+            diesel::delete(remote_targets.filter(id.eq(self.id()))).execute(conn)?;
+            let event = remote_target_event(
+                &before,
+                Action::Deleted,
+                context,
+                format!("Remote target '{}' deleted", before.name),
+            )?
+            .with_before(before.audit_snapshot());
+            emit_event(conn, &event)?;
+            Ok(())
+        })
+    }
+}
+
+pub(crate) async fn emit_remote_target_invoked_event(
+    pool: &DbPool,
+    target: &RemoteTarget,
+    context: &EventContext,
+    task_id: i32,
+    subject_type: &str,
+    subject_id: i32,
+) -> Result<(), ApiError> {
+    with_connection(pool, |conn| -> Result<(), ApiError> {
+        let event = NewEvent::new(
+            EntityType::RemoteTarget,
+            Action::Invoked,
+            context.actor_kind(),
+            format!("Remote target '{}' invoked", target.name),
+        )?
+        .with_context(context)
+        .with_entity_id(target.id)
+        .with_entity_name(target.name.clone())
+        .with_namespace_id(target.namespace_id)
+        .with_metadata(serde_json::json!({
+            "task_id": task_id,
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+        }));
+        emit_event(conn, &event)?;
+        Ok(())
+    })
 }
 
 pub(crate) async fn list_rows_with_total_count(

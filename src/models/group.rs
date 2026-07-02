@@ -5,6 +5,7 @@ use crate::db::traits::group::{
     SavePrincipalGroupRecord, UpdateGroupRecord,
 };
 use crate::errors::ApiError;
+use crate::events::EventContext;
 use crate::models::principal::Principal;
 use crate::models::principal_group::NewPrincipalGroup;
 use crate::models::search::{FilterField, QueryOptions, SortParam};
@@ -48,11 +49,23 @@ impl GroupID {
         self.load_group_record(backend.db_pool()).await
     }
 
-    pub async fn delete<C>(&self, backend: &C) -> Result<usize, ApiError>
+    pub async fn delete_without_events<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.delete_group_record(backend.db_pool()).await
+        self.delete_group_record_without_events(backend.db_pool())
+            .await
+    }
+
+    pub async fn delete<C>(
+        &self,
+        backend: &C,
+        context: Option<&EventContext>,
+    ) -> Result<usize, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.delete_group_record(backend.db_pool(), context).await
     }
 }
 
@@ -123,7 +136,11 @@ impl Group {
     /// * `Err(ApiError)` if the user was not added to the group
     ///
     /// If the user is already a member of the group, this function is a safe noop.
-    pub async fn add_member<C, P>(&self, backend: &C, member: &P) -> Result<(), ApiError>
+    pub async fn add_member_without_events<C, P>(
+        &self,
+        backend: &C,
+        member: &P,
+    ) -> Result<(), ApiError>
     where
         C: BackendContext + ?Sized,
         P: PrincipalIdAccessor,
@@ -132,26 +149,68 @@ impl Group {
             principal_id: member.principal_id(),
             group_id: self.id,
         }
-        .save_principal_group_record(backend.db_pool())
+        .save_principal_group_record_without_events(backend.db_pool())
         .await?;
 
         Ok(())
     }
 
-    pub async fn remove_member<C, P>(&self, member: &P, backend: &C) -> Result<(), ApiError>
+    pub async fn add_member<C, P>(
+        &self,
+        backend: &C,
+        member: &P,
+        context: Option<&EventContext>,
+    ) -> Result<(), ApiError>
     where
         C: BackendContext + ?Sized,
         P: PrincipalIdAccessor,
     {
-        self.remove_group_member_from_backend(member.principal_id(), backend.db_pool())
+        NewPrincipalGroup {
+            principal_id: member.principal_id(),
+            group_id: self.id,
+        }
+        .save_principal_group_record(backend.db_pool(), context)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn remove_member_without_events<C, P>(
+        &self,
+        member: &P,
+        backend: &C,
+    ) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized,
+        P: PrincipalIdAccessor,
+    {
+        self.remove_group_member_from_backend_without_events(
+            member.principal_id(),
+            backend.db_pool(),
+        )
+        .await
+    }
+
+    pub async fn remove_member<C, P>(
+        &self,
+        member: &P,
+        backend: &C,
+        context: Option<&EventContext>,
+    ) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized,
+        P: PrincipalIdAccessor,
+    {
+        self.remove_group_member_from_backend(member.principal_id(), backend.db_pool(), context)
             .await
     }
 
-    pub async fn delete<C>(&self, backend: &C) -> Result<usize, ApiError>
+    pub async fn delete_without_events<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.delete_group_record(backend.db_pool()).await
+        self.delete_group_record_without_events(backend.db_pool())
+            .await
     }
 }
 
@@ -171,11 +230,23 @@ impl NewGroup {
         }
     }
 
-    pub async fn save<C>(&self, backend: &C) -> Result<Group, ApiError>
+    pub async fn save_without_events<C>(&self, backend: &C) -> Result<Group, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.save_group_record(backend.db_pool()).await
+        self.save_group_record_without_events(backend.db_pool())
+            .await
+    }
+
+    pub async fn save<C>(
+        &self,
+        backend: &C,
+        context: Option<&EventContext>,
+    ) -> Result<Group, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.save_group_record(backend.db_pool(), context).await
     }
 }
 
@@ -187,11 +258,29 @@ pub struct UpdateGroup {
 }
 
 impl UpdateGroup {
-    pub async fn save<C>(&self, group_id: i32, backend: &C) -> Result<Group, ApiError>
+    pub async fn save_without_events<C>(
+        &self,
+        group_id: i32,
+        backend: &C,
+    ) -> Result<Group, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.update_group_record(group_id, backend.db_pool()).await
+        self.update_group_record_without_events(group_id, backend.db_pool())
+            .await
+    }
+
+    pub async fn save<C>(
+        &self,
+        group_id: i32,
+        backend: &C,
+        context: Option<&EventContext>,
+    ) -> Result<Group, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.update_group_record(group_id, backend.db_pool(), context)
+            .await
     }
 }
 

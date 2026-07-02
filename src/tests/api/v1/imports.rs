@@ -775,7 +775,7 @@ mod tests {
             .await;
         allowed
             .owner_group
-            .add_member(&context.pool, &context.normal_user)
+            .add_member_without_events(&context.pool, &context.normal_user)
             .await
             .unwrap();
 
@@ -893,7 +893,7 @@ mod tests {
             .await;
         allowed
             .owner_group
-            .add_member(&context.pool, &context.normal_user)
+            .add_member_without_events(&context.pool, &context.normal_user)
             .await
             .unwrap();
 

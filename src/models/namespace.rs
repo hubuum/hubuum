@@ -364,7 +364,7 @@ mod tests {
         for group in groups {
             namespace
                 .clone()
-                .grant(pool, group.id, permissions.clone())
+                .grant_without_events(pool, group.id, permissions.clone())
                 .await
                 .unwrap();
 
@@ -423,7 +423,7 @@ mod tests {
                     groupname: group_name.to_string(),
                     description: Some("Test group".to_string()),
                 }
-                .save(&pool)
+                .save_without_events(&pool)
                 .await
                 .unwrap(),
             );
@@ -489,7 +489,7 @@ mod tests {
 
         namespace.cleanup().await.unwrap();
         for group in groups {
-            group.delete(&pool).await.unwrap();
+            group.delete_without_events(&pool).await.unwrap();
         }
     }
 
@@ -526,7 +526,7 @@ mod tests {
                 groupname: "test_perm_grant_combinations".to_string(),
                 description: Some("Test group for combinations".to_string()),
             }
-            .save(&pool)
+            .save_without_events(&pool)
             .await
             .unwrap();
 
@@ -534,7 +534,7 @@ mod tests {
             // Grant this subset of permissions
             namespace
                 .namespace
-                .grant(&pool, group_id, PermissionsList::new(subset.clone()))
+                .grant_without_events(&pool, group_id, PermissionsList::new(subset.clone()))
                 .await
                 .unwrap();
 
@@ -549,7 +549,7 @@ mod tests {
             }
 
             namespace.cleanup().await.unwrap();
-            group.delete(&pool).await.unwrap();
+            group.delete_without_events(&pool).await.unwrap();
         }
     }
 
@@ -592,7 +592,7 @@ mod tests {
                 groupname: "test_perm_revoke_combinations".to_string(),
                 description: Some("Test group for combinations".to_string()),
             }
-            .save(&pool)
+            .save_without_events(&pool)
             .await
             .unwrap();
 
@@ -600,14 +600,14 @@ mod tests {
             // Grant all permissions
             namespace
                 .namespace
-                .grant(&pool, group_id, PermissionsList::new(permissions.clone()))
+                .grant_without_events(&pool, group_id, PermissionsList::new(permissions.clone()))
                 .await
                 .unwrap();
 
             // Revoke this subset of permissions
             namespace
                 .namespace
-                .revoke(&pool, group_id, PermissionsList::new(subset.clone()))
+                .revoke_without_events(&pool, group_id, PermissionsList::new(subset.clone()))
                 .await
                 .unwrap();
 
@@ -622,7 +622,7 @@ mod tests {
             }
 
             namespace.cleanup().await.unwrap();
-            group.delete(&pool).await.unwrap();
+            group.delete_without_events(&pool).await.unwrap();
         }
     }
 
@@ -643,7 +643,7 @@ mod tests {
             groupname: "test_perm_grant_without_side_effects".to_string(),
             description: Some("Test group for combinations".to_string()),
         }
-        .save(&pool)
+        .save_without_events(&pool)
         .await
         .unwrap();
 
@@ -746,7 +746,7 @@ mod tests {
             );
         }
         namespace.cleanup().await.unwrap();
-        group.delete(&pool).await.unwrap();
+        group.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_rt::test]
@@ -762,14 +762,14 @@ mod tests {
             groupname: "test_template_permissions_set_grant_and_revoke".to_string(),
             description: Some("Template permission controller coverage".to_string()),
         }
-        .save(&pool)
+        .save_without_events(&pool)
         .await
         .unwrap();
         let group_id = group.id;
 
         namespace
             .namespace
-            .set_permissions(
+            .set_permissions_without_events(
                 &pool,
                 group_id,
                 PermissionsList::new([Permissions::ReadTemplate, Permissions::UpdateTemplate]),
@@ -863,7 +863,7 @@ mod tests {
         );
 
         namespace.cleanup().await.unwrap();
-        group.delete(&pool).await.unwrap();
+        group.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_rt::test]
@@ -878,7 +878,7 @@ mod tests {
             groupname: format!("template_backfill_delegate_{}", namespace.namespace.id),
             description: Some("Template backfill delegate group".to_string()),
         }
-        .save(&pool)
+        .save_without_events(&pool)
         .await
         .unwrap();
 
@@ -886,7 +886,7 @@ mod tests {
             groupname: format!("template_backfill_non_delegate_{}", namespace.namespace.id),
             description: Some("Template backfill non-delegate group".to_string()),
         }
-        .save(&pool)
+        .save_without_events(&pool)
         .await
         .unwrap();
 
@@ -951,7 +951,10 @@ mod tests {
         assert!(!non_delegate_after.has_delete_template);
 
         namespace.cleanup().await.unwrap();
-        delegate_group.delete(&pool).await.unwrap();
-        non_delegate_group.delete(&pool).await.unwrap();
+        delegate_group.delete_without_events(&pool).await.unwrap();
+        non_delegate_group
+            .delete_without_events(&pool)
+            .await
+            .unwrap();
     }
 }

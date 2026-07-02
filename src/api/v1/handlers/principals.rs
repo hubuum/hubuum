@@ -8,7 +8,7 @@ use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
 use crate::db::traits::ActiveTokens;
 use crate::errors::ApiError;
-use crate::extractors::ManagementAccess;
+use crate::extractors::{AccessEventContext, ManagementAccess};
 use crate::models::namespace::principal_all_permissions;
 use crate::models::principal::{Principal, PrincipalKind};
 use crate::models::search::parse_query_parameter;
@@ -129,6 +129,7 @@ pub async fn create_token(
     requestor: ManagementAccess,
     principal_id: web::Path<PrincipalID>,
     body: web::Json<NewTokenRequest>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let principal = principal_id.into_inner().principal(&pool).await?;
     ensure_can_manage_principal(&pool, &requestor, &principal).await?;
@@ -165,6 +166,7 @@ pub async fn create_token(
         scoped = body.scopes.is_some()
     );
 
+    let event_context = requestor.event_context(&req);
     let raw = create_principal_token(
         &pool,
         principal.id,
@@ -172,6 +174,7 @@ pub async fn create_token(
         body.description.as_deref(),
         body.expires_at,
         body.scopes.as_deref(),
+        Some(&event_context),
     )
     .await?;
 
@@ -239,12 +242,16 @@ pub async fn revoke_token(
     pool: web::Data<DbPool>,
     requestor: ManagementAccess,
     path: web::Path<TokenPath>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let path = path.into_inner();
     let principal = path.principal_id.principal(&pool).await?;
     ensure_can_manage_principal(&pool, &requestor, &principal).await?;
 
-    let revoked = revoke_token_by_id_for_principal(&pool, path.token_id, principal.id).await?;
+    let event_context = requestor.event_context(&req);
+    let revoked =
+        revoke_token_by_id_for_principal(&pool, path.token_id, principal.id, Some(&event_context))
+            .await?;
     if revoked == 0 {
         return Err(ApiError::NotFound(
             "Token not found for this principal".to_string(),

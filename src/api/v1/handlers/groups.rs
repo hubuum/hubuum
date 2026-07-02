@@ -1,7 +1,7 @@
 use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::extractors::{AdminAccess, UserAccess};
+use crate::extractors::{AccessEventContext, AdminAccess, UserAccess};
 use crate::models::group::{GroupID, NewGroup, UpdateGroup};
 use crate::models::search::parse_query_parameter;
 use crate::models::service_account::service_accounts_owned_by_group;
@@ -83,6 +83,7 @@ pub async fn create_group(
     pool: web::Data<DbPool>,
     new_group: web::Json<NewGroup>,
     requestor: AdminAccess,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     debug!(
         message = "Group create requested",
@@ -90,7 +91,8 @@ pub async fn create_group(
         new_group = ?new_group
     );
 
-    let group = new_group.save(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    let group = new_group.save(&pool, Some(&event_context)).await?;
 
     Ok(json_response_created(
         &group,
@@ -151,6 +153,7 @@ pub async fn update_group(
     group_id: web::Path<GroupID>,
     updated_group: web::Json<UpdateGroup>,
     requestor: AdminAccess,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let group = group_id.group(&pool).await?;
 
@@ -160,7 +163,11 @@ pub async fn update_group(
         requestor = requestor.user.id
     );
 
-    let updated = updated_group.into_inner().save(group.id, &pool).await?;
+    let event_context = requestor.event_context(&req);
+    let updated = updated_group
+        .into_inner()
+        .save(group.id, &pool, Some(&event_context))
+        .await?;
     Ok(json_response(updated, StatusCode::OK))
 }
 
@@ -184,6 +191,7 @@ pub async fn delete_group(
     pool: web::Data<DbPool>,
     group_id: web::Path<GroupID>,
     requestor: AdminAccess,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     debug!(
         message = "Group delete requested",
@@ -205,7 +213,8 @@ pub async fn delete_group(
         )));
     }
 
-    group_id.delete(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    group_id.delete(&pool, Some(&event_context)).await?;
     Ok(json_response(json!({}), StatusCode::NO_CONTENT))
 }
 
@@ -273,6 +282,7 @@ pub async fn add_group_member(
     pool: web::Data<DbPool>,
     user_group_ids: web::Path<GroupMember>,
     requestor: AdminAccess,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let group = user_group_ids.group_id.group(&pool).await?;
     let principal = user_group_ids.principal_id.principal(&pool).await?;
@@ -284,7 +294,10 @@ pub async fn add_group_member(
         requestor = requestor.user.id
     );
 
-    group.add_member(&pool, &principal).await?;
+    let event_context = requestor.event_context(&req);
+    group
+        .add_member(&pool, &principal, Some(&event_context))
+        .await?;
 
     Ok(json_response(json!({}), StatusCode::NO_CONTENT))
 }
@@ -309,6 +322,7 @@ pub async fn delete_group_member(
     pool: web::Data<DbPool>,
     user_group_ids: web::Path<GroupMember>,
     requestor: AdminAccess,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let group = user_group_ids.group_id.group(&pool).await?;
     let principal = user_group_ids.principal_id.principal(&pool).await?;
@@ -320,6 +334,9 @@ pub async fn delete_group_member(
         requestor = requestor.user.id
     );
 
-    group.remove_member(&principal, &pool).await?;
+    let event_context = requestor.event_context(&req);
+    group
+        .remove_member(&principal, &pool, Some(&event_context))
+        .await?;
     Ok(json_response(json!({}), StatusCode::NO_CONTENT))
 }

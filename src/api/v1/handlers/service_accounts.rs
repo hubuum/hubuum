@@ -5,7 +5,7 @@ use tracing::debug;
 use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::extractors::ManagementAccess;
+use crate::extractors::{AccessEventContext, ManagementAccess};
 use crate::models::principal::load_principal_by_id;
 use crate::models::search::parse_query_parameter;
 use crate::models::service_account::{
@@ -77,6 +77,7 @@ async fn response_for(
 pub async fn create_service_account(
     pool: web::Data<DbPool>,
     requestor: ManagementAccess,
+    req: HttpRequest,
     new_sa: web::Json<NewServiceAccount>,
 ) -> Result<impl Responder, ApiError> {
     let new_sa = new_sa.into_inner();
@@ -98,7 +99,10 @@ pub async fn create_service_account(
         owner_group_id = new_sa.owner_group_id
     );
 
-    let sa = new_sa.save(&pool, Some(requestor.user.id)).await?;
+    let event_context = requestor.event_context(&req);
+    let sa = new_sa
+        .save(&pool, Some(requestor.user.id), &event_context)
+        .await?;
     let response = response_for(&pool, &sa).await?;
 
     Ok(json_response_created(
@@ -197,6 +201,7 @@ pub async fn get_service_account(
 pub async fn update_service_account(
     pool: web::Data<DbPool>,
     requestor: ManagementAccess,
+    req: HttpRequest,
     service_account_id: web::Path<ServiceAccountID>,
     update: web::Json<UpdateServiceAccount>,
 ) -> Result<impl Responder, ApiError> {
@@ -220,7 +225,8 @@ pub async fn update_service_account(
         ));
     }
 
-    let updated = update.save(id.id(), &pool).await?;
+    let event_context = requestor.event_context(&req);
+    let updated = update.save(id.id(), &pool, &event_context).await?;
     Ok(json_response(
         response_for(&pool, &updated).await?,
         StatusCode::OK,
@@ -244,13 +250,15 @@ pub async fn update_service_account(
 pub async fn disable_service_account(
     pool: web::Data<DbPool>,
     requestor: ManagementAccess,
+    req: HttpRequest,
     service_account_id: web::Path<ServiceAccountID>,
 ) -> Result<impl Responder, ApiError> {
     let id = service_account_id.into_inner();
     let sa = id.service_account(&pool).await?;
     ensure_can_manage(&pool, &requestor, &sa).await?;
 
-    let disabled = id.disable(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    let disabled = id.disable(&pool, &event_context).await?;
     // Immediately soft-revoke its tokens and cancel its pending work.
     revoke_all_tokens_for_principal(&pool, id.id()).await?;
     cancel_pending_tasks_for_principal(&pool, id.id()).await?;
@@ -284,11 +292,13 @@ pub async fn disable_service_account(
 pub async fn delete_service_account(
     pool: web::Data<DbPool>,
     requestor: ManagementAccess,
+    req: HttpRequest,
     service_account_id: web::Path<ServiceAccountID>,
 ) -> Result<impl Responder, ApiError> {
     let id = service_account_id.into_inner();
     let sa = id.service_account(&pool).await?;
     ensure_can_manage(&pool, &requestor, &sa).await?;
-    id.delete(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    id.delete(&pool, &event_context).await?;
     Ok(json_response(json!({}), StatusCode::NO_CONTENT))
 }
