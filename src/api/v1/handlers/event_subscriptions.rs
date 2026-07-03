@@ -1,6 +1,7 @@
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, routes, web};
 
 use crate::api::openapi::ApiErrorResponse;
+use crate::api::response::{ApiResponse, ResponseLocation};
 use crate::can;
 use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
@@ -16,7 +17,6 @@ use crate::models::{
 };
 use crate::pagination::prepare_db_pagination;
 use crate::traits::NamespaceAccessors;
-use crate::utilities::response::{json_response, json_response_created, paginated_json_response};
 
 #[utoipa::path(
     post,
@@ -60,13 +60,11 @@ pub async fn create_event_subscription(
         .save_event_subscription_record(&pool, &event_context)
         .await?
         .try_into()?;
-    Ok(json_response_created(
-        &created,
-        &format!(
-            "/api/v1/namespaces/{}/event-subscriptions/{}",
-            created.namespace_id, created.id
-        ),
-    ))
+    let location = ResponseLocation::new(format!(
+        "/api/v1/namespaces/{}/event-subscriptions/{}",
+        created.namespace_id, created.id
+    ))?;
+    Ok(ApiResponse::created(created, location))
 }
 
 #[utoipa::path(
@@ -103,7 +101,7 @@ pub async fn get_event_subscriptions(
     let query_options = prepare_db_pagination::<EventSubscription>(&params)?;
     let (subscriptions, total_count) =
         EventSubscription::list_with_total_count(&pool, namespace_id.id(), &query_options).await?;
-    paginated_json_response(subscriptions, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(subscriptions, total_count, &params)
 }
 
 #[utoipa::path(
@@ -138,7 +136,7 @@ pub async fn get_event_subscription(
     );
     let subscription = subscription_id.instance(&pool).await?;
     ensure_subscription_namespace(&subscription, namespace_id)?;
-    Ok(json_response(subscription, StatusCode::OK))
+    Ok(ApiResponse::new(subscription, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -193,7 +191,7 @@ pub async fn patch_event_subscription(
         .update_event_subscription_record(&pool, existing.id, &event_context)
         .await?
         .try_into()?;
-    Ok(json_response(updated, StatusCode::OK))
+    Ok(ApiResponse::new(updated, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -233,7 +231,7 @@ pub async fn delete_event_subscription(
     subscription_id
         .delete_event_subscription_record(&pool, &event_context)
         .await?;
-    Ok(actix_web::HttpResponse::NoContent().finish())
+    Ok(ApiResponse::no_content())
 }
 
 fn ensure_subscription_namespace(

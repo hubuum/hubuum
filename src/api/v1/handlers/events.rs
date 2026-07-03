@@ -1,6 +1,7 @@
-use actix_web::{HttpRequest, Responder, get, http::StatusCode, web};
+use actix_web::{HttpRequest, Responder, get, web};
 
 use crate::api::openapi::ApiErrorResponse;
+use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::db::traits::events::{list_events_with_total_count, parse_event_filters};
 use crate::errors::ApiError;
@@ -11,7 +12,6 @@ use crate::models::namespace::user_can_on_any;
 use crate::models::search::parse_query_parameter_with_passthrough;
 use crate::pagination::prepare_db_pagination;
 use crate::traits::AuthzSubject;
-use crate::utilities::response::paginated_json_response;
 
 #[utoipa::path(
     get,
@@ -103,7 +103,7 @@ async fn list_visible_events(
         &search_params,
     )
     .await?;
-    paginated_json_response(events, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(events, total_count, &params)
 }
 
 #[utoipa::path(

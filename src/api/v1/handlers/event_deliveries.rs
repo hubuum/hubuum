@@ -1,6 +1,7 @@
 use actix_web::{Responder, get, http::StatusCode, post, routes, web};
 
 use crate::api::openapi::ApiErrorResponse;
+use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::db::traits::event_delivery::{
     list_event_deliveries_with_total_count, load_event_delivery, mark_event_delivery_dead,
@@ -15,7 +16,6 @@ use crate::models::{
     EventDelivery, EventDeliveryHealthResponse, EventDeliveryID, EventDeliveryUpdateResponse,
 };
 use crate::pagination::prepare_db_pagination;
-use crate::utilities::response::{json_response, paginated_json_response};
 
 #[utoipa::path(
     get,
@@ -46,7 +46,7 @@ pub async fn get_event_deliveries(
     let query_options = prepare_db_pagination::<EventDelivery>(&params)?;
     let (deliveries, total_count) =
         list_event_deliveries_with_total_count(&pool, &query_options).await?;
-    paginated_json_response(deliveries, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(deliveries, total_count, &params)
 }
 
 #[utoipa::path(
@@ -65,7 +65,7 @@ pub async fn get_event_delivery_health(
     pool: web::Data<DbPool>,
     _admin: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    Ok(json_response(
+    Ok(ApiResponse::new(
         load_event_delivery_health(&pool).await?,
         StatusCode::OK,
     ))
@@ -90,7 +90,7 @@ pub async fn get_event_delivery(
     _admin: AdminAccess,
     delivery_id: web::Path<EventDeliveryID>,
 ) -> Result<impl Responder, ApiError> {
-    Ok(json_response(
+    Ok(ApiResponse::new(
         load_event_delivery(&pool, delivery_id.into_inner()).await?,
         StatusCode::OK,
     ))
@@ -118,7 +118,7 @@ pub async fn retry_event_delivery(
 ) -> Result<impl Responder, ApiError> {
     let delivery = release_event_delivery_for_retry(&pool, delivery_id.into_inner()).await?;
     kick_event_delivery_worker(pool.get_ref().clone());
-    Ok(json_response(
+    Ok(ApiResponse::new(
         EventDeliveryUpdateResponse { delivery },
         StatusCode::OK,
     ))
@@ -144,7 +144,7 @@ pub async fn dead_letter_event_delivery(
     delivery_id: web::Path<EventDeliveryID>,
 ) -> Result<impl Responder, ApiError> {
     let delivery = mark_event_delivery_dead(&pool, delivery_id.into_inner()).await?;
-    Ok(json_response(
+    Ok(ApiResponse::new(
         EventDeliveryUpdateResponse { delivery },
         StatusCode::OK,
     ))

@@ -1,6 +1,7 @@
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, routes, web};
 
 use crate::api::openapi::ApiErrorResponse;
+use crate::api::response::{ApiResponse, ResponseLocation};
 use crate::db::DbPool;
 use crate::db::traits::event_subscription::{
     DeleteEventSinkRecord, SaveEventSinkRecord, UpdateEventSinkRecord,
@@ -10,7 +11,6 @@ use crate::extractors::{AccessEventContext, AdminAccess};
 use crate::models::search::parse_query_parameter;
 use crate::models::{EventSink, EventSinkID, NewEventSink, UpdateEventSink};
 use crate::pagination::prepare_db_pagination;
-use crate::utilities::response::{json_response, json_response_created, paginated_json_response};
 
 #[utoipa::path(
     post,
@@ -42,10 +42,8 @@ pub async fn create_event_sink(
         .save_event_sink_record(&pool, &event_context)
         .await?
         .try_into()?;
-    Ok(json_response_created(
-        &created,
-        &format!("/api/v1/event-sinks/{}", created.id),
-    ))
+    let location = ResponseLocation::new(format!("/api/v1/event-sinks/{}", created.id))?;
+    Ok(ApiResponse::created(created, location))
 }
 
 #[utoipa::path(
@@ -71,7 +69,7 @@ pub async fn get_event_sinks(
     let params = parse_query_parameter(req.query_string())?;
     let query_options = prepare_db_pagination::<EventSink>(&params)?;
     let (sinks, total_count) = EventSink::list_with_total_count(&pool, &query_options).await?;
-    paginated_json_response(sinks, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(sinks, total_count, &params)
 }
 
 #[utoipa::path(
@@ -93,7 +91,7 @@ pub async fn get_event_sink(
     _admin: AdminAccess,
     sink_id: web::Path<EventSinkID>,
 ) -> Result<impl Responder, ApiError> {
-    Ok(json_response(
+    Ok(ApiResponse::new(
         sink_id.into_inner().instance(&pool).await?,
         StatusCode::OK,
     ))
@@ -137,7 +135,7 @@ pub async fn patch_event_sink(
         .update_event_sink_record(&pool, existing.id, &event_context)
         .await?
         .try_into()?;
-    Ok(json_response(updated, StatusCode::OK))
+    Ok(ApiResponse::new(updated, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -165,7 +163,7 @@ pub async fn delete_event_sink(
         .into_inner()
         .delete_event_sink_record(&pool, &event_context)
         .await?;
-    Ok(actix_web::HttpResponse::NoContent().finish())
+    Ok(ApiResponse::no_content())
 }
 
 pub fn config(cfg: &mut web::ServiceConfig) {
