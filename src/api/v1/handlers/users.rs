@@ -1,15 +1,13 @@
+use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
+use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, AdminOrSelfAccess};
 use crate::models::search::parse_query_parameter;
 use crate::models::user::{NewUser, UpdateUser, UserID, UserResponse, UserWithName};
 use crate::pagination::{count_query_options, prepare_db_pagination};
-use crate::utilities::response::{
-    json_response, json_response_created, paginated_json_mapped_response,
-};
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, routes, web};
-use serde_json::json;
 use tracing::debug;
 
 #[utoipa::path(
@@ -48,7 +46,7 @@ pub async fn get_users(
     let search_params = prepare_db_pagination::<UserWithName>(&params)?;
     let result = user.search_users(&pool, search_params).await?;
 
-    paginated_json_mapped_response(result, total_count, StatusCode::OK, &params, |users| {
+    ApiResponse::mapped_paginated(result, total_count, &params, |users| {
         users.into_iter().map(UserResponse::from).collect()
     })
 }
@@ -83,10 +81,8 @@ pub async fn create_user(
     let user = new_user.into_inner().save(&pool).await?;
     let response = user.to_response(&pool).await?;
 
-    Ok(json_response_created(
-        response,
-        format!("/api/v1/iam/users/{}", user.id).as_str(),
-    ))
+    let location = api_locations::user(user.id)?;
+    Ok(ApiResponse::created(response, location))
 }
 
 #[utoipa::path(
@@ -117,7 +113,7 @@ pub async fn get_user(
         requestor = requestor.user.id
     );
 
-    Ok(json_response(
+    Ok(ApiResponse::new(
         user.to_response(&pool).await?,
         StatusCode::OK,
     ))
@@ -154,7 +150,7 @@ pub async fn update_user(
     );
 
     let user = updated_user.into_inner().save(user.id, &pool).await?;
-    Ok(json_response(
+    Ok(ApiResponse::new(
         user.to_response(&pool).await?,
         StatusCode::OK,
     ))
@@ -189,7 +185,7 @@ pub async fn delete_user(
     let delete_result = user_id.delete(&pool).await;
 
     match delete_result {
-        Ok(elements) => Ok(json_response(json!(elements), StatusCode::NO_CONTENT)),
+        Ok(_) => Ok(ApiResponse::no_content()),
         Err(e) => Err(e),
     }
 }

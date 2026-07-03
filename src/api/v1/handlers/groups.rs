@@ -1,4 +1,6 @@
+use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
+use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, UserAccess};
@@ -7,12 +9,8 @@ use crate::models::search::parse_query_parameter;
 use crate::models::service_account::service_accounts_owned_by_group;
 use crate::models::{Group, Principal, PrincipalID, PrincipalMemberResponse};
 use crate::pagination::{count_query_options, prepare_db_pagination};
-use crate::utilities::response::{
-    json_response, json_response_created, paginated_json_mapped_response, paginated_json_response,
-};
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use tracing::debug;
 
 #[derive(Serialize, Deserialize)]
@@ -60,7 +58,7 @@ pub async fn get_groups(
     let search_params = prepare_db_pagination::<Group>(&params)?;
     let result = user.search_groups(&pool, search_params).await?;
 
-    paginated_json_response(result, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(result, total_count, &params)
 }
 
 #[utoipa::path(
@@ -92,10 +90,8 @@ pub async fn create_group(
 
     let group = new_group.save(&pool).await?;
 
-    Ok(json_response_created(
-        &group,
-        format!("/api/v1/iam/groups/{}", group.id).as_str(),
-    ))
+    let location = api_locations::group(group.id)?;
+    Ok(ApiResponse::created(group, location))
 }
 
 #[utoipa::path(
@@ -126,7 +122,7 @@ pub async fn get_group(
         requestor = requestor.user.id
     );
 
-    Ok(json_response(group, StatusCode::OK))
+    Ok(ApiResponse::new(group, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -161,7 +157,7 @@ pub async fn update_group(
     );
 
     let updated = updated_group.into_inner().save(group.id, &pool).await?;
-    Ok(json_response(updated, StatusCode::OK))
+    Ok(ApiResponse::new(updated, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -206,7 +202,7 @@ pub async fn delete_group(
     }
 
     group_id.delete(&pool).await?;
-    Ok(json_response(json!({}), StatusCode::NO_CONTENT))
+    Ok(ApiResponse::no_content())
 }
 
 #[utoipa::path(
@@ -245,7 +241,7 @@ pub async fn get_group_members(
     let search_params = prepare_db_pagination::<Principal>(&params)?;
     let members = group.members_paginated(&pool, &search_params).await?;
 
-    paginated_json_mapped_response(members, total_count, StatusCode::OK, &params, |members| {
+    ApiResponse::mapped_paginated(members, total_count, &params, |members| {
         members
             .into_iter()
             .map(PrincipalMemberResponse::from)
@@ -286,7 +282,7 @@ pub async fn add_group_member(
 
     group.add_member(&pool, &principal).await?;
 
-    Ok(json_response(json!({}), StatusCode::NO_CONTENT))
+    Ok(ApiResponse::no_content())
 }
 
 #[utoipa::path(
@@ -321,5 +317,5 @@ pub async fn delete_group_member(
     );
 
     group.remove_member(&principal, &pool).await?;
-    Ok(json_response(json!({}), StatusCode::NO_CONTENT))
+    Ok(ApiResponse::no_content())
 }

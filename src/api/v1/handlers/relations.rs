@@ -13,7 +13,7 @@ use crate::can;
 use crate::db::traits::UserPermissions;
 use crate::traits::{CanDelete, CanSave, NamespaceAccessors, SelfAccessors};
 
-use crate::utilities::response::{json_response, paginated_json_response};
+use crate::api::response::ApiResponse;
 use actix_web::delete;
 use tracing::debug;
 
@@ -55,7 +55,7 @@ async fn get_class_relations(
         .class_relations_page(&pool, search_params, requestor.scopes())
         .await?;
 
-    paginated_json_response(classes, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(classes, total_count, &params)
 }
 
 #[utoipa::path(
@@ -99,7 +99,7 @@ async fn get_class_relation(
 
     let relation = relation_id.instance(&pool).await?;
 
-    Ok(json_response(relation, StatusCode::OK))
+    Ok(ApiResponse::new(relation, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -145,7 +145,7 @@ async fn create_class_relation(
 
     let relation = relation.save(&pool).await?;
 
-    Ok(json_response(relation, StatusCode::CREATED))
+    Ok(ApiResponse::new(relation, StatusCode::CREATED))
 }
 
 #[utoipa::path(
@@ -189,7 +189,7 @@ async fn delete_class_relation(
 
     relation_id.delete(&pool).await?;
 
-    Ok(json_response("{}", StatusCode::NO_CONTENT))
+    Ok(ApiResponse::no_content())
 }
 
 #[utoipa::path(
@@ -226,7 +226,7 @@ async fn get_object_relations(
         .object_relations_page(&pool, search_params, requestor.scopes())
         .await?;
 
-    paginated_json_response(object_relations, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(object_relations, total_count, &params)
 }
 
 #[utoipa::path(
@@ -270,7 +270,7 @@ async fn get_object_relation(
 
     let relation = relation_id.instance(&pool).await?;
 
-    Ok(json_response(relation, StatusCode::OK))
+    Ok(ApiResponse::new(relation, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -316,7 +316,7 @@ async fn create_object_relation(
 
     let relation = relation.save(&pool).await?;
 
-    Ok(json_response(relation, StatusCode::CREATED))
+    Ok(ApiResponse::new(relation, StatusCode::CREATED))
 }
 
 #[utoipa::path(
@@ -360,5 +360,5 @@ async fn delete_object_relation(
 
     relation_id.delete(&pool).await?;
 
-    Ok(json_response("{}", StatusCode::NO_CONTENT))
+    Ok(ApiResponse::no_content())
 }

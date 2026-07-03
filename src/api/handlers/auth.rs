@@ -1,4 +1,5 @@
 use crate::api::openapi::{ApiErrorResponse, LoginResponse, MessageResponse};
+use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, Authenticated, ManagementAccess};
@@ -6,10 +7,8 @@ use crate::middlewares::rate_limit::{
     clear_login_failures, client_ip_for_request, login_is_rate_limited, record_login_failure,
 };
 use crate::models::{LoginUser, Token, UserID};
-use crate::utilities::response::json_response;
-use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, web};
+use actix_web::{HttpRequest, Responder, get, post, web};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use tracing::{debug, warn};
 use utoipa::ToSchema;
 
@@ -51,9 +50,8 @@ pub async fn login(
             user = name,
             client_ip = client_ip_log.as_deref()
         );
-        return Ok(json_response(
-            json!({ "error": "Too Many Requests", "message": "Too many login attempts. Please try again later." }),
-            StatusCode::TOO_MANY_REQUESTS,
+        return Err(ApiError::TooManyRequests(
+            "Too many login attempts. Please try again later.".to_string(),
         ));
     }
 
@@ -93,10 +91,7 @@ pub async fn login(
         token = token.obfuscate()
     );
 
-    Ok(json_response(
-        json!({"token": token.get_token()}),
-        StatusCode::OK,
-    ))
+    Ok(ApiResponse::ok(LoginResponse::new(token.get_token())))
 }
 
 #[utoipa::path(
@@ -122,10 +117,7 @@ pub async fn logout(
     let result = token.delete(&pool).await;
 
     match result {
-        Ok(_) => Ok(json_response(
-            json!({ "message": "Logout successful."}),
-            StatusCode::OK,
-        )),
+        Ok(_) => Ok(ApiResponse::message("Logout successful.")),
         Err(e) => {
             warn!(
                 message = "Logout failed",
@@ -163,10 +155,7 @@ pub async fn logout_all(
     let delete_result = user_access.user.delete_all_tokens(&pool).await;
 
     match delete_result {
-        Ok(_) => Ok(json_response(
-            json!({ "message": "Logout of all tokens successful."}),
-            StatusCode::OK,
-        )),
+        Ok(_) => Ok(ApiResponse::message("Logout of all tokens successful.")),
         Err(e) => {
             warn!(
                 message = "Logout of all tokens failed",
@@ -205,10 +194,7 @@ pub async fn logout_token(
     let result = token.delete(&pool).await;
 
     match result {
-        Ok(_) => Ok(json_response(
-            json!({ "message": "Logout of token successful."}),
-            StatusCode::OK,
-        )),
+        Ok(_) => Ok(ApiResponse::message("Logout of token successful.")),
         Err(e) => {
             warn!(
                 message = "Logout of token failed",
@@ -259,10 +245,10 @@ pub async fn logout_other(
         .await;
 
     match delete_result {
-        Ok(_) => Ok(json_response(
-            json!({ "message": format!("Logout of tokens for {} successful.", user_id.id())}),
-            StatusCode::OK,
-        )),
+        Ok(_) => Ok(ApiResponse::message(format!(
+            "Logout of tokens for {} successful.",
+            user_id.id()
+        ))),
         Err(e) => {
             warn!(
                 message = "Logout of other tokens failed",
@@ -295,8 +281,5 @@ pub async fn validate_token(user_access: Authenticated) -> Result<impl Responder
         token = user_access.token.obfuscate()
     );
 
-    Ok(json_response(
-        json!({ "message": "Token is valid."}),
-        StatusCode::OK,
-    ))
+    Ok(ApiResponse::message("Token is valid."))
 }

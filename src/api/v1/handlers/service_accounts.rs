@@ -1,8 +1,9 @@
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
-use serde_json::json;
 use tracing::debug;
 
+use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
+use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::ManagementAccess;
@@ -19,9 +20,6 @@ use crate::models::{
 };
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::traits::AuthzSubject;
-use crate::utilities::response::{
-    json_response, json_response_created, paginated_json_mapped_response,
-};
 
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(create_service_account)
@@ -101,10 +99,8 @@ pub async fn create_service_account(
     let sa = new_sa.save(&pool, Some(requestor.user.id)).await?;
     let response = response_for(&pool, &sa).await?;
 
-    Ok(json_response_created(
-        response,
-        format!("/api/v1/iam/service-accounts/{}", sa.id).as_str(),
-    ))
+    let location = api_locations::service_account(sa.id)?;
+    Ok(ApiResponse::created(response, location))
 }
 
 #[utoipa::path(
@@ -141,7 +137,7 @@ pub async fn list_service_accounts(
     let accounts =
         search_manageable_service_accounts(&pool, &requestor.user, is_admin, search_params).await?;
 
-    paginated_json_mapped_response(accounts, total_count, StatusCode::OK, &params, |accounts| {
+    ApiResponse::mapped_paginated(accounts, total_count, &params, |accounts| {
         accounts
             .into_iter()
             .map(ServiceAccountResponse::from)
@@ -173,7 +169,7 @@ pub async fn get_service_account(
         .service_account(&pool)
         .await?;
     ensure_can_manage(&pool, &requestor, &sa).await?;
-    Ok(json_response(
+    Ok(ApiResponse::new(
         response_for(&pool, &sa).await?,
         StatusCode::OK,
     ))
@@ -221,7 +217,7 @@ pub async fn update_service_account(
     }
 
     let updated = update.save(id.id(), &pool).await?;
-    Ok(json_response(
+    Ok(ApiResponse::new(
         response_for(&pool, &updated).await?,
         StatusCode::OK,
     ))
@@ -261,7 +257,7 @@ pub async fn disable_service_account(
         requestor = requestor.user.id
     );
 
-    Ok(json_response(
+    Ok(ApiResponse::new(
         response_for(&pool, &disabled).await?,
         StatusCode::OK,
     ))
@@ -290,5 +286,5 @@ pub async fn delete_service_account(
     let sa = id.service_account(&pool).await?;
     ensure_can_manage(&pool, &requestor, &sa).await?;
     id.delete(&pool).await?;
-    Ok(json_response(json!({}), StatusCode::NO_CONTENT))
+    Ok(ApiResponse::no_content())
 }

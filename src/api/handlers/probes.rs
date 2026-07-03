@@ -4,9 +4,9 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use crate::api::openapi::ApiErrorResponse;
+use crate::api::response::ApiResponse;
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
-use crate::utilities::response::json_response;
 
 #[derive(Serialize, ToSchema)]
 pub struct ProbeResponse {
@@ -31,7 +31,7 @@ impl ProbeResponse {
 )]
 #[get("/healthz")]
 pub async fn healthz() -> impl Responder {
-    json_response(ProbeResponse::ok("ok"), StatusCode::OK)
+    ApiResponse::new(ProbeResponse::ok("ok"), StatusCode::OK)
 }
 
 #[utoipa::path(
@@ -52,5 +52,5 @@ pub async fn readyz(pool: web::Data<DbPool>) -> Result<impl Responder, ApiError>
         ApiError::ServiceUnavailable(format!("Database readiness check failed: {err}"))
     })?;
 
-    Ok(json_response(ProbeResponse::ok("ready"), StatusCode::OK))
+    Ok(ApiResponse::new(ProbeResponse::ok("ready"), StatusCode::OK))
 }

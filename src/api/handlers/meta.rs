@@ -1,4 +1,5 @@
 use crate::api::openapi::{ApiErrorResponse, CountsResponse};
+use crate::api::response::ApiResponse;
 use crate::config::{get_config, login_rate_limit_config};
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
@@ -7,8 +8,7 @@ use crate::middlewares::rate_limit;
 use crate::models::class::total_class_count;
 use crate::models::namespace::total_namespace_count;
 use crate::models::object::{objects_per_class_count, total_object_count};
-use crate::utilities::response::json_response;
-use actix_web::{Responder, ResponseError, delete, get, http::StatusCode, web};
+use actix_web::{Responder, delete, get, http::StatusCode, web};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use diesel::QueryableByName;
@@ -111,7 +111,10 @@ struct TaskQueueState {
     )
 )]
 #[get("db")]
-pub async fn get_db_state(pool: web::Data<DbPool>, requestor: AdminAccess) -> impl Responder {
+pub async fn get_db_state(
+    pool: web::Data<DbPool>,
+    requestor: AdminAccess,
+) -> Result<impl Responder, ApiError> {
     let state = pool.state();
 
     let query = r#"
@@ -126,10 +129,9 @@ pub async fn get_db_state(pool: web::Data<DbPool>, requestor: AdminAccess) -> im
     let results = match with_connection(&pool, |conn| sql_query(query).load::<DbState>(conn)) {
         Ok(results) => results,
         Err(e) => {
-            return ApiError::InternalServerError(format!(
+            return Err(ApiError::InternalServerError(format!(
                 "Error getting state for the database: {e}"
-            ))
-            .error_response();
+            )));
         }
     };
 
@@ -146,10 +148,11 @@ pub async fn get_db_state(pool: web::Data<DbPool>, requestor: AdminAccess) -> im
             db_size: row.db_size,
             last_vacuum_time: row.last_vacuum_time.map(|dt| dt.to_string()),
         };
-        json_response(response, StatusCode::OK)
+        Ok(ApiResponse::new(response, StatusCode::OK))
     } else {
-        ApiError::InternalServerError("Error getting state for the database".to_string())
-            .error_response()
+        Err(ApiError::InternalServerError(
+            "Error getting state for the database".to_string(),
+        ))
     }
 }
 
@@ -181,7 +184,7 @@ pub async fn get_object_and_class_count(
         objects_per_class: objects_per_class_count(&pool).await?,
     };
 
-    Ok(json_response(response, StatusCode::OK))
+    Ok(ApiResponse::new(response, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -256,7 +259,7 @@ pub async fn get_task_queue_state(
         oldest_active_at: state.oldest_active_at.map(|dt| dt.to_string()),
     };
 
-    Ok(json_response(response, StatusCode::OK))
+    Ok(ApiResponse::new(response, StatusCode::OK))
 }
 
 /// Effective login rate-limit configuration, echoed back in the admin state endpoint.
@@ -421,7 +424,7 @@ pub async fn get_login_rate_limit_state(
         entries,
     };
 
-    Ok(json_response(response, StatusCode::OK))
+    Ok(ApiResponse::new(response, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -461,7 +464,7 @@ pub async fn release_login_rate_limit_entry(
         requestor = requestor.user.id
     );
 
-    Ok(json_response(
+    Ok(ApiResponse::new(
         ReleaseRateLimitResponse { released: true },
         StatusCode::OK,
     ))
@@ -488,7 +491,7 @@ pub async fn clear_login_rate_limit(requestor: AdminAccess) -> Result<impl Respo
         cleared
     );
 
-    Ok(json_response(
+    Ok(ApiResponse::new(
         ClearRateLimitResponse { cleared },
         StatusCode::OK,
     ))

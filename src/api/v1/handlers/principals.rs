@@ -1,10 +1,10 @@
 use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, web};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use tracing::debug;
 use utoipa::ToSchema;
 
-use crate::api::openapi::ApiErrorResponse;
+use crate::api::openapi::{ApiErrorResponse, LoginResponse};
+use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::db::traits::ActiveTokens;
 use crate::errors::ApiError;
@@ -19,9 +19,6 @@ use crate::models::token::{create_principal_token, revoke_token_by_id_for_princi
 use crate::models::{Group, Permissions, PrincipalID, PrincipalToken, PrincipalTokenMetadata};
 use crate::pagination::prepare_db_pagination;
 use crate::traits::{AuthzSubject, GroupAccessors};
-use crate::utilities::response::{
-    json_response, paginated_json_mapped_response, paginated_json_response,
-};
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 
@@ -116,7 +113,7 @@ pub(crate) async fn principal_permissions_response(
     params(("principal_id" = i32, Path, description = "Principal id")),
     request_body = NewTokenRequest,
     responses(
-        (status = 201, description = "Raw token (shown once)"),
+        (status = 201, description = "Raw token (shown once)", body = LoginResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
@@ -175,8 +172,8 @@ pub async fn create_token(
     )
     .await?;
 
-    Ok(json_response(
-        json!({ "token": raw.get_token() }),
+    Ok(ApiResponse::new(
+        LoginResponse::new(raw.get_token()),
         StatusCode::CREATED,
     ))
 }
@@ -210,7 +207,7 @@ pub async fn list_tokens(
         .tokens_paginated_with_total_count(&pool, &search_params)
         .await?;
 
-    paginated_json_mapped_response(tokens, total_count, StatusCode::OK, &params, |tokens| {
+    ApiResponse::mapped_paginated(tokens, total_count, &params, |tokens| {
         tokens
             .into_iter()
             .map(PrincipalTokenMetadata::from)
@@ -250,7 +247,7 @@ pub async fn revoke_token(
             "Token not found for this principal".to_string(),
         ));
     }
-    Ok(json_response(json!({}), StatusCode::NO_CONTENT))
+    Ok(ApiResponse::no_content())
 }
 
 #[utoipa::path(
@@ -281,7 +278,7 @@ pub async fn list_principal_groups(
     let (groups, total_count) = pid
         .groups_paginated_with_total_count(&pool, &search_params)
         .await?;
-    paginated_json_response(groups, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(groups, total_count, &params)
 }
 
 /// One group's contribution to a principal's effective permissions on a namespace.
@@ -324,5 +321,5 @@ pub async fn list_principal_permissions(
     ensure_can_manage_principal(&pool, &requestor, &principal).await?;
 
     let report = principal_permissions_response(&pool, &pid).await?;
-    Ok(json_response(report, StatusCode::OK))
+    Ok(ApiResponse::new(report, StatusCode::OK))
 }

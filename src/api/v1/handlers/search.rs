@@ -4,6 +4,7 @@ use futures_util::stream;
 use serde::Serialize;
 
 use crate::api::openapi::ApiErrorResponse;
+use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
@@ -12,7 +13,6 @@ use crate::models::{
     UnifiedSearchStartedEvent, execute_unified_search, execute_unified_search_batch,
     parse_unified_search_query,
 };
-use crate::utilities::response::json_response;
 
 fn sse_event<T: Serialize>(event: &str, payload: &T) -> Result<Bytes, ApiError> {
     let data = serde_json::to_string(payload).map_err(|error| {
@@ -51,7 +51,7 @@ pub async fn get_search(
     let params = parse_unified_search_query(req.query_string())?;
     let response =
         execute_unified_search(&requestor.principal, &pool, &params, requestor.scopes()).await?;
-    Ok(json_response(response, StatusCode::OK))
+    Ok(ApiResponse::new(response, StatusCode::OK))
 }
 
 #[utoipa::path(
