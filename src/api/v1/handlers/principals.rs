@@ -4,7 +4,7 @@ use tracing::debug;
 use utoipa::ToSchema;
 
 use crate::api::openapi::{ApiErrorResponse, LoginResponse};
-use crate::api::response::{JsonResponse, MappedPaginatedJsonResponse, PaginatedJsonResponse};
+use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::db::traits::ActiveTokens;
 use crate::errors::ApiError;
@@ -172,7 +172,7 @@ pub async fn create_token(
     )
     .await?;
 
-    Ok(JsonResponse::new(
+    Ok(ApiResponse::new(
         LoginResponse::new(raw.get_token()),
         StatusCode::CREATED,
     ))
@@ -207,7 +207,7 @@ pub async fn list_tokens(
         .tokens_paginated_with_total_count(&pool, &search_params)
         .await?;
 
-    MappedPaginatedJsonResponse::new(tokens, total_count, StatusCode::OK, &params, |tokens| {
+    ApiResponse::mapped_paginated(tokens, total_count, &params, |tokens| {
         tokens
             .into_iter()
             .map(PrincipalTokenMetadata::from)
@@ -247,7 +247,7 @@ pub async fn revoke_token(
             "Token not found for this principal".to_string(),
         ));
     }
-    Ok(JsonResponse::no_content())
+    Ok(ApiResponse::no_content())
 }
 
 #[utoipa::path(
@@ -278,7 +278,7 @@ pub async fn list_principal_groups(
     let (groups, total_count) = pid
         .groups_paginated_with_total_count(&pool, &search_params)
         .await?;
-    PaginatedJsonResponse::new(groups, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(groups, total_count, &params)
 }
 
 /// One group's contribution to a principal's effective permissions on a namespace.
@@ -321,5 +321,5 @@ pub async fn list_principal_permissions(
     ensure_can_manage_principal(&pool, &requestor, &principal).await?;
 
     let report = principal_permissions_response(&pool, &pid).await?;
-    Ok(JsonResponse::new(report, StatusCode::OK))
+    Ok(ApiResponse::new(report, StatusCode::OK))
 }

@@ -7,7 +7,7 @@ use serde_json::json;
 
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::JsonResponse;
+use crate::api::response::ApiResponse;
 use crate::can;
 use crate::config::{
     DEFAULT_REPORT_DB_STATEMENT_TIMEOUT_MS, DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER,
@@ -224,17 +224,11 @@ pub async fn run_report(
     .await?;
 
     let response = task.to_response()?;
-    let mut headers = HashMap::new();
-    headers.insert(
-        "Location".to_string(),
-        api_locations::task(task.id)?.as_str().to_string(),
-    );
     kick_task_worker(pool.get_ref().clone());
 
-    Ok(JsonResponse::with_headers(
+    Ok(ApiResponse::accepted_at(
         response,
-        StatusCode::ACCEPTED,
-        Some(headers),
+        api_locations::task(task.id)?,
     ))
 }
 
@@ -302,7 +296,7 @@ pub async fn get_report(
         .load_authorized_report(&pool, &requestor.principal)
         .await?;
     let output = task.find_report_output_summary(&pool).await?;
-    Ok(JsonResponse::new(
+    Ok(ApiResponse::new(
         task.to_response_with_report_output(output.as_ref())?,
         StatusCode::OK,
     ))

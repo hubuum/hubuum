@@ -3,7 +3,7 @@ use tracing::debug;
 
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::{CreatedJsonResponse, JsonResponse, MappedPaginatedJsonResponse};
+use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::ManagementAccess;
@@ -100,7 +100,7 @@ pub async fn create_service_account(
     let response = response_for(&pool, &sa).await?;
 
     let location = api_locations::service_account(sa.id)?;
-    Ok(CreatedJsonResponse::new(response, location))
+    Ok(ApiResponse::created(response, location))
 }
 
 #[utoipa::path(
@@ -137,7 +137,7 @@ pub async fn list_service_accounts(
     let accounts =
         search_manageable_service_accounts(&pool, &requestor.user, is_admin, search_params).await?;
 
-    MappedPaginatedJsonResponse::new(accounts, total_count, StatusCode::OK, &params, |accounts| {
+    ApiResponse::mapped_paginated(accounts, total_count, &params, |accounts| {
         accounts
             .into_iter()
             .map(ServiceAccountResponse::from)
@@ -169,7 +169,7 @@ pub async fn get_service_account(
         .service_account(&pool)
         .await?;
     ensure_can_manage(&pool, &requestor, &sa).await?;
-    Ok(JsonResponse::new(
+    Ok(ApiResponse::new(
         response_for(&pool, &sa).await?,
         StatusCode::OK,
     ))
@@ -217,7 +217,7 @@ pub async fn update_service_account(
     }
 
     let updated = update.save(id.id(), &pool).await?;
-    Ok(JsonResponse::new(
+    Ok(ApiResponse::new(
         response_for(&pool, &updated).await?,
         StatusCode::OK,
     ))
@@ -257,7 +257,7 @@ pub async fn disable_service_account(
         requestor = requestor.user.id
     );
 
-    Ok(JsonResponse::new(
+    Ok(ApiResponse::new(
         response_for(&pool, &disabled).await?,
         StatusCode::OK,
     ))
@@ -286,5 +286,5 @@ pub async fn delete_service_account(
     let sa = id.service_account(&pool).await?;
     ensure_can_manage(&pool, &requestor, &sa).await?;
     id.delete(&pool).await?;
-    Ok(JsonResponse::no_content())
+    Ok(ApiResponse::no_content())
 }

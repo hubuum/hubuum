@@ -1,8 +1,6 @@
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::{
-    CreatedJsonResponse, JsonResponse, MappedPaginatedJsonResponse, PaginatedJsonResponse,
-};
+use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, UserAccess};
@@ -60,7 +58,7 @@ pub async fn get_groups(
     let search_params = prepare_db_pagination::<Group>(&params)?;
     let result = user.search_groups(&pool, search_params).await?;
 
-    PaginatedJsonResponse::new(result, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(result, total_count, &params)
 }
 
 #[utoipa::path(
@@ -93,7 +91,7 @@ pub async fn create_group(
     let group = new_group.save(&pool).await?;
 
     let location = api_locations::group(group.id)?;
-    Ok(CreatedJsonResponse::new(group, location))
+    Ok(ApiResponse::created(group, location))
 }
 
 #[utoipa::path(
@@ -124,7 +122,7 @@ pub async fn get_group(
         requestor = requestor.user.id
     );
 
-    Ok(JsonResponse::new(group, StatusCode::OK))
+    Ok(ApiResponse::new(group, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -159,7 +157,7 @@ pub async fn update_group(
     );
 
     let updated = updated_group.into_inner().save(group.id, &pool).await?;
-    Ok(JsonResponse::new(updated, StatusCode::OK))
+    Ok(ApiResponse::new(updated, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -204,7 +202,7 @@ pub async fn delete_group(
     }
 
     group_id.delete(&pool).await?;
-    Ok(JsonResponse::no_content())
+    Ok(ApiResponse::no_content())
 }
 
 #[utoipa::path(
@@ -243,7 +241,7 @@ pub async fn get_group_members(
     let search_params = prepare_db_pagination::<Principal>(&params)?;
     let members = group.members_paginated(&pool, &search_params).await?;
 
-    MappedPaginatedJsonResponse::new(members, total_count, StatusCode::OK, &params, |members| {
+    ApiResponse::mapped_paginated(members, total_count, &params, |members| {
         members
             .into_iter()
             .map(PrincipalMemberResponse::from)
@@ -284,7 +282,7 @@ pub async fn add_group_member(
 
     group.add_member(&pool, &principal).await?;
 
-    Ok(JsonResponse::no_content())
+    Ok(ApiResponse::no_content())
 }
 
 #[utoipa::path(
@@ -319,5 +317,5 @@ pub async fn delete_group_member(
     );
 
     group.remove_member(&principal, &pool).await?;
-    Ok(JsonResponse::no_content())
+    Ok(ApiResponse::no_content())
 }

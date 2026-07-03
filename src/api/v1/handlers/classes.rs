@@ -4,9 +4,7 @@ use tracing::{debug, info};
 
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::{
-    CreatedJsonResponse, JsonResponse, MappedPaginatedJsonResponse, PaginatedJsonResponse,
-};
+use crate::api::response::ApiResponse;
 use crate::can;
 use crate::db::DbPool;
 use crate::db::traits::{ClassRelation, ObjectRelationMemberships, UserPermissions};
@@ -213,7 +211,7 @@ async fn get_classes(
         .search_classes(&pool, search_params, requestor.scopes())
         .await?;
 
-    PaginatedJsonResponse::new(classes, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(classes, total_count, &params)
 }
 
 #[utoipa::path(
@@ -262,7 +260,7 @@ async fn create_class(
         .await?;
 
     let location = api_locations::class(class.id)?;
-    Ok(CreatedJsonResponse::new(class, location))
+    Ok(ApiResponse::created(class, location))
 }
 
 #[utoipa::path(
@@ -304,7 +302,7 @@ async fn get_class(
     );
     let class = class.expand_namespace(&pool).await?;
 
-    Ok(JsonResponse::new(class, StatusCode::OK))
+    Ok(ApiResponse::new(class, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -366,7 +364,7 @@ async fn update_class(
         .await?
         .expand_namespace(&pool)
         .await?;
-    Ok(JsonResponse::new(class, StatusCode::OK))
+    Ok(ApiResponse::new(class, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -408,7 +406,7 @@ async fn delete_class(
     );
 
     class.delete(&pool).await?;
-    Ok(JsonResponse::no_content())
+    Ok(ApiResponse::no_content())
 }
 
 #[utoipa::path(
@@ -482,7 +480,7 @@ async fn get_class_permissions(
     )
     .await?;
 
-    PaginatedJsonResponse::new(permissions, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(permissions, total_count, &params)
 }
 
 #[utoipa::path(
@@ -526,7 +524,7 @@ async fn get_related_classes(
         .classes_related_to_page(&pool, class, search_params, requestor.scopes())
         .await?;
 
-    MappedPaginatedJsonResponse::new(classes, total_count, StatusCode::OK, &params, |page| {
+    ApiResponse::mapped_paginated(classes, total_count, &params, |page| {
         page.to_descendant_classes_with_path()
     })
 }
@@ -591,7 +589,7 @@ async fn create_class_relation(
     let relation = relation.save(&pool).await?;
 
     let location = api_locations::class_relation(class_id.id(), relation.id())?;
-    Ok(CreatedJsonResponse::new(relation, location))
+    Ok(ApiResponse::created(relation, location))
 }
 
 #[utoipa::path(
@@ -645,7 +643,7 @@ async fn delete_class_relation(
         || relation.to_hubuum_class_id == class_id.id()
     {
         relation.delete(&pool).await?;
-        Ok(JsonResponse::no_content())
+        Ok(ApiResponse::no_content())
     } else {
         info!(
             message = "Relation membership mismatch when deleting relation: class does not match either endpoint",
@@ -709,7 +707,7 @@ async fn get_related_class_relations(
     let (relations, total_count) = user
         .class_relations_touching_page(&pool, class, search_params, requestor.scopes())
         .await?;
-    PaginatedJsonResponse::new(relations, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(relations, total_count, &params)
 }
 
 #[utoipa::path(
@@ -763,7 +761,7 @@ async fn get_related_class_graph(
         .search_class_relations_between_ids(&pool, &class_ids, requestor.scopes())
         .await?;
 
-    Ok(JsonResponse::new(
+    Ok(ApiResponse::new(
         RelatedClassGraph { classes, relations },
         StatusCode::OK,
     ))
@@ -823,7 +821,7 @@ async fn get_objects_in_class(
         .search_objects(&pool, search_params, requestor.scopes())
         .await?;
 
-    PaginatedJsonResponse::new(objects, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(objects, total_count, &params)
 }
 
 #[utoipa::path(
@@ -873,7 +871,7 @@ async fn create_object_in_class(
     let object = object_data.save(&pool).await?;
 
     let location = api_locations::class_object(class.id, object.id())?;
-    Ok(CreatedJsonResponse::new(object, location))
+    Ok(ApiResponse::created(object, location))
 }
 
 #[utoipa::path(
@@ -917,7 +915,7 @@ async fn get_object_in_class(
         object
     );
 
-    Ok(JsonResponse::new(object, StatusCode::OK))
+    Ok(ApiResponse::new(object, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -967,7 +965,7 @@ async fn patch_object_in_class(
     ensure_object_update_stays_in_path_class(&object_data, &object)?;
 
     let object = object_data.update(&pool, object.id).await?;
-    Ok(JsonResponse::new(object, StatusCode::OK))
+    Ok(ApiResponse::new(object, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -1012,7 +1010,7 @@ async fn delete_object_in_class(
     );
 
     object.delete(&pool).await?;
-    Ok(JsonResponse::no_content())
+    Ok(ApiResponse::no_content())
 }
 
 #[utoipa::path(
@@ -1094,7 +1092,7 @@ async fn get_related_objects(
         .objects_related_to_page(&pool, object, search_params, requestor.scopes())
         .await?;
 
-    MappedPaginatedJsonResponse::new(hits, total_count, StatusCode::OK, &params, |page| {
+    ApiResponse::mapped_paginated(hits, total_count, &params, |page| {
         page.to_descendant_objects_with_path()
     })
 }
@@ -1151,7 +1149,7 @@ async fn get_related_object_relations(
         .object_relations_touching_page(&pool, object, search_params, requestor.scopes())
         .await?;
 
-    PaginatedJsonResponse::new(relations, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(relations, total_count, &params)
 }
 
 #[utoipa::path(
@@ -1216,7 +1214,7 @@ async fn get_related_object_graph(
         .search_object_relations_between_ids(&pool, &object_ids, requestor.scopes())
         .await?;
 
-    Ok(JsonResponse::new(
+    Ok(ApiResponse::new(
         RelatedObjectGraph { objects, relations },
         StatusCode::OK,
     ))
@@ -1274,7 +1272,7 @@ async fn get_object_relation_from_class_and_objects(
         .object_relation(&pool, &from_class, &to_object)
         .await
     {
-        Ok(relation) => Ok(JsonResponse::new(relation, StatusCode::OK)),
+        Ok(relation) => Ok(ApiResponse::new(relation, StatusCode::OK)),
         Err(_) => Err(ApiError::NotFound(format!(
             "Object {} of class {} is not related to object {}",
             from_object.id(),
@@ -1365,7 +1363,7 @@ async fn delete_object_relation(
     );
 
     relation.delete(&pool).await?;
-    Ok(JsonResponse::no_content())
+    Ok(ApiResponse::no_content())
 }
 
 #[utoipa::path(
@@ -1446,5 +1444,5 @@ async fn create_object_relation(
         to_class.id(),
         to_object.id(),
     )?;
-    Ok(CreatedJsonResponse::new(relation, location))
+    Ok(ApiResponse::created(relation, location))
 }

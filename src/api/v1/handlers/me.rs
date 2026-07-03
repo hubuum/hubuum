@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::{JsonResponse, MappedPaginatedJsonResponse, PaginatedJsonResponse};
+use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::principals::{
     PrincipalNamespacePermissions, principal_permissions_response,
 };
@@ -66,7 +66,7 @@ pub async fn get_me(requestor: Authenticated) -> Result<impl Responder, ApiError
         scopes: requestor.scopes,
     };
 
-    Ok(JsonResponse::new(
+    Ok(ApiResponse::new(
         MeResponse {
             principal: requestor.principal.into(),
             token,
@@ -99,7 +99,7 @@ pub async fn list_my_tokens(
         .tokens_paginated_with_total_count(&pool, &search_params)
         .await?;
 
-    MappedPaginatedJsonResponse::new(tokens, total_count, StatusCode::OK, &params, |tokens| {
+    ApiResponse::mapped_paginated(tokens, total_count, &params, |tokens| {
         tokens
             .into_iter()
             .map(crate::models::PrincipalTokenMetadata::from)
@@ -129,7 +129,7 @@ pub async fn list_my_groups(
         .principal
         .groups_paginated_with_total_count(&pool, &search_params)
         .await?;
-    PaginatedJsonResponse::new(groups, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(groups, total_count, &params)
 }
 
 #[utoipa::path(
@@ -148,5 +148,5 @@ pub async fn list_my_permissions(
     requestor: Authenticated,
 ) -> Result<impl Responder, ApiError> {
     let report = principal_permissions_response(&pool, &requestor.principal).await?;
-    Ok(JsonResponse::new(report, StatusCode::OK))
+    Ok(ApiResponse::new(report, StatusCode::OK))
 }

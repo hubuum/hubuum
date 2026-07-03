@@ -11,7 +11,7 @@ use crate::models::{
 use crate::models::search::parse_query_parameter;
 use crate::pagination::{count_query_options, prepare_db_pagination};
 
-use crate::api::response::{CreatedJsonResponse, JsonResponse, PaginatedJsonResponse};
+use crate::api::response::ApiResponse;
 use actix_web::{
     HttpRequest, Responder, delete, get, http::StatusCode, patch, post, put, routes, web,
 };
@@ -60,7 +60,7 @@ pub async fn get_namespaces(
     let result = user
         .search_namespaces(&pool, search_params, requestor.scopes())
         .await?;
-    PaginatedJsonResponse::new(result, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(result, total_count, &params)
 }
 
 #[utoipa::path(
@@ -94,7 +94,7 @@ pub async fn create_namespace(
     let created_namespace = new_namespace_request.save(&pool).await?;
 
     let location = api_locations::namespace(created_namespace.id)?;
-    Ok(CreatedJsonResponse::new(created_namespace, location))
+    Ok(ApiResponse::created(created_namespace, location))
 }
 
 #[utoipa::path(
@@ -133,7 +133,7 @@ pub async fn get_namespace(
         namespace
     );
 
-    Ok(JsonResponse::new(namespace, StatusCode::OK))
+    Ok(ApiResponse::new(namespace, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -176,7 +176,7 @@ pub async fn update_namespace(
     );
 
     let updated_namespace = update_data.into_inner().update(&pool, namespace.id).await?;
-    Ok(JsonResponse::new(updated_namespace, StatusCode::ACCEPTED))
+    Ok(ApiResponse::accepted(updated_namespace))
 }
 
 #[utoipa::path(
@@ -215,7 +215,7 @@ pub async fn delete_namespace(
     );
 
     namespace.delete(&pool).await?;
-    Ok(JsonResponse::no_content())
+    Ok(ApiResponse::no_content())
 }
 
 /// List all groups who have permissions for a namespace
@@ -266,7 +266,7 @@ pub async fn get_namespace_permissions(
             &search_params,
         )
         .await?;
-    PaginatedJsonResponse::new(permissions, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(permissions, total_count, &params)
 }
 
 /// List all permissions for a given group on a namespace
@@ -314,7 +314,7 @@ pub async fn get_namespace_group_permissions(
 
     let permissions = group_on(&pool, namespace.id, group_id.id()).await?;
 
-    Ok(JsonResponse::new(permissions, StatusCode::OK))
+    Ok(ApiResponse::new(permissions, StatusCode::OK))
 }
 
 /// Post a permission set to a group on a namespace
@@ -373,7 +373,7 @@ pub async fn grant_namespace_group_permissions(
 
     namespace.grant(&pool, group_id.id(), permissions).await?;
 
-    Ok(JsonResponse::new((), StatusCode::CREATED))
+    Ok(ApiResponse::created_empty())
 }
 
 /// Replace all permissions for a group on a namespace
@@ -433,7 +433,7 @@ pub async fn replace_namespace_group_permissions(
         .set_permissions(&pool, group_id.id(), permissions)
         .await?;
 
-    Ok(JsonResponse::new((), StatusCode::OK))
+    Ok(ApiResponse::ok_empty())
 }
 
 /// Revoke a permission set from a group on a namespace
@@ -478,7 +478,7 @@ pub async fn revoke_namespace_group_permissions(
 
     namespace.revoke_all(&pool, group_id.id()).await?;
 
-    Ok(JsonResponse::no_content())
+    Ok(ApiResponse::no_content())
 }
 
 /// Check a specific permission for a group on a namespace
@@ -525,9 +525,9 @@ pub async fn get_namespace_group_permission(
     );
 
     if group_can_on(&pool, group_id.id(), namespace, permission).await? {
-        return Ok(JsonResponse::no_content());
+        return Ok(ApiResponse::no_content());
     }
-    Ok(JsonResponse::new((), StatusCode::NOT_FOUND))
+    Ok(ApiResponse::not_found_empty())
 }
 
 /// Grant a specific permission to a group on a namespace
@@ -577,7 +577,7 @@ pub async fn grant_namespace_group_permission(
         .grant(&pool, group_id.id(), PermissionsList::new([permission]))
         .await?;
 
-    Ok(JsonResponse::new((), StatusCode::CREATED))
+    Ok(ApiResponse::created_empty())
 }
 
 /// Revoke a specific permission from a group on a namespace
@@ -626,7 +626,7 @@ pub async fn revoke_namespace_group_permission(
         .revoke(&pool, group_id.id(), PermissionsList::new([permission]))
         .await?;
 
-    Ok(JsonResponse::no_content())
+    Ok(ApiResponse::no_content())
 }
 
 /// List all permissions for a principal on a namespace
@@ -685,7 +685,7 @@ pub async fn get_namespace_principal_permissions(
         return Err(ApiError::NotFound("No permissions found".to_string()));
     }
 
-    PaginatedJsonResponse::new(permissions, total_count, StatusCode::OK, &query_options)
+    ApiResponse::paginated(permissions, total_count, &query_options)
 }
 
 /// List all groups that have any permissions on a namespace
@@ -739,5 +739,5 @@ pub async fn get_namespace_groups_with_permission(
     )
     .await?;
 
-    PaginatedJsonResponse::new(groups, total_count, StatusCode::OK, &query_options)
+    ApiResponse::paginated(groups, total_count, &query_options)
 }

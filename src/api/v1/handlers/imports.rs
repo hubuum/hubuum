@@ -1,10 +1,8 @@
-use std::collections::HashMap;
-
 use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, web};
 
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::{JsonResponse, PaginatedJsonResponse};
+use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::db::traits::task::{TaskBackend, TaskCreateRequest, TaskScopeSnapshot};
 use crate::errors::ApiError;
@@ -127,17 +125,11 @@ pub async fn create_import(
     .await?;
 
     let response = task.to_response()?;
-    let mut headers = HashMap::new();
-    headers.insert(
-        "Location".to_string(),
-        api_locations::task(task.id)?.as_str().to_string(),
-    );
     kick_task_worker(pool.get_ref().clone());
 
-    Ok(JsonResponse::with_headers(
+    Ok(ApiResponse::accepted_at(
         response,
-        StatusCode::ACCEPTED,
-        Some(headers),
+        api_locations::task(task.id)?,
     ))
 }
 
@@ -167,7 +159,7 @@ pub async fn get_import(
         .into_inner()
         .load_authorized_import(&pool, &requestor.principal)
         .await?;
-    Ok(JsonResponse::new(task.to_response()?, StatusCode::OK))
+    Ok(ApiResponse::new(task.to_response()?, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -206,5 +198,5 @@ pub async fn get_import_results(
         .into_iter()
         .map(ImportTaskResultResponse::from)
         .collect::<Vec<_>>();
-    PaginatedJsonResponse::new(results, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(results, total_count, &params)
 }

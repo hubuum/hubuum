@@ -3,7 +3,7 @@ use tracing::{debug, info};
 
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::{CreatedJsonResponse, JsonResponse, PaginatedJsonResponse};
+use crate::api::response::ApiResponse;
 use crate::can;
 use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
@@ -61,7 +61,7 @@ pub async fn create_template(
     let created = template.save(&pool).await?;
 
     let location = api_locations::template(created.id)?;
-    Ok(CreatedJsonResponse::new(created, location))
+    Ok(ApiResponse::created(created, location))
 }
 
 #[utoipa::path(
@@ -103,7 +103,7 @@ pub async fn get_templates(
         ReportTemplate::list_with_total_count(&pool, &allowed_namespace_ids, &search_params)
             .await?;
 
-    PaginatedJsonResponse::new(templates, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(templates, total_count, &params)
 }
 
 #[utoipa::path(
@@ -146,7 +146,7 @@ pub async fn get_template(
         NamespaceID::new(template.namespace_id)?
     );
 
-    Ok(JsonResponse::new(template, StatusCode::OK))
+    Ok(ApiResponse::new(template, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -208,16 +208,10 @@ pub async fn run_template_report(
     )
     .await?;
     let response = task.to_response()?;
-    let mut headers = std::collections::HashMap::new();
-    headers.insert(
-        "Location".to_string(),
-        api_locations::task(task.id)?.as_str().to_string(),
-    );
 
-    Ok(JsonResponse::with_headers(
+    Ok(ApiResponse::accepted_at(
         response,
-        StatusCode::ACCEPTED,
-        Some(headers),
+        api_locations::task(task.id)?,
     ))
 }
 
@@ -280,7 +274,7 @@ pub async fn patch_template(
 
     let updated = update.update(&pool, existing.id).await?;
 
-    Ok(JsonResponse::new(updated, StatusCode::OK))
+    Ok(ApiResponse::new(updated, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -325,5 +319,5 @@ pub async fn delete_template(
 
     template_id.delete(&pool).await?;
 
-    Ok(JsonResponse::no_content())
+    Ok(ApiResponse::no_content())
 }

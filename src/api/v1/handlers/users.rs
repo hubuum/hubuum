@@ -1,6 +1,6 @@
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::{CreatedJsonResponse, JsonResponse, MappedPaginatedJsonResponse};
+use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, AdminOrSelfAccess};
@@ -46,7 +46,7 @@ pub async fn get_users(
     let search_params = prepare_db_pagination::<UserWithName>(&params)?;
     let result = user.search_users(&pool, search_params).await?;
 
-    MappedPaginatedJsonResponse::new(result, total_count, StatusCode::OK, &params, |users| {
+    ApiResponse::mapped_paginated(result, total_count, &params, |users| {
         users.into_iter().map(UserResponse::from).collect()
     })
 }
@@ -82,7 +82,7 @@ pub async fn create_user(
     let response = user.to_response(&pool).await?;
 
     let location = api_locations::user(user.id)?;
-    Ok(CreatedJsonResponse::new(response, location))
+    Ok(ApiResponse::created(response, location))
 }
 
 #[utoipa::path(
@@ -113,7 +113,7 @@ pub async fn get_user(
         requestor = requestor.user.id
     );
 
-    Ok(JsonResponse::new(
+    Ok(ApiResponse::new(
         user.to_response(&pool).await?,
         StatusCode::OK,
     ))
@@ -150,7 +150,7 @@ pub async fn update_user(
     );
 
     let user = updated_user.into_inner().save(user.id, &pool).await?;
-    Ok(JsonResponse::new(
+    Ok(ApiResponse::new(
         user.to_response(&pool).await?,
         StatusCode::OK,
     ))
@@ -185,7 +185,7 @@ pub async fn delete_user(
     let delete_result = user_id.delete(&pool).await;
 
     match delete_result {
-        Ok(_) => Ok(JsonResponse::no_content()),
+        Ok(_) => Ok(ApiResponse::no_content()),
         Err(e) => Err(e),
     }
 }

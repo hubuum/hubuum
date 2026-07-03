@@ -3,7 +3,7 @@ use tracing::{debug, info};
 
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::{CreatedJsonResponse, JsonResponse, PaginatedJsonResponse};
+use crate::api::response::ApiResponse;
 use crate::can;
 use crate::config::{DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER, get_config};
 use crate::db::DbPool;
@@ -71,7 +71,7 @@ pub async fn create_remote_target(
         .await?
         .try_into()?;
     let location = api_locations::remote_target(created.id)?;
-    Ok(CreatedJsonResponse::new(created, location))
+    Ok(ApiResponse::created(created, location))
 }
 
 #[utoipa::path(
@@ -109,7 +109,7 @@ pub async fn get_remote_targets(
     let (targets, total_count) =
         RemoteTarget::list_with_total_count(&pool, &allowed_namespace_ids, &query_options).await?;
 
-    PaginatedJsonResponse::new(targets, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(targets, total_count, &params)
 }
 
 #[utoipa::path(
@@ -140,7 +140,7 @@ pub async fn get_remote_target(
         [Permissions::ReadRemoteTarget],
         NamespaceID::new(target.namespace_id)?
     );
-    Ok(JsonResponse::new(target, StatusCode::OK))
+    Ok(ApiResponse::new(target, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -208,7 +208,7 @@ pub async fn patch_remote_target(
         .update_remote_target_record(&pool, existing.id)
         .await?
         .try_into()?;
-    Ok(JsonResponse::new(updated, StatusCode::OK))
+    Ok(ApiResponse::new(updated, StatusCode::OK))
 }
 
 async fn validate_remote_target_class_scope(
@@ -322,15 +322,9 @@ pub async fn invoke_remote_target(
         subject_id = resolved.subject_id
     );
 
-    let mut headers = std::collections::HashMap::new();
-    headers.insert(
-        "Location".to_string(),
-        api_locations::task(task.id)?.as_str().to_string(),
-    );
-    Ok(JsonResponse::with_headers(
+    Ok(ApiResponse::accepted_at(
         task.to_response()?,
-        StatusCode::ACCEPTED,
-        Some(headers),
+        api_locations::task(task.id)?,
     ))
 }
 

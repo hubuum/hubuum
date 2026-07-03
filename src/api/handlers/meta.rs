@@ -1,5 +1,5 @@
 use crate::api::openapi::{ApiErrorResponse, CountsResponse};
-use crate::api::response::JsonResponse;
+use crate::api::response::ApiResponse;
 use crate::config::{get_config, login_rate_limit_config};
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
@@ -148,7 +148,7 @@ pub async fn get_db_state(
             db_size: row.db_size,
             last_vacuum_time: row.last_vacuum_time.map(|dt| dt.to_string()),
         };
-        Ok(JsonResponse::new(response, StatusCode::OK))
+        Ok(ApiResponse::new(response, StatusCode::OK))
     } else {
         Err(ApiError::InternalServerError(
             "Error getting state for the database".to_string(),
@@ -184,7 +184,7 @@ pub async fn get_object_and_class_count(
         objects_per_class: objects_per_class_count(&pool).await?,
     };
 
-    Ok(JsonResponse::new(response, StatusCode::OK))
+    Ok(ApiResponse::new(response, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -259,7 +259,7 @@ pub async fn get_task_queue_state(
         oldest_active_at: state.oldest_active_at.map(|dt| dt.to_string()),
     };
 
-    Ok(JsonResponse::new(response, StatusCode::OK))
+    Ok(ApiResponse::new(response, StatusCode::OK))
 }
 
 /// Effective login rate-limit configuration, echoed back in the admin state endpoint.
@@ -424,7 +424,7 @@ pub async fn get_login_rate_limit_state(
         entries,
     };
 
-    Ok(JsonResponse::new(response, StatusCode::OK))
+    Ok(ApiResponse::new(response, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -464,7 +464,7 @@ pub async fn release_login_rate_limit_entry(
         requestor = requestor.user.id
     );
 
-    Ok(JsonResponse::new(
+    Ok(ApiResponse::new(
         ReleaseRateLimitResponse { released: true },
         StatusCode::OK,
     ))
@@ -491,7 +491,7 @@ pub async fn clear_login_rate_limit(requestor: AdminAccess) -> Result<impl Respo
         cleared
     );
 
-    Ok(JsonResponse::new(
+    Ok(ApiResponse::new(
         ClearRateLimitResponse { cleared },
         StatusCode::OK,
     ))

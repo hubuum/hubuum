@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 use tracing::debug;
 
+use crate::api::openapi::MessageResponse;
 use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
 use crate::pagination::{CursorPaginated, finalize_page, pagination_headers};
@@ -22,15 +23,24 @@ static NO_CONTENT_STATUS_CODES: LazyLock<HashSet<StatusCode>> = LazyLock::new(||
     m
 });
 
-pub struct JsonResponse<T> {
-    data: T,
-    status: StatusCode,
-    headers: Option<HashMap<String, String>>,
+pub enum ApiResponse<T> {
+    Json {
+        data: T,
+        status: StatusCode,
+        headers: Option<HashMap<String, String>>,
+    },
+    Empty {
+        status: StatusCode,
+    },
+    Created {
+        data: T,
+        location: ResponseLocation,
+    },
 }
 
-impl<T> JsonResponse<T> {
+impl<T> ApiResponse<T> {
     pub fn new(data: T, status: StatusCode) -> Self {
-        Self {
+        Self::Json {
             data,
             status,
             headers: None,
@@ -41,45 +51,129 @@ impl<T> JsonResponse<T> {
         Self::new(data, StatusCode::OK)
     }
 
-    pub fn with_headers(
-        data: T,
-        status: StatusCode,
-        headers: Option<HashMap<String, String>>,
-    ) -> Self {
-        Self {
+    pub fn accepted(data: T) -> Self {
+        Self::new(data, StatusCode::ACCEPTED)
+    }
+
+    pub fn created(data: T, location: ResponseLocation) -> Self {
+        Self::Created { data, location }
+    }
+
+    pub fn accepted_at(data: T, location: ResponseLocation) -> Self {
+        Self::Json {
             data,
-            status,
-            headers,
+            status: StatusCode::ACCEPTED,
+            headers: Some(location_header(location)),
         }
     }
 }
 
-impl<T: Serialize> Responder for JsonResponse<T> {
+impl<T> ApiResponse<Vec<T>>
+where
+    T: CursorPaginated,
+{
+    pub fn paginated(
+        data: Vec<T>,
+        total_count: i64,
+        query_options: &QueryOptions,
+    ) -> Result<Self, ApiError> {
+        let page = finalize_page(data, query_options)?;
+        Ok(Self::Json {
+            data: page.items,
+            status: StatusCode::OK,
+            headers: Some(pagination_headers(&page.next_cursor, total_count)),
+        })
+    }
+}
+
+impl<U> ApiResponse<Vec<U>> {
+    pub fn mapped_paginated<T, F>(
+        data: Vec<T>,
+        total_count: i64,
+        query_options: &QueryOptions,
+        map: F,
+    ) -> Result<Self, ApiError>
+    where
+        T: CursorPaginated,
+        F: FnOnce(Vec<T>) -> Vec<U>,
+    {
+        let page = finalize_page(data, query_options)?;
+        Ok(Self::Json {
+            data: map(page.items),
+            status: StatusCode::OK,
+            headers: Some(pagination_headers(&page.next_cursor, total_count)),
+        })
+    }
+}
+
+impl ApiResponse<()> {
+    pub fn ok_empty() -> Self {
+        Self::new((), StatusCode::OK)
+    }
+
+    pub fn created_empty() -> Self {
+        Self::new((), StatusCode::CREATED)
+    }
+
+    pub fn no_content() -> Self {
+        Self::Empty {
+            status: StatusCode::NO_CONTENT,
+        }
+    }
+
+    pub fn not_found_empty() -> Self {
+        Self::new((), StatusCode::NOT_FOUND)
+    }
+}
+
+impl ApiResponse<MessageResponse> {
+    pub fn message(message: impl Into<String>) -> Self {
+        Self::ok(MessageResponse::new(message))
+    }
+}
+
+impl<T: Serialize> Responder for ApiResponse<T> {
     type Body = BoxBody;
 
     fn respond_to(self, _req: &HttpRequest) -> HttpResponse<Self::Body> {
-        let mut response_builder = HttpResponse::build(self.status);
+        match self {
+            Self::Json {
+                data,
+                status,
+                headers,
+            } => {
+                let mut response_builder = HttpResponse::build(status);
+                insert_headers(&mut response_builder, headers);
 
-        if let Some(headers) = self.headers {
-            for (key, value) in headers {
-                debug!(message = "Adding response header", key = key, value = value);
-                response_builder.insert_header((key, value));
+                if NO_CONTENT_STATUS_CODES.contains(&status) {
+                    debug!(message = "Empty result requested", status = ?status);
+                    response_builder.finish()
+                } else {
+                    response_builder.json(data)
+                }
             }
-        }
-
-        if NO_CONTENT_STATUS_CODES.contains(&self.status) {
-            debug!(message = "Empty result requested", status = ?self.status);
-            response_builder.finish()
-        } else {
-            response_builder.json(self.data)
+            Self::Empty { status } => HttpResponse::build(status).finish(),
+            Self::Created { data, location } => HttpResponse::Created()
+                .insert_header((header::LOCATION, location.as_str()))
+                .json(data),
         }
     }
 }
 
-impl JsonResponse<()> {
-    pub fn no_content() -> Self {
-        Self::new((), StatusCode::NO_CONTENT)
+fn insert_headers(
+    response_builder: &mut actix_web::HttpResponseBuilder,
+    headers: Option<HashMap<String, String>>,
+) {
+    if let Some(headers) = headers {
+        for (key, value) in headers {
+            debug!(message = "Adding response header", key = key, value = value);
+            response_builder.insert_header((key, value));
+        }
     }
+}
+
+fn location_header(location: ResponseLocation) -> HashMap<String, String> {
+    HashMap::from([(header::LOCATION.to_string(), location.as_str().to_string())])
 }
 
 pub struct ResponseLocation(String);
@@ -102,94 +196,5 @@ impl ResponseLocation {
 
     pub fn as_str(&self) -> &str {
         &self.0
-    }
-}
-
-pub struct CreatedJsonResponse<T> {
-    data: T,
-    location: ResponseLocation,
-}
-
-impl<T> CreatedJsonResponse<T> {
-    pub fn new(data: T, location: ResponseLocation) -> Self {
-        Self { data, location }
-    }
-}
-
-impl<T: Serialize> Responder for CreatedJsonResponse<T> {
-    type Body = BoxBody;
-
-    fn respond_to(self, _req: &HttpRequest) -> HttpResponse<Self::Body> {
-        HttpResponse::Created()
-            .insert_header((header::LOCATION, self.location.as_str()))
-            .json(self.data)
-    }
-}
-
-pub struct PaginatedJsonResponse<T> {
-    data: Vec<T>,
-    status: StatusCode,
-    headers: HashMap<String, String>,
-}
-
-impl<T> PaginatedJsonResponse<T>
-where
-    T: CursorPaginated,
-{
-    pub fn new(
-        data: Vec<T>,
-        total_count: i64,
-        status: StatusCode,
-        query_options: &QueryOptions,
-    ) -> Result<Self, ApiError> {
-        let page = finalize_page(data, query_options)?;
-        Ok(Self {
-            data: page.items,
-            status,
-            headers: pagination_headers(&page.next_cursor, total_count),
-        })
-    }
-}
-
-impl<T: Serialize> Responder for PaginatedJsonResponse<T> {
-    type Body = BoxBody;
-
-    fn respond_to(self, req: &HttpRequest) -> HttpResponse<Self::Body> {
-        JsonResponse::with_headers(self.data, self.status, Some(self.headers)).respond_to(req)
-    }
-}
-
-pub struct MappedPaginatedJsonResponse<U> {
-    data: Vec<U>,
-    status: StatusCode,
-    headers: HashMap<String, String>,
-}
-
-impl<U> MappedPaginatedJsonResponse<U> {
-    pub fn new<T, F>(
-        data: Vec<T>,
-        total_count: i64,
-        status: StatusCode,
-        query_options: &QueryOptions,
-        map: F,
-    ) -> Result<Self, ApiError>
-    where
-        T: CursorPaginated,
-        F: FnOnce(Vec<T>) -> Vec<U>,
-    {
-        let page = finalize_page(data, query_options)?;
-        Ok(Self {
-            data: map(page.items),
-            status,
-            headers: pagination_headers(&page.next_cursor, total_count),
-        })
-    }
-}
-
-impl<U: Serialize> Responder for MappedPaginatedJsonResponse<U> {
-    type Body = BoxBody;
-
-    fn respond_to(self, req: &HttpRequest) -> HttpResponse<Self::Body> {
-        JsonResponse::with_headers(self.data, self.status, Some(self.headers)).respond_to(req)
     }
 }

@@ -1,7 +1,7 @@
 use actix_web::{HttpRequest, Responder, get, http::StatusCode, routes, web};
 
 use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::{JsonResponse, PaginatedJsonResponse};
+use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::db::traits::task::{
     TaskBackend, list_report_task_output_summaries, list_tasks_with_total_count,
@@ -148,7 +148,7 @@ pub async fn get_tasks(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    PaginatedJsonResponse::new(tasks, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(tasks, total_count, &params)
 }
 
 #[utoipa::path(
@@ -182,7 +182,7 @@ pub async fn get_task(
     } else {
         ReportOutputLookup::Missing
     };
-    Ok(JsonResponse::new(
+    Ok(ApiResponse::new(
         task.to_response_with_report_output(report_output.as_ref())?,
         StatusCode::OK,
     ))
@@ -222,5 +222,5 @@ pub async fn get_task_events(
         .into_iter()
         .map(TaskEventResponse::from)
         .collect::<Vec<_>>();
-    PaginatedJsonResponse::new(events, total_count, StatusCode::OK, &params)
+    ApiResponse::paginated(events, total_count, &params)
 }

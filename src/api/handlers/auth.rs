@@ -1,5 +1,5 @@
 use crate::api::openapi::{ApiErrorResponse, LoginResponse, MessageResponse};
-use crate::api::response::JsonResponse;
+use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, Authenticated, ManagementAccess};
@@ -91,7 +91,7 @@ pub async fn login(
         token = token.obfuscate()
     );
 
-    Ok(JsonResponse::ok(LoginResponse::new(token.get_token())))
+    Ok(ApiResponse::ok(LoginResponse::new(token.get_token())))
 }
 
 #[utoipa::path(
@@ -117,7 +117,7 @@ pub async fn logout(
     let result = token.delete(&pool).await;
 
     match result {
-        Ok(_) => Ok(JsonResponse::ok(MessageResponse::new("Logout successful."))),
+        Ok(_) => Ok(ApiResponse::message("Logout successful.")),
         Err(e) => {
             warn!(
                 message = "Logout failed",
@@ -155,9 +155,7 @@ pub async fn logout_all(
     let delete_result = user_access.user.delete_all_tokens(&pool).await;
 
     match delete_result {
-        Ok(_) => Ok(JsonResponse::ok(MessageResponse::new(
-            "Logout of all tokens successful.",
-        ))),
+        Ok(_) => Ok(ApiResponse::message("Logout of all tokens successful.")),
         Err(e) => {
             warn!(
                 message = "Logout of all tokens failed",
@@ -196,9 +194,7 @@ pub async fn logout_token(
     let result = token.delete(&pool).await;
 
     match result {
-        Ok(_) => Ok(JsonResponse::ok(MessageResponse::new(
-            "Logout of token successful.",
-        ))),
+        Ok(_) => Ok(ApiResponse::message("Logout of token successful.")),
         Err(e) => {
             warn!(
                 message = "Logout of token failed",
@@ -249,10 +245,10 @@ pub async fn logout_other(
         .await;
 
     match delete_result {
-        Ok(_) => Ok(JsonResponse::ok(MessageResponse::new(format!(
+        Ok(_) => Ok(ApiResponse::message(format!(
             "Logout of tokens for {} successful.",
             user_id.id()
-        )))),
+        ))),
         Err(e) => {
             warn!(
                 message = "Logout of other tokens failed",
@@ -285,5 +281,5 @@ pub async fn validate_token(user_access: Authenticated) -> Result<impl Responder
         token = user_access.token.obfuscate()
     );
 
-    Ok(JsonResponse::ok(MessageResponse::new("Token is valid.")))
+    Ok(ApiResponse::message("Token is valid."))
 }
