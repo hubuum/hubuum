@@ -149,6 +149,11 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// ## Returns
     ///
     /// The permission object that holds the permissions for the group.
+    ///
+    /// This bypasses event emission and is intended only for internal
+    /// infrastructure paths such as bootstrap/setup, fixture construction,
+    /// cleanup, and event-system tests. Normal application code should use
+    /// [`PermissionController::grant`] so event subscribers observe the change.
     async fn grant_without_events<C>(
         &self,
         backend: &C,
@@ -180,6 +185,12 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     ///
     /// - When `replace_existing` is false, no permissions are removed from the group.
     /// - When `replace_existing` is true, any existing permissions are cleared first.
+    ///
+    /// This bypasses event emission and is intended only for internal
+    /// infrastructure paths such as bootstrap/setup, fixture construction,
+    /// cleanup, and event-system tests. Normal application code should use
+    /// [`PermissionController::apply_permissions`] so event subscribers observe
+    /// the change.
     async fn apply_permissions_without_events<C>(
         &self,
         backend: &C,
@@ -239,6 +250,11 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     ///
     /// The permission object that holds the permissions for the group. If the group
     /// did not have any permissions, an ApiError::NotFound is returned.
+    ///
+    /// This bypasses event emission and is intended only for internal
+    /// infrastructure paths such as bootstrap/setup, fixture construction,
+    /// cleanup, and event-system tests. Normal application code should use
+    /// [`PermissionController::revoke`] so event subscribers observe the change.
     async fn revoke_without_events<C>(
         &self,
         backend: &C,
@@ -366,6 +382,12 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// ## Returns
     ///
     /// The permission object that holds the permissions for the group.
+    ///
+    /// This bypasses event emission and is intended only for internal
+    /// infrastructure paths such as bootstrap/setup, fixture construction,
+    /// cleanup, and event-system tests. Normal application code should use
+    /// [`PermissionController::set_permissions`] so event subscribers observe
+    /// the change.
     async fn set_permissions_without_events<C>(
         &self,
         backend: &C,
@@ -407,6 +429,12 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
     /// ## Returns
     ///
     /// An empty result.
+    ///
+    /// This bypasses event emission and is intended only for internal
+    /// infrastructure paths such as bootstrap/setup, fixture cleanup, and
+    /// event-system tests. Normal application code should use
+    /// [`PermissionController::revoke_all`] so event subscribers observe the
+    /// change.
     async fn revoke_all_without_events<C>(
         &self,
         backend: &C,

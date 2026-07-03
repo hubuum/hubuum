@@ -237,6 +237,11 @@ impl User {
         self.delete_all_user_tokens_record(backend.db_pool()).await
     }
 
+    /// Delete this user without emitting domain events.
+    ///
+    /// Intended only for internal infrastructure paths such as bootstrap/setup,
+    /// fixture cleanup, and event-system tests. Normal application code should
+    /// use [`User::delete`] so event subscribers observe the change.
     pub async fn delete_without_events<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -286,6 +291,12 @@ impl UpdateUser {
         Ok(self)
     }
 
+    /// Persist changes without emitting domain events.
+    ///
+    /// Intended only for internal infrastructure paths such as bootstrap/setup,
+    /// fixture construction, cleanup, and event-system tests. Normal application
+    /// code should use [`UpdateUser::save`] so event subscribers observe the
+    /// change.
     pub async fn save_without_events<C>(self, user_id: i32, backend: &C) -> Result<User, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -325,6 +336,11 @@ pub struct NewUser {
 }
 
 impl NewUser {
+    /// Persist without emitting domain events.
+    ///
+    /// Intended only for internal infrastructure paths such as bootstrap/setup,
+    /// fixture construction, cleanup, and event-system tests. Normal application
+    /// code should use [`NewUser::save`] so event subscribers observe the change.
     pub async fn save_without_events<C>(self, backend: &C) -> Result<User, ApiError>
     where
         C: BackendContext + ?Sized,

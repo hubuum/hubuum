@@ -141,6 +141,9 @@ impl Token {
 /// Soft-revoke a token by id, scoped to the owning principal. Filtering on BOTH
 /// ids prevents a manager of principal A from revoking principal B's token by
 /// guessing its id. Returns the number of rows updated (0 = not found / not theirs).
+///
+/// This bypasses event emission and is intended only for internal
+/// infrastructure paths such as cleanup and event-system tests.
 pub async fn revoke_token_by_id_for_principal_without_events<C>(
     backend: &C,
     token_id: i32,

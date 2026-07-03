@@ -9,6 +9,11 @@ use super::context::BackendContext;
 /// This is the public model-facing delete API. The actual backend-specific work is delegated to
 /// hidden adapter traits so implementations can stay thin.
 pub trait CanDelete {
+    /// Delete without emitting domain events.
+    ///
+    /// Intended only for internal infrastructure paths such as bootstrap/setup,
+    /// fixture cleanup, and event-system tests. Normal application code should
+    /// use [`CanDelete::delete`] so event subscribers observe the change.
     #[cfg_attr(not(test), allow(dead_code))]
     async fn delete_without_events<C>(&self, backend: &C) -> Result<(), ApiError>
     where
@@ -25,6 +30,11 @@ pub trait CanDelete {
 /// `Namespace`, while saving an existing value may also return the updated persisted value.
 pub trait CanSave {
     type Output;
+    /// Persist without emitting domain events.
+    ///
+    /// Intended only for internal infrastructure paths such as bootstrap/setup,
+    /// fixture construction, cleanup, and event-system tests. Normal application
+    /// code should use [`CanSave::save`] so event subscribers observe the change.
     #[cfg_attr(not(test), allow(dead_code))]
     async fn save_without_events<C>(&self, backend: &C) -> Result<Self::Output, ApiError>
     where
@@ -41,6 +51,11 @@ pub trait CanSave {
 /// returned after the update completes.
 pub trait CanUpdate {
     type Output;
+    /// Update without emitting domain events.
+    ///
+    /// Intended only for internal infrastructure paths such as bootstrap/setup,
+    /// fixture construction, cleanup, and event-system tests. Normal application
+    /// code should use [`CanUpdate::update`] so event subscribers observe the change.
     async fn update_without_events<C>(
         &self,
         backend: &C,

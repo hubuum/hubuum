@@ -196,6 +196,11 @@ impl NewServiceAccount {
             .await
     }
 
+    /// Persist without emitting domain events.
+    ///
+    /// This helper is available only in tests and is intended for fixture
+    /// construction and event-system tests. Normal application code should use
+    /// [`NewServiceAccount::save`] so event subscribers observe the change.
     #[cfg(test)]
     pub async fn save_without_events<C>(
         &self,
@@ -347,6 +352,11 @@ impl ServiceAccountID {
         load_service_account_by_id(backend.db_pool(), self.id()).await
     }
 
+    /// Disable this service account without emitting domain events.
+    ///
+    /// This helper is available only in tests and is intended for fixture
+    /// cleanup and event-system tests. Normal application code should use
+    /// [`ServiceAccountID::disable`] so event subscribers observe the change.
     #[cfg(test)]
     pub async fn disable_without_events<C>(&self, backend: &C) -> Result<ServiceAccount, ApiError>
     where

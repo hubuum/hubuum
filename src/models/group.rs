@@ -49,6 +49,11 @@ impl GroupID {
         self.load_group_record(backend.db_pool()).await
     }
 
+    /// Delete this group without emitting domain events.
+    ///
+    /// Intended only for internal infrastructure paths such as bootstrap/setup,
+    /// fixture cleanup, and event-system tests. Normal application code should
+    /// use [`GroupID::delete`] so event subscribers observe the change.
     pub async fn delete_without_events<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -135,6 +140,11 @@ impl Group {
     /// * `Ok(())` if the user was added to the group
     /// * `Err(ApiError)` if the user was not added to the group
     ///
+    /// This bypasses event emission and is intended only for internal
+    /// infrastructure paths such as bootstrap/setup, fixture construction,
+    /// cleanup, and event-system tests. Normal application code should use
+    /// [`Group::add_member`] so event subscribers observe the change.
+    ///
     /// If the user is already a member of the group, this function is a safe noop.
     pub async fn add_member_without_events<C, P>(
         &self,
@@ -175,6 +185,11 @@ impl Group {
         Ok(())
     }
 
+    /// Remove a member from this group without emitting domain events.
+    ///
+    /// Intended only for internal infrastructure paths such as bootstrap/setup,
+    /// fixture cleanup, and event-system tests. Normal application code should
+    /// use [`Group::remove_member`] so event subscribers observe the change.
     pub async fn remove_member_without_events<C, P>(
         &self,
         member: &P,
@@ -205,6 +220,11 @@ impl Group {
             .await
     }
 
+    /// Delete this group without emitting domain events.
+    ///
+    /// Intended only for internal infrastructure paths such as bootstrap/setup,
+    /// fixture cleanup, and event-system tests. Normal application code should
+    /// use the event-aware delete path so event subscribers observe the change.
     pub async fn delete_without_events<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -230,6 +250,11 @@ impl NewGroup {
         }
     }
 
+    /// Persist without emitting domain events.
+    ///
+    /// Intended only for internal infrastructure paths such as bootstrap/setup,
+    /// fixture construction, cleanup, and event-system tests. Normal application
+    /// code should use [`NewGroup::save`] so event subscribers observe the change.
     pub async fn save_without_events<C>(&self, backend: &C) -> Result<Group, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -258,6 +283,12 @@ pub struct UpdateGroup {
 }
 
 impl UpdateGroup {
+    /// Persist changes without emitting domain events.
+    ///
+    /// Intended only for internal infrastructure paths such as bootstrap/setup,
+    /// fixture construction, cleanup, and event-system tests. Normal application
+    /// code should use [`UpdateGroup::save`] so event subscribers observe the
+    /// change.
     pub async fn save_without_events<C>(
         &self,
         group_id: i32,
