@@ -552,7 +552,7 @@ pub async fn get_remote_target_as_of(
     let actor_map = resolve_actor_usernames(&pool, row.actor_id.into_iter().collect()).await?;
     let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
     Ok(ApiResponse::ok(HistoryResponse {
-            entry: row,
-            actor_username,
+        entry: row,
+        actor_username,
     }))
 }
