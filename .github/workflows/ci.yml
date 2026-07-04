@@ -228,6 +228,8 @@ jobs:
       
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ matrix.platform.target }}-${{ matrix.toolchain }}-release
       
       - name: Install Linux dependencies
         if: contains(matrix.platform.os, 'ubuntu')
@@ -354,7 +356,7 @@ jobs:
 
       - name: Build (Windows)
         if: contains(matrix.platform.os, 'windows')
-        run: cargo build -F tls-rustls,amqp,email,valkey --locked --release
+        run: cargo build -F tls-rustls,amqp,email,valkey --locked --release --target ${{ matrix.platform.target }}
       
       - name: Run tests (non-Windows, all features)
         if: "!contains(matrix.platform.os, 'windows')"
@@ -362,7 +364,7 @@ jobs:
 
       - name: Run tests (Windows, full release feature set)
         if: contains(matrix.platform.os, 'windows')
-        run: cargo test -F tls-rustls,amqp,email,valkey --locked --release
+        run: cargo test -F tls-rustls,amqp,email,valkey --locked --release --target ${{ matrix.platform.target }}
 
   all-features-release-build:
     name: Release build with all features
@@ -472,6 +474,8 @@ jobs:
 
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ matrix.platform.target }}-stable-release
       
       - name: Install Linux dependencies
         if: contains(matrix.platform.os, 'ubuntu')
@@ -620,6 +624,8 @@ jobs:
         run: rustup target add ${{ matrix.platform.target }}
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ matrix.platform.target }}-stable-release
       - name: Install Linux dependencies
         if: contains(matrix.platform.os, 'ubuntu')
         run: |
