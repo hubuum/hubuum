@@ -17,7 +17,13 @@ mod tls;
 mod traits;
 mod utilities;
 
-use actix_web::{App, HttpServer, middleware::Logger, web, web::Data, web::JsonConfig};
+use actix_web::{
+    App, HttpServer,
+    middleware::{Logger, from_fn},
+    web,
+    web::Data,
+    web::JsonConfig,
+};
 use db::init_pool;
 #[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;
@@ -124,6 +130,7 @@ async fn main() -> std::io::Result<()> {
                 proxy_trust.clone(),
             ))
             .wrap(Logger::default())
+            .wrap(from_fn(middlewares::actor_context))
             .app_data(Data::new(app_config.clone()))
             .app_data(Data::new(pool.clone()))
             .app_data(JsonConfig::default().error_handler(json_error_handler))

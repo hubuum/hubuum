@@ -17,6 +17,9 @@ pub async fn get_request_with_correlation(
     let app = test::init_service(
         App::new()
             .wrap(TracingMiddleware::new())
+            .wrap(actix_web::middleware::from_fn(
+                crate::middlewares::actor_context,
+            ))
             .app_data(Data::new(pool.clone()))
             .configure(prod_api::config),
     )
@@ -62,6 +65,9 @@ where
     let app = test::init_service(
         App::new()
             .wrap(TracingMiddleware::new())
+            .wrap(actix_web::middleware::from_fn(
+                crate::middlewares::actor_context,
+            ))
             .app_data(Data::new(pool.clone()))
             .configure(prod_api::config),
     )
@@ -98,6 +104,9 @@ pub async fn delete_request(
     let app = test::init_service(
         App::new()
             .wrap(TracingMiddleware::new())
+            .wrap(actix_web::middleware::from_fn(
+                crate::middlewares::actor_context,
+            ))
             .app_data(Data::new(pool.clone()))
             .configure(prod_api::config),
     )
@@ -122,6 +131,9 @@ where
     let app = test::init_service(
         App::new()
             .wrap(TracingMiddleware::new())
+            .wrap(actix_web::middleware::from_fn(
+                crate::middlewares::actor_context,
+            ))
             .app_data(Data::new(pool.clone()))
             .configure(prod_api::config),
     )
@@ -147,6 +159,9 @@ where
     let app = test::init_service(
         App::new()
             .wrap(TracingMiddleware::new())
+            .wrap(actix_web::middleware::from_fn(
+                crate::middlewares::actor_context,
+            ))
             .app_data(Data::new(pool.clone()))
             .configure(prod_api::config),
     )

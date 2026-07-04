@@ -10,6 +10,7 @@ pub mod client_allowlist;
 pub mod constants;
 pub mod id_newtypes;
 pub mod search;
+pub mod temporal;
 pub mod validation;
 
 use actix_web::web;

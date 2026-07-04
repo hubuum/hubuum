@@ -677,4 +677,60 @@ mod tests {
         assert_eq!(tokens[0].name.as_deref(), Some(matching_name.as_str()));
         assert_eq!(tokens[0].issued, expected_issued);
     }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_api_anonymize_user(#[future(awt)] test_context: TestContext) {
+        use crate::db::with_connection;
+        use diesel::prelude::*;
+
+        let context = test_context;
+
+        // Create a throwaway user to anonymize.
+        let uname = format!("api_anon_{}", context.scope.scope_id);
+        let new_user = crate::models::NewUser {
+            name: uname.clone(),
+            password: "secret".into(),
+            proper_name: Some("API Anon".into()),
+            email: Some("x@example.com".into()),
+        }
+        .save(&context.pool, None)
+        .await
+        .unwrap();
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/iam/users/{}/anonymize", new_user.id),
+            &serde_json::json!({}),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::NO_CONTENT).await;
+
+        let principal_name: String = with_connection(&context.pool, |conn| {
+            use crate::schema::principals::dsl as p;
+            p::principals
+                .filter(p::id.eq(new_user.id))
+                .select(p::name)
+                .first(conn)
+        })
+        .unwrap();
+        assert_eq!(principal_name, format!("anonymized-{}", new_user.id));
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_api_anonymize_missing_user_returns_404(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            "/api/v1/iam/users/2147483647/anonymize",
+            &serde_json::json!({}),
+        )
+        .await;
+
+        assert_response_status(resp, StatusCode::NOT_FOUND).await;
+    }
 }

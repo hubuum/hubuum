@@ -24,6 +24,13 @@ use crate::traits::{
     CanDelete, CanSave, CanUpdate, NamespaceAccessors, PermissionController, Search, SelfAccessors,
 };
 
+crate::history_db_fns!(
+    namespace_history_paginated_with_total_count,
+    namespace_as_of,
+    crate::schema::namespaces_history,
+    crate::models::NamespaceHistory
+);
+
 #[utoipa::path(
     get,
     path = "/api/v1/namespaces",
@@ -773,4 +780,135 @@ pub async fn get_namespace_groups_with_permission(
     .await?;
 
     ApiResponse::paginated(groups, total_count, &query_options)
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/namespaces/{namespace_id}/history",
+    tag = "namespaces",
+    security(("bearer_auth" = [])),
+    params(("namespace_id" = i32, Path, description = "Namespace ID")),
+    responses(
+        (status = 200, description = "Namespace history", body = [crate::api::v1::handlers::history::HistoryResponse<crate::models::NamespaceHistory>]),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 404, description = "Namespace not found", body = ApiErrorResponse)
+    )
+)]
+#[get("/{namespace_id}/history")]
+pub async fn get_namespace_history(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+    namespace_id: web::Path<NamespaceID>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    use crate::api::v1::handlers::history::{
+        HistoryResponse, can_read_deleted_history, resolve_actor_usernames,
+    };
+
+    let user = &requestor.principal;
+    let namespace_id = namespace_id.into_inner();
+    let (entity_id, require_history) = match namespace_id.instance(&pool).await {
+        Ok(instance) => {
+            can!(
+                &pool,
+                user,
+                requestor.scopes(),
+                [Permissions::ReadCollection],
+                instance
+            );
+            (instance.id, false)
+        }
+        Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
+            (namespace_id.id(), true)
+        }
+        Err(err) => return Err(err),
+    };
+
+    let params = parse_query_parameter(req.query_string())?;
+    let search_params = prepare_db_pagination::<crate::models::NamespaceHistory>(&params)?;
+    let (rows, total_count) =
+        namespace_history_paginated_with_total_count(entity_id, &pool, &search_params).await?;
+    if require_history && total_count == 0 {
+        return Err(ApiError::NotFound(format!(
+            "namespace {entity_id} not found"
+        )));
+    }
+
+    let actor_ids = rows.iter().filter_map(|r| r.actor_id).collect();
+    let actor_map = resolve_actor_usernames(&pool, actor_ids).await?;
+
+    ApiResponse::mapped_paginated(rows, total_count, &params, move |rows| {
+        rows.into_iter()
+            .map(|row| {
+                let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
+                HistoryResponse {
+                    entry: row,
+                    actor_username,
+                }
+            })
+            .collect()
+    })
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/namespaces/{namespace_id}/history/as-of",
+    tag = "namespaces",
+    security(("bearer_auth" = [])),
+    params(
+        ("namespace_id" = i32, Path, description = "Namespace ID"),
+        ("at" = String, Query, description = "RFC3339 timestamp")
+    ),
+    responses(
+        (status = 200, description = "Namespace version at timestamp", body = crate::api::v1::handlers::history::HistoryResponse<crate::models::NamespaceHistory>),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 404, description = "Namespace or version not found", body = ApiErrorResponse)
+    )
+)]
+#[get("/{namespace_id}/history/as-of")]
+pub async fn get_namespace_as_of(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+    namespace_id: web::Path<NamespaceID>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    use crate::api::v1::handlers::history::{
+        HistoryResponse, can_read_deleted_history, parse_as_of, resolve_actor_usernames,
+    };
+
+    let user = &requestor.principal;
+    let namespace_id = namespace_id.into_inner();
+    let entity_id = match namespace_id.instance(&pool).await {
+        Ok(instance) => {
+            can!(
+                &pool,
+                user,
+                requestor.scopes(),
+                [Permissions::ReadCollection],
+                instance
+            );
+            instance.id
+        }
+        Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
+            namespace_id.id()
+        }
+        Err(err) => return Err(err),
+    };
+
+    let at = parse_as_of(req.query_string())?;
+    let row = namespace_as_of(entity_id, at, &pool)
+        .await?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("no version of namespace {entity_id} at {at}"))
+        })?;
+
+    let actor_map = resolve_actor_usernames(&pool, row.actor_id.into_iter().collect()).await?;
+    let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
+    Ok(ApiResponse::ok(HistoryResponse {
+        entry: row,
+        actor_username,
+    }))
 }

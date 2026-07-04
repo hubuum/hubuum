@@ -104,6 +104,24 @@ diesel::table! {
 }
 
 diesel::table! {
+    hubuumclass_history (history_id) {
+        id -> Int4,
+        name -> Varchar,
+        namespace_id -> Int4,
+        json_schema -> Nullable<Jsonb>,
+        validate_schema -> Bool,
+        description -> Varchar,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+        op -> Varchar,
+        valid_from -> Timestamptz,
+        valid_to -> Nullable<Timestamptz>,
+        actor_id -> Nullable<Int4>,
+        history_id -> Int8,
+    }
+}
+
+diesel::table! {
     hubuumclass_reachability (id) {
         id -> Int8,
         ancestor_class_id -> Int4,
@@ -126,6 +144,23 @@ diesel::table! {
 }
 
 diesel::table! {
+    hubuumclass_relation_history (history_id) {
+        id -> Int4,
+        from_hubuum_class_id -> Int4,
+        to_hubuum_class_id -> Int4,
+        forward_template_alias -> Nullable<Varchar>,
+        reverse_template_alias -> Nullable<Varchar>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+        op -> Varchar,
+        valid_from -> Timestamptz,
+        valid_to -> Nullable<Timestamptz>,
+        actor_id -> Nullable<Int4>,
+        history_id -> Int8,
+    }
+}
+
+diesel::table! {
     hubuumobject (id) {
         id -> Int4,
         name -> Varchar,
@@ -139,6 +174,24 @@ diesel::table! {
 }
 
 diesel::table! {
+    hubuumobject_history (history_id) {
+        id -> Int4,
+        name -> Varchar,
+        namespace_id -> Int4,
+        hubuum_class_id -> Int4,
+        data -> Jsonb,
+        description -> Varchar,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+        op -> Varchar,
+        valid_from -> Timestamptz,
+        valid_to -> Nullable<Timestamptz>,
+        actor_id -> Nullable<Int4>,
+        history_id -> Int8,
+    }
+}
+
+diesel::table! {
     hubuumobject_relation (id) {
         id -> Int4,
         from_hubuum_object_id -> Int4,
@@ -146,6 +199,22 @@ diesel::table! {
         class_relation_id -> Int4,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    hubuumobject_relation_history (history_id) {
+        id -> Int4,
+        from_hubuum_object_id -> Int4,
+        to_hubuum_object_id -> Int4,
+        class_relation_id -> Int4,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+        op -> Varchar,
+        valid_from -> Timestamptz,
+        valid_to -> Nullable<Timestamptz>,
+        actor_id -> Nullable<Int4>,
+        history_id -> Int8,
     }
 }
 
@@ -171,6 +240,21 @@ diesel::table! {
         description -> Varchar,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    namespaces_history (history_id) {
+        id -> Int4,
+        name -> Varchar,
+        description -> Varchar,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+        op -> Varchar,
+        valid_from -> Timestamptz,
+        valid_to -> Nullable<Timestamptz>,
+        actor_id -> Nullable<Int4>,
+        history_id -> Int8,
     }
 }
 
@@ -265,6 +349,31 @@ diesel::table! {
 }
 
 diesel::table! {
+    remote_targets_history (history_id) {
+        id -> Int4,
+        namespace_id -> Int4,
+        class_id -> Nullable<Int4>,
+        name -> Varchar,
+        description -> Varchar,
+        method -> Varchar,
+        url_template -> Text,
+        headers_template -> Jsonb,
+        body_template -> Nullable<Text>,
+        auth_config -> Jsonb,
+        allowed_subject_types -> Jsonb,
+        timeout_ms -> Int4,
+        enabled -> Bool,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+        op -> Varchar,
+        valid_from -> Timestamptz,
+        valid_to -> Nullable<Timestamptz>,
+        actor_id -> Nullable<Int4>,
+        history_id -> Int8,
+    }
+}
+
+diesel::table! {
     report_task_outputs (id) {
         id -> Int4,
         task_id -> Int4,
@@ -303,6 +412,32 @@ diesel::table! {
         default_limits -> Nullable<Jsonb>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    report_templates_history (history_id) {
+        id -> Int4,
+        namespace_id -> Int4,
+        name -> Varchar,
+        description -> Varchar,
+        content_type -> Varchar,
+        template -> Text,
+        kind -> Varchar,
+        scope_kind -> Nullable<Varchar>,
+        class_id -> Nullable<Int4>,
+        default_query -> Nullable<Text>,
+        include -> Nullable<Jsonb>,
+        relation_context -> Nullable<Jsonb>,
+        default_missing_data_policy -> Nullable<Varchar>,
+        default_limits -> Nullable<Jsonb>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+        op -> Varchar,
+        valid_from -> Timestamptz,
+        valid_to -> Nullable<Timestamptz>,
+        actor_id -> Nullable<Int4>,
+        history_id -> Int8,
     }
 }
 
@@ -377,6 +512,7 @@ diesel::table! {
         email -> Nullable<Varchar>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        anonymized_at -> Nullable<Timestamp>,
     }
 }
 
@@ -413,18 +549,25 @@ diesel::allow_tables_to_appear_in_same_query!(
     group_memberships,
     groups,
     hubuumclass,
+    hubuumclass_history,
     hubuumclass_reachability,
     hubuumclass_relation,
+    hubuumclass_relation_history,
     hubuumobject,
+    hubuumobject_history,
     hubuumobject_relation,
+    hubuumobject_relation_history,
     import_task_results,
     namespaces,
+    namespaces_history,
     permissions,
     principals,
     remote_call_results,
     remote_targets,
+    remote_targets_history,
     report_task_outputs,
     report_templates,
+    report_templates_history,
     service_accounts,
     tasks,
     token_scopes,
