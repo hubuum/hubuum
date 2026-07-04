@@ -11,7 +11,7 @@ mod tests {
     };
     use crate::tests::api_operations::{delete_request, get_request};
     use crate::tests::asserts::assert_response_status;
-    use crate::tests::{TestContext, test_context};
+    use crate::tests::{TestContext, lock_test_mutex, test_context};
 
     const LOGIN_RATE_LIMIT_ENDPOINT: &str = "/api/v0/meta/login-rate-limit";
 
@@ -57,7 +57,7 @@ mod tests {
     async fn test_login_rate_limit_meta_endpoint_returns_config(
         #[future(awt)] test_context: TestContext,
     ) {
-        let _guard = LOGIN_RATE_LIMIT_TEST_LOCK.lock().await;
+        let _guard = lock_test_mutex(&LOGIN_RATE_LIMIT_TEST_LOCK).await;
         reset_login_rate_limit_for_tests().await;
         let context = test_context;
 
@@ -97,7 +97,7 @@ mod tests {
     #[rstest]
     #[actix_web::test]
     async fn test_login_rate_limit_release_entry(#[future(awt)] test_context: TestContext) {
-        let _guard = LOGIN_RATE_LIMIT_TEST_LOCK.lock().await;
+        let _guard = lock_test_mutex(&LOGIN_RATE_LIMIT_TEST_LOCK).await;
         reset_login_rate_limit_for_tests().await;
         let context = test_context;
 
@@ -168,7 +168,7 @@ mod tests {
     async fn test_login_rate_limit_filter_by_scope_and_query(
         #[future(awt)] test_context: TestContext,
     ) {
-        let _guard = LOGIN_RATE_LIMIT_TEST_LOCK.lock().await;
+        let _guard = lock_test_mutex(&LOGIN_RATE_LIMIT_TEST_LOCK).await;
         reset_login_rate_limit_for_tests().await;
         let context = test_context;
 
@@ -228,7 +228,7 @@ mod tests {
     #[rstest]
     #[actix_web::test]
     async fn test_login_rate_limit_clear_all(#[future(awt)] test_context: TestContext) {
-        let _guard = LOGIN_RATE_LIMIT_TEST_LOCK.lock().await;
+        let _guard = lock_test_mutex(&LOGIN_RATE_LIMIT_TEST_LOCK).await;
         reset_login_rate_limit_for_tests().await;
         let context = test_context;
 

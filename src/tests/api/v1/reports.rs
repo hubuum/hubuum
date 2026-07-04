@@ -20,7 +20,9 @@ mod tests {
     use crate::tests::api::v1::classes::tests::{cleanup, create_test_classes};
     use crate::tests::api_operations::{get_request, post_request_with_headers};
     use crate::tests::asserts::{assert_response_status, header_value};
-    use crate::tests::{TestContext, create_test_user, test_context};
+    use crate::tests::{
+        TestContext, TestMutex, create_test_user, lock_test_mutex, test_context, test_mutex,
+    };
     use crate::traits::{CanSave, CanUpdate};
     const REPORTS_ENDPOINT: &str = "/api/v1/reports";
 
@@ -28,8 +30,7 @@ mod tests {
     /// outputs: one runs the global `purge_expired_report_outputs`, the other needs its expired
     /// row to survive until it has queried it. They cannot safely interleave; every other test in
     /// the suite remains free to run in parallel.
-    static EXPIRED_OUTPUT_PURGE_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
-        std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+    static EXPIRED_OUTPUT_PURGE_LOCK: TestMutex = test_mutex();
 
     async fn wait_for_task(
         context: &TestContext,
@@ -1497,7 +1498,7 @@ mod tests {
 
         // Hold the purge lock from here: the global purge below must not race the expired-output
         // test, which relies on its own expired row surviving.
-        let _purge_guard = EXPIRED_OUTPUT_PURGE_LOCK.lock().await;
+        let _purge_guard = lock_test_mutex(&EXPIRED_OUTPUT_PURGE_LOCK).await;
 
         crate::db::with_connection(&context.pool, |conn| {
             use crate::schema::report_task_outputs::dsl::{
@@ -1602,7 +1603,7 @@ mod tests {
 
         // Hold the purge lock so the cleanup test's global purge cannot delete our expired row
         // out from under the assertions below.
-        let _purge_guard = EXPIRED_OUTPUT_PURGE_LOCK.lock().await;
+        let _purge_guard = lock_test_mutex(&EXPIRED_OUTPUT_PURGE_LOCK).await;
 
         // Fixed, whole-second timestamp in the past: deterministically expired and round-trips
         // through Postgres' microsecond-resolution `timestamp` column without precision loss.

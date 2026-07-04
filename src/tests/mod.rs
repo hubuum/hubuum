@@ -32,11 +32,23 @@ use crate::utilities::auth::generate_random_password;
 
 use crate::traits::{CanDelete, CanSave};
 use std::sync::LazyLock;
+use tokio::sync::{Mutex, MutexGuard};
 
 static POOL: LazyLock<DbPool> = LazyLock::new(|| {
     let config = get_config().unwrap();
     init_pool(&config.database_url, 20)
 });
+
+pub type TestMutex = LazyLock<Mutex<()>>;
+pub type TestMutexGuard = MutexGuard<'static, ()>;
+
+pub const fn test_mutex() -> TestMutex {
+    LazyLock::new(|| Mutex::new(()))
+}
+
+pub async fn lock_test_mutex(mutex: &'static TestMutex) -> TestMutexGuard {
+    mutex.lock().await
+}
 
 #[derive(Clone)]
 pub struct NamespaceFixture {
