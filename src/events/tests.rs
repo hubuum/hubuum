@@ -7,8 +7,6 @@
 
 #![cfg(test)]
 
-use std::sync::OnceLock;
-
 use diesel::prelude::*;
 use rstest::rstest;
 use uuid::Uuid;
@@ -48,17 +46,13 @@ use crate::models::{
     UpdateReportTemplate, UpdateUser,
 };
 use crate::schema::events::dsl::events;
-use crate::tests::{TestScope, create_test_user, test_scope};
+use crate::tests::{
+    TestMutex, TestScope, create_test_user, lock_test_mutex, test_mutex, test_scope,
+};
 use crate::traits::{CanDelete, CanSave, CanUpdate, PermissionController};
 
-static EVENT_DELIVERY_TEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-
-async fn event_delivery_test_lock() -> tokio::sync::MutexGuard<'static, ()> {
-    EVENT_DELIVERY_TEST_LOCK
-        .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await
-}
+static EVENT_DELIVERY_TEST_LOCK: TestMutex = test_mutex();
+static EVENT_RETENTION_TEST_LOCK: TestMutex = test_mutex();
 
 /// Count event rows for a given `event_id` (0 or 1, since `event_id` is UNIQUE).
 fn count_events_for(conn: &mut PgConnection, target: Uuid) -> i64 {
@@ -538,6 +532,7 @@ async fn ordinary_event_delete_is_rejected_by_append_only_trigger() {
 
 #[actix_web::test]
 async fn event_retention_purge_deletes_old_events_through_guarded_path() {
+    let _lock = lock_test_mutex(&EVENT_RETENTION_TEST_LOCK).await;
     let scope = test_scope();
     let old_event = insert_namespace_created_event_at(
         &scope,
@@ -562,6 +557,7 @@ async fn event_retention_purge_deletes_old_events_through_guarded_path() {
 
 #[actix_web::test]
 async fn event_retention_purge_keeps_events_pending_fanout() {
+    let _lock = lock_test_mutex(&EVENT_RETENTION_TEST_LOCK).await;
     let scope = test_scope();
     let old_event = insert_namespace_created_event_at(
         &scope,
@@ -585,6 +581,7 @@ async fn event_retention_purge_keeps_events_pending_fanout() {
 
 #[actix_web::test]
 async fn event_retention_purge_keeps_events_with_active_deliveries() {
+    let _lock = lock_test_mutex(&EVENT_RETENTION_TEST_LOCK).await;
     let scope = test_scope();
     let fixture = scope.with_namespace().await;
     create_namespace_event_subscription(&scope, fixture.namespace.id, "retention_active", true)
@@ -612,6 +609,7 @@ async fn event_retention_purge_keeps_events_with_active_deliveries() {
 
 #[actix_web::test]
 async fn event_retention_purge_deletes_old_terminal_deliveries_without_deleting_event() {
+    let _lock = lock_test_mutex(&EVENT_RETENTION_TEST_LOCK).await;
     let scope = test_scope();
     let fixture = scope.with_namespace().await;
     let subscription_id = create_namespace_event_subscription(
@@ -664,7 +662,7 @@ async fn event_retention_purge_deletes_old_terminal_deliveries_without_deleting_
 
 #[actix_web::test]
 async fn event_delivery_worker_marks_successful_delivery_succeeded() {
-    let _lock = event_delivery_test_lock().await;
+    let _lock = lock_test_mutex(&EVENT_DELIVERY_TEST_LOCK).await;
     let scope = test_scope();
     let fixture = scope.with_namespace().await;
     create_namespace_event_subscription(&scope, fixture.namespace.id, "delivery_success", true)
@@ -693,7 +691,7 @@ async fn event_delivery_worker_marks_successful_delivery_succeeded() {
 
 #[actix_web::test]
 async fn event_delivery_worker_retries_with_backoff_then_marks_dead() {
-    let _lock = event_delivery_test_lock().await;
+    let _lock = lock_test_mutex(&EVENT_DELIVERY_TEST_LOCK).await;
     let scope = test_scope();
     let fixture = scope.with_namespace().await;
     create_namespace_event_subscription(&scope, fixture.namespace.id, "delivery_retry", true).await;
@@ -740,7 +738,7 @@ async fn event_delivery_worker_retries_with_backoff_then_marks_dead() {
 
 #[actix_web::test]
 async fn event_delivery_claims_expired_in_flight_rows_again() {
-    let _lock = event_delivery_test_lock().await;
+    let _lock = lock_test_mutex(&EVENT_DELIVERY_TEST_LOCK).await;
     let scope = test_scope();
     let fixture = scope.with_namespace().await;
     create_namespace_event_subscription(&scope, fixture.namespace.id, "delivery_reclaim", true)
@@ -775,7 +773,7 @@ async fn event_delivery_claims_expired_in_flight_rows_again() {
 
 #[actix_web::test]
 async fn event_delivery_failed_mark_respects_claim_token() {
-    let _lock = event_delivery_test_lock().await;
+    let _lock = lock_test_mutex(&EVENT_DELIVERY_TEST_LOCK).await;
     let scope = test_scope();
     let fixture = scope.with_namespace().await;
     create_namespace_event_subscription(&scope, fixture.namespace.id, "delivery_claim_token", true)

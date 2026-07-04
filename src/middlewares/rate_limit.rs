@@ -4,6 +4,8 @@ use ipnet::{Ipv4Net, Ipv6Net};
 use crate::config::{AppConfig, LoginRateLimitConfig, login_rate_limit_config};
 use crate::middlewares::client_allowlist::{ProxyTrust, extract_client_ip_from_http_request};
 
+#[cfg(test)]
+use crate::tests::{TestMutex, test_mutex};
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::sync::LazyLock;
@@ -313,8 +315,7 @@ pub(crate) async fn clear_all() -> usize {
 /// Serializes tests that touch the process-global limiter state (auth login tests and the
 /// admin `/meta/login-rate-limit` tests) so they do not observe each other's failures.
 #[cfg(test)]
-pub(crate) static LOGIN_RATE_LIMIT_TEST_LOCK: LazyLock<Mutex<()>> =
-    LazyLock::new(|| Mutex::new(()));
+pub(crate) static LOGIN_RATE_LIMIT_TEST_LOCK: TestMutex = test_mutex();
 
 #[cfg(test)]
 pub(crate) async fn reset_login_rate_limit_for_tests() {

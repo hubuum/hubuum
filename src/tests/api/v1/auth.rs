@@ -7,12 +7,11 @@ mod tests {
         LOGIN_RATE_LIMIT_TEST_LOCK, reset_login_rate_limit_for_tests,
     };
     use crate::models::user::LoginUser;
-    use crate::tests::{create_test_admin, create_test_user};
+    use crate::tests::{TestMutexGuard, create_test_admin, create_test_user, lock_test_mutex};
     use crate::{api, assert_not_contains};
     use actix_web::http::header;
     use actix_web::{App, http::StatusCode, test, web, web::Data};
     use diesel::prelude::*;
-    use tokio::sync::MutexGuard;
 
     const LOGIN_ENDPOINT: &str = "/api/v0/auth/login";
     const LOGOUT_ENDPOINT: &str = "/api/v0/auth/logout";
@@ -21,8 +20,8 @@ mod tests {
     const LOGOUT_SPECIFIC_TOKEN: &str = "/api/v0/auth/logout/token";
     const VALIDATE_TOKEN_ENDPOINT: &str = "/api/v0/auth/validate";
 
-    async fn lock_auth_test_state() -> MutexGuard<'static, ()> {
-        LOGIN_RATE_LIMIT_TEST_LOCK.lock().await
+    async fn lock_auth_test_state() -> TestMutexGuard {
+        lock_test_mutex(&LOGIN_RATE_LIMIT_TEST_LOCK).await
     }
 
     #[actix_web::test]
