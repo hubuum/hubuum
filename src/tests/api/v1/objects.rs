@@ -1549,6 +1549,7 @@ mod tests {
 
         let context = test_context;
         let ns = context.namespace_fixture("object_history_api").await;
+        let event_context = hubuum_events_core::EventContext::system();
 
         // Create a class and an object.
         let class = NewHubuumClass {
@@ -1558,7 +1559,7 @@ mod tests {
             json_schema: None,
             validate_schema: Some(false),
         }
-        .save(&context.pool)
+        .save(&context.pool, &event_context)
         .await
         .unwrap();
 
@@ -1569,7 +1570,7 @@ mod tests {
             hubuum_class_id: class.id,
             data: serde_json::json!({"test": "v1"}),
         }
-        .save(&context.pool)
+        .save(&context.pool, &event_context)
         .await
         .unwrap();
 
@@ -1581,7 +1582,7 @@ mod tests {
             data: None,
             description: Some("v2".to_string()),
         }
-        .update(&context.pool, created.id)
+        .update(&context.pool, created.id, &event_context)
         .await
         .unwrap();
 
@@ -1626,6 +1627,7 @@ mod tests {
     async fn test_api_object_history_404_for_missing(#[future(awt)] test_context: TestContext) {
         let context = test_context;
         let ns = context.namespace_fixture("object_history_404").await;
+        let event_context = hubuum_events_core::EventContext::system();
 
         let class = NewHubuumClass {
             name: "object_history_404_class".to_string(),
@@ -1634,7 +1636,7 @@ mod tests {
             json_schema: None,
             validate_schema: Some(false),
         }
-        .save(&context.pool)
+        .save(&context.pool, &event_context)
         .await
         .unwrap();
 

@@ -193,6 +193,7 @@ async fn unchanged_domain_update_is_noop() {
     let pool = scope.pool.clone();
     let ns = scope.namespace_fixture("noop_update").await;
     let cname = format!("noop_update_class_{}", scope.scope_id);
+    let event_context = hubuum_events_core::EventContext::system();
 
     let class = NewHubuumClass {
         name: cname,
@@ -201,7 +202,7 @@ async fn unchanged_domain_update_is_noop() {
         validate_schema: Some(false),
         description: "d".into(),
     }
-    .save(&pool)
+    .save(&pool, &event_context)
     .await
     .unwrap();
     let before_updated_at = class.updated_at;
@@ -218,7 +219,7 @@ async fn unchanged_domain_update_is_noop() {
         validate_schema: Some(class.validate_schema),
         description: Some(class.description.clone()),
     }
-    .update(&pool, class.id)
+    .update_without_events(&pool, class.id)
     .await
     .unwrap();
 
@@ -280,6 +281,7 @@ async fn cascade_delete_records_history() {
     let pool = scope.pool.clone();
     let ns = scope.namespace_fixture("cascade_hist").await;
     let cname = format!("cascade_hist_class_{}", scope.scope_id);
+    let event_context = hubuum_events_core::EventContext::system();
 
     let class = NewHubuumClass {
         name: cname.clone(),
@@ -288,7 +290,7 @@ async fn cascade_delete_records_history() {
         validate_schema: Some(false),
         description: "d".into(),
     }
-    .save(&pool)
+    .save(&pool, &event_context)
     .await
     .unwrap();
 
@@ -326,6 +328,7 @@ async fn actor_scope_sets_actor_and_default_is_null() {
     // Inside a scope -> actor recorded.
     let in_name = format!("actor_in_{}", scope.scope_id);
     let in_class = with_actor_scope(Some(4242), async {
+        let event_context = hubuum_events_core::EventContext::system();
         NewHubuumClass {
             name: in_name.clone(),
             namespace_id: ns_id,
@@ -333,7 +336,7 @@ async fn actor_scope_sets_actor_and_default_is_null() {
             validate_schema: Some(false),
             description: "d".into(),
         }
-        .save(&pool)
+        .save(&pool, &event_context)
         .await
     })
     .await
@@ -341,6 +344,7 @@ async fn actor_scope_sets_actor_and_default_is_null() {
 
     // Outside any scope -> actor NULL.
     let out_name = format!("actor_out_{}", scope.scope_id);
+    let event_context = hubuum_events_core::EventContext::system();
     let out_class = NewHubuumClass {
         name: out_name.clone(),
         namespace_id: ns_id,
@@ -348,7 +352,7 @@ async fn actor_scope_sets_actor_and_default_is_null() {
         validate_schema: Some(false),
         description: "d".into(),
     }
-    .save(&pool)
+    .save(&pool, &event_context)
     .await
     .unwrap();
 
@@ -390,7 +394,7 @@ async fn anonymize_scrubs_pii_but_keeps_history_actor() {
         proper_name: Some("Anon User".into()),
         email: Some("a@example.com".into()),
     }
-    .save(&pool)
+    .save(&pool, None)
     .await
     .unwrap();
     let token = user.create_token(&pool).await.unwrap();
@@ -398,6 +402,7 @@ async fn anonymize_scrubs_pii_but_keeps_history_actor() {
 
     let cname = format!("anon_class_{}", scope.scope_id);
     let class = with_actor_scope(Some(user.id), async {
+        let event_context = hubuum_events_core::EventContext::system();
         NewHubuumClass {
             name: cname.clone(),
             namespace_id: ns.namespace.id,
@@ -405,7 +410,7 @@ async fn anonymize_scrubs_pii_but_keeps_history_actor() {
             validate_schema: Some(false),
             description: "d".into(),
         }
-        .save(&pool)
+        .save(&pool, &event_context)
         .await
     })
     .await

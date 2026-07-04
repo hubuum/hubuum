@@ -1179,6 +1179,7 @@ mod tests {
 
         let (pool, admin_token, _normal_token) = setup_pool_and_tokens().await;
         let namespace = create_namespace(&pool, "template_history_api").await;
+        let event_context = hubuum_events_core::EventContext::system();
 
         // Create then update so there are two versions.
         let created = NewReportTemplate {
@@ -1196,7 +1197,7 @@ mod tests {
             default_missing_data_policy: None,
             default_limits: None,
         }
-        .save(&pool)
+        .save(&pool, &event_context)
         .await
         .unwrap();
 
@@ -1214,7 +1215,7 @@ mod tests {
             default_missing_data_policy: None,
             default_limits: None,
         }
-        .update(&pool, created.id)
+        .update(&pool, created.id, &event_context)
         .await
         .unwrap();
 
@@ -1251,7 +1252,7 @@ mod tests {
         let snap: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(snap["description"], "v1");
 
-        namespace.delete(&pool).await.unwrap();
+        namespace.delete(&pool, &event_context).await.unwrap();
     }
 
     #[actix_web::test]

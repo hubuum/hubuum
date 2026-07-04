@@ -770,6 +770,7 @@ pub mod tests {
 
         let context = test_context;
         let ns = context.namespace_fixture("class_history_api").await;
+        let event_context = hubuum_events_core::EventContext::system();
 
         // Create then update so there are two versions.
         let created = NewHubuumClass {
@@ -779,7 +780,7 @@ pub mod tests {
             json_schema: None,
             validate_schema: Some(false),
         }
-        .save(&context.pool)
+        .save(&context.pool, &event_context)
         .await
         .unwrap();
         UpdateHubuumClass {
@@ -789,7 +790,7 @@ pub mod tests {
             validate_schema: None,
             description: Some("v2".to_string()),
         }
-        .update(&context.pool, created.id)
+        .update(&context.pool, created.id, &event_context)
         .await
         .unwrap();
 
@@ -849,6 +850,7 @@ pub mod tests {
 
         let context = test_context;
         let ns = context.namespace_fixture("deleted_class_history").await;
+        let event_context = hubuum_events_core::EventContext::system();
         let class = NewHubuumClass {
             name: "deleted_class_history".to_string(),
             description: "v1".to_string(),
@@ -856,11 +858,11 @@ pub mod tests {
             json_schema: None,
             validate_schema: Some(false),
         }
-        .save(&context.pool)
+        .save(&context.pool, &event_context)
         .await
         .unwrap();
         let class_id = class.id;
-        class.delete(&context.pool).await.unwrap();
+        class.delete(&context.pool, &event_context).await.unwrap();
 
         let normal_resp = get_request(
             &context.pool,
@@ -894,6 +896,7 @@ pub mod tests {
 
         let context = test_context;
         let ns = context.namespace_fixture("class_history_cursor").await;
+        let event_context = hubuum_events_core::EventContext::system();
 
         // Create then update TWICE to have three history rows (I, U, U).
         let created = NewHubuumClass {
@@ -903,7 +906,7 @@ pub mod tests {
             json_schema: None,
             validate_schema: Some(false),
         }
-        .save(&context.pool)
+        .save(&context.pool, &event_context)
         .await
         .unwrap();
 
@@ -914,7 +917,7 @@ pub mod tests {
             validate_schema: None,
             description: Some("v2".to_string()),
         }
-        .update(&context.pool, created.id)
+        .update(&context.pool, created.id, &event_context)
         .await
         .unwrap();
 
@@ -925,7 +928,7 @@ pub mod tests {
             validate_schema: None,
             description: Some("v3".to_string()),
         }
-        .update(&context.pool, created.id)
+        .update(&context.pool, created.id, &event_context)
         .await
         .unwrap();
 

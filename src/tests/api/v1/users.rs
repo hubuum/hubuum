@@ -694,7 +694,7 @@ mod tests {
             proper_name: Some("API Anon".into()),
             email: Some("x@example.com".into()),
         }
-        .save(&context.pool)
+        .save(&context.pool, None)
         .await
         .unwrap();
 

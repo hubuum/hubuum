@@ -918,6 +918,7 @@ mod tests {
 
         let context = test_context;
         let ns = context.namespace_fixture("namespace_history_api").await;
+        let event_context = hubuum_events_core::EventContext::system();
 
         // Create then update so there are two versions.
         let created = ns.namespace.clone();
@@ -925,7 +926,7 @@ mod tests {
             name: None,
             description: Some("v2".to_string()),
         }
-        .update(&context.pool, created.id)
+        .update(&context.pool, created.id, &event_context)
         .await
         .unwrap();
 
