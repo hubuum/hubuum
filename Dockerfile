@@ -18,12 +18,17 @@ RUN cargo binstall --no-confirm diesel_cli
 # required for Cargo to load the workspace during the dependency-only build.
 #
 # NOTE: workspace members are listed explicitly (not auto-detected) so that only
-# crate *manifests* — not their sources — enter the dependency-cache layer,
-# keeping that layer valid across crate source edits. When you add a crate under
-# crates/, update THREE places below: (1) add a COPY for its Cargo.toml here,
-# (2) add a dummy src/lib.rs in the dependency-only build, and (3) add its src
-# dir to that step's `rm -rf` cleanup.
+# crate manifests, not their sources, enter the dependency-cache layer. This
+# keeps that layer valid across crate source edits. When you add a crate under
+# crates/, add a COPY for its Cargo.toml here; the dependency-only build below
+# creates and cleans up dummy source files for every copied crate manifest.
 COPY Cargo.toml Cargo.lock ./
+COPY crates/hubuum-event-sink-amqp/Cargo.toml ./crates/hubuum-event-sink-amqp/Cargo.toml
+COPY crates/hubuum-event-sink-email/Cargo.toml ./crates/hubuum-event-sink-email/Cargo.toml
+COPY crates/hubuum-event-sink-valkey/Cargo.toml ./crates/hubuum-event-sink-valkey/Cargo.toml
+COPY crates/hubuum-event-sink-webhook/Cargo.toml ./crates/hubuum-event-sink-webhook/Cargo.toml
+COPY crates/hubuum-event-sinks-common/Cargo.toml ./crates/hubuum-event-sinks-common/Cargo.toml
+COPY crates/hubuum-events-core/Cargo.toml ./crates/hubuum-events-core/Cargo.toml
 COPY crates/hubuum-outbound-http/Cargo.toml ./crates/hubuum-outbound-http/Cargo.toml
 COPY crates/hubuum-templates/Cargo.toml ./crates/hubuum-templates/Cargo.toml
 COPY migrations ./migrations
@@ -42,15 +47,16 @@ RUN awk ' \
 # Use cache mounts to persist cargo registry/git between builds
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    mkdir -p src/bin crates/hubuum-outbound-http/src crates/hubuum-templates/src && \
+    mkdir -p src/bin && \
+    find crates -mindepth 2 -maxdepth 2 -name Cargo.toml \
+        -exec sh -c 'mkdir -p "$(dirname "$1")/src" && echo "pub fn dummy() { }" > "$(dirname "$1")/src/lib.rs"' sh {} \; && \
     echo "fn main() {}" > src/main.rs && \
     echo "pub fn dummy() {}" > src/lib.rs && \
     echo "fn main() {}" > src/bin/admin.rs && \
     echo "fn main() {}" > src/bin/openapi.rs && \
-    echo "pub fn dummy() {}" > crates/hubuum-outbound-http/src/lib.rs && \
-    echo "pub fn dummy() {}" > crates/hubuum-templates/src/lib.rs && \
     cargo build ${CARGO_BUILD_FLAGS} --bin hubuum-server --bin hubuum-admin && \
-    rm -rf src crates/hubuum-outbound-http/src crates/hubuum-templates/src
+    rm -rf src && \
+    find crates -mindepth 2 -maxdepth 2 -type d -name src -exec rm -rf {} +
 
 # Copy the actual source code
 COPY . .
