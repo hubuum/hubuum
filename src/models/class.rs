@@ -159,7 +159,7 @@ pub mod tests {
             description: "test".to_string(),
         };
 
-        class.save(pool).await.unwrap()
+        class.save_without_events(pool).await.unwrap()
     }
 
     #[actix_rt::test]
@@ -205,7 +205,7 @@ pub mod tests {
             description: None,
         };
 
-        let updated_class = update.update(&pool, class.id).await.unwrap();
+        let updated_class = update.update_without_events(&pool, class.id).await.unwrap();
 
         assert_eq!(updated_class.id, class.id);
         assert_eq!(updated_class.name, "test update 2");
@@ -214,7 +214,7 @@ pub mod tests {
         assert_eq!(updated_class.validate_schema, class.validate_schema);
         assert_eq!(updated_class.description, class.description);
 
-        updated_class.delete(&pool).await.unwrap();
+        updated_class.delete_without_events(&pool).await.unwrap();
         verify_no_such_class(&pool, class.id).await;
 
         namespace.cleanup().await.unwrap();
@@ -230,7 +230,7 @@ pub mod tests {
         let mut class = create_class(&pool, &namespace.namespace, "test saving").await;
 
         class.description = "new description".to_string();
-        class.save(&pool).await.unwrap();
+        class.save_without_events(&pool).await.unwrap();
 
         let fetched_class = get_class(class.id, &pool).await;
 

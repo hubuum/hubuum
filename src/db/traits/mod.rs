@@ -1,6 +1,12 @@
 pub mod active_tokens;
 pub mod authz;
 pub mod class;
+pub mod event_delivery;
+pub mod event_fanout;
+pub mod event_observability;
+pub mod event_retention;
+pub mod event_subscription;
+pub mod events;
 pub mod group;
 pub mod is_active;
 pub mod namespace;

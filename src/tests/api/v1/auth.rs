@@ -375,8 +375,8 @@ mod tests {
 
         let user_tokens = new_user.tokens(&pool).await.unwrap();
         assert_eq!(user_tokens.len(), 0, "User still has tokens");
-        new_user.delete(&pool).await.unwrap();
-        admin_user.delete(&pool).await.unwrap();
+        new_user.delete_without_events(&pool).await.unwrap();
+        admin_user.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
@@ -456,8 +456,8 @@ mod tests {
         let user_token_strings: Vec<String> = user_tokens.iter().map(|t| t.token.clone()).collect();
         let deleted_token_hash = Token::storage_hash_from_raw(&token);
         assert_not_contains!(&user_token_strings, &deleted_token_hash);
-        new_user.delete(&pool).await.unwrap();
-        admin_user.delete(&pool).await.unwrap();
+        new_user.delete_without_events(&pool).await.unwrap();
+        admin_user.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]

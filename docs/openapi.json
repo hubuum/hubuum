@@ -1199,6 +1199,152 @@
         ]
       }
     },
+    "/api/v1/classes/{class_id}/events": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Events",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/events.",
+        "operationId": "getApiV1ClassesByClassIdEvents",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "description": "Optional action filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_kind",
+            "in": "query",
+            "description": "Optional actor kind filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_user_id",
+            "in": "query",
+            "description": "Optional actor principal id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "namespace_id",
+            "in": "query",
+            "description": "Optional namespace id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "occurred_after",
+            "in": "query",
+            "description": "Optional lower occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "occurred_before",
+            "in": "query",
+            "description": "Optional upper occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Cursor page size",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Supported fields: id, occurred_at",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor token from X-Next-Cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Visible class audit events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/classes/{class_id}/objects/{object_id}/related/graph": {
       "get": {
         "tags": [
@@ -2583,6 +2729,1032 @@
         ]
       }
     },
+    "/api/v1/classes/{class_id}/{object_id}/events": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Get Api V1 Classes By Class Id By Object Id Events",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/{object_id}/events.",
+        "operationId": "getApiV1ClassesByClassIdByObjectIdEvents",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "object_id",
+            "in": "path",
+            "description": "Object id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "description": "Optional action filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_kind",
+            "in": "query",
+            "description": "Optional actor kind filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_user_id",
+            "in": "query",
+            "description": "Optional actor principal id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "namespace_id",
+            "in": "query",
+            "description": "Optional namespace id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "occurred_after",
+            "in": "query",
+            "description": "Optional lower occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "occurred_before",
+            "in": "query",
+            "description": "Optional upper occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Cursor page size",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Supported fields: id, occurred_at",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor token from X-Next-Cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Visible object audit events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/event-deliveries": {
+      "get": {
+        "tags": [
+          "event-deliveries"
+        ],
+        "summary": "Get Api V1 Event Deliveries",
+        "description": "Auto-generated documentation for GET /api/v1/event-deliveries.",
+        "operationId": "getApiV1EventDeliveries",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Cursor page size",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Supported fields: id, status, created_at, updated_at, next_attempt_at",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor token from X-Next-Cursor",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event deliveries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventDelivery"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/event-deliveries/health": {
+      "get": {
+        "tags": [
+          "event-deliveries"
+        ],
+        "summary": "Get Api V1 Event Deliveries Health",
+        "description": "Auto-generated documentation for GET /api/v1/event-deliveries/health.",
+        "operationId": "getApiV1EventDeliveriesHealth",
+        "responses": {
+          "200": {
+            "description": "Event delivery pipeline health",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventDeliveryHealthResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/event-deliveries/{delivery_id}": {
+      "get": {
+        "tags": [
+          "event-deliveries"
+        ],
+        "summary": "Get Api V1 Event Deliveries By Delivery Id",
+        "description": "Auto-generated documentation for GET /api/v1/event-deliveries/{delivery_id}.",
+        "operationId": "getApiV1EventDeliveriesByDeliveryId",
+        "parameters": [
+          {
+            "name": "delivery_id",
+            "in": "path",
+            "description": "Event delivery ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event delivery",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventDelivery"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event delivery not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/event-deliveries/{delivery_id}/dead": {
+      "post": {
+        "tags": [
+          "event-deliveries"
+        ],
+        "summary": "Post Api V1 Event Deliveries By Delivery Id Dead",
+        "description": "Auto-generated documentation for POST /api/v1/event-deliveries/{delivery_id}/dead.",
+        "operationId": "postApiV1EventDeliveriesByDeliveryIdDead",
+        "parameters": [
+          {
+            "name": "delivery_id",
+            "in": "path",
+            "description": "Event delivery ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event delivery marked dead",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventDeliveryUpdateResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event delivery not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/event-deliveries/{delivery_id}/retry": {
+      "post": {
+        "tags": [
+          "event-deliveries"
+        ],
+        "summary": "Post Api V1 Event Deliveries By Delivery Id Retry",
+        "description": "Auto-generated documentation for POST /api/v1/event-deliveries/{delivery_id}/retry.",
+        "operationId": "postApiV1EventDeliveriesByDeliveryIdRetry",
+        "parameters": [
+          {
+            "name": "delivery_id",
+            "in": "path",
+            "description": "Event delivery ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event delivery released for retry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventDeliveryUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event delivery not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/event-sinks": {
+      "get": {
+        "tags": [
+          "event-sinks"
+        ],
+        "summary": "Get Api V1 Event Sinks",
+        "description": "Auto-generated documentation for GET /api/v1/event-sinks.",
+        "operationId": "getApiV1EventSinks",
+        "responses": {
+          "200": {
+            "description": "Event sinks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventSink"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "event-sinks"
+        ],
+        "summary": "Post Api V1 Event Sinks",
+        "description": "Auto-generated documentation for POST /api/v1/event-sinks.",
+        "operationId": "postApiV1EventSinks",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewEventSink"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Event sink created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventSink"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/event-sinks/{sink_id}": {
+      "get": {
+        "tags": [
+          "event-sinks"
+        ],
+        "summary": "Get Api V1 Event Sinks By Sink Id",
+        "description": "Auto-generated documentation for GET /api/v1/event-sinks/{sink_id}.",
+        "operationId": "getApiV1EventSinksBySinkId",
+        "parameters": [
+          {
+            "name": "sink_id",
+            "in": "path",
+            "description": "Event sink ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event sink",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventSink"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event sink not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "event-sinks"
+        ],
+        "summary": "Delete Api V1 Event Sinks By Sink Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/event-sinks/{sink_id}.",
+        "operationId": "deleteApiV1EventSinksBySinkId",
+        "parameters": [
+          {
+            "name": "sink_id",
+            "in": "path",
+            "description": "Event sink ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Event sink deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event sink not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "event-sinks"
+        ],
+        "summary": "Patch Api V1 Event Sinks By Sink Id",
+        "description": "Auto-generated documentation for PATCH /api/v1/event-sinks/{sink_id}.",
+        "operationId": "patchApiV1EventSinksBySinkId",
+        "parameters": [
+          {
+            "name": "sink_id",
+            "in": "path",
+            "description": "Event sink ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateEventSink"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Event sink updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventSink"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event sink not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/events": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Get Api V1 Events",
+        "description": "Auto-generated documentation for GET /api/v1/events.",
+        "operationId": "getApiV1Events",
+        "parameters": [
+          {
+            "name": "entity_type",
+            "in": "query",
+            "description": "Optional event entity type filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "entity_id",
+            "in": "query",
+            "description": "Optional event entity id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "description": "Optional action filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_kind",
+            "in": "query",
+            "description": "Optional actor kind filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_user_id",
+            "in": "query",
+            "description": "Optional actor principal id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "namespace_id",
+            "in": "query",
+            "description": "Optional namespace id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "occurred_after",
+            "in": "query",
+            "description": "Optional lower occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "occurred_before",
+            "in": "query",
+            "description": "Optional upper occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Cursor page size",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Supported fields: id, occurred_at",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor token from X-Next-Cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Visible audit events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/iam/groups": {
       "get": {
         "tags": [
@@ -2921,6 +4093,152 @@
           },
           "404": {
             "description": "Group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/groups/{group_id}/events": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Get Api V1 Iam Groups By Group Id Events",
+        "description": "Auto-generated documentation for GET /api/v1/iam/groups/{group_id}/events.",
+        "operationId": "getApiV1IamGroupsByGroupIdEvents",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group principal id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "description": "Optional action filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_kind",
+            "in": "query",
+            "description": "Optional actor kind filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_user_id",
+            "in": "query",
+            "description": "Optional actor principal id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "namespace_id",
+            "in": "query",
+            "description": "Optional namespace id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "occurred_after",
+            "in": "query",
+            "description": "Optional lower occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "occurred_before",
+            "in": "query",
+            "description": "Optional upper occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Cursor page size",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Supported fields: id, occurred_at",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor token from X-Next-Cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Visible group audit events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
             "content": {
               "application/json": {
                 "schema": {
@@ -4639,6 +5957,152 @@
         ]
       }
     },
+    "/api/v1/iam/users/{user_id}/events": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Get Api V1 Iam Users By User Id Events",
+        "description": "Auto-generated documentation for GET /api/v1/iam/users/{user_id}/events.",
+        "operationId": "getApiV1IamUsersByUserIdEvents",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "User principal id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "description": "Optional action filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_kind",
+            "in": "query",
+            "description": "Optional actor kind filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_user_id",
+            "in": "query",
+            "description": "Optional actor principal id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "namespace_id",
+            "in": "query",
+            "description": "Optional namespace id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "occurred_after",
+            "in": "query",
+            "description": "Optional lower occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "occurred_before",
+            "in": "query",
+            "description": "Optional upper occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Cursor page size",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Supported fields: id, occurred_at",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor token from X-Next-Cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Visible user audit events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/imports": {
       "post": {
         "tags": [
@@ -5175,6 +6639,567 @@
           },
           "404": {
             "description": "Namespace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace_id}/event-subscriptions": {
+      "get": {
+        "tags": [
+          "event-subscriptions"
+        ],
+        "summary": "Get Api V1 Namespaces By Namespace Id Event Subscriptions",
+        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/event-subscriptions.",
+        "operationId": "getApiV1NamespacesByNamespaceIdEventSubscriptions",
+        "parameters": [
+          {
+            "name": "namespace_id",
+            "in": "path",
+            "description": "Namespace ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event subscriptions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventSubscription"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "event-subscriptions"
+        ],
+        "summary": "Post Api V1 Namespaces By Namespace Id Event Subscriptions",
+        "description": "Auto-generated documentation for POST /api/v1/namespaces/{namespace_id}/event-subscriptions.",
+        "operationId": "postApiV1NamespacesByNamespaceIdEventSubscriptions",
+        "parameters": [
+          {
+            "name": "namespace_id",
+            "in": "path",
+            "description": "Namespace ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewEventSubscription"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Event subscription created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventSubscription"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Namespace or sink not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace_id}/event-subscriptions/{subscription_id}": {
+      "get": {
+        "tags": [
+          "event-subscriptions"
+        ],
+        "summary": "Get Api V1 Namespaces By Namespace Id Event Subscriptions By Subscription Id",
+        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/event-subscriptions/{subscription_id}.",
+        "operationId": "getApiV1NamespacesByNamespaceIdEventSubscriptionsBySubscriptionId",
+        "parameters": [
+          {
+            "name": "namespace_id",
+            "in": "path",
+            "description": "Namespace ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "subscription_id",
+            "in": "path",
+            "description": "Event subscription ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event subscription",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventSubscription"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event subscription not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "event-subscriptions"
+        ],
+        "summary": "Delete Api V1 Namespaces By Namespace Id Event Subscriptions By Subscription Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/namespaces/{namespace_id}/event-subscriptions/{subscription_id}.",
+        "operationId": "deleteApiV1NamespacesByNamespaceIdEventSubscriptionsBySubscriptionId",
+        "parameters": [
+          {
+            "name": "namespace_id",
+            "in": "path",
+            "description": "Namespace ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "subscription_id",
+            "in": "path",
+            "description": "Event subscription ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Event subscription deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event subscription not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "event-subscriptions"
+        ],
+        "summary": "Patch Api V1 Namespaces By Namespace Id Event Subscriptions By Subscription Id",
+        "description": "Auto-generated documentation for PATCH /api/v1/namespaces/{namespace_id}/event-subscriptions/{subscription_id}.",
+        "operationId": "patchApiV1NamespacesByNamespaceIdEventSubscriptionsBySubscriptionId",
+        "parameters": [
+          {
+            "name": "namespace_id",
+            "in": "path",
+            "description": "Namespace ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "subscription_id",
+            "in": "path",
+            "description": "Event subscription ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateEventSubscription"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Event subscription updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventSubscription"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event subscription not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace_id}/events": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Get Api V1 Namespaces By Namespace Id Events",
+        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/events.",
+        "operationId": "getApiV1NamespacesByNamespaceIdEvents",
+        "parameters": [
+          {
+            "name": "namespace_id",
+            "in": "path",
+            "description": "Namespace id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "description": "Optional action filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_kind",
+            "in": "query",
+            "description": "Optional actor kind filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_user_id",
+            "in": "query",
+            "description": "Optional actor principal id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "occurred_after",
+            "in": "query",
+            "description": "Optional lower occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "occurred_before",
+            "in": "query",
+            "description": "Optional upper occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Cursor page size",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Supported fields: id, occurred_at",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor token from X-Next-Cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Visible namespace audit events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
             "content": {
               "application/json": {
                 "schema": {
@@ -6898,6 +8923,152 @@
         ]
       }
     },
+    "/api/v1/remote-targets/{target_id}/events": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Get Api V1 Remote Targets By Target Id Events",
+        "description": "Auto-generated documentation for GET /api/v1/remote-targets/{target_id}/events.",
+        "operationId": "getApiV1RemoteTargetsByTargetIdEvents",
+        "parameters": [
+          {
+            "name": "target_id",
+            "in": "path",
+            "description": "Remote target id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "description": "Optional action filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_kind",
+            "in": "query",
+            "description": "Optional actor kind filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_user_id",
+            "in": "query",
+            "description": "Optional actor principal id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "namespace_id",
+            "in": "query",
+            "description": "Optional namespace id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "occurred_after",
+            "in": "query",
+            "description": "Optional lower occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "occurred_before",
+            "in": "query",
+            "description": "Optional upper occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Cursor page size",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Supported fields: id, occurred_at",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor token from X-Next-Cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Visible remote target audit events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/remote-targets/{target_id}/invoke": {
       "post": {
         "tags": [
@@ -8111,6 +10282,152 @@
         ]
       }
     },
+    "/api/v1/templates/{template_id}/events": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Get Api V1 Templates By Template Id Events",
+        "description": "Auto-generated documentation for GET /api/v1/templates/{template_id}/events.",
+        "operationId": "getApiV1TemplatesByTemplateIdEvents",
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Report template id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "description": "Optional action filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_kind",
+            "in": "query",
+            "description": "Optional actor kind filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_user_id",
+            "in": "query",
+            "description": "Optional actor principal id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "namespace_id",
+            "in": "query",
+            "description": "Optional namespace id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "occurred_after",
+            "in": "query",
+            "description": "Optional lower occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "occurred_before",
+            "in": "query",
+            "description": "Optional upper occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Cursor page size",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Supported fields: id, occurred_at",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor token from X-Next-Cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Visible report template audit events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/templates/{template_id}/reports": {
       "post": {
         "tags": [
@@ -8463,6 +10780,650 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "EventDelivery": {
+        "type": "object",
+        "required": [
+          "id",
+          "event_id",
+          "subscription_id",
+          "status",
+          "attempts",
+          "next_attempt_at",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "attempts": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "claim_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "event_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "locked_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "next_attempt_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string"
+          },
+          "subscription_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "EventDeliveryHealthResponse": {
+        "type": "object",
+        "required": [
+          "fanout",
+          "delivery",
+          "sinks",
+          "subscriptions"
+        ],
+        "properties": {
+          "delivery": {
+            "$ref": "#/components/schemas/EventDeliveryQueueHealth"
+          },
+          "fanout": {
+            "$ref": "#/components/schemas/EventFanoutHealth"
+          },
+          "sinks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventSinkDeliveryHealth"
+            }
+          },
+          "subscriptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventSubscriptionDeliveryHealth"
+            }
+          }
+        }
+      },
+      "EventDeliveryQueueHealth": {
+        "type": "object",
+        "required": [
+          "counts",
+          "stale_claims",
+          "worker"
+        ],
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/EventDeliveryStatusCounts"
+          },
+          "oldest_due_age_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "stale_claims": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "worker": {
+            "$ref": "#/components/schemas/EventWorkerHealth"
+          }
+        }
+      },
+      "EventDeliveryStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "in_flight",
+          "succeeded",
+          "failed",
+          "dead"
+        ]
+      },
+      "EventDeliveryStatusCounts": {
+        "type": "object",
+        "required": [
+          "total",
+          "pending",
+          "in_flight",
+          "succeeded",
+          "failed",
+          "dead",
+          "retryable"
+        ],
+        "properties": {
+          "dead": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "in_flight": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "retryable": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "succeeded": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "EventDeliveryUpdateResponse": {
+        "type": "object",
+        "required": [
+          "delivery"
+        ],
+        "properties": {
+          "delivery": {
+            "$ref": "#/components/schemas/EventDelivery"
+          }
+        }
+      },
+      "EventFanoutHealth": {
+        "type": "object",
+        "required": [
+          "pending_events",
+          "in_flight_events",
+          "stale_claims",
+          "worker"
+        ],
+        "properties": {
+          "in_flight_events": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "oldest_pending_age_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "pending_events": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "stale_claims": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "worker": {
+            "$ref": "#/components/schemas/EventWorkerHealth"
+          }
+        }
+      },
+      "EventResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "event_id",
+          "occurred_at",
+          "entity_type",
+          "action",
+          "actor_kind",
+          "summary",
+          "metadata",
+          "schema_version"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "actor_kind": {
+            "type": "string"
+          },
+          "actor_user_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "after": {},
+          "before": {},
+          "correlation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "entity_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "entity_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "entity_type": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "metadata": {},
+          "namespace_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "summary": {
+            "type": "string"
+          }
+        }
+      },
+      "EventSink": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "config",
+          "enabled",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "config": {},
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/EventSinkKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "secret_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "EventSinkDeliveryHealth": {
+        "type": "object",
+        "required": [
+          "sink_id",
+          "sink_name",
+          "sink_kind",
+          "sink_enabled",
+          "subscription_count",
+          "counts",
+          "stale_claims"
+        ],
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/EventDeliveryStatusCounts"
+          },
+          "oldest_due_age_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "sink_enabled": {
+            "type": "boolean"
+          },
+          "sink_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "sink_kind": {
+            "type": "string"
+          },
+          "sink_name": {
+            "type": "string"
+          },
+          "stale_claims": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "subscription_count": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "EventSinkID": {
+        "type": "integer",
+        "format": "int32",
+        "description": "Identifier wrapper for an event sink."
+      },
+      "EventSinkKind": {
+        "type": "string",
+        "enum": [
+          "webhook",
+          "amqp",
+          "valkey_stream",
+          "email"
+        ]
+      },
+      "EventSubscription": {
+        "type": "object",
+        "required": [
+          "id",
+          "namespace_id",
+          "sink_id",
+          "name",
+          "description",
+          "entity_types",
+          "actions",
+          "routing",
+          "enabled",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "entity_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "filter": {
+            "$ref": "#/components/schemas/EventSubscriptionFilter"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          },
+          "namespace_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "routing": {},
+          "sink_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "EventSubscriptionDeliveryHealth": {
+        "type": "object",
+        "required": [
+          "subscription_id",
+          "subscription_name",
+          "namespace_id",
+          "sink_id",
+          "sink_name",
+          "sink_kind",
+          "subscription_enabled",
+          "sink_enabled",
+          "counts",
+          "stale_claims"
+        ],
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/EventDeliveryStatusCounts"
+          },
+          "namespace_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "oldest_due_age_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "sink_enabled": {
+            "type": "boolean"
+          },
+          "sink_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "sink_kind": {
+            "type": "string"
+          },
+          "sink_name": {
+            "type": "string"
+          },
+          "stale_claims": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "subscription_enabled": {
+            "type": "boolean"
+          },
+          "subscription_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "subscription_name": {
+            "type": "string"
+          }
+        }
+      },
+      "EventSubscriptionFilter": {
+        "type": "object",
+        "description": "Optional additional fan-out filter for an event subscription.\n\n`entity_types` and `actions` remain first-class subscription fields because\nthey drive catalog validation and coarse fan-out selection. This filter\nnarrows those matches by stable event-envelope fields. Empty or omitted\nfields match all events for that dimension.",
+        "properties": {
+          "actor_kinds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "actor_user_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          "correlation_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "entity_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          "entity_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "namespace_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          "related_namespace_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          "request_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "EventWorkerHealth": {
+        "type": "object",
+        "required": [
+          "workers_configured",
+          "batch_size",
+          "poll_interval_ms",
+          "lock_timeout_ms",
+          "wakeups"
+        ],
+        "properties": {
+          "batch_size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lock_timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "poll_interval_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "wakeups": {
+            "$ref": "#/components/schemas/EventWorkerWakeupStats"
+          },
+          "workers_configured": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "EventWorkerWakeupStats": {
+        "type": "object",
+        "required": [
+          "notifications_sent",
+          "notification_wakeups",
+          "poll_wakeups"
+        ],
+        "properties": {
+          "notification_wakeups": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "notifications_sent": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "poll_wakeups": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -9571,6 +12532,70 @@
           }
         }
       },
+      "NewEventSink": {
+        "type": "object",
+        "required": [
+          "name",
+          "kind"
+        ],
+        "properties": {
+          "config": {},
+          "enabled": {
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/EventSinkKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "secret_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "NewEventSubscription": {
+        "type": "object",
+        "required": [
+          "sink_id",
+          "name",
+          "entity_types",
+          "actions"
+        ],
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "entity_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "filter": {
+            "$ref": "#/components/schemas/EventSubscriptionFilter"
+          },
+          "name": {
+            "type": "string"
+          },
+          "routing": {},
+          "sink_id": {
+            "$ref": "#/components/schemas/EventSinkID"
+          }
+        }
+      },
       "NewGroup": {
         "type": "object",
         "required": [
@@ -10131,7 +13156,9 @@
           "has_delete_remote_target",
           "has_execute_remote_target",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "has_read_audit",
+          "has_manage_event_subscription"
         ],
         "properties": {
           "created_at": {
@@ -10185,6 +13212,12 @@
             "type": "boolean"
           },
           "has_execute_remote_target": {
+            "type": "boolean"
+          },
+          "has_manage_event_subscription": {
+            "type": "boolean"
+          },
+          "has_read_audit": {
             "type": "boolean"
           },
           "has_read_class": {
@@ -10274,7 +13307,9 @@
           "CreateRemoteTarget",
           "UpdateRemoteTarget",
           "DeleteRemoteTarget",
-          "ExecuteRemoteTarget"
+          "ExecuteRemoteTarget",
+          "ReadAudit",
+          "ManageEventSubscription"
         ]
       },
       "PrincipalMemberResponse": {
@@ -11583,7 +14618,7 @@
           },
           "id": {
             "type": "integer",
-            "format": "int32"
+            "format": "int64"
           },
           "message": {
             "type": "string"
@@ -12015,6 +15050,102 @@
         "properties": {
           "query": {
             "type": "string"
+          }
+        }
+      },
+      "UpdateEventSink": {
+        "type": "object",
+        "properties": {
+          "config": {},
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EventSinkKind"
+              }
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "secret_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "UpdateEventSubscription": {
+        "type": "object",
+        "properties": {
+          "actions": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "entity_types": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "filter": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EventSubscriptionFilter"
+              }
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "routing": {},
+          "sink_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EventSinkID"
+              }
+            ]
           }
         }
       },

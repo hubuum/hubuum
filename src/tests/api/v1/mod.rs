@@ -1,5 +1,8 @@
 pub mod auth;
 pub mod classes;
+pub mod event_deliveries;
+pub mod event_subscriptions;
+pub mod events;
 pub mod groups;
 pub mod imports;
 pub mod namespaces;

@@ -2,7 +2,7 @@ use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::extractors::{AdminAccess, Authenticated};
+use crate::extractors::{AccessEventContext, AdminAccess, Authenticated};
 use crate::models::{
     Group, GroupID, GroupPermission, Namespace, NamespaceID, NewNamespaceWithAssignee, Permission,
     Permissions, PermissionsList, UpdateNamespace,
@@ -83,6 +83,7 @@ pub async fn create_namespace(
     pool: web::Data<DbPool>,
     new_namespace_request: web::Json<NewNamespaceWithAssignee>,
     requestor: AdminAccess,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let new_namespace_request = new_namespace_request.into_inner();
     debug!(
@@ -91,7 +92,8 @@ pub async fn create_namespace(
         new_namespace = new_namespace_request.name
     );
 
-    let created_namespace = new_namespace_request.save(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    let created_namespace = new_namespace_request.save(&pool, &event_context).await?;
 
     let location = api_locations::namespace(created_namespace.id)?;
     Ok(ApiResponse::created(created_namespace, location))
@@ -158,6 +160,7 @@ pub async fn update_namespace(
     requestor: Authenticated,
     namespace_id: web::Path<NamespaceID>,
     update_data: web::Json<UpdateNamespace>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     debug!(
         message = "Namespace update requested",
@@ -175,7 +178,11 @@ pub async fn update_namespace(
         namespace
     );
 
-    let updated_namespace = update_data.into_inner().update(&pool, namespace.id).await?;
+    let event_context = requestor.event_context(&req);
+    let updated_namespace = update_data
+        .into_inner()
+        .update(&pool, namespace.id, &event_context)
+        .await?;
     Ok(ApiResponse::accepted(updated_namespace))
 }
 
@@ -198,6 +205,7 @@ pub async fn delete_namespace(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     namespace_id: web::Path<NamespaceID>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     debug!(
         message = "Namespace delete requested",
@@ -214,7 +222,8 @@ pub async fn delete_namespace(
         namespace
     );
 
-    namespace.delete(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    namespace.delete(&pool, &event_context).await?;
     Ok(ApiResponse::no_content())
 }
 
@@ -350,6 +359,7 @@ pub async fn grant_namespace_group_permissions(
     requestor: Authenticated,
     params: web::Path<(NamespaceID, GroupID)>,
     permissions: web::Json<Vec<Permissions>>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let (namespace_id, group_id) = params.into_inner();
     let permissions = PermissionsList::new(permissions.into_inner());
@@ -371,7 +381,10 @@ pub async fn grant_namespace_group_permissions(
         namespace
     );
 
-    namespace.grant(&pool, group_id.id(), permissions).await?;
+    let event_context = requestor.event_context(&req);
+    namespace
+        .grant(&pool, group_id.id(), permissions, Some(&event_context))
+        .await?;
 
     Ok(ApiResponse::created_empty())
 }
@@ -401,6 +414,7 @@ pub async fn replace_namespace_group_permissions(
     requestor: Authenticated,
     params: web::Path<(NamespaceID, GroupID)>,
     permissions: web::Json<Vec<Permissions>>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let (namespace_id, group_id) = params.into_inner();
     let permissions = PermissionsList::new(permissions.into_inner());
@@ -429,8 +443,9 @@ pub async fn replace_namespace_group_permissions(
         ));
     }
 
+    let event_context = requestor.event_context(&req);
     namespace
-        .set_permissions(&pool, group_id.id(), permissions)
+        .set_permissions(&pool, group_id.id(), permissions, Some(&event_context))
         .await?;
 
     Ok(ApiResponse::ok_empty())
@@ -457,6 +472,7 @@ pub async fn revoke_namespace_group_permissions(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     params: web::Path<(NamespaceID, GroupID)>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let (namespace_id, group_id) = params.into_inner();
 
@@ -476,7 +492,10 @@ pub async fn revoke_namespace_group_permissions(
         namespace
     );
 
-    namespace.revoke_all(&pool, group_id.id()).await?;
+    let event_context = requestor.event_context(&req);
+    namespace
+        .revoke_all(&pool, group_id.id(), Some(&event_context))
+        .await?;
 
     Ok(ApiResponse::no_content())
 }
@@ -553,6 +572,7 @@ pub async fn grant_namespace_group_permission(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     params: web::Path<(NamespaceID, GroupID, Permissions)>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let (namespace_id, group_id, permission) = params.into_inner();
 
@@ -573,8 +593,14 @@ pub async fn grant_namespace_group_permission(
         namespace
     );
 
+    let event_context = requestor.event_context(&req);
     namespace
-        .grant(&pool, group_id.id(), PermissionsList::new([permission]))
+        .grant(
+            &pool,
+            group_id.id(),
+            PermissionsList::new([permission]),
+            Some(&event_context),
+        )
         .await?;
 
     Ok(ApiResponse::created_empty())
@@ -602,6 +628,7 @@ pub async fn revoke_namespace_group_permission(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     params: web::Path<(NamespaceID, GroupID, Permissions)>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let (namespace_id, group_id, permission) = params.into_inner();
 
@@ -622,8 +649,14 @@ pub async fn revoke_namespace_group_permission(
         namespace
     );
 
+    let event_context = requestor.event_context(&req);
     namespace
-        .revoke(&pool, group_id.id(), PermissionsList::new([permission]))
+        .revoke(
+            &pool,
+            group_id.id(),
+            PermissionsList::new([permission]),
+            Some(&event_context),
+        )
         .await?;
 
     Ok(ApiResponse::no_content())

@@ -14,7 +14,16 @@ categories = ["web-programming::http-server"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [workspace]
-members = ["crates/hubuum-outbound-http", "crates/hubuum-templates"]
+members = [
+    "crates/hubuum-event-sink-amqp",
+    "crates/hubuum-event-sink-email",
+    "crates/hubuum-event-sink-valkey",
+    "crates/hubuum-event-sink-webhook",
+    "crates/hubuum-event-sinks-common",
+    "crates/hubuum-events-core",
+    "crates/hubuum-outbound-http",
+    "crates/hubuum-templates",
+]
 
 [dependencies]
 actix-rt = "2"
@@ -32,6 +41,7 @@ diesel = { version = "2", features = [
     "r2d2",
     "chrono",
     "64-column-tables",
+    "uuid",
 ] }
 ipnet = "2.12"
 futures = "0.3"
@@ -44,8 +54,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
 hmac = "0.13"
-hubuum-outbound-http = { path = "crates/hubuum-outbound-http" }
+hubuum-event-sink-amqp = { path = "crates/hubuum-event-sink-amqp", optional = true }
+hubuum-event-sink-email = { path = "crates/hubuum-event-sink-email", optional = true }
+hubuum-event-sink-valkey = { path = "crates/hubuum-event-sink-valkey", optional = true }
+hubuum-event-sink-webhook = { path = "crates/hubuum-event-sink-webhook" }
+hubuum-event-sinks-common = { path = "crates/hubuum-event-sinks-common" }
 hubuum-templates = { path = "crates/hubuum-templates" }
+hubuum-events-core = { path = "crates/hubuum-events-core", features = ["schema"] }
+hubuum-outbound-http = { path = "crates/hubuum-outbound-http" }
 minijinja = { version = "2", features = ["loader", "fuel"] }
 tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "net", "io-util"] }
 tracing = "0.1"
@@ -55,13 +71,13 @@ tracing-subscriber = { version = "0.3", features = [
     "chrono",
     "json",
 ] }
-utoipa = { version = "5", features = ["actix_extras", "chrono"] }
+utoipa = { version = "5", features = ["actix_extras", "chrono", "uuid"] }
 utoipa-swagger-ui = { version = "9", features = [
     "actix-web",
     "vendored",
 ], optional = true }
 urlparse = "0.7"
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "serde"] }
 percent-encoding = "2"
 rustls = { version = "0.23", features = ["aws-lc-rs", "ring"], optional = true }
 openssl = { version = "0.10.80", optional = true }
@@ -76,9 +92,12 @@ tokio-rustls = "0.26"
 
 [features]
 default = ["swagger-ui"]
+amqp = ["dep:hubuum-event-sink-amqp"]
+email = ["dep:hubuum-event-sink-email"]
 swagger-ui = ["dep:utoipa-swagger-ui"]
 tls-rustls = ["dep:rustls", "actix-web/rustls-0_23"]
 tls-openssl = ["dep:openssl", "actix-web/openssl"]
+valkey = ["dep:hubuum-event-sink-valkey"]
 
 [profile.release]
 codegen-units = 1

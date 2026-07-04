@@ -1,12 +1,41 @@
 use diesel::prelude::*;
 
 use crate::db::traits::GetClass;
-use crate::db::{DbPool, with_connection};
+use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
+use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::{
     ClassIdSet, HubuumClass, HubuumClassID, HubuumClassRelation, HubuumClassRelationID, Namespace,
     NewHubuumClass, NewHubuumClassRelation, UpdateHubuumClass,
 };
+
+fn class_snapshot(class: &HubuumClass) -> serde_json::Value {
+    serde_json::json!({
+        "id": class.id,
+        "name": class.name,
+        "namespace_id": class.namespace_id,
+        "json_schema": class.json_schema,
+        "validate_schema": class.validate_schema,
+        "description": class.description,
+        "created_at": class.created_at,
+        "updated_at": class.updated_at,
+    })
+}
+
+fn class_event(
+    class: &HubuumClass,
+    action: Action,
+    context: &EventContext,
+    summary: impl Into<String>,
+) -> Result<NewEvent, ApiError> {
+    Ok(
+        NewEvent::new(EntityType::Class, action, context.actor_kind(), summary)?
+            .with_context(context)
+            .with_entity_id(class.id)
+            .with_entity_name(class.name.clone())
+            .with_namespace_id(class.namespace_id),
+    )
+}
 
 impl GetClass for HubuumClass {
     async fn class_from_backend(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
@@ -119,11 +148,26 @@ impl LoadClassRecord for HubuumClassID {
 }
 
 pub trait CreateClassRecord {
-    async fn create_class_record(&self, pool: &DbPool) -> Result<HubuumClass, ApiError>;
+    async fn create_class_record_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<HubuumClass, ApiError>;
+
+    async fn create_class_record(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumClass, ApiError> {
+        let _ = context;
+        self.create_class_record_without_events(pool).await
+    }
 }
 
 impl CreateClassRecord for NewHubuumClass {
-    async fn create_class_record(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
+    async fn create_class_record_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<HubuumClass, ApiError> {
         use crate::schema::hubuumclass::dsl::hubuumclass;
 
         with_connection(pool, |conn| {
@@ -132,18 +176,56 @@ impl CreateClassRecord for NewHubuumClass {
                 .get_result(conn)
         })
     }
+
+    async fn create_class_record(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumClass, ApiError> {
+        let Some(context) = context else {
+            return self.create_class_record_without_events(pool).await;
+        };
+
+        use crate::schema::hubuumclass::dsl::hubuumclass;
+
+        with_transaction(pool, |conn| -> Result<HubuumClass, ApiError> {
+            let class = diesel::insert_into(hubuumclass)
+                .values(self)
+                .get_result::<HubuumClass>(conn)?;
+            let event = class_event(
+                &class,
+                Action::Created,
+                context,
+                format!("Class '{}' created", class.name),
+            )?
+            .with_after(class_snapshot(&class));
+            emit_event(conn, &event)?;
+            Ok(class)
+        })
+    }
 }
 
 pub trait UpdateClassRecord {
-    async fn update_class_record(
+    async fn update_class_record_without_events(
         &self,
         pool: &DbPool,
         class_id: i32,
     ) -> Result<HubuumClass, ApiError>;
+
+    async fn update_class_record(
+        &self,
+        pool: &DbPool,
+        class_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumClass, ApiError> {
+        let _ = context;
+        self.update_class_record_without_events(pool, class_id)
+            .await
+    }
 }
 
 impl UpdateClassRecord for UpdateHubuumClass {
-    async fn update_class_record(
+    async fn update_class_record_without_events(
         &self,
         pool: &DbPool,
         class_id: i32,
@@ -156,20 +238,88 @@ impl UpdateClassRecord for UpdateHubuumClass {
                 .get_result(conn)
         })
     }
+
+    async fn update_class_record(
+        &self,
+        pool: &DbPool,
+        class_id: i32,
+        context: Option<&EventContext>,
+    ) -> Result<HubuumClass, ApiError> {
+        let Some(context) = context else {
+            return self
+                .update_class_record_without_events(pool, class_id)
+                .await;
+        };
+
+        use crate::schema::hubuumclass::dsl::{hubuumclass, id};
+
+        with_transaction(pool, |conn| -> Result<HubuumClass, ApiError> {
+            let before = hubuumclass
+                .filter(id.eq(class_id))
+                .first::<HubuumClass>(conn)?;
+            let updated = diesel::update(hubuumclass.filter(id.eq(class_id)))
+                .set(self)
+                .get_result::<HubuumClass>(conn)?;
+            let event = class_event(
+                &updated,
+                Action::Updated,
+                context,
+                format!("Class '{}' updated", updated.name),
+            )?
+            .with_before(class_snapshot(&before))
+            .with_after(class_snapshot(&updated));
+            emit_event(conn, &event)?;
+            Ok(updated)
+        })
+    }
 }
 
 pub trait DeleteClassRecord {
-    async fn delete_class_record(&self, pool: &DbPool) -> Result<(), ApiError>;
+    async fn delete_class_record_without_events(&self, pool: &DbPool) -> Result<(), ApiError>;
+
+    async fn delete_class_record(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<(), ApiError> {
+        let _ = context;
+        self.delete_class_record_without_events(pool).await
+    }
 }
 
 impl DeleteClassRecord for HubuumClass {
-    async fn delete_class_record(&self, pool: &DbPool) -> Result<(), ApiError> {
+    async fn delete_class_record_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
 
         with_connection(pool, |conn| {
             diesel::delete(hubuumclass.filter(id.eq(self.id))).execute(conn)
         })?;
         Ok(())
+    }
+
+    async fn delete_class_record(
+        &self,
+        pool: &DbPool,
+        context: Option<&EventContext>,
+    ) -> Result<(), ApiError> {
+        let Some(context) = context else {
+            return self.delete_class_record_without_events(pool).await;
+        };
+
+        use crate::schema::hubuumclass::dsl::{hubuumclass, id};
+
+        with_transaction(pool, |conn| -> Result<(), ApiError> {
+            diesel::delete(hubuumclass.filter(id.eq(self.id))).execute(conn)?;
+            let event = class_event(
+                self,
+                Action::Deleted,
+                context,
+                format!("Class '{}' deleted", self.name),
+            )?
+            .with_before(class_snapshot(self));
+            emit_event(conn, &event)?;
+            Ok(())
+        })
     }
 }
 

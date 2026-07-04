@@ -1,6 +1,6 @@
 use actix_service::{Service, Transform};
 use actix_web::{
-    Error,
+    Error, HttpMessage,
     dev::ServiceRequest,
     dev::ServiceResponse,
     http::header::{HeaderName, HeaderValue},
@@ -10,6 +10,8 @@ use std::task::{Context, Poll};
 use std::time::Instant;
 use tracing::{Instrument, Level, info, span};
 use uuid::Uuid;
+
+use crate::events::RequestProvenance;
 
 use super::client_allowlist::{ProxyTrust, extract_client_ip};
 
@@ -79,7 +81,8 @@ where
     }
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
-        let request_id = Uuid::new_v4().to_string(); // Generate a new UUID
+        let request_id = Uuid::new_v4();
+        let request_id_s = request_id.to_string();
 
         // Extract the correlation ID from the request headers, could be None
         let correlation_id = req
@@ -87,8 +90,10 @@ where
             .get(&CORRELATION_ID)
             .and_then(|hv| hv.to_str().ok())
             .map(str::to_string);
+        req.extensions_mut()
+            .insert(RequestProvenance::new(request_id, correlation_id.clone()));
 
-        let span = span!(Level::INFO, "request", request_id = %request_id, correlation_id = ?correlation_id);
+        let span = span!(Level::INFO, "request", request_id = %request_id_s, correlation_id = ?correlation_id);
 
         let method = req.method().to_string();
         let path = req.path().to_string();
@@ -96,7 +101,7 @@ where
         let client_ip_s = client_ip.map(|ip| ip.to_string());
 
         let start_time = Instant::now();
-        info!(request_id = %request_id, correlation_id = ?correlation_id, message = "Request start", method = &method, path = &path, client_ip = client_ip_s.as_deref());
+        info!(request_id = %request_id_s, correlation_id = ?correlation_id, message = "Request start", method = &method, path = &path, client_ip = client_ip_s.as_deref());
 
         let fut = self.service.call(req);
 
@@ -105,7 +110,7 @@ where
                 let mut res = fut.await?;
 
                 // Add the request ID and correlation ID to the response headers
-                res.headers_mut().insert(REQUEST_ID, request_id.parse().unwrap_or_else(|_| HeaderValue::from_static("<failed>")));
+                res.headers_mut().insert(REQUEST_ID, request_id_s.parse().unwrap_or_else(|_| HeaderValue::from_static("<failed>")));
                 if let Some(correlation_id) = correlation_id {
                     res.headers_mut().insert(
                         CORRELATION_ID,

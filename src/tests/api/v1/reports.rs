@@ -92,7 +92,7 @@ mod tests {
 
         let mut created = Vec::new();
         for object in objects {
-            created.push(object.save(pool).await.unwrap());
+            created.push(object.save_without_events(pool).await.unwrap());
         }
         created
     }
@@ -108,7 +108,7 @@ mod tests {
             forward_template_alias: None,
             reverse_template_alias: None,
         }
-        .save(pool)
+        .save_without_events(pool)
         .await
         .unwrap()
     }
@@ -125,7 +125,7 @@ mod tests {
             json_schema: None,
             validate_schema: Some(false),
         }
-        .save(pool)
+        .save_without_events(pool)
         .await
         .unwrap()
     }
@@ -141,7 +141,7 @@ mod tests {
             to_hubuum_object_id: to_object_id,
             class_relation_id,
         }
-        .save(pool)
+        .save_without_events(pool)
         .await
         .unwrap()
     }
@@ -170,7 +170,7 @@ mod tests {
             default_missing_data_policy: None,
             default_limits: None,
         }
-        .save(pool)
+        .save_without_events(pool)
         .await
         .unwrap();
 
@@ -294,7 +294,7 @@ mod tests {
             hubuum_class_id: host_class.id,
             data: serde_json::json!({}),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let room = NewHubuumObject {
@@ -304,7 +304,7 @@ mod tests {
             hubuum_class_id: room_class.id,
             data: serde_json::json!({}),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let class_relation =
@@ -419,7 +419,7 @@ mod tests {
             template: Some("changed output".to_string()),
             ..empty_update_template_payload()
         }
-        .update(&context.pool, template_id)
+        .update_without_events(&context.pool, template_id)
         .await
         .unwrap();
 
@@ -430,7 +430,7 @@ mod tests {
             hubuum_class_id: class.id,
             data: serde_json::json!({"hostname": "report-cache-01", "owner": "carol"}),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -538,7 +538,7 @@ mod tests {
             default_missing_data_policy: None,
             default_limits: None,
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -659,7 +659,7 @@ mod tests {
             default_missing_data_policy: None,
             default_limits: None,
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -708,7 +708,7 @@ mod tests {
             default_missing_data_policy: None,
             default_limits: None,
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -762,7 +762,7 @@ mod tests {
                 default_missing_data_policy: None,
                 default_limits: None,
             }
-.save(&context.pool)
+.save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -819,7 +819,7 @@ mod tests {
             default_missing_data_policy: None,
             default_limits: None,
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -1169,7 +1169,10 @@ mod tests {
         assert_response_status(output_resp, StatusCode::NOT_FOUND).await;
 
         cleanup(&classes).await;
-        other_user.delete(&context.pool).await.unwrap();
+        other_user
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
     }
 
     #[rstest]
@@ -1205,7 +1208,7 @@ mod tests {
             hubuum_class_id: host_class.id,
             data: serde_json::json!({}),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let room = NewHubuumObject {
@@ -1215,7 +1218,7 @@ mod tests {
             hubuum_class_id: room_class.id,
             data: serde_json::json!({}),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let person = NewHubuumObject {
@@ -1225,7 +1228,7 @@ mod tests {
             hubuum_class_id: person_class.id,
             data: serde_json::json!({}),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -1235,7 +1238,7 @@ mod tests {
             forward_template_alias: Some("rooms".to_string()),
             reverse_template_alias: Some("hosts".to_string()),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let room_person_relation = NewHubuumClassRelation {
@@ -1244,7 +1247,7 @@ mod tests {
             forward_template_alias: Some("persons".to_string()),
             reverse_template_alias: Some("rooms".to_string()),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let _ =
@@ -1346,7 +1349,7 @@ mod tests {
             hubuum_class_id: host_class.id,
             data: serde_json::json!({}),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let room_a = NewHubuumObject {
@@ -1356,7 +1359,7 @@ mod tests {
             hubuum_class_id: room_class.id,
             data: serde_json::json!({}),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let room_b = NewHubuumObject {
@@ -1366,7 +1369,7 @@ mod tests {
             hubuum_class_id: room_class.id,
             data: serde_json::json!({}),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let person = NewHubuumObject {
@@ -1376,7 +1379,7 @@ mod tests {
             hubuum_class_id: person_class.id,
             data: serde_json::json!({}),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -1386,7 +1389,7 @@ mod tests {
             forward_template_alias: Some("rooms".to_string()),
             reverse_template_alias: Some("hosts".to_string()),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let room_person_relation = NewHubuumClassRelation {
@@ -1395,7 +1398,7 @@ mod tests {
             forward_template_alias: Some("persons".to_string()),
             reverse_template_alias: Some("rooms".to_string()),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -1847,19 +1850,19 @@ mod tests {
         };
 
         let host_a = make_object("host-a", host_class.id)
-            .save(&context.pool)
+            .save_without_events(&context.pool)
             .await
             .unwrap();
         let host_b = make_object("host-b", host_class.id)
-            .save(&context.pool)
+            .save_without_events(&context.pool)
             .await
             .unwrap();
         let room_a = make_object("room-a", room_class.id)
-            .save(&context.pool)
+            .save_without_events(&context.pool)
             .await
             .unwrap();
         let room_b = make_object("room-b", room_class.id)
-            .save(&context.pool)
+            .save_without_events(&context.pool)
             .await
             .unwrap();
 
@@ -1869,7 +1872,7 @@ mod tests {
             forward_template_alias: Some("rooms".to_string()),
             reverse_template_alias: Some("hosts".to_string()),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -1893,7 +1896,7 @@ mod tests {
                 default_missing_data_policy: None,
                 default_limits: None,
             }
-.save(&context.pool)
+.save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -1953,7 +1956,7 @@ mod tests {
             hubuum_class_id: host_class.id,
             data: serde_json::json!({}),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -1968,7 +1971,7 @@ mod tests {
                     hubuum_class_id: room_class.id,
                     data: serde_json::json!({}),
                 }
-                .save(&context.pool)
+                .save_without_events(&context.pool)
                 .await
                 .unwrap(),
             );
@@ -2084,7 +2087,7 @@ mod tests {
             forward_template_alias: Some("rooms".to_string()),
             reverse_template_alias: Some("hosts".to_string()),
         }
-        .save(&context.pool)
+        .save_without_events(&context.pool)
         .await
         .unwrap();
         let template = NewReportTemplate {
@@ -2102,7 +2105,7 @@ mod tests {
                 default_missing_data_policy: None,
                 default_limits: None,
             }
-.save(&context.pool)
+.save_without_events(&context.pool)
         .await
         .unwrap();
 
@@ -2119,7 +2122,7 @@ mod tests {
                     hubuum_class_id: host_class.id,
                     data: serde_json::json!({}),
                 }
-                .save(&context.pool)
+                .save_without_events(&context.pool)
                 .await
                 .unwrap();
                 for room_index in 0..2 {
@@ -2130,7 +2133,7 @@ mod tests {
                         hubuum_class_id: room_class.id,
                         data: serde_json::json!({}),
                     }
-                    .save(&context.pool)
+                    .save_without_events(&context.pool)
                     .await
                     .unwrap();
                     let _ =

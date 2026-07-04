@@ -4,6 +4,7 @@ use crate::db::traits::namespace::{
     UpdateNamespaceRecord,
 };
 use crate::errors::ApiError;
+use crate::events::EventContext;
 use crate::models::group::GroupID;
 use crate::models::namespace::{
     Namespace, NamespaceID, NewNamespace, NewNamespaceWithAssignee, UpdateNamespace,
@@ -19,40 +20,85 @@ use crate::traits::{
 impl SaveAdapter for Namespace {
     type Output = Namespace;
 
-    async fn save_adapter(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
+    async fn save_adapter_without_events(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
         let updated_namespace = UpdateNamespace {
             name: Some(self.name.clone()),
             description: Some(self.description.clone()),
         };
-        updated_namespace.update(pool, self.id).await
+        updated_namespace.update_without_events(pool, self.id).await
+    }
+
+    async fn save_adapter(
+        &self,
+        pool: &DbPool,
+        context: &EventContext,
+    ) -> Result<Self::Output, ApiError> {
+        let updated_namespace = UpdateNamespace {
+            name: Some(self.name.clone()),
+            description: Some(self.description.clone()),
+        };
+        updated_namespace
+            .update_namespace_record(pool, self.id, Some(context))
+            .await
     }
 }
 
 impl DeleteAdapter for Namespace {
-    async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
-        self.delete_namespace_record(pool).await
+    async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
+        self.delete_namespace_record_without_events(pool).await
+    }
+
+    async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
+        self.delete_namespace_record(pool, Some(context)).await
     }
 }
 
 impl DeleteAdapter for NamespaceID {
-    async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
-        self.delete_namespace_record(pool).await
+    async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
+        self.delete_namespace_record_without_events(pool).await
+    }
+
+    async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
+        self.delete_namespace_record(pool, Some(context)).await
     }
 }
 
 impl UpdateAdapter for UpdateNamespace {
     type Output = Namespace;
 
-    async fn update_adapter(&self, pool: &DbPool, nid: i32) -> Result<Self::Output, ApiError> {
-        self.update_namespace_record(pool, nid).await
+    async fn update_adapter_without_events(
+        &self,
+        pool: &DbPool,
+        nid: i32,
+    ) -> Result<Self::Output, ApiError> {
+        self.update_namespace_record_without_events(pool, nid).await
+    }
+
+    async fn update_adapter(
+        &self,
+        pool: &DbPool,
+        nid: i32,
+        context: &EventContext,
+    ) -> Result<Self::Output, ApiError> {
+        self.update_namespace_record(pool, nid, Some(context)).await
     }
 }
 
 impl SaveAdapter for NewNamespaceWithAssignee {
     type Output = Namespace;
 
-    async fn save_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        self.save_namespace_with_assignee_record(pool).await
+    async fn save_adapter_without_events(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
+        self.save_namespace_with_assignee_record_without_events(pool)
+            .await
+    }
+
+    async fn save_adapter(
+        &self,
+        pool: &DbPool,
+        context: &EventContext,
+    ) -> Result<Namespace, ApiError> {
+        self.save_namespace_with_assignee_record(pool, Some(context))
+            .await
     }
 }
 
@@ -117,7 +163,7 @@ impl NewNamespace {
     where
         C: BackendContext + ?Sized,
     {
-        self.save_namespace_for_group_record(backend.db_pool(), assignee.id())
+        self.save_namespace_for_group_record_without_events(backend.db_pool(), assignee.id())
             .await
     }
 
@@ -134,8 +180,11 @@ impl NewNamespace {
     where
         C: BackendContext + ?Sized,
     {
-        self.save_namespace_for_group_record(backend.db_pool(), ns_with_assignee.group_id)
-            .await
+        self.save_namespace_for_group_record_without_events(
+            backend.db_pool(),
+            ns_with_assignee.group_id,
+        )
+        .await
     }
 }
 

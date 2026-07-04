@@ -68,7 +68,10 @@ async fn test_validate_object(#[case] json_data: &str, #[case] expected: bool) {
     let pool = ns.pool.clone();
 
     // Save the class and build the new object.
-    let class = new_class.save(&pool).await.expect("Failed to create class");
+    let class = new_class
+        .save_without_events(&pool)
+        .await
+        .expect("Failed to create class");
     let object = NewHubuumObject {
         name: obj_name,
         namespace_id: ns.namespace.id,
@@ -109,7 +112,10 @@ async fn test_validate_update_object(#[case] json_data: &str, #[case] expected: 
     let pool = ns.pool.clone();
 
     // Save the class and then create an object with the base data.
-    let class = new_class.save(&pool).await.expect("Failed to create class");
+    let class = new_class
+        .save_without_events(&pool)
+        .await
+        .expect("Failed to create class");
     let object = NewHubuumObject {
         name: obj_name,
         namespace_id: ns.namespace.id,
@@ -117,7 +123,7 @@ async fn test_validate_update_object(#[case] json_data: &str, #[case] expected: 
         data: base_data,
         description: "Test object".to_string(),
     }
-    .save(&pool)
+    .save_without_events(&pool)
     .await
     .expect("Failed to create object");
 

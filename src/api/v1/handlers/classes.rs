@@ -9,7 +9,7 @@ use crate::can;
 use crate::db::DbPool;
 use crate::db::traits::{ClassRelation, ObjectRelationMemberships, UserPermissions};
 use crate::errors::ApiError;
-use crate::extractors::Authenticated;
+use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::traits::{ExpandNamespace, ToHubuumObjects};
 use crate::pagination::{
     count_query_options, page_limits, prepare_db_pagination, validate_page_limit,
@@ -234,6 +234,7 @@ async fn create_class(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     class_data: web::Json<NewHubuumClass>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let class_data = class_data.into_inner();
@@ -253,8 +254,9 @@ async fn create_class(
         namespace
     );
 
+    let event_context = requestor.event_context(&req);
     let class = class_data
-        .save(&pool)
+        .save(&pool, &event_context)
         .await?
         .expand_namespace(&pool)
         .await?;
@@ -327,6 +329,7 @@ async fn update_class(
     requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     class_data: web::Json<UpdateHubuumClass>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let class_id = class_id.into_inner();
@@ -359,8 +362,9 @@ async fn update_class(
         );
     }
 
+    let event_context = requestor.event_context(&req);
     let class = class_data
-        .update(&pool, class.id)
+        .update(&pool, class.id, &event_context)
         .await?
         .expand_namespace(&pool)
         .await?;
@@ -386,6 +390,7 @@ async fn delete_class(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let class_id = class_id.into_inner();
@@ -405,7 +410,8 @@ async fn delete_class(
         class
     );
 
-    class.delete(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    class.delete(&pool, &event_context).await?;
     Ok(ApiResponse::no_content())
 }
 
@@ -554,6 +560,7 @@ async fn create_class_relation(
     requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     relation_data: web::Json<NewHubuumClassRelationFromClass>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::models::NewHubuumClassRelation;
     use crate::traits::NamespaceAccessors;
@@ -586,7 +593,8 @@ async fn create_class_relation(
         ids.1
     );
 
-    let relation = relation.save(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    let relation = relation.save(&pool, &event_context).await?;
 
     let location = api_locations::class_relation(class_id.id(), relation.id())?;
     Ok(ApiResponse::created(relation, location))
@@ -613,6 +621,7 @@ async fn delete_class_relation(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumClassRelationID)>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::traits::NamespaceAccessors;
 
@@ -642,7 +651,8 @@ async fn delete_class_relation(
     if relation.from_hubuum_class_id == class_id.id()
         || relation.to_hubuum_class_id == class_id.id()
     {
-        relation.delete(&pool).await?;
+        let event_context = requestor.event_context(&req);
+        relation.delete(&pool, &event_context).await?;
         Ok(ApiResponse::no_content())
     } else {
         info!(
@@ -846,6 +856,7 @@ async fn create_object_in_class(
     requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     object_data: web::Json<NewHubuumObject>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let class_id = class_id.into_inner();
@@ -868,7 +879,8 @@ async fn create_object_in_class(
     );
     ensure_new_object_matches_path_class(&object_data, &class)?;
 
-    let object = object_data.save(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    let object = object_data.save(&pool, &event_context).await?;
 
     let location = api_locations::class_object(class.id, object.id())?;
     Ok(ApiResponse::created(object, location))
@@ -941,6 +953,7 @@ async fn patch_object_in_class(
     requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumObjectID)>,
     object_data: web::Json<UpdateHubuumObject>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let (class_id, object_id) = paths.into_inner();
@@ -964,7 +977,8 @@ async fn patch_object_in_class(
     );
     ensure_object_update_stays_in_path_class(&object_data, &object)?;
 
-    let object = object_data.update(&pool, object.id).await?;
+    let event_context = requestor.event_context(&req);
+    let object = object_data.update(&pool, object.id, &event_context).await?;
     Ok(ApiResponse::new(object, StatusCode::OK))
 }
 
@@ -988,6 +1002,7 @@ async fn delete_object_in_class(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumObjectID)>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let (class_id, object_id) = paths.into_inner();
@@ -1009,7 +1024,8 @@ async fn delete_object_in_class(
         object
     );
 
-    object.delete(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    object.delete(&pool, &event_context).await?;
     Ok(ApiResponse::no_content())
 }
 
@@ -1304,6 +1320,7 @@ async fn delete_object_relation(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumObjectID, HubuumClassID, HubuumObjectID)>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let (from_class, from_object, to_class, to_object) = paths.into_inner();
@@ -1362,7 +1379,8 @@ async fn delete_object_relation(
         relation_id_actual = relation.id()
     );
 
-    relation.delete(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    relation.delete(&pool, &event_context).await?;
     Ok(ApiResponse::no_content())
 }
 
@@ -1390,6 +1408,7 @@ async fn create_object_relation(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumObjectID, HubuumClassID, HubuumObjectID)>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let (from_class, from_object, to_class, to_object) = paths.into_inner();
@@ -1436,7 +1455,8 @@ async fn create_object_relation(
         to_hubuum_object_id: to_object.id(),
     };
 
-    let relation = relation.save(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    let relation = relation.save(&pool, &event_context).await?;
 
     let location = api_locations::object_relation(
         from_class.id(),

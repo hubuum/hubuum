@@ -4,6 +4,7 @@ use crate::db::traits::relations::{
 };
 
 use crate::errors::ApiError;
+use crate::events::EventContext;
 
 use crate::models::{
     HubuumObjectRelation, HubuumObjectRelationID, HubuumObjectWithPath, NewHubuumObjectRelation,
@@ -39,22 +40,45 @@ impl InstanceAdapter<HubuumObjectRelation> for HubuumObjectRelation {
 }
 
 impl DeleteAdapter for HubuumObjectRelation {
-    async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
-        self.delete_object_relation_record(pool).await
+    async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
+        self.delete_object_relation_record_without_events(pool)
+            .await
+    }
+
+    async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
+        self.delete_object_relation_record(pool, Some(context))
+            .await
     }
 }
 
 impl DeleteAdapter for HubuumObjectRelationID {
-    async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
-        self.delete_object_relation_record(pool).await
+    async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
+        self.delete_object_relation_record_without_events(pool)
+            .await
+    }
+
+    async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
+        self.delete_object_relation_record(pool, Some(context))
+            .await
     }
 }
 
 impl SaveAdapter for NewHubuumObjectRelation {
     type Output = HubuumObjectRelation;
 
-    async fn save_adapter(&self, pool: &DbPool) -> Result<HubuumObjectRelation, ApiError> {
-        self.save_object_relation_record(pool).await
+    async fn save_adapter_without_events(
+        &self,
+        pool: &DbPool,
+    ) -> Result<HubuumObjectRelation, ApiError> {
+        self.save_object_relation_record_without_events(pool).await
+    }
+
+    async fn save_adapter(
+        &self,
+        pool: &DbPool,
+        context: &EventContext,
+    ) -> Result<HubuumObjectRelation, ApiError> {
+        self.save_object_relation_record(pool, Some(context)).await
     }
 }
 

@@ -8,7 +8,7 @@ use crate::can;
 use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
 use crate::errors::ApiError;
-use crate::extractors::Authenticated;
+use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::namespace::user_can_on_any;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
@@ -39,6 +39,7 @@ pub async fn create_template(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     template: web::Json<NewReportTemplate>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let template = template.into_inner();
@@ -58,7 +59,8 @@ pub async fn create_template(
         NamespaceID::new(template.namespace_id)?
     );
 
-    let created = template.save(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    let created = template.save(&pool, &event_context).await?;
 
     let location = api_locations::template(created.id)?;
     Ok(ApiResponse::created(created, location))
@@ -239,6 +241,7 @@ pub async fn patch_template(
     requestor: Authenticated,
     template_id: web::Path<ReportTemplateID>,
     update: web::Json<UpdateReportTemplate>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let template_id = template_id.into_inner();
@@ -272,7 +275,8 @@ pub async fn patch_template(
         );
     }
 
-    let updated = update.update(&pool, existing.id).await?;
+    let event_context = requestor.event_context(&req);
+    let updated = update.update(&pool, existing.id, &event_context).await?;
 
     Ok(ApiResponse::new(updated, StatusCode::OK))
 }
@@ -297,6 +301,7 @@ pub async fn delete_template(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     template_id: web::Path<ReportTemplateID>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let template_id = template_id.into_inner();
@@ -317,7 +322,8 @@ pub async fn delete_template(
         NamespaceID::new(template.namespace_id)?
     );
 
-    template_id.delete(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    template_id.delete(&pool, &event_context).await?;
 
     Ok(ApiResponse::no_content())
 }

@@ -3,7 +3,7 @@ use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::extractors::{AdminAccess, AdminOrSelfAccess};
+use crate::extractors::{AccessEventContext, AdminAccess, AdminOrSelfAccess};
 use crate::models::search::parse_query_parameter;
 use crate::models::user::{NewUser, UpdateUser, UserID, UserResponse, UserWithName};
 use crate::pagination::{count_query_options, prepare_db_pagination};
@@ -71,6 +71,7 @@ pub async fn create_user(
     pool: web::Data<DbPool>,
     new_user: web::Json<NewUser>,
     requestor: AdminAccess,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     debug!(
         message = "User create requested",
@@ -78,7 +79,11 @@ pub async fn create_user(
         new_user = new_user.name.as_str()
     );
 
-    let user = new_user.into_inner().save(&pool).await?;
+    let event_context = requestor.event_context(&req);
+    let user = new_user
+        .into_inner()
+        .save(&pool, Some(&event_context))
+        .await?;
     let response = user.to_response(&pool).await?;
 
     let location = api_locations::user(user.id)?;
@@ -141,6 +146,7 @@ pub async fn update_user(
     user_id: web::Path<UserID>,
     updated_user: web::Json<UpdateUser>,
     requestor: AdminAccess,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = user_id.into_inner().user(&pool).await?;
     debug!(
@@ -149,7 +155,11 @@ pub async fn update_user(
         requestor = requestor.user.id
     );
 
-    let user = updated_user.into_inner().save(user.id, &pool).await?;
+    let event_context = requestor.event_context(&req);
+    let user = updated_user
+        .into_inner()
+        .save(user.id, &pool, Some(&event_context))
+        .await?;
     Ok(ApiResponse::new(
         user.to_response(&pool).await?,
         StatusCode::OK,
@@ -175,6 +185,7 @@ pub async fn delete_user(
     pool: web::Data<DbPool>,
     user_id: web::Path<UserID>,
     requestor: AdminAccess,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     debug!(
         message = "User delete requested",
@@ -182,7 +193,8 @@ pub async fn delete_user(
         requestor = requestor.user.id
     );
 
-    let delete_result = user_id.delete(&pool).await;
+    let event_context = requestor.event_context(&req);
+    let delete_result = user_id.delete(&pool, Some(&event_context)).await;
 
     match delete_result {
         Ok(_) => Ok(ApiResponse::no_content()),

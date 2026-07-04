@@ -6,6 +6,7 @@ use crate::db::traits::class::{
     ClassNamespaceLookup, CreateClassRecord, DeleteClassRecord, LoadClassRecord, UpdateClassRecord,
 };
 use crate::errors::ApiError;
+use crate::events::EventContext;
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 
 use crate::models::{
@@ -15,7 +16,7 @@ use crate::models::{
 impl SaveAdapter for HubuumClass {
     type Output = HubuumClass;
 
-    async fn save_adapter(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
+    async fn save_adapter_without_events(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
         let update = UpdateHubuumClass {
             name: Some(self.name.clone()),
             namespace_id: Some(self.namespace_id),
@@ -24,29 +25,74 @@ impl SaveAdapter for HubuumClass {
             description: Some(self.description.clone()),
         };
 
-        update.update(pool, self.id).await
+        update.update_without_events(pool, self.id).await
+    }
+
+    async fn save_adapter(
+        &self,
+        pool: &DbPool,
+        context: &EventContext,
+    ) -> Result<Self::Output, ApiError> {
+        let update = UpdateHubuumClass {
+            name: Some(self.name.clone()),
+            namespace_id: Some(self.namespace_id),
+            json_schema: self.json_schema.clone(),
+            validate_schema: Some(self.validate_schema),
+            description: Some(self.description.clone()),
+        };
+
+        update
+            .update_class_record(pool, self.id, Some(context))
+            .await
     }
 }
 
 impl DeleteAdapter for HubuumClass {
-    async fn delete_adapter(&self, pool: &DbPool) -> Result<(), ApiError> {
-        self.delete_class_record(pool).await
+    async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
+        self.delete_class_record_without_events(pool).await
+    }
+
+    async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
+        self.delete_class_record(pool, Some(context)).await
     }
 }
 
 impl SaveAdapter for NewHubuumClass {
     type Output = HubuumClass;
 
-    async fn save_adapter(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
-        self.create_class_record(pool).await
+    async fn save_adapter_without_events(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
+        self.create_class_record_without_events(pool).await
+    }
+
+    async fn save_adapter(
+        &self,
+        pool: &DbPool,
+        context: &EventContext,
+    ) -> Result<HubuumClass, ApiError> {
+        self.create_class_record(pool, Some(context)).await
     }
 }
 
 impl UpdateAdapter for UpdateHubuumClass {
     type Output = HubuumClass;
 
-    async fn update_adapter(&self, pool: &DbPool, class_id: i32) -> Result<HubuumClass, ApiError> {
-        self.update_class_record(pool, class_id).await
+    async fn update_adapter_without_events(
+        &self,
+        pool: &DbPool,
+        class_id: i32,
+    ) -> Result<HubuumClass, ApiError> {
+        self.update_class_record_without_events(pool, class_id)
+            .await
+    }
+
+    async fn update_adapter(
+        &self,
+        pool: &DbPool,
+        class_id: i32,
+        context: &EventContext,
+    ) -> Result<HubuumClass, ApiError> {
+        self.update_class_record(pool, class_id, Some(context))
+            .await
     }
 }
 

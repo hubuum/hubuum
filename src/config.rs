@@ -17,6 +17,24 @@ use crate::errors::ApiError;
 pub const DEFAULT_PAGE_LIMIT: usize = 100;
 pub const MAX_PAGE_LIMIT: usize = 250;
 pub const DEFAULT_TASK_POLL_INTERVAL_MS: u64 = 200;
+pub const DEFAULT_EVENT_FANOUT_WORKERS: usize = 1;
+pub const DEFAULT_EVENT_FANOUT_BATCH_SIZE: usize = 100;
+pub const DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS: u64 = 250;
+pub const DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS: u64 = 30_000;
+pub const DEFAULT_EVENT_DELIVERY_WORKERS: usize = 0;
+pub const DEFAULT_EVENT_DELIVERY_BATCH_SIZE: usize = 100;
+pub const DEFAULT_EVENT_DELIVERY_POLL_INTERVAL_MS: u64 = 500;
+pub const DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS: u64 = 30_000;
+pub const DEFAULT_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS: u64 = 25_000;
+pub const DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS: u64 = 1_000;
+pub const DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS: u64 = 300_000;
+pub const DEFAULT_EVENT_DELIVERY_MAX_ATTEMPTS: i32 = 10;
+pub const DEFAULT_EVENT_RETENTION_PURGE_ENABLED: bool = false;
+pub const DEFAULT_EVENT_RETENTION_DAYS: i64 = 365;
+pub const DEFAULT_EVENT_DELIVERY_RETENTION_DAYS: i64 = 30;
+pub const DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS: u64 = 3_600;
+pub const DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE: usize = 1_000;
+pub const DEFAULT_EVENT_RETENTION_FILE_ARCHIVE_ENABLED: bool = false;
 pub const DEFAULT_REPORT_OUTPUT_RETENTION_HOURS: i64 = 24 * 7;
 pub const DEFAULT_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS: u64 = 300;
 pub const DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER: usize = 100;
@@ -148,6 +166,158 @@ pub struct AppConfig {
         default_value_t = DEFAULT_TASK_POLL_INTERVAL_MS
     )]
     pub task_poll_interval_ms: u64,
+
+    /// Number of background event fan-out workers
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_FANOUT_WORKERS",
+        default_value_t = DEFAULT_EVENT_FANOUT_WORKERS
+    )]
+    pub event_fanout_workers: usize,
+
+    /// Number of events an event fan-out worker claims per batch
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_FANOUT_BATCH_SIZE",
+        default_value_t = DEFAULT_EVENT_FANOUT_BATCH_SIZE
+    )]
+    pub event_fanout_batch_size: usize,
+
+    /// How long idle event fan-out workers sleep between queue polls
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_FANOUT_POLL_INTERVAL_MS",
+        default_value_t = DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS
+    )]
+    pub event_fanout_poll_interval_ms: u64,
+
+    /// How long event fan-out claims remain locked before another worker may retry
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS",
+        default_value_t = DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS
+    )]
+    pub event_fanout_lock_timeout_ms: u64,
+
+    /// Number of background event delivery workers. Zero disables transport delivery.
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_DELIVERY_WORKERS",
+        default_value_t = DEFAULT_EVENT_DELIVERY_WORKERS
+    )]
+    pub event_delivery_workers: usize,
+
+    /// Number of delivery rows an event delivery worker claims per batch
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_DELIVERY_BATCH_SIZE",
+        default_value_t = DEFAULT_EVENT_DELIVERY_BATCH_SIZE
+    )]
+    pub event_delivery_batch_size: usize,
+
+    /// How long idle event delivery workers sleep between queue polls
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_DELIVERY_POLL_INTERVAL_MS",
+        default_value_t = DEFAULT_EVENT_DELIVERY_POLL_INTERVAL_MS
+    )]
+    pub event_delivery_poll_interval_ms: u64,
+
+    /// How long event delivery claims remain locked before another worker may retry
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS",
+        default_value_t = DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS
+    )]
+    pub event_delivery_lock_timeout_ms: u64,
+
+    /// Wall-clock timeout for one event delivery transport attempt.
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS",
+        default_value_t = DEFAULT_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS
+    )]
+    pub event_delivery_transport_timeout_ms: u64,
+
+    /// Initial event delivery retry backoff
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS",
+        default_value_t = DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS
+    )]
+    pub event_delivery_retry_backoff_base_ms: u64,
+
+    /// Maximum event delivery retry backoff
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS",
+        default_value_t = DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS
+    )]
+    pub event_delivery_retry_backoff_max_ms: u64,
+
+    /// Delivery attempts before a row moves to dead-letter status
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_DELIVERY_MAX_ATTEMPTS",
+        default_value_t = DEFAULT_EVENT_DELIVERY_MAX_ATTEMPTS
+    )]
+    pub event_delivery_max_attempts: i32,
+
+    /// Enable the destructive event retention purge worker.
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_RETENTION_PURGE_ENABLED",
+        default_value_t = DEFAULT_EVENT_RETENTION_PURGE_ENABLED
+    )]
+    pub event_retention_purge_enabled: bool,
+
+    /// How long audit/event rows are retained before purge eligibility.
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_RETENTION_DAYS",
+        default_value_t = DEFAULT_EVENT_RETENTION_DAYS
+    )]
+    pub event_retention_days: i64,
+
+    /// How long terminal event delivery rows are retained before purge eligibility.
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_DELIVERY_RETENTION_DAYS",
+        default_value_t = DEFAULT_EVENT_DELIVERY_RETENTION_DAYS
+    )]
+    pub event_delivery_retention_days: i64,
+
+    /// How often the event retention purge worker wakes up when enabled.
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_RETENTION_PURGE_INTERVAL_SECONDS",
+        default_value_t = DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS
+    )]
+    pub event_retention_purge_interval_seconds: u64,
+
+    /// Maximum events deleted in one retention purge transaction.
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE",
+        default_value_t = DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE
+    )]
+    pub event_retention_purge_batch_size: usize,
+
+    /// Enable local JSONL file archive writes before deleting eligible events.
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED",
+        default_value_t = DEFAULT_EVENT_RETENTION_FILE_ARCHIVE_ENABLED
+    )]
+    pub event_retention_file_archive_enabled: bool,
+
+    /// Optional JSONL archive path for events selected by the retention purge.
+    #[clap(
+        long,
+        env = "HUBUUM_EVENT_RETENTION_ARCHIVE_PATH",
+        default_value = None
+    )]
+    pub event_retention_archive_path: Option<String>,
 
     /// How long successful stored report outputs remain available for refetch.
     #[clap(
@@ -491,6 +661,117 @@ impl AppConfig {
             ));
         }
 
+        if self.event_fanout_workers == 0 {
+            return Err(ApiError::BadRequest(
+                "event_fanout_workers must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.event_fanout_batch_size == 0 {
+            return Err(ApiError::BadRequest(
+                "event_fanout_batch_size must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.event_fanout_poll_interval_ms == 0 {
+            return Err(ApiError::BadRequest(
+                "event_fanout_poll_interval_ms must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.event_fanout_lock_timeout_ms == 0 {
+            return Err(ApiError::BadRequest(
+                "event_fanout_lock_timeout_ms must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.event_delivery_batch_size == 0 {
+            return Err(ApiError::BadRequest(
+                "event_delivery_batch_size must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.event_delivery_poll_interval_ms == 0 {
+            return Err(ApiError::BadRequest(
+                "event_delivery_poll_interval_ms must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.event_delivery_lock_timeout_ms == 0 {
+            return Err(ApiError::BadRequest(
+                "event_delivery_lock_timeout_ms must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.event_delivery_transport_timeout_ms == 0 {
+            return Err(ApiError::BadRequest(
+                "event_delivery_transport_timeout_ms must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.event_delivery_transport_timeout_ms >= self.event_delivery_lock_timeout_ms {
+            return Err(ApiError::BadRequest(format!(
+                "event_delivery_transport_timeout_ms ({}) must be less than event_delivery_lock_timeout_ms ({})",
+                self.event_delivery_transport_timeout_ms, self.event_delivery_lock_timeout_ms
+            )));
+        }
+
+        if self.event_delivery_retry_backoff_base_ms == 0 {
+            return Err(ApiError::BadRequest(
+                "event_delivery_retry_backoff_base_ms must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.event_delivery_retry_backoff_max_ms == 0 {
+            return Err(ApiError::BadRequest(
+                "event_delivery_retry_backoff_max_ms must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.event_delivery_retry_backoff_base_ms > self.event_delivery_retry_backoff_max_ms {
+            return Err(ApiError::BadRequest(format!(
+                "event_delivery_retry_backoff_base_ms ({}) must be less than or equal to event_delivery_retry_backoff_max_ms ({})",
+                self.event_delivery_retry_backoff_base_ms, self.event_delivery_retry_backoff_max_ms
+            )));
+        }
+
+        if self.event_delivery_max_attempts <= 0 {
+            return Err(ApiError::BadRequest(
+                "event_delivery_max_attempts must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.event_retention_days <= 0 {
+            return Err(ApiError::BadRequest(
+                "event_retention_days must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.event_delivery_retention_days <= 0 {
+            return Err(ApiError::BadRequest(
+                "event_delivery_retention_days must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.event_retention_purge_interval_seconds == 0 {
+            return Err(ApiError::BadRequest(
+                "event_retention_purge_interval_seconds must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.event_retention_purge_batch_size == 0 {
+            return Err(ApiError::BadRequest(
+                "event_retention_purge_batch_size must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.event_retention_file_archive_enabled && self.event_retention_archive_path.is_none()
+        {
+            return Err(ApiError::BadRequest(
+                "event_retention_archive_path is required when event_retention_file_archive_enabled is true".to_string(),
+            ));
+        }
+
         if self.report_output_retention_hours <= 0 {
             return Err(ApiError::BadRequest(
                 "report_output_retention_hours must be greater than 0".to_string(),
@@ -822,6 +1103,88 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_TASK_POLL_INTERVAL_MS),
+        event_fanout_workers: env::var("HUBUUM_EVENT_FANOUT_WORKERS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_FANOUT_WORKERS),
+        event_fanout_batch_size: env::var("HUBUUM_EVENT_FANOUT_BATCH_SIZE")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_FANOUT_BATCH_SIZE),
+        event_fanout_poll_interval_ms: env::var("HUBUUM_EVENT_FANOUT_POLL_INTERVAL_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS),
+        event_fanout_lock_timeout_ms: env::var("HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS),
+        event_delivery_workers: env::var("HUBUUM_EVENT_DELIVERY_WORKERS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_DELIVERY_WORKERS),
+        event_delivery_batch_size: env::var("HUBUUM_EVENT_DELIVERY_BATCH_SIZE")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_DELIVERY_BATCH_SIZE),
+        event_delivery_poll_interval_ms: env::var("HUBUUM_EVENT_DELIVERY_POLL_INTERVAL_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_DELIVERY_POLL_INTERVAL_MS),
+        event_delivery_lock_timeout_ms: env::var("HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS),
+        event_delivery_transport_timeout_ms: env::var("HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS),
+        event_delivery_retry_backoff_base_ms: env::var(
+            "HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS",
+        )
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS),
+        event_delivery_retry_backoff_max_ms: env::var("HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS),
+        event_delivery_max_attempts: env::var("HUBUUM_EVENT_DELIVERY_MAX_ATTEMPTS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_DELIVERY_MAX_ATTEMPTS),
+        event_retention_purge_enabled: env::var("HUBUUM_EVENT_RETENTION_PURGE_ENABLED")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_RETENTION_PURGE_ENABLED),
+        event_retention_days: env::var("HUBUUM_EVENT_RETENTION_DAYS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_RETENTION_DAYS),
+        event_delivery_retention_days: env::var("HUBUUM_EVENT_DELIVERY_RETENTION_DAYS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_DELIVERY_RETENTION_DAYS),
+        event_retention_purge_interval_seconds: env::var(
+            "HUBUUM_EVENT_RETENTION_PURGE_INTERVAL_SECONDS",
+        )
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS),
+        event_retention_purge_batch_size: env::var("HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE),
+        event_retention_file_archive_enabled: env::var(
+            "HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED",
+        )
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(DEFAULT_EVENT_RETENTION_FILE_ARCHIVE_ENABLED),
+        event_retention_archive_path: env_or_default_opt(
+            "HUBUUM_EVENT_RETENTION_ARCHIVE_PATH",
+            None,
+        ),
         report_output_retention_hours: env::var("HUBUUM_REPORT_OUTPUT_RETENTION_HOURS")
             .ok()
             .and_then(|value| value.parse().ok())
@@ -1129,7 +1492,16 @@ mod tests {
     use clap::Parser;
 
     use super::{
-        AppConfig, DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS, DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+        AppConfig, DEFAULT_EVENT_DELIVERY_BATCH_SIZE, DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS,
+        DEFAULT_EVENT_DELIVERY_MAX_ATTEMPTS, DEFAULT_EVENT_DELIVERY_POLL_INTERVAL_MS,
+        DEFAULT_EVENT_DELIVERY_RETENTION_DAYS, DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS,
+        DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS, DEFAULT_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS,
+        DEFAULT_EVENT_DELIVERY_WORKERS, DEFAULT_EVENT_FANOUT_BATCH_SIZE,
+        DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS, DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS,
+        DEFAULT_EVENT_FANOUT_WORKERS, DEFAULT_EVENT_RETENTION_DAYS,
+        DEFAULT_EVENT_RETENTION_FILE_ARCHIVE_ENABLED, DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE,
+        DEFAULT_EVENT_RETENTION_PURGE_ENABLED, DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS,
+        DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS, DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS,
         DEFAULT_PAGE_LIMIT, DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER,
         DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER, DEFAULT_REPORT_MAX_OUTPUT_BYTES,
         DEFAULT_TASK_POLL_INTERVAL_MS, DEFAULT_TOKEN_LIFETIME_HOURS, MAX_PAGE_LIMIT, TEST_ENV_LOCK,
@@ -1261,11 +1633,181 @@ mod tests {
     }
 
     #[test]
+    fn event_fanout_worker_settings_are_parsed_from_env() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _workers_guard = EnvVarGuard::set("HUBUUM_EVENT_FANOUT_WORKERS", Some("2"));
+        let _batch_guard = EnvVarGuard::set("HUBUUM_EVENT_FANOUT_BATCH_SIZE", Some("50"));
+        let _poll_guard = EnvVarGuard::set("HUBUUM_EVENT_FANOUT_POLL_INTERVAL_MS", Some("500"));
+        let _lock_guard = EnvVarGuard::set("HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS", Some("45000"));
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(parsed.event_fanout_workers, 2);
+        assert_eq!(parsed.event_fanout_batch_size, 50);
+        assert_eq!(parsed.event_fanout_poll_interval_ms, 500);
+        assert_eq!(parsed.event_fanout_lock_timeout_ms, 45000);
+        assert_eq!(loaded.event_fanout_workers, 2);
+        assert_eq!(loaded.event_fanout_batch_size, 50);
+        assert_eq!(loaded.event_fanout_poll_interval_ms, 500);
+        assert_eq!(loaded.event_fanout_lock_timeout_ms, 45000);
+    }
+
+    #[test]
+    fn event_delivery_worker_settings_are_parsed_from_env() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _workers_guard = EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_WORKERS", Some("2"));
+        let _batch_guard = EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_BATCH_SIZE", Some("25"));
+        let _poll_guard = EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_POLL_INTERVAL_MS", Some("750"));
+        let _lock_guard = EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS", Some("45000"));
+        let _transport_timeout_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS", Some("20000"));
+        let _base_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS", Some("100"));
+        let _max_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS", Some("5000"));
+        let _attempts_guard = EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_MAX_ATTEMPTS", Some("4"));
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(parsed.event_delivery_workers, 2);
+        assert_eq!(parsed.event_delivery_batch_size, 25);
+        assert_eq!(parsed.event_delivery_poll_interval_ms, 750);
+        assert_eq!(parsed.event_delivery_lock_timeout_ms, 45000);
+        assert_eq!(parsed.event_delivery_transport_timeout_ms, 20000);
+        assert_eq!(parsed.event_delivery_retry_backoff_base_ms, 100);
+        assert_eq!(parsed.event_delivery_retry_backoff_max_ms, 5000);
+        assert_eq!(parsed.event_delivery_max_attempts, 4);
+        assert_eq!(loaded.event_delivery_workers, 2);
+        assert_eq!(loaded.event_delivery_batch_size, 25);
+        assert_eq!(loaded.event_delivery_poll_interval_ms, 750);
+        assert_eq!(loaded.event_delivery_lock_timeout_ms, 45000);
+        assert_eq!(loaded.event_delivery_transport_timeout_ms, 20000);
+        assert_eq!(loaded.event_delivery_retry_backoff_base_ms, 100);
+        assert_eq!(loaded.event_delivery_retry_backoff_max_ms, 5000);
+        assert_eq!(loaded.event_delivery_max_attempts, 4);
+    }
+
+    #[test]
+    fn event_retention_settings_are_parsed_from_env() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _enabled_guard = EnvVarGuard::set("HUBUUM_EVENT_RETENTION_PURGE_ENABLED", Some("true"));
+        let _event_days_guard = EnvVarGuard::set("HUBUUM_EVENT_RETENTION_DAYS", Some("90"));
+        let _delivery_days_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_RETENTION_DAYS", Some("14"));
+        let _interval_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_RETENTION_PURGE_INTERVAL_SECONDS", Some("600"));
+        let _batch_guard = EnvVarGuard::set("HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE", Some("250"));
+        let _file_archive_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED", Some("true"));
+        let _archive_guard = EnvVarGuard::set(
+            "HUBUUM_EVENT_RETENTION_ARCHIVE_PATH",
+            Some("/tmp/hubuum-events.jsonl"),
+        );
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert!(parsed.event_retention_purge_enabled);
+        assert_eq!(parsed.event_retention_days, 90);
+        assert_eq!(parsed.event_delivery_retention_days, 14);
+        assert_eq!(parsed.event_retention_purge_interval_seconds, 600);
+        assert_eq!(parsed.event_retention_purge_batch_size, 250);
+        assert!(parsed.event_retention_file_archive_enabled);
+        assert_eq!(
+            parsed.event_retention_archive_path.as_deref(),
+            Some("/tmp/hubuum-events.jsonl")
+        );
+        assert!(loaded.event_retention_purge_enabled);
+        assert_eq!(loaded.event_retention_days, 90);
+        assert_eq!(loaded.event_delivery_retention_days, 14);
+        assert_eq!(loaded.event_retention_purge_interval_seconds, 600);
+        assert_eq!(loaded.event_retention_purge_batch_size, 250);
+        assert!(loaded.event_retention_file_archive_enabled);
+        assert_eq!(
+            loaded.event_retention_archive_path.as_deref(),
+            Some("/tmp/hubuum-events.jsonl")
+        );
+    }
+
+    #[test]
+    fn event_retention_settings_are_validated() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE", Some("0"));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "event_retention_purge_batch_size must be greater than 0"
+        );
+    }
+
+    #[test]
+    fn event_retention_file_archive_requires_path() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _enabled_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED", Some("true"));
+        let _path_guard = EnvVarGuard::set("HUBUUM_EVENT_RETENTION_ARCHIVE_PATH", None);
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "event_retention_archive_path is required when event_retention_file_archive_enabled is true"
+        );
+    }
+
+    #[test]
+    fn event_delivery_transport_timeout_must_be_shorter_than_lock_timeout() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _lock_guard = EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS", Some("1000"));
+        let _transport_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS", Some("1000"));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "event_delivery_transport_timeout_ms (1000) must be less than event_delivery_lock_timeout_ms (1000)"
+        );
+    }
+
+    #[test]
     fn worker_defaults_scale_from_detected_cpu_count() {
         let _lock = TEST_ENV_LOCK.lock().unwrap();
         let _actix_guard = EnvVarGuard::set("HUBUUM_ACTIX_WORKERS", None);
         let _task_guard = EnvVarGuard::set("HUBUUM_TASK_WORKERS", None);
         let _interval_guard = EnvVarGuard::set("HUBUUM_TASK_POLL_INTERVAL_MS", None);
+        let _fanout_workers_guard = EnvVarGuard::set("HUBUUM_EVENT_FANOUT_WORKERS", None);
+        let _fanout_batch_guard = EnvVarGuard::set("HUBUUM_EVENT_FANOUT_BATCH_SIZE", None);
+        let _fanout_poll_guard = EnvVarGuard::set("HUBUUM_EVENT_FANOUT_POLL_INTERVAL_MS", None);
+        let _fanout_lock_guard = EnvVarGuard::set("HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS", None);
+        let _delivery_workers_guard = EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_WORKERS", None);
+        let _delivery_batch_guard = EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_BATCH_SIZE", None);
+        let _delivery_poll_guard = EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_POLL_INTERVAL_MS", None);
+        let _delivery_lock_guard = EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS", None);
+        let _delivery_transport_timeout_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS", None);
+        let _delivery_base_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS", None);
+        let _delivery_max_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS", None);
+        let _delivery_attempts_guard = EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_MAX_ATTEMPTS", None);
+        let _retention_enabled_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_RETENTION_PURGE_ENABLED", None);
+        let _retention_days_guard = EnvVarGuard::set("HUBUUM_EVENT_RETENTION_DAYS", None);
+        let _retention_delivery_days_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_RETENTION_DAYS", None);
+        let _retention_interval_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_RETENTION_PURGE_INTERVAL_SECONDS", None);
+        let _retention_batch_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_RETENTION_PURGE_BATCH_SIZE", None);
+        let _retention_file_archive_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED", None);
+        let _retention_archive_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_RETENTION_ARCHIVE_PATH", None);
 
         let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
         let loaded = get_config_from_env().unwrap();
@@ -1273,9 +1815,143 @@ mod tests {
         assert_eq!(parsed.actix_workers, default_actix_workers());
         assert_eq!(parsed.task_workers, default_task_workers());
         assert_eq!(parsed.task_poll_interval_ms, DEFAULT_TASK_POLL_INTERVAL_MS);
+        assert_eq!(parsed.event_fanout_workers, DEFAULT_EVENT_FANOUT_WORKERS);
+        assert_eq!(
+            parsed.event_fanout_batch_size,
+            DEFAULT_EVENT_FANOUT_BATCH_SIZE
+        );
+        assert_eq!(
+            parsed.event_fanout_poll_interval_ms,
+            DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS
+        );
+        assert_eq!(
+            parsed.event_fanout_lock_timeout_ms,
+            DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS
+        );
+        assert_eq!(
+            parsed.event_delivery_workers,
+            DEFAULT_EVENT_DELIVERY_WORKERS
+        );
+        assert_eq!(
+            parsed.event_delivery_batch_size,
+            DEFAULT_EVENT_DELIVERY_BATCH_SIZE
+        );
+        assert_eq!(
+            parsed.event_delivery_poll_interval_ms,
+            DEFAULT_EVENT_DELIVERY_POLL_INTERVAL_MS
+        );
+        assert_eq!(
+            parsed.event_delivery_lock_timeout_ms,
+            DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS
+        );
+        assert_eq!(
+            parsed.event_delivery_transport_timeout_ms,
+            DEFAULT_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS
+        );
+        assert_eq!(
+            parsed.event_delivery_retry_backoff_base_ms,
+            DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS
+        );
+        assert_eq!(
+            parsed.event_delivery_retry_backoff_max_ms,
+            DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS
+        );
+        assert_eq!(
+            parsed.event_delivery_max_attempts,
+            DEFAULT_EVENT_DELIVERY_MAX_ATTEMPTS
+        );
+        assert_eq!(
+            parsed.event_retention_purge_enabled,
+            DEFAULT_EVENT_RETENTION_PURGE_ENABLED
+        );
+        assert_eq!(parsed.event_retention_days, DEFAULT_EVENT_RETENTION_DAYS);
+        assert_eq!(
+            parsed.event_delivery_retention_days,
+            DEFAULT_EVENT_DELIVERY_RETENTION_DAYS
+        );
+        assert_eq!(
+            parsed.event_retention_purge_interval_seconds,
+            DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS
+        );
+        assert_eq!(
+            parsed.event_retention_purge_batch_size,
+            DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE
+        );
+        assert_eq!(
+            parsed.event_retention_file_archive_enabled,
+            DEFAULT_EVENT_RETENTION_FILE_ARCHIVE_ENABLED
+        );
+        assert_eq!(parsed.event_retention_archive_path, None);
         assert_eq!(loaded.actix_workers, default_actix_workers());
         assert_eq!(loaded.task_workers, default_task_workers());
         assert_eq!(loaded.task_poll_interval_ms, DEFAULT_TASK_POLL_INTERVAL_MS);
+        assert_eq!(loaded.event_fanout_workers, DEFAULT_EVENT_FANOUT_WORKERS);
+        assert_eq!(
+            loaded.event_fanout_batch_size,
+            DEFAULT_EVENT_FANOUT_BATCH_SIZE
+        );
+        assert_eq!(
+            loaded.event_fanout_poll_interval_ms,
+            DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS
+        );
+        assert_eq!(
+            loaded.event_fanout_lock_timeout_ms,
+            DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS
+        );
+        assert_eq!(
+            loaded.event_delivery_workers,
+            DEFAULT_EVENT_DELIVERY_WORKERS
+        );
+        assert_eq!(
+            loaded.event_delivery_batch_size,
+            DEFAULT_EVENT_DELIVERY_BATCH_SIZE
+        );
+        assert_eq!(
+            loaded.event_delivery_poll_interval_ms,
+            DEFAULT_EVENT_DELIVERY_POLL_INTERVAL_MS
+        );
+        assert_eq!(
+            loaded.event_delivery_lock_timeout_ms,
+            DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS
+        );
+        assert_eq!(
+            loaded.event_delivery_transport_timeout_ms,
+            DEFAULT_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS
+        );
+        assert_eq!(
+            loaded.event_delivery_retry_backoff_base_ms,
+            DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS
+        );
+        assert_eq!(
+            loaded.event_delivery_retry_backoff_max_ms,
+            DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS
+        );
+        assert_eq!(
+            loaded.event_delivery_max_attempts,
+            DEFAULT_EVENT_DELIVERY_MAX_ATTEMPTS
+        );
+        assert_eq!(
+            loaded.event_retention_purge_enabled,
+            DEFAULT_EVENT_RETENTION_PURGE_ENABLED
+        );
+        assert_eq!(loaded.event_retention_days, DEFAULT_EVENT_RETENTION_DAYS);
+        assert_eq!(
+            loaded.event_delivery_retention_days,
+            DEFAULT_EVENT_DELIVERY_RETENTION_DAYS
+        );
+        assert_eq!(
+            loaded.event_retention_purge_interval_seconds,
+            DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS
+        );
+        assert_eq!(
+            loaded.event_retention_purge_batch_size,
+            DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE
+        );
+        assert_eq!(
+            loaded.event_retention_file_archive_enabled,
+            DEFAULT_EVENT_RETENTION_FILE_ARCHIVE_ENABLED
+        );
+        assert_eq!(loaded.event_retention_archive_path, None);
     }
 
     #[test]

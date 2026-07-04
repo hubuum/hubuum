@@ -14,10 +14,11 @@ The task system provides a generic framework for long-running server-side work.
 Current task kind:
 
 - `import`
+- `report`
+- `remote_call`
 
 Reserved task kinds already modeled in the schema:
 
-- `report`
 - `export`
 - `reindex`
 
@@ -28,18 +29,22 @@ The goal is to keep task lifecycle, queueing, polling, and audit history generic
 The implementation has:
 
 - `tasks`
-- `task_events`
+- `events` rows with `entity_type = 'task'`
 - `import_task_results`
+- `report_task_outputs`
+- `remote_call_results`
 
-The first two are generic framework tables.
+The first two are generic framework storage.
 
-The last one is a typed per-task-kind result table for imports.
+The result/output tables are typed per task kind.
 
 Relevant code:
 
 - [src/models/task.rs](../src/models/task.rs)
 - [src/db/traits/task.rs](../src/db/traits/task.rs)
-- [migrations/2026-03-07-000001_tasks_and_imports/up.sql](../migrations/2026-03-07-000001_tasks_and_imports/up.sql)
+- [migrations/2023-12-27-011440_initial/up.sql](../migrations/2023-12-27-011440_initial/up.sql)
+- [migrations/2026-06-29-000000_events_table/up.sql](../migrations/2026-06-29-000000_events_table/up.sql)
+- [migrations/2026-06-29-000001_consolidate_task_events/up.sql](../migrations/2026-06-29-000001_consolidate_task_events/up.sql)
 
 ### `tasks`
 
@@ -55,9 +60,10 @@ Each row stores:
 - progress counters: `total_items`, `processed_items`, `success_items`, `failed_items`
 - terminal summary: `summary`
 
-### `task_events`
+### Task lifecycle events
 
-`task_events` is append-only lifecycle/progress history.
+Task lifecycle/progress history is stored in the unified `events` table with
+`entity_type = 'task'` and `entity_id = tasks.id`.
 
 Typical events:
 
@@ -67,8 +73,10 @@ Typical events:
 - `succeeded`
 - `failed`
 - `partially_succeeded`
+- `cleanup`
 
-The task row is the current state. `task_events` is the history of how the task got there.
+The task row is the current state. Task-scoped `events` rows are the history of
+how the task got there.
 
 ### `import_task_results`
 
@@ -89,10 +97,11 @@ This table is intentionally separate from `tasks`, because result shape is task-
 
 That is the current architectural rule:
 
-- `tasks` and `task_events` are the generic task framework
+- `tasks` and task-scoped `events` rows are the generic task framework
 - result persistence is typed per task kind
 
-So a future async report implementation would be expected to introduce its own typed result/output table rather than reuse `import_task_results`.
+New task kinds should introduce typed result/output tables where their result
+shape does not match an existing table.
 
 ## Status model
 
@@ -508,10 +517,9 @@ See:
 The simplest accurate mental model is:
 
 - `tasks` is the queue and current status table
-- `task_events` is the audit/history table
+- task-scoped `events` rows are the audit/history table
 - result tables are typed per task kind
 - task workers claim from Postgres directly
 - each task kind supplies its own planner and executor
-- imports are currently the only real task kind
 - strict imports make domain mutations atomically
 - best-effort imports trade atomicity for progress
