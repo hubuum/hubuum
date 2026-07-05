@@ -8,6 +8,7 @@ pub mod api_operations;
 pub mod asserts;
 pub mod client_allowlist;
 pub mod constants;
+pub mod docs_examples;
 pub mod id_newtypes;
 pub mod search;
 pub mod temporal;

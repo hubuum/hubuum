@@ -471,6 +471,9 @@ fn record_missing_value_warning(missing: MissingValue) {
 mod tests {
     use super::*;
     use crate::models::{ReportScopeKind, ReportTemplateKind};
+    use crate::tests::docs_examples::required_labeled_block;
+
+    const TEMPLATE_GUIDE: &str = include_str!("../../docs/template_guide.md");
 
     #[test]
     fn limited_string_writer_accumulates_under_limit() {
@@ -515,6 +518,167 @@ mod tests {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    fn template_guide_context() -> serde_json::Value {
+        serde_json::json!({
+            "items": [
+                {
+                    "id": 101,
+                    "name": "srv-app-01",
+                    "description": "Application server",
+                    "namespace_id": 7,
+                    "hubuum_class_id": 42,
+                    "data": {
+                        "owner": "alice",
+                        "hostname": "srv-app-01.example.org",
+                        "environment": "prod",
+                        "tags": ["prod", "app"]
+                    }
+                },
+                {
+                    "id": 102,
+                    "name": "srv-db-01",
+                    "description": "Database server",
+                    "namespace_id": 7,
+                    "hubuum_class_id": 42,
+                    "data": {
+                        "owner": "bob",
+                        "hostname": "srv-db-01.example.org",
+                        "environment": "prod",
+                        "tags": ["prod", "db"]
+                    }
+                }
+            ],
+            "meta": {
+                "count": 2,
+                "truncated": false,
+                "scope": {
+                    "kind": "objects_in_class",
+                    "class_id": 42,
+                    "object_id": null
+                },
+                "content_type": "text/plain"
+            },
+            "warnings": [],
+            "request": {
+                "scope": {
+                    "kind": "objects_in_class",
+                    "class_id": 42,
+                    "object_id": null
+                },
+                "query": "name__contains=srv-&sort=name"
+            }
+        })
+    }
+
+    fn template_guide_block(label: &str) -> String {
+        required_labeled_block(TEMPLATE_GUIDE, label).unwrap().body
+    }
+
+    fn assert_template_guide_example(
+        name: &str,
+        content_type: ReportContentType,
+        missing_data_policy: ReportMissingDataPolicy,
+    ) -> (String, Vec<ReportWarning>) {
+        let template = template(
+            100,
+            10,
+            &format!("{name}.txt"),
+            content_type,
+            &template_guide_block(&format!("template-guide/{name}/template")),
+        );
+
+        render_template(
+            &template,
+            &[],
+            &template_guide_context(),
+            content_type,
+            missing_data_policy,
+            usize::MAX,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn template_guide_plain_text_example_matches_renderer() {
+        let (rendered, warnings) = assert_template_guide_example(
+            "plain",
+            ReportContentType::TextPlain,
+            ReportMissingDataPolicy::Strict,
+        );
+
+        assert_eq!(
+            rendered,
+            template_guide_block("template-guide/plain/output")
+        );
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn template_guide_html_example_matches_renderer() {
+        let (rendered, warnings) = assert_template_guide_example(
+            "html",
+            ReportContentType::TextHtml,
+            ReportMissingDataPolicy::Strict,
+        );
+
+        assert_eq!(rendered, template_guide_block("template-guide/html/output"));
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn template_guide_csv_example_matches_renderer() {
+        let (rendered, warnings) = assert_template_guide_example(
+            "csv",
+            ReportContentType::TextCsv,
+            ReportMissingDataPolicy::Strict,
+        );
+
+        assert_eq!(rendered, template_guide_block("template-guide/csv/output"));
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn template_guide_nested_array_example_matches_renderer() {
+        let (rendered, warnings) = assert_template_guide_example(
+            "nested-array",
+            ReportContentType::TextPlain,
+            ReportMissingDataPolicy::Strict,
+        );
+
+        assert_eq!(
+            rendered,
+            template_guide_block("template-guide/nested-array/output")
+        );
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn template_guide_missing_data_policy_examples_match_renderer() {
+        let (null_rendered, null_warnings) = assert_template_guide_example(
+            "missing-data",
+            ReportContentType::TextPlain,
+            ReportMissingDataPolicy::Null,
+        );
+        let (omit_rendered, omit_warnings) = assert_template_guide_example(
+            "missing-data",
+            ReportContentType::TextPlain,
+            ReportMissingDataPolicy::Omit,
+        );
+
+        assert_eq!(
+            null_rendered,
+            template_guide_block("template-guide/missing-data/null-output")
+        );
+        assert_eq!(
+            omit_rendered,
+            template_guide_block("template-guide/missing-data/omit-output")
+        );
+        assert_eq!(null_warnings.len(), 1);
+        assert_eq!(omit_warnings.len(), 1);
+        assert_eq!(null_warnings[0].code, "template_missing_value");
+        assert_eq!(omit_warnings[0].code, "template_missing_value");
     }
 
     #[test]

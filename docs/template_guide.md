@@ -268,15 +268,19 @@ Composition rules:
 
 Template:
 
+<!-- doc-example: template-guide/plain/template -->
+
 ```text
 Report scope: {{ meta.scope.kind }}
 Rows: {{ meta.count }}
 
 {% for item in items %}- {{ item.name }} owned by {{ item.data.owner }}
-{% endfor %}
+{% endfor -%}
 ```
 
 Rendered output:
+
+<!-- doc-example: template-guide/plain/output -->
 
 ```text
 Report scope: objects_in_class
@@ -290,12 +294,16 @@ Rows: 2
 
 Template:
 
+<!-- doc-example: template-guide/html/template -->
+
 ```html
 <h1>Server report</h1>
 <ul>{% for item in items %}<li><strong>{{ item.name }}</strong> - {{ item.data.hostname }}</li>{% endfor %}</ul>
 ```
 
 Rendered output:
+
+<!-- doc-example: template-guide/html/output -->
 
 ```html
 <h1>Server report</h1>
@@ -308,13 +316,17 @@ Interpolated values are HTML-escaped automatically for `text/html` output.
 
 Template:
 
+<!-- doc-example: template-guide/csv/template -->
+
 ```csv
 name,owner,hostname
 {% for item in items %}{{ item.name }},{{ item.data.owner }},{{ item.data.hostname }}
-{% endfor %}
+{% endfor -%}
 ```
 
 Rendered output:
+
+<!-- doc-example: template-guide/csv/output -->
 
 ```csv
 name,owner,hostname
@@ -337,13 +349,17 @@ Given item data like:
 
 Template:
 
+<!-- doc-example: template-guide/nested-array/template -->
+
 ```text
 {% for item in items %}{{ item.name }}
 {% for tag in item.data.tags %}  - {{ tag }}
-{% endfor %}{% endfor %}
+{% endfor %}{% endfor -%}
 ```
 
 Rendered output:
+
+<!-- doc-example: template-guide/nested-array/output -->
 
 ```text
 srv-app-01
@@ -457,9 +473,11 @@ Missing values are controlled by `missing_data_policy` on the report request.
 
 Example template:
 
+<!-- doc-example: template-guide/missing-data/template -->
+
 ```text
 {% for item in items %}{{ item.name }} owner={{ item.data.primary_contact }}
-{% endfor %}
+{% endfor -%}
 ```
 
 If `primary_contact` does not exist:
@@ -471,12 +489,16 @@ If `primary_contact` does not exist:
 
 Rendered output with `null`:
 
+<!-- doc-example: template-guide/missing-data/null-output -->
+
 ```text
 srv-app-01 owner=null
 srv-db-01 owner=null
 ```
 
 Rendered output with `omit`:
+
+<!-- doc-example: template-guide/missing-data/omit-output -->
 
 ```text
 srv-app-01 owner=
