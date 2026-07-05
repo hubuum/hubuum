@@ -43,6 +43,7 @@ use tracing::debug;
 
 use crate::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
 use crate::models::search::StatementTimeoutMs;
+use crate::observability::metrics::{self, ResultKind};
 use crate::utilities::db::DatabaseUrlComponents;
 
 pub type DbConnection = AsyncPgConnection;
@@ -169,7 +170,17 @@ where
 }
 
 async fn acquire_connection(pool: &DbPool) -> Result<PooledConnection<'_, DbConnection>, ApiError> {
-    pool.get().await.map_err(ApiError::from)
+    let start = std::time::Instant::now();
+    match pool.get().await {
+        Ok(conn) => {
+            metrics::db_connection_acquired(start.elapsed());
+            Ok(conn)
+        }
+        Err(error) => {
+            metrics::db_connection_acquire_failed(start.elapsed());
+            Err(ApiError::from(error))
+        }
+    }
 }
 
 tokio::task_local! {
@@ -321,7 +332,8 @@ where
     ApiError: From<E>,
 {
     let mut conn = acquire_connection(pool).await?;
-    if statement_timeout.is_none() && actor.is_none() {
+    let start = std::time::Instant::now();
+    let result = if statement_timeout.is_none() && actor.is_none() {
         f(&mut conn).await.map_err(ApiError::from)
     } else {
         conn.transaction::<R, ApiError, _>(async move |conn| {
@@ -334,7 +346,13 @@ where
             f(conn).await.map_err(ApiError::from)
         })
         .await
-    }
+    };
+    let result_kind = match &result {
+        Ok(_) => ResultKind::Ok,
+        Err(error) => ResultKind::Error(error.class()),
+    };
+    metrics::db_operation_finished("connection", start.elapsed(), &result_kind);
+    result
 }
 
 /// Return an updated row, or fetch the current row when a temporal no-op trigger
@@ -423,8 +441,9 @@ where
     let statement_timeout = ambient_statement_timeout();
     let actor = ambient_actor();
     let mut conn = acquire_connection(pool).await?;
-    crate::logger::defer_operation_mutation_logs_until_commit(conn.transaction::<R, ApiError, _>(
-        async move |conn| {
+    let start = std::time::Instant::now();
+    let result = crate::logger::defer_operation_mutation_logs_until_commit(
+        conn.transaction::<R, ApiError, _>(async move |conn| {
             if let Some(statement_timeout) = statement_timeout {
                 set_local_statement_timeout(conn, statement_timeout).await?;
             }
@@ -432,9 +451,15 @@ where
                 set_local_actor(conn, actor).await?;
             }
             f(conn).await.map_err(ApiError::from)
-        },
-    ))
-    .await
+        }),
+    )
+    .await;
+    let result_kind = match &result {
+        Ok(_) => ResultKind::Ok,
+        Err(error) => ResultKind::Error(error.class()),
+    };
+    metrics::db_operation_finished("transaction", start.elapsed(), &result_kind);
+    result
 }
 
 pub fn init_pool(database_url: &str, max_size: u32) -> DbPool {

@@ -146,6 +146,7 @@ where
 
         let method = req.method().to_string();
         let path = req.path().to_string();
+        let route = req.match_pattern().unwrap_or_else(|| route_group(&path));
         let client_ip = extract_client_ip(&req, &self.proxy_trust);
         let client_ip_s = client_ip.map(|ip| ip.to_string());
         req.extensions_mut()
@@ -158,6 +159,7 @@ where
             ));
 
         let start_time = Instant::now();
+        crate::observability::metrics::http_request_started();
         let fut = span.in_scope(|| self.service.call(req));
 
         Box::pin(
@@ -165,6 +167,13 @@ where
                 let mut res = match fut.await {
                     Ok(res) => res,
                     Err(err) => {
+                        let elapsed_time = start_time.elapsed();
+                        crate::observability::metrics::http_request_finished(
+                            &method,
+                            &route,
+                            err.as_response_error().status_code().as_u16(),
+                            elapsed_time,
+                        );
                         let elapsed_ms = elapsed_millis(start_time);
                         let status = err.as_response_error().status_code();
                         let status_code = status.as_u16();
@@ -210,6 +219,13 @@ where
                     );
                 }
 
+                let elapsed_time = start_time.elapsed();
+                crate::observability::metrics::http_request_finished(
+                    &method,
+                    &route,
+                    res.status().as_u16(),
+                    elapsed_time,
+                );
                 let elapsed_ms = elapsed_millis(start_time);
                 let status = res.status();
                 let status_code = status.as_u16();
@@ -246,5 +262,14 @@ where
             }
             .instrument(span),
         )
+    }
+}
+
+fn route_group(path: &str) -> String {
+    match path {
+        "/healthz" | "/readyz" | "/metrics" | "/api-doc/openapi.json" => path.to_string(),
+        path if path.starts_with("/api/v1/") => "/api/v1/{route}".to_string(),
+        path if path.starts_with("/api/v0/") => "/api/v0/{route}".to_string(),
+        _ => "unknown".to_string(),
     }
 }

@@ -180,6 +180,14 @@ async fn execute_remote_call(
         Ok(response) => {
             let status = response.status_display();
             let success = response.is_success();
+            crate::observability::metrics::remote_call_finished(
+                target.method.as_str(),
+                status_family(response.status_code()),
+                if success { "success" } else { "failure" },
+                std::time::Duration::from_millis(
+                    u64::try_from(response.duration_ms()).unwrap_or(0),
+                ),
+            );
             insert_remote_call_result(
                 pool,
                 NewRemoteCallResult {
@@ -234,6 +242,12 @@ async fn record_remote_call_failure(
 ) -> Result<RemoteExecutionOutcome, ApiError> {
     let api_error = outbound_error_to_api_error(error);
     let message = crate::tasks::helpers::sanitize_error_for_storage(&api_error);
+    crate::observability::metrics::remote_call_finished(
+        context.method,
+        "none",
+        remote_error_outcome(&api_error),
+        std::time::Duration::from_millis(u64::try_from(duration_ms).unwrap_or(0)),
+    );
     insert_remote_call_result(
         context.pool,
         NewRemoteCallResult {
@@ -257,6 +271,26 @@ async fn record_remote_call_failure(
         summary: message,
         event_data: Some(serde_json::json!({ "duration_ms": duration_ms })),
     })
+}
+
+fn status_family(status_code: u16) -> &'static str {
+    match status_code {
+        100..=199 => "1xx",
+        200..=299 => "2xx",
+        300..=399 => "3xx",
+        400..=499 => "4xx",
+        500..=599 => "5xx",
+        _ => "unknown",
+    }
+}
+
+fn remote_error_outcome(error: &ApiError) -> &'static str {
+    match error {
+        ApiError::ServiceUnavailable(_) => "timeout",
+        ApiError::Forbidden(_) => "private_target_rejected",
+        ApiError::BadRequest(_) => "validation_rejected",
+        _ => "failure",
+    }
 }
 
 async fn finalize_remote_task(

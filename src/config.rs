@@ -61,6 +61,8 @@ pub const DEFAULT_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS: u64 = 300;
 pub const DEFAULT_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS: u64 = 86_400;
 pub const DEFAULT_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V4: u8 = 24;
 pub const DEFAULT_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6: u8 = 64;
+pub const DEFAULT_METRICS_ENABLED: bool = true;
+pub const DEFAULT_METRICS_PATH: &str = "/metrics";
 pub const DEFAULT_TRUSTED_PROXY_HOPS: usize = 0;
 pub const DEFAULT_MAX_TRANSITIVE_DEPTH: i32 = 100;
 
@@ -629,6 +631,22 @@ pub struct AppConfig {
     )]
     pub tls_backend: Option<TlsBackend>,
 
+    /// Enable the Prometheus metrics scrape endpoint.
+    #[clap(
+        long,
+        env = "HUBUUM_METRICS_ENABLED",
+        default_value_t = DEFAULT_METRICS_ENABLED
+    )]
+    pub metrics_enabled: bool,
+
+    /// HTTP path for the Prometheus metrics scrape endpoint.
+    #[clap(
+        long,
+        env = "HUBUUM_METRICS_PATH",
+        default_value = DEFAULT_METRICS_PATH
+    )]
+    pub metrics_path: String,
+
     /// Trust proxy IP headers (X-Forwarded-For). If false, use peer address only.
     ///
     /// When true, the real client IP is resolved from the right of the
@@ -972,6 +990,24 @@ impl AppConfig {
             return Err(ApiError::BadRequest(format!(
                 "default_page_limit ({}) must be less than or equal to max_page_limit ({})",
                 self.default_page_limit, self.max_page_limit
+            )));
+        }
+
+        if !self.metrics_path.starts_with('/') || self.metrics_path.len() == 1 {
+            return Err(ApiError::BadRequest(
+                "metrics_path must be an absolute non-root path".to_string(),
+            ));
+        }
+
+        if self.metrics_path.starts_with("/api/")
+            || matches!(
+                self.metrics_path.as_str(),
+                "/healthz" | "/readyz" | "/api-doc/openapi.json"
+            )
+        {
+            return Err(ApiError::BadRequest(format!(
+                "metrics_path '{}' collides with an existing application route",
+                self.metrics_path
             )));
         }
 
@@ -1381,6 +1417,10 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         tls_key_path: env_or_default_opt("HUBUUM_TLS_KEY_PATH", None),
         tls_key_passphrase: env_or_default_opt("HUBUUM_TLS_KEY_PASSPHRASE", None),
         tls_backend: env_or_default_tls_backend("HUBUUM_TLS_BACKEND"),
+        metrics_enabled: env_or_default("HUBUUM_METRICS_ENABLED", "true")
+            .parse()
+            .unwrap_or(DEFAULT_METRICS_ENABLED),
+        metrics_path: env_or_default("HUBUUM_METRICS_PATH", DEFAULT_METRICS_PATH),
         trust_ip_headers: env_or_default("HUBUUM_TRUST_IP_HEADERS", "false")
             .parse()
             .unwrap_or(false),
@@ -2410,5 +2450,51 @@ mod tests {
 
         assert!(parsed.trusted_proxies.nets().is_empty());
         assert!(loaded.trusted_proxies.nets().is_empty());
+    }
+
+    #[test]
+    fn metrics_config_parses_from_env() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _enabled = EnvVarGuard::set("HUBUUM_METRICS_ENABLED", Some("false"));
+        let _path = EnvVarGuard::set("HUBUUM_METRICS_PATH", Some("/internal/metrics"));
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        for config in [&parsed, &loaded] {
+            assert!(!config.metrics_enabled);
+            assert_eq!(config.metrics_path, "/internal/metrics");
+        }
+    }
+
+    #[test]
+    fn metrics_path_must_be_absolute_non_root_path() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _path = EnvVarGuard::set("HUBUUM_METRICS_PATH", Some("metrics"));
+
+        let error = get_config_from_env().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "metrics_path must be an absolute non-root path"
+        );
+    }
+
+    #[test]
+    fn metrics_path_must_not_collide_with_existing_routes() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+
+        for path in [
+            "/api/v1/metrics",
+            "/healthz",
+            "/readyz",
+            "/api-doc/openapi.json",
+        ] {
+            let _path = EnvVarGuard::set("HUBUUM_METRICS_PATH", Some(path));
+            let error = get_config_from_env().unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                format!("metrics_path '{path}' collides with an existing application route")
+            );
+        }
     }
 }

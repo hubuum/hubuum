@@ -14,6 +14,7 @@ pub mod group;
 pub mod history;
 pub mod identity;
 pub mod is_active;
+pub mod metrics;
 pub mod object;
 pub mod permissions;
 pub mod principal;

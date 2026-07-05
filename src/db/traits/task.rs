@@ -417,6 +417,7 @@ pub trait TaskBackend: TaskIdentifier {
             failed_items = record.failed_items,
             summary = record.summary.as_deref()
         );
+        record_task_completion_metrics(&record);
 
         Ok(record)
     }
@@ -479,12 +480,32 @@ pub trait TaskBackend: TaskIdentifier {
             failed_items = record.failed_items,
             summary = record.summary.as_deref()
         );
+        record_task_completion_metrics(&record);
 
         Ok(record)
     }
 }
 
 impl<T: TaskIdentifier + ?Sized> TaskBackend for T {}
+
+fn record_task_completion_metrics(record: &TaskRecord) {
+    crate::observability::metrics::task_completed(
+        &record.kind,
+        &record.status,
+        duration_between(record.created_at, record.started_at),
+        record
+            .started_at
+            .and_then(|started_at| duration_between(started_at, record.finished_at)),
+    );
+}
+
+fn duration_between(
+    start: chrono::NaiveDateTime,
+    end: Option<chrono::NaiveDateTime>,
+) -> Option<std::time::Duration> {
+    let elapsed = end?.signed_duration_since(start).num_milliseconds();
+    (elapsed >= 0).then(|| std::time::Duration::from_millis(elapsed as u64))
+}
 
 #[cfg(test)]
 impl NewTaskRecord {

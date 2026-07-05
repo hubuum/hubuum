@@ -67,6 +67,9 @@ hubuum-templates = { path = "crates/hubuum-templates" }
 hubuum-events-core = { path = "crates/hubuum-events-core", features = ["schema"] }
 hubuum-outbound-http = { path = "crates/hubuum-outbound-http" }
 minijinja = { version = "2", features = ["loader", "fuel"] }
+opentelemetry = { version = "0.32", default-features = false, features = ["metrics"] }
+opentelemetry-prometheus = "0.32"
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["metrics"] }
 tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "net", "io-util"] }
 tokio-postgres = "0.7"
 tokio-postgres-rustls = "0.13"
@@ -86,6 +89,7 @@ urlparse = "0.7"
 uuid = { version = "1", features = ["v4", "serde"] }
 percent-encoding = "2"
 rustls = { version = "0.23", features = ["aws-lc-rs", "ring"] }
+prometheus = "0.14"
 openssl = { version = "0.10.80", optional = true }
 lru = "0.18.0"
 toml = "0.9"

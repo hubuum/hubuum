@@ -23,6 +23,8 @@ Probe paths bypass the client IP allowlist so platform health checks are not rej
 | `HUBUUM_BIND_PORT` | `8080` | Port the server listens on |
 | `HUBUUM_LOG_LEVEL` | `info` | JSON log verbosity (`trace`, `debug`, `info`, `warn`, `error`) |
 | `HUBUUM_ACTIX_WORKERS` | Detected CPU count | Number of Actix worker threads |
+| `HUBUUM_METRICS_ENABLED` | `true` | Enables the Prometheus metrics scrape endpoint |
+| `HUBUUM_METRICS_PATH` | `/metrics` | Absolute path for the Prometheus metrics scrape endpoint |
 
 Logs are newline-delimited JSON only and are configured through `HUBUUM_LOG_LEVEL`. Release
 builds include their Git SHA in the structured startup event; local builders may set
