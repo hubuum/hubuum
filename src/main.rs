@@ -20,13 +20,7 @@ mod tls;
 mod traits;
 mod utilities;
 
-use actix_web::{
-    App, HttpServer,
-    middleware::{Logger, from_fn},
-    web,
-    web::Data,
-    web::JsonConfig,
-};
+use actix_web::{App, HttpServer, middleware::from_fn, web, web::Data, web::JsonConfig};
 use db::init_pool;
 #[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;
@@ -34,9 +28,6 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use tracing::{debug, info, warn};
-use tracing_subscriber::{
-    filter::EnvFilter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
-};
 
 use crate::api::openapi::openapi_json as openapi_json_handler;
 use crate::config::{get_config, token_hash_key_is_ephemeral};
@@ -69,29 +60,15 @@ async fn main() -> std::io::Result<()> {
             EXIT_CODE_CONFIG_ERROR,
         ),
     };
-    let filter = if is_valid_log_level(&config.log_level) {
-        EnvFilter::try_new(&config.log_level).unwrap_or_else(|_e| {
-            fatal_error(
-                &format!("Error parsing log level: {}", &config.log_level),
-                EXIT_CODE_CONFIG_ERROR,
-            )
-        })
-    } else {
+    if !is_valid_log_level(&config.log_level) {
         fatal_error(
             &format!("Invalid log level: {}", config.log_level),
             EXIT_CODE_CONFIG_ERROR,
-        )
-    };
-
-    tracing_subscriber::registry()
-        .with(filter)
-        .with(
-            tracing_subscriber::fmt::layer()
-                .json()
-                .with_span_events(FmtSpan::CLOSE)
-                .event_format(logger::HubuumLoggingFormat),
-        )
-        .init();
+        );
+    }
+    if let Err(err) = logger::init_json_logging(&config.log_level) {
+        fatal_error(&err, EXIT_CODE_CONFIG_ERROR);
+    }
 
     if token_hash_key_is_ephemeral() {
         warn!(

@@ -21,8 +21,11 @@ Probe paths bypass the client IP allowlist so platform health checks are not rej
 | ------- | ------- | ----------- |
 | `HUBUUM_BIND_IP` | `127.0.0.1` | IP address the server binds to |
 | `HUBUUM_BIND_PORT` | `8080` | Port the server listens on |
-| `HUBUUM_LOG_LEVEL` | `info` | Logging level (trace, debug, info, warn, error) |
+| `HUBUUM_LOG_LEVEL` | `info` | JSON log verbosity (`trace`, `debug`, `info`, `warn`, `error`) |
 | `HUBUUM_ACTIX_WORKERS` | Detected CPU count | Number of Actix worker threads |
+
+Logs are newline-delimited JSON only and are configured through `HUBUUM_LOG_LEVEL`; see
+[Structured Logging](logging.md) for fields and examples.
 
 ### Access Control Configuration
 

@@ -33,15 +33,18 @@ pub trait UserPermissions: AuthzSubject {
         use std::collections::HashSet;
 
         let requested: Vec<Permissions> = permissions.into_iter().collect();
+        let principal_id = self.principal_id();
 
         // Fail-closed scope pre-filter, before the admin bypass.
         if !scope_allows(scopes, &requested) {
+            crate::logger::log_authorization_denial(principal_id, &requested, None, "token_scope");
             return Err(ApiError::Forbidden(
                 "Token scope does not permit the requested action".to_string(),
             ));
         }
 
         if AuthzSubject::is_admin(self, pool).await? {
+            crate::logger::log_authorization_grant(principal_id, &requested, 0, "admin");
             return Ok(());
         }
 
@@ -66,6 +69,7 @@ pub trait UserPermissions: AuthzSubject {
             .buffered(5)
             .try_collect()
             .await?;
+        let collection_count = collection_ids.len();
 
         let mut base_query = lookup_table
             .inner_join(closure_table.on(collection_id_field.eq(ancestor_collection_id)))
@@ -74,8 +78,8 @@ pub trait UserPermissions: AuthzSubject {
             .filter(group_id_field.eq_any(group_id_subquery));
 
         // Apply all permission filters
-        for perm in requested {
-            crate::apply_permission_filter!(base_query, perm, true);
+        for perm in &requested {
+            crate::apply_permission_filter!(base_query, *perm, true);
         }
 
         // Count the number of distinct collections that match all criteria
@@ -88,9 +92,21 @@ pub trait UserPermissions: AuthzSubject {
         .await?;
 
         // Check if the count of matching collections equals the number of input collections
-        if matching_collections_count as usize == collection_ids.len() {
+        if matching_collections_count as usize == collection_count {
+            crate::logger::log_authorization_grant(
+                principal_id,
+                &requested,
+                collection_count,
+                "permissions",
+            );
             Ok(())
         } else {
+            crate::logger::log_authorization_denial(
+                principal_id,
+                &requested,
+                Some(collection_count),
+                "permissions",
+            );
             Err(ApiError::Forbidden(
                 "User does not have the required permissions".to_string(),
             ))
