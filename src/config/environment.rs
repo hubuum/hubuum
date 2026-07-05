@@ -155,6 +155,7 @@ pub const DYNAMIC_SECRET_PREFIXES: &[(&str, EnvironmentOwner)] = &[
 /// until they can receive an injected secret-provider trait.
 pub const ENVIRONMENT_ADAPTER_PATHS: &[&str] = &[
     "src/config.rs",
+    "src/config/token_hash.rs",
     "src/bin/admin.rs",
     "src/logger.rs",
     "src/tasks/remote_call.rs",

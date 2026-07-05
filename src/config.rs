@@ -1,24 +1,28 @@
 pub mod environment;
 pub mod running;
 
-use std::sync::LazyLock;
 #[cfg(test)]
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 #[cfg(not(test))]
 use std::sync::OnceLock;
 
-use clap::{Parser, ValueEnum};
+use clap::Parser;
+#[cfg(test)]
+use clap::ValueEnum;
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::num::NonZeroUsize;
 use std::str::FromStr;
-use uuid::Uuid;
 
 use crate::errors::ApiError;
 
 mod defaults;
+mod tls_backend;
+mod token_hash;
 pub use defaults::*;
+pub use tls_backend::TlsBackend;
+pub use token_hash::{token_hash_key_bytes, token_hash_key_is_ephemeral};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -83,29 +87,6 @@ impl From<MetricsPath> for String {
     }
 }
 
-struct TokenHashKeyConfig {
-    key: Vec<u8>,
-    is_ephemeral: bool,
-}
-
-static TOKEN_HASH_KEY_CONFIG: LazyLock<TokenHashKeyConfig> = LazyLock::new(|| {
-    if let Ok(env_key) = std::env::var("HUBUUM_TOKEN_HASH_KEY") {
-        let trimmed = env_key.trim();
-        if !trimmed.is_empty() {
-            return TokenHashKeyConfig {
-                key: trimmed.as_bytes().to_vec(),
-                is_ephemeral: false,
-            };
-        }
-    }
-
-    let generated = format!("{}{}", Uuid::new_v4(), Uuid::new_v4());
-    TokenHashKeyConfig {
-        key: generated.into_bytes(),
-        is_ephemeral: true,
-    }
-});
-
 fn detected_cpu_count() -> usize {
     std::thread::available_parallelism()
         .map(NonZeroUsize::get)
@@ -118,27 +99,6 @@ fn default_actix_workers() -> usize {
 
 fn default_task_workers() -> usize {
     detected_cpu_count().div_ceil(2).max(1)
-}
-
-#[derive(ValueEnum, Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum TlsBackend {
-    Rustls,
-    Openssl,
-}
-
-impl TlsBackend {
-    #[cfg(any(
-        not(any(feature = "tls-rustls", feature = "tls-openssl")),
-        all(feature = "tls-rustls", not(feature = "tls-openssl")),
-        all(feature = "tls-openssl", not(feature = "tls-rustls"))
-    ))]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Rustls => "rustls",
-            Self::Openssl => "openssl",
-        }
-    }
 }
 
 #[derive(Parser, Deserialize, Clone)]
@@ -1049,14 +1009,6 @@ pub fn max_transitive_depth() -> i32 {
         .unwrap_or(DEFAULT_MAX_TRANSITIVE_DEPTH);
 
     depth
-}
-
-pub fn token_hash_key_bytes() -> &'static [u8] {
-    &TOKEN_HASH_KEY_CONFIG.key
-}
-
-pub fn token_hash_key_is_ephemeral() -> bool {
-    TOKEN_HASH_KEY_CONFIG.is_ephemeral
 }
 
 /// Snapshot of all login rate-limit knobs, resolved once per check so a single request
