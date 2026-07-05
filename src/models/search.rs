@@ -36,159 +36,57 @@ pub fn parse_query_parameter_with_passthrough(
     qs: &str,
     passthrough_keys: &[&str],
 ) -> Result<(QueryOptions, HashMap<String, Vec<String>>), ApiError> {
-    let mut filters = Vec::new();
-    let mut sort = Vec::new();
-    let mut limit = None;
-    let mut cursor = None;
-    let mut include_total = None;
-    let mut passthrough = HashMap::<String, Vec<String>>::new();
-    let passthrough_keys = passthrough_keys.iter().copied().collect::<HashSet<_>>();
+    let (query_options, passthrough) =
+        hubuum_query::parse_query_parameter_with_passthrough(qs, passthrough_keys)
+            .map_err(query_error_to_api_error)?;
 
-    if qs.is_empty() {
-        return Ok((
-            QueryOptions {
-                filters,
-                sort,
-                limit,
-                cursor,
-                include_total: true,
-            },
-            passthrough,
-        ));
-    }
-
-    for (key, value) in decode_query_parameter_pairs(qs)? {
-        if passthrough_keys.contains(key.as_str()) {
-            passthrough.entry(key).or_default().push(value);
-            continue;
-        }
-
-        match key.as_str() {
-            // LIMIT: e.g. limit=10, for limiting the number of results
-            "limit" => {
-                if limit.is_some() {
-                    return Err(ApiError::BadRequest("duplicate limit".into()));
-                }
-                let parsed_limit = value
-                    .parse::<usize>()
-                    .map_err(|e| ApiError::BadRequest(format!("bad limit: {e}")))?;
-                limit = Some(validate_page_limit(parsed_limit)?);
-            }
-
-            "cursor" => {
-                if cursor.is_some() {
-                    return Err(ApiError::BadRequest("duplicate cursor".into()));
-                }
-                cursor = Some(value);
-            }
-
-            "include_total" => {
-                if include_total.is_some() {
-                    return Err(ApiError::BadRequest("duplicate include_total".into()));
-                }
-                include_total = Some(value.as_boolean()?);
-            }
-
-            // SORT / ORDER BY: e.g. sort=created_at,-name,email.desc
-            "sort" | "order_by" => {
-                for piece in value.split(',') {
-                    let descending = piece.starts_with('-') || piece.ends_with(".desc");
-                    let field_name = piece
-                        .trim_start_matches('-')
-                        .trim_end_matches(".asc")
-                        .trim_end_matches(".desc");
-                    let field = FilterField::from_str(field_name)?;
-                    sort.push(SortParam { field, descending });
-                }
-            }
-
-            // FILTER: e.g. field__op=value
-            _ => {
-                let param = parse_single_filter(&key, &value)?;
-                filters.push(param);
-            }
-        }
-    }
-
-    Ok((
-        QueryOptions {
-            filters,
-            sort,
-            limit,
-            cursor,
-            include_total: include_total.unwrap_or(true),
-        },
-        passthrough,
-    ))
+    Ok((query_options_from_query_crate(query_options)?, passthrough))
 }
 
-fn decode_query_parameter_pairs(qs: &str) -> Result<Vec<(String, String)>, ApiError> {
-    let mut pairs = Vec::new();
-
-    for chunk in qs.split('&') {
-        let parts: Vec<_> = chunk.splitn(2, '=').collect();
-        if parts.len() != 2 {
-            return Err(ApiError::BadRequest(format!(
-                "Invalid query parameter: '{chunk}'"
-            )));
+fn query_error_to_api_error(error: hubuum_query::QueryError) -> ApiError {
+    match error {
+        hubuum_query::QueryError::BadRequest(message) => ApiError::BadRequest(message),
+        hubuum_query::QueryError::InvalidIntegerRange(message) => {
+            ApiError::InvalidIntegerRange(message)
         }
-
-        let key = decode_query_component(parts[0], chunk, "key")?;
-        let value = decode_query_component(parts[1], chunk, "value")?;
-
-        pairs.push((key, value));
     }
-
-    Ok(pairs)
 }
 
-fn decode_query_component(raw: &str, chunk: &str, component: &str) -> Result<String, ApiError> {
-    // `percent_decode().decode_utf8()` returns a borrowing Cow when there are no
-    // `%` escapes, so the common case allocates at most once via `into_owned()`.
-    // Only the `+` -> space pre-pass needs its own allocation, so skip it when
-    // there is no `+` to avoid the unconditional `replace` allocation.
-    let decoded = if raw.contains('+') {
-        let form_encoded = raw.replace('+', " ");
-        percent_encoding::percent_decode(form_encoded.as_bytes())
-            .decode_utf8()
-            .map(|value| value.into_owned())
-    } else {
-        percent_encoding::percent_decode(raw.as_bytes())
-            .decode_utf8()
-            .map(|value| value.into_owned())
-    };
-
-    decoded.map_err(|e| {
-        ApiError::BadRequest(format!(
-            "Invalid query parameter: '{chunk}', invalid {component}: {e}",
-        ))
+fn query_options_from_query_crate(
+    query_options: hubuum_query::QueryOptions,
+) -> Result<QueryOptions, ApiError> {
+    Ok(QueryOptions {
+        filters: query_options
+            .filters
+            .into_iter()
+            .map(parsed_query_param_from_query_crate)
+            .collect::<Result<Vec<_>, _>>()?,
+        sort: query_options
+            .sort
+            .into_iter()
+            .map(sort_param_from_query_crate)
+            .collect::<Result<Vec<_>, _>>()?,
+        limit: query_options.limit.map(validate_page_limit).transpose()?,
+        cursor: query_options.cursor,
+        include_total: query_options.include_total,
     })
 }
 
-fn parse_single_filter(key: &str, value: &str) -> Result<ParsedQueryParam, ApiError> {
-    let field_and_op: Vec<&str> = key.splitn(2, "__").collect();
-    let value = value.to_string();
-    let field = field_and_op[0].to_string();
+fn parsed_query_param_from_query_crate(
+    param: hubuum_query::ParsedQueryParam,
+) -> Result<ParsedQueryParam, ApiError> {
+    Ok(ParsedQueryParam {
+        field: FilterField::from_str(&param.field.to_string())?,
+        operator: SearchOperator::new_from_string(&param.operator.to_string())?,
+        value: param.value,
+    })
+}
 
-    if value.is_empty() {
-        return Err(ApiError::BadRequest(format!(
-            "Invalid query parameter: '{key}', no value",
-        )));
-    }
-
-    let operator = if field_and_op.len() == 1 {
-        SearchOperator::new_from_string("equals")?
-    } else {
-        SearchOperator::new_from_string(field_and_op[1])?
-    };
-
-    let parsed_query_param = ParsedQueryParam {
-        field: FilterField::from_str(&field)?,
-        operator,
-        value,
-    };
-
-    Ok(parsed_query_param)
+fn sort_param_from_query_crate(param: hubuum_query::SortParam) -> Result<SortParam, ApiError> {
+    Ok(SortParam {
+        field: FilterField::from_str(&param.field.to_string())?,
+        descending: param.descending,
+    })
 }
 
 /// ## A per-query Postgres `statement_timeout`, in milliseconds.

@@ -24,6 +24,7 @@ members = [
     "crates/hubuum-event-sinks-common",
     "crates/hubuum-events-core",
     "crates/hubuum-outbound-http",
+    "crates/hubuum-query",
     "crates/hubuum-templates",
 ]
 
@@ -66,6 +67,7 @@ hubuum-event-sinks-common = { path = "crates/hubuum-event-sinks-common" }
 hubuum-templates = { path = "crates/hubuum-templates" }
 hubuum-events-core = { path = "crates/hubuum-events-core", features = ["schema"] }
 hubuum-outbound-http = { path = "crates/hubuum-outbound-http" }
+hubuum-query = { path = "crates/hubuum-query" }
 minijinja = { version = "2", features = ["loader", "fuel"] }
 opentelemetry = { version = "0.32", default-features = false, features = ["metrics"] }
 opentelemetry-prometheus = "0.32"
@@ -136,14 +138,6 @@ path = "src/bin/openapi.rs"
 test = false
 
 [[bench]]
-name = "parse_query_parameter_callgrind"
-harness = false
-
-[[bench]]
-name = "parse_integer_list_callgrind"
-harness = false
-
-[[bench]]
 name = "json_sql_filters_callgrind"
 harness = false
 
@@ -160,15 +154,7 @@ name = "object_validation_nested_callgrind"
 harness = false
 
 [[bench]]
-name = "search_operator_parsing_callgrind"
-harness = false
-
-[[bench]]
 name = "permissions_parsing_callgrind"
-harness = false
-
-[[bench]]
-name = "jsonb_type_inference_callgrind"
 harness = false
 
 [[bench]]

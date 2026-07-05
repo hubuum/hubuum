@@ -1,4 +1,4 @@
-use hubuum::utilities::extensions::parse_integer_list;
+use hubuum_query::parse_integer_list;
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use std::hint::black_box;
 

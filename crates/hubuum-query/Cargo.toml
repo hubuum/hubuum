@@ -1,0 +1,31 @@
+[package]
+name = "hubuum-query"
+version = "0.0.1"
+edition = "2024"
+description = "App-neutral query parsing and search parameter types for Hubuum."
+license = "MIT"
+repository = "https://github.com/hubuum/hubuum"
+
+[dependencies]
+chrono = "0.4"
+percent-encoding = "2"
+serde_json = "1"
+
+[dev-dependencies]
+iai-callgrind = "0.16.1"
+
+[[bench]]
+name = "parse_query_parameter_callgrind"
+harness = false
+
+[[bench]]
+name = "parse_integer_list_callgrind"
+harness = false
+
+[[bench]]
+name = "search_operator_parsing_callgrind"
+harness = false
+
+[[bench]]
+name = "jsonb_type_inference_callgrind"
+harness = false

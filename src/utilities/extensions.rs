@@ -152,63 +152,10 @@ impl<T: AsRef<str>> CustomStringExtensions for T {
 ///
 /// * A sorted vector of unique integers or ApiError::InvalidIntegerRange if the input is invalid
 pub fn parse_integer_list(input: &str) -> Result<Vec<i32>, ApiError> {
-    let mut numbers = Vec::new();
-
-    // Split the input string on commas to handle individual numbers or ranges separately.
-    for segment in input.split(',') {
-        // Identify and handle ranges.
-        // For negative ranges, like "-4--2", ensure they are parsed correctly.
-        if segment.contains("--") {
-            let parts: Vec<&str> = segment.split("--").collect();
-            if parts.len() != 2 {
-                return Err(ApiError::InvalidIntegerRange(format!(
-                    "Invalid format: '{segment}'"
-                )));
-            }
-            let start = parts[0].parse::<i32>().map_err(|_| {
-                ApiError::InvalidIntegerRange(format!("Invalid start of range: '{}'", parts[0]))
-            })?;
-            let end = format!("-{}", parts[1]).parse::<i32>().map_err(|_| {
-                ApiError::InvalidIntegerRange(format!("Invalid end of range: '{}'", parts[1]))
-            })?;
-            if start > end {
-                return Err(ApiError::InvalidIntegerRange(format!(
-                    "Range start is greater than end: '{segment}'"
-                )));
-            }
-            numbers.extend(start..=end);
-        } else if let Some(idx) = segment.find('-') {
-            if idx == 0 {
-                // It's a negative number, not a range.
-                numbers.push(segment.parse::<i32>().map_err(|_| {
-                    ApiError::InvalidIntegerRange(format!("Invalid number: '{segment}'"))
-                })?);
-            } else {
-                // It's a positive range.
-                let (start, end) = segment.split_at(idx);
-                let end = &end[1..]; // Skip the hyphen
-                let start = start.parse::<i32>().map_err(|_| {
-                    ApiError::InvalidIntegerRange(format!("Invalid start of range: '{start}'"))
-                })?;
-                let end = end.parse::<i32>().map_err(|_| {
-                    ApiError::InvalidIntegerRange(format!("Invalid end of range: '{end}'"))
-                })?;
-                if start > end {
-                    return Err(ApiError::InvalidIntegerRange(format!(
-                        "Range start is greater than end: '{segment}'"
-                    )));
-                }
-                numbers.extend(start..=end);
-            }
-        } else {
-            // Handle a single number.
-            numbers.push(segment.parse::<i32>().map_err(|_| {
-                ApiError::InvalidIntegerRange(format!("Invalid number: '{segment}'"))
-            })?);
+    hubuum_query::parse_integer_list(input).map_err(|error| match error {
+        hubuum_query::QueryError::BadRequest(message) => ApiError::BadRequest(message),
+        hubuum_query::QueryError::InvalidIntegerRange(message) => {
+            ApiError::InvalidIntegerRange(message)
         }
-    }
-
-    numbers.sort_unstable();
-    numbers.dedup();
-    Ok(numbers)
+    })
 }
