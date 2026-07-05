@@ -7,6 +7,7 @@
 - `cargo clippy` should pass for all code before changes are considered complete.
 - Run clippy as `cargo clippy --all-targets -- -D warnings`.
 - `rustfmt` should pass for all Rust code. Keep formatting mechanical and avoid hand-formatting that fights `rustfmt`.
+- When workspace crate membership, crate manifests, `Cargo.lock`, `Dockerfile`, or `.dockerignore` changes, verify the production container build with `scripts/check-container-build.sh` before shipping a PR. Use `scripts/check-container-build.sh --variant full` when changes affect TLS/OpenSSL feature composition.
 - Regenerate OpenAPI after endpoint or schema changes before considering the change complete.
 - Markdown lint must pass for all `*.md` files. Run it locally with `npx markdownlint-cli2 --config .markdownlint.json "**/*.md" "!target"` before considering documentation changes complete. Every fenced code block must declare a language (use `text` for plain ASCII/diagrams), and tables must use a single, consistent column style (MD060).
 
