@@ -83,7 +83,7 @@ GET /api/v1/reports/12/output
 
 ### Supported scopes
 
-- `namespaces`
+- `collections`
 - `classes`
 - `objects_in_class`
   - requires `class_id`
@@ -215,7 +215,7 @@ query/limits/policy. Runtime `query` replaces the template's default query when 
 Executable templates support every report scope kind:
 
 - `objects_in_class` and `related_objects` are bound to a single class and require the template's `class_id`.
-- `namespaces`, `classes`, `class_relations`, and `object_relations` are class-agnostic and must not set `class_id`.
+- `collections`, `classes`, `class_relations`, and `object_relations` are class-agnostic and must not set `class_id`.
 
 `object_id` is only accepted at run time for `related_objects` templates; supplying it for any other scope
 is rejected with `400 Bad Request`.
@@ -267,7 +267,7 @@ Supported output types:
 
 For concrete template examples and example context data, see [template_guide.md](template_guide.md).
 
-Templates use Jinja syntax, including loops, conditionals, expressions, macros, and same-namespace `include`/`extends`/`import`.
+Templates use Jinja syntax, including loops, conditionals, expressions, macros, and same-collection `include`/`extends`/`import`.
 
 The template context contains:
 

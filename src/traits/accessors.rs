@@ -3,7 +3,7 @@
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::{
-    HubuumClass, HubuumClassID, HubuumObject, HubuumObjectID, Namespace, NamespaceID,
+    Collection, CollectionID, HubuumClass, HubuumClassID, HubuumObject, HubuumObjectID,
 };
 
 use super::context::BackendContext;
@@ -73,64 +73,64 @@ where
     }
 }
 
-/// Access the namespace represented by a value.
+/// Access the collection represented by a value.
 ///
-/// This allows both direct entities and identifier wrappers to expose a common namespace lookup
+/// This allows both direct entities and identifier wrappers to expose a common collection lookup
 /// API without pushing Diesel details into the public trait surface.
 #[allow(async_fn_in_trait)]
-pub trait NamespaceAccessors<N = Namespace, I = NamespaceID> {
-    /// Return the namespace instance for this value.
-    async fn namespace<C>(&self, backend: &C) -> Result<N, ApiError>
+pub trait CollectionAccessors<N = Collection, I = CollectionID> {
+    /// Return the collection instance for this value.
+    async fn collection<C>(&self, backend: &C) -> Result<N, ApiError>
     where
         C: BackendContext + ?Sized;
 
-    /// Return the namespace identifier for this value.
-    async fn namespace_id<C>(&self, backend: &C) -> Result<I, ApiError>
+    /// Return the collection identifier for this value.
+    async fn collection_id<C>(&self, backend: &C) -> Result<I, ApiError>
     where
         C: BackendContext + ?Sized;
 }
 
 #[doc(hidden)]
-pub(crate) trait NamespaceAdapter<N = Namespace, I = NamespaceID> {
-    async fn namespace_adapter(&self, pool: &DbPool) -> Result<N, ApiError>;
-    async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<I, ApiError>;
+pub(crate) trait CollectionAdapter<N = Collection, I = CollectionID> {
+    async fn collection_adapter(&self, pool: &DbPool) -> Result<N, ApiError>;
+    async fn collection_id_adapter(&self, pool: &DbPool) -> Result<I, ApiError>;
 }
 
-impl<T, N, I> NamespaceAccessors<N, I> for T
+impl<T, N, I> CollectionAccessors<N, I> for T
 where
-    T: NamespaceAdapter<N, I>,
+    T: CollectionAdapter<N, I>,
 {
-    async fn namespace<C>(&self, backend: &C) -> Result<N, ApiError>
+    async fn collection<C>(&self, backend: &C) -> Result<N, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.namespace_adapter(backend.db_pool()).await
+        self.collection_adapter(backend.db_pool()).await
     }
 
-    async fn namespace_id<C>(&self, backend: &C) -> Result<I, ApiError>
+    async fn collection_id<C>(&self, backend: &C) -> Result<I, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.namespace_id_adapter(backend.db_pool()).await
+        self.collection_id_adapter(backend.db_pool()).await
     }
 }
 
-impl<T, N, I> NamespaceAdapter<N, I> for &T
+impl<T, N, I> CollectionAdapter<N, I> for &T
 where
-    T: NamespaceAdapter<N, I> + ?Sized,
+    T: CollectionAdapter<N, I> + ?Sized,
 {
-    async fn namespace_adapter(&self, pool: &DbPool) -> Result<N, ApiError> {
-        (*self).namespace_adapter(pool).await
+    async fn collection_adapter(&self, pool: &DbPool) -> Result<N, ApiError> {
+        (*self).collection_adapter(pool).await
     }
 
-    async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<I, ApiError> {
-        (*self).namespace_id_adapter(pool).await
+    async fn collection_id_adapter(&self, pool: &DbPool) -> Result<I, ApiError> {
+        (*self).collection_id_adapter(pool).await
     }
 }
 
 /// Access the class represented by a value.
 ///
-/// As with [`NamespaceAccessors`], this trait lets entity and identifier types share a common
+/// As with [`CollectionAccessors`], this trait lets entity and identifier types share a common
 /// class lookup interface while keeping backend-specific loading in internal adapters.
 pub trait ClassAccessors<C = HubuumClass, I = HubuumClassID> {
     /// Return the class instance for this value.

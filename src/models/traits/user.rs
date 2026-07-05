@@ -2,14 +2,15 @@ use std::iter::IntoIterator;
 
 use crate::models::search::QueryOptions;
 use crate::models::{
-    ClassGraphRow, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
-    HubuumObjectRelation, Namespace, Permissions, RelatedObjectForRootRow, RelatedObjectGraphRow,
-    RelatedObjectIncludeRow, ReportIncludeRelatedQuery, UnifiedSearchSpec, User, UserID,
+    ClassGraphRow, Collection, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation,
+    HubuumObject, HubuumObjectRelation, Permissions, RelatedObjectForRootRow,
+    RelatedObjectGraphRow, RelatedObjectIncludeRow, ReportIncludeRelatedQuery, UnifiedSearchSpec,
+    User, UserID,
 };
 
 use crate::db::DbPool;
 use crate::db::traits::user::{
-    LoadPermittedNamespaces, LoadUserGroups, LoadUserGroupsPaginated, LoadUserRecord,
+    LoadPermittedCollections, LoadUserGroups, LoadUserGroupsPaginated, LoadUserRecord,
     UnifiedSearchBackend, UserSearchBackend,
 };
 use crate::errors::ApiError;
@@ -20,21 +21,21 @@ use crate::traits::{AuthzSubject, BackendContext, ClassAccessors, SelfAccessors}
 ///
 /// The methods on this trait delegate into backend search implementations while keeping the
 /// model-facing API expressed in terms of `User` / `UserID` style accessors.
-pub trait Search: UserNamespaceAccessors {
-    async fn search_namespaces<C>(
+pub trait Search: UserCollectionAccessors {
+    async fn search_collections<C>(
         &self,
         backend: &C,
         query_options: QueryOptions,
         scopes: Option<&[Permissions]>,
-    ) -> Result<Vec<Namespace>, ApiError>
+    ) -> Result<Vec<Collection>, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.search_namespaces_from_backend(backend.db_pool(), query_options, scopes)
+        self.search_collections_from_backend(backend.db_pool(), query_options, scopes)
             .await
     }
 
-    async fn count_namespaces<C>(
+    async fn count_collections<C>(
         &self,
         backend: &C,
         query_options: QueryOptions,
@@ -43,7 +44,7 @@ pub trait Search: UserNamespaceAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.count_namespaces_from_backend(backend.db_pool(), query_options, scopes)
+        self.count_collections_from_backend(backend.db_pool(), query_options, scopes)
             .await
     }
 
@@ -322,16 +323,16 @@ pub trait Search: UserNamespaceAccessors {
             .await
     }
 
-    async fn search_unified_namespaces<C>(
+    async fn search_unified_collections<C>(
         &self,
         backend: &C,
         query: &UnifiedSearchSpec,
         scopes: Option<&[Permissions]>,
-    ) -> Result<Vec<Namespace>, ApiError>
+    ) -> Result<Vec<Collection>, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.search_unified_namespaces_from_backend(backend.db_pool(), query, scopes)
+        self.search_unified_collections_from_backend(backend.db_pool(), query, scopes)
             .await
     }
 
@@ -387,43 +388,43 @@ pub trait GroupAccessors: AuthzSubject {
     }
 }
 
-/// Access namespaces that are visible to a user through direct or group-derived permissions.
-pub trait UserNamespaceAccessors: GroupAccessors + AuthzSubject {
-    /// Return all namespaces that the user has NamespacePermissions::ReadCollection on.
+/// Access collections that are visible to a user through direct or group-derived permissions.
+pub trait UserCollectionAccessors: GroupAccessors + AuthzSubject {
+    /// Return all collections that the user has CollectionPermissions::ReadCollection on.
     #[allow(dead_code)] // Lazy-used in tests.
-    async fn namespaces_read<C>(&self, backend: &C) -> Result<Vec<Namespace>, ApiError>
+    async fn collections_read<C>(&self, backend: &C) -> Result<Vec<Collection>, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.namespaces(backend, &[Permissions::ReadCollection])
+        self.collections(backend, &[Permissions::ReadCollection])
             .await
     }
 
-    /// Return all namespaces that the user has the given permissions on.
-    async fn namespaces<'a, C, I>(
+    /// Return all collections that the user has the given permissions on.
+    async fn collections<'a, C, I>(
         &self,
         backend: &C,
         permissions_list: &'a I,
-    ) -> Result<Vec<Namespace>, ApiError>
+    ) -> Result<Vec<Collection>, ApiError>
     where
         C: BackendContext + ?Sized,
         &'a I: IntoIterator<Item = &'a Permissions>,
     {
         // NOTE: scopes are passed as `None` here (unscoped). Live token-scope
-        // threading through the namespace/search visibility helpers is wired in
+        // threading through the collection/search visibility helpers is wired in
         // the handler/search-scope pass; the admin fast path stays correct for
         // the `None` case.
-        self.load_namespaces_with_permissions(backend.db_pool(), permissions_list, None)
+        self.load_collections_with_permissions(backend.db_pool(), permissions_list, None)
             .await
     }
 }
 
-// Group/namespace accessors are available to every authorization subject (human
+// Group/collection accessors are available to every authorization subject (human
 // users, service accounts, bare principals) via the identity-only contract.
 impl<T: AuthzSubject + ?Sized> GroupAccessors for T {}
-impl<T: GroupAccessors + AuthzSubject + ?Sized> UserNamespaceAccessors for T {}
+impl<T: GroupAccessors + AuthzSubject + ?Sized> UserCollectionAccessors for T {}
 
-impl<T: UserNamespaceAccessors + ?Sized> Search for T {}
+impl<T: UserCollectionAccessors + ?Sized> Search for T {}
 
 // User list/search cursoring lives on `UserWithName` (which carries the
 // principal name); `User` itself maps the `users` table and is not cursor-sorted
@@ -481,10 +482,10 @@ mod test {
 
     #[rstest]
     #[actix_rt::test]
-    async fn test_user_permissions_namespace_and_class_listing(
+    async fn test_user_permissions_collection_and_class_listing(
         #[future(awt)] test_context: TestContext,
     ) {
-        use crate::models::namespace::NewNamespace;
+        use crate::models::collection::NewCollection;
         use crate::models::search::{FilterField, ParsedQueryParam, SearchOperator};
 
         let context = test_context;
@@ -502,20 +503,20 @@ mod test {
             .await
             .unwrap();
 
-        let ns = NewNamespace {
-            name: "test_user_namespace_listing".to_string(),
-            description: "Test namespace".to_string(),
+        let ns = NewCollection {
+            name: "test_user_collection_listing".to_string(),
+            description: "Test collection".to_string(),
         }
         .save_and_grant_all_to(&context.pool, GroupID::new(test_group_1.id).unwrap())
         .await
         .unwrap();
 
         let class = NewHubuumClass {
-            name: "test_user_namespace_listing".to_string(),
+            name: "test_user_collection_listing".to_string(),
             description: "Test class".to_string(),
             json_schema: None,
             validate_schema: None,
-            namespace_id: ns.id,
+            collection_id: ns.id,
         }
         .save_without_events(&context.pool)
         .await
@@ -541,16 +542,16 @@ mod test {
             value: "ReadClass".to_string(),
         };
 
-        let read_namespace_param = ParsedQueryParam {
+        let read_collection_param = ParsedQueryParam {
             field: FilterField::Permissions,
             operator: SearchOperator::Equals { is_negated: false },
             value: "ReadCollection".to_string(),
         };
 
         let nslist = test_user_1
-            .search_namespaces(
+            .search_collections(
                 &context.pool,
-                make_query_options_from_query_param(&read_namespace_param),
+                make_query_options_from_query_param(&read_collection_param),
                 None,
             )
             .await
@@ -558,9 +559,9 @@ mod test {
         assert_contains!(&nslist, &ns);
 
         let nslist = test_user_2
-            .search_namespaces(
+            .search_collections(
                 &context.pool,
-                make_query_options_from_query_param(&read_namespace_param),
+                make_query_options_from_query_param(&read_collection_param),
                 None,
             )
             .await
@@ -592,9 +593,9 @@ mod test {
             .unwrap();
 
         let nslist = test_user_2
-            .search_namespaces(
+            .search_collections(
                 &context.pool,
-                make_query_options_from_query_param(&read_namespace_param),
+                make_query_options_from_query_param(&read_collection_param),
                 None,
             )
             .await
@@ -647,7 +648,7 @@ mod test {
         assert_not_contains!(&classlist, &class);
 
         let nslist = test_user_2
-            .search_namespaces(
+            .search_collections(
                 &context.pool,
                 make_query_options_from_query_param(&read_class_param),
                 None,
@@ -661,9 +662,9 @@ mod test {
             .unwrap();
 
         let nslist = test_user_2
-            .search_namespaces(
+            .search_collections(
                 &context.pool,
-                make_query_options_from_query_param(&read_namespace_param),
+                make_query_options_from_query_param(&read_collection_param),
                 None,
             )
             .await

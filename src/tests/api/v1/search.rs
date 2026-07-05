@@ -19,11 +19,11 @@ mod tests {
     ) {
         let context = test_context;
         let needle = context.scoped_name("unifiedsearchserver").replace('_', "");
-        let namespace = context.namespace_fixture(&needle).await;
+        let collection = context.collection_fixture(&needle).await;
 
         let class = NewHubuumClass {
             name: needle.clone(),
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             json_schema: None,
             validate_schema: Some(false),
             description: format!("{needle} inventory"),
@@ -34,7 +34,7 @@ mod tests {
 
         NewHubuumObject {
             name: format!("{needle}-object"),
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             hubuum_class_id: class.id,
             data: serde_json::json!({"hostname": format!("{needle}-object")}),
             description: format!("{needle} object description"),
@@ -46,13 +46,13 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{SEARCH_ENDPOINT}?q={needle}&kinds=namespace,class,object"),
+            &format!("{SEARCH_ENDPOINT}?q={needle}&kinds=collection,class,object"),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let search: UnifiedSearchResponse = test::read_body_json(resp).await;
 
-        assert!(!search.results.namespaces.is_empty());
+        assert!(!search.results.collections.is_empty());
         assert_eq!(search.results.classes.len(), 1);
         assert_eq!(search.results.objects.len(), 1);
 
@@ -64,22 +64,22 @@ mod tests {
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let search: UnifiedSearchResponse = test::read_body_json(resp).await;
-        assert!(search.results.namespaces.is_empty());
+        assert!(search.results.collections.is_empty());
         assert_eq!(search.results.classes.len(), 1);
         assert!(search.results.objects.is_empty());
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     #[rstest]
     #[actix_web::test]
     async fn test_api_search_class_schema_toggle(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let namespace = context.namespace_fixture("unified_schema_toggle").await;
+        let collection = context.collection_fixture("unified_schema_toggle").await;
 
         let class = NewHubuumClass {
             name: "ordinary-class".to_string(),
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             json_schema: Some(serde_json::json!({
                 "type": "object",
                 "properties": { "role": { "type": "string", "description": "schemaonlyneedle" } }
@@ -112,20 +112,20 @@ mod tests {
         assert_eq!(search.results.classes.len(), 1);
         assert_eq!(search.results.classes[0].id, class.id);
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     #[rstest]
     #[actix_web::test]
     async fn test_api_search_object_data_toggle(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let namespace = context
-            .namespace_fixture("unified_object_data_toggle")
+        let collection = context
+            .collection_fixture("unified_object_data_toggle")
             .await;
 
         let class = NewHubuumClass {
             name: "search-data-class".to_string(),
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             json_schema: None,
             validate_schema: Some(false),
             description: "class for data search".to_string(),
@@ -136,7 +136,7 @@ mod tests {
 
         let object = NewHubuumObject {
             name: "ordinary-object".to_string(),
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             hubuum_class_id: class.id,
             data: serde_json::json!({"owner": "jsononlyneedle", "ignored_key": "value"}),
             description: "generic object".to_string(),
@@ -166,19 +166,19 @@ mod tests {
         assert_eq!(search.results.objects.len(), 1);
         assert_eq!(search.results.objects[0].id, object.id);
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     #[rstest]
     #[actix_web::test]
     async fn test_api_search_per_kind_cursor_pagination(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let namespace = context.namespace_fixture("unified_cursor_page").await;
+        let collection = context.collection_fixture("unified_cursor_page").await;
 
         for idx in 0..3 {
             NewHubuumClass {
                 name: format!("cursorclass{idx}"),
-                namespace_id: namespace.namespace.id,
+                collection_id: collection.collection.id,
                 json_schema: None,
                 validate_schema: Some(false),
                 description: "cursorclass description".to_string(),
@@ -213,15 +213,15 @@ mod tests {
         assert_eq!(second_page.results.classes.len(), 1);
         assert!(second_page.next.classes.is_none());
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     #[rstest]
     #[actix_web::test]
     async fn test_api_search_permission_scoping(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let visible = context.namespace_fixture("permneedle_visible").await;
-        let hidden = context.namespace_fixture("permneedle_hidden").await;
+        let visible = context.collection_fixture("permneedle_visible").await;
+        let hidden = context.collection_fixture("permneedle_hidden").await;
 
         visible
             .owner_group
@@ -229,10 +229,10 @@ mod tests {
             .await
             .unwrap();
 
-        for namespace in [&visible, &hidden] {
+        for collection in [&visible, &hidden] {
             let class = NewHubuumClass {
-                name: format!("permneedle-class-{}", namespace.namespace.id),
-                namespace_id: namespace.namespace.id,
+                name: format!("permneedle-class-{}", collection.collection.id),
+                collection_id: collection.collection.id,
                 json_schema: None,
                 validate_schema: Some(false),
                 description: "permneedle class".to_string(),
@@ -242,8 +242,8 @@ mod tests {
             .unwrap();
 
             NewHubuumObject {
-                name: format!("permneedle-object-{}", namespace.namespace.id),
-                namespace_id: namespace.namespace.id,
+                name: format!("permneedle-object-{}", collection.collection.id),
+                collection_id: collection.collection.id,
                 hubuum_class_id: class.id,
                 data: serde_json::json!({"tag": "permneedle"}),
                 description: "permneedle object".to_string(),
@@ -262,27 +262,27 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let search: UnifiedSearchResponse = test::read_body_json(resp).await;
 
-        assert_eq!(search.results.namespaces.len(), 1);
+        assert_eq!(search.results.collections.len(), 1);
         assert!(
             search
                 .results
-                .namespaces
+                .collections
                 .iter()
-                .all(|namespace| namespace.id == visible.namespace.id)
+                .all(|collection| collection.id == visible.collection.id)
         );
         assert!(
             search
                 .results
                 .classes
                 .iter()
-                .all(|class| class.namespace.id == visible.namespace.id)
+                .all(|class| class.collection.id == visible.collection.id)
         );
         assert!(
             search
                 .results
                 .objects
                 .iter()
-                .all(|object| object.namespace_id == visible.namespace.id)
+                .all(|object| object.collection_id == visible.collection.id)
         );
 
         visible.cleanup().await.unwrap();
@@ -318,11 +318,11 @@ mod tests {
     #[actix_web::test]
     async fn test_api_search_stream_events(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let namespace = context.namespace_fixture("streamneedle").await;
+        let collection = context.collection_fixture("streamneedle").await;
 
         let class = NewHubuumClass {
             name: "streamneedle-class".to_string(),
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             json_schema: None,
             validate_schema: Some(false),
             description: "streamneedle class".to_string(),
@@ -333,7 +333,7 @@ mod tests {
 
         NewHubuumObject {
             name: "streamneedle-object".to_string(),
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             hubuum_class_id: class.id,
             data: serde_json::json!({"label": "streamneedle"}),
             description: "streamneedle object".to_string(),
@@ -359,6 +359,6 @@ mod tests {
         assert!(body.contains("\"kind\":\"objects\""));
         assert!(body.contains("event: done"));
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 }

@@ -142,18 +142,18 @@ mod tests {
     #[actix_web::test]
     async fn test_event_subscription_validates_catalog_and_requires_permission() {
         let context = TestContext::new().await;
-        let namespace = context.namespace_fixture("subscription_catalog").await;
+        let collection = context.collection_fixture("subscription_catalog").await;
         let sink = create_sink(&context, "subscription_sink").await;
         let endpoint = format!(
-            "/api/v1/namespaces/{}/event-subscriptions",
-            namespace.namespace.id
+            "/api/v1/collections/{}/event-subscriptions",
+            collection.collection.id
         );
 
         let valid = NewEventSubscription {
             sink_id: crate::models::EventSinkID::new(sink.id).unwrap(),
             name: context.scoped_name("subscription"),
             description: "valid event subscription".to_string(),
-            entity_types: vec!["namespace".to_string()],
+            entity_types: vec!["collection".to_string()],
             actions: vec!["created".to_string()],
             filter: hubuum_events_core::EventSubscriptionFilter::default(),
             routing: json!({"url": "https://example.test/events"}),
@@ -165,8 +165,8 @@ mod tests {
         let resp = post_request(&context.pool, &context.admin_token, &endpoint, &valid).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
         let created: EventSubscription = test::read_body_json(resp).await;
-        assert_eq!(created.namespace_id, namespace.namespace.id);
-        assert_eq!(created.entity_types, vec!["namespace"]);
+        assert_eq!(created.collection_id, collection.collection.id);
+        assert_eq!(created.entity_types, vec!["collection"]);
         assert_eq!(created.actions, vec!["created"]);
         assert_eq!(
             created.filter,
@@ -205,7 +205,7 @@ mod tests {
             sink_id: crate::models::EventSinkID::new(sink.id).unwrap(),
             name: context.scoped_name("subscription_invalid_filter"),
             description: "invalid event subscription filter".to_string(),
-            entity_types: vec!["namespace".to_string()],
+            entity_types: vec!["collection".to_string()],
             actions: vec!["created".to_string()],
             filter: hubuum_events_core::EventSubscriptionFilter {
                 actor_kinds: vec!["anonymous".to_string()],

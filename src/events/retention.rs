@@ -187,16 +187,16 @@ mod tests {
             id: 1,
             event_id: Uuid::new_v4(),
             occurred_at: chrono::Utc::now().naive_utc(),
-            entity_type: "namespace".to_string(),
+            entity_type: "collection".to_string(),
             entity_id: Some(1),
             entity_name: Some("example".to_string()),
-            namespace_id: Some(1),
+            collection_id: Some(1),
             action: "created".to_string(),
             actor_user_id: None,
             actor_kind: "system".to_string(),
             request_id: None,
             correlation_id: None,
-            summary: "namespace created".to_string(),
+            summary: "collection created".to_string(),
             before: None,
             after: None,
             metadata: serde_json::json!({}),
@@ -240,7 +240,7 @@ mod tests {
         assert_eq!(archived.lines().count(), 1);
         assert!(archived.contains("\"archived_at\""));
         assert!(archived.contains("\"event\""));
-        assert!(archived.contains("\"entity_type\":\"namespace\""));
+        assert!(archived.contains("\"entity_type\":\"collection\""));
         std::fs::remove_file(path).unwrap();
     }
 }

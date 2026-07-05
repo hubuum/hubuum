@@ -11,7 +11,7 @@ This document describes Hubuum's row-history mechanism, which records every data
 Every versioned table has a companion `<table>_history` table that records all mutations. For example:
 - `hubuumclass` → `hubuumclass_history`
 - `hubuumobject` → `hubuumobject_history`
-- `namespaces` → `namespaces_history`
+- `collections` → `collections_history`
 - `hubuumclass_relation` → `hubuumclass_relation_history`
 - `hubuumobject_relation` → `hubuumobject_relation_history`
 - `report_templates` → `report_templates_history`
@@ -97,7 +97,7 @@ CREATE TRIGGER hubuumclass_history_trg AFTER INSERT OR UPDATE OR DELETE ON hubuu
 
 ### No-Op Updates
 
-For temporal domain tables (`hubuumclass`, `hubuumobject`, `namespaces`,
+For temporal domain tables (`hubuumclass`, `hubuumobject`, `collections`,
 `report_templates`, and `remote_targets`), an `UPDATE` whose domain data is
 identical to the existing row is suppressed by a `BEFORE UPDATE` trigger.
 `updated_at` is intentionally excluded from the comparison.
@@ -220,7 +220,7 @@ DO $$
 DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY[
-    'hubuumclass','hubuumobject','namespaces','hubuumclass_relation',
+    'hubuumclass','hubuumobject','collections','hubuumclass_relation',
     'hubuumobject_relation','report_templates','remote_targets',
     'new_table'  -- Add here
   ]
@@ -372,7 +372,7 @@ The temporal history system now exposes read-only access to historical versions 
 
 ### Endpoints
 
-For each of the five versioned resources (classes, objects, namespaces, report templates, remote targets), two history endpoints are available:
+For each of the five versioned resources (classes, objects, collections, report templates, remote targets), two history endpoints are available:
 
 #### 1. List History Versions (Cursor-Paginated)
 
@@ -381,7 +381,7 @@ Returns all historical versions for a specific entity, ordered newest-first by d
 **Endpoints:**
 - `GET /api/v1/classes/{class_id}/history`
 - `GET /api/v1/classes/{class_id}/{object_id}/history`
-- `GET /api/v1/namespaces/{namespace_id}/history`
+- `GET /api/v1/collections/{collection_id}/history`
 - `GET /api/v1/templates/{template_id}/history`
 - `GET /api/v1/remote-targets/{remote_target_id}/history`
 
@@ -439,7 +439,7 @@ Returns the historical version of an entity that was valid at a specific instant
 **Endpoints:**
 - `GET /api/v1/classes/{class_id}/history/as-of?at=<rfc3339>`
 - `GET /api/v1/classes/{class_id}/{object_id}/history/as-of?at=<rfc3339>`
-- `GET /api/v1/namespaces/{namespace_id}/history/as-of?at=<rfc3339>`
+- `GET /api/v1/collections/{collection_id}/history/as-of?at=<rfc3339>`
 - `GET /api/v1/templates/{template_id}/history/as-of?at=<rfc3339>`
 - `GET /api/v1/remote-targets/{remote_target_id}/history/as-of?at=<rfc3339>`
 
@@ -460,15 +460,15 @@ History read access mirrors the base resource's Read permission:
 
 - **Classes**: Requires `Permissions::ReadClass` on the class entity
 - **Objects**: Requires `Permissions::ReadObject` on the object entity
-- **Namespaces**: Requires `Permissions::ReadCollection` on the namespace entity
-- **Report Templates**: Requires `Permissions::ReadTemplate` on the template's parent namespace
-- **Remote Targets**: Requires `Permissions::ReadRemoteTarget` on the remote target's parent namespace
+- **Collections**: Requires `Permissions::ReadCollection` on the collection entity
+- **Report Templates**: Requires `Permissions::ReadTemplate` on the template's parent collection
+- **Remote Targets**: Requires `Permissions::ReadRemoteTarget` on the remote target's parent collection
 
 **Deleted Entity Handling:**
 If an entity has been deleted from the base table, normal callers receive **404 Not Found** because there is no live row to authorize against. Unscoped admins may still read the deleted entity's history and delete tombstone through the same history endpoints for compliance/audit purposes.
 
-**Known Limitation — Cross-Namespace History:**
-Because permission is checked against the entity's CURRENT namespace, and an entity's `namespace_id` can change over time, the returned history may include versions (and the `namespace_id`) from when the entity lived in a different namespace. This means the history is visible to anyone who can read the entity's current namespace, even if those historical versions reflect a time when the entity was in a different namespace. This is an accepted limitation of the current permission model.
+**Known Limitation — Cross-Collection History:**
+Because permission is checked against the entity's CURRENT collection, and an entity's `collection_id` can change over time, the returned history may include versions (and the `collection_id`) from when the entity lived in a different collection. This means the history is visible to anyone who can read the entity's current collection, even if those historical versions reflect a time when the entity was in a different collection. This is an accepted limitation of the current permission model.
 
 ### Limitations and Future Work
 

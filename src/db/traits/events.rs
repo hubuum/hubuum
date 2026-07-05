@@ -16,28 +16,28 @@ pub struct EventListFilters {
     pub action: Option<Action>,
     pub actor_kind: Option<ActorKind>,
     pub actor_user_id: Option<i32>,
-    pub namespace_id: Option<i32>,
+    pub collection_id: Option<i32>,
     pub occurred_after: Option<chrono::NaiveDateTime>,
     pub occurred_before: Option<chrono::NaiveDateTime>,
 }
 
 pub async fn list_events_with_total_count(
     pool: &DbPool,
-    accessible_namespace_ids: &[i32],
-    include_namespace_less: bool,
+    accessible_collection_ids: &[i32],
+    include_collection_less: bool,
     filters: &EventListFilters,
     query_options: &QueryOptions,
 ) -> Result<(Vec<EventResponse>, i64), ApiError> {
-    let query = build_event_query(accessible_namespace_ids, include_namespace_less, filters)?;
+    let query = build_event_query(accessible_collection_ids, include_collection_less, filters)?;
     let total_count = with_connection(pool, |conn| query.count().get_result::<i64>(conn))?;
 
-    let mut query = build_event_query(accessible_namespace_ids, include_namespace_less, filters)?;
+    let mut query = build_event_query(accessible_collection_ids, include_collection_less, filters)?;
     apply_query_options!(query, query_options, EventResponse);
     let rows = with_connection(pool, |conn| query.load::<Event>(conn))?;
     let rows = rows
         .into_iter()
         .map(|event| {
-            event_response_for_visibility(event, accessible_namespace_ids, include_namespace_less)
+            event_response_for_visibility(event, accessible_collection_ids, include_collection_less)
         })
         .collect();
 
@@ -45,38 +45,38 @@ pub async fn list_events_with_total_count(
 }
 
 fn build_event_query<'a>(
-    accessible_namespace_ids: &'a [i32],
-    include_namespace_less: bool,
+    accessible_collection_ids: &'a [i32],
+    include_collection_less: bool,
     filters: &EventListFilters,
 ) -> Result<crate::schema::events::BoxedQuery<'a, diesel::pg::Pg>, ApiError> {
     use crate::schema::events::dsl::{
-        action, actor_kind, actor_user_id, entity_id, entity_type, events, namespace_id,
+        action, actor_kind, actor_user_id, collection_id, entity_id, entity_type, events,
         occurred_at,
     };
 
     let mut query = events.into_boxed();
 
-    if !include_namespace_less && accessible_namespace_ids.is_empty() {
+    if !include_collection_less && accessible_collection_ids.is_empty() {
         return Ok(query.filter(sql::<Bool>("FALSE")));
     }
 
-    if include_namespace_less {
-        if !accessible_namespace_ids.is_empty() {
+    if include_collection_less {
+        if !accessible_collection_ids.is_empty() {
             query = query.filter(
-                namespace_id
-                    .eq_any(accessible_namespace_ids)
-                    .or(namespace_id.is_null())
-                    .or(sql::<Bool>(&related_namespace_filter_sql(
-                        accessible_namespace_ids,
+                collection_id
+                    .eq_any(accessible_collection_ids)
+                    .or(collection_id.is_null())
+                    .or(sql::<Bool>(&related_collection_filter_sql(
+                        accessible_collection_ids,
                     ))),
             );
         }
     } else {
         query = query.filter(
-            namespace_id
-                .eq_any(accessible_namespace_ids)
-                .or(sql::<Bool>(&related_namespace_filter_sql(
-                    accessible_namespace_ids,
+            collection_id
+                .eq_any(accessible_collection_ids)
+                .or(sql::<Bool>(&related_collection_filter_sql(
+                    accessible_collection_ids,
                 ))),
         );
     }
@@ -96,8 +96,8 @@ fn build_event_query<'a>(
     if let Some(value) = filters.actor_user_id {
         query = query.filter(actor_user_id.eq(Some(value)));
     }
-    if let Some(value) = filters.namespace_id {
-        query = query.filter(namespace_id.eq(Some(value)));
+    if let Some(value) = filters.collection_id {
+        query = query.filter(collection_id.eq(Some(value)));
     }
     if let Some(value) = filters.occurred_after {
         query = query.filter(occurred_at.ge(value));
@@ -109,16 +109,16 @@ fn build_event_query<'a>(
     Ok(query)
 }
 
-fn related_namespace_filter_sql(accessible_namespace_ids: &[i32]) -> String {
-    if accessible_namespace_ids.is_empty() {
+fn related_collection_filter_sql(accessible_collection_ids: &[i32]) -> String {
+    if accessible_collection_ids.is_empty() {
         return "FALSE".to_string();
     }
 
-    accessible_namespace_ids
+    accessible_collection_ids
         .iter()
         .map(|id| {
-            let numeric_probe = serde_json::json!({ "related_namespace_ids": [id] });
-            let string_probe = serde_json::json!({ "related_namespace_ids": [id.to_string()] });
+            let numeric_probe = serde_json::json!({ "related_collection_ids": [id] });
+            let string_probe = serde_json::json!({ "related_collection_ids": [id.to_string()] });
             format!(
                 "events.metadata @> '{}'::jsonb OR events.metadata @> '{}'::jsonb",
                 numeric_probe, string_probe
@@ -130,13 +130,13 @@ fn related_namespace_filter_sql(accessible_namespace_ids: &[i32]) -> String {
 
 fn event_response_for_visibility(
     event: Event,
-    accessible_namespace_ids: &[i32],
-    include_namespace_less: bool,
+    accessible_collection_ids: &[i32],
+    include_collection_less: bool,
 ) -> EventResponse {
     let is_directly_visible = event
-        .namespace_id
-        .is_some_and(|id| accessible_namespace_ids.contains(&id))
-        || (include_namespace_less && event.namespace_id.is_none());
+        .collection_id
+        .is_some_and(|id| accessible_collection_ids.contains(&id))
+        || (include_collection_less && event.collection_id.is_none());
     let response = EventResponse::from(event);
     if is_directly_visible {
         response
@@ -158,7 +158,7 @@ pub fn parse_event_filters(
         action: parse_optional_catalog_filter(passthrough, "action", Action::from_db)?,
         actor_kind: parse_optional_catalog_filter(passthrough, "actor_kind", ActorKind::from_db)?,
         actor_user_id: parse_optional_i32_filter(passthrough, "actor_user_id")?,
-        namespace_id: parse_optional_i32_filter(passthrough, "namespace_id")?,
+        collection_id: parse_optional_i32_filter(passthrough, "collection_id")?,
         occurred_after: parse_optional_date_filter(passthrough, "occurred_after")?,
         occurred_before: parse_optional_date_filter(passthrough, "occurred_before")?,
     })

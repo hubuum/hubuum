@@ -256,16 +256,16 @@ mod tests {
             id: 42,
             event_id: Uuid::new_v4(),
             occurred_at: Utc::now().naive_utc(),
-            entity_type: "namespace".to_string(),
+            entity_type: "collection".to_string(),
             entity_id: Some(7),
             entity_name: Some("example".to_string()),
-            namespace_id: Some(7),
+            collection_id: Some(7),
             action: "created".to_string(),
             actor_user_id: Some(1),
             actor_kind: "user".to_string(),
             request_id: None,
             correlation_id: Some("corr-1".to_string()),
-            summary: "namespace created".to_string(),
+            summary: "collection created".to_string(),
             before: None,
             after: Some(serde_json::json!({"name": "example"})),
             metadata: serde_json::json!({"source": "test"}),
@@ -332,8 +332,8 @@ mod tests {
         let envelope = envelope();
         let rendered = render_email(&envelope, &config()).unwrap();
 
-        assert_eq!(rendered.subject, "Hubuum namespace created: example");
-        assert!(rendered.body.contains("namespace created"));
+        assert_eq!(rendered.subject, "Hubuum collection created: example");
+        assert!(rendered.body.contains("collection created"));
         assert!(rendered.body.contains(&envelope.event_id.to_string()));
     }
 

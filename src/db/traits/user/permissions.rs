@@ -1,15 +1,15 @@
 use super::*;
 use crate::db::traits::authz::{AuthzSubject, scope_allows};
 pub trait UserPermissions: AuthzSubject {
-    /// ## Check if a subject has a set of permissions in a set of namespaces
+    /// ## Check if a subject has a set of permissions in a set of collections
     ///
-    /// All permissions must be present in all namespaces for the function to return true.
+    /// All permissions must be present in all collections for the function to return true.
     ///
     /// ### Parameters
     ///
     /// * `pool` - A database connection pool
     /// * `permissions` - An iterable of permissions to check for
-    /// * `namespaces` - An iterable of namespaces to check against
+    /// * `collections` - An iterable of collections to check against
     /// * `scopes` - The token scope set (`None` = unscoped/full authority)
     ///
     /// ### Returns
@@ -19,13 +19,13 @@ pub trait UserPermissions: AuthzSubject {
         &self,
         pool: &DbPool,
         permissions: P,
-        namespaces: I,
+        collections: I,
         scopes: Option<&[Permissions]>,
     ) -> Result<(), ApiError>
     where
         P: IntoIterator<Item = Permissions>,
         I: IntoIterator<Item = N>,
-        N: NamespaceAccessors,
+        N: CollectionAccessors,
     {
         use crate::models::PermissionFilter;
         use diesel::{dsl::sql, sql_types::BigInt};
@@ -47,12 +47,12 @@ pub trait UserPermissions: AuthzSubject {
 
         let lookup_table = crate::schema::permissions::dsl::permissions;
         let group_id_field = crate::schema::permissions::dsl::group_id;
-        let namespace_id_field = crate::schema::permissions::dsl::namespace_id;
+        let collection_id_field = crate::schema::permissions::dsl::collection_id;
 
         let group_id_subquery = self.group_ids_subquery();
 
-        let namespace_ids: HashSet<i32> = stream::iter(namespaces)
-            .map(|ns| async move { ns.namespace_id(pool).await.map(|nid| nid.id()) })
+        let collection_ids: HashSet<i32> = stream::iter(collections)
+            .map(|ns| async move { ns.collection_id(pool).await.map(|nid| nid.id()) })
             // Batch the futures into groups of 5, to avoid overwhelming the database
             .buffered(5)
             .try_collect()
@@ -60,7 +60,7 @@ pub trait UserPermissions: AuthzSubject {
 
         let mut base_query = lookup_table
             .into_boxed()
-            .filter(namespace_id_field.eq_any(&namespace_ids))
+            .filter(collection_id_field.eq_any(&collection_ids))
             .filter(group_id_field.eq_any(group_id_subquery));
 
         // Apply all permission filters
@@ -68,15 +68,15 @@ pub trait UserPermissions: AuthzSubject {
             base_query = perm.create_boxed_filter(base_query, true);
         }
 
-        // Count the number of distinct namespaces that match all criteria
-        let matching_namespaces_count = with_connection(pool, |conn| {
+        // Count the number of distinct collections that match all criteria
+        let matching_collections_count = with_connection(pool, |conn| {
             base_query
-                .select(sql::<BigInt>("COUNT(DISTINCT namespace_id)"))
+                .select(sql::<BigInt>("COUNT(DISTINCT collection_id)"))
                 .first::<i64>(conn)
         })?;
 
-        // Check if the count of matching namespaces equals the number of input namespaces
-        if matching_namespaces_count as usize == namespace_ids.len() {
+        // Check if the count of matching collections equals the number of input collections
+        if matching_collections_count as usize == collection_ids.len() {
             Ok(())
         } else {
             Err(ApiError::Forbidden(

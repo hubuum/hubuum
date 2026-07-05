@@ -23,8 +23,8 @@ use crate::config::{AppConfig, get_config};
 use crate::db::DbPool;
 use crate::db::{init_pool, with_connection};
 use crate::errors::ApiError;
+use crate::models::collection::{Collection, NewCollectionWithAssignee};
 use crate::models::group::{Group, NewGroup};
-use crate::models::namespace::{Namespace, NewNamespaceWithAssignee};
 use crate::models::token::create_principal_token;
 use crate::models::user::{NewUser, User};
 use crate::models::{HubuumClass, HubuumObject, NewHubuumClass, NewHubuumObject};
@@ -52,29 +52,29 @@ pub async fn lock_test_mutex(mutex: &'static TestMutex) -> TestMutexGuard {
 }
 
 #[derive(Clone)]
-pub struct NamespaceFixture {
+pub struct CollectionFixture {
     pub pool: web::Data<DbPool>,
-    pub namespace: Namespace,
+    pub collection: Collection,
     pub owner_group: Group,
     pub prefix: String,
 }
 
-impl NamespaceFixture {
-    pub fn namespace_id(&self) -> i32 {
-        self.namespace.id
+impl CollectionFixture {
+    pub fn collection_id(&self) -> i32 {
+        self.collection.id
     }
 
-    pub fn namespace_filter(&self) -> String {
-        format!("namespaces={}", self.namespace.id)
+    pub fn collection_filter(&self) -> String {
+        format!("collections={}", self.collection.id)
     }
 
     pub async fn cleanup(&self) -> Result<(), ApiError> {
-        self.namespace.delete_without_events(&self.pool).await?;
+        self.collection.delete_without_events(&self.pool).await?;
         self.owner_group.delete_without_events(&self.pool).await?;
         Ok(())
     }
 
-    pub async fn cleanup_all(fixtures: &[NamespaceFixture]) -> Result<(), ApiError> {
+    pub async fn cleanup_all(fixtures: &[CollectionFixture]) -> Result<(), ApiError> {
         for fixture in fixtures {
             fixture.cleanup().await?;
         }
@@ -84,7 +84,7 @@ impl NamespaceFixture {
 
 #[derive(Clone)]
 pub struct ClassFixture {
-    pub namespace: NamespaceFixture,
+    pub collection: CollectionFixture,
     pub classes: Vec<HubuumClass>,
 }
 
@@ -107,13 +107,13 @@ impl<'a> IntoIterator for &'a ClassFixture {
 
 impl ClassFixture {
     pub async fn cleanup(&self) -> Result<(), ApiError> {
-        self.namespace.cleanup().await
+        self.collection.cleanup().await
     }
 }
 
 #[derive(Clone)]
 pub struct ObjectFixture {
-    pub namespace: NamespaceFixture,
+    pub collection: CollectionFixture,
     pub class: HubuumClass,
     pub objects: Vec<HubuumObject>,
 }
@@ -140,12 +140,12 @@ impl ObjectFixture {
         self.class.id
     }
 
-    pub fn namespace_id(&self) -> i32 {
-        self.namespace.namespace.id
+    pub fn collection_id(&self) -> i32 {
+        self.collection.collection.id
     }
 
     pub async fn cleanup(&self) -> Result<(), ApiError> {
-        self.namespace.cleanup().await
+        self.collection.cleanup().await
     }
 }
 
@@ -179,20 +179,20 @@ impl TestScope {
         self.scoped_name(&format!("{file}_line_{}", location.line()))
     }
 
-    pub async fn namespace_fixture(&self, label: &str) -> NamespaceFixture {
-        create_namespace_fixture(&self.pool, &self.scoped_name(label)).await
+    pub async fn collection_fixture(&self, label: &str) -> CollectionFixture {
+        create_collection_fixture(&self.pool, &self.scoped_name(label)).await
     }
 
-    pub async fn namespace_fixtures(&self, label: &str, count: usize) -> Vec<NamespaceFixture> {
-        create_namespace_fixtures(&self.pool, &self.scoped_name(label), count).await
+    pub async fn collection_fixtures(&self, label: &str, count: usize) -> Vec<CollectionFixture> {
+        create_collection_fixtures(&self.pool, &self.scoped_name(label), count).await
     }
 
-    pub async fn with_namespace(&self) -> NamespaceFixture {
-        create_namespace_fixture(&self.pool, &self.caller_scoped_name()).await
+    pub async fn with_collection(&self) -> CollectionFixture {
+        create_collection_fixture(&self.pool, &self.caller_scoped_name()).await
     }
 
-    pub async fn with_namespaces(&self, count: usize) -> Vec<NamespaceFixture> {
-        create_namespace_fixtures(&self.pool, &self.caller_scoped_name(), count).await
+    pub async fn with_collections(&self, count: usize) -> Vec<CollectionFixture> {
+        create_collection_fixtures(&self.pool, &self.caller_scoped_name(), count).await
     }
 
     pub async fn class_fixture(
@@ -200,8 +200,8 @@ impl TestScope {
         label: &str,
         classes: Vec<NewHubuumClass>,
     ) -> Result<ClassFixture, ApiError> {
-        let namespace = self.namespace_fixture(label).await;
-        create_class_fixture(&self.pool, namespace, classes).await
+        let collection = self.collection_fixture(label).await;
+        create_class_fixture(&self.pool, collection, classes).await
     }
 
     pub async fn object_fixture(
@@ -210,8 +210,8 @@ impl TestScope {
         class: NewHubuumClass,
         objects: Vec<NewHubuumObject>,
     ) -> Result<ObjectFixture, ApiError> {
-        let namespace = self.namespace_fixture(label).await;
-        create_object_fixture(&self.pool, namespace, class, objects).await
+        let collection = self.collection_fixture(label).await;
+        create_object_fixture(&self.pool, collection, class, objects).await
     }
 }
 
@@ -254,8 +254,8 @@ impl TestContext {
         self.scope.scoped_name(label)
     }
 
-    pub async fn namespace_fixture(&self, label: &str) -> NamespaceFixture {
-        let fixture = self.scope.namespace_fixture(label).await;
+    pub async fn collection_fixture(&self, label: &str) -> CollectionFixture {
+        let fixture = self.scope.collection_fixture(label).await;
         fixture
             .owner_group
             .add_member_without_events(&self.pool, &self.admin_user)
@@ -264,8 +264,8 @@ impl TestContext {
         fixture
     }
 
-    pub async fn namespace_fixtures(&self, label: &str, count: usize) -> Vec<NamespaceFixture> {
-        let fixtures = self.scope.namespace_fixtures(label, count).await;
+    pub async fn collection_fixtures(&self, label: &str, count: usize) -> Vec<CollectionFixture> {
+        let fixtures = self.scope.collection_fixtures(label, count).await;
 
         for fixture in &fixtures {
             fixture
@@ -278,8 +278,8 @@ impl TestContext {
         fixtures
     }
 
-    pub async fn with_namespace(&self) -> NamespaceFixture {
-        let fixture = self.scope.with_namespace().await;
+    pub async fn with_collection(&self) -> CollectionFixture {
+        let fixture = self.scope.with_collection().await;
         fixture
             .owner_group
             .add_member_without_events(&self.pool, &self.admin_user)
@@ -288,8 +288,8 @@ impl TestContext {
         fixture
     }
 
-    pub async fn with_namespaces(&self, count: usize) -> Vec<NamespaceFixture> {
-        let fixtures = self.scope.with_namespaces(count).await;
+    pub async fn with_collections(&self, count: usize) -> Vec<CollectionFixture> {
+        let fixtures = self.scope.with_collections(count).await;
 
         for fixture in &fixtures {
             fixture
@@ -307,8 +307,8 @@ impl TestContext {
         label: &str,
         classes: Vec<NewHubuumClass>,
     ) -> Result<ClassFixture, ApiError> {
-        let namespace = self.namespace_fixture(label).await;
-        create_class_fixture(&self.pool, namespace, classes).await
+        let collection = self.collection_fixture(label).await;
+        create_class_fixture(&self.pool, collection, classes).await
     }
 
     pub async fn object_fixture(
@@ -317,8 +317,8 @@ impl TestContext {
         class: NewHubuumClass,
         objects: Vec<NewHubuumObject>,
     ) -> Result<ObjectFixture, ApiError> {
-        let namespace = self.namespace_fixture(label).await;
-        create_object_fixture(&self.pool, namespace, class, objects).await
+        let collection = self.collection_fixture(label).await;
+        create_object_fixture(&self.pool, collection, class, objects).await
     }
 }
 
@@ -343,33 +343,33 @@ fn sanitize_fixture_label(label: &str) -> String {
     }
 }
 
-async fn create_namespace_fixture(pool: &DbPool, label: &str) -> NamespaceFixture {
+async fn create_collection_fixture(pool: &DbPool, label: &str) -> CollectionFixture {
     let prefix = sanitize_fixture_label(label);
     let owner_group = create_groups_with_prefix(pool, &format!("{prefix}_owner"), 1)
         .await
         .remove(0);
-    let namespace =
-        create_namespace_for_group(pool, &format!("{prefix}_namespace"), owner_group.id)
+    let collection =
+        create_collection_for_group(pool, &format!("{prefix}_collection"), owner_group.id)
             .await
             .unwrap();
 
-    NamespaceFixture {
+    CollectionFixture {
         pool: web::Data::new(pool.clone()),
-        namespace,
+        collection,
         owner_group,
         prefix,
     }
 }
 
-async fn create_namespace_fixtures(
+async fn create_collection_fixtures(
     pool: &DbPool,
     label: &str,
     count: usize,
-) -> Vec<NamespaceFixture> {
+) -> Vec<CollectionFixture> {
     let mut fixtures = Vec::with_capacity(count);
 
     for index in 0..count {
-        fixtures.push(create_namespace_fixture(pool, &format!("{label}_{index}")).await);
+        fixtures.push(create_collection_fixture(pool, &format!("{label}_{index}")).await);
     }
 
     fixtures
@@ -377,33 +377,33 @@ async fn create_namespace_fixtures(
 
 pub(crate) async fn create_class_fixture(
     pool: &DbPool,
-    namespace: NamespaceFixture,
+    collection: CollectionFixture,
     classes: Vec<NewHubuumClass>,
 ) -> Result<ClassFixture, ApiError> {
     let mut saved_classes = Vec::with_capacity(classes.len());
 
     for class in classes {
         let class = NewHubuumClass {
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             ..class
         };
         saved_classes.push(class.save_without_events(pool).await?);
     }
 
     Ok(ClassFixture {
-        namespace,
+        collection,
         classes: saved_classes,
     })
 }
 
 pub(crate) async fn create_object_fixture(
     pool: &DbPool,
-    namespace: NamespaceFixture,
+    collection: CollectionFixture,
     class: NewHubuumClass,
     objects: Vec<NewHubuumObject>,
 ) -> Result<ObjectFixture, ApiError> {
     let class = NewHubuumClass {
-        namespace_id: namespace.namespace.id,
+        collection_id: collection.collection.id,
         ..class
     }
     .save_without_events(pool)
@@ -412,7 +412,7 @@ pub(crate) async fn create_object_fixture(
     let mut saved_objects = Vec::with_capacity(objects.len());
     for object in objects {
         let object = NewHubuumObject {
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             hubuum_class_id: class.id,
             ..object
         };
@@ -420,7 +420,7 @@ pub(crate) async fn create_object_fixture(
     }
 
     Ok(ObjectFixture {
-        namespace,
+        collection,
         class,
         objects: saved_objects,
     })
@@ -662,14 +662,14 @@ pub fn test_scope() -> TestScope {
     TestScope::new()
 }
 
-async fn create_namespace_for_group(
+async fn create_collection_for_group(
     pool: &DbPool,
     ns_name: &str,
     group_id: i32,
-) -> Result<Namespace, ApiError> {
-    NewNamespaceWithAssignee {
+) -> Result<Collection, ApiError> {
+    NewCollectionWithAssignee {
         name: ns_name.to_string(),
-        description: "Test namespace".to_string(),
+        description: "Test collection".to_string(),
         group_id,
     }
     .save_without_events(pool)
@@ -702,34 +702,34 @@ pub fn generate_all_subsets<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
 mod test {
 
     use super::*;
-    use crate::{models::namespace::UpdateNamespace, traits::CanUpdate};
+    use crate::{models::collection::UpdateCollection, traits::CanUpdate};
 
     #[actix_rt::test]
     async fn test_updated_and_created_at() {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
-        let namespace = scope.namespace_fixture("test_updated_at").await;
-        let original_updated_at = namespace.namespace.updated_at;
-        let original_created_at = namespace.namespace.created_at;
+        let collection = scope.collection_fixture("test_updated_at").await;
+        let original_updated_at = collection.collection.updated_at;
+        let original_created_at = collection.collection.created_at;
 
-        let update = UpdateNamespace {
+        let update = UpdateCollection {
             name: Some("test update 2".to_string()),
             description: None,
         };
 
-        let updated_namespace = update
-            .update_without_events(&pool, namespace.namespace.id)
+        let updated_collection = update
+            .update_without_events(&pool, collection.collection.id)
             .await
             .unwrap();
-        let new_created_at = updated_namespace.created_at;
-        let new_updated_at = updated_namespace.updated_at;
+        let new_created_at = updated_collection.created_at;
+        let new_updated_at = updated_collection.updated_at;
 
-        assert_eq!(updated_namespace.id, namespace.namespace.id);
-        assert_eq!(updated_namespace.name, "test update 2");
+        assert_eq!(updated_collection.id, collection.collection.id);
+        assert_eq!(updated_collection.name, "test update 2");
         assert_eq!(original_created_at, new_created_at);
         assert_ne!(original_updated_at, new_updated_at);
         assert!(new_updated_at > original_updated_at);
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 }

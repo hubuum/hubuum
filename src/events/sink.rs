@@ -21,7 +21,7 @@ impl From<Event> for EventEnvelope {
             entity_type: event.entity_type,
             entity_id: event.entity_id,
             entity_name: event.entity_name,
-            namespace_id: event.namespace_id,
+            collection_id: event.collection_id,
             action: event.action,
             actor_user_id: event.actor_user_id,
             actor_kind: event.actor_kind,
@@ -211,7 +211,7 @@ mod tests {
             sink: &'a EventSink,
         ) -> BoxFuture<'a, Result<(), SinkError>> {
             async move {
-                assert_eq!(envelope.entity_type, "namespace");
+                assert_eq!(envelope.entity_type, "collection");
                 assert_eq!(subscription.name, "subscription");
                 assert_eq!(sink.name, "sink");
                 Ok(())
@@ -226,16 +226,16 @@ mod tests {
             id: 1,
             event_id: Uuid::new_v4(),
             occurred_at: chrono::Utc::now().naive_utc(),
-            entity_type: "namespace".to_string(),
+            entity_type: "collection".to_string(),
             entity_id: Some(10),
             entity_name: Some("example".to_string()),
-            namespace_id: Some(10),
+            collection_id: Some(10),
             action: "created".to_string(),
             actor_user_id: None,
             actor_kind: "system".to_string(),
             request_id: None,
             correlation_id: None,
-            summary: "created namespace".to_string(),
+            summary: "created collection".to_string(),
             before: None,
             after: None,
             metadata: serde_json::json!({}),
@@ -243,11 +243,11 @@ mod tests {
         };
         let subscription = EventSubscription {
             id: 1,
-            namespace_id: 10,
+            collection_id: 10,
             sink_id: 1,
             name: "subscription".to_string(),
             description: String::new(),
-            entity_types: vec!["namespace".to_string()],
+            entity_types: vec!["collection".to_string()],
             actions: vec!["created".to_string()],
             filter: hubuum_events_core::EventSubscriptionFilter::default(),
             routing: serde_json::json!({}),

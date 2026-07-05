@@ -28,7 +28,7 @@ Authentication:
 
 Imports use client-local refs for items created in the same request and natural-key selectors for existing records.
 
-Do not send database IDs such as `namespace_id`, `hubuum_class_id`, or `group_id` to wire the graph together.
+Do not send database IDs such as `collection_id`, `hubuum_class_id`, or `group_id` to wire the graph together.
 
 Top-level fields:
 
@@ -51,7 +51,7 @@ Example:
     "permission_policy": "abort"
   },
   "graph": {
-    "namespaces": [
+    "collections": [
       {
         "ref": "ns:infra",
         "name": "infra",
@@ -64,7 +64,7 @@ Example:
         "name": "server",
         "description": "Server objects",
         "validate_schema": false,
-        "namespace_ref": "ns:infra"
+        "collection_ref": "ns:infra"
       }
     ],
     "objects": [
@@ -79,10 +79,10 @@ Example:
         "class_ref": "class:server"
       }
     ],
-    "namespace_permissions": [
+    "collection_permissions": [
       {
         "ref": "acl:ops-read",
-        "namespace_ref": "ns:infra",
+        "collection_ref": "ns:infra",
         "group_key": {
           "groupname": "ops"
         },
@@ -106,13 +106,13 @@ Use `ref` when one imported item should be referenced by another imported item.
 
 Examples:
 
-- class uses `namespace_ref`
+- class uses `collection_ref`
 - object uses `class_ref`
-- permission assignment uses `namespace_ref`
+- permission assignment uses `collection_ref`
 
 Each individual selector pair is exclusive:
 
-- `namespace_ref` or `namespace_key`
+- `collection_ref` or `collection_key`
 - `class_ref` or `class_key`
 - `from_class_ref` or `from_class_key`
 - `to_class_ref` or `to_class_key`
@@ -131,7 +131,7 @@ Examples:
 {
   "class_key": {
     "name": "server",
-    "namespace_key": {
+    "collection_key": {
       "name": "infra"
     }
   }
@@ -148,7 +148,7 @@ Examples:
 
 Selector shapes:
 
-- `NamespaceKey`
+- `CollectionKey`
 
 ```json
 {
@@ -161,7 +161,7 @@ Selector shapes:
 ```json
 {
   "name": "server",
-  "namespace_key": {
+  "collection_key": {
     "name": "infra"
   }
 }
@@ -174,7 +174,7 @@ Selector shapes:
   "name": "web-01",
   "class_key": {
     "name": "server",
-    "namespace_key": {
+    "collection_key": {
       "name": "infra"
     }
   }
@@ -183,36 +183,36 @@ Selector shapes:
 
 ## Supported graph sections
 
-- `namespaces`
+- `collections`
 - `classes`
 - `objects`
 - `class_relations`
 - `object_relations`
-- `namespace_permissions`
+- `collection_permissions`
 
 Section shapes:
 
-### `namespaces`
+### `collections`
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `ref` | string | no | Client-local reference for later items in the same request. |
-| `name` | string | yes | Natural key for namespace lookup. |
-| `description` | string | yes | Namespace description. |
+| `name` | string | yes | Natural key for collection lookup. |
+| `description` | string | yes | Collection description. |
 
 ### `classes`
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `ref` | string | no | Client-local reference for later items in the same request. |
-| `name` | string | yes | Class name within the selected namespace. |
+| `name` | string | yes | Class name within the selected collection. |
 | `description` | string | yes | Class description. |
 | `json_schema` | JSON value | no | Optional JSON Schema for object validation. |
 | `validate_schema` | boolean | no | Defaults to `false` when creating a new class. When overwriting an existing class, omitting it preserves the current value. |
-| `namespace_ref` | string | conditional | Use when the namespace is created in the same request. |
-| `namespace_key` | object | conditional | Use when the namespace already exists. |
+| `collection_ref` | string | conditional | Use when the collection is created in the same request. |
+| `collection_key` | object | conditional | Use when the collection already exists. |
 
-Exactly one of `namespace_ref` or `namespace_key` must be set.
+Exactly one of `collection_ref` or `collection_key` must be set.
 
 ### `objects`
 
@@ -249,7 +249,7 @@ Example:
       "from_class_ref": "class:server",
       "to_class_key": {
         "name": "rack",
-        "namespace_key": {
+        "collection_key": {
           "name": "infra"
         }
       }
@@ -282,7 +282,7 @@ Example:
         "name": "rack-a3",
         "class_key": {
           "name": "rack",
-          "namespace_key": {
+          "collection_key": {
             "name": "infra"
           }
         }
@@ -292,18 +292,18 @@ Example:
 }
 ```
 
-### `namespace_permissions`
+### `collection_permissions`
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `ref` | string | no | Client-local reference. |
-| `namespace_ref` | string | conditional | Use when the namespace is created in the same request. |
-| `namespace_key` | object | conditional | Use when the namespace already exists. |
+| `collection_ref` | string | conditional | Use when the collection is created in the same request. |
+| `collection_key` | object | conditional | Use when the collection already exists. |
 | `group_key` | object | yes | Existing group selector. |
 | `permissions` | array of strings | yes | Permission names listed below. |
-| `replace_existing` | boolean | no | Defaults to `false`. `false` adds the requested permissions to any existing grant. `true` replaces the existing grant for that namespace/group pair. |
+| `replace_existing` | boolean | no | Defaults to `false`. `false` adds the requested permissions to any existing grant. `true` replaces the existing grant for that collection/group pair. |
 
-Exactly one of `namespace_ref` or `namespace_key` must be set.
+Exactly one of `collection_ref` or `collection_key` must be set.
 
 Allowed permission values:
 
@@ -477,7 +477,7 @@ Example:
     "id": 101,
     "task_id": 12,
     "item_ref": "ns:infra",
-    "entity_kind": "namespace",
+    "entity_kind": "collection",
     "action": "create",
     "identifier": "infra",
     "outcome": "succeeded",
@@ -507,11 +507,11 @@ Failed item example:
   "id": 109,
   "task_id": 14,
   "item_ref": "acl:ops-admin",
-  "entity_kind": "namespace_permission",
+  "entity_kind": "collection_permission",
   "action": "grant",
   "identifier": "infra::ops",
   "outcome": "failed",
-  "error": "User does not have permissions [DelegateCollection] on namespace 3",
+  "error": "User does not have permissions [DelegateCollection] on collection 3",
   "details": null,
   "created_at": "2026-03-07T10:21:05"
 }

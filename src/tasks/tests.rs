@@ -7,14 +7,14 @@ use super::helpers::{
     class_to_resolution, planned_result, sanitize_error_for_storage,
     should_abort_best_effort_execution,
 };
-use super::planning::{plan_class, plan_namespace, plan_object};
+use super::planning::{plan_class, plan_collection, plan_object};
 use super::request_hash;
 use super::resolution::{
-    remember_class, remember_namespace, resolve_class_planning, resolve_namespace_by_id_planning,
-    resolve_namespace_planning, resolve_object_planning, resolve_object_runtime,
+    remember_class, remember_collection, resolve_class_planning, resolve_collection_by_id_planning,
+    resolve_collection_planning, resolve_object_planning, resolve_object_runtime,
 };
 use super::types::{
-    ExecutionAccumulator, FailureKind, NamespaceResolution, PlannedExecution, PlannedItem,
+    CollectionResolution, ExecutionAccumulator, FailureKind, PlannedExecution, PlannedItem,
     PlanningFailure, PlanningState, RuntimeState, WorkerLoopAction,
 };
 use super::worker::{background_worker_action, mark_claimed_task_failed, process_one_task};
@@ -23,32 +23,32 @@ use crate::db::traits::task_import::{create_class_db, create_object_db};
 use crate::db::with_connection;
 use crate::errors::ApiError;
 use crate::models::{
-    ClassKey, ImportAtomicity, ImportClassInput, ImportCollisionPolicy, ImportMode,
-    ImportNamespaceInput, ImportObjectInput, ImportPermissionPolicy, NamespaceKey,
+    ClassKey, CollectionKey, ImportAtomicity, ImportClassInput, ImportCollectionInput,
+    ImportCollisionPolicy, ImportMode, ImportObjectInput, ImportPermissionPolicy,
     NewImportTaskResultRecord, NewTaskRecord, ObjectKey, TaskKind, TaskStatus,
 };
+use crate::schema::collections::dsl::{collections, name as collection_name};
 use crate::schema::hubuumclass::dsl::{hubuumclass, name as class_name};
-use crate::schema::namespaces::dsl::{name as namespace_name, namespaces};
 use crate::schema::tasks::dsl::{created_at, id as task_id, tasks};
 use crate::tests::TestContext;
 
 #[test]
 fn test_execute_import_strict_rolls_back_on_runtime_failure() {
     let context = block_on(TestContext::new());
-    let namespace = context.scoped_name("strict_rollback_ns");
+    let collection = context.scoped_name("strict_rollback_ns");
     let class = context.scoped_name("strict_rollback_class");
     let planned_items = vec![
         PlannedItem {
             result: planned_result(
-                "namespace",
+                "collection",
                 "create",
                 Some("ns:ok".to_string()),
-                Some(namespace.clone()),
+                Some(collection.clone()),
             ),
-            execution: Some(PlannedExecution::CreateNamespace(ImportNamespaceInput {
+            execution: Some(PlannedExecution::CreateCollection(ImportCollectionInput {
                 ref_: Some("ns:ok".to_string()),
-                name: namespace.clone(),
-                description: "Rollback namespace".to_string(),
+                name: collection.clone(),
+                description: "Rollback collection".to_string(),
             })),
         },
         PlannedItem {
@@ -64,8 +64,8 @@ fn test_execute_import_strict_rolls_back_on_runtime_failure() {
                 description: "Fails at runtime".to_string(),
                 json_schema: None,
                 validate_schema: Some(false),
-                namespace_ref: Some("ns:missing".to_string()),
-                namespace_key: None,
+                collection_ref: Some("ns:missing".to_string()),
+                collection_key: None,
             })),
         },
     ];
@@ -79,9 +79,9 @@ fn test_execute_import_strict_rolls_back_on_runtime_failure() {
     ));
     assert!(result.is_err());
 
-    let namespace_exists = with_connection(&context.pool, |conn| {
-        namespaces
-            .filter(namespace_name.eq(&namespace))
+    let collection_exists = with_connection(&context.pool, |conn| {
+        collections
+            .filter(collection_name.eq(&collection))
             .count()
             .get_result::<i64>(conn)
     })
@@ -94,7 +94,7 @@ fn test_execute_import_strict_rolls_back_on_runtime_failure() {
     })
     .unwrap();
 
-    assert_eq!(namespace_exists, 0);
+    assert_eq!(collection_exists, 0);
     assert_eq!(class_exists, 0);
     assert_eq!(accumulator.processed, 0);
 }
@@ -102,21 +102,21 @@ fn test_execute_import_strict_rolls_back_on_runtime_failure() {
 #[test]
 fn test_execute_import_best_effort_keeps_successful_items() {
     let context = block_on(TestContext::new());
-    let namespace_one = context.scoped_name("best_effort_ns_one");
-    let namespace_two = context.scoped_name("best_effort_ns_two");
+    let collection_one = context.scoped_name("best_effort_ns_one");
+    let collection_two = context.scoped_name("best_effort_ns_two");
     let class_bad = context.scoped_name("best_effort_class_bad");
     let planned_items = vec![
         PlannedItem {
             result: planned_result(
-                "namespace",
+                "collection",
                 "create",
                 Some("ns:one".to_string()),
-                Some(namespace_one.clone()),
+                Some(collection_one.clone()),
             ),
-            execution: Some(PlannedExecution::CreateNamespace(ImportNamespaceInput {
+            execution: Some(PlannedExecution::CreateCollection(ImportCollectionInput {
                 ref_: Some("ns:one".to_string()),
-                name: namespace_one.clone(),
-                description: "Best effort namespace one".to_string(),
+                name: collection_one.clone(),
+                description: "Best effort collection one".to_string(),
             })),
         },
         PlannedItem {
@@ -132,21 +132,21 @@ fn test_execute_import_best_effort_keeps_successful_items() {
                 description: "Fails at runtime".to_string(),
                 json_schema: None,
                 validate_schema: Some(false),
-                namespace_ref: Some("ns:missing".to_string()),
-                namespace_key: None,
+                collection_ref: Some("ns:missing".to_string()),
+                collection_key: None,
             })),
         },
         PlannedItem {
             result: planned_result(
-                "namespace",
+                "collection",
                 "create",
                 Some("ns:two".to_string()),
-                Some(namespace_two.clone()),
+                Some(collection_two.clone()),
             ),
-            execution: Some(PlannedExecution::CreateNamespace(ImportNamespaceInput {
+            execution: Some(PlannedExecution::CreateCollection(ImportCollectionInput {
                 ref_: Some("ns:two".to_string()),
-                name: namespace_two.clone(),
-                description: "Best effort namespace two".to_string(),
+                name: collection_two.clone(),
+                description: "Best effort collection two".to_string(),
             })),
         },
     ];
@@ -165,15 +165,15 @@ fn test_execute_import_best_effort_keeps_successful_items() {
     ))
     .unwrap();
 
-    let namespace_count = with_connection(&context.pool, |conn| {
-        namespaces
-            .filter(namespace_name.eq_any([namespace_one.clone(), namespace_two.clone()]))
+    let collection_count = with_connection(&context.pool, |conn| {
+        collections
+            .filter(collection_name.eq_any([collection_one.clone(), collection_two.clone()]))
             .count()
             .get_result::<i64>(conn)
     })
     .unwrap();
 
-    assert_eq!(namespace_count, 2);
+    assert_eq!(collection_count, 2);
     assert_eq!(accumulator.processed, 3);
     assert_eq!(accumulator.success, 2);
     assert_eq!(accumulator.failed, 1);
@@ -182,20 +182,20 @@ fn test_execute_import_best_effort_keeps_successful_items() {
 #[test]
 fn test_execute_import_best_effort_continues_after_non_policy_runtime_error() {
     let context = block_on(TestContext::new());
-    let namespace_one = context.scoped_name("best_effort_runtime_ns_one");
-    let namespace_two = context.scoped_name("best_effort_runtime_ns_two");
+    let collection_one = context.scoped_name("best_effort_runtime_ns_one");
+    let collection_two = context.scoped_name("best_effort_runtime_ns_two");
     let planned_items = vec![
         PlannedItem {
             result: planned_result(
-                "namespace",
+                "collection",
                 "create",
                 Some("ns:one".to_string()),
-                Some(namespace_one.clone()),
+                Some(collection_one.clone()),
             ),
-            execution: Some(PlannedExecution::CreateNamespace(ImportNamespaceInput {
+            execution: Some(PlannedExecution::CreateCollection(ImportCollectionInput {
                 ref_: Some("ns:one".to_string()),
-                name: namespace_one.clone(),
-                description: "Best effort namespace one".to_string(),
+                name: collection_one.clone(),
+                description: "Best effort collection one".to_string(),
             })),
         },
         PlannedItem {
@@ -211,21 +211,21 @@ fn test_execute_import_best_effort_continues_after_non_policy_runtime_error() {
                 description: "Fails at runtime".to_string(),
                 json_schema: None,
                 validate_schema: Some(false),
-                namespace_ref: Some("ns:missing".to_string()),
-                namespace_key: None,
+                collection_ref: Some("ns:missing".to_string()),
+                collection_key: None,
             })),
         },
         PlannedItem {
             result: planned_result(
-                "namespace",
+                "collection",
                 "create",
                 Some("ns:two".to_string()),
-                Some(namespace_two.clone()),
+                Some(collection_two.clone()),
             ),
-            execution: Some(PlannedExecution::CreateNamespace(ImportNamespaceInput {
+            execution: Some(PlannedExecution::CreateCollection(ImportCollectionInput {
                 ref_: Some("ns:two".to_string()),
-                name: namespace_two.clone(),
-                description: "Best effort namespace two".to_string(),
+                name: collection_two.clone(),
+                description: "Best effort collection two".to_string(),
             })),
         },
     ];
@@ -244,15 +244,15 @@ fn test_execute_import_best_effort_continues_after_non_policy_runtime_error() {
     ))
     .unwrap();
 
-    let namespace_count = with_connection(&context.pool, |conn| {
-        namespaces
-            .filter(namespace_name.eq_any([namespace_one.clone(), namespace_two.clone()]))
+    let collection_count = with_connection(&context.pool, |conn| {
+        collections
+            .filter(collection_name.eq_any([collection_one.clone(), collection_two.clone()]))
             .count()
             .get_result::<i64>(conn)
     })
     .unwrap();
 
-    assert_eq!(namespace_count, 2);
+    assert_eq!(collection_count, 2);
     assert_eq!(accumulator.processed, 3);
     assert_eq!(accumulator.success, 2);
     assert_eq!(accumulator.failed, 1);
@@ -263,14 +263,14 @@ fn test_execute_import_strict_preserves_underlying_error_variant() {
     let context = block_on(TestContext::new());
     let planned_items = vec![PlannedItem {
         result: planned_result(
-            "namespace",
+            "collection",
             "update",
             Some("ns:missing".to_string()),
             Some("missing".to_string()),
         ),
-        execution: Some(PlannedExecution::UpdateNamespace {
-            namespace_id: -999,
-            input: ImportNamespaceInput {
+        execution: Some(PlannedExecution::UpdateCollection {
+            collection_id: -999,
+            input: ImportCollectionInput {
                 ref_: Some("ns:missing".to_string()),
                 name: "missing".to_string(),
                 description: "missing".to_string(),
@@ -372,29 +372,29 @@ fn test_background_worker_continues_immediately_after_processing_a_task() {
 }
 
 #[test]
-fn test_remember_namespace_populates_namespace_id_index() {
+fn test_remember_collection_populates_collection_id_index() {
     let mut state = PlanningState::new();
-    let namespace = NamespaceResolution {
+    let collection = CollectionResolution {
         id: -42,
         name: "planned".to_string(),
-        description: "planned namespace".to_string(),
+        description: "planned collection".to_string(),
         exists_in_db: false,
     };
 
-    remember_namespace(
+    remember_collection(
         &mut state,
         Some("ns:planned".to_string()),
-        namespace.clone(),
+        collection.clone(),
     );
 
     assert_eq!(
-        state.namespaces_by_id.get(&namespace.id).unwrap().name,
-        namespace.name
+        state.collections_by_id.get(&collection.id).unwrap().name,
+        collection.name
     );
 }
 
 #[test]
-fn test_plan_namespace_rejects_duplicate_name_within_request() {
+fn test_plan_collection_rejects_duplicate_name_within_request() {
     let context = block_on(TestContext::new());
     let mut state = PlanningState::new();
     let mode = ImportMode {
@@ -402,13 +402,13 @@ fn test_plan_namespace_rejects_duplicate_name_within_request() {
         collision_policy: Some(ImportCollisionPolicy::Overwrite),
         permission_policy: Some(ImportPermissionPolicy::Continue),
     };
-    let input = ImportNamespaceInput {
+    let input = ImportCollectionInput {
         ref_: Some("ns:one".to_string()),
-        name: context.scoped_name("duplicate_namespace"),
+        name: context.scoped_name("duplicate_collection"),
         description: "first".to_string(),
     };
 
-    block_on(plan_namespace(
+    block_on(plan_collection(
         &context.pool,
         &context.admin_user,
         &mode,
@@ -417,11 +417,11 @@ fn test_plan_namespace_rejects_duplicate_name_within_request() {
     ))
     .unwrap();
 
-    let duplicate = ImportNamespaceInput {
+    let duplicate = ImportCollectionInput {
         ref_: Some("ns:two".to_string()),
         ..input
     };
-    let err = block_on(plan_namespace(
+    let err = block_on(plan_collection(
         &context.pool,
         &context.admin_user,
         &mode,
@@ -431,21 +431,21 @@ fn test_plan_namespace_rejects_duplicate_name_within_request() {
     .unwrap_err();
 
     assert!(matches!(err.kind, FailureKind::Validation));
-    assert!(err.message.contains("Duplicate namespace name"));
+    assert!(err.message.contains("Duplicate collection name"));
 }
 
 #[test]
 fn test_plan_class_rejects_duplicate_name_against_virtual_planned_class() {
     let context = block_on(TestContext::new());
-    let fixture = block_on(context.namespace_fixture("duplicate_virtual_class"));
+    let fixture = block_on(context.collection_fixture("duplicate_virtual_class"));
     let mut state = PlanningState::new();
-    remember_namespace(
+    remember_collection(
         &mut state,
         Some("ns:existing".to_string()),
-        NamespaceResolution {
-            id: fixture.namespace.id,
-            name: fixture.namespace.name.clone(),
-            description: fixture.namespace.description.clone(),
+        CollectionResolution {
+            id: fixture.collection.id,
+            name: fixture.collection.name.clone(),
+            description: fixture.collection.description.clone(),
             exists_in_db: true,
         },
     );
@@ -461,8 +461,8 @@ fn test_plan_class_rejects_duplicate_name_against_virtual_planned_class() {
         description: "first".to_string(),
         json_schema: None,
         validate_schema: Some(false),
-        namespace_ref: Some("ns:existing".to_string()),
-        namespace_key: None,
+        collection_ref: Some("ns:existing".to_string()),
+        collection_key: None,
     };
 
     block_on(plan_class(
@@ -494,7 +494,7 @@ fn test_plan_class_rejects_duplicate_name_against_virtual_planned_class() {
 #[test]
 fn test_plan_object_rejects_duplicate_name_against_virtual_planned_object() {
     let context = block_on(TestContext::new());
-    let fixture = block_on(context.namespace_fixture("duplicate_virtual_object"));
+    let fixture = block_on(context.collection_fixture("duplicate_virtual_object"));
     let class = with_connection(&context.pool, |conn| {
         create_class_db(
             conn,
@@ -504,12 +504,12 @@ fn test_plan_object_rejects_duplicate_name_against_virtual_planned_object() {
                 description: "existing class".to_string(),
                 json_schema: None,
                 validate_schema: Some(false),
-                namespace_ref: None,
-                namespace_key: Some(NamespaceKey {
-                    name: fixture.namespace.name.clone(),
+                collection_ref: None,
+                collection_key: Some(CollectionKey {
+                    name: fixture.collection.name.clone(),
                 }),
             },
-            fixture.namespace.id,
+            fixture.collection.id,
         )
     })
     .unwrap();
@@ -563,26 +563,26 @@ fn test_plan_object_rejects_duplicate_name_against_virtual_planned_object() {
 #[test]
 fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
     let context = block_on(TestContext::new());
-    let fixture_one = block_on(context.namespace_fixture("duplicate_class_ref_one"));
-    let fixture_two = block_on(context.namespace_fixture("duplicate_class_ref_two"));
+    let fixture_one = block_on(context.collection_fixture("duplicate_class_ref_one"));
+    let fixture_two = block_on(context.collection_fixture("duplicate_class_ref_two"));
     let mut state = PlanningState::new();
-    remember_namespace(
+    remember_collection(
         &mut state,
         Some("ns:one".to_string()),
-        NamespaceResolution {
-            id: fixture_one.namespace.id,
-            name: fixture_one.namespace.name.clone(),
-            description: fixture_one.namespace.description.clone(),
+        CollectionResolution {
+            id: fixture_one.collection.id,
+            name: fixture_one.collection.name.clone(),
+            description: fixture_one.collection.description.clone(),
             exists_in_db: true,
         },
     );
-    remember_namespace(
+    remember_collection(
         &mut state,
         Some("ns:two".to_string()),
-        NamespaceResolution {
-            id: fixture_two.namespace.id,
-            name: fixture_two.namespace.name.clone(),
-            description: fixture_two.namespace.description.clone(),
+        CollectionResolution {
+            id: fixture_two.collection.id,
+            name: fixture_two.collection.name.clone(),
+            description: fixture_two.collection.description.clone(),
             exists_in_db: true,
         },
     );
@@ -598,8 +598,8 @@ fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
         description: "first".to_string(),
         json_schema: None,
         validate_schema: Some(false),
-        namespace_ref: Some("ns:one".to_string()),
-        namespace_key: None,
+        collection_ref: Some("ns:one".to_string()),
+        collection_key: None,
     };
 
     block_on(plan_class(
@@ -613,7 +613,7 @@ fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
 
     let duplicate = ImportClassInput {
         name: context.scoped_name("duplicate_class_ref_two"),
-        namespace_ref: Some("ns:two".to_string()),
+        collection_ref: Some("ns:two".to_string()),
         ..input
     };
     let err = block_on(plan_class(
@@ -632,7 +632,7 @@ fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
 #[test]
 fn test_plan_object_rejects_duplicate_ref_against_virtual_planned_object() {
     let context = block_on(TestContext::new());
-    let fixture = block_on(context.namespace_fixture("duplicate_object_ref"));
+    let fixture = block_on(context.collection_fixture("duplicate_object_ref"));
     let class_one = with_connection(&context.pool, |conn| {
         create_class_db(
             conn,
@@ -642,12 +642,12 @@ fn test_plan_object_rejects_duplicate_ref_against_virtual_planned_object() {
                 description: "first class".to_string(),
                 json_schema: None,
                 validate_schema: Some(false),
-                namespace_ref: None,
-                namespace_key: Some(NamespaceKey {
-                    name: fixture.namespace.name.clone(),
+                collection_ref: None,
+                collection_key: Some(CollectionKey {
+                    name: fixture.collection.name.clone(),
                 }),
             },
-            fixture.namespace.id,
+            fixture.collection.id,
         )
     })
     .unwrap();
@@ -660,12 +660,12 @@ fn test_plan_object_rejects_duplicate_ref_against_virtual_planned_object() {
                 description: "second class".to_string(),
                 json_schema: None,
                 validate_schema: Some(false),
-                namespace_ref: None,
-                namespace_key: Some(NamespaceKey {
-                    name: fixture.namespace.name.clone(),
+                collection_ref: None,
+                collection_key: Some(CollectionKey {
+                    name: fixture.collection.name.clone(),
                 }),
             },
-            fixture.namespace.id,
+            fixture.collection.id,
         )
     })
     .unwrap();
@@ -723,76 +723,76 @@ fn test_plan_object_rejects_duplicate_ref_against_virtual_planned_object() {
 }
 
 #[test]
-fn test_resolve_namespace_planning_backfills_caches_after_db_lookup() {
+fn test_resolve_collection_planning_backfills_caches_after_db_lookup() {
     let context = block_on(TestContext::new());
-    let fixture = block_on(context.namespace_fixture("planning_namespace_cache"));
+    let fixture = block_on(context.collection_fixture("planning_collection_cache"));
     let mut state = PlanningState::new();
 
-    let resolved = block_on(resolve_namespace_planning(
+    let resolved = block_on(resolve_collection_planning(
         &context.pool,
         &mut state,
         None,
-        Some(&NamespaceKey {
-            name: fixture.namespace.name.clone(),
+        Some(&CollectionKey {
+            name: fixture.collection.name.clone(),
         }),
     ))
     .unwrap();
 
-    assert_eq!(resolved.id, fixture.namespace.id);
+    assert_eq!(resolved.id, fixture.collection.id);
     assert_eq!(
         state
-            .namespaces_by_name
-            .get(&fixture.namespace.name)
+            .collections_by_name
+            .get(&fixture.collection.name)
             .unwrap()
             .id,
-        fixture.namespace.id
+        fixture.collection.id
     );
     assert_eq!(
         state
-            .namespaces_by_id
-            .get(&fixture.namespace.id)
+            .collections_by_id
+            .get(&fixture.collection.id)
             .unwrap()
             .name,
-        fixture.namespace.name
+        fixture.collection.name
     );
 }
 
 #[test]
-fn test_resolve_namespace_by_id_planning_backfills_caches_after_db_lookup() {
+fn test_resolve_collection_by_id_planning_backfills_caches_after_db_lookup() {
     let context = block_on(TestContext::new());
-    let fixture = block_on(context.namespace_fixture("planning_namespace_id_cache"));
+    let fixture = block_on(context.collection_fixture("planning_collection_id_cache"));
     let mut state = PlanningState::new();
 
-    let resolved = block_on(resolve_namespace_by_id_planning(
+    let resolved = block_on(resolve_collection_by_id_planning(
         &context.pool,
         &mut state,
-        fixture.namespace.id,
+        fixture.collection.id,
     ))
     .unwrap();
 
-    assert_eq!(resolved.name, fixture.namespace.name);
+    assert_eq!(resolved.name, fixture.collection.name);
     assert_eq!(
         state
-            .namespaces_by_name
-            .get(&fixture.namespace.name)
+            .collections_by_name
+            .get(&fixture.collection.name)
             .unwrap()
             .id,
-        fixture.namespace.id
+        fixture.collection.id
     );
     assert_eq!(
         state
-            .namespaces_by_id
-            .get(&fixture.namespace.id)
+            .collections_by_id
+            .get(&fixture.collection.id)
             .unwrap()
             .name,
-        fixture.namespace.name
+        fixture.collection.name
     );
 }
 
 #[test]
 fn test_resolve_class_planning_backfills_cache_after_db_lookup() {
     let context = block_on(TestContext::new());
-    let fixture = block_on(context.namespace_fixture("planning_class_cache"));
+    let fixture = block_on(context.collection_fixture("planning_class_cache"));
     let class_name_value = context.scoped_name("planning_class_cache_value");
     let class = with_connection(&context.pool, |conn| {
         create_class_db(
@@ -803,12 +803,12 @@ fn test_resolve_class_planning_backfills_cache_after_db_lookup() {
                 description: "cached class".to_string(),
                 json_schema: None,
                 validate_schema: Some(false),
-                namespace_ref: None,
-                namespace_key: Some(NamespaceKey {
-                    name: fixture.namespace.name.clone(),
+                collection_ref: None,
+                collection_key: Some(CollectionKey {
+                    name: fixture.collection.name.clone(),
                 }),
             },
-            fixture.namespace.id,
+            fixture.collection.id,
         )
     })
     .unwrap();
@@ -820,9 +820,9 @@ fn test_resolve_class_planning_backfills_cache_after_db_lookup() {
         None,
         Some(&ClassKey {
             name: class.name.clone(),
-            namespace_ref: None,
-            namespace_key: Some(NamespaceKey {
-                name: fixture.namespace.name.clone(),
+            collection_ref: None,
+            collection_key: Some(CollectionKey {
+                name: fixture.collection.name.clone(),
             }),
         }),
     ))
@@ -832,7 +832,7 @@ fn test_resolve_class_planning_backfills_cache_after_db_lookup() {
     assert_eq!(
         state
             .classes_by_key
-            .get(&(fixture.namespace.id, class.name.clone()))
+            .get(&(fixture.collection.id, class.name.clone()))
             .unwrap()
             .id,
         class.id
@@ -842,7 +842,7 @@ fn test_resolve_class_planning_backfills_cache_after_db_lookup() {
 #[test]
 fn test_resolve_object_planning_backfills_cache_after_db_lookup() {
     let context = block_on(TestContext::new());
-    let fixture = block_on(context.namespace_fixture("planning_object_cache"));
+    let fixture = block_on(context.collection_fixture("planning_object_cache"));
     let class_name_value = context.scoped_name("planning_object_cache_class");
     let class = with_connection(&context.pool, |conn| {
         create_class_db(
@@ -853,12 +853,12 @@ fn test_resolve_object_planning_backfills_cache_after_db_lookup() {
                 description: "cached class".to_string(),
                 json_schema: None,
                 validate_schema: Some(false),
-                namespace_ref: None,
-                namespace_key: Some(NamespaceKey {
-                    name: fixture.namespace.name.clone(),
+                collection_ref: None,
+                collection_key: Some(CollectionKey {
+                    name: fixture.collection.name.clone(),
                 }),
             },
-            fixture.namespace.id,
+            fixture.collection.id,
         )
     })
     .unwrap();
@@ -874,9 +874,9 @@ fn test_resolve_object_planning_backfills_cache_after_db_lookup() {
                 class_ref: None,
                 class_key: Some(ClassKey {
                     name: class.name.clone(),
-                    namespace_ref: None,
-                    namespace_key: Some(NamespaceKey {
-                        name: fixture.namespace.name.clone(),
+                    collection_ref: None,
+                    collection_key: Some(CollectionKey {
+                        name: fixture.collection.name.clone(),
                     }),
                 }),
             },
@@ -895,9 +895,9 @@ fn test_resolve_object_planning_backfills_cache_after_db_lookup() {
             class_ref: None,
             class_key: Some(ClassKey {
                 name: class.name.clone(),
-                namespace_ref: None,
-                namespace_key: Some(NamespaceKey {
-                    name: fixture.namespace.name.clone(),
+                collection_ref: None,
+                collection_key: Some(CollectionKey {
+                    name: fixture.collection.name.clone(),
                 }),
             }),
         }),
@@ -916,27 +916,27 @@ fn test_resolve_object_planning_backfills_cache_after_db_lookup() {
 }
 
 #[test]
-fn test_update_namespace_refreshes_runtime_ref_for_following_items() {
+fn test_update_collection_refreshes_runtime_ref_for_following_items() {
     let context = block_on(TestContext::new());
-    let fixture = block_on(context.namespace_fixture("update_namespace_ref"));
-    let updated_description = context.scoped_name("updated_namespace_description");
-    let execution = PlannedExecution::UpdateNamespace {
-        namespace_id: fixture.namespace.id,
-        input: ImportNamespaceInput {
+    let fixture = block_on(context.collection_fixture("update_collection_ref"));
+    let updated_description = context.scoped_name("updated_collection_description");
+    let execution = PlannedExecution::UpdateCollection {
+        collection_id: fixture.collection.id,
+        input: ImportCollectionInput {
             ref_: Some("ns:existing".to_string()),
-            name: fixture.namespace.name.clone(),
+            name: fixture.collection.name.clone(),
             description: updated_description.clone(),
         },
     };
 
     let class_input = ImportClassInput {
         ref_: Some("class:child".to_string()),
-        name: context.scoped_name("class_after_namespace_update"),
+        name: context.scoped_name("class_after_collection_update"),
         description: "child".to_string(),
         json_schema: None,
         validate_schema: Some(false),
-        namespace_ref: Some("ns:existing".to_string()),
-        namespace_key: None,
+        collection_ref: Some("ns:existing".to_string()),
+        collection_key: None,
     };
 
     let result = with_connection(&context.pool, |conn| {
@@ -947,19 +947,19 @@ fn test_update_namespace_refreshes_runtime_ref_for_following_items() {
             &mut runtime,
             &PlannedExecution::CreateClass(class_input.clone()),
         )?;
-        Ok::<_, ApiError>(runtime.namespaces_by_ref.get("ns:existing").cloned())
+        Ok::<_, ApiError>(runtime.collections_by_ref.get("ns:existing").cloned())
     })
     .unwrap();
 
-    let namespace = result.expect("namespace ref should be available after update");
-    assert_eq!(namespace.id, fixture.namespace.id);
-    assert_eq!(namespace.description, updated_description);
+    let collection = result.expect("collection ref should be available after update");
+    assert_eq!(collection.id, fixture.collection.id);
+    assert_eq!(collection.description, updated_description);
 }
 
 #[test]
 fn test_update_class_refreshes_runtime_ref_for_following_items() {
     let context = block_on(TestContext::new());
-    let fixture = block_on(context.namespace_fixture("update_class_ref"));
+    let fixture = block_on(context.collection_fixture("update_class_ref"));
     let class_name_value = context.scoped_name("existing_class_for_update");
     let class = with_connection(&context.pool, |conn| {
         create_class_db(
@@ -970,12 +970,12 @@ fn test_update_class_refreshes_runtime_ref_for_following_items() {
                 description: "existing class".to_string(),
                 json_schema: None,
                 validate_schema: Some(false),
-                namespace_ref: None,
-                namespace_key: Some(NamespaceKey {
-                    name: fixture.namespace.name.clone(),
+                collection_ref: None,
+                collection_key: Some(CollectionKey {
+                    name: fixture.collection.name.clone(),
                 }),
             },
-            fixture.namespace.id,
+            fixture.collection.id,
         )
     })
     .unwrap();
@@ -988,9 +988,9 @@ fn test_update_class_refreshes_runtime_ref_for_following_items() {
             description: "updated class".to_string(),
             json_schema: None,
             validate_schema: Some(false),
-            namespace_ref: None,
-            namespace_key: Some(NamespaceKey {
-                name: fixture.namespace.name.clone(),
+            collection_ref: None,
+            collection_key: Some(CollectionKey {
+                name: fixture.collection.name.clone(),
             }),
         },
     };
@@ -1024,7 +1024,7 @@ fn test_update_class_refreshes_runtime_ref_for_following_items() {
 #[test]
 fn test_plan_class_update_preserves_existing_schema_for_following_objects() {
     let context = block_on(TestContext::new());
-    let fixture = block_on(context.namespace_fixture("update_class_schema_ref"));
+    let fixture = block_on(context.collection_fixture("update_class_schema_ref"));
     let schema = serde_json::json!({
         "type": "object",
         "required": ["hostname"],
@@ -1042,24 +1042,24 @@ fn test_plan_class_update_preserves_existing_schema_for_following_objects() {
                 description: "existing class".to_string(),
                 json_schema: Some(schema.clone()),
                 validate_schema: Some(true),
-                namespace_ref: None,
-                namespace_key: Some(NamespaceKey {
-                    name: fixture.namespace.name.clone(),
+                collection_ref: None,
+                collection_key: Some(CollectionKey {
+                    name: fixture.collection.name.clone(),
                 }),
             },
-            fixture.namespace.id,
+            fixture.collection.id,
         )
     })
     .unwrap();
 
     let mut state = PlanningState::new();
-    remember_namespace(
+    remember_collection(
         &mut state,
         Some("ns:existing".to_string()),
-        NamespaceResolution {
-            id: fixture.namespace.id,
-            name: fixture.namespace.name.clone(),
-            description: fixture.namespace.description.clone(),
+        CollectionResolution {
+            id: fixture.collection.id,
+            name: fixture.collection.name.clone(),
+            description: fixture.collection.description.clone(),
             exists_in_db: true,
         },
     );
@@ -1081,8 +1081,8 @@ fn test_plan_class_update_preserves_existing_schema_for_following_objects() {
             description: "updated description".to_string(),
             json_schema: None,
             validate_schema: None,
-            namespace_ref: Some("ns:existing".to_string()),
-            namespace_key: None,
+            collection_ref: Some("ns:existing".to_string()),
+            collection_key: None,
         },
     ))
     .unwrap();
@@ -1109,7 +1109,7 @@ fn test_plan_class_update_preserves_existing_schema_for_following_objects() {
 #[test]
 fn test_update_object_refreshes_runtime_ref_for_following_items() {
     let context = block_on(TestContext::new());
-    let fixture = block_on(context.namespace_fixture("update_object_ref"));
+    let fixture = block_on(context.collection_fixture("update_object_ref"));
     let class_name_value = context.scoped_name("existing_class_for_object_update");
     let class = with_connection(&context.pool, |conn| {
         create_class_db(
@@ -1120,12 +1120,12 @@ fn test_update_object_refreshes_runtime_ref_for_following_items() {
                 description: "existing class".to_string(),
                 json_schema: None,
                 validate_schema: Some(false),
-                namespace_ref: None,
-                namespace_key: Some(NamespaceKey {
-                    name: fixture.namespace.name.clone(),
+                collection_ref: None,
+                collection_key: Some(CollectionKey {
+                    name: fixture.collection.name.clone(),
                 }),
             },
-            fixture.namespace.id,
+            fixture.collection.id,
         )
     })
     .unwrap();
@@ -1142,9 +1142,9 @@ fn test_update_object_refreshes_runtime_ref_for_following_items() {
                 class_ref: None,
                 class_key: Some(ClassKey {
                     name: class.name.clone(),
-                    namespace_ref: None,
-                    namespace_key: Some(NamespaceKey {
-                        name: fixture.namespace.name.clone(),
+                    collection_ref: None,
+                    collection_key: Some(CollectionKey {
+                        name: fixture.collection.name.clone(),
                     }),
                 }),
             },
@@ -1163,9 +1163,9 @@ fn test_update_object_refreshes_runtime_ref_for_following_items() {
             class_ref: None,
             class_key: Some(ClassKey {
                 name: class.name.clone(),
-                namespace_ref: None,
-                namespace_key: Some(NamespaceKey {
-                    name: fixture.namespace.name.clone(),
+                collection_ref: None,
+                collection_key: Some(CollectionKey {
+                    name: fixture.collection.name.clone(),
                 }),
             }),
         },
@@ -1229,7 +1229,7 @@ fn test_sanitize_error_for_storage_masks_database_details() {
 fn test_runtime_planning_failures_are_sanitized_for_storage() {
     let failure = PlanningFailure {
         kind: FailureKind::Runtime,
-        item: planned_result("namespace", "lookup", Some("ns:one".to_string()), None),
+        item: planned_result("collection", "lookup", Some("ns:one".to_string()), None),
         message: "relation users does not exist".to_string(),
     };
 
@@ -1354,7 +1354,7 @@ fn test_mark_claimed_task_failed_uses_recorded_result_counts() {
             NewImportTaskResultRecord {
                 task_id: task.id,
                 item_ref: Some("a".to_string()),
-                entity_kind: "namespace".to_string(),
+                entity_kind: "collection".to_string(),
                 action: "create".to_string(),
                 identifier: Some("a".to_string()),
                 outcome: "succeeded".to_string(),
@@ -1421,7 +1421,7 @@ fn test_count_import_results_summary_counts_success_and_failure_rows() {
             NewImportTaskResultRecord {
                 task_id: task.id,
                 item_ref: Some("one".to_string()),
-                entity_kind: "namespace".to_string(),
+                entity_kind: "collection".to_string(),
                 action: "create".to_string(),
                 identifier: Some("one".to_string()),
                 outcome: "succeeded".to_string(),

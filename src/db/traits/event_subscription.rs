@@ -370,13 +370,13 @@ fn emit_event_subscription_audit(
     .with_context(event_context)
     .with_entity_id(after.id)
     .with_entity_name(&after.name)
-    .with_namespace_id(after.namespace_id)
+    .with_collection_id(after.collection_id)
     .with_before_opt(before.map(event_subscription_snapshot))
     .with_after_opt((action != Action::Deleted).then(|| event_subscription_snapshot(after)))
     .with_metadata(json!({
         "subscription_id": after.id,
         "sink_id": after.sink_id,
-        "namespace_id": after.namespace_id,
+        "collection_id": after.collection_id,
         "enabled": after.enabled,
     }));
     emit_event(conn, &event)?;
@@ -398,7 +398,7 @@ fn event_sink_snapshot(row: &EventSinkRow) -> serde_json::Value {
 fn event_subscription_snapshot(row: &EventSubscriptionRow) -> serde_json::Value {
     json!({
         "id": row.id,
-        "namespace_id": row.namespace_id,
+        "collection_id": row.collection_id,
         "sink_id": row.sink_id,
         "name": row.name,
         "description": row.description,
@@ -448,27 +448,27 @@ fn build_event_sink_query(
 
 pub(crate) async fn list_event_subscription_rows_with_total_count(
     pool: &DbPool,
-    namespace: i32,
+    collection: i32,
     query_options: &QueryOptions,
 ) -> Result<(Vec<EventSubscriptionRow>, i64), ApiError> {
-    let base = build_event_subscription_query(namespace, query_options)?;
+    let base = build_event_subscription_query(collection, query_options)?;
     let total_count = with_connection(pool, |conn| base.count().get_result::<i64>(conn))?;
-    let mut query = build_event_subscription_query(namespace, query_options)?;
+    let mut query = build_event_subscription_query(collection, query_options)?;
     apply_query_options!(query, query_options, EventSubscription);
     let rows = with_connection(pool, |conn| query.load::<EventSubscriptionRow>(conn))?;
     Ok((rows, total_count))
 }
 
 fn build_event_subscription_query(
-    namespace: i32,
+    collection: i32,
     query_options: &QueryOptions,
 ) -> Result<crate::schema::event_subscriptions::BoxedQuery<'static, diesel::pg::Pg>, ApiError> {
     use crate::schema::event_subscriptions::dsl::{
-        created_at, event_subscriptions, id, name, namespace_id,
+        collection_id, created_at, event_subscriptions, id, name,
     };
 
     let mut query = event_subscriptions
-        .filter(namespace_id.eq(namespace))
+        .filter(collection_id.eq(collection))
         .into_boxed();
     for param in query_options.filters.clone() {
         let operator = param.operator.clone();
@@ -516,11 +516,11 @@ impl EventSink {
 impl EventSubscription {
     pub async fn list_with_total_count(
         pool: &DbPool,
-        namespace_id: i32,
+        collection_id: i32,
         query_options: &QueryOptions,
     ) -> Result<(Vec<EventSubscription>, i64), ApiError> {
         let (rows, total) =
-            list_event_subscription_rows_with_total_count(pool, namespace_id, query_options)
+            list_event_subscription_rows_with_total_count(pool, collection_id, query_options)
                 .await?;
         let subscriptions = rows
             .into_iter()

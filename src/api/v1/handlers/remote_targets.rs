@@ -15,10 +15,10 @@ use crate::db::traits::remote_target::{
 use crate::db::traits::task::{TaskCreateRequest, TaskScopeSnapshot};
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
-use crate::models::namespace::user_can_on_any;
+use crate::models::collection::user_can_on_any;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    HubuumClassID, NamespaceID, NewRemoteTarget, Permissions, RemoteTarget, RemoteTargetID,
+    CollectionID, HubuumClassID, NewRemoteTarget, Permissions, RemoteTarget, RemoteTargetID,
     RemoteTargetInvokeRequest, StoredRemoteCallTaskPayload, TaskKind, UpdateRemoteTarget,
     authorize_remote_invocation,
 };
@@ -26,7 +26,7 @@ use crate::pagination::prepare_db_pagination;
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
-use crate::traits::{ClassAccessors, NamespaceAccessors};
+use crate::traits::{ClassAccessors, CollectionAccessors};
 
 crate::history_db_fns!(
     remote_target_history_paginated_with_total_count,
@@ -65,11 +65,11 @@ pub async fn create_remote_target(
         user,
         requestor.scopes(),
         [Permissions::CreateRemoteTarget],
-        target.namespace_id
+        target.collection_id
     );
     validate_remote_target_class_scope(
         &pool,
-        target.namespace_id.id(),
+        target.collection_id.id(),
         target.class_id.map(HubuumClassID::id),
     )
     .await?;
@@ -106,7 +106,7 @@ pub async fn get_remote_targets(
     let user = &requestor.principal;
     let params = parse_query_parameter(req.query_string())?;
     let query_options = prepare_db_pagination::<RemoteTarget>(&params)?;
-    let allowed_namespace_ids = user_can_on_any(
+    let allowed_collection_ids = user_can_on_any(
         &pool,
         user,
         Permissions::ReadRemoteTarget,
@@ -114,10 +114,10 @@ pub async fn get_remote_targets(
     )
     .await?
     .into_iter()
-    .map(|namespace| namespace.id)
+    .map(|collection| collection.id)
     .collect::<Vec<_>>();
     let (targets, total_count) =
-        RemoteTarget::list_with_total_count(&pool, &allowed_namespace_ids, &query_options).await?;
+        RemoteTarget::list_with_total_count(&pool, &allowed_collection_ids, &query_options).await?;
 
     ApiResponse::paginated(targets, total_count, &params)
 }
@@ -148,7 +148,7 @@ pub async fn get_remote_target(
         user,
         requestor.scopes(),
         [Permissions::ReadRemoteTarget],
-        NamespaceID::new(target.namespace_id)?
+        CollectionID::new(target.collection_id)?
     );
     Ok(ApiResponse::new(target, StatusCode::OK))
 }
@@ -192,27 +192,27 @@ pub async fn patch_remote_target(
         user.clone(),
         requestor.scopes(),
         [Permissions::UpdateRemoteTarget],
-        NamespaceID::new(existing.namespace_id)?
+        CollectionID::new(existing.collection_id)?
     );
-    if let Some(namespace_id) = update.namespace_id {
+    if let Some(collection_id) = update.collection_id {
         can!(
             &pool,
             user,
             requestor.scopes(),
             [Permissions::CreateRemoteTarget],
-            namespace_id
+            collection_id
         );
     }
-    let effective_namespace_id = update
-        .namespace_id
-        .map(NamespaceID::id)
-        .unwrap_or(existing.namespace_id);
+    let effective_collection_id = update
+        .collection_id
+        .map(CollectionID::id)
+        .unwrap_or(existing.collection_id);
     let effective_class_id = match update.class_id {
         Some(Some(class_id)) => Some(class_id.id()),
         Some(None) => None,
         None => existing.class_id,
     };
-    validate_remote_target_class_scope(&pool, effective_namespace_id, effective_class_id).await?;
+    validate_remote_target_class_scope(&pool, effective_collection_id, effective_class_id).await?;
 
     let row = update.into_row(&existing)?;
     let event_context = requestor.event_context(&req);
@@ -225,16 +225,16 @@ pub async fn patch_remote_target(
 
 async fn validate_remote_target_class_scope(
     pool: &DbPool,
-    namespace_id: i32,
+    collection_id: i32,
     class_id: Option<i32>,
 ) -> Result<(), ApiError> {
     let Some(class_id) = class_id else {
         return Ok(());
     };
     let class = HubuumClassID::new(class_id)?.class(pool).await?;
-    if class.namespace_id != namespace_id {
+    if class.collection_id != collection_id {
         return Err(ApiError::BadRequest(
-            "class_id must belong to the remote target namespace".to_string(),
+            "class_id must belong to the remote target collection".to_string(),
         ));
     }
     Ok(())
@@ -268,7 +268,7 @@ pub async fn delete_remote_target(
         user,
         requestor.scopes(),
         [Permissions::DeleteRemoteTarget],
-        NamespaceID::new(existing.namespace_id)?
+        CollectionID::new(existing.collection_id)?
     );
     let event_context = requestor.event_context(&req);
     target_id
@@ -459,7 +459,7 @@ pub async fn get_remote_target_history(
                 user,
                 requestor.scopes(),
                 [Permissions::ReadRemoteTarget],
-                NamespaceID::new(instance.namespace_id)?
+                CollectionID::new(instance.collection_id)?
             );
             (instance.id, false)
         }
@@ -532,7 +532,7 @@ pub async fn get_remote_target_as_of(
                 user,
                 requestor.scopes(),
                 [Permissions::ReadRemoteTarget],
-                NamespaceID::new(instance.namespace_id)?
+                CollectionID::new(instance.collection_id)?
             );
             instance.id
         }

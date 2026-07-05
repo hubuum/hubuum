@@ -5,7 +5,7 @@ use utoipa::ToSchema;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::principals::{
-    PrincipalNamespacePermissions, principal_permissions_response,
+    PrincipalCollectionPermissions, principal_permissions_response,
 };
 use crate::db::DbPool;
 use crate::db::traits::ActiveTokens;
@@ -138,7 +138,7 @@ pub async fn list_my_groups(
     tag = "principals",
     security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "Current principal effective permissions per namespace, grouped by granting group", body = [PrincipalNamespacePermissions]),
+        (status = 200, description = "Current principal effective permissions per collection, grouped by granting group", body = [PrincipalCollectionPermissions]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse)
     )
 )]

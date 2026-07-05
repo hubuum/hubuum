@@ -40,11 +40,11 @@ where
 }
 
 #[macro_export]
-/// ## Check if a user has a set of permissions in a set of namespaces.
+/// ## Check if a user has a set of permissions in a set of collections.
 ///
 /// This is a thin wrapper over the [`UserPermissions::can`] method, but with a more
 /// convenient syntax for the caller as the objects we test against may be of different types
-/// but all implement the [`NamespaceAccessors`] trait.
+/// but all implement the [`CollectionAccessors`] trait.
 ///
 /// ### Arguments
 ///
@@ -55,8 +55,8 @@ where
 ///   applied even to admins). This argument is **required** — request handlers pass
 ///   `requestor.scopes()`; truly unscoped internal callers pass `None` explicitly.
 /// * `[permissions]` - An iterable of [`Permissions`] to check for.
-///   All permissions must be present in all namespaces.
-/// * `objects+`- Objects to check permissions on (impl [`NamespaceAccessors`]).
+///   All permissions must be present in all collections.
+/// * `objects+`- Objects to check permissions on (impl [`CollectionAccessors`]).
 ///
 /// ### Returns
 ///
@@ -67,13 +67,13 @@ where
 /// ```text
 /// use hubuum::can;
 /// // `scopes` is `Option<&[Permissions]>` — e.g. `requestor.scopes()` or `None`.
-/// can!(pool, subject, scopes, [Permissions::ReadCollection], namespace, class, object);
-/// can!(pool, subject, scopes, [Permissions::ReadCollection, Permissions::UpdateCollection], namespace, class1, class2);
+/// can!(pool, subject, scopes, [Permissions::ReadCollection], collection, class, object);
+/// can!(pool, subject, scopes, [Permissions::ReadCollection, Permissions::UpdateCollection], collection, class1, class2);
 /// ```
 ///
 /// [`UserPermissions::can`]: crate::db::traits::UserPermissions::can
 /// [`UserPermissions`]: crate::db::traits::UserPermissions
-/// [`NamespaceAccessors`]: crate::traits::NamespaceAccessors
+/// [`CollectionAccessors`]: crate::traits::CollectionAccessors
 /// [`Permissions`]: crate::models::Permissions
 /// [`ApiError::Forbidden`]: crate::errors::ApiError::Forbidden
 macro_rules! can {
@@ -82,15 +82,15 @@ macro_rules! can {
     // migration to scope-aware authorization is a compile error, not a silent
     // scope bypass. Resource/task handlers pass `requestor.scopes()`; truly
     // unscoped internal callers pass `None` explicitly.
-    ($pool:expr, $subject:expr, $scopes:expr, [$($perm:expr),+], $($namespace:expr),+) => {{
+    ($pool:expr, $subject:expr, $scopes:expr, [$($perm:expr),+], $($collection:expr),+) => {{
         $subject.can(
             $pool,
             vec![$($perm),+],
             vec![
-                // This should be fairly cheap. We're just getting the namespace ID for each object,
-                // which is a field lookup returning a `NamespaceID`. There is no database interaction
+                // This should be fairly cheap. We're just getting the collection ID for each object,
+                // which is a field lookup returning a `CollectionID`. There is no database interaction
                 // here but the trait definition requires the pool to be passed.
-                $($namespace.namespace_id($pool).await?),+
+                $($collection.collection_id($pool).await?),+
             ],
             $scopes,
         ).await?
@@ -583,7 +583,7 @@ macro_rules! bind_transitive_filter_params {
 ///
 /// ### Arguments
 ///
-/// * `noun` - human-readable name used in the validation error, e.g. `"namespace id"`.
+/// * `noun` - human-readable name used in the validation error, e.g. `"collection id"`.
 ///
 /// ### Example
 ///
@@ -591,13 +591,13 @@ macro_rules! bind_transitive_filter_params {
 /// use hubuum::int_id_newtype;
 ///
 /// int_id_newtype! {
-///     /// Identifier for a namespace.
-///     pub struct NamespaceID;
-///     noun = "namespace id";
+///     /// Identifier for a collection.
+///     pub struct CollectionID;
+///     noun = "collection id";
 /// }
 ///
-/// assert_eq!(NamespaceID::new(42).unwrap().id(), 42);
-/// assert!(NamespaceID::new(0).is_err());
+/// assert_eq!(CollectionID::new(42).unwrap().id(), 42);
+/// assert!(CollectionID::new(0).is_err());
 /// ```
 #[macro_export]
 macro_rules! int_id_newtype {

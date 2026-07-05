@@ -6,7 +6,7 @@
 //! sinks, and future template consumers.
 //!
 //! It intentionally does not own Hubuum-specific concerns such as report
-//! database models, namespace template loading, permission checks, report output
+//! database models, collection template loading, permission checks, report output
 //! persistence, API error types, or global app configuration. Callers pass
 //! `TemplateLimits` explicitly, usually through `prepare_template`, and may
 //! provide an optional missing-value recorder callback when they need

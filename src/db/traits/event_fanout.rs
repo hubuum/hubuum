@@ -95,8 +95,8 @@ pub async fn fanout_events(pool: &DbPool, event_ids: &[i64]) -> Result<usize, Ap
             return Ok(0);
         }
 
-        let candidate_namespace_ids = candidate_subscription_namespace_ids(&claimed_events);
-        let subscriptions = load_enabled_subscriptions(conn, &candidate_namespace_ids)?
+        let candidate_collection_ids = candidate_subscription_collection_ids(&claimed_events);
+        let subscriptions = load_enabled_subscriptions(conn, &candidate_collection_ids)?
             .into_iter()
             .map(CompiledEventSubscription::try_from)
             .collect::<Result<Vec<_>, _>>()?;
@@ -126,11 +126,11 @@ pub async fn fanout_events(pool: &DbPool, event_ids: &[i64]) -> Result<usize, Ap
 
 fn load_enabled_subscriptions(
     conn: &mut PgConnection,
-    namespace_ids: &[i32],
+    collection_ids: &[i32],
 ) -> Result<Vec<crate::models::event_subscription::EventSubscriptionRow>, ApiError> {
     use crate::schema::{event_sinks, event_subscriptions};
 
-    if namespace_ids.is_empty() {
+    if collection_ids.is_empty() {
         return Ok(Vec::new());
     }
 
@@ -138,22 +138,22 @@ fn load_enabled_subscriptions(
         .inner_join(event_sinks::table.on(event_sinks::id.eq(event_subscriptions::sink_id)))
         .filter(event_subscriptions::enabled.eq(true))
         .filter(event_sinks::enabled.eq(true))
-        .filter(event_subscriptions::namespace_id.eq_any(namespace_ids))
+        .filter(event_subscriptions::collection_id.eq_any(collection_ids))
         .select(event_subscriptions::all_columns)
         .load::<crate::models::event_subscription::EventSubscriptionRow>(conn)
         .map_err(ApiError::from)
 }
 
-fn candidate_subscription_namespace_ids(events: &[Event]) -> Vec<i32> {
-    let mut namespace_ids = HashSet::new();
+fn candidate_subscription_collection_ids(events: &[Event]) -> Vec<i32> {
+    let mut collection_ids = HashSet::new();
     for event in events {
-        if let Some(namespace_id) = event.namespace_id {
-            namespace_ids.insert(namespace_id);
+        if let Some(collection_id) = event.collection_id {
+            collection_ids.insert(collection_id);
         }
         let envelope = EventEnvelope::from(event.clone());
-        namespace_ids.extend(envelope.related_namespace_ids());
+        collection_ids.extend(envelope.related_collection_ids());
     }
-    namespace_ids.into_iter().collect()
+    collection_ids.into_iter().collect()
 }
 
 fn matching_subscription_ids(
@@ -171,7 +171,7 @@ fn matching_subscription_ids(
 #[derive(Debug)]
 struct CompiledEventSubscription {
     id: i32,
-    namespace_id: i32,
+    collection_id: i32,
     entity_types: HashSet<String>,
     actions: HashSet<String>,
     filter: hubuum_events_core::EventSubscriptionFilter,
@@ -195,7 +195,7 @@ impl TryFrom<crate::models::event_subscription::EventSubscriptionRow>
         .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
         Ok(Self {
             id: subscription.id,
-            namespace_id: subscription.namespace_id,
+            collection_id: subscription.collection_id,
             entity_types: entity_types.into_iter().collect(),
             actions: actions.into_iter().collect(),
             filter,
@@ -207,18 +207,18 @@ impl CompiledEventSubscription {
     fn matches_event(&self, event: &Event, envelope: &EventEnvelope) -> bool {
         self.entity_types.contains(&event.entity_type)
             && self.actions.contains(&event.action)
-            && subscription_namespace_matches_event(self.namespace_id, event, envelope)
+            && subscription_collection_matches_event(self.collection_id, event, envelope)
             && self.filter.matches(envelope)
     }
 }
 
-fn subscription_namespace_matches_event(
-    namespace_id: i32,
+fn subscription_collection_matches_event(
+    collection_id: i32,
     event: &Event,
     envelope: &EventEnvelope,
 ) -> bool {
-    event.namespace_id == Some(namespace_id)
-        || envelope.related_namespace_ids().contains(&namespace_id)
+    event.collection_id == Some(collection_id)
+        || envelope.related_collection_ids().contains(&collection_id)
 }
 
 fn insert_delivery_rows(

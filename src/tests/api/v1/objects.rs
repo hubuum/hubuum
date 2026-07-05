@@ -40,7 +40,7 @@ mod tests {
         count: usize,
     ) -> ObjectFixture {
         let class = NewHubuumClass {
-            namespace_id: 0,
+            collection_id: 0,
             name: format!("test class {prefix}"),
             description: "Test class description".to_string(),
             json_schema: None,
@@ -51,7 +51,7 @@ mod tests {
 
         for i in 0..count {
             objects.push(NewHubuumObject {
-                namespace_id: 0,
+                collection_id: 0,
                 hubuum_class_id: 0,
                 data: serde_json::json!({"test": format!("data_{i}")}),
                 name: format!("{prefix} test object {i}"),
@@ -61,7 +61,7 @@ mod tests {
 
         create_object_fixture(
             &context.pool,
-            context.namespace_fixture(prefix).await,
+            context.collection_fixture(prefix).await,
             class,
             objects,
         )
@@ -72,10 +72,10 @@ mod tests {
     async fn create_json_ip_filter_fixture(
         context: &TestContext,
         prefix: &str,
-    ) -> (crate::tests::NamespaceFixture, crate::models::HubuumClass) {
-        let namespace = context.namespace_fixture(prefix).await;
+    ) -> (crate::tests::CollectionFixture, crate::models::HubuumClass) {
+        let collection = context.collection_fixture(prefix).await;
         let class = NewHubuumClass {
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             name: format!("json ip filter class {prefix}"),
             description: format!("json ip filter class {prefix}"),
             json_schema: None,
@@ -132,7 +132,7 @@ mod tests {
 
         for (name, data) in test_objects {
             NewHubuumObject {
-                namespace_id: namespace.namespace.id,
+                collection_id: collection.collection.id,
                 hubuum_class_id: class.id,
                 data,
                 name: name.to_string(),
@@ -143,7 +143,7 @@ mod tests {
             .unwrap();
         }
 
-        (namespace, class)
+        (collection, class)
     }
 
     async fn assert_json_ip_filter_query(
@@ -152,14 +152,14 @@ mod tests {
         query_string: &str,
         expected_names: Vec<&str>,
     ) {
-        let (namespace, class) = create_json_ip_filter_fixture(context, prefix).await;
+        let (collection, class) = create_json_ip_filter_fixture(context, prefix).await;
 
         let resp = get_request(
             &context.pool,
             &context.admin_token,
             &format!(
-                "{OBJECT_ENDPOINT}/{}/?namespaces={}&{}&sort=id",
-                class.id, namespace.namespace.id, query_string
+                "{OBJECT_ENDPOINT}/{}/?collections={}&{}&sort=id",
+                class.id, collection.collection.id, query_string
             ),
         )
         .await;
@@ -172,16 +172,16 @@ mod tests {
         let object_names: Vec<&str> = objects.iter().map(|object| object.name.as_str()).collect();
         assert_eq!(object_names, expected_names);
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     async fn create_json_typed_filter_fixture(
         context: &TestContext,
         prefix: &str,
-    ) -> (crate::tests::NamespaceFixture, crate::models::HubuumClass) {
-        let namespace = context.namespace_fixture(prefix).await;
+    ) -> (crate::tests::CollectionFixture, crate::models::HubuumClass) {
+        let collection = context.collection_fixture(prefix).await;
         let class = NewHubuumClass {
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             name: format!("json typed filter class {prefix}"),
             description: format!("json typed filter class {prefix}"),
             json_schema: None,
@@ -234,7 +234,7 @@ mod tests {
 
         for (name, data) in test_objects {
             NewHubuumObject {
-                namespace_id: namespace.namespace.id,
+                collection_id: collection.collection.id,
                 hubuum_class_id: class.id,
                 data,
                 name: name.to_string(),
@@ -245,7 +245,7 @@ mod tests {
             .unwrap();
         }
 
-        (namespace, class)
+        (collection, class)
     }
 
     async fn assert_json_typed_filter_query(
@@ -254,14 +254,14 @@ mod tests {
         query_string: &str,
         expected_names: Vec<&str>,
     ) {
-        let (namespace, class) = create_json_typed_filter_fixture(context, prefix).await;
+        let (collection, class) = create_json_typed_filter_fixture(context, prefix).await;
 
         let resp = get_request(
             &context.pool,
             &context.admin_token,
             &format!(
-                "{OBJECT_ENDPOINT}/{}/?namespaces={}&{}&sort=id",
-                class.id, namespace.namespace.id, query_string
+                "{OBJECT_ENDPOINT}/{}/?collections={}&{}&sort=id",
+                class.id, collection.collection.id, query_string
             ),
         )
         .await;
@@ -271,7 +271,7 @@ mod tests {
         let object_names: Vec<&str> = objects.iter().map(|object| object.name.as_str()).collect();
         assert_eq!(object_names, expected_names);
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -283,7 +283,7 @@ mod tests {
         let class = &classes[0];
 
         let object = NewHubuumObject {
-            namespace_id: class.namespace_id,
+            collection_id: class.collection_id,
             hubuum_class_id: class.id,
             data: serde_json::json!({"test": "data"}),
             name: "test object".to_string(),
@@ -305,7 +305,7 @@ mod tests {
         assert_eq!(object_from_api, object);
 
         let updated_object = UpdateHubuumObject {
-            namespace_id: None,
+            collection_id: None,
             hubuum_class_id: None,
             data: None,
             name: Some("updated object".to_string()),
@@ -385,7 +385,7 @@ mod tests {
             let class = &classes[*class_id as usize];
 
             let object = NewHubuumObject {
-                namespace_id: class.namespace_id,
+                collection_id: class.collection_id,
                 hubuum_class_id: class.id,
                 data: serde_json::json!({"test": "data"}),
                 name: "test create object".to_string(),
@@ -409,7 +409,7 @@ mod tests {
                 assert_eq!(object_from_api.name, object.name);
                 assert_eq!(object_from_api.description, object.description);
                 assert_eq!(object_from_api.data, object.data);
-                assert_eq!(object_from_api.namespace_id, object.namespace_id);
+                assert_eq!(object_from_api.collection_id, object.collection_id);
                 assert_eq!(object_from_api.hubuum_class_id, object.hubuum_class_id);
 
                 let object_url = format!("{}/{}/{}", OBJECT_ENDPOINT, class.id, object_from_api.id);
@@ -432,7 +432,7 @@ mod tests {
         let body_class = &classes[1];
 
         let object = NewHubuumObject {
-            namespace_id: body_class.namespace_id,
+            collection_id: body_class.collection_id,
             hubuum_class_id: body_class.id,
             data: serde_json::json!({"test": "data"}),
             name: "test create object mismatch".to_string(),
@@ -462,7 +462,7 @@ mod tests {
         let other_class = &classes[1];
 
         let object = NewHubuumObject {
-            namespace_id: owning_class.namespace_id,
+            collection_id: owning_class.collection_id,
             hubuum_class_id: owning_class.id,
             data: serde_json::json!({"test": "data"}),
             name: "test object path class mismatch".to_string(),
@@ -477,7 +477,7 @@ mod tests {
         let _ = assert_response_status(resp, StatusCode::NOT_FOUND).await;
 
         let updated_object = UpdateHubuumObject {
-            namespace_id: None,
+            collection_id: None,
             hubuum_class_id: None,
             data: None,
             name: Some("should not update".to_string()),
@@ -510,7 +510,7 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn patch_object_in_class_rejects_class_or_namespace_move(
+    async fn patch_object_in_class_rejects_class_or_collection_move(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
@@ -519,7 +519,7 @@ mod tests {
         let other_class = &classes[1];
 
         let object = NewHubuumObject {
-            namespace_id: owning_class.namespace_id,
+            collection_id: owning_class.collection_id,
             hubuum_class_id: owning_class.id,
             data: serde_json::json!({"test": "data"}),
             name: "test object move rejected".to_string(),
@@ -530,7 +530,7 @@ mod tests {
         .unwrap();
 
         let updated_object = UpdateHubuumObject {
-            namespace_id: None,
+            collection_id: None,
             hubuum_class_id: Some(other_class.id),
             data: None,
             name: None,
@@ -552,11 +552,11 @@ mod tests {
     #[actix_web::test]
     async fn patch_object_in_class_validates_schema(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let namespace = context
-            .namespace_fixture("patch_object_schema_validation")
+        let collection = context
+            .collection_fixture("patch_object_schema_validation")
             .await;
         let class = NewHubuumClass {
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             name: "patch object schema validation".to_string(),
             description: "patch object schema validation".to_string(),
             json_schema: Some(get_schema(SchemaType::Geo).clone()),
@@ -566,7 +566,7 @@ mod tests {
         .await
         .unwrap();
         let object = NewHubuumObject {
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             hubuum_class_id: class.id,
             data: serde_json::json!({"latitude": 59.9, "longitude": 10.7}),
             name: "valid geo object".to_string(),
@@ -577,7 +577,7 @@ mod tests {
         .unwrap();
 
         let updated_object = UpdateHubuumObject {
-            namespace_id: None,
+            collection_id: None,
             hubuum_class_id: None,
             data: Some(serde_json::json!({"latitude": "north", "longitude": 10.7})),
             name: None,
@@ -602,7 +602,7 @@ mod tests {
         let object_after_patch: HubuumObject = test::read_body_json(resp).await;
         assert_eq!(object_after_patch.data, object.data);
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -617,7 +617,7 @@ mod tests {
 
         for i in 0..5 {
             let object = NewHubuumObject {
-                namespace_id: class.namespace_id,
+                collection_id: class.collection_id,
                 hubuum_class_id: classes[0].id,
                 data: serde_json::json!({"test": format!("data_{i}")}),
                 name: format!("test get objects {i}"),
@@ -649,10 +649,10 @@ mod tests {
             &context.pool,
             context
                 .scope
-                .namespace_fixture("admin_lists_hidden_objects")
+                .collection_fixture("admin_lists_hidden_objects")
                 .await,
             NewHubuumClass {
-                namespace_id: 0,
+                collection_id: 0,
                 name: "hidden object class".to_string(),
                 description: "hidden object class".to_string(),
                 json_schema: None,
@@ -660,14 +660,14 @@ mod tests {
             },
             vec![
                 NewHubuumObject {
-                    namespace_id: 0,
+                    collection_id: 0,
                     hubuum_class_id: 0,
                     data: serde_json::json!({"name": "hidden-object-1"}),
                     name: "hidden object 1".to_string(),
                     description: "hidden object 1".to_string(),
                 },
                 NewHubuumObject {
-                    namespace_id: 0,
+                    collection_id: 0,
                     hubuum_class_id: 0,
                     data: serde_json::json!({"name": "hidden-object-2"}),
                     name: "hidden object 2".to_string(),
@@ -682,8 +682,8 @@ mod tests {
             &context.pool,
             &context.admin_token,
             &format!(
-                "{OBJECT_ENDPOINT}/{}/?namespaces={}&sort=id",
-                hidden_fixture.class.id, hidden_fixture.namespace.namespace.id
+                "{OBJECT_ENDPOINT}/{}/?collections={}&sort=id",
+                hidden_fixture.class.id, hidden_fixture.collection.collection.id
             ),
         )
         .await;
@@ -723,18 +723,18 @@ mod tests {
     ) {
         let context = test_context;
 
-        let namespace_name = format!(
+        let collection_name = format!(
             "test_api_objects_filter_json_data_examples_{}",
             query_string
                 .chars()
                 .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
                 .collect::<String>()
         );
-        let namespace = context.namespace_fixture(&namespace_name).await;
+        let collection = context.collection_fixture(&collection_name).await;
         let class = NewHubuumClass {
-            namespace_id: namespace.namespace.id,
-            name: format!("json filter class {namespace_name}"),
-            description: format!("json filter class {namespace_name}"),
+            collection_id: collection.collection.id,
+            name: format!("json filter class {collection_name}"),
+            description: format!("json filter class {collection_name}"),
             json_schema: None,
             validate_schema: None,
         }
@@ -771,7 +771,7 @@ mod tests {
 
         for (name, data) in test_objects {
             NewHubuumObject {
-                namespace_id: namespace.namespace.id,
+                collection_id: collection.collection.id,
                 hubuum_class_id: class.id,
                 data,
                 name: name.to_string(),
@@ -786,8 +786,8 @@ mod tests {
             &context.pool,
             &context.admin_token,
             &format!(
-                "{OBJECT_ENDPOINT}/{}/?namespaces={}&{}&sort=id",
-                class.id, namespace.namespace.id, query_string
+                "{OBJECT_ENDPOINT}/{}/?collections={}&{}&sort=id",
+                class.id, collection.collection.id, query_string
             ),
         )
         .await;
@@ -797,7 +797,7 @@ mod tests {
         let object_names: Vec<&str> = objects.iter().map(|object| object.name.as_str()).collect();
         assert_eq!(object_names, expected_names);
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     // Covers docs/querying.md typed JSON examples and ensures malformed stored values do not fail the request.
@@ -948,9 +948,9 @@ mod tests {
                 .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
                 .collect::<String>()
         );
-        let namespace = context.namespace_fixture(&unique).await;
+        let collection = context.collection_fixture(&unique).await;
         let class = NewHubuumClass {
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             name: format!("json ip invalid filter class {unique}"),
             description: format!("json ip invalid filter class {unique}"),
             json_schema: None,
@@ -961,7 +961,7 @@ mod tests {
         .unwrap();
 
         NewHubuumObject {
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             hubuum_class_id: class.id,
             data: serde_json::json!({
                 "network": { "address": "10.0.0.10" }
@@ -977,14 +977,14 @@ mod tests {
             &context.pool,
             &context.admin_token,
             &format!(
-                "{OBJECT_ENDPOINT}/{}/?namespaces={}&{}",
-                class.id, namespace.namespace.id, query_string
+                "{OBJECT_ENDPOINT}/{}/?collections={}&{}",
+                class.id, collection.collection.id, query_string
             ),
         )
         .await;
         let _ = assert_response_status(resp, StatusCode::BAD_REQUEST).await;
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -993,13 +993,13 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let namespace = context
-            .namespace_fixture(
+        let collection = context
+            .collection_fixture(
                 "test_api_objects_filter_json_data_ip_operators_large_dataset_and_expression_index",
             )
             .await;
         let class = NewHubuumClass {
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             name: "json ip large dataset class".to_string(),
             description: "json ip large dataset class".to_string(),
             json_schema: None,
@@ -1019,7 +1019,7 @@ mod tests {
                 }
 
                 NewHubuumObject {
-                    namespace_id: namespace.namespace.id,
+                    collection_id: collection.collection.id,
                     hubuum_class_id: class.id,
                     data: serde_json::json!({
                         "network": { "address": address }
@@ -1050,7 +1050,7 @@ mod tests {
             };
 
             NewHubuumObject {
-                namespace_id: namespace.namespace.id,
+                collection_id: collection.collection.id,
                 hubuum_class_id: class.id,
                 data,
                 name: name.clone(),
@@ -1065,15 +1065,15 @@ mod tests {
             conn.transaction::<_, diesel::result::Error, _>(|conn| {
                 diesel::sql_query("DROP INDEX IF EXISTS idx_hubuumobject_hubuum_class_id")
                     .execute(conn)?;
-                diesel::sql_query("DROP INDEX IF EXISTS idx_hubuumobject_namespace_id")
+                diesel::sql_query("DROP INDEX IF EXISTS idx_hubuumobject_collection_id")
                     .execute(conn)?;
                 let create_index_sql = format!(
                     "CREATE INDEX IF NOT EXISTS idx_test_json_ip_expression \
                  ON hubuumobject USING GIST ((try_inet(data #>> '{{network,address}}')) inet_ops) \
                  WHERE hubuum_class_id = {} \
-                 AND namespace_id = {} \
+                 AND collection_id = {} \
                  AND try_inet(data #>> '{{network,address}}') IS NOT NULL",
-                    class.id, namespace.namespace.id
+                    class.id, collection.collection.id
                 );
                 diesel::sql_query(create_index_sql).execute(conn)?;
                 diesel::sql_query("ANALYZE hubuumobject").execute(conn)?;
@@ -1082,10 +1082,10 @@ mod tests {
                 let explain_sql = format!(
                     "EXPLAIN SELECT id FROM hubuumobject \
                  WHERE hubuum_class_id = {} \
-                 AND namespace_id = {} \
+                 AND collection_id = {} \
                  AND try_inet(data #>> '{{network,address}}') IS NOT NULL \
                  AND try_inet(data #>> '{{network,address}}') <<= '10.42.1.0/24'::inet",
-                    class.id, namespace.namespace.id
+                    class.id, collection.collection.id
                 );
                 let plan_rows = diesel::sql_query(explain_sql).load::<ExplainRow>(conn)?;
 
@@ -1095,8 +1095,8 @@ mod tests {
                 )
                 .execute(conn)?;
                 diesel::sql_query(
-                    "CREATE INDEX IF NOT EXISTS idx_hubuumobject_namespace_id \
-                 ON hubuumobject (namespace_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_hubuumobject_collection_id \
+                 ON hubuumobject (collection_id)",
                 )
                 .execute(conn)?;
                 Ok(plan_rows)
@@ -1124,8 +1124,8 @@ mod tests {
                 &context.pool,
                 &context.admin_token,
                 &format!(
-                    "{OBJECT_ENDPOINT}/{}/?namespaces={}&json_data__within_network=network,address=10.42.1.0/24&sort=id&limit=100{}",
-                    class.id, namespace.namespace.id, cursor_param
+                    "{OBJECT_ENDPOINT}/{}/?collections={}&json_data__within_network=network,address=10.42.1.0/24&sort=id&limit=100{}",
+                    class.id, collection.collection.id, cursor_param
                 ),
             )
             .await;
@@ -1144,7 +1144,7 @@ mod tests {
         assert_eq!(fetched_names.len(), expected_names.len());
         assert_eq!(fetched_names, expected_names);
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -1170,12 +1170,12 @@ mod tests {
 
         let unique_name = format!("{json_data}_create_objects_in_class_failing_validation");
 
-        let namespace = context.namespace_fixture(&unique_name).await;
+        let collection = context.collection_fixture(&unique_name).await;
 
         let schema = get_schema(SchemaType::Geo);
         let class = NewHubuumClass {
             name: unique_name.clone(),
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             description: "Test class".to_string(),
             json_schema: Some(schema.clone()),
             validate_schema: Some(true),
@@ -1186,7 +1186,7 @@ mod tests {
 
         let object = NewHubuumObject {
             name: unique_name.clone(),
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             hubuum_class_id: class.id,
             data: serde_json::from_str(json_data).unwrap(),
             description: "Test object".to_string(),
@@ -1215,7 +1215,7 @@ mod tests {
             assert_eq!(object_from_api.name, object.name);
             assert_eq!(object_from_api.description, object.description);
             assert_eq!(object_from_api.data, object.data);
-            assert_eq!(object_from_api.namespace_id, object.namespace_id);
+            assert_eq!(object_from_api.collection_id, object.collection_id);
             assert_eq!(object_from_api.hubuum_class_id, object.hubuum_class_id);
             object_from_api
                 .delete_without_events(&context.pool)
@@ -1230,7 +1230,7 @@ mod tests {
             );
         }
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -1241,7 +1241,7 @@ mod tests {
     #[case::sorted_name_desc("name.desc", &[3, 2, 1])]
     #[case::sorted_created_at_asc("created_at.asc", &[0, 1, 2])]
     #[case::sorted_created_at_desc("created_at.desc", &[3, 2, 1])]
-    #[case::sorted_namespace_and_id_asc("namespace_id.asc,id.asc", &[0, 1, 2])]
+    #[case::sorted_collection_and_id_asc("collection_id.asc,id.asc", &[0, 1, 2])]
     #[actix_web::test]
     async fn test_api_objects_sorted(
         #[case] sort_order: &str,
@@ -1255,7 +1255,7 @@ mod tests {
             4,
         )
         .await;
-        let namespace_id = created_objects.namespace_id();
+        let collection_id = created_objects.collection_id();
 
         let sort_order = if sort_order.is_empty() {
             ""
@@ -1267,7 +1267,7 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{OBJECT_ENDPOINT}/{class_id}/?namespaces={namespace_id}{sort_order}"),
+            &format!("{OBJECT_ENDPOINT}/{class_id}/?collections={collection_id}{sort_order}"),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
@@ -1291,7 +1291,7 @@ mod tests {
         let context = test_context;
         let created_objects =
             create_test_objects(&context, &format!("api_objects_limit_{limit}"), 6).await;
-        let namespace_id = created_objects.namespace_id();
+        let collection_id = created_objects.collection_id();
         let class_id = created_objects.class_id();
 
         // Limit to 2 results
@@ -1299,7 +1299,7 @@ mod tests {
             &context.pool,
             &context.admin_token,
             &format!(
-                "{OBJECT_ENDPOINT}/{class_id}/?namespaces={namespace_id}&limit={limit}&sort=id"
+                "{OBJECT_ENDPOINT}/{class_id}/?collections={collection_id}&limit={limit}&sort=id"
             ),
         )
         .await;
@@ -1314,13 +1314,13 @@ mod tests {
     async fn test_api_objects_cursor_pagination(#[future(awt)] test_context: TestContext) {
         let context = test_context;
         let created_objects = create_test_objects(&context, "api_objects_cursor", 6).await;
-        let namespace_id = created_objects.namespace_id();
+        let collection_id = created_objects.collection_id();
         let class_id = created_objects.class_id();
 
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{OBJECT_ENDPOINT}/{class_id}/?namespaces={namespace_id}&limit=2&sort=id"),
+            &format!("{OBJECT_ENDPOINT}/{class_id}/?collections={collection_id}&limit=2&sort=id"),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
@@ -1336,7 +1336,7 @@ mod tests {
             &context.pool,
             &context.admin_token,
             &format!(
-                "{OBJECT_ENDPOINT}/{class_id}/?namespaces={namespace_id}&limit=2&sort=id&cursor={}",
+                "{OBJECT_ENDPOINT}/{class_id}/?collections={collection_id}&limit=2&sort=id&cursor={}",
                 next_cursor.unwrap()
             ),
         )
@@ -1353,10 +1353,10 @@ mod tests {
     async fn create_json_structure_filter_fixture(
         context: &TestContext,
         prefix: &str,
-    ) -> (crate::tests::NamespaceFixture, crate::models::HubuumClass) {
-        let namespace = context.namespace_fixture(prefix).await;
+    ) -> (crate::tests::CollectionFixture, crate::models::HubuumClass) {
+        let collection = context.collection_fixture(prefix).await;
         let class = NewHubuumClass {
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             name: format!("json struct filter class {prefix}"),
             description: format!("json struct filter class {prefix}"),
             json_schema: None,
@@ -1409,7 +1409,7 @@ mod tests {
 
         for (name, data) in test_objects {
             NewHubuumObject {
-                namespace_id: namespace.namespace.id,
+                collection_id: collection.collection.id,
                 hubuum_class_id: class.id,
                 data,
                 name: name.to_string(),
@@ -1420,7 +1420,7 @@ mod tests {
             .unwrap();
         }
 
-        (namespace, class)
+        (collection, class)
     }
 
     async fn assert_json_structure_filter_query(
@@ -1429,14 +1429,14 @@ mod tests {
         query_string: &str,
         expected_names: Vec<&str>,
     ) {
-        let (namespace, class) = create_json_structure_filter_fixture(context, prefix).await;
+        let (collection, class) = create_json_structure_filter_fixture(context, prefix).await;
 
         let resp = get_request(
             &context.pool,
             &context.admin_token,
             &format!(
-                "{OBJECT_ENDPOINT}/{}/?namespaces={}&{}&sort=id",
-                class.id, namespace.namespace.id, query_string
+                "{OBJECT_ENDPOINT}/{}/?collections={}&{}&sort=id",
+                class.id, collection.collection.id, query_string
             ),
         )
         .await;
@@ -1446,7 +1446,7 @@ mod tests {
         let object_names: Vec<&str> = objects.iter().map(|object| object.name.as_str()).collect();
         assert_eq!(object_names, expected_names);
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -1548,14 +1548,14 @@ mod tests {
         use crate::traits::CanUpdate;
 
         let context = test_context;
-        let ns = context.namespace_fixture("object_history_api").await;
+        let ns = context.collection_fixture("object_history_api").await;
         let event_context = hubuum_events_core::EventContext::system();
 
         // Create a class and an object.
         let class = NewHubuumClass {
             name: "object_history_class".to_string(),
             description: "class for object history test".to_string(),
-            namespace_id: ns.namespace.id,
+            collection_id: ns.collection.id,
             json_schema: None,
             validate_schema: Some(false),
         }
@@ -1566,7 +1566,7 @@ mod tests {
         let created = NewHubuumObject {
             name: "object_history_api".to_string(),
             description: "v1".to_string(),
-            namespace_id: ns.namespace.id,
+            collection_id: ns.collection.id,
             hubuum_class_id: class.id,
             data: serde_json::json!({"test": "v1"}),
         }
@@ -1577,7 +1577,7 @@ mod tests {
         // Update to create a second version.
         UpdateHubuumObject {
             name: None,
-            namespace_id: None,
+            collection_id: None,
             hubuum_class_id: None,
             data: None,
             description: Some("v2".to_string()),
@@ -1626,13 +1626,13 @@ mod tests {
     #[actix_web::test]
     async fn test_api_object_history_404_for_missing(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let ns = context.namespace_fixture("object_history_404").await;
+        let ns = context.collection_fixture("object_history_404").await;
         let event_context = hubuum_events_core::EventContext::system();
 
         let class = NewHubuumClass {
             name: "object_history_404_class".to_string(),
             description: "class for 404 test".to_string(),
-            namespace_id: ns.namespace.id,
+            collection_id: ns.collection.id,
             json_schema: None,
             validate_schema: Some(false),
         }

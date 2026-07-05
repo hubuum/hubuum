@@ -499,13 +499,13 @@ mod tests {
     use chrono::NaiveDate;
 
     use super::*;
-    use crate::models::{Namespace, UserWithName};
+    use crate::models::{Collection, UserWithName};
 
-    fn namespace(id: i32, name: &str) -> Namespace {
-        Namespace {
+    fn collection(id: i32, name: &str) -> Collection {
+        Collection {
             id,
             name: name.to_string(),
-            description: format!("namespace {id}"),
+            description: format!("collection {id}"),
             created_at: NaiveDate::from_ymd_opt(2024, 1, id as u32)
                 .unwrap()
                 .and_hms_opt(0, 0, 0)
@@ -518,15 +518,15 @@ mod tests {
     }
 
     #[test]
-    fn test_paginate_namespaces_with_cursor() {
-        let namespaces = vec![
-            namespace(1, "alpha"),
-            namespace(2, "beta"),
-            namespace(3, "gamma"),
+    fn test_paginate_collections_with_cursor() {
+        let collections = vec![
+            collection(1, "alpha"),
+            collection(2, "beta"),
+            collection(3, "gamma"),
         ];
 
         let first_page = finalize_page(
-            namespaces.clone(),
+            collections.clone(),
             &QueryOptions {
                 filters: vec![],
                 sort: vec![],
@@ -546,7 +546,7 @@ mod tests {
         );
         assert!(first_page.next_cursor.is_some());
 
-        let prepared_query = prepare_db_pagination::<Namespace>(&QueryOptions {
+        let prepared_query = prepare_db_pagination::<Collection>(&QueryOptions {
             filters: vec![],
             sort: vec![],
             limit: Some(2),
@@ -555,13 +555,13 @@ mod tests {
         .unwrap();
 
         let cursor_sql =
-            cursor_filter_sql::<Namespace>(&prepared_query.sort, prepared_query.cursor.as_deref())
+            cursor_filter_sql::<Collection>(&prepared_query.sort, prepared_query.cursor.as_deref())
                 .unwrap();
 
-        assert_eq!(cursor_sql, Some("((namespaces.id > 2))".to_string()));
+        assert_eq!(cursor_sql, Some("((collections.id > 2))".to_string()));
 
         let second_page = finalize_page(
-            vec![namespace(3, "gamma")],
+            vec![collection(3, "gamma")],
             &QueryOptions {
                 filters: vec![],
                 sort: vec![],
@@ -583,15 +583,15 @@ mod tests {
     }
 
     #[test]
-    fn test_paginate_namespaces_descending() {
-        let namespaces = vec![
-            namespace(3, "gamma"),
-            namespace(2, "beta"),
-            namespace(1, "alpha"),
+    fn test_paginate_collections_descending() {
+        let collections = vec![
+            collection(3, "gamma"),
+            collection(2, "beta"),
+            collection(1, "alpha"),
         ];
 
         let page = finalize_page(
-            namespaces,
+            collections,
             &QueryOptions {
                 filters: vec![],
                 sort: vec![SortParam {

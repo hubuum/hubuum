@@ -1,12 +1,12 @@
 # Remote Target API
 
-Remote targets let namespace administrators define outbound HTTP actions and let authorized users
+Remote targets let collection administrators define outbound HTTP actions and let authorized users
 invoke one action for one Hubuum subject.
 
 The first version is manual invocation only:
 
-- targets are namespace-scoped
-- invocations can target one namespace, class, object, class relation, or object relation
+- targets are collection-scoped
+- invocations can target one collection, class, object, class relation, or object relation
 - execution is queued through the generic task system as `remote_call`
 - outbound methods are `get`, `post`, `patch`, and `delete`
 - rendered outbound URLs must use `https://`
@@ -32,15 +32,15 @@ Authentication:
 
 ## Permissions
 
-Remote target permissions are namespace permissions:
+Remote target permissions are collection permissions:
 
 | Permission | Description |
 | --- | --- |
-| `ReadRemoteTarget` | List or read target definitions in the namespace. |
-| `CreateRemoteTarget` | Create targets in the namespace. Also required when moving a target into a namespace. |
-| `UpdateRemoteTarget` | Update targets in the namespace. Required on the source namespace when moving a target. |
-| `DeleteRemoteTarget` | Delete targets in the namespace. |
-| `ExecuteRemoteTarget` | Invoke targets in the namespace. |
+| `ReadRemoteTarget` | List or read target definitions in the collection. |
+| `CreateRemoteTarget` | Create targets in the collection. Also required when moving a target into a collection. |
+| `UpdateRemoteTarget` | Update targets in the collection. Required on the source collection when moving a target. |
+| `DeleteRemoteTarget` | Delete targets in the collection. |
+| `ExecuteRemoteTarget` | Invoke targets in the collection. |
 
 Invoking a target also requires read permission for the selected subject. The worker re-checks
 subject read permission and `ExecuteRemoteTarget` for the submitting user before making the
@@ -48,15 +48,15 @@ outbound call.
 
 | Subject type | Read permission |
 | --- | --- |
-| `namespace` | `ReadCollection` on the namespace. |
-| `class` | `ReadClass` on the class namespace. |
-| `object` | `ReadObject` on the object namespace. |
-| `class_relation` | `ReadClassRelation` on both endpoint namespaces. |
-| `object_relation` | `ReadObjectRelation` on both endpoint namespaces. |
+| `collection` | `ReadCollection` on the collection. |
+| `class` | `ReadClass` on the class collection. |
+| `object` | `ReadObject` on the object collection. |
+| `class_relation` | `ReadClassRelation` on both endpoint collections. |
+| `object_relation` | `ReadObjectRelation` on both endpoint collections. |
 
-`ExecuteRemoteTarget` is checked on the target namespace. `ReadRemoteTarget` is not required to
-invoke a target by ID. For relation subjects, the target namespace must be one of the relation
-endpoint namespaces.
+`ExecuteRemoteTarget` is checked on the target collection. `ReadRemoteTarget` is not required to
+invoke a target by ID. For relation subjects, the target collection must be one of the relation
+endpoint collections.
 
 ## Target model
 
@@ -64,7 +64,7 @@ Example:
 
 ```json
 {
-  "namespace_id": 12,
+  "collection_id": 12,
   "class_id": 34,
   "name": "create-ticket",
   "description": "Create a ticket for the object",
@@ -89,16 +89,16 @@ Fields:
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `namespace_id` | integer | yes | Namespace that owns the target and controls permissions. |
-| `class_id` | integer or null | required for object targets | Class scope for targets whose `allowed_subject_types` includes `object`. Must belong to `namespace_id`. Must be null or omitted for non-object targets. |
-| `name` | string | yes | Unique with `namespace_id`. |
+| `collection_id` | integer | yes | Collection that owns the target and controls permissions. |
+| `class_id` | integer or null | required for object targets | Class scope for targets whose `allowed_subject_types` includes `object`. Must belong to `collection_id`. Must be null or omitted for non-object targets. |
+| `name` | string | yes | Unique with `collection_id`. |
 | `description` | string | yes | Human-readable description. |
 | `method` | string | yes | One of `get`, `post`, `patch`, `delete`. |
 | `url_template` | string | yes | MiniJinja template. Rendered URL must be HTTPS. |
 | `headers_template` | object | no | JSON object whose values are string templates. Defaults to `{}`. |
 | `body_template` | string or null | no | Optional template rendered to the outbound request body. |
 | `auth_config` | object | no | Defaults to `{ "type": "none" }`. |
-| `allowed_subject_types` | array | yes | Non-empty list of allowed subject types. Values are `namespace`, `class`, `object`, `class_relation`, and `object_relation`. |
+| `allowed_subject_types` | array | yes | Non-empty list of allowed subject types. Values are `collection`, `class`, `object`, `class_relation`, and `object_relation`. |
 | `timeout_ms` | integer | no | Per-call timeout. Capped by server configuration. Must be greater than zero. |
 | `enabled` | boolean | no | Disabled targets cannot be invoked. Defaults to `true`. |
 
@@ -177,22 +177,22 @@ Subject-specific keys:
 
 | Subject type | Additional context |
 | --- | --- |
-| `namespace` | `namespace` |
-| `class` | `class`, `namespace` |
-| `object` | `object`, `class`, `namespace` |
-| `class_relation` | `class_relation`, `from_class`, `to_class`, `namespaces` |
-| `object_relation` | `object_relation`, `from_object`, `to_object`, `class_relation`, `from_class`, `to_class`, `namespaces` |
+| `collection` | `collection` |
+| `class` | `class`, `collection` |
+| `object` | `object`, `class`, `collection` |
+| `class_relation` | `class_relation`, `from_class`, `to_class`, `collections` |
+| `object_relation` | `object_relation`, `from_object`, `to_object`, `class_relation`, `from_class`, `to_class`, `collections` |
 
 For object subjects, common fields include:
 
 - `object.id`
 - `object.name`
 - `object.description`
-- `object.namespace_id`
+- `object.collection_id`
 - `object.hubuum_class_id`
 - `object.data`
 - `class`
-- `namespace`
+- `collection`
 
 Example URL:
 
@@ -215,20 +215,20 @@ set `Content-Type` yourself in `headers_template` and render valid JSON from `bo
 
 Returns `201 Created` with the persisted target and `Location: /api/v1/remote-targets/{id}`.
 
-Requires `CreateRemoteTarget` on `namespace_id`.
+Requires `CreateRemoteTarget` on `collection_id`.
 
 ## List targets
 
 `GET /api/v1/remote-targets`
 
-Returns targets in namespaces where the caller has `ReadRemoteTarget`.
+Returns targets in collections where the caller has `ReadRemoteTarget`.
 
 Supported sorting follows the generic cursor pagination model:
 
 - `id`
 - `name`
 - `description`
-- `namespace_id`
+- `collection_id`
 - `created_at`
 - `updated_at`
 
@@ -237,7 +237,7 @@ Supported filters:
 - `id`
 - `name`
 - `description`
-- `namespace_id` or `namespaces`
+- `collection_id` or `collections`
 - `kind` for the HTTP method value
 - `created_at`
 - `updated_at`
@@ -246,8 +246,8 @@ Supported filters:
 
 `PATCH /api/v1/remote-targets/{target_id}`
 
-Requires `UpdateRemoteTarget` on the current namespace. If `namespace_id` changes, the caller also
-needs `CreateRemoteTarget` on the target namespace.
+Requires `UpdateRemoteTarget` on the current collection. If `collection_id` changes, the caller also
+needs `CreateRemoteTarget` on the target collection.
 
 `body_template` is nullable. Omitting it leaves it unchanged; sending `null` clears it.
 
@@ -255,7 +255,7 @@ needs `CreateRemoteTarget` on the target namespace.
 
 `DELETE /api/v1/remote-targets/{target_id}`
 
-Requires `DeleteRemoteTarget` on the target namespace.
+Requires `DeleteRemoteTarget` on the target collection.
 
 ## Invoke target
 
@@ -285,7 +285,7 @@ Request body:
 Supported subject shapes:
 
 ```json
-{ "type": "namespace", "namespace_id": 12 }
+{ "type": "collection", "collection_id": 12 }
 ```
 
 ```json
@@ -306,7 +306,7 @@ Supported subject shapes:
 
 For object subjects, `class_id` must match the object's class and the remote target's persisted
 `class_id`. The subject type must be listed in the target's `allowed_subject_types`, and the target
-namespace must be one of the subject namespaces. Disabled targets return `400 Bad Request`.
+collection must be one of the subject collections. Disabled targets return `400 Bad Request`.
 
 On success, Hubuum creates a queued task and returns `202 Accepted`:
 

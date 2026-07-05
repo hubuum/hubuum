@@ -44,7 +44,7 @@ impl Default for ImportMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
-pub struct NamespaceKey {
+pub struct CollectionKey {
     pub name: String,
 }
 
@@ -56,8 +56,8 @@ pub struct GroupKey {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct ClassKey {
     pub name: String,
-    pub namespace_ref: Option<String>,
-    pub namespace_key: Option<NamespaceKey>,
+    pub collection_ref: Option<String>,
+    pub collection_key: Option<CollectionKey>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -68,7 +68,7 @@ pub struct ObjectKey {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
-pub struct ImportNamespaceInput {
+pub struct ImportCollectionInput {
     #[serde(rename = "ref")]
     pub ref_: Option<String>,
     pub name: String,
@@ -83,8 +83,8 @@ pub struct ImportClassInput {
     pub description: String,
     pub json_schema: Option<serde_json::Value>,
     pub validate_schema: Option<bool>,
-    pub namespace_ref: Option<String>,
-    pub namespace_key: Option<NamespaceKey>,
+    pub collection_ref: Option<String>,
+    pub collection_key: Option<CollectionKey>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
@@ -121,11 +121,11 @@ pub struct ImportObjectRelationInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
-pub struct ImportNamespacePermissionInput {
+pub struct ImportCollectionPermissionInput {
     #[serde(rename = "ref")]
     pub ref_: Option<String>,
-    pub namespace_ref: Option<String>,
-    pub namespace_key: Option<NamespaceKey>,
+    pub collection_ref: Option<String>,
+    pub collection_key: Option<CollectionKey>,
     pub group_key: GroupKey,
     pub permissions: Vec<Permissions>,
     pub replace_existing: Option<bool>,
@@ -134,7 +134,7 @@ pub struct ImportNamespacePermissionInput {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, ToSchema)]
 pub struct ImportGraph {
     #[serde(default)]
-    pub namespaces: Vec<ImportNamespaceInput>,
+    pub collections: Vec<ImportCollectionInput>,
     #[serde(default)]
     pub classes: Vec<ImportClassInput>,
     #[serde(default)]
@@ -144,7 +144,7 @@ pub struct ImportGraph {
     #[serde(default)]
     pub object_relations: Vec<ImportObjectRelationInput>,
     #[serde(default)]
-    pub namespace_permissions: Vec<ImportNamespacePermissionInput>,
+    pub collection_permissions: Vec<ImportCollectionPermissionInput>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
@@ -157,12 +157,12 @@ pub struct ImportRequest {
 
 impl ImportRequest {
     pub fn total_items(&self) -> i32 {
-        (self.graph.namespaces.len()
+        (self.graph.collections.len()
             + self.graph.classes.len()
             + self.graph.objects.len()
             + self.graph.class_relations.len()
             + self.graph.object_relations.len()
-            + self.graph.namespace_permissions.len()) as i32
+            + self.graph.collection_permissions.len()) as i32
     }
 
     pub fn dry_run(&self) -> bool {

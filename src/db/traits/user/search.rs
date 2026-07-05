@@ -52,71 +52,76 @@ macro_rules! bind_raw_sql_query {
     }};
 }
 
-pub trait UserSearchBackend: UserNamespaceAccessors {
-    async fn search_namespaces_from_backend(
+pub trait UserSearchBackend: UserCollectionAccessors {
+    async fn search_collections_from_backend(
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
         scopes: Option<&[Permissions]>,
-    ) -> Result<Vec<Namespace>, ApiError> {
+    ) -> Result<Vec<Collection>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
-        self.search_namespaces_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
-            .await
+        self.search_collections_from_backend_with_admin_status(
+            pool,
+            query_options,
+            is_admin,
+            scopes,
+        )
+        .await
     }
 
-    async fn count_namespaces_from_backend(
+    async fn count_collections_from_backend(
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
         scopes: Option<&[Permissions]>,
     ) -> Result<i64, ApiError> {
         let is_admin = self.is_admin(pool).await?;
-        self.count_namespaces_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
+        self.count_collections_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
             .await
     }
 
-    async fn search_namespaces_from_backend_with_admin_status(
+    async fn search_collections_from_backend_with_admin_status(
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&[Permissions]>,
-    ) -> Result<Vec<Namespace>, ApiError> {
+    ) -> Result<Vec<Collection>, ApiError> {
         // Fail-closed: a scoped token must carry the resource read permission.
         if !scope_allows(scopes, &[Permissions::ReadCollection]) {
             return Ok(Vec::new());
         }
         let is_admin = is_admin && scopes.is_none();
-        use crate::schema::namespaces::dsl::{
-            created_at as namespace_created_at, description as namespace_description,
-            id as namespace_id, name as namespace_name, namespaces,
-            updated_at as namespace_updated_at,
+        use crate::schema::collections::dsl::{
+            collections, created_at as collection_created_at,
+            description as collection_description, id as collection_id, name as collection_name,
+            updated_at as collection_updated_at,
         };
         use crate::schema::permissions::dsl::{
-            group_id, namespace_id as permissions_nid, permissions,
+            collection_id as permissions_nid, group_id, permissions,
         };
         let query_params = query_options.filters.clone();
 
         debug!(
-            message = "Searching namespaces",
+            message = "Searching collections",
             stage = "Starting",
             user_id = self.principal_id(),
             query_params = ?query_params
         );
 
         // Validate any `permissions` query filters. The requested value does not
-        // narrow namespace visibility beyond the ReadCollection baseline applied
-        // below — a namespace is a collection, and ReadCollection is what gates
+        // narrow collection visibility beyond the ReadCollection baseline applied
+        // below — a collection is a collection, and ReadCollection is what gates
         // seeing it.
         query_params.permissions()?;
 
         let mut base_query = if is_admin {
-            namespaces.into_boxed()
+            collections.into_boxed()
         } else {
             let group_id_subquery = self.group_ids_subquery();
 
             // Visibility requires the principal's groups to actually hold
-            // ReadCollection (has_read_namespace) on the namespace, not merely to
+            // ReadCollection (has_read_collection) on the collection, not merely to
             // have *some* permission row for it.
             let permission_subquery = Permissions::ReadCollection.create_boxed_filter(
                 permissions
@@ -125,8 +130,8 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
                 true,
             );
 
-            namespaces
-                .filter(namespace_id.eq_any(permission_subquery.select(permissions_nid)))
+            collections
+                .filter(collection_id.eq_any(permission_subquery.select(permissions_nid)))
                 .into_boxed()
         };
 
@@ -134,52 +139,52 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
             use crate::{date_search, numeric_search, string_search};
             let operator = param.operator.clone();
             match param.field {
-                FilterField::Id => numeric_search!(base_query, param, operator, namespace_id),
+                FilterField::Id => numeric_search!(base_query, param, operator, collection_id),
                 FilterField::CreatedAt => {
-                    date_search!(base_query, param, operator, namespace_created_at)
+                    date_search!(base_query, param, operator, collection_created_at)
                 }
                 FilterField::UpdatedAt => {
-                    date_search!(base_query, param, operator, namespace_updated_at)
+                    date_search!(base_query, param, operator, collection_updated_at)
                 }
                 FilterField::Name => {
-                    string_search!(base_query, param, operator, namespace_name)
+                    string_search!(base_query, param, operator, collection_name)
                 }
                 FilterField::Description => {
-                    string_search!(base_query, param, operator, namespace_description)
+                    string_search!(base_query, param, operator, collection_description)
                 }
                 FilterField::Permissions => {}
                 _ => {
                     return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't searchable (or does not exist) for namespaces",
+                        "Field '{}' isn't searchable (or does not exist) for collections",
                         param.field
                     )));
                 }
             }
         }
 
-        crate::apply_query_options!(base_query, query_options, Namespace);
+        crate::apply_query_options!(base_query, query_options, Collection);
 
         with_connection(pool, |conn| {
             base_query
-                .select(namespaces::all_columns())
-                .load::<Namespace>(conn)
+                .select(collections::all_columns())
+                .load::<Collection>(conn)
         })
     }
 
-    async fn count_namespaces_from_backend_with_admin_status(
+    async fn count_collections_from_backend_with_admin_status(
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&[Permissions]>,
     ) -> Result<i64, ApiError> {
-        use crate::schema::namespaces::dsl::{
-            created_at as namespace_created_at, description as namespace_description,
-            id as namespace_id, name as namespace_name, namespaces,
-            updated_at as namespace_updated_at,
+        use crate::schema::collections::dsl::{
+            collections, created_at as collection_created_at,
+            description as collection_description, id as collection_id, name as collection_name,
+            updated_at as collection_updated_at,
         };
         use crate::schema::permissions::dsl::{
-            group_id, namespace_id as permissions_nid, permissions,
+            collection_id as permissions_nid, group_id, permissions,
         };
 
         // Fail-closed: a scoped token must carry the resource read permission.
@@ -190,18 +195,18 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
 
         let query_params = query_options.filters.clone();
         // Validate any `permissions` query filters. The requested value does not
-        // narrow namespace visibility beyond the ReadCollection baseline applied
-        // below — a namespace is a collection, and ReadCollection is what gates
+        // narrow collection visibility beyond the ReadCollection baseline applied
+        // below — a collection is a collection, and ReadCollection is what gates
         // seeing it.
         query_params.permissions()?;
 
         let mut base_query = if is_admin {
-            namespaces.into_boxed()
+            collections.into_boxed()
         } else {
             let group_id_subquery = self.group_ids_subquery();
 
             // Visibility requires the principal's groups to actually hold
-            // ReadCollection (has_read_namespace) on the namespace, not merely to
+            // ReadCollection (has_read_collection) on the collection, not merely to
             // have *some* permission row for it.
             let permission_subquery = Permissions::ReadCollection.create_boxed_filter(
                 permissions
@@ -210,8 +215,8 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
                 true,
             );
 
-            namespaces
-                .filter(namespace_id.eq_any(permission_subquery.select(permissions_nid)))
+            collections
+                .filter(collection_id.eq_any(permission_subquery.select(permissions_nid)))
                 .into_boxed()
         };
 
@@ -219,23 +224,23 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
             use crate::{date_search, numeric_search, string_search};
             let operator = param.operator.clone();
             match param.field {
-                FilterField::Id => numeric_search!(base_query, param, operator, namespace_id),
+                FilterField::Id => numeric_search!(base_query, param, operator, collection_id),
                 FilterField::CreatedAt => {
-                    date_search!(base_query, param, operator, namespace_created_at)
+                    date_search!(base_query, param, operator, collection_created_at)
                 }
                 FilterField::UpdatedAt => {
-                    date_search!(base_query, param, operator, namespace_updated_at)
+                    date_search!(base_query, param, operator, collection_updated_at)
                 }
                 FilterField::Name => {
-                    string_search!(base_query, param, operator, namespace_name)
+                    string_search!(base_query, param, operator, collection_name)
                 }
                 FilterField::Description => {
-                    string_search!(base_query, param, operator, namespace_description)
+                    string_search!(base_query, param, operator, collection_description)
                 }
                 FilterField::Permissions => {}
                 _ => {
                     return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't searchable (or does not exist) for namespaces",
+                        "Field '{}' isn't searchable (or does not exist) for collections",
                         param.field
                     )));
                 }
@@ -275,8 +280,8 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
         scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         use crate::schema::hubuumclass::dsl::{
-            created_at as class_created_at, description as class_description, hubuumclass,
-            id as class_id, name as class_name, namespace_id as class_namespace_id,
+            collection_id as class_collection_id, created_at as class_created_at,
+            description as class_description, hubuumclass, id as class_id, name as class_name,
             updated_at as class_updated_at, validate_schema as class_validate_schema,
         };
 
@@ -292,25 +297,25 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
         let mut permissions_list = query_params.permissions()?;
         permissions_list.ensure_contains(&[Permissions::ReadClass, Permissions::ReadCollection]);
 
-        let namespaces = self
-            .load_namespaces_with_permissions_with_admin_status(
+        let collections = self
+            .load_collections_with_permissions_with_admin_status(
                 pool,
                 &permissions_list,
                 is_admin,
                 scopes,
             )
             .await?;
-        let namespace_ids: Vec<i32> = namespaces.iter().map(|n| n.id).collect();
+        let collection_ids: Vec<i32> = collections.iter().map(|n| n.id).collect();
 
         debug!(
             message = "Searching classes",
-            stage = "Namespace IDs",
+            stage = "Collection IDs",
             user_id = self.principal_id(),
-            namespace_ids = ?namespace_ids
+            collection_ids = ?collection_ids
         );
 
         let mut base_query = hubuumclass
-            .filter(class_namespace_id.eq_any(namespace_ids))
+            .filter(class_collection_id.eq_any(collection_ids))
             .into_boxed();
 
         let json_schema_queries = query_params.json_schemas()?;
@@ -332,8 +337,8 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
             let operator = param.operator.clone();
             match param.field {
                 FilterField::Id => numeric_search!(base_query, param, operator, class_id),
-                FilterField::Namespaces => {
-                    numeric_search!(base_query, param, operator, class_namespace_id)
+                FilterField::Collections => {
+                    numeric_search!(base_query, param, operator, class_collection_id)
                 }
                 FilterField::CreatedAt => {
                     date_search!(base_query, param, operator, class_created_at)
@@ -370,10 +375,10 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
                 .load::<HubuumClass>(conn)
         })?;
 
-        let namespace_map: std::collections::HashMap<i32, Namespace> =
-            namespaces.into_iter().map(|n| (n.id, n)).collect();
+        let collection_map: std::collections::HashMap<i32, Collection> =
+            collections.into_iter().map(|n| (n.id, n)).collect();
 
-        Ok(result.expand_namespace_from_map(&namespace_map))
+        Ok(result.expand_collection_from_map(&collection_map))
     }
 
     async fn count_classes_from_backend_with_admin_status(
@@ -384,8 +389,8 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
         scopes: Option<&[Permissions]>,
     ) -> Result<i64, ApiError> {
         use crate::schema::hubuumclass::dsl::{
-            created_at as class_created_at, description as class_description, hubuumclass,
-            id as class_id, name as class_name, namespace_id as class_namespace_id,
+            collection_id as class_collection_id, created_at as class_created_at,
+            description as class_description, hubuumclass, id as class_id, name as class_name,
             updated_at as class_updated_at, validate_schema as class_validate_schema,
         };
 
@@ -394,18 +399,18 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
         let mut permissions_list = query_params.permissions()?;
         permissions_list.ensure_contains(&[Permissions::ReadClass, Permissions::ReadCollection]);
 
-        let namespaces = self
-            .load_namespaces_with_permissions_with_admin_status(
+        let collections = self
+            .load_collections_with_permissions_with_admin_status(
                 pool,
                 &permissions_list,
                 is_admin,
                 scopes,
             )
             .await?;
-        let namespace_ids: Vec<i32> = namespaces.iter().map(|n| n.id).collect();
+        let collection_ids: Vec<i32> = collections.iter().map(|n| n.id).collect();
 
         let mut base_query = hubuumclass
-            .filter(class_namespace_id.eq_any(namespace_ids))
+            .filter(class_collection_id.eq_any(collection_ids))
             .into_boxed();
 
         let json_schema_queries = query_params.json_schemas()?;
@@ -420,8 +425,8 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
             let operator = param.operator.clone();
             match param.field {
                 FilterField::Id => numeric_search!(base_query, param, operator, class_id),
-                FilterField::Namespaces => {
-                    numeric_search!(base_query, param, operator, class_namespace_id)
+                FilterField::Collections => {
+                    numeric_search!(base_query, param, operator, class_collection_id)
                 }
                 FilterField::CreatedAt => {
                     date_search!(base_query, param, operator, class_created_at)
@@ -486,9 +491,9 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
         scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumObject>, ApiError> {
         use crate::schema::hubuumobject::dsl::{
-            created_at as object_created_at, description as object_description, hubuum_class_id,
-            hubuumobject, id as object_id, name as object_name,
-            namespace_id as object_namespace_id, updated_at as object_updated_at,
+            collection_id as object_collection_id, created_at as object_created_at,
+            description as object_description, hubuum_class_id, hubuumobject, id as object_id,
+            name as object_name, updated_at as object_updated_at,
         };
 
         let query_params = query_options.filters.clone();
@@ -503,8 +508,8 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
         let mut permission_list = query_params.permissions()?;
         permission_list.ensure_contains(&[Permissions::ReadObject, Permissions::ReadCollection]);
 
-        let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(
+        let collection_ids: Vec<i32> = self
+            .load_collections_with_permissions_with_admin_status(
                 pool,
                 &permission_list,
                 is_admin,
@@ -517,13 +522,13 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
 
         debug!(
             message = "Searching objects",
-            stage = "Namespace IDs",
+            stage = "Collection IDs",
             user_id = self.principal_id(),
-            namespace_ids = ?namespace_ids
+            collection_ids = ?collection_ids
         );
 
         let mut base_query = hubuumobject
-            .filter(object_namespace_id.eq_any(namespace_ids))
+            .filter(object_collection_id.eq_any(collection_ids))
             .into_boxed();
 
         let json_data_queries = query_params.json_datas(FilterField::JsonData)?;
@@ -545,8 +550,8 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
             let operator = param.operator.clone();
             match param.field {
                 FilterField::Id => numeric_search!(base_query, param, operator, object_id),
-                FilterField::Namespaces => {
-                    numeric_search!(base_query, param, operator, object_namespace_id)
+                FilterField::Collections => {
+                    numeric_search!(base_query, param, operator, object_collection_id)
                 }
                 FilterField::CreatedAt => {
                     date_search!(base_query, param, operator, object_created_at)
@@ -595,9 +600,9 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
         scopes: Option<&[Permissions]>,
     ) -> Result<i64, ApiError> {
         use crate::schema::hubuumobject::dsl::{
-            created_at as object_created_at, description as object_description, hubuum_class_id,
-            hubuumobject, id as object_id, name as object_name,
-            namespace_id as object_namespace_id, updated_at as object_updated_at,
+            collection_id as object_collection_id, created_at as object_created_at,
+            description as object_description, hubuum_class_id, hubuumobject, id as object_id,
+            name as object_name, updated_at as object_updated_at,
         };
 
         let query_params = query_options.filters.clone();
@@ -605,8 +610,8 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
         let mut permission_list = query_params.permissions()?;
         permission_list.ensure_contains(&[Permissions::ReadObject, Permissions::ReadCollection]);
 
-        let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(
+        let collection_ids: Vec<i32> = self
+            .load_collections_with_permissions_with_admin_status(
                 pool,
                 &permission_list,
                 is_admin,
@@ -618,7 +623,7 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
             .collect();
 
         let mut base_query = hubuumobject
-            .filter(object_namespace_id.eq_any(namespace_ids))
+            .filter(object_collection_id.eq_any(collection_ids))
             .into_boxed();
 
         let json_data_queries = query_params.json_datas(FilterField::JsonData)?;
@@ -633,8 +638,8 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
             let operator = param.operator.clone();
             match param.field {
                 FilterField::Id => numeric_search!(base_query, param, operator, object_id),
-                FilterField::Namespaces => {
-                    numeric_search!(base_query, param, operator, object_namespace_id)
+                FilterField::Collections => {
+                    numeric_search!(base_query, param, operator, object_collection_id)
                 }
                 FilterField::CreatedAt => {
                     date_search!(base_query, param, operator, object_created_at)
@@ -730,7 +735,7 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
         scopes: Option<&[Permissions]>,
     ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError> {
         use crate::schema::hubuumclass::dsl::{
-            hubuumclass, id as class_id, namespace_id as class_namespace_id,
+            collection_id as class_collection_id, hubuumclass, id as class_id,
         };
         use crate::schema::hubuumclass_relation::dsl::{
             created_at as class_relation_created_at, from_hubuum_class_id, hubuumclass_relation,
@@ -750,8 +755,8 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
         let mut permissions_list = query_params.permissions()?;
         permissions_list.ensure_contains(&[Permissions::ReadClassRelation]);
 
-        let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(
+        let collection_ids: Vec<i32> = self
+            .load_collections_with_permissions_with_admin_status(
                 pool,
                 &permissions_list,
                 is_admin,
@@ -764,9 +769,9 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
 
         debug!(
             message = "Searching class relations",
-            stage = "Namespace IDs",
+            stage = "Collection IDs",
             user_id = self.principal_id(),
-            namespace_ids = ?namespace_ids
+            collection_ids = ?collection_ids
         );
 
         for param in &[FilterField::ClassFromName, FilterField::ClassToName] {
@@ -834,14 +839,14 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
                     from_hubuum_class_id.eq_any(
                         hubuumclass
                             .select(class_id)
-                            .filter(class_namespace_id.eq_any(&namespace_ids)),
+                            .filter(class_collection_id.eq_any(&collection_ids)),
                     ),
                 )
                 .filter(
                     to_hubuum_class_id.eq_any(
                         hubuumclass
                             .select(class_id)
-                            .filter(class_namespace_id.eq_any(&namespace_ids)),
+                            .filter(class_collection_id.eq_any(&collection_ids)),
                     ),
                 )
                 .into_boxed();
@@ -936,7 +941,7 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
         K: SelfAccessors<HubuumClass>,
     {
         use crate::schema::hubuumclass::dsl::{
-            hubuumclass, id as class_id, namespace_id as class_namespace_id,
+            collection_id as class_collection_id, hubuumclass, id as class_id,
         };
         use crate::schema::hubuumclass_relation::dsl::{
             created_at as relation_created_at, from_hubuum_class_id, hubuumclass_relation,
@@ -949,8 +954,8 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
         let mut permissions_list = query_params.permissions()?;
         permissions_list.ensure_contains(&[Permissions::ReadClassRelation]);
 
-        let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(
+        let collection_ids: Vec<i32> = self
+            .load_collections_with_permissions_with_admin_status(
                 pool,
                 &permissions_list,
                 is_admin,
@@ -972,14 +977,14 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
                     from_hubuum_class_id.eq_any(
                         hubuumclass
                             .select(class_id)
-                            .filter(class_namespace_id.eq_any(&namespace_ids)),
+                            .filter(class_collection_id.eq_any(&collection_ids)),
                     ),
                 )
                 .filter(
                     to_hubuum_class_id.eq_any(
                         hubuumclass
                             .select(class_id)
-                            .filter(class_namespace_id.eq_any(&namespace_ids)),
+                            .filter(class_collection_id.eq_any(&collection_ids)),
                     ),
                 )
                 .into_boxed();
@@ -1061,7 +1066,7 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
         scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
         use crate::schema::hubuumclass::dsl::{
-            hubuumclass, id as class_id, namespace_id as class_namespace_id,
+            collection_id as class_collection_id, hubuumclass, id as class_id,
         };
         use crate::schema::hubuumclass_relation::dsl::{
             from_hubuum_class_id, hubuumclass_relation, id as relation_id, to_hubuum_class_id,
@@ -1072,8 +1077,8 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
         }
 
         let permission_list = [Permissions::ReadClassRelation];
-        let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(
+        let collection_ids: Vec<i32> = self
+            .load_collections_with_permissions_with_admin_status(
                 pool,
                 &permission_list,
                 is_admin,
@@ -1091,14 +1096,14 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
                 from_hubuum_class_id.eq_any(
                     hubuumclass
                         .select(class_id)
-                        .filter(class_namespace_id.eq_any(&namespace_ids)),
+                        .filter(class_collection_id.eq_any(&collection_ids)),
                 ),
             )
             .filter(
                 to_hubuum_class_id.eq_any(
                     hubuumclass
                         .select(class_id)
-                        .filter(class_namespace_id.eq_any(&namespace_ids)),
+                        .filter(class_collection_id.eq_any(&collection_ids)),
                 ),
             )
             .order(relation_id.asc());
@@ -1288,7 +1293,7 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
         scopes: Option<&[Permissions]>,
     ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError> {
         use crate::schema::hubuumobject::dsl::{
-            hubuumobject, id as object_id, namespace_id as object_namespace_id,
+            collection_id as object_collection_id, hubuumobject, id as object_id,
         };
         use crate::schema::hubuumobject_relation::dsl::{
             class_relation_id, created_at as relation_created_at, from_hubuum_object_id,
@@ -1308,8 +1313,8 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
         let mut permissions_list = query_params.permissions()?;
         permissions_list.ensure_contains(&[Permissions::ReadObjectRelation]);
 
-        let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(
+        let collection_ids: Vec<i32> = self
+            .load_collections_with_permissions_with_admin_status(
                 pool,
                 &permissions_list,
                 is_admin,
@@ -1322,9 +1327,9 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
 
         debug!(
             message = "Searching object relations",
-            stage = "Namespace IDs",
+            stage = "Collection IDs",
             user_id = self.principal_id(),
-            namespace_ids = ?namespace_ids
+            collection_ids = ?collection_ids
         );
 
         let build_query = || -> Result<_, ApiError> {
@@ -1333,14 +1338,14 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
                     from_hubuum_object_id.eq_any(
                         hubuumobject
                             .select(object_id)
-                            .filter(object_namespace_id.eq_any(&namespace_ids)),
+                            .filter(object_collection_id.eq_any(&collection_ids)),
                     ),
                 )
                 .filter(
                     to_hubuum_object_id.eq_any(
                         hubuumobject
                             .select(object_id)
-                            .filter(object_namespace_id.eq_any(&namespace_ids)),
+                            .filter(object_collection_id.eq_any(&collection_ids)),
                     ),
                 )
                 .into_boxed();
@@ -1434,7 +1439,7 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
         O: SelfAccessors<HubuumObject>,
     {
         use crate::schema::hubuumobject::dsl::{
-            hubuumobject, id as object_id_column, namespace_id as object_namespace_id,
+            collection_id as object_collection_id, hubuumobject, id as object_id_column,
         };
         use crate::schema::hubuumobject_relation::dsl::{
             class_relation_id, created_at as relation_created_at, from_hubuum_object_id,
@@ -1456,8 +1461,8 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
         let mut permissions_list = query_params.permissions()?;
         permissions_list.ensure_contains(&[Permissions::ReadObjectRelation]);
 
-        let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(
+        let collection_ids: Vec<i32> = self
+            .load_collections_with_permissions_with_admin_status(
                 pool,
                 &permissions_list,
                 is_admin,
@@ -1470,10 +1475,10 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
 
         debug!(
             message = "Searching direct object relations touching object",
-            stage = "Namespace IDs",
+            stage = "Collection IDs",
             user_id = self.principal_id(),
             object_id = object.id(),
-            namespace_ids = ?namespace_ids
+            collection_ids = ?collection_ids
         );
 
         let build_query = || -> Result<_, ApiError> {
@@ -1487,14 +1492,14 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
                     from_hubuum_object_id.eq_any(
                         hubuumobject
                             .select(object_id_column)
-                            .filter(object_namespace_id.eq_any(&namespace_ids)),
+                            .filter(object_collection_id.eq_any(&collection_ids)),
                     ),
                 )
                 .filter(
                     to_hubuum_object_id.eq_any(
                         hubuumobject
                             .select(object_id_column)
-                            .filter(object_namespace_id.eq_any(&namespace_ids)),
+                            .filter(object_collection_id.eq_any(&collection_ids)),
                     ),
                 )
                 .into_boxed();
@@ -1579,7 +1584,7 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
         scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
         use crate::schema::hubuumobject::dsl::{
-            hubuumobject, id as object_id_column, namespace_id as object_namespace_id,
+            collection_id as object_collection_id, hubuumobject, id as object_id_column,
         };
         use crate::schema::hubuumobject_relation::dsl::{
             from_hubuum_object_id, hubuumobject_relation, id, to_hubuum_object_id,
@@ -1590,8 +1595,8 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
         }
 
         let permission_list = [Permissions::ReadObjectRelation];
-        let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(
+        let collection_ids: Vec<i32> = self
+            .load_collections_with_permissions_with_admin_status(
                 pool,
                 &permission_list,
                 is_admin,
@@ -1606,7 +1611,7 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
             message = "Searching object relations between visible object IDs",
             user_id = self.principal_id(),
             object_ids = ?object_ids,
-            namespace_ids = ?namespace_ids
+            collection_ids = ?collection_ids
         );
 
         let base_query = hubuumobject_relation
@@ -1616,14 +1621,14 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
                 from_hubuum_object_id.eq_any(
                     hubuumobject
                         .select(object_id_column)
-                        .filter(object_namespace_id.eq_any(&namespace_ids)),
+                        .filter(object_collection_id.eq_any(&collection_ids)),
                 ),
             )
             .filter(
                 to_hubuum_object_id.eq_any(
                     hubuumobject
                         .select(object_id_column)
-                        .filter(object_namespace_id.eq_any(&namespace_ids)),
+                        .filter(object_collection_id.eq_any(&collection_ids)),
                 ),
             )
             .order(id.asc());
@@ -1791,8 +1796,8 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
 
         let permissions =
             PermissionsList::new([Permissions::ReadObject, Permissions::ReadObjectRelation]);
-        let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(
+        let collection_ids: Vec<i32> = self
+            .load_collections_with_permissions_with_admin_status(
                 pool,
                 &permissions,
                 is_admin,
@@ -1800,16 +1805,16 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
             )
             .await?
             .into_iter()
-            .map(|namespace| namespace.id)
+            .map(|collection| collection.id)
             .collect();
 
-        if namespace_ids.is_empty() {
+        if collection_ids.is_empty() {
             return Ok(Vec::new());
         }
 
         let spec = build_root_graph_walk_query(RootGraphWalkSpec {
             root_object_ids,
-            namespace_ids: &namespace_ids,
+            collection_ids: &collection_ids,
             max_depth: include.max_depth,
             per_root_limit: include.limit,
             edges: GraphWalkEdges::Directional {
@@ -1878,8 +1883,8 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
 
         let permissions =
             PermissionsList::new([Permissions::ReadObject, Permissions::ReadObjectRelation]);
-        let namespace_ids: Vec<i32> = self
-            .load_namespaces_with_permissions_with_admin_status(
+        let collection_ids: Vec<i32> = self
+            .load_collections_with_permissions_with_admin_status(
                 pool,
                 &permissions,
                 is_admin,
@@ -1887,16 +1892,16 @@ pub trait UserSearchBackend: UserNamespaceAccessors {
             )
             .await?
             .into_iter()
-            .map(|namespace| namespace.id)
+            .map(|collection| collection.id)
             .collect();
 
-        if namespace_ids.is_empty() {
+        if collection_ids.is_empty() {
             return Ok(Vec::new());
         }
 
         let spec = build_root_graph_walk_query(RootGraphWalkSpec {
             root_object_ids,
-            namespace_ids: &namespace_ids,
+            collection_ids: &collection_ids,
             max_depth,
             per_root_limit: per_root_cap,
             edges: GraphWalkEdges::Bidirectional,
@@ -1977,8 +1982,8 @@ fn related_include_object_edge_select_sql(
       ON source_edge_object.id = hubuumobject_relation.{source_column}
     JOIN hubuumobject target_edge_object
       ON target_edge_object.id = hubuumobject_relation.{target_column}
-    WHERE source_edge_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
-      AND target_edge_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
+    WHERE source_edge_object.collection_id IN (SELECT collection_id FROM valid_collections)
+      AND target_edge_object.collection_id IN (SELECT collection_id FROM valid_collections)
 {class_relation_filter_sql}"#
     )
 }
@@ -2031,7 +2036,7 @@ enum GraphWalkProjection {
 /// the bind-variable ordering shared by both batched per-root graph queries.
 struct RootGraphWalkSpec<'a> {
     root_object_ids: &'a [i32],
-    namespace_ids: &'a [i32],
+    collection_ids: &'a [i32],
     max_depth: i32,
     per_root_limit: i32,
     edges: GraphWalkEdges,
@@ -2052,14 +2057,14 @@ fn bidirectional_object_edges_sql() -> &'static str {
 /// Builds the recursive per-root object-graph walk shared by `related_objects_for_roots`
 /// (include path) and `bidirectionally_related_objects_for_roots` (templated hydration).
 ///
-/// The `root_objects`/`valid_namespaces`/`graph_walk`/`deduped_walk` CTEs are identical for both
+/// The `root_objects`/`valid_collections`/`graph_walk`/`deduped_walk` CTEs are identical for both
 /// callers; only the edge set, the per-root ranking, and the final projection differ. Bind order
-/// is fixed here: root ids, namespace ids, (edge class-relation filter), max_depth ×2,
+/// is fixed here: root ids, collection ids, (edge class-relation filter), max_depth ×2,
 /// (target class id), per_root_limit.
 fn build_root_graph_walk_query(spec: RootGraphWalkSpec) -> RawSqlQuerySpec {
     let mut bind_variables = Vec::<SQLValue>::new();
     let root_array_sql = sql_integer_array(spec.root_object_ids, &mut bind_variables);
-    let namespace_array_sql = sql_integer_array(spec.namespace_ids, &mut bind_variables);
+    let collection_array_sql = sql_integer_array(spec.collection_ids, &mut bind_variables);
 
     let object_edges_sql = match spec.edges {
         GraphWalkEdges::Bidirectional => bidirectional_object_edges_sql().to_string(),
@@ -2108,7 +2113,7 @@ fn build_root_graph_walk_query(spec: RootGraphWalkSpec) -> RawSqlQuerySpec {
     ranked_walk.depth,
     ranked_walk.path,
     target_object.name AS descendant_name,
-    target_object.namespace_id AS descendant_namespace_id,
+    target_object.collection_id AS descendant_collection_id,
     target_object.hubuum_class_id AS descendant_class_id,
     target_object.description AS descendant_description,
     target_object.data AS descendant_data,
@@ -2118,7 +2123,7 @@ FROM ranked_walk
 JOIN hubuumobject target_object
   ON target_object.id = ranked_walk.descendant_object_id
 WHERE ranked_walk.related_rank <= ?
-  AND target_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
+  AND target_object.collection_id IN (SELECT collection_id FROM valid_collections)
 ORDER BY ranked_walk.root_object_id ASC, ranked_walk.related_rank ASC"#
             .to_string(),
         GraphWalkProjection::AncestorAndDescendant => r#"SELECT
@@ -2129,8 +2134,8 @@ ORDER BY ranked_walk.root_object_id ASC, ranked_walk.related_rank ASC"#
     ranked_walk.path,
     source_object.name AS ancestor_name,
     target_object.name AS descendant_name,
-    source_object.namespace_id AS ancestor_namespace_id,
-    target_object.namespace_id AS descendant_namespace_id,
+    source_object.collection_id AS ancestor_collection_id,
+    target_object.collection_id AS descendant_collection_id,
     source_object.hubuum_class_id AS ancestor_class_id,
     target_object.hubuum_class_id AS descendant_class_id,
     source_object.description AS ancestor_description,
@@ -2147,8 +2152,8 @@ JOIN hubuumobject source_object
 JOIN hubuumobject target_object
   ON target_object.id = ranked_walk.descendant_object_id
 WHERE ranked_walk.related_rank <= ?
-  AND source_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
-  AND target_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
+  AND source_object.collection_id IN (SELECT collection_id FROM valid_collections)
+  AND target_object.collection_id IN (SELECT collection_id FROM valid_collections)
 ORDER BY ranked_walk.root_object_id ASC, ranked_walk.related_rank ASC"#
             .to_string(),
     };
@@ -2159,8 +2164,8 @@ WITH RECURSIVE
 root_objects AS (
     SELECT unnest({root_array_sql}) AS root_object_id
 ),
-valid_namespaces AS (
-    SELECT unnest({namespace_array_sql}) AS namespace_id
+valid_collections AS (
+    SELECT unnest({collection_array_sql}) AS collection_id
 ),
 object_edges AS (
 {object_edges_sql}
@@ -2178,7 +2183,7 @@ graph_walk AS (
     JOIN hubuumobject target_object
       ON target_object.id = object_edges.target_object_id
     WHERE ? >= 1
-      AND target_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
+      AND target_object.collection_id IN (SELECT collection_id FROM valid_collections)
 
     UNION ALL
 
@@ -2195,7 +2200,7 @@ graph_walk AS (
       ON target_object.id = object_edges.target_object_id
     WHERE NOT (object_edges.target_object_id = ANY(graph_walk.path))
       AND graph_walk.depth < ?
-      AND target_object.namespace_id IN (SELECT namespace_id FROM valid_namespaces)
+      AND target_object.collection_id IN (SELECT collection_id FROM valid_collections)
 ),
 deduped_walk AS (
     SELECT DISTINCT ON (root_object_id, descendant_object_id)
@@ -2267,7 +2272,7 @@ async fn build_related_classes_query_spec<U, K>(
     scopes: Option<&[Permissions]>,
 ) -> Result<Option<RawSqlQuerySpec>, ApiError>
 where
-    U: UserNamespaceAccessors + ?Sized,
+    U: UserCollectionAccessors + ?Sized,
     K: SelfAccessors<HubuumClass>,
 {
     let query_params = query_options.filters.clone();
@@ -2275,8 +2280,8 @@ where
     let mut permissions_list = query_params.permissions()?;
     permissions_list.ensure_contains(&[Permissions::ReadClass, Permissions::ReadClassRelation]);
 
-    let namespace_ids: Vec<i32> = user
-        .load_namespaces_with_permissions_with_admin_status(
+    let collection_ids: Vec<i32> = user
+        .load_collections_with_permissions_with_admin_status(
             pool,
             &permissions_list,
             is_admin,
@@ -2287,22 +2292,22 @@ where
         .map(|n| n.id)
         .collect();
 
-    if namespace_ids.is_empty() {
+    if collection_ids.is_empty() {
         return Ok(None);
     }
 
     let mut bind_variables = Vec::<SQLValue>::new();
     bind_variables.push(SQLValue::Integer(class.id()));
     let related_depth_upper_bound = related_depth_upper_bound(&query_params)?;
-    let namespace_array_sql = sql_integer_array(&namespace_ids, &mut bind_variables);
+    let collection_array_sql = sql_integer_array(&collection_ids, &mut bind_variables);
     let mut raw_sql = if let Some(max_depth) = related_depth_upper_bound {
         bind_variables.push(SQLValue::Integer(max_depth));
         format!(
-            "SELECT * FROM get_bidirectionally_related_classes(?, {namespace_array_sql}, ?) AS related_classes"
+            "SELECT * FROM get_bidirectionally_related_classes(?, {collection_array_sql}, ?) AS related_classes"
         )
     } else {
         format!(
-            "SELECT * FROM get_bidirectionally_related_classes(?, {namespace_array_sql}, NULL) AS related_classes"
+            "SELECT * FROM get_bidirectionally_related_classes(?, {collection_array_sql}, NULL) AS related_classes"
         )
     };
 
@@ -2334,7 +2339,7 @@ async fn build_related_objects_query_spec<U, O>(
     scopes: Option<&[Permissions]>,
 ) -> Result<Option<RawSqlQuerySpec>, ApiError>
 where
-    U: UserNamespaceAccessors + ?Sized,
+    U: UserCollectionAccessors + ?Sized,
     O: SelfAccessors<HubuumObject> + ClassAccessors,
 {
     let query_params = query_options.filters.clone();
@@ -2350,8 +2355,8 @@ where
     let mut permissions_list = query_params.permissions()?;
     permissions_list.ensure_contains(&[Permissions::ReadObject, Permissions::ReadObjectRelation]);
 
-    let namespace_ids: Vec<i32> = user
-        .load_namespaces_with_permissions_with_admin_status(
+    let collection_ids: Vec<i32> = user
+        .load_collections_with_permissions_with_admin_status(
             pool,
             &permissions_list,
             is_admin,
@@ -2362,36 +2367,36 @@ where
         .map(|n| n.id)
         .collect();
 
-    if namespace_ids.is_empty() {
+    if collection_ids.is_empty() {
         debug!(
             message = "Searching object relations related to object",
-            stage = "Namespace IDs",
+            stage = "Collection IDs",
             user_id = user.principal_id(),
-            result = "No namespace IDs found, returning empty result"
+            result = "No collection IDs found, returning empty result"
         );
         return Ok(None);
     }
 
     debug!(
         message = "Searching object relations related to object",
-        stage = "Namespace IDs",
+        stage = "Collection IDs",
         user_id = user.principal_id(),
-        result = "Found namespace IDs",
-        namespace_ids = ?namespace_ids
+        result = "Found collection IDs",
+        collection_ids = ?collection_ids
     );
 
     let mut bind_variables = Vec::<SQLValue>::new();
     bind_variables.push(SQLValue::Integer(object.id()));
     let related_depth_upper_bound = related_depth_upper_bound(&query_params)?;
-    let namespace_array_sql = sql_integer_array(&namespace_ids, &mut bind_variables);
+    let collection_array_sql = sql_integer_array(&collection_ids, &mut bind_variables);
     let mut raw_sql = if let Some(max_depth) = related_depth_upper_bound {
         bind_variables.push(SQLValue::Integer(max_depth));
         format!(
-            "SELECT * FROM get_bidirectionally_related_objects(?, {namespace_array_sql}, ?) AS related_objects"
+            "SELECT * FROM get_bidirectionally_related_objects(?, {collection_array_sql}, ?) AS related_objects"
         )
     } else {
         format!(
-            "SELECT * FROM get_bidirectionally_related_objects(?, {namespace_array_sql}, NULL) AS related_objects"
+            "SELECT * FROM get_bidirectionally_related_objects(?, {collection_array_sql}, NULL) AS related_objects"
         )
     };
 
@@ -2489,10 +2494,10 @@ fn related_classes_column(field: &FilterField) -> Option<&'static str> {
             Some("related_classes.descendant_class_id")
         }
         FilterField::ClassFrom => Some("related_classes.ancestor_class_id"),
-        FilterField::Namespaces | FilterField::NamespaceId | FilterField::NamespacesTo => {
-            Some("related_classes.descendant_namespace_id")
+        FilterField::Collections | FilterField::CollectionId | FilterField::CollectionsTo => {
+            Some("related_classes.descendant_collection_id")
         }
-        FilterField::NamespacesFrom => Some("related_classes.ancestor_namespace_id"),
+        FilterField::CollectionsFrom => Some("related_classes.ancestor_collection_id"),
         FilterField::Name | FilterField::NameTo => Some("related_classes.descendant_name"),
         FilterField::NameFrom => Some("related_classes.ancestor_name"),
         FilterField::Description | FilterField::DescriptionTo => {
@@ -2541,10 +2546,10 @@ fn build_related_classes_clause(
         | FilterField::ClassTo
         | FilterField::ClassId
         | FilterField::Classes
-        | FilterField::Namespaces
-        | FilterField::NamespaceId
-        | FilterField::NamespacesFrom
-        | FilterField::NamespacesTo
+        | FilterField::Collections
+        | FilterField::CollectionId
+        | FilterField::CollectionsFrom
+        | FilterField::CollectionsTo
         | FilterField::Depth => {
             if !param.operator.is_applicable_to(DataType::NumericOrDate) {
                 return Err(ApiError::OperatorMismatch(format!(
@@ -2771,9 +2776,9 @@ fn related_objects_column(field: &FilterField) -> Option<&'static str> {
         FilterField::ClassId | FilterField::Classes | FilterField::ClassTo => {
             Some("related_objects.descendant_class_id")
         }
-        FilterField::NamespacesFrom => Some("related_objects.ancestor_namespace_id"),
-        FilterField::Namespaces | FilterField::NamespaceId | FilterField::NamespacesTo => {
-            Some("related_objects.descendant_namespace_id")
+        FilterField::CollectionsFrom => Some("related_objects.ancestor_collection_id"),
+        FilterField::Collections | FilterField::CollectionId | FilterField::CollectionsTo => {
+            Some("related_objects.descendant_collection_id")
         }
         FilterField::NameFrom => Some("related_objects.ancestor_name"),
         FilterField::Name | FilterField::NameTo => Some("related_objects.descendant_name"),
@@ -2837,10 +2842,10 @@ fn build_related_objects_clause(
         | FilterField::ClassId
         | FilterField::Classes
         | FilterField::ClassTo
-        | FilterField::Namespaces
-        | FilterField::NamespaceId
-        | FilterField::NamespacesFrom
-        | FilterField::NamespacesTo
+        | FilterField::Collections
+        | FilterField::CollectionId
+        | FilterField::CollectionsFrom
+        | FilterField::CollectionsTo
         | FilterField::Depth => {
             if !param.operator.is_applicable_to(DataType::NumericOrDate) {
                 return Err(ApiError::OperatorMismatch(format!(
@@ -3078,7 +3083,7 @@ fn build_related_objects_clause(
     Ok(Some(clause))
 }
 
-impl<T: ?Sized> UserSearchBackend for T where T: UserNamespaceAccessors {}
+impl<T: ?Sized> UserSearchBackend for T where T: UserCollectionAccessors {}
 
 impl User {
     pub async fn search_users(

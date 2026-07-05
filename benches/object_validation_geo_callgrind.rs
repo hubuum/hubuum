@@ -33,7 +33,7 @@ static GEO_SCHEMA: LazyLock<serde_json::Value> = LazyLock::new(|| {
 fn bench_validate_geo_schema() -> usize {
     let object = NewHubuumObject {
         name: "geo-object".to_string(),
-        namespace_id: 1,
+        collection_id: 1,
         hubuum_class_id: 1,
         data: serde_json::json!({
             "latitude": 40.7128,

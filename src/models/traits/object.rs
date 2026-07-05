@@ -1,24 +1,53 @@
 use crate::db::DbPool;
 use crate::db::traits::object::{
-    DeleteObjectRecord, LoadObjectRecord, ObjectClassLookup, ObjectNamespaceLookup,
+    DeleteObjectRecord, LoadObjectRecord, ObjectClassLookup, ObjectCollectionLookup,
     SaveObjectRecord, UpdateObjectRecord, ValidateObjectRecord, ValidateObjectSchema,
 };
 use crate::errors::ApiError;
 use crate::events::EventContext;
 
 use crate::models::class::{HubuumClass, HubuumClassID};
-use crate::models::namespace::{Namespace, NamespaceID};
+use crate::models::collection::{Collection, CollectionID};
 use crate::models::object::{
     HubuumObject, HubuumObjectID, HubuumObjectWithPath, NewHubuumObject, UpdateHubuumObject,
 };
 use crate::models::search::{FilterField, SortParam};
-use crate::traits::accessors::{ClassAdapter, IdAccessor, InstanceAdapter, NamespaceAdapter};
+use crate::traits::accessors::{ClassAdapter, CollectionAdapter, IdAccessor, InstanceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 use crate::traits::{
-    BackendContext, ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping,
-    CursorSqlType, CursorValue, NamespaceAccessors, PermissionController, Validate,
+    BackendContext, ClassAccessors, CollectionAccessors, CursorPaginated, CursorSqlField,
+    CursorSqlMapping, CursorSqlType, CursorValue, PermissionController, Validate,
     ValidateAgainstSchema,
 };
+use tracing::debug;
+
+pub async fn check_if_object_in_class<C, O>(
+    pool: &DbPool,
+    class: &C,
+    object: &O,
+) -> Result<(), ApiError>
+where
+    C: crate::traits::SelfAccessors<HubuumClass>,
+    O: crate::traits::SelfAccessors<HubuumObject> + ClassAccessors<HubuumClass>,
+{
+    let object_class_id = object.class_id(pool).await?.id();
+
+    if object_class_id != class.id() {
+        debug!(
+            message = "Object class mismatch",
+            class_id = class.id(),
+            object_id = object.id(),
+            object_class = object_class_id
+        );
+        return Err(ApiError::NotFound(format!(
+            "Object {} is not of class {}",
+            object.id(),
+            class.id()
+        )));
+    }
+
+    Ok(())
+}
 
 impl HubuumObject {
     /// Create a new HubuumObject merged with the update object.
@@ -37,7 +66,7 @@ impl HubuumObject {
     pub fn merge_update(&self, update: &UpdateHubuumObject) -> Self {
         Self {
             name: update.name.clone().unwrap_or_else(|| self.name.clone()),
-            namespace_id: update.namespace_id.unwrap_or(self.namespace_id),
+            collection_id: update.collection_id.unwrap_or(self.collection_id),
             hubuum_class_id: update.hubuum_class_id.unwrap_or(self.hubuum_class_id),
             data: update.data.clone().unwrap_or_else(|| self.data.clone()),
             description: update
@@ -176,13 +205,13 @@ impl InstanceAdapter<HubuumObject> for HubuumObject {
     }
 }
 
-impl NamespaceAdapter for HubuumObject {
-    async fn namespace_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        self.lookup_object_namespace(pool).await
+impl CollectionAdapter for HubuumObject {
+    async fn collection_adapter(&self, pool: &DbPool) -> Result<Collection, ApiError> {
+        self.lookup_object_collection(pool).await
     }
 
-    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<NamespaceID, ApiError> {
-        NamespaceID::new(self.namespace_id)
+    async fn collection_id_adapter(&self, _pool: &DbPool) -> Result<CollectionID, ApiError> {
+        CollectionID::new(self.collection_id)
     }
 }
 
@@ -211,13 +240,13 @@ impl InstanceAdapter<HubuumObject> for HubuumObjectID {
     }
 }
 
-impl NamespaceAdapter for HubuumObjectID {
-    async fn namespace_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        self.lookup_object_namespace(pool).await
+impl CollectionAdapter for HubuumObjectID {
+    async fn collection_adapter(&self, pool: &DbPool) -> Result<Collection, ApiError> {
+        self.lookup_object_collection(pool).await
     }
 
-    async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<NamespaceID, ApiError> {
-        NamespaceID::new(self.namespace(pool).await?.id)
+    async fn collection_id_adapter(&self, pool: &DbPool) -> Result<CollectionID, ApiError> {
+        CollectionID::new(self.collection(pool).await?.id)
     }
 }
 
@@ -241,8 +270,8 @@ impl CursorPaginated for HubuumObject {
             FilterField::Id
                 | FilterField::Name
                 | FilterField::Description
-                | FilterField::Namespaces
-                | FilterField::NamespaceId
+                | FilterField::Collections
+                | FilterField::CollectionId
                 | FilterField::ClassId
                 | FilterField::Classes
                 | FilterField::CreatedAt
@@ -255,8 +284,8 @@ impl CursorPaginated for HubuumObject {
             FilterField::Id => CursorValue::Integer(self.id as i64),
             FilterField::Name => CursorValue::String(self.name.clone()),
             FilterField::Description => CursorValue::String(self.description.clone()),
-            FilterField::Namespaces | FilterField::NamespaceId => {
-                CursorValue::Integer(self.namespace_id as i64)
+            FilterField::Collections | FilterField::CollectionId => {
+                CursorValue::Integer(self.collection_id as i64)
             }
             FilterField::ClassId | FilterField::Classes => {
                 CursorValue::Integer(self.hubuum_class_id as i64)
@@ -302,8 +331,8 @@ impl CursorSqlMapping for HubuumObject {
                 sql_type: CursorSqlType::String,
                 nullable: false,
             },
-            FilterField::Namespaces | FilterField::NamespaceId => CursorSqlField {
-                column: "hubuumobject.namespace_id",
+            FilterField::Collections | FilterField::CollectionId => CursorSqlField {
+                column: "hubuumobject.collection_id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
@@ -338,8 +367,8 @@ impl CursorPaginated for HubuumObjectWithPath {
             field,
             FilterField::Id
                 | FilterField::Name
-                | FilterField::Namespaces
-                | FilterField::NamespaceId
+                | FilterField::Collections
+                | FilterField::CollectionId
                 | FilterField::ClassId
                 | FilterField::Classes
                 | FilterField::CreatedAt
@@ -352,8 +381,8 @@ impl CursorPaginated for HubuumObjectWithPath {
         Ok(match field {
             FilterField::Id => CursorValue::Integer(self.id as i64),
             FilterField::Name => CursorValue::String(self.name.clone()),
-            FilterField::Namespaces | FilterField::NamespaceId => {
-                CursorValue::Integer(self.namespace_id as i64)
+            FilterField::Collections | FilterField::CollectionId => {
+                CursorValue::Integer(self.collection_id as i64)
             }
             FilterField::ClassId | FilterField::Classes => {
                 CursorValue::Integer(self.hubuum_class_id as i64)
@@ -401,8 +430,8 @@ impl CursorSqlMapping for HubuumObjectWithPath {
                 sql_type: CursorSqlType::String,
                 nullable: false,
             },
-            FilterField::Namespaces | FilterField::NamespaceId => CursorSqlField {
-                column: "descendant_namespace_id",
+            FilterField::Collections | FilterField::CollectionId => CursorSqlField {
+                column: "descendant_collection_id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },

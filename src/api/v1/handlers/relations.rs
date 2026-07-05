@@ -11,7 +11,7 @@ use crate::pagination::prepare_db_pagination;
 
 use crate::can;
 use crate::db::traits::UserPermissions;
-use crate::traits::{CanDelete, CanSave, NamespaceAccessors, SelfAccessors};
+use crate::traits::{CanDelete, CanSave, CollectionAccessors, SelfAccessors};
 
 use crate::api::response::ApiResponse;
 use actix_web::delete;
@@ -87,14 +87,14 @@ async fn get_class_relation(
         relation_id = ?relation_id,
     );
 
-    let namespaces = relation_id.namespace(&pool).await?;
+    let collections = relation_id.collection(&pool).await?;
     can!(
         &pool,
         user,
         requestor.scopes(),
         [Permissions::ReadClassRelation],
-        namespaces.0,
-        namespaces.1
+        collections.0,
+        collections.1
     );
 
     let relation = relation_id.instance(&pool).await?;
@@ -134,14 +134,14 @@ async fn create_class_relation(
         to_class = relation.to_hubuum_class_id,
     );
 
-    let namespaces = relation.namespace(&pool).await?;
+    let collections = relation.collection(&pool).await?;
     can!(
         &pool,
         user,
         requestor.scopes(),
         [Permissions::CreateClassRelation],
-        namespaces.0,
-        namespaces.1
+        collections.0,
+        collections.1
     );
 
     let event_context = requestor.event_context(&req);
@@ -180,14 +180,14 @@ async fn delete_class_relation(
         relation_id = ?relation_id,
     );
 
-    let namespaces = relation_id.namespace(&pool).await?;
+    let collections = relation_id.collection(&pool).await?;
     can!(
         &pool,
         user,
         requestor.scopes(),
         [Permissions::DeleteClassRelation],
-        namespaces.0,
-        namespaces.1
+        collections.0,
+        collections.1
     );
 
     let event_context = requestor.event_context(&req);
@@ -262,14 +262,14 @@ async fn get_object_relation(
         relation_id = ?relation_id,
     );
 
-    let namespaces = relation_id.namespace(&pool).await?;
+    let collections = relation_id.collection(&pool).await?;
     can!(
         &pool,
         user,
         requestor.scopes(),
         [Permissions::ReadObjectRelation],
-        namespaces.0,
-        namespaces.1
+        collections.0,
+        collections.1
     );
 
     let relation = relation_id.instance(&pool).await?;
@@ -309,14 +309,14 @@ async fn create_object_relation(
         to_object = relation.to_hubuum_object_id,
     );
 
-    let namespaces = relation.namespace(&pool).await?;
+    let collections = relation.collection(&pool).await?;
     can!(
         &pool,
         user,
         requestor.scopes(),
         [Permissions::CreateObjectRelation],
-        namespaces.0,
-        namespaces.1
+        collections.0,
+        collections.1
     );
 
     let event_context = requestor.event_context(&req);
@@ -355,14 +355,14 @@ async fn delete_object_relation(
         relation_id = ?relation_id,
     );
 
-    let namespaces = relation_id.namespace(&pool).await?;
+    let collections = relation_id.collection(&pool).await?;
     can!(
         &pool,
         user,
         requestor.scopes(),
         [Permissions::DeleteObjectRelation],
-        namespaces.0,
-        namespaces.1
+        collections.0,
+        collections.1
     );
 
     let event_context = requestor.event_context(&req);

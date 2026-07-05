@@ -6,21 +6,21 @@ use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::{Permission, Permissions, PermissionsList};
 
-use super::{BackendContext, NamespaceAccessors};
+use super::{BackendContext, CollectionAccessors};
 
 #[allow(dead_code)]
-pub trait PermissionController: Serialize + NamespaceAccessors {
+pub trait PermissionController: Serialize + CollectionAccessors {
     /// Check if the user has the given permission on the object.
     ///
-    /// - If the trait is called on a namespace, check against self.
+    /// - If the trait is called on a collection, check against self.
     /// - If the trait is called on a HubuumClass or a HubuumObject,
-    ///   check against the namespace of the class or object.
+    ///   check against the collection of the class or object.
     /// - If the trait is called on a HubuumClassID or a HubuumObjectID,
-    ///   create a HubuumClass or HubuumObject and check against the namespace
+    ///   create a HubuumClass or HubuumObject and check against the collection
     ///   of the class or object.
     ///
     /// If this is called on a *ID, a full class is created to extract
-    /// the namespace_id. To avoid creating the class multiple times during use
+    /// the collection_id. To avoid creating the class multiple times during use
     /// do this:
     /// ```text
     /// class = class_id.class(backend).await?;
@@ -72,15 +72,15 @@ pub trait PermissionController: Serialize + NamespaceAccessors {
 
     /// Check if the user has all the given permissions on the object.
     ///
-    /// - If the trait is called on a namespace, check against self.
+    /// - If the trait is called on a collection, check against self.
     /// - If the trait is called on a HubuumClass or a HubuumObject,
-    ///   check against the namespace of the class or object.
+    ///   check against the collection of the class or object.
     /// - If the trait is called on a HubuumClassID or a HubuumObjectID,
-    ///   create a HubuumClass or HubuumObject and check against the namespace
+    ///   create a HubuumClass or HubuumObject and check against the collection
     ///   of the class or object.
     ///
     /// If this is called on a *ID, a full class is created to extract
-    /// the namespace_id. To avoid creating the class multiple times during use
+    /// the collection_id. To avoid creating the class multiple times during use
     /// do this:
     /// ```text
     /// permissions = vec![Permissions::ReadClass, Permissions::UpdateClass];

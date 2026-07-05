@@ -21,8 +21,8 @@ pub fn group(group_id: i32) -> Result<ResponseLocation, ApiError> {
     api_v1(format!("iam/groups/{group_id}"))
 }
 
-pub fn namespace(namespace_id: i32) -> Result<ResponseLocation, ApiError> {
-    api_v1(format!("namespaces/{namespace_id}"))
+pub fn collection(collection_id: i32) -> Result<ResponseLocation, ApiError> {
+    api_v1(format!("collections/{collection_id}"))
 }
 
 pub fn object_relation(

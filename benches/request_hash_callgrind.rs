@@ -12,8 +12,8 @@ static PAYLOAD: LazyLock<serde_json::Value> = LazyLock::new(|| {
         "mode": "upsert",
         "atomicity": "all_or_nothing",
         "classes": [
-            { "name": "asset", "namespace": "platform", "schema": { "type": "object" } },
-            { "name": "service", "namespace": "platform", "schema": { "type": "object" } }
+            { "name": "asset", "collection": "platform", "schema": { "type": "object" } },
+            { "name": "service", "collection": "platform", "schema": { "type": "object" } }
         ],
         "objects": [
             {

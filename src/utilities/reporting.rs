@@ -23,15 +23,15 @@ const TEMPLATE_ENV_CACHE_MAX_ENTRIES: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct TemplateEnvCacheKey {
-    namespace_id: i32,
-    namespace_signature: NamespaceTemplateSignature,
+    collection_id: i32,
+    collection_signature: CollectionTemplateSignature,
     template_name: String,
     content_type: ReportContentType,
     missing_data_policy: ReportMissingDataPolicy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct NamespaceTemplateSignature {
+struct CollectionTemplateSignature {
     template_count: usize,
     max_updated_at_micros: i64,
     template_hash: u64,
@@ -59,16 +59,16 @@ thread_local! {
 pub fn validate_template(
     template_name: &str,
     template_source: &str,
-    namespace_id: i32,
-    namespace_templates: &[ReportTemplate],
+    collection_id: i32,
+    collection_templates: &[ReportTemplate],
     content_type: ReportContentType,
 ) -> Result<(), ApiError> {
     let (recursion_limit, fuel) = template_limits_from_config();
     validate_template_with_limits(
         template_name,
         template_source,
-        namespace_id,
-        namespace_templates,
+        collection_id,
+        collection_templates,
         content_type,
         recursion_limit,
         fuel,
@@ -78,8 +78,8 @@ pub fn validate_template(
 pub fn validate_template_with_limits(
     template_name: &str,
     template_source: &str,
-    namespace_id: i32,
-    namespace_templates: &[ReportTemplate],
+    collection_id: i32,
+    collection_templates: &[ReportTemplate],
     content_type: ReportContentType,
     recursion_limit: usize,
     fuel: u64,
@@ -87,8 +87,8 @@ pub fn validate_template_with_limits(
     let env = build_environment(
         template_name,
         template_source,
-        namespace_id,
-        namespace_templates,
+        collection_id,
+        collection_templates,
         content_type,
         ReportMissingDataPolicy::Omit,
         TemplateLimits::new(recursion_limit, fuel),
@@ -153,7 +153,7 @@ impl Write for SizeLimitedWriter {
 
 pub fn render_template(
     template: &ReportTemplate,
-    namespace_templates: &[ReportTemplate],
+    collection_templates: &[ReportTemplate],
     context: &serde_json::Value,
     content_type: ReportContentType,
     missing_data_policy: ReportMissingDataPolicy,
@@ -161,8 +161,8 @@ pub fn render_template(
 ) -> Result<(String, Vec<ReportWarning>), ApiError> {
     let (recursion_limit, fuel) = template_limits_from_config();
     let cache_key = TemplateEnvCacheKey {
-        namespace_id: template.namespace_id,
-        namespace_signature: namespace_signature(template.namespace_id, namespace_templates),
+        collection_id: template.collection_id,
+        collection_signature: collection_signature(template.collection_id, collection_templates),
         template_name: template.name.clone(),
         content_type,
         missing_data_policy,
@@ -183,8 +183,8 @@ pub fn render_template(
             let built = Arc::new(build_environment(
                 &template.name,
                 &template.template,
-                template.namespace_id,
-                namespace_templates,
+                template.collection_id,
+                collection_templates,
                 content_type,
                 missing_data_policy,
                 TemplateLimits::new(recursion_limit, fuel),
@@ -192,12 +192,12 @@ pub fn render_template(
             let mut cache = template_env_cache()
                 .write()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            // Drop now-stale environments for this namespace (templates changed) before inserting.
+            // Drop now-stale environments for this collection (templates changed) before inserting.
             let stale_keys = cache
                 .iter()
                 .filter(|(key, _)| {
-                    key.namespace_id == cache_key.namespace_id
-                        && key.namespace_signature != cache_key.namespace_signature
+                    key.collection_id == cache_key.collection_id
+                        && key.collection_signature != cache_key.collection_signature
                 })
                 .map(|(key, _)| key.clone())
                 .collect::<Vec<_>>();
@@ -244,13 +244,13 @@ fn template_env_cache()
     })
 }
 
-fn namespace_signature(
-    namespace_id: i32,
-    namespace_templates: &[ReportTemplate],
-) -> NamespaceTemplateSignature {
-    let mut templates = namespace_templates
+fn collection_signature(
+    collection_id: i32,
+    collection_templates: &[ReportTemplate],
+) -> CollectionTemplateSignature {
+    let mut templates = collection_templates
         .iter()
-        .filter(|template| template.namespace_id == namespace_id)
+        .filter(|template| template.collection_id == collection_id)
         .map(|template| {
             (
                 template.id,
@@ -270,7 +270,7 @@ fn namespace_signature(
     let mut hasher = DefaultHasher::new();
     templates.hash(&mut hasher);
 
-    NamespaceTemplateSignature {
+    CollectionTemplateSignature {
         template_count: templates.len(),
         max_updated_at_micros,
         template_hash: hasher.finish(),
@@ -280,18 +280,18 @@ fn namespace_signature(
 fn build_environment(
     template_name: &str,
     template_source: &str,
-    namespace_id: i32,
-    namespace_templates: &[ReportTemplate],
+    collection_id: i32,
+    collection_templates: &[ReportTemplate],
     content_type: ReportContentType,
     missing_data_policy: ReportMissingDataPolicy,
     limits: TemplateLimits,
 ) -> Result<CachedTemplateEnvironment, ApiError> {
     let mut env = Environment::new();
-    let template_map = Arc::new(build_namespace_template_map(
-        namespace_id,
+    let template_map = Arc::new(build_collection_template_map(
+        collection_id,
         template_name,
         template_source,
-        namespace_templates,
+        collection_templates,
     ));
 
     env.set_keep_trailing_newline(true);
@@ -340,15 +340,15 @@ fn template_limits_from_config() -> (usize, u64) {
         ))
 }
 
-fn build_namespace_template_map(
-    namespace_id: i32,
+fn build_collection_template_map(
+    collection_id: i32,
     template_name: &str,
     template_source: &str,
-    namespace_templates: &[ReportTemplate],
+    collection_templates: &[ReportTemplate],
 ) -> HashMap<String, String> {
-    let mut templates = namespace_templates
+    let mut templates = collection_templates
         .iter()
-        .filter(|template| template.namespace_id == namespace_id)
+        .filter(|template| template.collection_id == collection_id)
         .map(|template| (template.name.clone(), template.template.clone()))
         .collect::<HashMap<_, _>>();
     templates.insert(template_name.to_string(), template_source.to_string());
@@ -381,7 +381,7 @@ fn validation_context(content_type: ReportContentType) -> serde_json::Value {
             "id": 0,
             "name": "",
             "description": "",
-            "namespace_id": 0,
+            "collection_id": 0,
             "hubuum_class_id": 0,
             "data": {},
             "path": [],
@@ -494,7 +494,7 @@ mod tests {
 
     fn template(
         id: i32,
-        namespace_id: i32,
+        collection_id: i32,
         name: &str,
         content_type: ReportContentType,
         source: &str,
@@ -502,7 +502,7 @@ mod tests {
         let now = chrono::Utc::now().naive_utc();
         ReportTemplate {
             id,
-            namespace_id,
+            collection_id,
             name: name.to_string(),
             description: "template".to_string(),
             content_type,
@@ -527,7 +527,7 @@ mod tests {
                     "id": 101,
                     "name": "srv-app-01",
                     "description": "Application server",
-                    "namespace_id": 7,
+                    "collection_id": 7,
                     "hubuum_class_id": 42,
                     "data": {
                         "owner": "alice",
@@ -540,7 +540,7 @@ mod tests {
                     "id": 102,
                     "name": "srv-db-01",
                     "description": "Database server",
-                    "namespace_id": 7,
+                    "collection_id": 7,
                     "hubuum_class_id": 42,
                     "data": {
                         "owner": "bob",
@@ -712,7 +712,7 @@ mod tests {
     }
 
     #[test]
-    fn supports_same_namespace_includes() {
+    fn supports_same_collection_includes() {
         let layout = template(
             2,
             10,
@@ -848,7 +848,7 @@ mod tests {
     }
 
     #[test]
-    fn supports_same_namespace_imports() {
+    fn supports_same_collection_imports() {
         let macros = template(
             8,
             10,
@@ -951,7 +951,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_cross_namespace_template_loading() {
+    fn rejects_cross_collection_template_loading() {
         let layout = template(
             10,
             20,

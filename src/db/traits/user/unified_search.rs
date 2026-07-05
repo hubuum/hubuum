@@ -2,45 +2,45 @@ use diesel::dsl::sql;
 use diesel::prelude::*;
 use diesel::sql_types::{Bool, Text};
 
-use crate::db::traits::user::LoadPermittedNamespaces;
+use crate::db::traits::user::LoadPermittedCollections;
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
-use crate::models::traits::ExpandNamespaceFromMap;
-use crate::models::traits::user::UserNamespaceAccessors;
+use crate::models::traits::ExpandCollectionFromMap;
+use crate::models::traits::user::UserCollectionAccessors;
 use crate::models::{
-    HubuumClass, HubuumClassExpanded, HubuumObject, Namespace, Permissions, UnifiedSearchSpec,
+    Collection, HubuumClass, HubuumClassExpanded, HubuumObject, Permissions, UnifiedSearchSpec,
 };
 
-pub trait UnifiedSearchBackend: UserNamespaceAccessors {
-    async fn search_unified_namespaces_from_backend(
+pub trait UnifiedSearchBackend: UserCollectionAccessors {
+    async fn search_unified_collections_from_backend(
         &self,
         pool: &DbPool,
         params: &UnifiedSearchSpec,
         scopes: Option<&[Permissions]>,
-    ) -> Result<Vec<Namespace>, ApiError> {
-        use crate::schema::namespaces::dsl as ns;
+    ) -> Result<Vec<Collection>, ApiError> {
+        use crate::schema::collections::dsl as ns;
 
-        let namespaces =
-            permitted_namespaces(self, pool, &[Permissions::ReadCollection], scopes).await?;
-        if namespaces.is_empty() {
+        let collections =
+            permitted_collections(self, pool, &[Permissions::ReadCollection], scopes).await?;
+        if collections.is_empty() {
             return Ok(vec![]);
         }
 
-        let namespace_ids = namespaces
+        let collection_ids = collections
             .into_iter()
-            .map(|namespace| namespace.id)
+            .map(|collection| collection.id)
             .collect::<Vec<_>>();
         let pattern = format!("%{}%", params.query);
 
         with_connection(pool, |conn| {
-            ns::namespaces
-                .filter(ns::id.eq_any(namespace_ids))
+            ns::collections
+                .filter(ns::id.eq_any(collection_ids))
                 .filter(
                     ns::name
                         .ilike(pattern.clone())
                         .or(ns::description.ilike(pattern.clone())),
                 )
-                .load::<Namespace>(conn)
+                .load::<Collection>(conn)
         })
     }
 
@@ -52,28 +52,28 @@ pub trait UnifiedSearchBackend: UserNamespaceAccessors {
     ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         use crate::schema::hubuumclass::dsl as class_dsl;
 
-        let namespaces = permitted_namespaces(
+        let collections = permitted_collections(
             self,
             pool,
             &[Permissions::ReadCollection, Permissions::ReadClass],
             scopes,
         )
         .await?;
-        if namespaces.is_empty() {
+        if collections.is_empty() {
             return Ok(vec![]);
         }
 
-        let namespace_map = namespaces
+        let collection_map = collections
             .iter()
             .cloned()
-            .map(|namespace| (namespace.id, namespace))
+            .map(|collection| (collection.id, collection))
             .collect::<std::collections::HashMap<_, _>>();
-        let namespace_ids = namespace_map.keys().copied().collect::<Vec<_>>();
+        let collection_ids = collection_map.keys().copied().collect::<Vec<_>>();
         let pattern = format!("%{}%", params.query);
 
         let classes = with_connection(pool, |conn| {
             let mut query = class_dsl::hubuumclass
-                .filter(class_dsl::namespace_id.eq_any(namespace_ids))
+                .filter(class_dsl::collection_id.eq_any(collection_ids))
                 .into_boxed();
 
             if params.search_class_schema {
@@ -98,7 +98,7 @@ pub trait UnifiedSearchBackend: UserNamespaceAccessors {
             query.load::<HubuumClass>(conn)
         })?;
 
-        Ok(classes.expand_namespace_from_map(&namespace_map))
+        Ok(classes.expand_collection_from_map(&collection_map))
     }
 
     async fn search_unified_objects_from_backend(
@@ -109,26 +109,26 @@ pub trait UnifiedSearchBackend: UserNamespaceAccessors {
     ) -> Result<Vec<HubuumObject>, ApiError> {
         use crate::schema::hubuumobject::dsl as object_dsl;
 
-        let namespaces = permitted_namespaces(
+        let collections = permitted_collections(
             self,
             pool,
             &[Permissions::ReadCollection, Permissions::ReadObject],
             scopes,
         )
         .await?;
-        if namespaces.is_empty() {
+        if collections.is_empty() {
             return Ok(vec![]);
         }
 
-        let namespace_ids = namespaces
+        let collection_ids = collections
             .into_iter()
-            .map(|namespace| namespace.id)
+            .map(|collection| collection.id)
             .collect::<Vec<_>>();
         let pattern = format!("%{}%", params.query);
 
         with_connection(pool, |conn| {
             let mut query = object_dsl::hubuumobject
-                .filter(object_dsl::namespace_id.eq_any(namespace_ids))
+                .filter(object_dsl::collection_id.eq_any(collection_ids))
                 .into_boxed();
 
             if params.search_object_data {
@@ -157,18 +157,18 @@ pub trait UnifiedSearchBackend: UserNamespaceAccessors {
     }
 }
 
-async fn permitted_namespaces<T>(
+async fn permitted_collections<T>(
     user: &T,
     pool: &DbPool,
     permissions: &[Permissions],
     scopes: Option<&[Permissions]>,
-) -> Result<Vec<Namespace>, ApiError>
+) -> Result<Vec<Collection>, ApiError>
 where
-    T: UserNamespaceAccessors + ?Sized,
+    T: UserCollectionAccessors + ?Sized,
 {
     let permissions = permissions.to_vec();
-    user.load_namespaces_with_permissions(pool, &permissions, scopes)
+    user.load_collections_with_permissions(pool, &permissions, scopes)
         .await
 }
 
-impl<T: ?Sized> UnifiedSearchBackend for T where T: UserNamespaceAccessors {}
+impl<T: ?Sized> UnifiedSearchBackend for T where T: UserCollectionAccessors {}

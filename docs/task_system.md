@@ -270,12 +270,12 @@ Planning is implemented in:
 
 Planning walks the import graph in dependency order:
 
-1. namespaces
+1. collections
 2. classes
 3. objects
 4. class relations
 5. object relations
-6. namespace permissions
+6. collection permissions
 
 Planning resolves:
 
@@ -362,7 +362,7 @@ This is the most important correctness detail.
 
 The following are inside one transaction:
 
-- namespace/class/object/relation/permission mutations for planned import items
+- collection/class/object/relation/permission mutations for planned import items
 
 ### What is not in that same transaction
 
@@ -396,7 +396,7 @@ Current behavior:
 - `best_effort + permission_policy=continue` records permission failures and continues with remaining plannable work
 - `best_effort + permission_policy=abort` stops once a permission failure requires abort
 - `collision_policy=abort` records or aborts on collisions depending on atomicity
-- `collision_policy=overwrite` turns matching namespace/class/object collisions into update operations
+- `collision_policy=overwrite` turns matching collection/class/object collisions into update operations
 
 For relations:
 

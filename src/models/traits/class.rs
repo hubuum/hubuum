@@ -1,16 +1,16 @@
-use crate::traits::accessors::{ClassAdapter, IdAccessor, InstanceAdapter, NamespaceAdapter};
-use crate::traits::{CanUpdate, ClassAccessors, NamespaceAccessors, PermissionController};
+use crate::traits::accessors::{ClassAdapter, CollectionAdapter, IdAccessor, InstanceAdapter};
+use crate::traits::{CanUpdate, ClassAccessors, CollectionAccessors, PermissionController};
 
 use crate::db::DbPool;
 use crate::db::traits::class::{
-    ClassNamespaceLookup, CreateClassRecord, DeleteClassRecord, LoadClassRecord, UpdateClassRecord,
+    ClassCollectionLookup, CreateClassRecord, DeleteClassRecord, LoadClassRecord, UpdateClassRecord,
 };
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 
 use crate::models::{
-    HubuumClass, HubuumClassID, Namespace, NamespaceID, NewHubuumClass, UpdateHubuumClass,
+    Collection, CollectionID, HubuumClass, HubuumClassID, NewHubuumClass, UpdateHubuumClass,
 };
 
 impl SaveAdapter for HubuumClass {
@@ -19,7 +19,7 @@ impl SaveAdapter for HubuumClass {
     async fn save_adapter_without_events(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
         let update = UpdateHubuumClass {
             name: Some(self.name.clone()),
-            namespace_id: Some(self.namespace_id),
+            collection_id: Some(self.collection_id),
             json_schema: self.json_schema.clone(),
             validate_schema: Some(self.validate_schema),
             description: Some(self.description.clone()),
@@ -35,7 +35,7 @@ impl SaveAdapter for HubuumClass {
     ) -> Result<Self::Output, ApiError> {
         let update = UpdateHubuumClass {
             name: Some(self.name.clone()),
-            namespace_id: Some(self.namespace_id),
+            collection_id: Some(self.collection_id),
             json_schema: self.json_schema.clone(),
             validate_schema: Some(self.validate_schema),
             description: Some(self.description.clone()),
@@ -118,13 +118,13 @@ impl ClassAdapter for HubuumClass {
     }
 }
 
-impl NamespaceAdapter for HubuumClass {
-    async fn namespace_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        self.lookup_class_namespace(pool).await
+impl CollectionAdapter for HubuumClass {
+    async fn collection_adapter(&self, pool: &DbPool) -> Result<Collection, ApiError> {
+        self.lookup_class_collection(pool).await
     }
 
-    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<NamespaceID, ApiError> {
-        NamespaceID::new(self.namespace_id)
+    async fn collection_id_adapter(&self, _pool: &DbPool) -> Result<CollectionID, ApiError> {
+        CollectionID::new(self.collection_id)
     }
 }
 
@@ -153,13 +153,13 @@ impl ClassAdapter for HubuumClassID {
     }
 }
 
-impl NamespaceAdapter for HubuumClassID {
-    async fn namespace_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        self.lookup_class_namespace(pool).await
+impl CollectionAdapter for HubuumClassID {
+    async fn collection_adapter(&self, pool: &DbPool) -> Result<Collection, ApiError> {
+        self.lookup_class_collection(pool).await
     }
 
-    async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<NamespaceID, ApiError> {
-        NamespaceID::new(self.namespace(pool).await?.id)
+    async fn collection_id_adapter(&self, pool: &DbPool) -> Result<CollectionID, ApiError> {
+        CollectionID::new(self.collection(pool).await?.id)
     }
 }
 

@@ -5,7 +5,7 @@ use crate::errors::ApiError;
 use crate::models::group::Group;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
-    GroupPermission, HubuumClass, HubuumClassExpanded, Namespace, NamespaceID, Permission,
+    Collection, CollectionID, GroupPermission, HubuumClass, HubuumClassExpanded, Permission,
 };
 use crate::traits::{
     BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
@@ -17,29 +17,29 @@ pub trait FromTuple<T> {
     fn from_tuple(t: (Group, T)) -> Self;
 }
 
-/// Expand a value by loading its namespace from the backend.
+/// Expand a value by loading its collection from the backend.
 ///
 /// Use this when the caller has a backend context available and wants a fully expanded output
 /// value rather than an ID-only representation.
-pub trait ExpandNamespace<T> {
-    async fn expand_namespace<C>(&self, backend: &C) -> Result<T, ApiError>
+pub trait ExpandCollection<T> {
+    async fn expand_collection<C>(&self, backend: &C) -> Result<T, ApiError>
     where
         C: BackendContext + ?Sized;
 }
 
-impl ExpandNamespace<HubuumClassExpanded> for HubuumClass {
-    async fn expand_namespace<C>(&self, backend: &C) -> Result<HubuumClassExpanded, ApiError>
+impl ExpandCollection<HubuumClassExpanded> for HubuumClass {
+    async fn expand_collection<C>(&self, backend: &C) -> Result<HubuumClassExpanded, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        let namespace = NamespaceID::new(self.namespace_id)?
+        let collection = CollectionID::new(self.collection_id)?
             .instance(backend)
             .await?;
 
         Ok(HubuumClassExpanded {
             id: self.id,
             name: self.name.clone(),
-            namespace,
+            collection,
             json_schema: self.json_schema.clone(),
             validate_schema: self.validate_schema,
             description: self.description.clone(),
@@ -49,9 +49,9 @@ impl ExpandNamespace<HubuumClassExpanded> for HubuumClass {
     }
 }
 
-/// Expand a value by looking up namespaces in a precomputed map rather than hitting the backend.
-pub trait ExpandNamespaceFromMap<T> {
-    fn expand_namespace_from_map(&self, namespace_map: &HashMap<i32, Namespace>) -> T;
+/// Expand a value by looking up collections in a precomputed map rather than hitting the backend.
+pub trait ExpandCollectionFromMap<T> {
+    fn expand_collection_from_map(&self, collection_map: &HashMap<i32, Collection>) -> T;
 }
 
 impl FromTuple<Permission> for GroupPermission {
@@ -63,33 +63,33 @@ impl FromTuple<Permission> for GroupPermission {
     }
 }
 
-impl ExpandNamespaceFromMap<Vec<HubuumClassExpanded>> for Vec<HubuumClass> {
-    fn expand_namespace_from_map(
+impl ExpandCollectionFromMap<Vec<HubuumClassExpanded>> for Vec<HubuumClass> {
+    fn expand_collection_from_map(
         &self,
-        namespace_map: &HashMap<i32, Namespace>,
+        collection_map: &HashMap<i32, Collection>,
     ) -> Vec<HubuumClassExpanded> {
         self.iter()
-            .map(|class| class.expand_namespace_from_map(namespace_map))
+            .map(|class| class.expand_collection_from_map(collection_map))
             .collect()
     }
 }
 
-impl ExpandNamespaceFromMap<HubuumClassExpanded> for HubuumClass {
-    fn expand_namespace_from_map(
+impl ExpandCollectionFromMap<HubuumClassExpanded> for HubuumClass {
+    fn expand_collection_from_map(
         &self,
-        namespace_map: &HashMap<i32, Namespace>,
+        collection_map: &HashMap<i32, Collection>,
     ) -> HubuumClassExpanded {
-        let namespace = match namespace_map.get(&self.namespace_id) {
-            Some(namespace) => namespace.clone(),
+        let collection = match collection_map.get(&self.collection_id) {
+            Some(collection) => collection.clone(),
             None => {
                 warn!(
-                    message = "Namespace mapping failed",
-                    id = self.namespace_id,
+                    message = "Collection mapping failed",
+                    id = self.collection_id,
                     class = self.name,
                     class_id = self.id
                 );
-                Namespace {
-                    id: self.namespace_id,
+                Collection {
+                    id: self.collection_id,
                     name: "Unknown".to_string(),
                     description: "Unknown".to_string(),
                     created_at: chrono::NaiveDateTime::default(),
@@ -101,7 +101,7 @@ impl ExpandNamespaceFromMap<HubuumClassExpanded> for HubuumClass {
         HubuumClassExpanded {
             id: self.id,
             name: self.name.clone(),
-            namespace,
+            collection,
             json_schema: self.json_schema.clone(),
             validate_schema: self.validate_schema,
             description: self.description.clone(),
@@ -118,8 +118,8 @@ impl CursorPaginated for HubuumClassExpanded {
             FilterField::Id
                 | FilterField::Name
                 | FilterField::Description
-                | FilterField::Namespaces
-                | FilterField::NamespaceId
+                | FilterField::Collections
+                | FilterField::CollectionId
                 | FilterField::CreatedAt
                 | FilterField::UpdatedAt
         )
@@ -130,8 +130,8 @@ impl CursorPaginated for HubuumClassExpanded {
             FilterField::Id => CursorValue::Integer(self.id as i64),
             FilterField::Name => CursorValue::String(self.name.clone()),
             FilterField::Description => CursorValue::String(self.description.clone()),
-            FilterField::Namespaces | FilterField::NamespaceId => {
-                CursorValue::Integer(self.namespace.id as i64)
+            FilterField::Collections | FilterField::CollectionId => {
+                CursorValue::Integer(self.collection.id as i64)
             }
             FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
             FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
@@ -174,8 +174,8 @@ impl CursorSqlMapping for HubuumClassExpanded {
                 sql_type: CursorSqlType::String,
                 nullable: false,
             },
-            FilterField::Namespaces | FilterField::NamespaceId => CursorSqlField {
-                column: "hubuumclass.namespace_id",
+            FilterField::Collections | FilterField::CollectionId => CursorSqlField {
+                column: "hubuumclass.collection_id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },

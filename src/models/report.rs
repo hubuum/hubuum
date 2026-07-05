@@ -9,7 +9,7 @@ use crate::errors::ApiError;
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReportScopeKind {
-    Namespaces,
+    Collections,
     Classes,
     ObjectsInClass,
     ClassRelations,
@@ -28,7 +28,7 @@ pub struct ReportScope {
 impl ReportScope {
     pub fn validate(&self) -> Result<(), ApiError> {
         match self.kind {
-            ReportScopeKind::Namespaces
+            ReportScopeKind::Collections
             | ReportScopeKind::Classes
             | ReportScopeKind::ClassRelations
             | ReportScopeKind::ObjectRelations => {
@@ -318,7 +318,7 @@ pub struct ReportTemplateRunRequest {
 impl ReportScopeKind {
     pub fn as_str(self) -> &'static str {
         match self {
-            ReportScopeKind::Namespaces => "namespaces",
+            ReportScopeKind::Collections => "collections",
             ReportScopeKind::Classes => "classes",
             ReportScopeKind::ObjectsInClass => "objects_in_class",
             ReportScopeKind::ClassRelations => "class_relations",
@@ -328,7 +328,7 @@ impl ReportScopeKind {
     }
 
     /// Whether this scope targets a single class and therefore needs a `class_id`.
-    /// The collection scopes (`namespaces`, `classes`, `class_relations`,
+    /// The collection scopes (`collections`, `classes`, `class_relations`,
     /// `object_relations`) are class-agnostic.
     pub fn requires_class_id(self) -> bool {
         matches!(self, Self::ObjectsInClass | Self::RelatedObjects)
@@ -340,7 +340,7 @@ impl FromStr for ReportScopeKind {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "namespaces" => Ok(Self::Namespaces),
+            "collections" => Ok(Self::Collections),
             "classes" => Ok(Self::Classes),
             "objects_in_class" => Ok(Self::ObjectsInClass),
             "class_relations" => Ok(Self::ClassRelations),

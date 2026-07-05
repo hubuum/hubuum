@@ -78,14 +78,14 @@ mod tests {
             NewHubuumObject {
                 name: "report-app-01".to_string(),
                 description: "App server".to_string(),
-                namespace_id: class.namespace_id,
+                collection_id: class.collection_id,
                 hubuum_class_id: class.id,
                 data: serde_json::json!({"hostname": "report-app-01", "owner": "alice"}),
             },
             NewHubuumObject {
                 name: "report-db-01".to_string(),
                 description: "Database server".to_string(),
-                namespace_id: class.namespace_id,
+                collection_id: class.collection_id,
                 hubuum_class_id: class.id,
                 data: serde_json::json!({"hostname": "report-db-01", "owner": "bob"}),
             },
@@ -116,13 +116,13 @@ mod tests {
 
     async fn create_named_class(
         pool: &crate::db::DbPool,
-        namespace_id: i32,
+        collection_id: i32,
         name: &str,
     ) -> HubuumClass {
         NewHubuumClass {
             name: name.to_string(),
             description: format!("{name} description"),
-            namespace_id,
+            collection_id,
             json_schema: None,
             validate_schema: Some(false),
         }
@@ -149,7 +149,7 @@ mod tests {
 
     async fn create_template(
         pool: &crate::db::DbPool,
-        namespace_id: i32,
+        collection_id: i32,
         class_id: i32,
         scope_kind: ReportScopeKind,
         name: &str,
@@ -157,7 +157,7 @@ mod tests {
         template: &str,
     ) -> i32 {
         let template = NewReportTemplate {
-            namespace_id,
+            collection_id,
             name: name.to_string(),
             description: "report template".to_string(),
             content_type,
@@ -180,7 +180,7 @@ mod tests {
 
     fn empty_update_template_payload() -> UpdateReportTemplate {
         UpdateReportTemplate {
-            namespace_id: None,
+            collection_id: None,
             name: None,
             description: None,
             template: None,
@@ -273,25 +273,25 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let namespace = context
-            .namespace_fixture("report_json_related_include")
+        let collection = context
+            .collection_fixture("report_json_related_include")
             .await;
         let host_class = create_named_class(
             &context.pool,
-            namespace.namespace.id,
+            collection.collection.id,
             &context.scoped_name("Host"),
         )
         .await;
         let room_class = create_named_class(
             &context.pool,
-            namespace.namespace.id,
+            collection.collection.id,
             &context.scoped_name("Room"),
         )
         .await;
         let host = NewHubuumObject {
             name: "host-include-01".to_string(),
             description: "host".to_string(),
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             hubuum_class_id: host_class.id,
             data: serde_json::json!({}),
         }
@@ -301,7 +301,7 @@ mod tests {
         let room = NewHubuumObject {
             name: "room-include-101".to_string(),
             description: "room".to_string(),
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             hubuum_class_id: room_class.id,
             data: serde_json::json!({}),
         }
@@ -363,7 +363,7 @@ mod tests {
             serde_json::json!([host.id, room.id])
         );
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -377,7 +377,7 @@ mod tests {
         let _ = create_report_objects(&context.pool, &class).await;
         let template_id = create_template(
             &context.pool,
-            class.namespace_id,
+            class.collection_id,
             class.id,
             ReportScopeKind::ObjectsInClass,
             "stable-template",
@@ -414,7 +414,7 @@ mod tests {
         assert_eq!(first_body, "report-app-01=alice\nreport-db-01=bob\n");
 
         UpdateReportTemplate {
-            namespace_id: None,
+            collection_id: None,
             name: None,
             description: None,
             template: Some("changed output".to_string()),
@@ -427,7 +427,7 @@ mod tests {
         let _ = NewHubuumObject {
             name: "report-cache-01".to_string(),
             description: "new object".to_string(),
-            namespace_id: class.namespace_id,
+            collection_id: class.collection_id,
             hubuum_class_id: class.id,
             data: serde_json::json!({"hostname": "report-cache-01", "owner": "carol"}),
         }
@@ -459,7 +459,7 @@ mod tests {
         let class = classes[0].clone();
         let template_id = create_template(
             &context.pool,
-            class.namespace_id,
+            class.collection_id,
             class.id,
             ReportScopeKind::RelatedObjects,
             "needs-object-id",
@@ -491,7 +491,7 @@ mod tests {
         let class = classes[0].clone();
         let template_id = create_template(
             &context.pool,
-            class.namespace_id,
+            class.collection_id,
             class.id,
             ReportScopeKind::ObjectsInClass,
             "rejects-object-id",
@@ -525,7 +525,7 @@ mod tests {
 
         // Template carries a default query that selects only the "app" host.
         let template = NewReportTemplate {
-            namespace_id: class.namespace_id,
+            collection_id: class.collection_id,
             name: "report.default-query".to_string(),
             description: "default query report".to_string(),
             content_type: ReportContentType::TextPlain,
@@ -599,7 +599,7 @@ mod tests {
         let _ = create_report_objects(&context.pool, &class).await;
         let template_id = create_template(
             &context.pool,
-            class.namespace_id,
+            class.collection_id,
             class.id,
             ReportScopeKind::ObjectsInClass,
             "report.csv",
@@ -640,21 +640,21 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn test_run_namespaces_scope_template(#[future(awt)] test_context: TestContext) {
+    async fn test_run_collections_scope_template(#[future(awt)] test_context: TestContext) {
         let context = test_context;
         let classes = create_test_classes(&context, "report_ns_scope").await;
-        let namespace_name = classes.namespace.namespace.name.clone();
+        let collection_name = classes.collection.collection.name.clone();
 
         let template = NewReportTemplate {
-            namespace_id: classes[0].namespace_id,
-            name: "report.namespaces".to_string(),
-            description: "namespace listing".to_string(),
+            collection_id: classes[0].collection_id,
+            name: "report.collections".to_string(),
+            description: "collection listing".to_string(),
             content_type: ReportContentType::TextPlain,
             template: "{% for item in items %}{{ item.name }}\n{% endfor %}".to_string(),
             kind: ReportTemplateKind::Report,
-            scope_kind: Some(ReportScopeKind::Namespaces),
+            scope_kind: Some(ReportScopeKind::Collections),
             class_id: None,
-            default_query: Some(format!("name__equals={namespace_name}")),
+            default_query: Some(format!("name__equals={collection_name}")),
             include: None,
             relation_context: None,
             default_missing_data_policy: None,
@@ -683,7 +683,7 @@ mod tests {
         .await;
         let output = assert_response_status(output, StatusCode::OK).await;
         let body = String::from_utf8(test::read_body(output).await.to_vec()).unwrap();
-        assert_eq!(body, format!("{namespace_name}\n"));
+        assert_eq!(body, format!("{collection_name}\n"));
 
         cleanup(&classes).await;
     }
@@ -695,7 +695,7 @@ mod tests {
         let classes = create_test_classes(&context, "report_cls_scope").await;
 
         let template = NewReportTemplate {
-            namespace_id: classes[0].namespace_id,
+            collection_id: classes[0].collection_id,
             name: "report.classes".to_string(),
             description: "class listing".to_string(),
             content_type: ReportContentType::TextPlain,
@@ -747,7 +747,7 @@ mod tests {
         let relation = create_class_relation(&context.pool, classes[0].id, classes[1].id).await;
 
         let template = NewReportTemplate {
-                namespace_id: classes[0].namespace_id,
+                collection_id: classes[0].collection_id,
                 name: "report.class-relations".to_string(),
                 description: "class relation listing".to_string(),
                 content_type: ReportContentType::TextPlain,
@@ -806,13 +806,13 @@ mod tests {
         let classes = create_test_classes(&context, "report_collection_object_id").await;
 
         let template = NewReportTemplate {
-            namespace_id: classes[0].namespace_id,
-            name: "report.namespaces-no-object".to_string(),
-            description: "namespace listing".to_string(),
+            collection_id: classes[0].collection_id,
+            name: "report.collections-no-object".to_string(),
+            description: "collection listing".to_string(),
             content_type: ReportContentType::TextPlain,
             template: "{% for item in items %}{{ item.name }}{% endfor %}".to_string(),
             kind: ReportTemplateKind::Report,
-            scope_kind: Some(ReportScopeKind::Namespaces),
+            scope_kind: Some(ReportScopeKind::Collections),
             class_id: None,
             default_query: None,
             include: None,
@@ -848,7 +848,7 @@ mod tests {
         let _ = create_report_objects(&context.pool, &class).await;
         let template_id = create_template(
             &context.pool,
-            class.namespace_id,
+            class.collection_id,
             class.id,
             ReportScopeKind::ObjectsInClass,
             "warning-template",
@@ -1087,7 +1087,7 @@ mod tests {
         let class = classes[0].clone();
         let template_id = create_template(
             &context.pool,
-            class.namespace_id,
+            class.collection_id,
             class.id,
             ReportScopeKind::ObjectsInClass,
             "restricted-template",
@@ -1182,22 +1182,22 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let namespace = context.namespace_fixture("report_related_output").await;
+        let collection = context.collection_fixture("report_related_output").await;
         let host_class = create_named_class(
             &context.pool,
-            namespace.namespace.id,
+            collection.collection.id,
             &context.scoped_name("Host"),
         )
         .await;
         let room_class = create_named_class(
             &context.pool,
-            namespace.namespace.id,
+            collection.collection.id,
             &context.scoped_name("Room"),
         )
         .await;
         let person_class = create_named_class(
             &context.pool,
-            namespace.namespace.id,
+            collection.collection.id,
             &context.scoped_name("Person"),
         )
         .await;
@@ -1205,7 +1205,7 @@ mod tests {
         let host = NewHubuumObject {
             name: "host-01".to_string(),
             description: "host".to_string(),
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             hubuum_class_id: host_class.id,
             data: serde_json::json!({}),
         }
@@ -1215,7 +1215,7 @@ mod tests {
         let room = NewHubuumObject {
             name: "room-101".to_string(),
             description: "room".to_string(),
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             hubuum_class_id: room_class.id,
             data: serde_json::json!({}),
         }
@@ -1225,7 +1225,7 @@ mod tests {
         let person = NewHubuumObject {
             name: "alice".to_string(),
             description: "person".to_string(),
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             hubuum_class_id: person_class.id,
             data: serde_json::json!({}),
         }
@@ -1258,7 +1258,7 @@ mod tests {
 
         let template_id = create_template(
             &context.pool,
-            namespace.namespace.id,
+            collection.collection.id,
             host_class.id,
             ReportScopeKind::RelatedObjects,
             "reachable-template",
@@ -1314,7 +1314,7 @@ mod tests {
         assert!(messages.contains(&"Rendering report output"));
         assert!(messages.contains(&"Persisting report output"));
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -1323,22 +1323,22 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let namespace = context.namespace_fixture("report_paths_aliases").await;
+        let collection = context.collection_fixture("report_paths_aliases").await;
         let host_class = create_named_class(
             &context.pool,
-            namespace.namespace.id,
+            collection.collection.id,
             &context.scoped_name("Host"),
         )
         .await;
         let room_class = create_named_class(
             &context.pool,
-            namespace.namespace.id,
+            collection.collection.id,
             &context.scoped_name("Room"),
         )
         .await;
         let person_class = create_named_class(
             &context.pool,
-            namespace.namespace.id,
+            collection.collection.id,
             &context.scoped_name("Person"),
         )
         .await;
@@ -1346,7 +1346,7 @@ mod tests {
         let host = NewHubuumObject {
             name: "host-01".to_string(),
             description: "host".to_string(),
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             hubuum_class_id: host_class.id,
             data: serde_json::json!({}),
         }
@@ -1356,7 +1356,7 @@ mod tests {
         let room_a = NewHubuumObject {
             name: "room-101".to_string(),
             description: "room".to_string(),
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             hubuum_class_id: room_class.id,
             data: serde_json::json!({}),
         }
@@ -1366,7 +1366,7 @@ mod tests {
         let room_b = NewHubuumObject {
             name: "room-102".to_string(),
             description: "room".to_string(),
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             hubuum_class_id: room_class.id,
             data: serde_json::json!({}),
         }
@@ -1376,7 +1376,7 @@ mod tests {
         let person = NewHubuumObject {
             name: "alice".to_string(),
             description: "person".to_string(),
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             hubuum_class_id: person_class.id,
             data: serde_json::json!({}),
         }
@@ -1416,7 +1416,7 @@ mod tests {
 
         let template_id = create_template(
             &context.pool,
-            namespace.namespace.id,
+            collection.collection.id,
             host_class.id,
             ReportScopeKind::RelatedObjects,
             "paths-template",
@@ -1455,7 +1455,7 @@ mod tests {
             "rooms=room-101 room-102 |reachable=alice |paths=[alice via room-101][alice via room-102]"
         );
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -1471,7 +1471,7 @@ mod tests {
         let _ = create_report_objects(&context.pool, &class).await;
         let template_id = create_template(
             &context.pool,
-            class.namespace_id,
+            class.collection_id,
             class.id,
             ReportScopeKind::ObjectsInClass,
             "cleanup-template",
@@ -1580,7 +1580,7 @@ mod tests {
         let _ = create_report_objects(&context.pool, &class).await;
         let template_id = create_template(
             &context.pool,
-            class.namespace_id,
+            class.collection_id,
             class.id,
             ReportScopeKind::ObjectsInClass,
             "expired-template",
@@ -1692,7 +1692,7 @@ mod tests {
         let _ = create_report_objects(&context.pool, &class).await;
         let template_id = create_template(
             &context.pool,
-            class.namespace_id,
+            class.collection_id,
             class.id,
             ReportScopeKind::ObjectsInClass,
             "refinalize-template",
@@ -1790,7 +1790,7 @@ mod tests {
         let _ = create_report_objects(&context.pool, &class).await;
         let template_id = create_template(
             &context.pool,
-            class.namespace_id,
+            class.collection_id,
             class.id,
             ReportScopeKind::ObjectsInClass,
             "oversized-template",
@@ -1826,18 +1826,18 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let namespace = context
-            .namespace_fixture("report_multiroot_hydration")
+        let collection = context
+            .collection_fixture("report_multiroot_hydration")
             .await;
         let host_class = create_named_class(
             &context.pool,
-            namespace.namespace.id,
+            collection.collection.id,
             &context.scoped_name("MultiHost"),
         )
         .await;
         let room_class = create_named_class(
             &context.pool,
-            namespace.namespace.id,
+            collection.collection.id,
             &context.scoped_name("MultiRoom"),
         )
         .await;
@@ -1845,7 +1845,7 @@ mod tests {
         let make_object = |name: &str, class_id: i32| NewHubuumObject {
             name: name.to_string(),
             description: "obj".to_string(),
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             hubuum_class_id: class_id,
             data: serde_json::json!({}),
         };
@@ -1883,7 +1883,7 @@ mod tests {
             .await;
 
         let template = NewReportTemplate {
-                namespace_id: namespace.namespace.id,
+                collection_id: collection.collection.id,
                 name: "multiroot-template".to_string(),
                 description: "report template".to_string(),
                 content_type: ReportContentType::TextPlain,
@@ -1925,7 +1925,7 @@ mod tests {
         // Each host shows only its own room — no cross-root leakage from the batched fetch.
         assert_eq!(rendered, "host-a:room-a,;host-b:room-b,;");
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     // Pins the include path's `sort` option, which the unified SQL builder now threads through
@@ -1937,23 +1937,23 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let namespace = context.namespace_fixture("report_include_sort").await;
+        let collection = context.collection_fixture("report_include_sort").await;
         let host_class = create_named_class(
             &context.pool,
-            namespace.namespace.id,
+            collection.collection.id,
             &context.scoped_name("SortHost"),
         )
         .await;
         let room_class = create_named_class(
             &context.pool,
-            namespace.namespace.id,
+            collection.collection.id,
             &context.scoped_name("SortRoom"),
         )
         .await;
         let host = NewHubuumObject {
             name: "sort-host".to_string(),
             description: "host".to_string(),
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             hubuum_class_id: host_class.id,
             data: serde_json::json!({}),
         }
@@ -1968,7 +1968,7 @@ mod tests {
                 NewHubuumObject {
                     name: name.to_string(),
                     description: "room".to_string(),
-                    namespace_id: namespace.namespace.id,
+                    collection_id: collection.collection.id,
                     hubuum_class_id: room_class.id,
                     data: serde_json::json!({}),
                 }
@@ -2058,7 +2058,7 @@ mod tests {
             vec!["room-zulu", "room-alpha", "room-mike"]
         );
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     // Ignored benchmark: prints hydration_duration_ms for templated ObjectsInClass reports at
@@ -2069,16 +2069,16 @@ mod tests {
     #[ignore]
     async fn bench_objects_in_class_hydration_scaling(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let namespace = context.namespace_fixture("report_hydration_bench").await;
+        let collection = context.collection_fixture("report_hydration_bench").await;
         let host_class = create_named_class(
             &context.pool,
-            namespace.namespace.id,
+            collection.collection.id,
             &context.scoped_name("BenchHost"),
         )
         .await;
         let room_class = create_named_class(
             &context.pool,
-            namespace.namespace.id,
+            collection.collection.id,
             &context.scoped_name("BenchRoom"),
         )
         .await;
@@ -2092,7 +2092,7 @@ mod tests {
         .await
         .unwrap();
         let template = NewReportTemplate {
-                namespace_id: namespace.namespace.id,
+                collection_id: collection.collection.id,
                 name: "bench-template".to_string(),
                 description: "report template".to_string(),
                 content_type: ReportContentType::TextPlain,
@@ -2119,7 +2119,7 @@ mod tests {
                 let host = NewHubuumObject {
                     name: format!("bench-host-{index:04}"),
                     description: "host".to_string(),
-                    namespace_id: namespace.namespace.id,
+                    collection_id: collection.collection.id,
                     hubuum_class_id: host_class.id,
                     data: serde_json::json!({}),
                 }
@@ -2130,7 +2130,7 @@ mod tests {
                     let room = NewHubuumObject {
                         name: format!("bench-room-{index:04}-{room_index}"),
                         description: "room".to_string(),
-                        namespace_id: namespace.namespace.id,
+                        collection_id: collection.collection.id,
                         hubuum_class_id: room_class.id,
                         data: serde_json::json!({}),
                     }
@@ -2184,6 +2184,6 @@ mod tests {
         }
         println!();
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 }

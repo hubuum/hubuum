@@ -431,8 +431,8 @@ impl ParsedQueryParam {
         self.field == FilterField::Permissions
     }
 
-    pub fn is_namespace(&self) -> bool {
-        self.field == FilterField::Namespaces
+    pub fn is_collection(&self) -> bool {
+        self.field == FilterField::Collections
     }
 
     pub fn is_json_schema(&self) -> bool {
@@ -1000,10 +1000,10 @@ pub trait QueryParamsExt {
     /// * A PermissionsList of Permissions or ApiError::BadRequest if the permissions are invalid
     fn permissions(&self) -> Result<PermissionsList<Permissions>, ApiError>;
 
-    /// ## Get a sorted list of namespace ids from a list of parsed query parameters
+    /// ## Get a sorted list of collection ids from a list of parsed query parameters
     ///
-    /// Iterate over the parsed query parameters and filter out the ones that are namespaces,
-    /// defined as having the `field` set as "namespaces". For each value of each parsed query
+    /// Iterate over the parsed query parameters and filter out the ones that are collections,
+    /// defined as having the `field` set as "collections". For each value of each parsed query
     /// parameter, attempt to parse it into a list integers via [`parse_integer_list`].
     ///
     /// If the value is not a valid list of integers, return an ApiError::BadRequest.
@@ -1012,8 +1012,8 @@ pub trait QueryParamsExt {
     ///
     /// ### Returns
     ///
-    /// * A vector of integers or ApiError::BadRequest if any of the namespace values are invalid
-    fn namespaces(&self) -> Result<Vec<i32>, ApiError>;
+    /// * A vector of integers or ApiError::BadRequest if any of the collection values are invalid
+    fn collections(&self) -> Result<Vec<i32>, ApiError>;
 
     /// ## Get a list of all JSON Schema elements in a list of parsed query parameters
     ///
@@ -1093,18 +1093,18 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
         }
         Ok(PermissionsList::new(unique_permissions))
     }
-    /// ## Get a sorted list of namespace ids from a list of parsed query parameters
+    /// ## Get a sorted list of collection ids from a list of parsed query parameters
     ///
-    /// Iterate over the parsed query parameters and filter out the ones that are namespaces,
-    /// defined as having the `field` set as "namespaces". For each value of a matching parsed query
+    /// Iterate over the parsed query parameters and filter out the ones that are collections,
+    /// defined as having the `field` set as "collections". For each value of a matching parsed query
     /// parameter, attempt to parse it into a list of integers via [`parse_integer_list`].
     ///
     /// If any value is not a valid list of integers, return an ApiError::BadRequest.
-    fn namespaces(&self) -> Result<Vec<i32>, ApiError> {
+    fn collections(&self) -> Result<Vec<i32>, ApiError> {
         let mut nids = vec![];
 
         for p in self.iter() {
-            if p.field == FilterField::Namespaces {
+            if p.field == FilterField::Collections {
                 nids.extend(p.value.as_integer()?);
             }
         }
@@ -1801,8 +1801,8 @@ macro_rules! filter_fields {
 
 filter_fields!(
     (Id, "id"),
-    (Namespaces, "namespaces"),
-    (NamespaceId, "namespace_id"),
+    (Collections, "collections"),
+    (CollectionId, "collection_id"),
     (Name, "name"),
     (Groupname, "groupname"),
     (Username, "username"),
@@ -1837,8 +1837,8 @@ filter_fields!(
     (ClassFrom, "from_classes"),
     (ClassToName, "to_class_name"),
     (ClassFromName, "from_class_name"),
-    (NamespacesFrom, "from_namespaces"),
-    (NamespacesTo, "to_namespaces"),
+    (CollectionsFrom, "from_collections"),
+    (CollectionsTo, "to_collections"),
     (JsonDataFrom, "from_json_data"),
     (JsonDataTo, "to_json_data"),
     (CreatedAtFrom, "from_created_at"),

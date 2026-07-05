@@ -12,7 +12,7 @@ use crate::traits::BackendContext;
 pub struct HubuumClass {
     pub id: i32,
     pub name: String,
-    pub namespace_id: i32,
+    pub collection_id: i32,
     pub json_schema: Option<serde_json::Value>,
     pub validate_schema: bool,
     pub description: String,
@@ -25,7 +25,7 @@ pub struct HubuumClass {
 #[diesel(table_name = hubuumclass)]
 pub struct NewHubuumClass {
     pub name: String,
-    pub namespace_id: i32,
+    pub collection_id: i32,
     pub json_schema: Option<serde_json::Value>,
     pub validate_schema: Option<bool>,
     pub description: String,
@@ -36,7 +36,7 @@ pub struct NewHubuumClass {
 #[diesel(table_name = hubuumclass)]
 pub struct UpdateHubuumClass {
     pub name: Option<String>,
-    pub namespace_id: Option<i32>,
+    pub collection_id: Option<i32>,
     pub json_schema: Option<serde_json::Value>,
     pub validate_schema: Option<bool>,
     pub description: Option<String>,
@@ -46,7 +46,7 @@ pub struct UpdateHubuumClass {
 pub struct HubuumClassWithPath {
     pub id: i32,
     pub name: String,
-    pub namespace_id: i32,
+    pub collection_id: i32,
     pub json_schema: Option<serde_json::Value>,
     pub validate_schema: bool,
     pub description: String,
@@ -105,7 +105,7 @@ where
 fn new_hubuum_class_example() -> NewHubuumClass {
     NewHubuumClass {
         name: "server".to_string(),
-        namespace_id: 1,
+        collection_id: 1,
         json_schema: None,
         validate_schema: Some(false),
         description: "Server inventory class".to_string(),
@@ -116,7 +116,7 @@ fn new_hubuum_class_example() -> NewHubuumClass {
 fn update_hubuum_class_example() -> UpdateHubuumClass {
     UpdateHubuumClass {
         name: Some("server".to_string()),
-        namespace_id: Some(1),
+        collection_id: Some(1),
         json_schema: None,
         validate_schema: Some(true),
         description: Some("Validated server inventory class".to_string()),
@@ -128,7 +128,7 @@ fn update_hubuum_class_example() -> UpdateHubuumClass {
 pub struct HubuumClassHistory {
     pub id: i32,
     pub name: String,
-    pub namespace_id: i32,
+    pub collection_id: i32,
     pub json_schema: Option<serde_json::Value>,
     pub validate_schema: bool,
     pub description: String,
@@ -148,9 +148,9 @@ pub mod tests {
     use super::*;
     use crate::db::DbPool;
     use crate::models::class::HubuumClass;
-    use crate::models::namespace::Namespace;
+    use crate::models::collection::Collection;
     use crate::tests::TestScope;
-    use crate::traits::{CanDelete, CanSave, CanUpdate, ClassAccessors, NamespaceAccessors};
+    use crate::traits::{CanDelete, CanSave, CanUpdate, ClassAccessors, CollectionAccessors};
 
     pub async fn verify_no_such_class(pool: &DbPool, id: i32) {
         match HubuumClassID(id).class(pool).await {
@@ -168,12 +168,12 @@ pub mod tests {
 
     pub async fn create_class(
         pool: &DbPool,
-        namespace: &Namespace,
+        collection: &Collection,
         class_name: &str,
     ) -> HubuumClass {
         let class = NewHubuumClass {
             name: class_name.to_string(),
-            namespace_id: namespace.id,
+            collection_id: collection.id,
             json_schema: None,
             validate_schema: None,
             description: "test".to_string(),
@@ -187,15 +187,15 @@ pub mod tests {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
 
-        let namespace = scope.namespace_fixture("test").await;
+        let collection = scope.collection_fixture("test").await;
         //        let admin_group = ensure_admin_group(&pool).await;
 
         let class_name = "test_creating_class";
-        let class = create_class(&pool, &namespace.namespace, class_name).await;
+        let class = create_class(&pool, &collection.collection, class_name).await;
 
         assert_eq!(
-            class.namespace_id(&pool).await.unwrap().id(),
-            namespace.namespace.id
+            class.collection_id(&pool).await.unwrap().id(),
+            collection.collection.id
         );
         assert_eq!(class.name, class_name);
         assert_eq!(class.description, "test");
@@ -205,8 +205,8 @@ pub mod tests {
 
         assert_eq!(fetched_class, class);
 
-        // Deleting the namespace should cascade away the class
-        namespace.cleanup().await.unwrap();
+        // Deleting the collection should cascade away the class
+        collection.cleanup().await.unwrap();
         verify_no_such_class(&pool, class.id).await;
     }
 
@@ -214,12 +214,12 @@ pub mod tests {
     async fn test_updating_class_and_deleting_it() {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
-        let namespace = scope.namespace_fixture("updating_class").await;
-        let class = create_class(&pool, &namespace.namespace, "test_updating_class").await;
+        let collection = scope.collection_fixture("updating_class").await;
+        let class = create_class(&pool, &collection.collection, "test_updating_class").await;
 
         let update = UpdateHubuumClass {
             name: Some("test update 2".to_string()),
-            namespace_id: None,
+            collection_id: None,
             json_schema: None,
             validate_schema: None,
             description: None,
@@ -229,7 +229,7 @@ pub mod tests {
 
         assert_eq!(updated_class.id, class.id);
         assert_eq!(updated_class.name, "test update 2");
-        assert_eq!(updated_class.namespace_id, class.namespace_id);
+        assert_eq!(updated_class.collection_id, class.collection_id);
         assert_eq!(updated_class.json_schema, class.json_schema);
         assert_eq!(updated_class.validate_schema, class.validate_schema);
         assert_eq!(updated_class.description, class.description);
@@ -237,17 +237,17 @@ pub mod tests {
         updated_class.delete_without_events(&pool).await.unwrap();
         verify_no_such_class(&pool, class.id).await;
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     #[actix_rt::test]
     async fn test_saving_after_changing_class() {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
-        let namespace = scope
-            .namespace_fixture("test_saving_after_changing_class")
+        let collection = scope
+            .collection_fixture("test_saving_after_changing_class")
             .await;
-        let mut class = create_class(&pool, &namespace.namespace, "test saving").await;
+        let mut class = create_class(&pool, &collection.collection, "test saving").await;
 
         class.description = "new description".to_string();
         class.save_without_events(&pool).await.unwrap();
@@ -256,7 +256,7 @@ pub mod tests {
 
         assert_eq!(fetched_class.description, "new description");
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
         verify_no_such_class(&pool, class.id).await;
     }
 }

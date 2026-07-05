@@ -1,13 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::models::{
-    HubuumClass, HubuumObject, ImportClassInput, ImportClassRelationInput, ImportNamespaceInput,
-    ImportNamespacePermissionInput, ImportObjectInput, ImportObjectRelationInput, Namespace,
-    NewImportTaskResultRecord, Permissions, TaskStatus,
+    Collection, HubuumClass, HubuumObject, ImportClassInput, ImportClassRelationInput,
+    ImportCollectionInput, ImportCollectionPermissionInput, ImportObjectInput,
+    ImportObjectRelationInput, NewImportTaskResultRecord, Permissions, TaskStatus,
 };
 
 #[derive(Clone)]
-pub(super) struct NamespaceResolution {
+pub(super) struct CollectionResolution {
     pub(super) id: i32,
     pub(super) name: String,
     pub(super) description: String,
@@ -18,7 +18,7 @@ pub(super) struct NamespaceResolution {
 pub(super) struct ClassResolution {
     pub(super) id: i32,
     pub(super) name: String,
-    pub(super) namespace_id: i32,
+    pub(super) collection_id: i32,
     pub(super) json_schema: Option<serde_json::Value>,
     pub(super) validate_schema: bool,
     pub(super) exists_in_db: bool,
@@ -28,7 +28,7 @@ pub(super) struct ClassResolution {
 pub(super) struct ObjectResolution {
     pub(super) id: i32,
     pub(super) name: String,
-    pub(super) namespace_id: i32,
+    pub(super) collection_id: i32,
     pub(super) class_id: i32,
     pub(super) exists_in_db: bool,
 }
@@ -38,17 +38,17 @@ pub(super) struct PlanningState {
     pub(super) next_temp_id: i32,
     pub(super) is_admin: Option<bool>,
     /// Submitting token's scope boundary (`None` = unscoped). Threaded into the
-    /// per-namespace permission checks so a scoped import cannot exceed it.
+    /// per-collection permission checks so a scoped import cannot exceed it.
     pub(super) scopes: Option<Vec<crate::models::Permissions>>,
-    pub(super) planned_namespace_names: HashSet<String>,
+    pub(super) planned_collection_names: HashSet<String>,
     pub(super) planned_class_keys: HashSet<(i32, String)>,
     pub(super) planned_object_keys: HashSet<(i32, String)>,
-    pub(super) missing_namespace_names: HashSet<String>,
+    pub(super) missing_collection_names: HashSet<String>,
     pub(super) missing_class_keys: HashSet<(i32, String)>,
     pub(super) missing_object_keys: HashSet<(i32, String)>,
-    pub(super) namespaces_by_ref: HashMap<String, NamespaceResolution>,
-    pub(super) namespaces_by_name: HashMap<String, NamespaceResolution>,
-    pub(super) namespaces_by_id: HashMap<i32, NamespaceResolution>,
+    pub(super) collections_by_ref: HashMap<String, CollectionResolution>,
+    pub(super) collections_by_name: HashMap<String, CollectionResolution>,
+    pub(super) collections_by_id: HashMap<i32, CollectionResolution>,
     pub(super) classes_by_ref: HashMap<String, ClassResolution>,
     pub(super) classes_by_key: HashMap<(i32, String), ClassResolution>,
     pub(super) objects_by_ref: HashMap<String, ObjectResolution>,
@@ -57,7 +57,7 @@ pub(super) struct PlanningState {
     pub(super) object_relations: HashSet<(i32, i32)>,
     pub(super) class_relation_exists_cache: HashMap<(i32, i32), bool>,
     pub(super) object_relation_exists_cache: HashMap<(i32, i32), bool>,
-    pub(super) namespace_permission_cache: HashMap<(i32, Permissions), Result<(), String>>,
+    pub(super) collection_permission_cache: HashMap<(i32, Permissions), Result<(), String>>,
 }
 
 impl PlanningState {
@@ -77,7 +77,7 @@ impl PlanningState {
 
 #[derive(Default)]
 pub(super) struct RuntimeState {
-    pub(super) namespaces_by_ref: HashMap<String, Namespace>,
+    pub(super) collections_by_ref: HashMap<String, Collection>,
     pub(super) classes_by_ref: HashMap<String, HubuumClass>,
     pub(super) objects_by_ref: HashMap<String, HubuumObject>,
 }
@@ -99,10 +99,10 @@ pub(super) enum WorkerLoopAction {
 
 #[derive(Clone, Debug)]
 pub(super) enum PlannedExecution {
-    CreateNamespace(ImportNamespaceInput),
-    UpdateNamespace {
-        namespace_id: i32,
-        input: ImportNamespaceInput,
+    CreateCollection(ImportCollectionInput),
+    UpdateCollection {
+        collection_id: i32,
+        input: ImportCollectionInput,
     },
     CreateClass(ImportClassInput),
     UpdateClass {
@@ -116,7 +116,7 @@ pub(super) enum PlannedExecution {
     },
     CreateClassRelation(ImportClassRelationInput),
     CreateObjectRelation(ImportObjectRelationInput),
-    ApplyNamespacePermissions(ImportNamespacePermissionInput),
+    ApplyCollectionPermissions(ImportCollectionPermissionInput),
 }
 
 #[derive(Clone, Debug)]

@@ -127,17 +127,17 @@ async fn audit_templates(
     let mut failures = Vec::new();
 
     for template in templates {
-        let namespace_templates = template.namespace_siblings(&pool).await?;
+        let collection_templates = template.collection_siblings(&pool).await?;
         if let Err(error) = validate_template_with_limits(
             &template.name,
             &template.template,
-            template.namespace_id,
-            &namespace_templates,
+            template.collection_id,
+            &collection_templates,
             template.content_type,
             report_template_recursion_limit,
             report_template_fuel,
         ) {
-            failures.push((template.namespace_id, template.name, error.to_string()));
+            failures.push((template.collection_id, template.name, error.to_string()));
         }
     }
 
@@ -146,8 +146,8 @@ async fn audit_templates(
         return Ok(());
     }
 
-    for (namespace_id, template_name, error) in &failures {
-        println!("namespace={namespace_id} template={template_name}: {error}");
+    for (collection_id, template_name, error) in &failures {
+        println!("collection={collection_id} template={template_name}: {error}");
     }
 
     Err(ApiError::BadRequest(format!(

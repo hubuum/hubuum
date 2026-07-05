@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::errors::ApiError;
-use crate::models::{HubuumClassExpanded, HubuumObject, Namespace, Permissions};
+use crate::models::{Collection, HubuumClassExpanded, HubuumObject, Permissions};
 use crate::pagination::{page_limits, validate_page_limit_with_max};
 use crate::traits::BackendContext;
 use crate::utilities::extensions::CustomStringExtensions;
@@ -16,7 +16,7 @@ use crate::utilities::extensions::CustomStringExtensions;
 )]
 #[serde(rename_all = "lowercase")]
 pub enum UnifiedSearchKind {
-    Namespace,
+    Collection,
     Class,
     Object,
 }
@@ -24,7 +24,7 @@ pub enum UnifiedSearchKind {
 impl UnifiedSearchKind {
     pub fn batch_key(self) -> &'static str {
         match self {
-            Self::Namespace => "namespaces",
+            Self::Collection => "collections",
             Self::Class => "classes",
             Self::Object => "objects",
         }
@@ -36,7 +36,7 @@ impl FromStr for UnifiedSearchKind {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "namespace" => Ok(Self::Namespace),
+            "collection" => Ok(Self::Collection),
             "class" => Ok(Self::Class),
             "object" => Ok(Self::Object),
             _ => Err(ApiError::BadRequest(format!(
@@ -64,7 +64,7 @@ pub struct UnifiedSearchQuery {
     pub limit_per_kind: usize,
     pub search_class_schema: bool,
     pub search_object_data: bool,
-    namespace_cursor: Option<UnifiedSearchCursorToken>,
+    collection_cursor: Option<UnifiedSearchCursorToken>,
     class_cursor: Option<UnifiedSearchCursorToken>,
     object_cursor: Option<UnifiedSearchCursorToken>,
 }
@@ -83,7 +83,7 @@ struct UnifiedSearchQueryParts {
     limit_per_kind: Option<usize>,
     search_class_schema: Option<bool>,
     search_object_data: Option<bool>,
-    namespace_cursor: Option<UnifiedSearchCursorToken>,
+    collection_cursor: Option<UnifiedSearchCursorToken>,
     class_cursor: Option<UnifiedSearchCursorToken>,
     object_cursor: Option<UnifiedSearchCursorToken>,
 }
@@ -99,7 +99,7 @@ impl UnifiedSearchQuery {
 
     fn cursor_for(&self, kind: UnifiedSearchKind) -> Option<&UnifiedSearchCursorToken> {
         match kind {
-            UnifiedSearchKind::Namespace => self.namespace_cursor.as_ref(),
+            UnifiedSearchKind::Collection => self.collection_cursor.as_ref(),
             UnifiedSearchKind::Class => self.class_cursor.as_ref(),
             UnifiedSearchKind::Object => self.object_cursor.as_ref(),
         }
@@ -118,14 +118,14 @@ impl From<&UnifiedSearchQuery> for UnifiedSearchSpec {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UnifiedSearchResults {
-    pub namespaces: Vec<Namespace>,
+    pub collections: Vec<Collection>,
     pub classes: Vec<HubuumClassExpanded>,
     pub objects: Vec<HubuumObject>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UnifiedSearchNext {
-    pub namespaces: Option<String>,
+    pub collections: Option<String>,
     pub classes: Option<String>,
     pub objects: Option<String>,
 }
@@ -140,7 +140,7 @@ pub struct UnifiedSearchResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UnifiedSearchBatchResponse {
     pub kind: String,
-    pub namespaces: Vec<Namespace>,
+    pub collections: Vec<Collection>,
     pub classes: Vec<HubuumClassExpanded>,
     pub objects: Vec<HubuumObject>,
     pub next: Option<String>,
@@ -236,9 +236,9 @@ impl UnifiedSearchQueryParts {
                 reject_duplicate(&self.search_object_data, "search_object_data")?;
                 self.search_object_data = Some(value.as_boolean()?);
             }
-            "cursor_namespaces" => {
-                reject_duplicate(&self.namespace_cursor, "cursor_namespaces")?;
-                self.namespace_cursor = Some(decode_cursor(&value)?);
+            "cursor_collections" => {
+                reject_duplicate(&self.collection_cursor, "cursor_collections")?;
+                self.collection_cursor = Some(decode_cursor(&value)?);
             }
             "cursor_classes" => {
                 reject_duplicate(&self.class_cursor, "cursor_classes")?;
@@ -272,7 +272,7 @@ impl UnifiedSearchQueryParts {
             limit_per_kind,
             search_class_schema: self.search_class_schema.unwrap_or(false),
             search_object_data: self.search_object_data.unwrap_or(false),
-            namespace_cursor: self.namespace_cursor,
+            collection_cursor: self.collection_cursor,
             class_cursor: self.class_cursor,
             object_cursor: self.object_cursor,
         })
@@ -305,7 +305,7 @@ pub fn parse_unified_search_query_with_limits(
 
 fn default_kinds() -> BTreeSet<UnifiedSearchKind> {
     BTreeSet::from([
-        UnifiedSearchKind::Namespace,
+        UnifiedSearchKind::Collection,
         UnifiedSearchKind::Class,
         UnifiedSearchKind::Object,
     ])
@@ -421,19 +421,19 @@ fn object_value_matches(value: &serde_json::Value, query_lower: &str) -> bool {
     }
 }
 
-async fn search_namespaces<C, S>(
+async fn search_collections<C, S>(
     user: &S,
     backend: &C,
     params: &UnifiedSearchQuery,
     search_spec: &UnifiedSearchSpec,
     scopes: Option<&[Permissions]>,
-) -> Result<SearchPage<Namespace>, ApiError>
+) -> Result<SearchPage<Collection>, ApiError>
 where
     C: BackendContext + ?Sized,
     S: crate::traits::Search + ?Sized,
 {
     let rows = user
-        .search_unified_namespaces(backend, search_spec, scopes)
+        .search_unified_collections(backend, search_spec, scopes)
         .await?;
     if rows.is_empty() {
         return Ok(SearchPage {
@@ -446,18 +446,23 @@ where
 
     let scored = rows
         .into_iter()
-        .filter_map(|namespace| {
-            let rank = compute_rank(&namespace.name, &namespace.description, &query_lower, false)?;
+        .filter_map(|collection| {
+            let rank = compute_rank(
+                &collection.name,
+                &collection.description,
+                &query_lower,
+                false,
+            )?;
             Some((
-                cursor_for_item(namespace.id, &namespace.name, rank),
-                namespace,
+                cursor_for_item(collection.id, &collection.name, rank),
+                collection,
             ))
         })
         .collect();
 
     paginate_scored(
         scored,
-        params.cursor_for(UnifiedSearchKind::Namespace),
+        params.cursor_for(UnifiedSearchKind::Collection),
         params.limit_per_kind,
     )
 }
@@ -557,8 +562,8 @@ where
     S: crate::traits::Search + ?Sized,
 {
     let search_spec = params.search_spec();
-    let namespaces = if params.includes(UnifiedSearchKind::Namespace) {
-        search_namespaces(user, backend, params, &search_spec, scopes).await?
+    let collections = if params.includes(UnifiedSearchKind::Collection) {
+        search_collections(user, backend, params, &search_spec, scopes).await?
     } else {
         SearchPage {
             items: vec![],
@@ -587,12 +592,12 @@ where
     Ok(UnifiedSearchResponse {
         query: params.query.clone(),
         results: UnifiedSearchResults {
-            namespaces: namespaces.items,
+            collections: collections.items,
             classes: classes.items,
             objects: objects.items,
         },
         next: UnifiedSearchNext {
-            namespaces: namespaces.next,
+            collections: collections.next,
             classes: classes.next,
             objects: objects.next,
         },
@@ -612,11 +617,11 @@ where
 {
     let search_spec = params.search_spec();
     match kind {
-        UnifiedSearchKind::Namespace => {
-            let page = search_namespaces(user, backend, params, &search_spec, scopes).await?;
+        UnifiedSearchKind::Collection => {
+            let page = search_collections(user, backend, params, &search_spec, scopes).await?;
             Ok(UnifiedSearchBatchResponse {
                 kind: kind.batch_key().to_string(),
-                namespaces: page.items,
+                collections: page.items,
                 classes: vec![],
                 objects: vec![],
                 next: page.next,
@@ -626,7 +631,7 @@ where
             let page = search_classes(user, backend, params, &search_spec, scopes).await?;
             Ok(UnifiedSearchBatchResponse {
                 kind: kind.batch_key().to_string(),
-                namespaces: vec![],
+                collections: vec![],
                 classes: page.items,
                 objects: vec![],
                 next: page.next,
@@ -636,7 +641,7 @@ where
             let page = search_objects(user, backend, params, &search_spec, scopes).await?;
             Ok(UnifiedSearchBatchResponse {
                 kind: kind.batch_key().to_string(),
-                namespaces: vec![],
+                collections: vec![],
                 classes: vec![],
                 objects: page.items,
                 next: page.next,
@@ -654,7 +659,7 @@ mod tests {
         let parsed = parse_unified_search_query("q=server").unwrap();
         assert_eq!(parsed.query, "server");
         assert_eq!(parsed.limit_per_kind, page_limits().unwrap().0);
-        assert!(parsed.includes(UnifiedSearchKind::Namespace));
+        assert!(parsed.includes(UnifiedSearchKind::Collection));
         assert!(parsed.includes(UnifiedSearchKind::Class));
         assert!(parsed.includes(UnifiedSearchKind::Object));
         assert!(!parsed.search_class_schema);
@@ -673,7 +678,7 @@ mod tests {
             "q=server&kinds=class,object&limit_per_kind=5&search_class_schema=true&search_object_data=true&cursor_classes={cursor}"
         ))
         .unwrap();
-        assert!(!parsed.includes(UnifiedSearchKind::Namespace));
+        assert!(!parsed.includes(UnifiedSearchKind::Collection));
         assert!(parsed.includes(UnifiedSearchKind::Class));
         assert!(parsed.includes(UnifiedSearchKind::Object));
         assert!(parsed.search_class_schema);

@@ -19,38 +19,38 @@ Notes:
 | `/api/v1/iam/groups/{group_id}/members` | `id`, `name`, `created_at`, `updated_at` | `id`, `name`, `created_at`, `updated_at` | `id.asc` | members are principals; each row carries `principal_id`, `kind` (human/service_account), and `name` (`username` is accepted as an alias for `name`) |
 | `/api/v1/iam/principals/{principal_id}/tokens` | `id`, `name`, `issued_at`, `expires_at`, `last_used_at` | `id`, `name`, `issued_at`, `expires_at`, `last_used_at` | `issued_at.desc`, `id.asc` | `name` is the token's label, never the secret; `id` is the stable tie-breaker |
 
-## Namespaces and permissions
+## Collections and permissions
 
 | Endpoints | Filter fields | Sort fields | Default sort | Notes |
 | --- | --- | --- | --- | --- |
-| `/api/v1/namespaces` | `id`, `name`, `description`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `description`, `created_at`, `updated_at` | `id.asc` | `permissions` narrows the namespaces to those where the caller has the named permission |
-| `/api/v1/namespaces/{namespace_id}/permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at` | `id.asc` | returns `GroupPermission` rows |
-| `/api/v1/namespaces/{namespace_id}/permissions/principal/{principal_id}` | `id`, `name`, `groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at` | `id.asc` | constrained to one namespace and one principal's memberships (human or service account) |
-| `/api/v1/namespaces/{namespace_id}/has_permissions/{permission}` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id.asc` | path permission already narrows the result set |
-| `/api/v1/remote-targets` | `id`, `name`, `description`, `namespace_id`, `namespaces`, `kind`, `created_at`, `updated_at` | `id`, `name`, `description`, `namespace_id`, `created_at`, `updated_at` | `id.asc` | `kind` filters the target HTTP method; results are scoped to namespaces where the caller has `ReadRemoteTarget` |
+| `/api/v1/collections` | `id`, `name`, `description`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `description`, `created_at`, `updated_at` | `id.asc` | `permissions` narrows the collections to those where the caller has the named permission |
+| `/api/v1/collections/{collection_id}/permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at` | `id.asc` | returns `GroupPermission` rows |
+| `/api/v1/collections/{collection_id}/permissions/principal/{principal_id}` | `id`, `name`, `groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at` | `id.asc` | constrained to one collection and one principal's memberships (human or service account) |
+| `/api/v1/collections/{collection_id}/has_permissions/{permission}` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id.asc` | path permission already narrows the result set |
+| `/api/v1/remote-targets` | `id`, `name`, `description`, `collection_id`, `collections`, `kind`, `created_at`, `updated_at` | `id`, `name`, `description`, `collection_id`, `created_at`, `updated_at` | `id.asc` | `kind` filters the target HTTP method; results are scoped to collections where the caller has `ReadRemoteTarget` |
 
 ## Classes and objects
 
 | Endpoints | Filter fields | Sort fields | Default sort | Notes |
 | --- | --- | --- | --- | --- |
-| `/api/v1/classes` | `id`, `namespaces`, `name`, `description`, `validate_schema`, `json_schema`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `description`, `namespaces`, `namespace_id`, `created_at`, `updated_at` | `id.asc` | `json_schema` is only filterable, not sortable |
-| `/api/v1/classes/{class_id}/` | `id`, `name`, `description`, `namespaces`, `namespace_id`, `classes`, `class_id`, `json_data`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `description`, `namespaces`, `namespace_id`, `classes`, `class_id`, `created_at`, `updated_at` | `id.asc` | path constrains the result to a single class |
-| `/api/v1/classes/{class_id}/permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at` | `id.asc` | namespace permission rows for the class's namespace |
+| `/api/v1/classes` | `id`, `collections`, `name`, `description`, `validate_schema`, `json_schema`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `description`, `collections`, `collection_id`, `created_at`, `updated_at` | `id.asc` | `json_schema` is only filterable, not sortable |
+| `/api/v1/classes/{class_id}/` | `id`, `name`, `description`, `collections`, `collection_id`, `classes`, `class_id`, `json_data`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `description`, `collections`, `collection_id`, `classes`, `class_id`, `created_at`, `updated_at` | `id.asc` | path constrains the result to a single class |
+| `/api/v1/classes/{class_id}/permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at` | `id.asc` | collection permission rows for the class's collection |
 
 ## Relations
 
 | Endpoints | Filter fields | Sort fields | Default sort | Notes |
 | --- | --- | --- | --- | --- |
 | `/api/v1/relations/classes` | `id`, `from_classes`, `to_classes`, `from_class_name`, `to_class_name`, `created_at`, `updated_at`, `permissions` | `id`, `from_classes`, `to_classes`, `created_at`, `updated_at` | `id.asc` | `from_class_name` and `to_class_name` are filter-only helpers |
-| `/api/v1/relations/objects` | `id`, `class_relation`, `from_objects`, `to_objects`, `created_at`, `updated_at`, `permissions` | `id`, `class_relation`, `from_objects`, `to_objects`, `created_at`, `updated_at` | `id.asc` | permission filters narrow the namespaces used to scope object relations |
+| `/api/v1/relations/objects` | `id`, `class_relation`, `from_objects`, `to_objects`, `created_at`, `updated_at`, `permissions` | `id`, `class_relation`, `from_objects`, `to_objects`, `created_at`, `updated_at` | `id.asc` | permission filters narrow the collections used to scope object relations |
 
 ## Related resources
 
 | Endpoints | Filter fields | Sort fields | Default sort | Notes |
 | --- | --- | --- | --- | --- |
-| `/api/v1/classes/{class_id}/related/classes` | `id`, `name`, `description`, `namespace_id`, `namespaces`, `class_id`, `classes`, `created_at`, `updated_at`, `from_classes`, `to_classes`, `from_namespaces`, `to_namespaces`, `from_name`, `to_name`, `from_description`, `to_description`, `from_created_at`, `to_created_at`, `from_updated_at`, `to_updated_at`, `depth`, `path` | `id`, `name`, `description`, `namespace_id`, `namespaces`, `class_id`, `classes`, `created_at`, `updated_at`, `from_classes`, `to_classes`, `from_namespaces`, `to_namespaces`, `from_name`, `to_name`, `from_description`, `to_description`, `from_created_at`, `to_created_at`, `from_updated_at`, `to_updated_at`, `depth`, `path` | `path.asc`, `class_id.asc` | returns connected classes with a `path`; sorting and cursor pagination are done against class-closure columns in SQL |
+| `/api/v1/classes/{class_id}/related/classes` | `id`, `name`, `description`, `collection_id`, `collections`, `class_id`, `classes`, `created_at`, `updated_at`, `from_classes`, `to_classes`, `from_collections`, `to_collections`, `from_name`, `to_name`, `from_description`, `to_description`, `from_created_at`, `to_created_at`, `from_updated_at`, `to_updated_at`, `depth`, `path` | `id`, `name`, `description`, `collection_id`, `collections`, `class_id`, `classes`, `created_at`, `updated_at`, `from_classes`, `to_classes`, `from_collections`, `to_collections`, `from_name`, `to_name`, `from_description`, `to_description`, `from_created_at`, `to_created_at`, `from_updated_at`, `to_updated_at`, `depth`, `path` | `path.asc`, `class_id.asc` | returns connected classes with a `path`; sorting and cursor pagination are done against class-closure columns in SQL |
 | `/api/v1/classes/{class_id}/related/relations` | `id`, `from_classes`, `to_classes`, `created_at`, `updated_at` | `id`, `from_classes`, `to_classes`, `created_at`, `updated_at` | `id.asc` | path constrains the result to direct relations touching the class in the URL |
-| `/api/v1/classes/{class_id}/objects/{object_id}/related/objects` | `id`, `name`, `description`, `namespace_id`, `namespaces`, `class_id`, `classes`, `created_at`, `updated_at`, `from_objects`, `to_objects`, `from_classes`, `to_classes`, `from_namespaces`, `to_namespaces`, `from_name`, `to_name`, `from_description`, `to_description`, `from_created_at`, `to_created_at`, `from_updated_at`, `to_updated_at`, `from_json_data`, `to_json_data`, `depth`, `path` | `id`, `name`, `description`, `namespace_id`, `namespaces`, `class_id`, `classes`, `created_at`, `updated_at`, `from_objects`, `to_objects`, `from_classes`, `to_classes`, `from_namespaces`, `to_namespaces`, `from_name`, `to_name`, `from_description`, `to_description`, `from_created_at`, `to_created_at`, `from_updated_at`, `to_updated_at`, `depth`, `path` | `path.asc`, `id.asc` | returns connected objects with a `path`; sorting and cursor pagination are done against closure-table/object-join columns in SQL; JSON fields are filter-only; also accepts endpoint-specific `ignore_classes` and `ignore_self_class` result filters |
+| `/api/v1/classes/{class_id}/objects/{object_id}/related/objects` | `id`, `name`, `description`, `collection_id`, `collections`, `class_id`, `classes`, `created_at`, `updated_at`, `from_objects`, `to_objects`, `from_classes`, `to_classes`, `from_collections`, `to_collections`, `from_name`, `to_name`, `from_description`, `to_description`, `from_created_at`, `to_created_at`, `from_updated_at`, `to_updated_at`, `from_json_data`, `to_json_data`, `depth`, `path` | `id`, `name`, `description`, `collection_id`, `collections`, `class_id`, `classes`, `created_at`, `updated_at`, `from_objects`, `to_objects`, `from_classes`, `to_classes`, `from_collections`, `to_collections`, `from_name`, `to_name`, `from_description`, `to_description`, `from_created_at`, `to_created_at`, `from_updated_at`, `to_updated_at`, `depth`, `path` | `path.asc`, `id.asc` | returns connected objects with a `path`; sorting and cursor pagination are done against closure-table/object-join columns in SQL; JSON fields are filter-only; also accepts endpoint-specific `ignore_classes` and `ignore_self_class` result filters |
 | `/api/v1/classes/{class_id}/objects/{object_id}/related/relations` | `id`, `class_relation`, `from_objects`, `to_objects`, `created_at`, `updated_at`, `permissions` | `id`, `class_relation`, `from_objects`, `to_objects`, `created_at`, `updated_at` | `id.asc` | path constrains the result to direct relations touching the object in the URL |
 
 `/api/v1/classes/{class_id}/related/graph` is not a paginated list endpoint. It accepts connected-class filters such as `depth` to define the included neighborhood and returns a graph object containing `classes` and `relations`.
@@ -64,7 +64,7 @@ Common aliases accepted by the parser:
 - `order_by` is an alias for `sort`
 - `name` and `username` both target the user name field on user endpoints
 - `name` and `groupname` both target the group name field on group endpoints
-- `namespaces` and `namespace_id` can both be used for namespace-oriented object and class ordering
+- `collections` and `collection_id` can both be used for collection-oriented object and class ordering
 - `classes` and `class_id` can both be used for class-oriented object ordering
 
 ## Source of truth

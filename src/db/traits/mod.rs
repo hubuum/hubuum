@@ -1,6 +1,7 @@
 pub mod active_tokens;
 pub mod authz;
 pub mod class;
+pub mod collection;
 pub mod event_delivery;
 pub mod event_fanout;
 pub mod event_observability;
@@ -9,7 +10,6 @@ pub mod event_subscription;
 pub mod events;
 pub mod group;
 pub mod is_active;
-pub mod namespace;
 pub mod object;
 pub mod permissions;
 pub mod relations;
@@ -30,8 +30,8 @@ use crate::db::traits::relations::{
 use crate::errors::ApiError;
 use crate::models::search::{ParsedQueryParam, QueryOptions};
 use crate::models::{
-    HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, HubuumObject, HubuumObjectID,
-    HubuumObjectRelation, HubuumObjectTransitiveLink, Namespace, PrincipalToken, User,
+    Collection, HubuumClass, HubuumClassRelation, HubuumClassRelationTransitive, HubuumObject,
+    HubuumObjectID, HubuumObjectRelation, HubuumObjectTransitiveLink, PrincipalToken, User,
 };
 use crate::traits::{GroupAccessors, SelfAccessors};
 
@@ -62,20 +62,20 @@ pub trait ActiveTokens {
     ) -> Result<(Vec<PrincipalToken>, i64), ApiError>;
 }
 
-/// Trait for getting the namespace(s) of a structure from the backend database.
+/// Trait for getting the collection(s) of a structure from the backend database.
 ///
-/// By default, this returns the singular namespace of the structure in question.
-/// For relations, where we have two namespaces (one for each class or object),
-/// the trait is implemented to return a tuple of the two namespaces.
-pub trait GetNamespace<T = Namespace> {
-    async fn namespace_from_backend(&self, pool: &DbPool) -> Result<T, ApiError>;
+/// By default, this returns the singular collection of the structure in question.
+/// For relations, where we have two collections (one for each class or object),
+/// the trait is implemented to return a tuple of the two collections.
+pub trait GetCollection<T = Collection> {
+    async fn collection_from_backend(&self, pool: &DbPool) -> Result<T, ApiError>;
 }
 
 /// Trait for getting the classes(s) of a structure from the backend database.
 ///
 /// By default, this returns the singular class of the structure in question.
 /// For relations, where we have two classes (one for each structure), the
-/// trait is implemented to return a tuple of the two namespaces.
+/// trait is implemented to return a tuple of the two collections.
 pub trait GetClass<T = HubuumClass> {
     async fn class_from_backend(&self, pool: &DbPool) -> Result<T, ApiError>;
 }

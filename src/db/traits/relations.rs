@@ -49,7 +49,7 @@ fn class_relation_metadata(from_class: &HubuumClass, to_class: &HubuumClass) -> 
     serde_json::json!({
         "from_class_id": from_class.id,
         "to_class_id": to_class.id,
-        "related_namespace_ids": [from_class.namespace_id, to_class.namespace_id],
+        "related_collection_ids": [from_class.collection_id, to_class.collection_id],
     })
 }
 
@@ -64,7 +64,7 @@ fn object_relation_metadata(
         "to_object_id": to_object.id,
         "from_class_id": from_object.hubuum_class_id,
         "to_class_id": to_object.hubuum_class_id,
-        "related_namespace_ids": [from_object.namespace_id, to_object.namespace_id],
+        "related_collection_ids": [from_object.collection_id, to_object.collection_id],
     })
 }
 
@@ -515,13 +515,13 @@ where
         // No token context on this internal traversal helper (production related-
         // object endpoints go through the scope-aware `objects_related_to_page`),
         // so this runs with full principal authority.
-        let namespaces = user_can_on_any(pool, self, Permissions::ReadObject, None).await?;
+        let collections = user_can_on_any(pool, self, Permissions::ReadObject, None).await?;
         with_connection(pool, |conn| {
             sql_query("SELECT * FROM get_transitively_linked_objects($1, $2, $3, $4)")
                 .bind::<Integer, _>(source_object.id())
                 .bind::<Integer, _>(target_class.id())
                 .bind::<Array<Integer>, _>(
-                    namespaces.into_iter().map(|n| n.id()).collect::<Vec<_>>(),
+                    collections.into_iter().map(|n| n.id()).collect::<Vec<_>>(),
                 )
                 .bind::<Integer, _>(max_transitive_depth_from_config())
                 .load::<HubuumObjectTransitiveLink>(conn)
@@ -641,8 +641,8 @@ where
                 FilterField::UpdatedAt => {
                     date_search!(base_query, param, operator, obj::updated_at)
                 }
-                FilterField::Namespaces => {
-                    numeric_search!(base_query, param, operator, obj::namespace_id)
+                FilterField::Collections => {
+                    numeric_search!(base_query, param, operator, obj::collection_id)
                 }
                 FilterField::Description => {
                     string_search!(base_query, param, operator, obj::description)

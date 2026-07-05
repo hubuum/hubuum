@@ -88,7 +88,7 @@ Supported forms:
 - `sort=id.asc`
 - `sort=id.desc`
 - `sort=-id`
-- `sort=namespace_id.asc,name.desc`
+- `sort=collection_id.asc,name.desc`
 
 Notes:
 
@@ -124,7 +124,7 @@ Behavior:
 Example:
 
 ```text
-GET /api/v1/classes?namespaces=12&limit=2&sort=id.asc
+GET /api/v1/classes?collections=12&limit=2&sort=id.asc
 ```
 
 Example response header:
@@ -137,7 +137,7 @@ X-Next-Cursor: eyJzb3J0cyI6W3siZmllbGQiOiJpZCIsImRlc2NlbmRpbmciOmZhbHNlfV0sInZhb
 Next page:
 
 ```text
-GET /api/v1/classes?namespaces=12&limit=2&sort=id.asc&cursor=eyJzb3J0cyI6W3siZmllbGQiOiJpZCIsImRlc2NlbmRpbmciOmZhbHNlfV0sInZhbHVlcyI6W3sidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6Mn1dfQ
+GET /api/v1/classes?collections=12&limit=2&sort=id.asc&cursor=eyJzb3J0cyI6W3siZmllbGQiOiJpZCIsImRlc2NlbmRpbmciOmZhbHNlfV0sInZhbHVlcyI6W3sidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6Mn1dfQ
 ```
 
 ## JSON filtering
@@ -316,7 +316,7 @@ The shared query interface is currently used by:
 
 - user lists, user tokens, and user groups
 - group lists and group members
-- namespace lists and namespace permission listings
+- collection lists and collection permission listings
 - class lists, class permissions, connected-class listings, direct class-relation listings, and objects in class
 - global class relation and object relation lists
 - connected-object listings
