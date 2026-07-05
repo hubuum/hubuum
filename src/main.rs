@@ -6,6 +6,7 @@ mod config;
 pub mod db;
 mod errors;
 pub mod events;
+mod exports;
 mod extractors;
 mod logger;
 mod macros;

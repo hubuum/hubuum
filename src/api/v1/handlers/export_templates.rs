@@ -19,6 +19,7 @@ use crate::models::{
     Permissions, TaskResponse, UpdateExportTemplate,
 };
 use crate::pagination::prepare_db_pagination;
+use crate::tasks::idempotency_key_from_headers;
 use crate::traits::{CanDelete, CanSave, CanUpdate, CollectionAccessors, SelfAccessors};
 
 #[utoipa::path(
@@ -202,12 +203,13 @@ pub async fn run_template_export(
     );
 
     let export = template.build_export_request(run)?;
-    let task = crate::api::v1::handlers::exports::submit_export_task(
+    let idempotency_key = idempotency_key_from_headers(req.headers())?;
+    let task = crate::exports::submit_export_task(
         &pool,
         user,
         requestor.scopes(),
         Some(requestor.token_meta.id),
-        req,
+        idempotency_key,
         export,
         Some(template),
     )

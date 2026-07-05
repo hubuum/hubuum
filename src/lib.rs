@@ -6,6 +6,7 @@ pub mod config;
 pub mod db;
 pub mod errors;
 pub mod events;
+pub mod exports;
 pub mod extractors;
 pub mod logger;
 pub mod macros;
