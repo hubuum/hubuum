@@ -2,12 +2,11 @@ use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
-use std::io::{self, Write};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, OnceLock, RwLock};
 
 use hubuum_templates::{
-    MissingValue, MissingValueRecorder, TemplateLimits, register_curated_helpers,
+    MissingValue, MissingValueRecorder, SizeLimitedWriter, TemplateLimits, register_curated_helpers,
 };
 use lru::LruCache;
 use minijinja::value::Value;
@@ -103,54 +102,6 @@ pub fn validate_template_with_limits(
     Ok(())
 }
 
-/// Size-bounded `Write` sink shared by both export output paths. minijinja's
-/// `render_captured_to` (text/html/csv) and `serde_json::to_writer` (JSON) both write into this as
-/// they produce bytes, so an oversized export aborts at the configured byte budget instead of being
-/// fully materialized before the 413. Memory stays bounded by `max_bytes` because writing stops at
-/// the cap. The JSON size check ignores the captured bytes; the template path keeps them via
-/// `into_string`.
-pub struct SizeLimitedWriter {
-    max_bytes: usize,
-    buffer: Vec<u8>,
-    exceeded: bool,
-}
-
-impl SizeLimitedWriter {
-    pub fn new(max_bytes: usize) -> Self {
-        Self {
-            max_bytes,
-            buffer: Vec::new(),
-            exceeded: false,
-        }
-    }
-
-    pub fn exceeded(&self) -> bool {
-        self.exceeded
-    }
-
-    pub fn into_string(self) -> Result<String, ApiError> {
-        String::from_utf8(self.buffer).map_err(|error| {
-            ApiError::InternalServerError(format!("Rendered export was not valid UTF-8: {error}"))
-        })
-    }
-}
-
-impl Write for SizeLimitedWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if self.buffer.len().saturating_add(buf.len()) > self.max_bytes {
-            self.exceeded = true;
-            return Err(io::Error::other("export output limit exceeded"));
-        }
-
-        self.buffer.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
 pub fn render_template(
     template: &ExportTemplate,
     collection_templates: &[ExportTemplate],
@@ -223,7 +174,14 @@ pub fn render_template(
     let warnings = finish_template_warning_capture();
 
     match render_result {
-        Ok(_captured) => Ok((writer.into_string()?, warnings)),
+        Ok(_captured) => Ok((
+            writer.into_string().map_err(|error| {
+                ApiError::InternalServerError(format!(
+                    "Rendered export was not valid UTF-8: {error}"
+                ))
+            })?,
+            warnings,
+        )),
         Err(error) => {
             if writer.exceeded() {
                 return Err(ApiError::PayloadTooLarge(format!(
@@ -474,23 +432,6 @@ mod tests {
     use crate::tests::docs_examples::required_labeled_block;
 
     const TEMPLATE_GUIDE: &str = include_str!("../../docs/export_template_guide.md");
-
-    #[test]
-    fn limited_string_writer_accumulates_under_limit() {
-        let mut writer = SizeLimitedWriter::new(16);
-        writer.write_all(b"hello ").unwrap();
-        writer.write_all(b"world").unwrap();
-        assert!(!writer.exceeded());
-        assert_eq!(writer.into_string().unwrap(), "hello world");
-    }
-
-    #[test]
-    fn limited_string_writer_aborts_over_limit() {
-        let mut writer = SizeLimitedWriter::new(4);
-        let err = writer.write_all(b"toolong").unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::Other);
-        assert!(writer.exceeded());
-    }
 
     fn template(
         id: i32,

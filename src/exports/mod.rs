@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::time::Instant;
 
 use actix_web::{HttpResponse, http::StatusCode};
+use hubuum_templates::SizeLimitedWriter;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -31,7 +32,7 @@ use crate::models::{
 use crate::pagination::page_limits_or_defaults;
 use crate::tasks::{ensure_task_worker_running, request_hash};
 use crate::traits::{AuthzSubject, CollectionAccessors, SelfAccessors};
-use crate::utilities::exporting::{SizeLimitedWriter, render_template};
+use crate::utilities::exporting::render_template;
 
 use crate::models::traits::check_if_object_in_class;
 

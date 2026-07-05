@@ -10,3 +10,10 @@ repository = "https://github.com/hubuum/hubuum"
 chrono = "0.4"
 minijinja = { version = "2", features = ["fuel"] }
 serde_json = "1"
+
+[dev-dependencies]
+iai-callgrind = "0.16.1"
+
+[[bench]]
+name = "size_limited_writer_callgrind"
+harness = false
