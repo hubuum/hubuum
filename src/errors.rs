@@ -10,6 +10,8 @@ use std::num::ParseIntError;
 
 use tracing::{debug, error};
 
+use crate::observability::metrics;
+
 const PUBLIC_INTERNAL_ERROR: &str = "An internal error occurred";
 const PUBLIC_SERVICE_UNAVAILABLE: &str = "Service temporarily unavailable";
 
@@ -168,7 +170,7 @@ impl fmt::Display for ApiError {
 
 impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
-        crate::observability::metrics::api_error(self.class());
+        metrics::api_error(self.class());
         match self {
             ApiError::Conflict(message) => {
                 HttpResponse::Conflict().json(json!({ "error": "Conflict", "message": message}))
@@ -311,7 +313,7 @@ impl From<DieselError> for ApiError {
 /// Ensure that json deserialization errors are exported as a bad request and
 /// that the error itself is returned as json.
 pub fn json_error_handler(err: JsonPayloadError, _: &HttpRequest) -> actix_web::Error {
-    crate::observability::metrics::extraction_failure("json");
+    metrics::extraction_failure("json");
     let error_message = format!("Json deserialize error: {err}");
     ApiError::BadRequest(error_message).into()
 }
@@ -321,7 +323,7 @@ pub fn json_error_handler(err: JsonPayloadError, _: &HttpRequest) -> actix_web::
 /// (e.g. "Invalid collection id '0': must be a positive integer"); this maps that to a `400` so an
 /// invalid id is rejected at the edge as the contract promises.
 pub fn path_error_handler(err: actix_web::error::PathError, _: &HttpRequest) -> actix_web::Error {
-    crate::observability::metrics::extraction_failure("path");
+    metrics::extraction_failure("path");
     ApiError::BadRequest(err.to_string()).into()
 }
 

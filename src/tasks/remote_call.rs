@@ -20,6 +20,7 @@ use crate::models::{
     RemoteInvocationBodyOverride, RemoteInvocationParameters, RemoteTemplateContext,
     StoredRemoteCallTaskPayload, TaskRecord, TaskStatus, authorize_remote_invocation,
 };
+use crate::observability::metrics;
 
 pub(super) async fn execute_remote_call_task(
     pool: &DbPool,
@@ -180,7 +181,7 @@ async fn execute_remote_call(
         Ok(response) => {
             let status = response.status_display();
             let success = response.is_success();
-            crate::observability::metrics::remote_call_finished(
+            metrics::remote_call_finished(
                 target.method.as_str(),
                 status_family(response.status_code()),
                 if success { "success" } else { "failure" },
@@ -242,7 +243,7 @@ async fn record_remote_call_failure(
 ) -> Result<RemoteExecutionOutcome, ApiError> {
     let api_error = outbound_error_to_api_error(error);
     let message = crate::tasks::helpers::sanitize_error_for_storage(&api_error);
-    crate::observability::metrics::remote_call_finished(
+    metrics::remote_call_finished(
         context.method,
         "none",
         remote_error_outcome(&api_error),

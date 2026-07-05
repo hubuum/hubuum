@@ -22,7 +22,7 @@ Use admin JSON/API endpoints for detailed high-cardinality views.
 | Metric | Labels | Description |
 | ------ | ------ | ----------- |
 | `hubuum_http_requests_total` | `method`, `route`, `status_code`, `status_family` | HTTP requests by stable route template or coarse route group |
-| `hubuum_http_request_duration_seconds` | `method`, `route`, `status_code`, `status_family` | HTTP request duration histogram |
+| `hubuum_http_request_duration_seconds` | `method`, `route`, `status_family` | HTTP request duration histogram |
 | `hubuum_http_requests_in_flight` | none | Requests currently being handled |
 | `hubuum_api_errors_total` | `class` | API errors by public error class |
 | `hubuum_extraction_failures_total` | `kind` | JSON and path extraction failures |

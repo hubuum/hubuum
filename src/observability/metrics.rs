@@ -220,12 +220,13 @@ pub fn http_request_started() {
 
 pub fn http_request_finished(method: &str, route: &str, status_code: u16, duration: Duration) {
     if let Some(metrics) = METRICS.get() {
-        let attrs = http_attrs(method, route, status_code);
+        let count_attrs = http_count_attrs(method, route, status_code);
+        let duration_attrs = http_duration_attrs(method, route, status_code);
         metrics.http_in_flight.add(-1, &[]);
-        metrics.http_requests.add(1, &attrs);
+        metrics.http_requests.add(1, &count_attrs);
         metrics
             .http_request_duration
-            .record(duration.as_secs_f64(), &attrs);
+            .record(duration.as_secs_f64(), &duration_attrs);
     }
 }
 
@@ -515,11 +516,19 @@ fn age_seconds(
     timestamp.map(|timestamp| (now - timestamp).num_milliseconds().max(0) as f64 / 1000.0)
 }
 
-fn http_attrs(method: &str, route: &str, status_code: u16) -> [KeyValue; 4] {
+fn http_count_attrs(method: &str, route: &str, status_code: u16) -> [KeyValue; 4] {
     [
         KeyValue::new("method", method.to_string()),
         KeyValue::new("route", route.to_string()),
         KeyValue::new("status_code", i64::from(status_code)),
+        KeyValue::new("status_family", status_family(status_code)),
+    ]
+}
+
+fn http_duration_attrs(method: &str, route: &str, status_code: u16) -> [KeyValue; 3] {
+    [
+        KeyValue::new("method", method.to_string()),
+        KeyValue::new("route", route.to_string()),
         KeyValue::new("status_family", status_family(status_code)),
     ]
 }

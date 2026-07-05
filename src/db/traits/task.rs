@@ -16,6 +16,7 @@ use crate::models::{
     NewTaskEventRecord, NewTaskRecord, TaskEventRecord, TaskID, TaskKind, TaskRecord, TaskResponse,
     TaskResultCounts, TaskStatus,
 };
+use crate::observability::metrics;
 use crate::pagination::{CursorValue, decode_cursor_values, page_limits_or_defaults};
 
 pub struct TaskStateUpdate {
@@ -489,7 +490,7 @@ pub trait TaskBackend: TaskIdentifier {
 impl<T: TaskIdentifier + ?Sized> TaskBackend for T {}
 
 fn record_task_completion_metrics(record: &TaskRecord) {
-    crate::observability::metrics::task_completed(
+    metrics::task_completed(
         &record.kind,
         &record.status,
         duration_between(record.created_at, record.started_at),

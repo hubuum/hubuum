@@ -11,6 +11,7 @@ use tracing::{Instrument, Level, Span, error, field, info, span, warn};
 use uuid::Uuid;
 
 use crate::events::RequestProvenance;
+use crate::observability::metrics;
 
 use super::client_allowlist::{ProxyTrust, extract_client_ip};
 
@@ -159,7 +160,7 @@ where
             ));
 
         let start_time = Instant::now();
-        crate::observability::metrics::http_request_started();
+        metrics::http_request_started();
         let fut = span.in_scope(|| self.service.call(req));
 
         Box::pin(
@@ -168,7 +169,7 @@ where
                     Ok(res) => res,
                     Err(err) => {
                         let elapsed_time = start_time.elapsed();
-                        crate::observability::metrics::http_request_finished(
+                        metrics::http_request_finished(
                             &method,
                             &route,
                             err.as_response_error().status_code().as_u16(),
@@ -220,7 +221,7 @@ where
                 }
 
                 let elapsed_time = start_time.elapsed();
-                crate::observability::metrics::http_request_finished(
+                metrics::http_request_finished(
                     &method,
                     &route,
                     res.status().as_u16(),
