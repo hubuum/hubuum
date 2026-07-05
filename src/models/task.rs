@@ -21,6 +21,14 @@ pub enum TaskKind {
 }
 
 impl TaskKind {
+    pub const ALL: [Self; 5] = [
+        Self::Import,
+        Self::Report,
+        Self::Export,
+        Self::Reindex,
+        Self::RemoteCall,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             TaskKind::Import => "import",
@@ -56,6 +64,16 @@ pub enum TaskStatus {
 }
 
 impl TaskStatus {
+    pub const ALL: [Self; 7] = [
+        Self::Queued,
+        Self::Validating,
+        Self::Running,
+        Self::Succeeded,
+        Self::Failed,
+        Self::PartiallySucceeded,
+        Self::Cancelled,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             TaskStatus::Queued => "queued",

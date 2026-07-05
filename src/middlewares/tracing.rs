@@ -1,3 +1,7 @@
+use std::borrow::Cow;
+use std::task::{Context, Poll};
+use std::time::Instant;
+
 use actix_service::{Service, Transform};
 use actix_web::{
     Error, HttpMessage,
@@ -5,8 +9,6 @@ use actix_web::{
     http::header::{HeaderName, HeaderValue},
 };
 use futures_util::future::{self, LocalBoxFuture, Ready};
-use std::task::{Context, Poll};
-use std::time::Instant;
 use tracing::{Instrument, Level, Span, error, field, info, span, warn};
 use uuid::Uuid;
 
@@ -147,7 +149,10 @@ where
 
         let method = req.method().to_string();
         let path = req.path().to_string();
-        let route = req.match_pattern().unwrap_or_else(|| route_group(&path));
+        let route = req
+            .match_pattern()
+            .map(Cow::Owned)
+            .unwrap_or_else(|| route_group(&path));
         let client_ip = extract_client_ip(&req, &self.proxy_trust);
         let client_ip_s = client_ip.map(|ip| ip.to_string());
         req.extensions_mut()
@@ -160,11 +165,12 @@ where
             ));
 
         let start_time = Instant::now();
-        metrics::http_request_started();
+        let in_flight_guard = metrics::http_request_started();
         let fut = span.in_scope(|| self.service.call(req));
 
         Box::pin(
             async move {
+                let _in_flight_guard = in_flight_guard;
                 let mut res = match fut.await {
                     Ok(res) => res,
                     Err(err) => {
@@ -266,11 +272,14 @@ where
     }
 }
 
-fn route_group(path: &str) -> String {
+fn route_group(path: &str) -> Cow<'static, str> {
     match path {
-        "/healthz" | "/readyz" | "/metrics" | "/api-doc/openapi.json" => path.to_string(),
-        path if path.starts_with("/api/v1/") => "/api/v1/{route}".to_string(),
-        path if path.starts_with("/api/v0/") => "/api/v0/{route}".to_string(),
-        _ => "unknown".to_string(),
+        "/healthz" => Cow::Borrowed("/healthz"),
+        "/readyz" => Cow::Borrowed("/readyz"),
+        "/metrics" => Cow::Borrowed("/metrics"),
+        "/api-doc/openapi.json" => Cow::Borrowed("/api-doc/openapi.json"),
+        path if path.starts_with("/api/v1/") => Cow::Borrowed("/api/v1/{route}"),
+        path if path.starts_with("/api/v0/") => Cow::Borrowed("/api/v0/{route}"),
+        _ => Cow::Borrowed("unknown"),
     }
 }

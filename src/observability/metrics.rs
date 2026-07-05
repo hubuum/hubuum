@@ -1,18 +1,22 @@
-use std::sync::OnceLock;
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use actix_web::{HttpResponse, Responder, http::header, web};
-use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Gauge, Histogram, MeterProvider as _, UpDownCounter};
+use opentelemetry::{KeyValue, Value};
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 use prometheus::{Encoder, Registry, TextEncoder};
 
 use crate::db::DbPool;
 use crate::db::traits::metrics::MetricsBackend;
+use crate::db::traits::metrics::{InventoryMetricsSnapshot, TaskMetricsSnapshot};
 use crate::errors::ApiError;
 use crate::middlewares::rate_limit;
+use crate::models::{TaskKind, TaskStatus};
 
 static METRICS: OnceLock<Metrics> = OnceLock::new();
+const DB_SCRAPE_CACHE_TTL: Duration = Duration::from_secs(30);
 
 struct Metrics {
     registry: Registry,
@@ -45,6 +49,50 @@ struct Metrics {
     login_attempts: Counter<u64>,
     login_limiter_entries: Gauge<u64>,
     inventory_entities: Gauge<i64>,
+    refresh_failures: Counter<u64>,
+    scrape_cache: Mutex<ScrapeCache>,
+}
+
+#[derive(Default)]
+struct ScrapeCache {
+    inventory: CachedSnapshot<InventoryMetricsSnapshot>,
+    tasks: CachedSnapshot<TaskMetricsSnapshot>,
+}
+
+struct CachedSnapshot<T> {
+    value: Option<T>,
+    refreshed_at: Option<Instant>,
+}
+
+impl<T> Default for CachedSnapshot<T> {
+    fn default() -> Self {
+        Self {
+            value: None,
+            refreshed_at: None,
+        }
+    }
+}
+
+impl<T: Clone> CachedSnapshot<T> {
+    fn fresh_value(&self, now: Instant) -> Option<T> {
+        match (self.value.as_ref(), self.refreshed_at) {
+            (Some(value), Some(refreshed_at))
+                if now.duration_since(refreshed_at) < DB_SCRAPE_CACHE_TTL =>
+            {
+                Some(value.clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn cached_value(&self) -> Option<T> {
+        self.value.clone()
+    }
+
+    fn store(&mut self, value: T, now: Instant) {
+        self.value = Some(value);
+        self.refreshed_at = Some(now);
+    }
 }
 
 pub fn init() -> Result<(), ApiError> {
@@ -187,6 +235,11 @@ pub fn init() -> Result<(), ApiError> {
             .i64_gauge("hubuum_inventory_entities")
             .with_description("Low-cardinality domain inventory counts")
             .build(),
+        refresh_failures: meter
+            .u64_counter("hubuum_metrics_refresh_failures")
+            .with_description("Metrics scrape refresh failures by source")
+            .build(),
+        scrape_cache: Mutex::new(ScrapeCache::default()),
     };
 
     METRICS
@@ -196,7 +249,7 @@ pub fn init() -> Result<(), ApiError> {
 
 pub async fn scrape(pool: web::Data<DbPool>) -> Result<impl Responder, ApiError> {
     let metrics = get()?;
-    refresh_scrape_gauges(metrics, &pool).await?;
+    refresh_scrape_gauges(metrics, &pool).await;
 
     let encoder = TextEncoder::new();
     let metric_families = metrics.registry.gather();
@@ -212,17 +265,45 @@ pub async fn scrape(pool: web::Data<DbPool>) -> Result<impl Responder, ApiError>
         .body(body))
 }
 
-pub fn http_request_started() {
+pub struct HttpInFlightGuard {
+    active: bool,
+}
+
+impl Drop for HttpInFlightGuard {
+    fn drop(&mut self) {
+        if self.active
+            && let Some(metrics) = METRICS.get()
+        {
+            metrics.http_in_flight.add(-1, &[]);
+        }
+    }
+}
+
+pub fn http_request_started() -> HttpInFlightGuard {
     if let Some(metrics) = METRICS.get() {
         metrics.http_in_flight.add(1, &[]);
+    }
+    HttpInFlightGuard {
+        active: METRICS.get().is_some(),
     }
 }
 
 pub fn http_request_finished(method: &str, route: &str, status_code: u16, duration: Duration) {
     if let Some(metrics) = METRICS.get() {
-        let count_attrs = http_count_attrs(method, route, status_code);
-        let duration_attrs = http_duration_attrs(method, route, status_code);
-        metrics.http_in_flight.add(-1, &[]);
+        let status_family = status_family(status_code);
+        let method = Value::from(method.to_owned());
+        let route = Value::from(route.to_owned());
+        let count_attrs = [
+            KeyValue::new("method", method.clone()),
+            KeyValue::new("route", route.clone()),
+            KeyValue::new("status_code", i64::from(status_code)),
+            KeyValue::new("status_family", status_family),
+        ];
+        let duration_attrs = [
+            KeyValue::new("method", method),
+            KeyValue::new("route", route),
+            KeyValue::new("status_family", status_family),
+        ];
         metrics.http_requests.add(1, &count_attrs);
         metrics
             .http_request_duration
@@ -298,23 +379,13 @@ pub fn task_claimed(kind: &str, queue_wait: Option<Duration>) {
     }
 }
 
-pub fn task_completed(
-    kind: &str,
-    final_status: &str,
-    queue_wait: Option<Duration>,
-    execution: Option<Duration>,
-) {
+pub fn task_completed(kind: &str, final_status: &str, execution: Option<Duration>) {
     if let Some(metrics) = METRICS.get() {
         let attrs = [
             KeyValue::new("kind", kind.to_string()),
             KeyValue::new("final_status", final_status.to_string()),
         ];
         metrics.task_completions.add(1, &attrs);
-        if let Some(queue_wait) = queue_wait {
-            metrics
-                .task_queue_wait_duration
-                .record(queue_wait.as_secs_f64(), &attrs);
-        }
         if let Some(execution) = execution {
             metrics
                 .task_execution_duration
@@ -424,12 +495,20 @@ fn get() -> Result<&'static Metrics, ApiError> {
         .ok_or_else(|| ApiError::NotFound("Metrics are disabled".to_string()))
 }
 
-async fn refresh_scrape_gauges(metrics: &Metrics, pool: &DbPool) -> Result<(), ApiError> {
+#[cfg(test)]
+pub(crate) fn clear_scrape_cache_for_tests() {
+    if let Some(metrics) = METRICS.get()
+        && let Ok(mut cache) = metrics.scrape_cache.lock()
+    {
+        *cache = ScrapeCache::default();
+    }
+}
+
+async fn refresh_scrape_gauges(metrics: &Metrics, pool: &DbPool) {
     refresh_pool_gauges(metrics, pool);
     refresh_login_limiter_gauges(metrics).await;
-    refresh_inventory_gauges(metrics, pool).await?;
-    refresh_task_gauges(metrics, pool).await?;
-    Ok(())
+    refresh_inventory_gauges(metrics, pool).await;
+    refresh_task_gauges(metrics, pool).await;
 }
 
 fn refresh_pool_gauges(metrics: &Metrics, pool: &DbPool) {
@@ -466,8 +545,52 @@ async fn refresh_login_limiter_gauges(metrics: &Metrics) {
     );
 }
 
-async fn refresh_inventory_gauges(metrics: &Metrics, pool: &DbPool) -> Result<(), ApiError> {
-    let row = pool.metrics_inventory_snapshot().await?;
+async fn refresh_inventory_gauges(metrics: &Metrics, pool: &DbPool) {
+    if let Some(row) = cached_inventory_snapshot(metrics) {
+        record_inventory_snapshot(metrics, &row);
+        return;
+    }
+
+    match pool.metrics_inventory_snapshot().await {
+        Ok(row) => {
+            store_inventory_snapshot(metrics, row);
+            record_inventory_snapshot(metrics, &row);
+        }
+        Err(_) => {
+            metrics
+                .refresh_failures
+                .add(1, &[KeyValue::new("source", "inventory")]);
+            if let Some(row) = stale_inventory_snapshot(metrics) {
+                record_inventory_snapshot(metrics, &row);
+            }
+        }
+    }
+}
+
+fn cached_inventory_snapshot(metrics: &Metrics) -> Option<InventoryMetricsSnapshot> {
+    let now = Instant::now();
+    metrics
+        .scrape_cache
+        .lock()
+        .ok()
+        .and_then(|cache| cache.inventory.fresh_value(now))
+}
+
+fn stale_inventory_snapshot(metrics: &Metrics) -> Option<InventoryMetricsSnapshot> {
+    metrics
+        .scrape_cache
+        .lock()
+        .ok()
+        .and_then(|cache| cache.inventory.cached_value())
+}
+
+fn store_inventory_snapshot(metrics: &Metrics, snapshot: InventoryMetricsSnapshot) {
+    if let Ok(mut cache) = metrics.scrape_cache.lock() {
+        cache.inventory.store(snapshot, Instant::now());
+    }
+}
+
+fn record_inventory_snapshot(metrics: &Metrics, row: &InventoryMetricsSnapshot) {
     record_inventory(metrics, "namespaces", row.namespaces);
     record_inventory(metrics, "classes", row.classes);
     record_inventory(metrics, "objects", row.objects);
@@ -475,7 +598,6 @@ async fn refresh_inventory_gauges(metrics: &Metrics, pool: &DbPool) -> Result<()
     record_inventory(metrics, "groups", row.groups);
     record_inventory(metrics, "service_accounts", row.service_accounts);
     record_inventory(metrics, "remote_targets", row.remote_targets);
-    Ok(())
 }
 
 fn record_inventory(metrics: &Metrics, entity_type: &'static str, count: i64) {
@@ -484,18 +606,71 @@ fn record_inventory(metrics: &Metrics, entity_type: &'static str, count: i64) {
         .record(count, &[KeyValue::new("entity_type", entity_type)]);
 }
 
-async fn refresh_task_gauges(metrics: &Metrics, pool: &DbPool) -> Result<(), ApiError> {
-    let snapshot = pool.metrics_task_snapshot().await?;
-    let now = chrono::Utc::now().naive_utc();
+async fn refresh_task_gauges(metrics: &Metrics, pool: &DbPool) {
+    if let Some(snapshot) = cached_task_snapshot(metrics) {
+        record_task_snapshot(metrics, &snapshot);
+        return;
+    }
 
-    for row in snapshot.counts {
-        metrics.task_counts.record(
-            row.count,
-            &[
-                KeyValue::new("kind", row.kind),
-                KeyValue::new("status", row.status),
-            ],
-        );
+    match pool.metrics_task_snapshot().await {
+        Ok(snapshot) => {
+            record_task_snapshot(metrics, &snapshot);
+            store_task_snapshot(metrics, snapshot);
+        }
+        Err(_) => {
+            metrics
+                .refresh_failures
+                .add(1, &[KeyValue::new("source", "tasks")]);
+            if let Some(snapshot) = stale_task_snapshot(metrics) {
+                record_task_snapshot(metrics, &snapshot);
+            } else {
+                record_empty_task_snapshot(metrics);
+            }
+        }
+    }
+}
+
+fn cached_task_snapshot(metrics: &Metrics) -> Option<TaskMetricsSnapshot> {
+    let now = Instant::now();
+    metrics
+        .scrape_cache
+        .lock()
+        .ok()
+        .and_then(|cache| cache.tasks.fresh_value(now))
+}
+
+fn stale_task_snapshot(metrics: &Metrics) -> Option<TaskMetricsSnapshot> {
+    metrics
+        .scrape_cache
+        .lock()
+        .ok()
+        .and_then(|cache| cache.tasks.cached_value())
+}
+
+fn store_task_snapshot(metrics: &Metrics, snapshot: TaskMetricsSnapshot) {
+    if let Ok(mut cache) = metrics.scrape_cache.lock() {
+        cache.tasks.store(snapshot, Instant::now());
+    }
+}
+
+fn record_task_snapshot(metrics: &Metrics, snapshot: &TaskMetricsSnapshot) {
+    let now = chrono::Utc::now().naive_utc();
+    let mut counts = HashMap::new();
+
+    for row in &snapshot.counts {
+        counts.insert((row.kind.as_str(), row.status.as_str()), row.count);
+    }
+
+    for kind in TaskKind::ALL {
+        for status in TaskStatus::ALL {
+            let kind = kind.as_str();
+            let status = status.as_str();
+            let count = counts.get(&(kind, status)).copied().unwrap_or(0);
+            metrics.task_counts.record(
+                count,
+                &[KeyValue::new("kind", kind), KeyValue::new("status", status)],
+            );
+        }
     }
 
     metrics.task_oldest_age.record(
@@ -506,7 +681,27 @@ async fn refresh_task_gauges(metrics: &Metrics, pool: &DbPool) -> Result<(), Api
         age_seconds(snapshot.oldest_active_at, now).unwrap_or(0.0),
         &[KeyValue::new("state", "active")],
     );
-    Ok(())
+}
+
+fn record_empty_task_snapshot(metrics: &Metrics) {
+    for kind in TaskKind::ALL {
+        for status in TaskStatus::ALL {
+            metrics.task_counts.record(
+                0,
+                &[
+                    KeyValue::new("kind", kind.as_str()),
+                    KeyValue::new("status", status.as_str()),
+                ],
+            );
+        }
+    }
+
+    metrics
+        .task_oldest_age
+        .record(0.0, &[KeyValue::new("state", "queued")]);
+    metrics
+        .task_oldest_age
+        .record(0.0, &[KeyValue::new("state", "active")]);
 }
 
 fn age_seconds(
@@ -514,23 +709,6 @@ fn age_seconds(
     now: chrono::NaiveDateTime,
 ) -> Option<f64> {
     timestamp.map(|timestamp| (now - timestamp).num_milliseconds().max(0) as f64 / 1000.0)
-}
-
-fn http_count_attrs(method: &str, route: &str, status_code: u16) -> [KeyValue; 4] {
-    [
-        KeyValue::new("method", method.to_string()),
-        KeyValue::new("route", route.to_string()),
-        KeyValue::new("status_code", i64::from(status_code)),
-        KeyValue::new("status_family", status_family(status_code)),
-    ]
-}
-
-fn http_duration_attrs(method: &str, route: &str, status_code: u16) -> [KeyValue; 3] {
-    [
-        KeyValue::new("method", method.to_string()),
-        KeyValue::new("route", route.to_string()),
-        KeyValue::new("status_family", status_family(status_code)),
-    ]
 }
 
 fn status_family(status_code: u16) -> &'static str {

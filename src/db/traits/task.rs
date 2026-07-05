@@ -493,7 +493,6 @@ fn record_task_completion_metrics(record: &TaskRecord) {
     metrics::task_completed(
         &record.kind,
         &record.status,
-        duration_between(record.created_at, record.started_at),
         record
             .started_at
             .and_then(|started_at| duration_between(started_at, record.finished_at)),

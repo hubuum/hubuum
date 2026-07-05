@@ -11,6 +11,8 @@ Hubuum exposes low-cardinality runtime metrics through OpenTelemetry instruments
 
 Metrics are ephemeral operational signals for alerting, dashboards, and capacity planning. Durable audit and business facts stay in the event stream.
 
+Database-backed gauges are refreshed on a short in-process cache and are best-effort. If a refresh fails, `/metrics` still returns the runtime metrics it has and keeps the last successful database gauge values when available.
+
 ## Cardinality Rules
 
 Metric labels must stay bounded. Hubuum metrics do not use usernames, user IDs, client IPs, raw URL paths, object IDs, class names, namespace names, rendered remote URLs, template names, idempotency keys, or error messages.
@@ -31,10 +33,11 @@ Use admin JSON/API endpoints for detailed high-cardinality views.
 | `hubuum_db_connection_acquire_failures_total` | none | Pool connection acquisition failures |
 | `hubuum_db_operation_duration_seconds` | `operation`, `result` | `with_connection` and `with_transaction` helper duration |
 | `hubuum_db_operation_errors_total` | `operation`, `result` | Database helper failures by broad public error class |
+| `hubuum_metrics_refresh_failures_total` | `source` | Best-effort scrape refresh failures by inventory or tasks source |
 | `hubuum_task_worker_iterations_total` | `outcome` | Worker iterations by claimed, idle, or error |
 | `hubuum_task_claims_total` | `kind` | Tasks claimed by workers |
 | `hubuum_task_completions_total` | `kind`, `final_status` | Tasks reaching a terminal status |
-| `hubuum_task_queue_wait_duration_seconds` | `kind`, `final_status` or `kind` | Time from task creation to start/claim |
+| `hubuum_task_queue_wait_duration_seconds` | `kind` | Time from task creation to claim |
 | `hubuum_task_execution_duration_seconds` | `kind`, `final_status` | Time from task start to finish |
 | `hubuum_task_worker_config` | `setting` | Configured task worker count and poll interval |
 | `hubuum_tasks` | `kind`, `status` | Current tasks by bounded kind and status |
