@@ -14,25 +14,7 @@ jobs:
     secrets: inherit
     with:
       backend: all
-      auto_discover: false
-      benchmarks_json: >-
-        [
-          {"name":"json_sql_filters_callgrind","bench":"json_sql_filters_callgrind","backend":"iai-callgrind"},
-          {"name":"object_validation_geo_callgrind","bench":"object_validation_geo_callgrind","backend":"iai-callgrind"},
-          {"name":"object_validation_nested_callgrind","bench":"object_validation_nested_callgrind","backend":"iai-callgrind"},
-          {"name":"permissions_parsing_callgrind","bench":"permissions_parsing_callgrind","backend":"iai-callgrind"},
-          {"name":"request_hash_callgrind","bench":"request_hash_callgrind","backend":"iai-callgrind"},
-          {"name":"token_storage_hash_callgrind","bench":"token_storage_hash_callgrind","backend":"iai-callgrind"},
-          {"name":"unified_search_cursor_callgrind","bench":"unified_search_cursor_callgrind","backend":"iai-callgrind"},
-          {"name":"unified_search_query_parsing_callgrind","bench":"unified_search_query_parsing_callgrind","backend":"iai-callgrind"},
-          {"name":"parse_query_parameter_callgrind","bench":"parse_query_parameter_callgrind","backend":"iai-callgrind","manifest_path":"crates/hubuum-query/Cargo.toml"},
-          {"name":"parse_integer_list_callgrind","bench":"parse_integer_list_callgrind","backend":"iai-callgrind","manifest_path":"crates/hubuum-query/Cargo.toml"},
-          {"name":"search_operator_parsing_callgrind","bench":"search_operator_parsing_callgrind","backend":"iai-callgrind","manifest_path":"crates/hubuum-query/Cargo.toml"},
-          {"name":"jsonb_type_inference_callgrind","bench":"jsonb_type_inference_callgrind","backend":"iai-callgrind","manifest_path":"crates/hubuum-query/Cargo.toml"},
-          {"name":"size_limited_writer_callgrind","bench":"size_limited_writer_callgrind","backend":"iai-callgrind","manifest_path":"crates/hubuum-templates/Cargo.toml"},
-          {"name":"database_url_parsing_criterion","bench":"database_url_parsing_criterion","backend":"criterion"},
-          {"name":"password_hashing_criterion","bench":"password_hashing_criterion","backend":"criterion"}
-        ]
+      auto_discover: true
       criterion_statistic: median
       criterion_cli_args: "--noplot --sample-size 40 --measurement-time 4"
       regression_threshold_pct_iai_callgrind: 3
