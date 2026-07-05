@@ -13,6 +13,7 @@ mod tests {
     use crate::events::RequestProvenance;
     use crate::logger::{HubuumLoggingFormat, test_support::JsonLogWriter};
     use crate::middlewares::TracingMiddleware;
+    use crate::middlewares::actor_context;
     use crate::middlewares::tracing::record_principal_on_current_span;
     use crate::tests::api_operations::get_request_with_correlation;
     use crate::tests::asserts::assert_response_status;
@@ -187,5 +188,36 @@ mod tests {
             .find(|event| event["message"] == "request complete")
             .expect("request completion log");
         assert_eq!(event["principal"], 77);
+    }
+
+    #[actix_web::test]
+    async fn production_middleware_stack_records_authenticated_principal_on_request_logs() {
+        let test_context = TestContext::new().await;
+        let (writer, _guard) = capture_request_logs();
+        let app = test::init_service(
+            App::new()
+                .wrap(actix_web::middleware::from_fn(actor_context))
+                .wrap(TracingMiddleware::new())
+                .app_data(test_context.pool.clone())
+                .route("/principal", web::get().to(ok_handler)),
+        )
+        .await;
+
+        let resp = test::TestRequest::get()
+            .insert_header((
+                actix_web::http::header::AUTHORIZATION,
+                format!("Bearer {}", test_context.admin_token),
+            ))
+            .uri("/principal")
+            .send_request(&app)
+            .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let logs = writer.output();
+        let event = logs
+            .iter()
+            .find(|event| event["message"] == "request complete")
+            .expect("request completion log");
+        assert_eq!(event["principal"], test_context.admin_user.id);
     }
 }

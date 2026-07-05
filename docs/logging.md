@@ -47,11 +47,12 @@ Clients may send `X-Correlation-ID`; Hubuum echoes it as `x-correlation-id`. Hub
 
 ## Operation And Authorization Logs
 
-Domain mutation logs are emitted from the audit event writer at `INFO`. They use the audit catalog labels:
+Domain mutation-recorded logs are emitted from the audit event writer at `INFO`. They mean Hubuum inserted an audit event row in the current database transaction; if a later step rolls the transaction back, the audit row and the domain mutation are rolled back together even though the log line has already been written. These logs use the audit catalog labels:
 
 | Field | Description |
 | ----- | ----------- |
-| `operation` | `mutation` |
+| `operation` | `mutation_recorded` |
+| `mutation_phase` | `recorded` |
 | `entity_type` | Catalog entity label, such as `namespace` |
 | `action` | Catalog action label, such as `created` |
 | `entity_id` | Entity identifier when available |
@@ -66,7 +67,7 @@ Authorization decision logs use:
 | Grant | `DEBUG` |
 | Denial | `WARN` |
 
-Authorization records include `event_type=authorization`, `decision`, `principal_id`, requested `permissions`, `namespace_count` when known, and a short `reason`.
+Authorization records include `event_type=authorization`, `decision`, `principal_id`, requested `permissions` as a JSON array, nullable `namespace_count`, and a short `reason`.
 
 ## Sensitive Data Rules
 

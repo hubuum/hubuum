@@ -44,7 +44,7 @@ pub trait UserPermissions: AuthzSubject {
         }
 
         if AuthzSubject::is_admin(self, pool).await? {
-            crate::logger::log_authorization_grant(principal_id, &requested, 0, "admin");
+            crate::logger::log_authorization_grant(principal_id, &requested, None, "admin");
             return Ok(());
         }
 
@@ -96,7 +96,7 @@ pub trait UserPermissions: AuthzSubject {
             crate::logger::log_authorization_grant(
                 principal_id,
                 &requested,
-                collection_count,
+                Some(collection_count),
                 "permissions",
             );
             Ok(())

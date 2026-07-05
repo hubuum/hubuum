@@ -1,3 +1,6 @@
+use std::fmt;
+
+use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::fmt::FmtContext;
 use tracing_subscriber::fmt::FormattedFields;
@@ -39,8 +42,9 @@ pub fn log_operation_mutation(
     correlation_id: Option<&str>,
 ) {
     tracing::info!(
-        message = "operation mutation",
-        operation = "mutation",
+        message = "operation mutation recorded",
+        operation = "mutation_recorded",
+        mutation_phase = "recorded",
         entity_type = entity_type.as_str(),
         action = action.as_str(),
         entity_id,
@@ -54,7 +58,6 @@ pub fn log_operation_read(
     entity_type: Option<EntityType>,
     action: Option<Action>,
     entity_id: Option<i32>,
-    actor_principal_id: Option<i32>,
 ) {
     let entity_type = entity_type.map(EntityType::as_str);
     let action = action.map(Action::as_str);
@@ -64,14 +67,13 @@ pub fn log_operation_read(
         entity_type,
         action,
         entity_id,
-        actor_principal_id,
     );
 }
 
 pub fn log_authorization_grant(
     principal_id: i32,
     permissions: &[Permissions],
-    namespace_count: usize,
+    namespace_count: Option<usize>,
     reason: &'static str,
 ) {
     let permissions = permissions
@@ -84,7 +86,7 @@ pub fn log_authorization_grant(
         event_type = "authorization",
         decision = "grant",
         principal_id,
-        permissions,
+        permissions_json = permissions,
         namespace_count,
         reason,
     );
@@ -106,10 +108,145 @@ pub fn log_authorization_denial(
         event_type = "authorization",
         decision = "deny",
         principal_id,
-        permissions,
+        permissions_json = permissions,
         namespace_count,
         reason,
     );
+}
+
+fn json_field_name(field_name: &str) -> Option<&str> {
+    field_name.strip_suffix("_json")
+}
+
+fn serialize_entry<S, V>(
+    serializer_map: &mut S,
+    field_name: &str,
+    value: &V,
+) -> Result<(), S::Error>
+where
+    S: SerializeMap,
+    V: serde::Serialize + ?Sized,
+{
+    serializer_map.serialize_entry(field_name, value)
+}
+
+fn serialize_json_aware_str_entry<S>(
+    serializer_map: &mut S,
+    field_name: &str,
+    value: &str,
+) -> Result<(), S::Error>
+where
+    S: SerializeMap,
+{
+    let Some(stripped_field_name) = json_field_name(field_name) else {
+        return serializer_map.serialize_entry(field_name, value);
+    };
+
+    match serde_json::from_str::<serde_json::Value>(value) {
+        Ok(value) => serializer_map.serialize_entry(stripped_field_name, &value),
+        Err(_) => serializer_map.serialize_entry(stripped_field_name, value),
+    }
+}
+
+fn serialize_json_aware_value_entry<S>(
+    serializer_map: &mut S,
+    field_name: &str,
+    value: &serde_json::Value,
+) -> Result<(), S::Error>
+where
+    S: SerializeMap,
+{
+    match (json_field_name(field_name), value.as_str()) {
+        (Some(stripped_field_name), Some(value)) => {
+            match serde_json::from_str::<serde_json::Value>(value) {
+                Ok(value) => serializer_map.serialize_entry(stripped_field_name, &value),
+                Err(_) => serializer_map.serialize_entry(stripped_field_name, value),
+            }
+        }
+        (Some(stripped_field_name), None) => {
+            serializer_map.serialize_entry(stripped_field_name, value)
+        }
+        (None, _) => serializer_map.serialize_entry(field_name, value),
+    }
+}
+
+struct JsonFieldVisitor<S: SerializeMap> {
+    serializer: S,
+    state: Result<(), S::Error>,
+}
+
+impl<S> JsonFieldVisitor<S>
+where
+    S: SerializeMap,
+{
+    fn new(serializer: S) -> Self {
+        Self {
+            serializer,
+            state: Ok(()),
+        }
+    }
+
+    fn take_serializer(self) -> Result<S, S::Error> {
+        self.state.map(|_| self.serializer)
+    }
+
+    fn record_entry<V>(&mut self, field: &Field, value: &V)
+    where
+        V: serde::Serialize + ?Sized,
+    {
+        if self.state.is_ok() {
+            self.state = serialize_entry(&mut self.serializer, field.name(), value);
+        }
+    }
+
+    fn record_str_entry(&mut self, field: &Field, value: &str) {
+        if self.state.is_ok() {
+            self.state = serialize_json_aware_str_entry(&mut self.serializer, field.name(), value);
+        }
+    }
+}
+
+impl<S> Visit for JsonFieldVisitor<S>
+where
+    S: SerializeMap,
+{
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        self.record_entry(field, &value);
+    }
+
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        self.record_entry(field, &value);
+    }
+
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.record_entry(field, &value);
+    }
+
+    fn record_i128(&mut self, field: &Field, value: i128) {
+        self.record_entry(field, &value.to_string());
+    }
+
+    fn record_u128(&mut self, field: &Field, value: u128) {
+        self.record_entry(field, &value.to_string());
+    }
+
+    fn record_f64(&mut self, field: &Field, value: f64) {
+        self.record_entry(field, &value);
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.record_str_entry(field, value);
+    }
+
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        if self.state.is_ok() {
+            self.state = serialize_entry(
+                &mut self.serializer,
+                field.name(),
+                &format_args!("{value:?}"),
+            );
+        }
+    }
 }
 
 impl<S, N> FormatEvent<S, N> for HubuumLoggingFormat
@@ -149,16 +286,15 @@ where
                     && let Ok(serde_json::Value::Object(fields)) =
                         serde_json::from_str::<serde_json::Value>(data)
                 {
-                    for field in fields {
-                        serializer_map
-                            .serialize_entry(&field.0, &field.1)
+                    for (field_name, value) in fields {
+                        serialize_json_aware_value_entry(&mut serializer_map, &field_name, &value)
                             .map_err(|_| std::fmt::Error)?;
                     }
                 }
             }
         }
 
-        let mut visitor = tracing_serde::SerdeMapVisitor::new(serializer_map);
+        let mut visitor = JsonFieldVisitor::new(serializer_map);
         event.record(&mut visitor);
 
         visitor
@@ -226,6 +362,7 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use test_support::JsonLogWriter;
     use tracing::{info, info_span};
     use tracing_subscriber::layer::SubscriberExt;
@@ -282,6 +419,23 @@ mod tests {
     }
 
     #[test]
+    fn logging_format_serializes_json_suffixed_fields_as_json_values() {
+        let logs = capture_logs(|| {
+            info!(
+                message = "structured field",
+                permissions_json = "[\"ReadCollection\",\"UpdateCollection\"]",
+            );
+        });
+
+        let event = logs.first().expect("log event");
+        assert_eq!(
+            event["permissions"],
+            json!(["ReadCollection", "UpdateCollection"])
+        );
+        assert!(event.get("permissions_json").is_none());
+    }
+
+    #[test]
     fn test_logging_format_handles_special_characters() {
         let logs = capture_logs(|| {
             info!(
@@ -298,7 +452,7 @@ mod tests {
     #[test]
     fn authorization_helpers_log_grant_and_denial_levels() {
         let logs = capture_logs(|| {
-            log_authorization_grant(12, &[Permissions::ReadCollection], 1, "permissions");
+            log_authorization_grant(12, &[Permissions::ReadCollection], Some(1), "permissions");
             log_authorization_denial(12, &[Permissions::UpdateCollection], Some(1), "permissions");
         });
 
@@ -309,7 +463,7 @@ mod tests {
         assert_eq!(grant["severity"], "DEBUG");
         assert_eq!(grant["event_type"], "authorization");
         assert_eq!(grant["principal_id"], 12);
-        assert_eq!(grant["permissions"], "[\"ReadCollection\"]");
+        assert_eq!(grant["permissions"], json!(["ReadCollection"]));
 
         let denial = logs
             .iter()
@@ -318,7 +472,7 @@ mod tests {
         assert_eq!(denial["severity"], "WARN");
         assert_eq!(denial["event_type"], "authorization");
         assert_eq!(denial["principal_id"], 12);
-        assert_eq!(denial["permissions"], "[\"UpdateCollection\"]");
+        assert_eq!(denial["permissions"], json!(["UpdateCollection"]));
     }
 
     #[test]
@@ -337,7 +491,9 @@ mod tests {
 
         let event = logs.first().expect("operation event");
         assert_eq!(event["severity"], "INFO");
-        assert_eq!(event["operation"], "mutation");
+        assert_eq!(event["message"], "operation mutation recorded");
+        assert_eq!(event["operation"], "mutation_recorded");
+        assert_eq!(event["mutation_phase"], "recorded");
         assert_eq!(event["entity_type"], "namespace");
         assert_eq!(event["action"], "created");
         assert_eq!(event["entity_id"], 9);
