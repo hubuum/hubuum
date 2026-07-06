@@ -503,7 +503,7 @@ mod test {
             .await
             .unwrap();
 
-        let ns = NewCollection {
+        let collection_fixture = NewCollection {
             name: "test_user_collection_listing".to_string(),
             description: "Test collection".to_string(),
         }
@@ -516,7 +516,7 @@ mod test {
             description: "Test class".to_string(),
             json_schema: None,
             validate_schema: None,
-            collection_id: ns.id,
+            collection_id: collection_fixture.id,
         }
         .save_without_events(&context.pool)
         .await
@@ -548,7 +548,7 @@ mod test {
             value: "ReadCollection".to_string(),
         };
 
-        let nslist = test_user_1
+        let collection_list = test_user_1
             .search_collections(
                 &context.pool,
                 make_query_options_from_query_param(&read_collection_param),
@@ -556,9 +556,9 @@ mod test {
             )
             .await
             .unwrap();
-        assert_contains!(&nslist, &ns);
+        assert_contains!(&collection_list, &collection_fixture);
 
-        let nslist = test_user_2
+        let collection_list = test_user_2
             .search_collections(
                 &context.pool,
                 make_query_options_from_query_param(&read_collection_param),
@@ -566,7 +566,7 @@ mod test {
             )
             .await
             .unwrap();
-        assert_not_contains!(&nslist, &ns);
+        assert_not_contains!(&collection_list, &collection_fixture);
 
         let classlist = test_user_1
             .search_classes(
@@ -588,11 +588,12 @@ mod test {
             .unwrap();
         assert_not_contains!(&classlist, &class);
 
-        ns.grant_one(&context.pool, test_group_2.id, Permissions::ReadCollection)
+        collection_fixture
+            .grant_one(&context.pool, test_group_2.id, Permissions::ReadCollection)
             .await
             .unwrap();
 
-        let nslist = test_user_2
+        let collection_list = test_user_2
             .search_collections(
                 &context.pool,
                 make_query_options_from_query_param(&read_collection_param),
@@ -600,7 +601,7 @@ mod test {
             )
             .await
             .unwrap();
-        assert_contains!(&nslist, &ns);
+        assert_contains!(&collection_list, &collection_fixture);
 
         let classlist = test_user_1
             .search_classes(
@@ -647,7 +648,7 @@ mod test {
             .unwrap();
         assert_not_contains!(&classlist, &class);
 
-        let nslist = test_user_2
+        let collection_list = test_user_2
             .search_collections(
                 &context.pool,
                 make_query_options_from_query_param(&read_class_param),
@@ -655,13 +656,14 @@ mod test {
             )
             .await
             .unwrap();
-        assert_contains!(&nslist, &ns);
+        assert_contains!(&collection_list, &collection_fixture);
 
-        ns.revoke_all_without_events(&context.pool, test_group_2.id)
+        collection_fixture
+            .revoke_all_without_events(&context.pool, test_group_2.id)
             .await
             .unwrap();
 
-        let nslist = test_user_2
+        let collection_list = test_user_2
             .search_collections(
                 &context.pool,
                 make_query_options_from_query_param(&read_collection_param),
@@ -669,7 +671,7 @@ mod test {
             )
             .await
             .unwrap();
-        assert_not_contains!(&nslist, &ns);
+        assert_not_contains!(&collection_list, &collection_fixture);
 
         test_user_1
             .delete_without_events(&context.pool)
@@ -687,6 +689,9 @@ mod test {
             .delete_without_events(&context.pool)
             .await
             .unwrap();
-        ns.delete_without_events(&context.pool).await.unwrap();
+        collection_fixture
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
     }
 }

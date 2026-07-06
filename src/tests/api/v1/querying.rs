@@ -604,7 +604,7 @@ mod tests {
         let admin_group = ensure_admin_group(&context.pool).await;
 
         let collection_z = NewCollectionWithAssignee {
-            name: "querying_sort_description_ns_z".to_string(),
+            name: "querying_sort_description_collection_z".to_string(),
             description: "querying-sort-description-z".to_string(),
             group_id: admin_group.id,
         }
@@ -612,7 +612,7 @@ mod tests {
         .await
         .unwrap();
         let collection_a = NewCollectionWithAssignee {
-            name: "querying_sort_description_ns_a".to_string(),
+            name: "querying_sort_description_collection_a".to_string(),
             description: "querying-sort-description-a".to_string(),
             group_id: admin_group.id,
         }
@@ -620,7 +620,7 @@ mod tests {
         .await
         .unwrap();
         let collection_m = NewCollectionWithAssignee {
-            name: "querying_sort_description_ns_m".to_string(),
+            name: "querying_sort_description_collection_m".to_string(),
             description: "querying-sort-description-m".to_string(),
             group_id: admin_group.id,
         }
@@ -631,7 +631,7 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            "/api/v1/collections?name__contains=querying_sort_description_ns_&sort=description.asc",
+            "/api/v1/collections?name__contains=querying_sort_description_collection_&sort=description.asc",
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
@@ -793,7 +793,7 @@ mod tests {
         let context = test_context;
         let admin_group = ensure_admin_group(&context.pool).await;
 
-        let ns_z = NewCollectionWithAssignee {
+        let collection_z = NewCollectionWithAssignee {
             name: "descending_sort_z".to_string(),
             description: "z-description".to_string(),
             group_id: admin_group.id,
@@ -801,7 +801,7 @@ mod tests {
         .save_without_events(&context.pool)
         .await
         .unwrap();
-        let ns_a = NewCollectionWithAssignee {
+        let collection_a = NewCollectionWithAssignee {
             name: "descending_sort_a".to_string(),
             description: "a-description".to_string(),
             group_id: admin_group.id,
@@ -809,7 +809,7 @@ mod tests {
         .save_without_events(&context.pool)
         .await
         .unwrap();
-        let ns_m = NewCollectionWithAssignee {
+        let collection_m = NewCollectionWithAssignee {
             name: "descending_sort_m".to_string(),
             description: "m-description".to_string(),
             group_id: admin_group.id,
@@ -836,8 +836,17 @@ mod tests {
             vec!["z-description", "m-description", "a-description",]
         );
 
-        ns_a.delete_without_events(&context.pool).await.unwrap();
-        ns_m.delete_without_events(&context.pool).await.unwrap();
-        ns_z.delete_without_events(&context.pool).await.unwrap();
+        collection_a
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
+        collection_m
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
+        collection_z
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
     }
 }

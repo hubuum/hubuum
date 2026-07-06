@@ -496,7 +496,7 @@ mod tests {
 
     // ----- Batch 3: authz / scoped behavior -----
 
-    const NAMESPACES_ENDPOINT: &str = "/api/v1/collections";
+    const COLLECTIONS_ENDPOINT: &str = "/api/v1/collections";
     const USERS_ENDPOINT: &str = "/api/v1/iam/users";
 
     /// #6 / #16: a service account gets a group's collection permissions only via
@@ -526,7 +526,7 @@ mod tests {
         let resp = get_request(
             pool,
             &token,
-            &format!("{NAMESPACES_ENDPOINT}/{}", fixture.collection.id),
+            &format!("{COLLECTIONS_ENDPOINT}/{}", fixture.collection.id),
         )
         .await;
 
@@ -551,7 +551,7 @@ mod tests {
         let resp = get_request(
             pool,
             &token,
-            &format!("{NAMESPACES_ENDPOINT}/{}", fixture.collection.id),
+            &format!("{COLLECTIONS_ENDPOINT}/{}", fixture.collection.id),
         )
         .await;
 
@@ -576,7 +576,7 @@ mod tests {
         let resp = patch_request(
             pool,
             &token,
-            &format!("{NAMESPACES_ENDPOINT}/{}", fixture.collection.id),
+            &format!("{COLLECTIONS_ENDPOINT}/{}", fixture.collection.id),
             &serde_json::json!({ "description": "scoped-write-attempt" }),
         )
         .await;
@@ -904,7 +904,7 @@ mod tests {
             pool,
             &context.admin_token,
             &format!(
-                "{NAMESPACES_ENDPOINT}/{}/permissions/principal/{}",
+                "{COLLECTIONS_ENDPOINT}/{}/permissions/principal/{}",
                 fixture.collection.id, sa.id
             ),
         )
@@ -1307,7 +1307,7 @@ mod tests {
         group.add_member_without_events(pool, &sa).await.unwrap();
         let token = service_account_token(pool, &sa, None, None).await;
 
-        let resp = get_request(pool, &token, NAMESPACES_ENDPOINT).await;
+        let resp = get_request(pool, &token, COLLECTIONS_ENDPOINT).await;
         let collections: Vec<Collection> = test::read_body_json(resp).await;
         let visible = collections.iter().any(|n| n.id == fixture.collection.id);
 

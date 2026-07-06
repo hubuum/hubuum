@@ -73,7 +73,7 @@ mod tests {
             mode: Some(mode),
             graph: ImportGraph {
                 collections: vec![ImportCollectionInput {
-                    ref_: Some("ns:primary".to_string()),
+                    ref_: Some("collection:primary".to_string()),
                     name,
                     description: description.to_string(),
                 }],
@@ -89,7 +89,7 @@ mod tests {
     ) {
         let context = test_context;
         let delegate_group = create_test_group(&context.pool).await;
-        let import_collection_name = context.scoped_name("import_ns");
+        let import_collection_name = context.scoped_name("import_collection");
         let import_class_name = context.scoped_name("import_class");
         let object_name = context.scoped_name("import_object");
 
@@ -103,7 +103,7 @@ mod tests {
             }),
             graph: ImportGraph {
                 collections: vec![ImportCollectionInput {
-                    ref_: Some("ns:primary".to_string()),
+                    ref_: Some("collection:primary".to_string()),
                     name: import_collection_name.clone(),
                     description: "Imported collection".to_string(),
                 }],
@@ -113,7 +113,7 @@ mod tests {
                     description: "Imported class".to_string(),
                     json_schema: None,
                     validate_schema: Some(false),
-                    collection_ref: Some("ns:primary".to_string()),
+                    collection_ref: Some("collection:primary".to_string()),
                     collection_key: None,
                 }],
                 objects: vec![ImportObjectInput {
@@ -126,7 +126,7 @@ mod tests {
                 }],
                 collection_permissions: vec![ImportCollectionPermissionInput {
                     ref_: Some("acl:primary".to_string()),
-                    collection_ref: Some("ns:primary".to_string()),
+                    collection_ref: Some("collection:primary".to_string()),
                     collection_key: None,
                     group_key: GroupKey {
                         groupname: delegate_group.groupname.clone(),
@@ -290,7 +290,7 @@ mod tests {
     #[actix_web::test]
     async fn test_import_idempotency_returns_same_task(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let import_collection_name = context.scoped_name("idempotent_import_ns");
+        let import_collection_name = context.scoped_name("idempotent_import_collection");
         let idempotency = context.scoped_name("same-task");
 
         let body = ImportRequest {
@@ -299,7 +299,7 @@ mod tests {
             mode: None,
             graph: ImportGraph {
                 collections: vec![ImportCollectionInput {
-                    ref_: Some("ns:dry".to_string()),
+                    ref_: Some("collection:dry".to_string()),
                     name: import_collection_name,
                     description: "Dry run collection".to_string(),
                 }],
@@ -353,9 +353,10 @@ mod tests {
                 mode: None,
                 graph: ImportGraph {
                     collections: vec![ImportCollectionInput {
-                        ref_: Some("ns:dry".to_string()),
-                        name: context
-                            .scoped_name(&format!("idempotent_import_ns_concurrent_{iteration}")),
+                        ref_: Some("collection:dry".to_string()),
+                        name: context.scoped_name(&format!(
+                            "idempotent_import_collection_concurrent_{iteration}"
+                        )),
                         description: "Dry run collection".to_string(),
                     }],
                     ..ImportGraph::default()
@@ -429,7 +430,7 @@ mod tests {
             mode: None,
             graph: ImportGraph {
                 collections: vec![ImportCollectionInput {
-                    ref_: Some("ns:conflict".to_string()),
+                    ref_: Some("collection:conflict".to_string()),
                     name: context.scoped_name("idempotency_conflict_collection"),
                     description: "Dry run collection".to_string(),
                 }],
@@ -486,7 +487,7 @@ mod tests {
             mode: None,
             graph: ImportGraph {
                 collections: vec![ImportCollectionInput {
-                    ref_: Some("ns:conflict".to_string()),
+                    ref_: Some("collection:conflict".to_string()),
                     name: context.scoped_name("idempotency_conflict_collection_changed"),
                     description: "Changed dry run collection".to_string(),
                 }],
@@ -521,7 +522,7 @@ mod tests {
             mode: None,
             graph: ImportGraph {
                 collections: vec![ImportCollectionInput {
-                    ref_: Some("ns:unsupported".to_string()),
+                    ref_: Some("collection:unsupported".to_string()),
                     name: context.scoped_name("unsupported_import_version"),
                     description: "unsupported".to_string(),
                 }],
@@ -564,8 +565,8 @@ mod tests {
             }),
             graph: ImportGraph {
                 collections: vec![ImportCollectionInput {
-                    ref_: Some("ns:page".to_string()),
-                    name: context.scoped_name("paged_import_ns"),
+                    ref_: Some("collection:page".to_string()),
+                    name: context.scoped_name("paged_import_collection"),
                     description: "Imported collection".to_string(),
                 }],
                 classes: vec![ImportClassInput {
@@ -574,7 +575,7 @@ mod tests {
                     description: "Imported class".to_string(),
                     json_schema: None,
                     validate_schema: Some(false),
-                    collection_ref: Some("ns:page".to_string()),
+                    collection_ref: Some("collection:page".to_string()),
                     collection_key: None,
                 }],
                 objects: vec![ImportObjectInput {
@@ -587,7 +588,7 @@ mod tests {
                 }],
                 collection_permissions: vec![ImportCollectionPermissionInput {
                     ref_: Some("acl:page".to_string()),
-                    collection_ref: Some("ns:page".to_string()),
+                    collection_ref: Some("collection:page".to_string()),
                     collection_key: None,
                     group_key: GroupKey {
                         groupname: delegate_group.groupname.clone(),
@@ -977,7 +978,7 @@ mod tests {
             mode: None,
             graph: ImportGraph {
                 collections: vec![ImportCollectionInput {
-                    ref_: Some("ns:private".to_string()),
+                    ref_: Some("collection:private".to_string()),
                     name: context.scoped_name("private_task_collection"),
                     description: "private".to_string(),
                 }],

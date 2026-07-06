@@ -67,8 +67,8 @@ pub mod tests {
             .map(|c| CollectionID::new(c.collection_id).unwrap())
             .collect::<Vec<CollectionID>>();
 
-        for ns in collections {
-            assert_eq!(ns.id(), classes.collection.collection.id);
+        for collection_fixture in collections {
+            assert_eq!(collection_fixture.id(), classes.collection.collection.id);
         }
 
         classes.cleanup().await.unwrap();
@@ -368,12 +368,12 @@ pub mod tests {
     async fn test_api_classes_create(#[future(awt)] test_context: TestContext) {
         let context = test_context;
 
-        let ns = context.collection_fixture("api_create_test_classes").await;
+        let collection_fixture = context.collection_fixture("api_create_test_classes").await;
 
         let new_class = NewHubuumClass {
             name: "api_create_test_classes".to_string(),
             description: "api_create_test_classes".to_string(),
-            collection_id: ns.collection.id,
+            collection_id: collection_fixture.collection.id,
             json_schema: Some(get_schema(SchemaType::Blog).clone()),
             validate_schema: Some(false),
         };
@@ -402,7 +402,7 @@ pub mod tests {
         );
 
         assert_eq!(created_class, created_class_from_create);
-        ns.cleanup().await.unwrap();
+        collection_fixture.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -412,12 +412,12 @@ pub mod tests {
 
         let context = test_context;
 
-        let ns = context.collection_fixture("api_patch_test_classes").await;
+        let collection_fixture = context.collection_fixture("api_patch_test_classes").await;
 
         let new_class = NewHubuumClass {
             name: "api_patch_test_classes".to_string(),
             description: "api_patch_test_classes_desc".to_string(),
-            collection_id: ns.collection.id,
+            collection_id: collection_fixture.collection.id,
             json_schema: Some(get_schema(SchemaType::Blog).clone()),
             validate_schema: None,
         };
@@ -714,12 +714,12 @@ pub mod tests {
         use diesel::prelude::*;
 
         let context = test_context;
-        let ns = context.collection_fixture("actor_history").await;
+        let collection_fixture = context.collection_fixture("actor_history").await;
 
         let new_class = NewHubuumClass {
-            name: format!("{}_class", ns.collection.name),
+            name: format!("{}_class", collection_fixture.collection.name),
             description: "d".to_string(),
-            collection_id: ns.collection.id,
+            collection_id: collection_fixture.collection.id,
             json_schema: None,
             validate_schema: Some(false),
         };
@@ -760,7 +760,7 @@ pub mod tests {
             Some(expected_actor),
             "history must attribute the create to the requestor"
         );
-        ns.cleanup().await.unwrap();
+        collection_fixture.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -770,14 +770,14 @@ pub mod tests {
         use crate::traits::{CanSave, CanUpdate};
 
         let context = test_context;
-        let ns = context.collection_fixture("class_history_api").await;
+        let collection_fixture = context.collection_fixture("class_history_api").await;
         let event_context = hubuum_events_core::EventContext::system();
 
         // Create then update so there are two versions.
         let created = NewHubuumClass {
             name: "class_history_api".to_string(),
             description: "v1".to_string(),
-            collection_id: ns.collection.id,
+            collection_id: collection_fixture.collection.id,
             json_schema: None,
             validate_schema: Some(false),
         }
@@ -828,7 +828,7 @@ pub mod tests {
         let snap: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(snap["description"], "v1");
 
-        ns.cleanup().await.unwrap();
+        collection_fixture.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -850,12 +850,12 @@ pub mod tests {
         use crate::traits::{CanDelete, CanSave};
 
         let context = test_context;
-        let ns = context.collection_fixture("deleted_class_history").await;
+        let collection_fixture = context.collection_fixture("deleted_class_history").await;
         let event_context = hubuum_events_core::EventContext::system();
         let class = NewHubuumClass {
             name: "deleted_class_history".to_string(),
             description: "v1".to_string(),
-            collection_id: ns.collection.id,
+            collection_id: collection_fixture.collection.id,
             json_schema: None,
             validate_schema: Some(false),
         }
@@ -886,7 +886,7 @@ pub mod tests {
         assert_eq!(body[0]["op"], "D");
         assert_eq!(body[1]["op"], "I");
 
-        ns.cleanup().await.unwrap();
+        collection_fixture.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -896,14 +896,14 @@ pub mod tests {
         use crate::traits::{CanSave, CanUpdate};
 
         let context = test_context;
-        let ns = context.collection_fixture("class_history_cursor").await;
+        let collection_fixture = context.collection_fixture("class_history_cursor").await;
         let event_context = hubuum_events_core::EventContext::system();
 
         // Create then update TWICE to have three history rows (I, U, U).
         let created = NewHubuumClass {
             name: "class_history_cursor".to_string(),
             description: "v1".to_string(),
-            collection_id: ns.collection.id,
+            collection_id: collection_fixture.collection.id,
             json_schema: None,
             validate_schema: Some(false),
         }
@@ -989,6 +989,6 @@ pub mod tests {
             "page 2 history_id should not appear in page 1"
         );
 
-        ns.cleanup().await.unwrap();
+        collection_fixture.cleanup().await.unwrap();
     }
 }

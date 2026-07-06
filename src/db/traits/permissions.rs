@@ -227,12 +227,12 @@ fn update_permission_for_revoke(
 }
 
 fn new_permission_from_list(
-    nid: i32,
+    target_collection_id: i32,
     gid: i32,
     permission_list: &PermissionsList<Permissions>,
 ) -> NewPermission {
     NewPermission {
-        collection_id: nid,
+        collection_id: target_collection_id,
         group_id: gid,
         has_read_collection: permission_list.contains(&Permissions::ReadCollection),
         has_update_collection: permission_list.contains(&Permissions::UpdateCollection),
@@ -316,11 +316,11 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
     ) -> Result<Permission, ApiError> {
         use crate::schema::permissions::dsl::*;
 
-        let nid = self.collection_id(pool).await?.id();
+        let target_collection_id = self.collection_id(pool).await?.id();
 
         with_transaction(pool, |conn| -> Result<Permission, ApiError> {
             let existing_entry = permissions
-                .filter(collection_id.eq(nid))
+                .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_grant))
                 .first::<Permission>(conn)
                 .optional()?;
@@ -464,14 +464,14 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
                     }
 
                     Ok(diesel::update(permissions)
-                        .filter(collection_id.eq(nid))
+                        .filter(collection_id.eq(target_collection_id))
                         .filter(group_id.eq(group_id_for_grant))
                         .set(&update_perm)
                         .get_result(conn)?)
                 }
                 None => {
                     let new_entry = NewPermission {
-                        collection_id: nid,
+                        collection_id: target_collection_id,
                         group_id: group_id_for_grant,
                         has_read_collection: permission_list.contains(&Permissions::ReadCollection),
                         has_update_collection: permission_list
@@ -552,12 +552,12 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
 
         use crate::schema::permissions::dsl::*;
 
-        let nid = self.collection_id(pool).await?.id();
+        let target_collection_id = self.collection_id(pool).await?.id();
         let requested = permission_list.iter().copied().collect::<Vec<_>>();
 
         with_transaction(pool, |conn| -> Result<Permission, ApiError> {
             let before = permissions
-                .filter(collection_id.eq(nid))
+                .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_grant))
                 .first::<Permission>(conn)
                 .optional()?;
@@ -567,14 +567,17 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
                     let update_perm =
                         update_permission_for_grant(&permission_list, replace_existing);
                     diesel::update(permissions)
-                        .filter(collection_id.eq(nid))
+                        .filter(collection_id.eq(target_collection_id))
                         .filter(group_id.eq(group_id_for_grant))
                         .set(&update_perm)
                         .get_result::<Permission>(conn)?
                 }
                 None => {
-                    let new_entry =
-                        new_permission_from_list(nid, group_id_for_grant, &permission_list);
+                    let new_entry = new_permission_from_list(
+                        target_collection_id,
+                        group_id_for_grant,
+                        &permission_list,
+                    );
                     diesel::insert_into(permissions)
                         .values(&new_entry)
                         .get_result::<Permission>(conn)?
@@ -587,7 +590,7 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
                 context,
                 format!(
                     "Permissions granted to group {} on collection {}",
-                    group_id_for_grant, nid
+                    group_id_for_grant, target_collection_id
                 ),
                 &requested,
                 Some(replace_existing),
@@ -612,11 +615,11 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
     ) -> Result<Permission, ApiError> {
         use crate::schema::permissions::dsl::*;
 
-        let nid = self.collection_id(pool).await?.id();
+        let target_collection_id = self.collection_id(pool).await?.id();
 
         with_transaction(pool, |conn| -> Result<Permission, ApiError> {
             permissions
-                .filter(collection_id.eq(nid))
+                .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_revoke))
                 .first::<Permission>(conn)?;
 
@@ -720,7 +723,7 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
             }
 
             Ok(diesel::update(permissions)
-                .filter(collection_id.eq(nid))
+                .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_revoke))
                 .set(&update_perm)
                 .get_result(conn)?)
@@ -746,18 +749,18 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
 
         use crate::schema::permissions::dsl::*;
 
-        let nid = self.collection_id(pool).await?.id();
+        let target_collection_id = self.collection_id(pool).await?.id();
         let requested = permission_list.iter().copied().collect::<Vec<_>>();
 
         with_transaction(pool, |conn| -> Result<Permission, ApiError> {
             let before = permissions
-                .filter(collection_id.eq(nid))
+                .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_revoke))
                 .first::<Permission>(conn)?;
 
             let update_perm = update_permission_for_revoke(&permission_list);
             let after = diesel::update(permissions)
-                .filter(collection_id.eq(nid))
+                .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_revoke))
                 .set(&update_perm)
                 .get_result::<Permission>(conn)?;
@@ -768,7 +771,7 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
                 context,
                 format!(
                     "Permissions revoked from group {} on collection {}",
-                    group_id_for_revoke, nid
+                    group_id_for_revoke, target_collection_id
                 ),
                 &requested,
                 None,

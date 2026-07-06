@@ -513,11 +513,11 @@ async fn get_class_permissions(
         class
     );
 
-    let nid = class.collection_id(&pool).await?;
+    let target_collection_id = class.collection_id(&pool).await?;
     let count_params = count_query_options(&params);
     let total_count = crate::models::collection::count_groups_on_paginated(
         &pool,
-        nid,
+        target_collection_id,
         vec![
             Permissions::CreateClass,
             Permissions::UpdateClass,
@@ -530,7 +530,7 @@ async fn get_class_permissions(
     let search_params = prepare_db_pagination::<GroupPermission>(&params)?;
     let permissions = groups_on_paginated(
         &pool,
-        nid,
+        target_collection_id,
         vec![
             Permissions::CreateClass,
             Permissions::UpdateClass,

@@ -642,7 +642,7 @@ mod tests {
     #[actix_web::test]
     async fn test_run_collections_scope_template(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let classes = create_test_classes(&context, "report_ns_scope").await;
+        let classes = create_test_classes(&context, "report_collection_scope").await;
         let collection_name = classes.collection.collection.name.clone();
 
         let template = NewReportTemplate {

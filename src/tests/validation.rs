@@ -13,7 +13,7 @@ use crate::traits::{CanSave, Validate, ValidateAgainstSchema};
 /// The identifier string is used to create unique names.
 async fn setup_geo_class(identifier: &str) -> (CollectionFixture, NewHubuumClass, Value) {
     let scope = TestScope::new();
-    let ns = scope
+    let collection_fixture = scope
         .collection_fixture(&format!("Validation_test_{identifier}"))
         .await;
     // Get the Geo schema.
@@ -22,10 +22,10 @@ async fn setup_geo_class(identifier: &str) -> (CollectionFixture, NewHubuumClass
         name: format!("{identifier}_class"),
         validate_schema: Some(true),
         json_schema: Some(schema.clone()),
-        collection_id: ns.collection.id,
+        collection_id: collection_fixture.collection.id,
         description: "Geo class".to_string(),
     };
-    (ns, new_class, schema.clone())
+    (collection_fixture, new_class, schema.clone())
 }
 
 /// Asserts that a validation result (Ok or Err) matches the expected value.
@@ -64,8 +64,9 @@ async fn test_validate_object(#[case] json_data: &str, #[case] expected: bool) {
     let data = serde_json::from_str::<Value>(json_data).unwrap();
     let obj_name = format!("{json_data}_test_validate_object");
 
-    let (ns, new_class, _schema) = setup_geo_class(&format!("new_{json_data}")).await;
-    let pool = ns.pool.clone();
+    let (collection_fixture, new_class, _schema) =
+        setup_geo_class(&format!("new_{json_data}")).await;
+    let pool = collection_fixture.pool.clone();
 
     // Save the class and build the new object.
     let class = new_class
@@ -74,7 +75,7 @@ async fn test_validate_object(#[case] json_data: &str, #[case] expected: bool) {
         .expect("Failed to create class");
     let object = NewHubuumObject {
         name: obj_name,
-        collection_id: ns.collection.id,
+        collection_id: collection_fixture.collection.id,
         hubuum_class_id: class.id,
         data: data.clone(),
         description: "Test object".to_string(),
@@ -90,7 +91,10 @@ async fn test_validate_object(#[case] json_data: &str, #[case] expected: bool) {
     let object_validate = object.validate(&pool).await;
     assert_validation_result(object_validate, expected, "Object validation");
 
-    ns.cleanup().await.expect("Failed to delete collection");
+    collection_fixture
+        .cleanup()
+        .await
+        .expect("Failed to delete collection");
 }
 
 #[rstest]
@@ -108,8 +112,9 @@ async fn test_validate_update_object(#[case] json_data: &str, #[case] expected: 
     let base_data = serde_json::from_str::<Value>(base_data).unwrap();
     let updated_data = serde_json::from_str::<Value>(json_data).unwrap();
 
-    let (ns, new_class, _schema) = setup_geo_class(&format!("update_{json_data}")).await;
-    let pool = ns.pool.clone();
+    let (collection_fixture, new_class, _schema) =
+        setup_geo_class(&format!("update_{json_data}")).await;
+    let pool = collection_fixture.pool.clone();
 
     // Save the class and then create an object with the base data.
     let class = new_class
@@ -118,7 +123,7 @@ async fn test_validate_update_object(#[case] json_data: &str, #[case] expected: 
         .expect("Failed to create class");
     let object = NewHubuumObject {
         name: obj_name,
-        collection_id: ns.collection.id,
+        collection_id: collection_fixture.collection.id,
         hubuum_class_id: class.id,
         data: base_data,
         description: "Test object".to_string(),
@@ -139,5 +144,8 @@ async fn test_validate_update_object(#[case] json_data: &str, #[case] expected: 
     let validate = (&update_object, object.id).validate(&pool).await;
     assert_validation_result(validate, expected, "Update object validation");
 
-    ns.cleanup().await.expect("Failed to delete collection");
+    collection_fixture
+        .cleanup()
+        .await
+        .expect("Failed to delete collection");
 }

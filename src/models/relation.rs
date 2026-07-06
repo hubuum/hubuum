@@ -509,14 +509,26 @@ pub mod tests {
 
         let (collection, class1, class2) = create_collection_and_classes("create_object").await;
 
-        let nid = collection.collection.id;
+        let collection_id = collection.collection.id;
         let json = serde_json::json!({"test": "data"});
-        let object1 = create_object(&pool, class1.id, nid, "o1_create relation", json.clone())
-            .await
-            .unwrap();
-        let object2 = create_object(&pool, class2.id, nid, "o2_create relation", json.clone())
-            .await
-            .unwrap();
+        let object1 = create_object(
+            &pool,
+            class1.id,
+            collection_id,
+            "o1_create relation",
+            json.clone(),
+        )
+        .await
+        .unwrap();
+        let object2 = create_object(
+            &pool,
+            class2.id,
+            collection_id,
+            "o2_create relation",
+            json.clone(),
+        )
+        .await
+        .unwrap();
 
         let class_rel = create_class_relation(&pool, &class1, &class2).await;
 
@@ -546,20 +558,26 @@ pub mod tests {
         let (collection, class1, class2) =
             create_collection_and_classes("create_object_reverse").await;
 
-        let nid = collection.collection.id;
+        let collection_id = collection.collection.id;
         let json = serde_json::json!({"test": "data"});
         let object1 = create_object(
             &pool,
             class1.id,
-            nid,
+            collection_id,
             "o1_create reverse relation",
             json.clone(),
         )
         .await
         .unwrap();
-        let object2 = create_object(&pool, class2.id, nid, "o2_create reverse relation", json)
-            .await
-            .unwrap();
+        let object2 = create_object(
+            &pool,
+            class2.id,
+            collection_id,
+            "o2_create reverse relation",
+            json,
+        )
+        .await
+        .unwrap();
 
         let class_rel = create_class_relation(&pool, &class1, &class2).await;
         let object_rel = create_object_relation(&pool, &class_rel, &object1, &object2).await;
@@ -600,14 +618,26 @@ pub mod tests {
         )
         .await;
 
-        let nid = collection.collection.id;
+        let collection_id = collection.collection.id;
         let json = serde_json::json!({"test": "data"});
-        let object1 = create_object(&pool, class1.id, nid, "o1_fail relation", json.clone())
-            .await
-            .unwrap();
-        let object2 = create_object(&pool, class2.id, nid, "o2_fail relation", json.clone())
-            .await
-            .unwrap();
+        let object1 = create_object(
+            &pool,
+            class1.id,
+            collection_id,
+            "o1_fail relation",
+            json.clone(),
+        )
+        .await
+        .unwrap();
+        let object2 = create_object(
+            &pool,
+            class2.id,
+            collection_id,
+            "o2_fail relation",
+            json.clone(),
+        )
+        .await
+        .unwrap();
 
         let class_relation_13 = create_class_relation(&pool, &class1, &class3).await;
 
@@ -666,14 +696,26 @@ pub mod tests {
 
         let (collection, class1, class2) = create_collection_and_classes("delete_object").await;
 
-        let nid = collection.collection.id;
+        let collection_id = collection.collection.id;
         let json = serde_json::json!({"test": "data"});
-        let object1 = create_object(&pool, class1.id, nid, "o1_delete relation", json.clone())
-            .await
-            .unwrap();
-        let object2 = create_object(&pool, class2.id, nid, "o2_delete relation", json.clone())
-            .await
-            .unwrap();
+        let object1 = create_object(
+            &pool,
+            class1.id,
+            collection_id,
+            "o1_delete relation",
+            json.clone(),
+        )
+        .await
+        .unwrap();
+        let object2 = create_object(
+            &pool,
+            class2.id,
+            collection_id,
+            "o2_delete relation",
+            json.clone(),
+        )
+        .await
+        .unwrap();
 
         // Create a class relation so that we can create an object relation
         let class_rel = create_class_relation(&pool, &class1, &class2).await;
@@ -692,14 +734,26 @@ pub mod tests {
         let (collection, class1, class2) =
             create_collection_and_classes("delete_object_cascade").await;
 
-        let nid = collection.collection.id;
+        let collection_id = collection.collection.id;
         let json = serde_json::json!({"test": "data"});
-        let object1 = create_object(&pool, class1.id, nid, "o1_delete relation", json.clone())
-            .await
-            .unwrap();
-        let object2 = create_object(&pool, class2.id, nid, "o2_delete relation", json.clone())
-            .await
-            .unwrap();
+        let object1 = create_object(
+            &pool,
+            class1.id,
+            collection_id,
+            "o1_delete relation",
+            json.clone(),
+        )
+        .await
+        .unwrap();
+        let object2 = create_object(
+            &pool,
+            class2.id,
+            collection_id,
+            "o2_delete relation",
+            json.clone(),
+        )
+        .await
+        .unwrap();
 
         // Create a class relation so that we can create an object relation
         let class_rel = create_class_relation(&pool, &class1, &class2).await;
@@ -721,12 +775,12 @@ pub mod tests {
         let (collection, class1, class2) =
             create_collection_and_classes("find_object_relations").await;
 
-        let nid = collection.collection.id;
+        let collection_id = collection.collection.id;
         let json = serde_json::json!({"test": "data"});
         let object1 = create_object(
             pool,
             class1.id,
-            nid,
+            collection_id,
             "o1_find_object relation",
             json.clone(),
         )
@@ -735,7 +789,7 @@ pub mod tests {
         let object2 = create_object(
             pool,
             class2.id,
-            nid,
+            collection_id,
             "o2_find_object relation",
             json.clone(),
         )
@@ -775,24 +829,24 @@ pub mod tests {
         let pool = &context.pool;
 
         let scope = TestScope::new();
-        let ns = scope.collection_fixture("bidir_obj_traversal").await;
-        let nid = ns.collection.id;
+        let collection_fixture = scope.collection_fixture("bidir_obj_traversal").await;
+        let collection_id = collection_fixture.collection.id;
 
-        let class_a = create_class(pool, &ns.collection, "bidir_class_a").await;
-        let class_b = create_class(pool, &ns.collection, "bidir_class_b").await;
-        let class_c = create_class(pool, &ns.collection, "bidir_class_c").await;
+        let class_a = create_class(pool, &collection_fixture.collection, "bidir_class_a").await;
+        let class_b = create_class(pool, &collection_fixture.collection, "bidir_class_b").await;
+        let class_c = create_class(pool, &collection_fixture.collection, "bidir_class_c").await;
 
         let rel_ab = create_class_relation(pool, &class_a, &class_b).await;
         let rel_bc = create_class_relation(pool, &class_b, &class_c).await;
 
         let json = serde_json::json!({});
-        let obj_a = create_object(pool, class_a.id, nid, "bidir_oA", json.clone())
+        let obj_a = create_object(pool, class_a.id, collection_id, "bidir_oA", json.clone())
             .await
             .unwrap();
-        let obj_b = create_object(pool, class_b.id, nid, "bidir_oB", json.clone())
+        let obj_b = create_object(pool, class_b.id, collection_id, "bidir_oB", json.clone())
             .await
             .unwrap();
-        let obj_c = create_object(pool, class_c.id, nid, "bidir_oC", json.clone())
+        let obj_c = create_object(pool, class_c.id, collection_id, "bidir_oC", json.clone())
             .await
             .unwrap();
 
@@ -825,7 +879,7 @@ pub mod tests {
         );
         assert_eq!(backward[0].target_object_id, obj_a.id);
 
-        ns.cleanup().await.unwrap();
+        collection_fixture.cleanup().await.unwrap();
     }
 
     /// Test that transitive class relations are found bidirectionally.
@@ -836,11 +890,11 @@ pub mod tests {
         let pool = TestScope::new().pool;
 
         let scope = TestScope::new();
-        let ns = scope.collection_fixture("bidir_class_trans").await;
+        let collection_fixture = scope.collection_fixture("bidir_class_trans").await;
 
-        let class_a = create_class(&pool, &ns.collection, "bidir_trans_a").await;
-        let class_b = create_class(&pool, &ns.collection, "bidir_trans_b").await;
-        let class_c = create_class(&pool, &ns.collection, "bidir_trans_c").await;
+        let class_a = create_class(&pool, &collection_fixture.collection, "bidir_trans_a").await;
+        let class_b = create_class(&pool, &collection_fixture.collection, "bidir_trans_b").await;
+        let class_c = create_class(&pool, &collection_fixture.collection, "bidir_trans_c").await;
 
         create_class_relation(&pool, &class_a, &class_b).await;
         create_class_relation(&pool, &class_b, &class_c).await;
@@ -869,7 +923,7 @@ pub mod tests {
             "C should see A transitively"
         );
 
-        ns.cleanup().await.unwrap();
+        collection_fixture.cleanup().await.unwrap();
     }
 
     #[actix_rt::test]
@@ -878,12 +932,12 @@ pub mod tests {
 
         let pool = TestScope::new().pool;
         let scope = TestScope::new();
-        let ns = scope.collection_fixture("reachability_rebuild").await;
+        let collection_fixture = scope.collection_fixture("reachability_rebuild").await;
 
-        let class_a = create_class(&pool, &ns.collection, "reachability_a").await;
-        let class_b = create_class(&pool, &ns.collection, "reachability_b").await;
-        let class_c = create_class(&pool, &ns.collection, "reachability_c").await;
-        let class_d = create_class(&pool, &ns.collection, "reachability_d").await;
+        let class_a = create_class(&pool, &collection_fixture.collection, "reachability_a").await;
+        let class_b = create_class(&pool, &collection_fixture.collection, "reachability_b").await;
+        let class_c = create_class(&pool, &collection_fixture.collection, "reachability_c").await;
+        let class_d = create_class(&pool, &collection_fixture.collection, "reachability_d").await;
 
         let rel_ab = create_class_relation(&pool, &class_a, &class_b).await;
         create_class_relation(&pool, &class_b, &class_c).await;
@@ -906,7 +960,7 @@ pub mod tests {
             vec![Some(class_a.id), Some(class_d.id), Some(class_c.id)]
         );
 
-        ns.cleanup().await.unwrap();
+        collection_fixture.cleanup().await.unwrap();
     }
 
     #[actix_rt::test]
@@ -917,12 +971,16 @@ pub mod tests {
 
         let pool = TestScope::new().pool;
         let scope = TestScope::new();
-        let ns = scope.collection_fixture("transitive_cursor_path").await;
+        let collection_fixture = scope.collection_fixture("transitive_cursor_path").await;
 
-        let class_a = create_class(&pool, &ns.collection, "transitive_cursor_a").await;
-        let class_b = create_class(&pool, &ns.collection, "transitive_cursor_b").await;
-        let class_c = create_class(&pool, &ns.collection, "transitive_cursor_c").await;
-        let class_d = create_class(&pool, &ns.collection, "transitive_cursor_d").await;
+        let class_a =
+            create_class(&pool, &collection_fixture.collection, "transitive_cursor_a").await;
+        let class_b =
+            create_class(&pool, &collection_fixture.collection, "transitive_cursor_b").await;
+        let class_c =
+            create_class(&pool, &collection_fixture.collection, "transitive_cursor_c").await;
+        let class_d =
+            create_class(&pool, &collection_fixture.collection, "transitive_cursor_d").await;
 
         create_class_relation(&pool, &class_a, &class_b).await;
         create_class_relation(&pool, &class_b, &class_c).await;
@@ -961,7 +1019,7 @@ pub mod tests {
             vec![Some(class_a.id), Some(class_b.id), Some(class_c.id)]
         );
 
-        ns.cleanup().await.unwrap();
+        collection_fixture.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -975,24 +1033,44 @@ pub mod tests {
         let pool = &context.pool;
 
         let scope = TestScope::new();
-        let ns = scope.collection_fixture("same_class_target").await;
-        let nid = ns.collection.id;
+        let collection_fixture = scope.collection_fixture("same_class_target").await;
+        let collection_id = collection_fixture.collection.id;
 
-        let class_a = create_class(pool, &ns.collection, "same_target_class_a").await;
-        let class_b = create_class(pool, &ns.collection, "same_target_class_b").await;
+        let class_a =
+            create_class(pool, &collection_fixture.collection, "same_target_class_a").await;
+        let class_b =
+            create_class(pool, &collection_fixture.collection, "same_target_class_b").await;
 
         let rel_ab = create_class_relation(pool, &class_a, &class_b).await;
 
         let json = serde_json::json!({});
-        let obj_a1 = create_object(pool, class_a.id, nid, "same_target_a1", json.clone())
-            .await
-            .unwrap();
-        let obj_b1 = create_object(pool, class_b.id, nid, "same_target_b1", json.clone())
-            .await
-            .unwrap();
-        let obj_a2 = create_object(pool, class_a.id, nid, "same_target_a2", json.clone())
-            .await
-            .unwrap();
+        let obj_a1 = create_object(
+            pool,
+            class_a.id,
+            collection_id,
+            "same_target_a1",
+            json.clone(),
+        )
+        .await
+        .unwrap();
+        let obj_b1 = create_object(
+            pool,
+            class_b.id,
+            collection_id,
+            "same_target_b1",
+            json.clone(),
+        )
+        .await
+        .unwrap();
+        let obj_a2 = create_object(
+            pool,
+            class_a.id,
+            collection_id,
+            "same_target_a2",
+            json.clone(),
+        )
+        .await
+        .unwrap();
 
         create_object_relation(pool, &rel_ab, &obj_a1, &obj_b1).await;
         create_object_relation(pool, &rel_ab, &obj_a2, &obj_b1).await;
@@ -1007,7 +1085,7 @@ pub mod tests {
         assert_eq!(related[0].target_object_id, obj_a2.id);
         assert_eq!(related[0].path, vec![obj_a1.id, obj_b1.id, obj_a2.id]);
 
-        ns.cleanup().await.unwrap();
+        collection_fixture.cleanup().await.unwrap();
     }
 
     /// Deleting one class relation in a chain should only clean up object relations
@@ -1019,24 +1097,24 @@ pub mod tests {
         let pool = TestScope::new().pool;
 
         let scope = TestScope::new();
-        let ns = scope.collection_fixture("cleanup_scoped").await;
-        let nid = ns.collection.id;
+        let collection_fixture = scope.collection_fixture("cleanup_scoped").await;
+        let collection_id = collection_fixture.collection.id;
 
-        let class_a = create_class(&pool, &ns.collection, "cleanup_a").await;
-        let class_b = create_class(&pool, &ns.collection, "cleanup_b").await;
-        let class_c = create_class(&pool, &ns.collection, "cleanup_c").await;
+        let class_a = create_class(&pool, &collection_fixture.collection, "cleanup_a").await;
+        let class_b = create_class(&pool, &collection_fixture.collection, "cleanup_b").await;
+        let class_c = create_class(&pool, &collection_fixture.collection, "cleanup_c").await;
 
         let rel_ab = create_class_relation(&pool, &class_a, &class_b).await;
         let rel_bc = create_class_relation(&pool, &class_b, &class_c).await;
 
         let json = serde_json::json!({});
-        let obj_a = create_object(&pool, class_a.id, nid, "cleanup_oA", json.clone())
+        let obj_a = create_object(&pool, class_a.id, collection_id, "cleanup_oA", json.clone())
             .await
             .unwrap();
-        let obj_b = create_object(&pool, class_b.id, nid, "cleanup_oB", json.clone())
+        let obj_b = create_object(&pool, class_b.id, collection_id, "cleanup_oB", json.clone())
             .await
             .unwrap();
-        let obj_c = create_object(&pool, class_c.id, nid, "cleanup_oC", json.clone())
+        let obj_c = create_object(&pool, class_c.id, collection_id, "cleanup_oC", json.clone())
             .await
             .unwrap();
 
@@ -1056,7 +1134,7 @@ pub mod tests {
             "Object relation A-B should survive when only B-C class relation is deleted"
         );
 
-        ns.cleanup().await.unwrap();
+        collection_fixture.cleanup().await.unwrap();
     }
 
     /// When there's an alternative path (triangle: A↔B, A↔C, B↔C),
@@ -1067,12 +1145,12 @@ pub mod tests {
         let pool = TestScope::new().pool;
 
         let scope = TestScope::new();
-        let ns = scope.collection_fixture("cleanup_alt_path").await;
-        let nid = ns.collection.id;
+        let collection_fixture = scope.collection_fixture("cleanup_alt_path").await;
+        let collection_id = collection_fixture.collection.id;
 
-        let class_a = create_class(&pool, &ns.collection, "altpath_a").await;
-        let class_b = create_class(&pool, &ns.collection, "altpath_b").await;
-        let class_c = create_class(&pool, &ns.collection, "altpath_c").await;
+        let class_a = create_class(&pool, &collection_fixture.collection, "altpath_a").await;
+        let class_b = create_class(&pool, &collection_fixture.collection, "altpath_b").await;
+        let class_c = create_class(&pool, &collection_fixture.collection, "altpath_c").await;
 
         // Triangle: A↔B, B↔C, A↔C
         let rel_ab = create_class_relation(&pool, &class_a, &class_b).await;
@@ -1080,13 +1158,13 @@ pub mod tests {
         let _rel_ac = create_class_relation(&pool, &class_a, &class_c).await;
 
         let json = serde_json::json!({});
-        let obj_a = create_object(&pool, class_a.id, nid, "altpath_oA", json.clone())
+        let obj_a = create_object(&pool, class_a.id, collection_id, "altpath_oA", json.clone())
             .await
             .unwrap();
-        let obj_b = create_object(&pool, class_b.id, nid, "altpath_oB", json.clone())
+        let obj_b = create_object(&pool, class_b.id, collection_id, "altpath_oB", json.clone())
             .await
             .unwrap();
-        let obj_c = create_object(&pool, class_c.id, nid, "altpath_oC", json.clone())
+        let obj_c = create_object(&pool, class_c.id, collection_id, "altpath_oC", json.clone())
             .await
             .unwrap();
 
@@ -1107,6 +1185,6 @@ pub mod tests {
         // oB-oC was created under rel_bc which is now deleted — FK CASCADE removes it
         verify_no_such_object_relation(&pool, obj_rel_bc.id).await;
 
-        ns.cleanup().await.unwrap();
+        collection_fixture.cleanup().await.unwrap();
     }
 }

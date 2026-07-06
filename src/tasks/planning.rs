@@ -657,10 +657,10 @@ pub(super) async fn plan_collection(
         .get(&input.name)
         .cloned()
         .filter(|collection| collection.exists_in_db)
-        .map(|ns| Collection {
-            id: ns.id,
-            name: ns.name,
-            description: ns.description,
+        .map(|collection_fixture| Collection {
+            id: collection_fixture.id,
+            name: collection_fixture.name,
+            description: collection_fixture.description,
             created_at: Utc::now().naive_utc(),
             updated_at: Utc::now().naive_utc(),
         })

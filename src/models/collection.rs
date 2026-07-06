@@ -211,7 +211,7 @@ where
 ///
 /// ## Arguments
 /// * backend - Backend context used to execute the query
-/// * nid - ID of the collection to check permissions for
+/// * target_collection_id - ID of the collection to check permissions for
 /// * permission_type - Type of permission to check
 ///
 /// ## Returns
@@ -220,18 +220,23 @@ where
 #[allow(dead_code)]
 pub async fn groups_can_on<C>(
     backend: &C,
-    nid: i32,
+    target_collection_id: i32,
     permission_type: Permissions,
 ) -> Result<Vec<Group>, ApiError>
 where
     C: BackendContext + ?Sized,
 {
-    collection_backend::groups_can_on_from_backend(backend.db_pool(), nid, permission_type).await
+    collection_backend::groups_can_on_from_backend(
+        backend.db_pool(),
+        target_collection_id,
+        permission_type,
+    )
+    .await
 }
 
 pub async fn groups_can_on_paginated_with_total_count<C>(
     backend: &C,
-    nid: i32,
+    target_collection_id: i32,
     permission_type: Permissions,
     query_options: &QueryOptions,
 ) -> Result<(Vec<Group>, i64), ApiError>
@@ -240,7 +245,7 @@ where
 {
     collection_backend::groups_can_on_paginated_with_total_count_from_backend(
         backend.db_pool(),
-        nid,
+        target_collection_id,
         permission_type,
         query_options,
     )
@@ -334,11 +339,15 @@ where
 }
 
 /// List all permissions for a given group on a collection
-pub async fn group_on<C>(backend: &C, nid: i32, gid: i32) -> Result<Permission, ApiError>
+pub async fn group_on<C>(
+    backend: &C,
+    target_collection_id: i32,
+    gid: i32,
+) -> Result<Permission, ApiError>
 where
     C: BackendContext + ?Sized,
 {
-    collection_backend::group_on_from_backend(backend.db_pool(), nid, gid).await
+    collection_backend::group_on_from_backend(backend.db_pool(), target_collection_id, gid).await
 }
 
 #[derive(serde::Serialize, diesel::Queryable, Clone, Debug, ToSchema)]
@@ -403,11 +412,13 @@ mod tests {
 
     async fn groups_can_on_count(
         pool: &DbPool,
-        nid: i32,
+        target_collection_id: i32,
         permission_type: Permissions,
         expected_count: i32,
     ) {
-        let groups = groups_can_on(pool, nid, permission_type).await.unwrap();
+        let groups = groups_can_on(pool, target_collection_id, permission_type)
+            .await
+            .unwrap();
         assert_eq!(groups.len() as i32, expected_count);
     }
 
@@ -512,7 +523,7 @@ mod tests {
     }
 
     #[actix_rt::test]
-    async fn test_permission_grant_combinations() {
+    async fn test_permission_grant_ccombinations() {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
 
@@ -537,12 +548,12 @@ mod tests {
 
         for subset in subsets.iter() {
             let collection = scope
-                .collection_fixture("test_perm_grant_combinations")
+                .collection_fixture("test_perm_grant_ccombinations")
                 .await;
 
             let group = NewGroup {
-                groupname: "test_perm_grant_combinations".to_string(),
-                description: Some("Test group for combinations".to_string()),
+                groupname: "test_perm_grant_ccombinations".to_string(),
+                description: Some("Test group for ccombinations".to_string()),
             }
             .save_without_events(&pool)
             .await
@@ -572,7 +583,7 @@ mod tests {
     }
 
     #[actix_rt::test]
-    async fn test_permission_revoke_combinations() {
+    async fn test_permission_revoke_ccombinations() {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
 
@@ -603,12 +614,12 @@ mod tests {
 
         for subset in subsets {
             let collection = scope
-                .collection_fixture("test_perm_revoke_ombinations")
+                .collection_fixture("test_perm_revoke_combinations")
                 .await;
 
             let group = NewGroup {
-                groupname: "test_perm_revoke_combinations".to_string(),
-                description: Some("Test group for combinations".to_string()),
+                groupname: "test_perm_revoke_ccombinations".to_string(),
+                description: Some("Test group for ccombinations".to_string()),
             }
             .save_without_events(&pool)
             .await
@@ -659,7 +670,7 @@ mod tests {
 
         let group = NewGroup {
             groupname: "test_perm_grant_without_side_effects".to_string(),
-            description: Some("Test group for combinations".to_string()),
+            description: Some("Test group for ccombinations".to_string()),
         }
         .save_without_events(&pool)
         .await

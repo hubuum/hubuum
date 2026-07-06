@@ -53,7 +53,7 @@ Example:
   "graph": {
     "collections": [
       {
-        "ref": "ns:infra",
+        "ref": "collection:infra",
         "name": "infra",
         "description": "Infrastructure inventory"
       }
@@ -64,7 +64,7 @@ Example:
         "name": "server",
         "description": "Server objects",
         "validate_schema": false,
-        "collection_ref": "ns:infra"
+        "collection_ref": "collection:infra"
       }
     ],
     "objects": [
@@ -82,7 +82,7 @@ Example:
     "collection_permissions": [
       {
         "ref": "acl:ops-read",
-        "collection_ref": "ns:infra",
+        "collection_ref": "collection:infra",
         "group_key": {
           "groupname": "ops"
         },
@@ -476,7 +476,7 @@ Example:
   {
     "id": 101,
     "task_id": 12,
-    "item_ref": "ns:infra",
+    "item_ref": "collection:infra",
     "entity_kind": "collection",
     "action": "create",
     "identifier": "infra",

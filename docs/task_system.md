@@ -43,8 +43,6 @@ Relevant code:
 - [src/models/task.rs](../src/models/task.rs)
 - [src/db/traits/task.rs](../src/db/traits/task.rs)
 - [migrations/2023-12-27-011440_initial/up.sql](../migrations/2023-12-27-011440_initial/up.sql)
-- [migrations/2026-06-29-000000_events_table/up.sql](../migrations/2026-06-29-000000_events_table/up.sql)
-- [migrations/2026-06-29-000001_consolidate_task_events/up.sql](../migrations/2026-06-29-000001_consolidate_task_events/up.sql)
 
 ### `tasks`
 

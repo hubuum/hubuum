@@ -285,13 +285,15 @@ pub async fn group_can_on_from_backend<T: CollectionAccessors>(
 
 pub async fn groups_can_on_from_backend(
     pool: &DbPool,
-    nid: i32,
+    target_collection_id: i32,
     permission_type: Permissions,
 ) -> Result<Vec<Group>, ApiError> {
     use crate::schema::groups::dsl::{groups, id as group_table_id};
     use crate::schema::permissions::dsl::*;
 
-    let base_query = permissions.into_boxed().filter(collection_id.eq(nid));
+    let base_query = permissions
+        .into_boxed()
+        .filter(collection_id.eq(target_collection_id));
     let filtered_query = permission_type.create_boxed_filter(base_query, true);
 
     let group_ids = with_connection(pool, |conn| {
@@ -311,7 +313,7 @@ pub async fn groups_can_on_from_backend(
 
 pub async fn groups_can_on_paginated_with_total_count_from_backend(
     pool: &DbPool,
-    nid: i32,
+    target_collection_id: i32,
     permission_type: Permissions,
     query_options: &QueryOptions,
 ) -> Result<(Vec<Group>, i64), ApiError> {
@@ -322,7 +324,9 @@ pub async fn groups_can_on_paginated_with_total_count_from_backend(
     use crate::{date_search, numeric_search, string_search};
 
     let build_query = || -> Result<_, ApiError> {
-        let base_query = permissions.into_boxed().filter(collection_id.eq(nid));
+        let base_query = permissions
+            .into_boxed()
+            .filter(collection_id.eq(target_collection_id));
         let filtered_query = permission_type.create_boxed_filter(base_query, true);
 
         let mut query = groups
@@ -555,14 +559,14 @@ pub async fn count_groups_on_paginated_from_backend<T: CollectionAccessors>(
 
 pub async fn group_on_from_backend(
     pool: &DbPool,
-    nid: i32,
+    target_collection_id: i32,
     gid: i32,
 ) -> Result<Permission, ApiError> {
     use crate::schema::permissions::dsl::*;
 
     with_connection(pool, |conn| {
         permissions
-            .filter(collection_id.eq(nid))
+            .filter(collection_id.eq(target_collection_id))
             .filter(group_id.eq(gid))
             .first::<Permission>(conn)
     })

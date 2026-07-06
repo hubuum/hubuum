@@ -20,7 +20,7 @@ mod tests {
         let admin_group = ensure_admin_group(pool).await;
 
         NewCollectionWithAssignee {
-            name: format!("template_ns_{suffix}"),
+            name: format!("template_collection_{suffix}"),
             description: "template test collection".to_string(),
             group_id: admin_group.id,
         }
@@ -785,8 +785,9 @@ mod tests {
     #[actix_web::test]
     async fn test_report_template_rejects_class_in_another_collection() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let template_collection = create_collection(&pool, "report_class_template_ns").await;
-        let class_collection = create_collection(&pool, "report_class_target_ns").await;
+        let template_collection =
+            create_collection(&pool, "report_class_template_collection").await;
+        let class_collection = create_collection(&pool, "report_class_target_collection").await;
         let class = NewHubuumClass {
             name: "foreign-template-class".to_string(),
             collection_id: class_collection.id,

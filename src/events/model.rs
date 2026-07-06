@@ -2,7 +2,7 @@
 //!
 //! `NewEvent` is a validating builder: the `(entity_type, action)` pair is
 //! checked against the authoritative catalog at construction, so invalid
-//! combinations (e.g. `object_relation.updated`) can never reach
+//! ccombinations (e.g. `object_relation.updated`) can never reach
 //! [`super::emit_event`]. The struct holds validated `String` snapshots of the
 //! catalog enums at the Diesel boundary while exposing typed builders; the
 //! [`Event`] read model converts back to the typed enums on demand.

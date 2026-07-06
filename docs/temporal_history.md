@@ -307,7 +307,7 @@ The `users` table intentionally **lacks a history twin** because:
 
 ### The `anonymized_at` Column
 
-Added in migration `2026-06-29-000002_user_anonymized_at/up.sql`:
+The greenfield schema defines `users.anonymized_at`:
 
 ```sql
 ALTER TABLE users ADD COLUMN anonymized_at TIMESTAMP NULL;
@@ -486,7 +486,7 @@ Writes performed by background tasks (e.g., imports, async jobs in `src/tasks`) 
 
 ## References
 
-- **Migrations**: `migrations/2026-06-29-000001_temporal_history/up.sql`, `migrations/2026-06-29-000002_user_anonymized_at/up.sql`
+- **Schema**: `migrations/2023-12-27-011440_initial/up.sql`
 - **Database actor plumbing**: `src/db/mod.rs`
 - **Request-scoped actor context**: `src/middlewares/actor_context.rs`
 - **Anonymization logic**: `src/utilities/iam.rs`

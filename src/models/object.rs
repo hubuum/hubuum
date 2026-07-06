@@ -159,23 +159,23 @@ pub mod tests {
         let nested_data = serde_json::json!({"key": "value", "nested": {"key": "nested_value"}});
         let list_data = serde_json::json!({"key": "value", "list": [1, 2, 3]});
 
-        let nid = collection.id;
+        let target_collection_id = collection.id;
         let hid = class.id;
 
         let test_objects = vec![
-            ("Object 1", hid, nid, simple_data.clone()),
-            ("Object 2", hid, nid, simple_data.clone()),
-            ("Object 3", hid, nid, simple_data.clone()),
-            ("Object 4", hid, nid, nested_data.clone()),
-            ("Object 5", hid, nid, nested_data.clone()),
-            ("Object 6", hid, nid, list_data.clone()),
+            ("Object 1", hid, target_collection_id, simple_data.clone()),
+            ("Object 2", hid, target_collection_id, simple_data.clone()),
+            ("Object 3", hid, target_collection_id, simple_data.clone()),
+            ("Object 4", hid, target_collection_id, nested_data.clone()),
+            ("Object 5", hid, target_collection_id, nested_data.clone()),
+            ("Object 6", hid, target_collection_id, list_data.clone()),
         ];
 
         let mut ret_vec = Vec::new();
 
-        for (name, hid, nid, object_data) in test_objects {
+        for (name, hid, target_collection_id, object_data) in test_objects {
             ret_vec.push(
-                create_object(pool, hid, nid, name, object_data)
+                create_object(pool, hid, target_collection_id, name, object_data)
                     .await
                     .unwrap(),
             );

@@ -71,19 +71,19 @@ impl UpdateAdapter for UpdateCollection {
     async fn update_adapter_without_events(
         &self,
         pool: &DbPool,
-        nid: i32,
+        target_collection_id: i32,
     ) -> Result<Self::Output, ApiError> {
-        self.update_collection_record_without_events(pool, nid)
+        self.update_collection_record_without_events(pool, target_collection_id)
             .await
     }
 
     async fn update_adapter(
         &self,
         pool: &DbPool,
-        nid: i32,
+        target_collection_id: i32,
         context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
-        self.update_collection_record(pool, nid, Some(context))
+        self.update_collection_record(pool, target_collection_id, Some(context))
             .await
     }
 }
@@ -179,14 +179,14 @@ impl NewCollection {
     pub async fn update_with_permissions<C>(
         self,
         backend: &C,
-        ns_with_assignee: NewCollectionWithAssignee,
+        collection_with_assignee: NewCollectionWithAssignee,
     ) -> Result<Collection, ApiError>
     where
         C: BackendContext + ?Sized,
     {
         self.save_collection_for_group_record_without_events(
             backend.db_pool(),
-            ns_with_assignee.group_id,
+            collection_with_assignee.group_id,
         )
         .await
     }

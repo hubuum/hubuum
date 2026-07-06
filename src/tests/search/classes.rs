@@ -47,13 +47,13 @@ mod test {
 
         for i in 0..10 {
             let padded_i = format!("{i:02}");
-            let mut nid = collections[0].id;
+            let mut collection_id = collections[0].id;
             let mut schema = blog_schema.clone();
             if i > 8 {
-                nid = collections[2].id; // We'll get one class in this collection (9)
+                collection_id = collections[2].id; // We'll get one class in this collection (9)
                 schema = geo_schema.clone();
             } else if i > 5 {
-                nid = collections[1].id; // We'll get three classes in this collection (6,7,8)
+                collection_id = collections[1].id; // We'll get three classes in this collection (6,7,8)
                 schema = address_schema.clone();
             }
 
@@ -63,7 +63,7 @@ mod test {
                     description: format!("{pretty_prefix} class {padded_i}"),
                     json_schema: Some(schema),
                     validate_schema: Some(false),
-                    collection_id: nid,
+                    collection_id,
                 }
                 .save_without_events(&context.pool)
                 .await
@@ -99,8 +99,11 @@ mod test {
     }
 
     async fn cleanup(context: &TestContext, collections: Vec<Collection>) {
-        for ns in collections {
-            ns.delete_without_events(&context.pool).await.unwrap();
+        for collection_fixture in collections {
+            collection_fixture
+                .delete_without_events(&context.pool)
+                .await
+                .unwrap();
         }
     }
 
@@ -113,7 +116,7 @@ mod test {
         // Set which collections we want to search in
         let comma_separated_collections = collections
             .iter()
-            .map(|ns| ns.id.to_string())
+            .map(|collection_fixture| collection_fixture.id.to_string())
             .collect::<Vec<String>>()
             .join(",");
 
@@ -207,7 +210,7 @@ mod test {
             Some(SearchOperator::Equals { is_negated: false }),
             &collections
                 .iter()
-                .map(|ns| ns.id.to_string())
+                .map(|collection_fixture| collection_fixture.id.to_string())
                 .collect::<Vec<String>>()
                 .join(","),
         )
@@ -430,7 +433,7 @@ mod test {
             Some(SearchOperator::Equals { is_negated: false }),
             &collections
                 .iter()
-                .map(|ns| ns.id.to_string())
+                .map(|collection_fixture| collection_fixture.id.to_string())
                 .collect::<Vec<String>>()
                 .join(","),
         )

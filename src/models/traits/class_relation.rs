@@ -101,8 +101,11 @@ impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
         &self,
         pool: &DbPool,
     ) -> Result<(CollectionID, CollectionID), ApiError> {
-        let (ns1, ns2) = self.collection(pool).await?;
-        Ok((CollectionID::new(ns1.id)?, CollectionID::new(ns2.id)?))
+        let (collection_one, collection_two) = self.collection(pool).await?;
+        Ok((
+            CollectionID::new(collection_one.id)?,
+            CollectionID::new(collection_two.id)?,
+        ))
     }
 }
 
@@ -121,8 +124,11 @@ impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
         &self,
         pool: &DbPool,
     ) -> Result<(CollectionID, CollectionID), ApiError> {
-        let (ns1, ns2) = self.collection(pool).await?;
-        Ok((CollectionID::new(ns1.id)?, CollectionID::new(ns2.id)?))
+        let (collection_one, collection_two) = self.collection(pool).await?;
+        Ok((
+            CollectionID::new(collection_one.id)?,
+            CollectionID::new(collection_two.id)?,
+        ))
     }
 }
 
@@ -159,8 +165,11 @@ impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
         &self,
         pool: &DbPool,
     ) -> Result<(CollectionID, CollectionID), ApiError> {
-        let (ns1, ns2) = self.collection(pool).await?;
-        Ok((CollectionID::new(ns1.id)?, CollectionID::new(ns2.id)?))
+        let (collection_one, collection_two) = self.collection(pool).await?;
+        Ok((
+            CollectionID::new(collection_one.id)?,
+            CollectionID::new(collection_two.id)?,
+        ))
     }
 }
 
@@ -179,8 +188,11 @@ impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
         &self,
         pool: &DbPool,
     ) -> Result<(CollectionID, CollectionID), ApiError> {
-        let (ns1, ns2) = self.collection(pool).await?;
-        Ok((CollectionID::new(ns1.id)?, CollectionID::new(ns2.id)?))
+        let (collection_one, collection_two) = self.collection(pool).await?;
+        Ok((
+            CollectionID::new(collection_one.id)?,
+            CollectionID::new(collection_two.id)?,
+        ))
     }
 }
 

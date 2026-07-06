@@ -603,13 +603,13 @@ mod tests {
     #[actix_web::test]
     async fn move_requires_create_on_target_collection() {
         let context = TestContext::new().await;
-        let (source_ns, class_id, _) = setup_object(&context, "rt_move_src").await;
+        let (source_collection, class_id, _) = setup_object(&context, "rt_move_src").await;
         let target_collection = context.collection_fixture("rt_move_dst").await;
-        let target_ns = target_collection.collection.id;
+        let target_collection_id = target_collection.collection.id;
 
         let created = create_target(
             &context,
-            source_ns,
+            source_collection,
             class_id,
             "move-target",
             "https://x.example.com/h",
@@ -626,7 +626,7 @@ mod tests {
             .unwrap();
         let user_token = user.create_token(&context.pool).await.unwrap().get_token();
 
-        let source_collection = crate::models::CollectionID::new(source_ns)
+        let source_collection = crate::models::CollectionID::new(source_collection)
             .unwrap()
             .instance(&context.pool)
             .await
@@ -641,7 +641,7 @@ mod tests {
             .unwrap();
 
         let move_payload = serde_json::json!({
-            "collection_id": target_ns,
+            "collection_id": target_collection_id,
             "class_id": null,
             "allowed_subject_types": ["collection"],
         });
@@ -673,7 +673,7 @@ mod tests {
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let moved: RemoteTarget = test::read_body_json(resp).await;
-        assert_eq!(moved.collection_id, target_ns);
+        assert_eq!(moved.collection_id, target_collection_id);
     }
 
     #[actix_web::test]

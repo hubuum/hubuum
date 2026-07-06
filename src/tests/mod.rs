@@ -664,11 +664,11 @@ pub fn test_scope() -> TestScope {
 
 async fn create_collection_for_group(
     pool: &DbPool,
-    ns_name: &str,
+    collection_name: &str,
     group_id: i32,
 ) -> Result<Collection, ApiError> {
     NewCollectionWithAssignee {
-        name: ns_name.to_string(),
+        name: collection_name.to_string(),
         description: "Test collection".to_string(),
         group_id,
     }

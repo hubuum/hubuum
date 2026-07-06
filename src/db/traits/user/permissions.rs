@@ -52,7 +52,12 @@ pub trait UserPermissions: AuthzSubject {
         let group_id_subquery = self.group_ids_subquery();
 
         let collection_ids: HashSet<i32> = stream::iter(collections)
-            .map(|ns| async move { ns.collection_id(pool).await.map(|nid| nid.id()) })
+            .map(|collection_fixture| async move {
+                collection_fixture
+                    .collection_id(pool)
+                    .await
+                    .map(|collection_id| collection_id.id())
+            })
             // Batch the futures into groups of 5, to avoid overwhelming the database
             .buffered(5)
             .try_collect()

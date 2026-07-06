@@ -80,7 +80,7 @@ fn emit_event_respects_transaction_outcome(#[case] rollback: bool) {
     .unwrap()
     .with_collection_id(1)
     .with_entity_id(1)
-    .with_entity_name("ns-test")
+    .with_entity_name("collection_fixture-test")
     .with_request_id(Uuid::new_v4())
     .with_correlation_id("client-provided-correlation-id")
     .with_metadata(serde_json::json!({"k": "v"}));

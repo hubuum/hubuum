@@ -1548,14 +1548,14 @@ mod tests {
         use crate::traits::CanUpdate;
 
         let context = test_context;
-        let ns = context.collection_fixture("object_history_api").await;
+        let collection_fixture = context.collection_fixture("object_history_api").await;
         let event_context = hubuum_events_core::EventContext::system();
 
         // Create a class and an object.
         let class = NewHubuumClass {
             name: "object_history_class".to_string(),
             description: "class for object history test".to_string(),
-            collection_id: ns.collection.id,
+            collection_id: collection_fixture.collection.id,
             json_schema: None,
             validate_schema: Some(false),
         }
@@ -1566,7 +1566,7 @@ mod tests {
         let created = NewHubuumObject {
             name: "object_history_api".to_string(),
             description: "v1".to_string(),
-            collection_id: ns.collection.id,
+            collection_id: collection_fixture.collection.id,
             hubuum_class_id: class.id,
             data: serde_json::json!({"test": "v1"}),
         }
@@ -1619,20 +1619,20 @@ mod tests {
         let snap: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(snap["description"], "v1");
 
-        ns.cleanup().await.unwrap();
+        collection_fixture.cleanup().await.unwrap();
     }
 
     #[rstest]
     #[actix_web::test]
     async fn test_api_object_history_404_for_missing(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let ns = context.collection_fixture("object_history_404").await;
+        let collection_fixture = context.collection_fixture("object_history_404").await;
         let event_context = hubuum_events_core::EventContext::system();
 
         let class = NewHubuumClass {
             name: "object_history_404_class".to_string(),
             description: "class for 404 test".to_string(),
-            collection_id: ns.collection.id,
+            collection_id: collection_fixture.collection.id,
             json_schema: None,
             validate_schema: Some(false),
         }
@@ -1648,6 +1648,6 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::NOT_FOUND).await;
 
-        ns.cleanup().await.unwrap();
+        collection_fixture.cleanup().await.unwrap();
     }
 }

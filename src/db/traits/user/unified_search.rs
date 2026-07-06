@@ -18,7 +18,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         params: &UnifiedSearchSpec,
         scopes: Option<&[Permissions]>,
     ) -> Result<Vec<Collection>, ApiError> {
-        use crate::schema::collections::dsl as ns;
+        use crate::schema::collections::dsl as collection_dsl;
 
         let collections =
             permitted_collections(self, pool, &[Permissions::ReadCollection], scopes).await?;
@@ -33,12 +33,12 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         let pattern = format!("%{}%", params.query);
 
         with_connection(pool, |conn| {
-            ns::collections
-                .filter(ns::id.eq_any(collection_ids))
+            collection_dsl::collections
+                .filter(collection_dsl::id.eq_any(collection_ids))
                 .filter(
-                    ns::name
+                    collection_dsl::name
                         .ilike(pattern.clone())
-                        .or(ns::description.ilike(pattern.clone())),
+                        .or(collection_dsl::description.ilike(pattern.clone())),
                 )
                 .load::<Collection>(conn)
         })

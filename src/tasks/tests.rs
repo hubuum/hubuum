@@ -35,18 +35,18 @@ use crate::tests::TestContext;
 #[test]
 fn test_execute_import_strict_rolls_back_on_runtime_failure() {
     let context = block_on(TestContext::new());
-    let collection = context.scoped_name("strict_rollback_ns");
+    let collection = context.scoped_name("strict_rollback_collection");
     let class = context.scoped_name("strict_rollback_class");
     let planned_items = vec![
         PlannedItem {
             result: planned_result(
                 "collection",
                 "create",
-                Some("ns:ok".to_string()),
+                Some("collection:ok".to_string()),
                 Some(collection.clone()),
             ),
             execution: Some(PlannedExecution::CreateCollection(ImportCollectionInput {
-                ref_: Some("ns:ok".to_string()),
+                ref_: Some("collection:ok".to_string()),
                 name: collection.clone(),
                 description: "Rollback collection".to_string(),
             })),
@@ -64,7 +64,7 @@ fn test_execute_import_strict_rolls_back_on_runtime_failure() {
                 description: "Fails at runtime".to_string(),
                 json_schema: None,
                 validate_schema: Some(false),
-                collection_ref: Some("ns:missing".to_string()),
+                collection_ref: Some("collection:missing".to_string()),
                 collection_key: None,
             })),
         },
@@ -102,19 +102,19 @@ fn test_execute_import_strict_rolls_back_on_runtime_failure() {
 #[test]
 fn test_execute_import_best_effort_keeps_successful_items() {
     let context = block_on(TestContext::new());
-    let collection_one = context.scoped_name("best_effort_ns_one");
-    let collection_two = context.scoped_name("best_effort_ns_two");
+    let collection_one = context.scoped_name("best_effort_collection_one");
+    let collection_two = context.scoped_name("best_effort_collection_two");
     let class_bad = context.scoped_name("best_effort_class_bad");
     let planned_items = vec![
         PlannedItem {
             result: planned_result(
                 "collection",
                 "create",
-                Some("ns:one".to_string()),
+                Some("collection:one".to_string()),
                 Some(collection_one.clone()),
             ),
             execution: Some(PlannedExecution::CreateCollection(ImportCollectionInput {
-                ref_: Some("ns:one".to_string()),
+                ref_: Some("collection:one".to_string()),
                 name: collection_one.clone(),
                 description: "Best effort collection one".to_string(),
             })),
@@ -132,7 +132,7 @@ fn test_execute_import_best_effort_keeps_successful_items() {
                 description: "Fails at runtime".to_string(),
                 json_schema: None,
                 validate_schema: Some(false),
-                collection_ref: Some("ns:missing".to_string()),
+                collection_ref: Some("collection:missing".to_string()),
                 collection_key: None,
             })),
         },
@@ -140,11 +140,11 @@ fn test_execute_import_best_effort_keeps_successful_items() {
             result: planned_result(
                 "collection",
                 "create",
-                Some("ns:two".to_string()),
+                Some("collection:two".to_string()),
                 Some(collection_two.clone()),
             ),
             execution: Some(PlannedExecution::CreateCollection(ImportCollectionInput {
-                ref_: Some("ns:two".to_string()),
+                ref_: Some("collection:two".to_string()),
                 name: collection_two.clone(),
                 description: "Best effort collection two".to_string(),
             })),
@@ -182,18 +182,18 @@ fn test_execute_import_best_effort_keeps_successful_items() {
 #[test]
 fn test_execute_import_best_effort_continues_after_non_policy_runtime_error() {
     let context = block_on(TestContext::new());
-    let collection_one = context.scoped_name("best_effort_runtime_ns_one");
-    let collection_two = context.scoped_name("best_effort_runtime_ns_two");
+    let collection_one = context.scoped_name("best_effort_runtime_collection_one");
+    let collection_two = context.scoped_name("best_effort_runtime_collection_two");
     let planned_items = vec![
         PlannedItem {
             result: planned_result(
                 "collection",
                 "create",
-                Some("ns:one".to_string()),
+                Some("collection:one".to_string()),
                 Some(collection_one.clone()),
             ),
             execution: Some(PlannedExecution::CreateCollection(ImportCollectionInput {
-                ref_: Some("ns:one".to_string()),
+                ref_: Some("collection:one".to_string()),
                 name: collection_one.clone(),
                 description: "Best effort collection one".to_string(),
             })),
@@ -211,7 +211,7 @@ fn test_execute_import_best_effort_continues_after_non_policy_runtime_error() {
                 description: "Fails at runtime".to_string(),
                 json_schema: None,
                 validate_schema: Some(false),
-                collection_ref: Some("ns:missing".to_string()),
+                collection_ref: Some("collection:missing".to_string()),
                 collection_key: None,
             })),
         },
@@ -219,11 +219,11 @@ fn test_execute_import_best_effort_continues_after_non_policy_runtime_error() {
             result: planned_result(
                 "collection",
                 "create",
-                Some("ns:two".to_string()),
+                Some("collection:two".to_string()),
                 Some(collection_two.clone()),
             ),
             execution: Some(PlannedExecution::CreateCollection(ImportCollectionInput {
-                ref_: Some("ns:two".to_string()),
+                ref_: Some("collection:two".to_string()),
                 name: collection_two.clone(),
                 description: "Best effort collection two".to_string(),
             })),
@@ -265,13 +265,13 @@ fn test_execute_import_strict_preserves_underlying_error_variant() {
         result: planned_result(
             "collection",
             "update",
-            Some("ns:missing".to_string()),
+            Some("collection:missing".to_string()),
             Some("missing".to_string()),
         ),
         execution: Some(PlannedExecution::UpdateCollection {
             collection_id: -999,
             input: ImportCollectionInput {
-                ref_: Some("ns:missing".to_string()),
+                ref_: Some("collection:missing".to_string()),
                 name: "missing".to_string(),
                 description: "missing".to_string(),
             },
@@ -383,7 +383,7 @@ fn test_remember_collection_populates_collection_id_index() {
 
     remember_collection(
         &mut state,
-        Some("ns:planned".to_string()),
+        Some("collection:planned".to_string()),
         collection.clone(),
     );
 
@@ -403,7 +403,7 @@ fn test_plan_collection_rejects_duplicate_name_within_request() {
         permission_policy: Some(ImportPermissionPolicy::Continue),
     };
     let input = ImportCollectionInput {
-        ref_: Some("ns:one".to_string()),
+        ref_: Some("collection:one".to_string()),
         name: context.scoped_name("duplicate_collection"),
         description: "first".to_string(),
     };
@@ -418,7 +418,7 @@ fn test_plan_collection_rejects_duplicate_name_within_request() {
     .unwrap();
 
     let duplicate = ImportCollectionInput {
-        ref_: Some("ns:two".to_string()),
+        ref_: Some("collection:two".to_string()),
         ..input
     };
     let err = block_on(plan_collection(
@@ -441,7 +441,7 @@ fn test_plan_class_rejects_duplicate_name_against_virtual_planned_class() {
     let mut state = PlanningState::new();
     remember_collection(
         &mut state,
-        Some("ns:existing".to_string()),
+        Some("collection:existing".to_string()),
         CollectionResolution {
             id: fixture.collection.id,
             name: fixture.collection.name.clone(),
@@ -461,7 +461,7 @@ fn test_plan_class_rejects_duplicate_name_against_virtual_planned_class() {
         description: "first".to_string(),
         json_schema: None,
         validate_schema: Some(false),
-        collection_ref: Some("ns:existing".to_string()),
+        collection_ref: Some("collection:existing".to_string()),
         collection_key: None,
     };
 
@@ -568,7 +568,7 @@ fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
     let mut state = PlanningState::new();
     remember_collection(
         &mut state,
-        Some("ns:one".to_string()),
+        Some("collection:one".to_string()),
         CollectionResolution {
             id: fixture_one.collection.id,
             name: fixture_one.collection.name.clone(),
@@ -578,7 +578,7 @@ fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
     );
     remember_collection(
         &mut state,
-        Some("ns:two".to_string()),
+        Some("collection:two".to_string()),
         CollectionResolution {
             id: fixture_two.collection.id,
             name: fixture_two.collection.name.clone(),
@@ -598,7 +598,7 @@ fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
         description: "first".to_string(),
         json_schema: None,
         validate_schema: Some(false),
-        collection_ref: Some("ns:one".to_string()),
+        collection_ref: Some("collection:one".to_string()),
         collection_key: None,
     };
 
@@ -613,7 +613,7 @@ fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
 
     let duplicate = ImportClassInput {
         name: context.scoped_name("duplicate_class_ref_two"),
-        collection_ref: Some("ns:two".to_string()),
+        collection_ref: Some("collection:two".to_string()),
         ..input
     };
     let err = block_on(plan_class(
@@ -923,7 +923,7 @@ fn test_update_collection_refreshes_runtime_ref_for_following_items() {
     let execution = PlannedExecution::UpdateCollection {
         collection_id: fixture.collection.id,
         input: ImportCollectionInput {
-            ref_: Some("ns:existing".to_string()),
+            ref_: Some("collection:existing".to_string()),
             name: fixture.collection.name.clone(),
             description: updated_description.clone(),
         },
@@ -935,7 +935,7 @@ fn test_update_collection_refreshes_runtime_ref_for_following_items() {
         description: "child".to_string(),
         json_schema: None,
         validate_schema: Some(false),
-        collection_ref: Some("ns:existing".to_string()),
+        collection_ref: Some("collection:existing".to_string()),
         collection_key: None,
     };
 
@@ -947,7 +947,12 @@ fn test_update_collection_refreshes_runtime_ref_for_following_items() {
             &mut runtime,
             &PlannedExecution::CreateClass(class_input.clone()),
         )?;
-        Ok::<_, ApiError>(runtime.collections_by_ref.get("ns:existing").cloned())
+        Ok::<_, ApiError>(
+            runtime
+                .collections_by_ref
+                .get("collection:existing")
+                .cloned(),
+        )
     })
     .unwrap();
 
@@ -1055,7 +1060,7 @@ fn test_plan_class_update_preserves_existing_schema_for_following_objects() {
     let mut state = PlanningState::new();
     remember_collection(
         &mut state,
-        Some("ns:existing".to_string()),
+        Some("collection:existing".to_string()),
         CollectionResolution {
             id: fixture.collection.id,
             name: fixture.collection.name.clone(),
@@ -1081,7 +1086,7 @@ fn test_plan_class_update_preserves_existing_schema_for_following_objects() {
             description: "updated description".to_string(),
             json_schema: None,
             validate_schema: None,
-            collection_ref: Some("ns:existing".to_string()),
+            collection_ref: Some("collection:existing".to_string()),
             collection_key: None,
         },
     ))
@@ -1229,7 +1234,12 @@ fn test_sanitize_error_for_storage_masks_database_details() {
 fn test_runtime_planning_failures_are_sanitized_for_storage() {
     let failure = PlanningFailure {
         kind: FailureKind::Runtime,
-        item: planned_result("collection", "lookup", Some("ns:one".to_string()), None),
+        item: planned_result(
+            "collection",
+            "lookup",
+            Some("collection:one".to_string()),
+            None,
+        ),
         message: "relation users does not exist".to_string(),
     };
 
