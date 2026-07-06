@@ -8,9 +8,6 @@ use tracing_subscriber::fmt::format::{FormatEvent, FormatFields, Writer};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-use serde::ser::{SerializeMap, Serializer};
-use tracing_serde::AsSerde;
-
 use crate::events::{Action, EntityType};
 use crate::models::Permissions;
 
@@ -76,6 +73,10 @@ pub fn log_authorization_grant(
     namespace_count: Option<usize>,
     reason: &'static str,
 ) {
+    if !tracing::enabled!(tracing::Level::DEBUG) {
+        return;
+    }
+
     let permissions = permissions
         .iter()
         .map(ToString::to_string)
@@ -86,7 +87,7 @@ pub fn log_authorization_grant(
         event_type = "authorization",
         decision = "grant",
         principal_id,
-        permissions_json = permissions,
+        permissions,
         namespace_count,
         reason,
     );
@@ -108,130 +109,82 @@ pub fn log_authorization_denial(
         event_type = "authorization",
         decision = "deny",
         principal_id,
-        permissions_json = permissions,
+        permissions,
         namespace_count,
         reason,
     );
 }
 
-fn json_field_name(field_name: &str) -> Option<&str> {
-    field_name.strip_suffix("_json")
+fn structured_json_field_name(field_name: &str) -> Option<&'static str> {
+    match field_name {
+        "permissions" => Some("permissions"),
+        _ => None,
+    }
 }
 
-fn serialize_entry<S, V>(
-    serializer_map: &mut S,
+fn json_aware_value(field_name: &str, value: serde_json::Value) -> (String, serde_json::Value) {
+    match (structured_json_field_name(field_name), value.as_str()) {
+        (Some(target_field_name), Some(value)) => match serde_json::from_str(value) {
+            Ok(value) => (target_field_name.to_string(), value),
+            Err(_) => (
+                target_field_name.to_string(),
+                serde_json::Value::String(value.to_string()),
+            ),
+        },
+        (Some(target_field_name), None) => (target_field_name.to_string(), value),
+        (None, _) => (field_name.to_string(), value),
+    }
+}
+
+fn insert_json_aware_value(
+    fields: &mut serde_json::Map<String, serde_json::Value>,
     field_name: &str,
-    value: &V,
-) -> Result<(), S::Error>
-where
-    S: SerializeMap,
-    V: serde::Serialize + ?Sized,
-{
-    serializer_map.serialize_entry(field_name, value)
+    value: serde_json::Value,
+) {
+    let (field_name, value) = json_aware_value(field_name, value);
+    fields.insert(field_name, value);
 }
 
-fn serialize_json_aware_str_entry<S>(
-    serializer_map: &mut S,
-    field_name: &str,
-    value: &str,
-) -> Result<(), S::Error>
-where
-    S: SerializeMap,
-{
-    let Some(stripped_field_name) = json_field_name(field_name) else {
-        return serializer_map.serialize_entry(field_name, value);
-    };
-
-    match serde_json::from_str::<serde_json::Value>(value) {
-        Ok(value) => serializer_map.serialize_entry(stripped_field_name, &value),
-        Err(_) => serializer_map.serialize_entry(stripped_field_name, value),
-    }
+struct JsonFieldVisitor<'a> {
+    fields: &'a mut serde_json::Map<String, serde_json::Value>,
 }
 
-fn serialize_json_aware_value_entry<S>(
-    serializer_map: &mut S,
-    field_name: &str,
-    value: &serde_json::Value,
-) -> Result<(), S::Error>
-where
-    S: SerializeMap,
-{
-    match (json_field_name(field_name), value.as_str()) {
-        (Some(stripped_field_name), Some(value)) => {
-            match serde_json::from_str::<serde_json::Value>(value) {
-                Ok(value) => serializer_map.serialize_entry(stripped_field_name, &value),
-                Err(_) => serializer_map.serialize_entry(stripped_field_name, value),
-            }
-        }
-        (Some(stripped_field_name), None) => {
-            serializer_map.serialize_entry(stripped_field_name, value)
-        }
-        (None, _) => serializer_map.serialize_entry(field_name, value),
-    }
-}
-
-struct JsonFieldVisitor<S: SerializeMap> {
-    serializer: S,
-    state: Result<(), S::Error>,
-}
-
-impl<S> JsonFieldVisitor<S>
-where
-    S: SerializeMap,
-{
-    fn new(serializer: S) -> Self {
-        Self {
-            serializer,
-            state: Ok(()),
-        }
-    }
-
-    fn take_serializer(self) -> Result<S, S::Error> {
-        self.state.map(|_| self.serializer)
-    }
-
-    fn record_entry<V>(&mut self, field: &Field, value: &V)
-    where
-        V: serde::Serialize + ?Sized,
-    {
-        if self.state.is_ok() {
-            self.state = serialize_entry(&mut self.serializer, field.name(), value);
-        }
+impl JsonFieldVisitor<'_> {
+    fn record_value(&mut self, field: &Field, value: serde_json::Value) {
+        insert_json_aware_value(self.fields, field.name(), value);
     }
 
     fn record_str_entry(&mut self, field: &Field, value: &str) {
-        if self.state.is_ok() {
-            self.state = serialize_json_aware_str_entry(&mut self.serializer, field.name(), value);
-        }
+        self.record_value(field, serde_json::Value::String(value.to_string()));
     }
 }
 
-impl<S> Visit for JsonFieldVisitor<S>
-where
-    S: SerializeMap,
-{
+impl Visit for JsonFieldVisitor<'_> {
     fn record_bool(&mut self, field: &Field, value: bool) {
-        self.record_entry(field, &value);
+        self.record_value(field, serde_json::Value::Bool(value));
     }
 
     fn record_i64(&mut self, field: &Field, value: i64) {
-        self.record_entry(field, &value);
+        self.record_value(field, serde_json::Value::Number(value.into()));
     }
 
     fn record_u64(&mut self, field: &Field, value: u64) {
-        self.record_entry(field, &value);
+        self.record_value(field, serde_json::Value::Number(value.into()));
     }
 
     fn record_i128(&mut self, field: &Field, value: i128) {
-        self.record_entry(field, &value.to_string());
+        self.record_value(field, serde_json::Value::String(value.to_string()));
     }
 
     fn record_u128(&mut self, field: &Field, value: u128) {
-        self.record_entry(field, &value.to_string());
+        self.record_value(field, serde_json::Value::String(value.to_string()));
     }
 
     fn record_f64(&mut self, field: &Field, value: f64) {
-        self.record_entry(field, &value);
+        let value = serde_json::Number::from_f64(value)
+            .map(serde_json::Value::Number)
+            .unwrap_or_else(|| serde_json::Value::String(value.to_string()));
+        self.record_value(field, value);
     }
 
     fn record_str(&mut self, field: &Field, value: &str) {
@@ -239,13 +192,7 @@ where
     }
 
     fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
-        if self.state.is_ok() {
-            self.state = serialize_entry(
-                &mut self.serializer,
-                field.name(),
-                &format_args!("{value:?}"),
-            );
-        }
+        self.record_value(field, serde_json::Value::String(format!("{value:?}")));
     }
 }
 
@@ -264,47 +211,36 @@ where
         S: Subscriber + for<'a> LookupSpan<'a>,
     {
         let meta = event.metadata();
-
-        let mut s = Vec::<u8>::new();
-        let mut serializer = serde_json::Serializer::new(&mut s);
-        let mut serializer_map = serializer
-            .serialize_map(None)
-            .map_err(|_| std::fmt::Error)?;
+        let mut fields = serde_json::Map::new();
 
         let timestamp = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        serializer_map
-            .serialize_entry("time", &timestamp)
-            .map_err(|_| std::fmt::Error)?;
-        serializer_map
-            .serialize_entry("severity", &meta.level().as_serde())
-            .map_err(|_| std::fmt::Error)?;
+        fields.insert("time".to_string(), serde_json::Value::String(timestamp));
+        fields.insert(
+            "severity".to_string(),
+            serde_json::Value::String(meta.level().to_string()),
+        );
 
         if let Some(leaf_span) = ctx.lookup_current() {
             for span in leaf_span.scope().from_root() {
                 let ext = span.extensions();
                 if let Some(data) = ext.get::<FormattedFields<N>>()
-                    && let Ok(serde_json::Value::Object(fields)) =
+                    && let Ok(serde_json::Value::Object(span_fields)) =
                         serde_json::from_str::<serde_json::Value>(data)
                 {
-                    for (field_name, value) in fields {
-                        serialize_json_aware_value_entry(&mut serializer_map, &field_name, &value)
-                            .map_err(|_| std::fmt::Error)?;
+                    for (field_name, value) in span_fields {
+                        insert_json_aware_value(&mut fields, &field_name, value);
                     }
                 }
             }
         }
 
-        let mut visitor = JsonFieldVisitor::new(serializer_map);
+        let mut visitor = JsonFieldVisitor {
+            fields: &mut fields,
+        };
         event.record(&mut visitor);
 
-        visitor
-            .take_serializer()
-            .map_err(|_| std::fmt::Error)?
-            .end()
-            .map_err(|_| std::fmt::Error)?;
-
-        let s_str = std::str::from_utf8(&s).map_err(|_| std::fmt::Error)?;
-        writer.write_str(s_str)?;
+        let line = serde_json::to_string(&fields).map_err(|_| std::fmt::Error)?;
+        writer.write_str(&line)?;
         writeln!(writer)
     }
 }
@@ -320,10 +256,13 @@ pub(crate) mod test_support {
     }
 
     impl JsonLogWriter {
-        pub(crate) fn output(&self) -> Vec<serde_json::Value> {
+        pub(crate) fn raw_output(&self) -> String {
             let bytes = self.lines.lock().expect("writer lock").clone();
-            String::from_utf8(bytes)
-                .expect("utf8 logs")
+            String::from_utf8(bytes).expect("utf8 logs")
+        }
+
+        pub(crate) fn output(&self) -> Vec<serde_json::Value> {
+            self.raw_output()
                 .lines()
                 .map(|line| serde_json::from_str(line).expect("json log line"))
                 .collect()
@@ -366,6 +305,19 @@ mod tests {
     use test_support::JsonLogWriter;
     use tracing::{info, info_span};
     use tracing_subscriber::layer::SubscriberExt;
+
+    fn capture_raw_logs(run: impl FnOnce()) -> String {
+        let writer = JsonLogWriter::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_writer(writer.clone())
+                .event_format(HubuumLoggingFormat),
+        );
+
+        tracing::subscriber::with_default(subscriber, run);
+        writer.raw_output()
+    }
 
     fn capture_logs(run: impl FnOnce()) -> Vec<serde_json::Value> {
         let writer = JsonLogWriter::default();
@@ -419,11 +371,12 @@ mod tests {
     }
 
     #[test]
-    fn logging_format_serializes_json_suffixed_fields_as_json_values() {
+    fn logging_format_serializes_explicit_structured_fields_as_json_values() {
         let logs = capture_logs(|| {
             info!(
                 message = "structured field",
-                permissions_json = "[\"ReadCollection\",\"UpdateCollection\"]",
+                permissions = "[\"ReadCollection\",\"UpdateCollection\"]",
+                unrelated_json = "{\"kept\":\"literal\"}",
             );
         });
 
@@ -432,7 +385,7 @@ mod tests {
             event["permissions"],
             json!(["ReadCollection", "UpdateCollection"])
         );
-        assert!(event.get("permissions_json").is_none());
+        assert_eq!(event["unrelated_json"], "{\"kept\":\"literal\"}");
     }
 
     #[test]
@@ -502,5 +455,34 @@ mod tests {
         assert_eq!(event["correlation_id"], "operation-correlation");
         assert!(event.get("before").is_none());
         assert!(event.get("after").is_none());
+    }
+
+    #[test]
+    fn event_fields_override_span_fields_without_duplicate_json_keys() {
+        let request_id = uuid::Uuid::new_v4();
+        let raw_logs = capture_raw_logs(|| {
+            let span = info_span!(
+                "request",
+                request_id = "span-request",
+                correlation_id = "span-correlation"
+            );
+            let _guard = span.enter();
+            log_operation_mutation(
+                EntityType::Namespace,
+                Action::Created,
+                Some(9),
+                Some(12),
+                Some(request_id),
+                Some("event-correlation"),
+            );
+        });
+
+        let line = raw_logs.lines().next().expect("raw log line");
+        assert_eq!(line.matches("\"request_id\"").count(), 1);
+        assert_eq!(line.matches("\"correlation_id\"").count(), 1);
+
+        let event: serde_json::Value = serde_json::from_str(line).expect("json log line");
+        assert_eq!(event["request_id"], request_id.to_string());
+        assert_eq!(event["correlation_id"], "event-correlation");
     }
 }
