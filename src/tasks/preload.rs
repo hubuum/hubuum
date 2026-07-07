@@ -132,7 +132,8 @@ pub(super) async fn preload_existing_classes(
 
     let mut requested = HashMap::<i32, HashSet<String>>::new();
     for key in class_keys {
-        let Some(collection) = resolve_class_collection_for_preload(pool, state, &key).await? else {
+        let Some(collection) = resolve_class_collection_for_preload(pool, state, &key).await?
+        else {
             continue;
         };
         if !collection.exists_in_db {
