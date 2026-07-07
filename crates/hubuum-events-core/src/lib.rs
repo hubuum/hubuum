@@ -137,7 +137,7 @@ pub enum EntityType {
     Permission,
     Token,
     RemoteTarget,
-    ReportTemplate,
+    ExportTemplate,
     Task,
     ServiceAccount,
     EventSink,
@@ -158,7 +158,7 @@ impl EntityType {
             EntityType::Permission => "permission",
             EntityType::Token => "token",
             EntityType::RemoteTarget => "remote_target",
-            EntityType::ReportTemplate => "report_template",
+            EntityType::ExportTemplate => "export_template",
             EntityType::Task => "task",
             EntityType::ServiceAccount => "service_account",
             EntityType::EventSink => "event_sink",
@@ -179,7 +179,7 @@ impl EntityType {
             "permission" => Ok(EntityType::Permission),
             "token" => Ok(EntityType::Token),
             "remote_target" => Ok(EntityType::RemoteTarget),
-            "report_template" => Ok(EntityType::ReportTemplate),
+            "export_template" => Ok(EntityType::ExportTemplate),
             "task" => Ok(EntityType::Task),
             "service_account" => Ok(EntityType::ServiceAccount),
             "event_sink" => Ok(EntityType::EventSink),
@@ -274,7 +274,7 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
     use Action as A;
     use EntityType as E;
     match entity_type {
-        E::Collection | E::Class | E::Object | E::User | E::Group | E::ReportTemplate => {
+        E::Collection | E::Class | E::Object | E::User | E::Group | E::ExportTemplate => {
             &[A::Created, A::Updated, A::Deleted]
         }
         E::ServiceAccount => &[A::Created, A::Updated, A::Disabled, A::Deleted],
@@ -654,7 +654,7 @@ mod tests {
             EntityType::Permission,
             EntityType::Token,
             EntityType::RemoteTarget,
-            EntityType::ReportTemplate,
+            EntityType::ExportTemplate,
             EntityType::Task,
             EntityType::ServiceAccount,
             EntityType::EventSink,

@@ -14,7 +14,7 @@ The task system provides a generic framework for long-running server-side work.
 Current task kind:
 
 - `import`
-- `report`
+- `export`
 - `remote_call`
 
 Reserved task kinds already modeled in the schema:
@@ -31,7 +31,7 @@ The implementation has:
 - `tasks`
 - `events` rows with `entity_type = 'task'`
 - `import_task_results`
-- `report_task_outputs`
+- `export_task_outputs`
 - `remote_call_results`
 
 The first two are generic framework storage.
@@ -189,7 +189,7 @@ Worker behavior is configurable via:
 
 - `HUBUUM_TASK_WORKERS`
 - `HUBUUM_TASK_POLL_INTERVAL_MS`
-- `HUBUUM_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS`
+- `HUBUUM_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS`
 
 The canonical env-var reference lives in:
 
@@ -200,7 +200,7 @@ Defaults:
 - `HUBUUM_ACTIX_WORKERS`: detected CPU count
 - `HUBUUM_TASK_WORKERS`: about half the detected CPU count, minimum `1`
 - `HUBUUM_TASK_POLL_INTERVAL_MS`: `200`
-- `HUBUUM_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS`: `300`
+- `HUBUUM_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS`: `300`
 
 The HTTP worker count and background task worker count are intentionally separate.
 
@@ -431,7 +431,7 @@ Relevant code:
 
 - [src/api/handlers/meta.rs](../src/api/handlers/meta.rs)
 
-This endpoint reports:
+This endpoint exports:
 
 - configured worker counts
 - poll interval

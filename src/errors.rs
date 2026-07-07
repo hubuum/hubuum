@@ -259,14 +259,14 @@ impl From<DieselError> for ApiError {
     }
 }
 
-/// Ensure that json deserialization errors are reported as a bad request and
+/// Ensure that json deserialization errors are exported as a bad request and
 /// that the error itself is returned as json.
 pub fn json_error_handler(err: JsonPayloadError, _: &HttpRequest) -> actix_web::Error {
     let error_message = format!("Json deserialize error: {err}");
     ApiError::BadRequest(error_message).into()
 }
 
-/// Ensure that path-parameter errors are reported as a bad request rather than actix's default
+/// Ensure that path-parameter errors are exported as a bad request rather than actix's default
 /// `404`. The validating `Deserialize` impls on the id newtypes already surface a clear message
 /// (e.g. "Invalid collection id '0': must be a positive integer"); this maps that to a `400` so an
 /// invalid id is rejected at the edge as the contract promises.

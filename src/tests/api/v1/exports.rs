@@ -8,14 +8,14 @@ mod tests {
     use rstest::rstest;
     use std::time::Duration;
 
-    use crate::db::traits::task::{TaskBackend, TaskStateUpdate, purge_expired_report_outputs};
+    use crate::db::traits::task::{TaskBackend, TaskStateUpdate, purge_expired_export_outputs};
     use crate::models::{
-        HubuumClass, HubuumClassRelation, HubuumObjectRelation, NewHubuumClass,
-        NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
-        NewReportTaskOutputRecord, NewReportTemplate, NewTaskEventRecord, NewTaskRecord,
-        ReportContentType, ReportJsonResponse, ReportRelationContext, ReportRequest, ReportScope,
-        ReportScopeKind, ReportTemplateKind, TaskEventResponse, TaskID, TaskKind, TaskResponse,
-        TaskStatus, UpdateReportTemplate,
+        ExportContentType, ExportJsonResponse, ExportRelationContext, ExportRequest, ExportScope,
+        ExportScopeKind, ExportTemplateKind, HubuumClass, HubuumClassRelation,
+        HubuumObjectRelation, NewExportTaskOutputRecord, NewExportTemplate, NewHubuumClass,
+        NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewTaskEventRecord,
+        NewTaskRecord, TaskEventResponse, TaskID, TaskKind, TaskResponse, TaskStatus,
+        UpdateExportTemplate,
     };
     use crate::tests::api::v1::classes::tests::{cleanup, create_test_classes};
     use crate::tests::api_operations::{get_request, post_request_with_headers};
@@ -24,10 +24,10 @@ mod tests {
         TestContext, TestMutex, create_test_user, lock_test_mutex, test_context, test_mutex,
     };
     use crate::traits::{CanSave, CanUpdate};
-    const REPORTS_ENDPOINT: &str = "/api/v1/reports";
+    const EXPORTS_ENDPOINT: &str = "/api/v1/exports";
 
-    /// Serializes only the two tests that contend over the process-wide set of expired report
-    /// outputs: one runs the global `purge_expired_report_outputs`, the other needs its expired
+    /// Serializes only the two tests that contend over the process-wide set of expired export
+    /// outputs: one runs the global `purge_expired_export_outputs`, the other needs its expired
     /// row to survive until it has queried it. They cannot safely interleave; every other test in
     /// the suite remains free to run in parallel.
     static EXPIRED_OUTPUT_PURGE_LOCK: TestMutex = test_mutex();
@@ -70,24 +70,24 @@ mod tests {
         );
     }
 
-    async fn create_report_objects(
+    async fn create_export_objects(
         pool: &crate::db::DbPool,
         class: &HubuumClass,
     ) -> Vec<crate::models::HubuumObject> {
         let objects = vec![
             NewHubuumObject {
-                name: "report-app-01".to_string(),
+                name: "export-app-01".to_string(),
                 description: "App server".to_string(),
                 collection_id: class.collection_id,
                 hubuum_class_id: class.id,
-                data: serde_json::json!({"hostname": "report-app-01", "owner": "alice"}),
+                data: serde_json::json!({"hostname": "export-app-01", "owner": "alice"}),
             },
             NewHubuumObject {
-                name: "report-db-01".to_string(),
+                name: "export-db-01".to_string(),
                 description: "Database server".to_string(),
                 collection_id: class.collection_id,
                 hubuum_class_id: class.id,
-                data: serde_json::json!({"hostname": "report-db-01", "owner": "bob"}),
+                data: serde_json::json!({"hostname": "export-db-01", "owner": "bob"}),
             },
         ];
 
@@ -151,18 +151,18 @@ mod tests {
         pool: &crate::db::DbPool,
         collection_id: i32,
         class_id: i32,
-        scope_kind: ReportScopeKind,
+        scope_kind: ExportScopeKind,
         name: &str,
-        content_type: ReportContentType,
+        content_type: ExportContentType,
         template: &str,
     ) -> i32 {
-        let template = NewReportTemplate {
+        let template = NewExportTemplate {
             collection_id,
             name: name.to_string(),
-            description: "report template".to_string(),
+            description: "export template".to_string(),
             content_type,
             template: template.to_string(),
-            kind: ReportTemplateKind::Report,
+            kind: ExportTemplateKind::Export,
             scope_kind: Some(scope_kind),
             class_id: Some(class_id),
             default_query: None,
@@ -178,8 +178,8 @@ mod tests {
         template.id
     }
 
-    fn empty_update_template_payload() -> UpdateReportTemplate {
-        UpdateReportTemplate {
+    fn empty_update_template_payload() -> UpdateExportTemplate {
+        UpdateExportTemplate {
             collection_id: None,
             name: None,
             description: None,
@@ -197,21 +197,21 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn test_report_submission_returns_task_and_json_output_is_refetchable(
+    async fn test_export_submission_returns_task_and_json_output_is_refetchable(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let classes = create_test_classes(&context, "report_async_json").await;
+        let classes = create_test_classes(&context, "export_async_json").await;
         let class = classes[0].clone();
-        let created_objects = create_report_objects(&context.pool, &class).await;
+        let created_objects = create_export_objects(&context.pool, &class).await;
 
-        let body = ReportRequest {
-            scope: ReportScope {
-                kind: ReportScopeKind::ObjectsInClass,
+        let body = ExportRequest {
+            scope: ExportScope {
+                kind: ExportScopeKind::ObjectsInClass,
                 class_id: Some(class.id),
                 object_id: None,
             },
-            query: Some("name__contains=report-&sort=name".to_string()),
+            query: Some("name__contains=export-&sort=name".to_string()),
             missing_data_policy: None,
             limits: None,
             include: None,
@@ -221,11 +221,11 @@ mod tests {
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            REPORTS_ENDPOINT,
+            EXPORTS_ENDPOINT,
             &body,
             vec![(
                 header::HeaderName::from_static("idempotency-key"),
-                context.scoped_name("report-json-idempotency"),
+                context.scoped_name("export-json-idempotency"),
             )],
         )
         .await;
@@ -234,13 +234,13 @@ mod tests {
         let task: TaskResponse = test::read_body_json(resp).await;
 
         assert_eq!(location, Some(format!("/api/v1/tasks/{}", task.id)));
-        assert_eq!(task.kind, TaskKind::Report);
-        assert!(task.links.report.is_some());
-        assert!(task.links.report_output.is_some());
+        assert_eq!(task.kind, TaskKind::Export);
+        assert!(task.links.export.is_some());
+        assert!(task.links.export_output.is_some());
         assert!(
             task.details
                 .as_ref()
-                .and_then(|details| details.report.as_ref())
+                .and_then(|details| details.export.as_ref())
                 .is_some()
         );
 
@@ -251,30 +251,30 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/reports/{}/output", task.id),
+            &format!("/api/v1/exports/{}/output", task.id),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let report: ReportJsonResponse = test::read_body_json(resp).await;
+        let export: ExportJsonResponse = test::read_body_json(resp).await;
 
-        assert_eq!(report.meta.count, created_objects.len());
-        assert_eq!(report.meta.scope.kind, ReportScopeKind::ObjectsInClass);
-        assert_eq!(report.meta.content_type, ReportContentType::ApplicationJson);
-        assert_eq!(report.items.len(), 2);
-        assert_eq!(report.items[0]["name"], "report-app-01");
-        assert_eq!(report.items[1]["name"], "report-db-01");
+        assert_eq!(export.meta.count, created_objects.len());
+        assert_eq!(export.meta.scope.kind, ExportScopeKind::ObjectsInClass);
+        assert_eq!(export.meta.content_type, ExportContentType::ApplicationJson);
+        assert_eq!(export.items.len(), 2);
+        assert_eq!(export.items[0]["name"], "export-app-01");
+        assert_eq!(export.items[1]["name"], "export-db-01");
 
         cleanup(&classes).await;
     }
 
     #[rstest]
     #[actix_web::test]
-    async fn test_report_json_output_includes_bounded_related_objects(
+    async fn test_export_json_output_includes_bounded_related_objects(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
         let collection = context
-            .collection_fixture("report_json_related_include")
+            .collection_fixture("export_json_related_include")
             .await;
         let host_class = create_named_class(
             &context.pool,
@@ -335,7 +335,7 @@ mod tests {
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            REPORTS_ENDPOINT,
+            EXPORTS_ENDPOINT,
             &body,
             vec![],
         )
@@ -347,19 +347,19 @@ mod tests {
         let output = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/reports/{}/output", task.id),
+            &format!("/api/v1/exports/{}/output", task.id),
         )
         .await;
         let output = assert_response_status(output, StatusCode::OK).await;
-        let report: ReportJsonResponse = test::read_body_json(output).await;
+        let export: ExportJsonResponse = test::read_body_json(output).await;
 
-        assert_eq!(report.items.len(), 1);
+        assert_eq!(export.items.len(), 1);
         assert_eq!(
-            report.items[0]["related"]["rooms"][0]["name"],
+            export.items[0]["related"]["rooms"][0]["name"],
             "room-include-101"
         );
         assert_eq!(
-            report.items[0]["related"]["rooms"][0]["path"],
+            export.items[0]["related"]["rooms"][0]["path"],
             serde_json::json!([host.id, room.id])
         );
 
@@ -368,32 +368,32 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn test_report_output_stays_stable_after_template_and_data_changes(
+    async fn test_export_output_stays_stable_after_template_and_data_changes(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let classes = create_test_classes(&context, "report_output_stable").await;
+        let classes = create_test_classes(&context, "export_output_stable").await;
         let class = classes[0].clone();
-        let _ = create_report_objects(&context.pool, &class).await;
+        let _ = create_export_objects(&context.pool, &class).await;
         let template_id = create_template(
             &context.pool,
             class.collection_id,
             class.id,
-            ReportScopeKind::ObjectsInClass,
+            ExportScopeKind::ObjectsInClass,
             "stable-template",
-            ReportContentType::TextPlain,
+            ExportContentType::TextPlain,
             "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}",
         )
         .await;
 
         let body = serde_json::json!({
-            "query": "name__contains=report-&sort=name"
+            "query": "name__contains=export-&sort=name"
         });
 
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/templates/{template_id}/reports"),
+            &format!("/api/v1/export-templates/{template_id}/exports"),
             &body,
             vec![],
         )
@@ -406,14 +406,14 @@ mod tests {
         let first_output = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/reports/{}/output", task.id),
+            &format!("/api/v1/exports/{}/output", task.id),
         )
         .await;
         let first_output = assert_response_status(first_output, StatusCode::OK).await;
         let first_body = String::from_utf8(test::read_body(first_output).await.to_vec()).unwrap();
-        assert_eq!(first_body, "report-app-01=alice\nreport-db-01=bob\n");
+        assert_eq!(first_body, "export-app-01=alice\nexport-db-01=bob\n");
 
-        UpdateReportTemplate {
+        UpdateExportTemplate {
             collection_id: None,
             name: None,
             description: None,
@@ -425,11 +425,11 @@ mod tests {
         .unwrap();
 
         let _ = NewHubuumObject {
-            name: "report-cache-01".to_string(),
+            name: "export-cache-01".to_string(),
             description: "new object".to_string(),
             collection_id: class.collection_id,
             hubuum_class_id: class.id,
-            data: serde_json::json!({"hostname": "report-cache-01", "owner": "carol"}),
+            data: serde_json::json!({"hostname": "export-cache-01", "owner": "carol"}),
         }
         .save_without_events(&context.pool)
         .await
@@ -438,7 +438,7 @@ mod tests {
         let second_output = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/reports/{}/output", task.id),
+            &format!("/api/v1/exports/{}/output", task.id),
         )
         .await;
         let second_output = assert_response_status(second_output, StatusCode::OK).await;
@@ -455,15 +455,15 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let classes = create_test_classes(&context, "report_run_requires_object").await;
+        let classes = create_test_classes(&context, "export_run_requires_object").await;
         let class = classes[0].clone();
         let template_id = create_template(
             &context.pool,
             class.collection_id,
             class.id,
-            ReportScopeKind::RelatedObjects,
+            ExportScopeKind::RelatedObjects,
             "needs-object-id",
-            ReportContentType::TextPlain,
+            ExportContentType::TextPlain,
             "{% for item in items %}{{ item.name }}{% endfor %}",
         )
         .await;
@@ -471,7 +471,7 @@ mod tests {
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/templates/{template_id}/reports"),
+            &format!("/api/v1/export-templates/{template_id}/exports"),
             &serde_json::json!({}),
             vec![],
         )
@@ -487,15 +487,15 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let classes = create_test_classes(&context, "report_run_rejects_object").await;
+        let classes = create_test_classes(&context, "export_run_rejects_object").await;
         let class = classes[0].clone();
         let template_id = create_template(
             &context.pool,
             class.collection_id,
             class.id,
-            ReportScopeKind::ObjectsInClass,
+            ExportScopeKind::ObjectsInClass,
             "rejects-object-id",
-            ReportContentType::TextPlain,
+            ExportContentType::TextPlain,
             "{% for item in items %}{{ item.name }}{% endfor %}",
         )
         .await;
@@ -503,7 +503,7 @@ mod tests {
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/templates/{template_id}/reports"),
+            &format!("/api/v1/export-templates/{template_id}/exports"),
             &serde_json::json!({ "object_id": 1 }),
             vec![],
         )
@@ -519,19 +519,19 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let classes = create_test_classes(&context, "report_run_default_query").await;
+        let classes = create_test_classes(&context, "export_run_default_query").await;
         let class = classes[0].clone();
-        let _ = create_report_objects(&context.pool, &class).await;
+        let _ = create_export_objects(&context.pool, &class).await;
 
         // Template carries a default query that selects only the "app" host.
-        let template = NewReportTemplate {
+        let template = NewExportTemplate {
             collection_id: class.collection_id,
-            name: "report.default-query".to_string(),
-            description: "default query report".to_string(),
-            content_type: ReportContentType::TextPlain,
+            name: "export.default-query".to_string(),
+            description: "default query export".to_string(),
+            content_type: ExportContentType::TextPlain,
             template: "{% for item in items %}{{ item.name }}\n{% endfor %}".to_string(),
-            kind: ReportTemplateKind::Report,
-            scope_kind: Some(ReportScopeKind::ObjectsInClass),
+            kind: ExportTemplateKind::Export,
+            scope_kind: Some(ExportScopeKind::ObjectsInClass),
             class_id: Some(class.id),
             default_query: Some("name__contains=app-&sort=name".to_string()),
             include: None,
@@ -547,7 +547,7 @@ mod tests {
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/templates/{}/reports", template.id),
+            &format!("/api/v1/export-templates/{}/exports", template.id),
             &serde_json::json!({}),
             vec![],
         )
@@ -558,18 +558,18 @@ mod tests {
         let output = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/reports/{}/output", task.id),
+            &format!("/api/v1/exports/{}/output", task.id),
         )
         .await;
         let output = assert_response_status(output, StatusCode::OK).await;
         let body = String::from_utf8(test::read_body(output).await.to_vec()).unwrap();
-        assert_eq!(body, "report-app-01\n");
+        assert_eq!(body, "export-app-01\n");
 
         // A runtime query overrides the template default entirely.
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/templates/{}/reports", template.id),
+            &format!("/api/v1/export-templates/{}/exports", template.id),
             &serde_json::json!({ "query": "name__contains=db-&sort=name" }),
             vec![],
         )
@@ -580,12 +580,12 @@ mod tests {
         let output = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/reports/{}/output", task.id),
+            &format!("/api/v1/exports/{}/output", task.id),
         )
         .await;
         let output = assert_response_status(output, StatusCode::OK).await;
         let body = String::from_utf8(test::read_body(output).await.to_vec()).unwrap();
-        assert_eq!(body, "report-db-01\n");
+        assert_eq!(body, "export-db-01\n");
 
         cleanup(&classes).await;
     }
@@ -594,16 +594,16 @@ mod tests {
     #[actix_web::test]
     async fn test_run_template_csv_output_end_to_end(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let classes = create_test_classes(&context, "report_run_csv").await;
+        let classes = create_test_classes(&context, "export_run_csv").await;
         let class = classes[0].clone();
-        let _ = create_report_objects(&context.pool, &class).await;
+        let _ = create_export_objects(&context.pool, &class).await;
         let template_id = create_template(
             &context.pool,
             class.collection_id,
             class.id,
-            ReportScopeKind::ObjectsInClass,
-            "report.csv",
-            ReportContentType::TextCsv,
+            ExportScopeKind::ObjectsInClass,
+            "export.csv",
+            ExportContentType::TextCsv,
             "host,owner\n{% for item in items %}{{ item.name|csv_cell }},{{ item.data.owner|csv_cell }}\n{% endfor %}",
         )
         .await;
@@ -611,7 +611,7 @@ mod tests {
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/templates/{template_id}/reports"),
+            &format!("/api/v1/export-templates/{template_id}/exports"),
             &serde_json::json!({ "query": "sort=name" }),
             vec![],
         )
@@ -623,7 +623,7 @@ mod tests {
         let output = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/reports/{}/output", task.id),
+            &format!("/api/v1/exports/{}/output", task.id),
         )
         .await;
         let output = assert_response_status(output, StatusCode::OK).await;
@@ -633,7 +633,7 @@ mod tests {
             "expected text/csv output, got {content_type}"
         );
         let body = String::from_utf8(test::read_body(output).await.to_vec()).unwrap();
-        assert_eq!(body, "host,owner\nreport-app-01,alice\nreport-db-01,bob\n");
+        assert_eq!(body, "host,owner\nexport-app-01,alice\nexport-db-01,bob\n");
 
         cleanup(&classes).await;
     }
@@ -642,17 +642,17 @@ mod tests {
     #[actix_web::test]
     async fn test_run_collections_scope_template(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let classes = create_test_classes(&context, "report_collection_scope").await;
+        let classes = create_test_classes(&context, "export_collection_scope").await;
         let collection_name = classes.collection.collection.name.clone();
 
-        let template = NewReportTemplate {
+        let template = NewExportTemplate {
             collection_id: classes[0].collection_id,
-            name: "report.collections".to_string(),
+            name: "export.collections".to_string(),
             description: "collection listing".to_string(),
-            content_type: ReportContentType::TextPlain,
+            content_type: ExportContentType::TextPlain,
             template: "{% for item in items %}{{ item.name }}\n{% endfor %}".to_string(),
-            kind: ReportTemplateKind::Report,
-            scope_kind: Some(ReportScopeKind::Collections),
+            kind: ExportTemplateKind::Export,
+            scope_kind: Some(ExportScopeKind::Collections),
             class_id: None,
             default_query: Some(format!("name__equals={collection_name}")),
             include: None,
@@ -667,7 +667,7 @@ mod tests {
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/templates/{}/reports", template.id),
+            &format!("/api/v1/export-templates/{}/exports", template.id),
             &serde_json::json!({}),
             vec![],
         )
@@ -678,7 +678,7 @@ mod tests {
         let output = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/reports/{}/output", task.id),
+            &format!("/api/v1/exports/{}/output", task.id),
         )
         .await;
         let output = assert_response_status(output, StatusCode::OK).await;
@@ -692,18 +692,18 @@ mod tests {
     #[actix_web::test]
     async fn test_run_classes_scope_template(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let classes = create_test_classes(&context, "report_cls_scope").await;
+        let classes = create_test_classes(&context, "export_cls_scope").await;
 
-        let template = NewReportTemplate {
+        let template = NewExportTemplate {
             collection_id: classes[0].collection_id,
-            name: "report.classes".to_string(),
+            name: "export.classes".to_string(),
             description: "class listing".to_string(),
-            content_type: ReportContentType::TextPlain,
+            content_type: ExportContentType::TextPlain,
             template: "{% for item in items %}{{ item.name }}\n{% endfor %}".to_string(),
-            kind: ReportTemplateKind::Report,
-            scope_kind: Some(ReportScopeKind::Classes),
+            kind: ExportTemplateKind::Export,
+            scope_kind: Some(ExportScopeKind::Classes),
             class_id: None,
-            default_query: Some("name__contains=report_cls_scope_api_class_&sort=name".to_string()),
+            default_query: Some("name__contains=export_cls_scope_api_class_&sort=name".to_string()),
             include: None,
             relation_context: None,
             default_missing_data_policy: None,
@@ -716,7 +716,7 @@ mod tests {
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/templates/{}/reports", template.id),
+            &format!("/api/v1/export-templates/{}/exports", template.id),
             &serde_json::json!({}),
             vec![],
         )
@@ -727,7 +727,7 @@ mod tests {
         let output = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/reports/{}/output", task.id),
+            &format!("/api/v1/exports/{}/output", task.id),
         )
         .await;
         let output = assert_response_status(output, StatusCode::OK).await;
@@ -743,19 +743,19 @@ mod tests {
     #[actix_web::test]
     async fn test_run_class_relations_scope_template(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let classes = create_test_classes(&context, "report_rel_scope").await;
+        let classes = create_test_classes(&context, "export_rel_scope").await;
         let relation = create_class_relation(&context.pool, classes[0].id, classes[1].id).await;
 
-        let template = NewReportTemplate {
+        let template = NewExportTemplate {
                 collection_id: classes[0].collection_id,
-                name: "report.class-relations".to_string(),
+                name: "export.class-relations".to_string(),
                 description: "class relation listing".to_string(),
-                content_type: ReportContentType::TextPlain,
+                content_type: ExportContentType::TextPlain,
                 template:
                     "{% for item in items %}[{{ item.from_hubuum_class_id }}->{{ item.to_hubuum_class_id }}]{% endfor %}"
                         .to_string(),
-                kind: ReportTemplateKind::Report,
-                scope_kind: Some(ReportScopeKind::ClassRelations),
+                kind: ExportTemplateKind::Export,
+                scope_kind: Some(ExportScopeKind::ClassRelations),
                 class_id: None,
                 default_query: None,
                 include: None,
@@ -770,7 +770,7 @@ mod tests {
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/templates/{}/reports", template.id),
+            &format!("/api/v1/export-templates/{}/exports", template.id),
             &serde_json::json!({ "limits": { "max_items": 1000 } }),
             vec![],
         )
@@ -781,7 +781,7 @@ mod tests {
         let output = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/reports/{}/output", task.id),
+            &format!("/api/v1/exports/{}/output", task.id),
         )
         .await;
         let output = assert_response_status(output, StatusCode::OK).await;
@@ -803,16 +803,16 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let classes = create_test_classes(&context, "report_collection_object_id").await;
+        let classes = create_test_classes(&context, "export_collection_object_id").await;
 
-        let template = NewReportTemplate {
+        let template = NewExportTemplate {
             collection_id: classes[0].collection_id,
-            name: "report.collections-no-object".to_string(),
+            name: "export.collections-no-object".to_string(),
             description: "collection listing".to_string(),
-            content_type: ReportContentType::TextPlain,
+            content_type: ExportContentType::TextPlain,
             template: "{% for item in items %}{{ item.name }}{% endfor %}".to_string(),
-            kind: ReportTemplateKind::Report,
-            scope_kind: Some(ReportScopeKind::Collections),
+            kind: ExportTemplateKind::Export,
+            scope_kind: Some(ExportScopeKind::Collections),
             class_id: None,
             default_query: None,
             include: None,
@@ -827,7 +827,7 @@ mod tests {
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/templates/{}/reports", template.id),
+            &format!("/api/v1/export-templates/{}/exports", template.id),
             &serde_json::json!({ "object_id": 1 }),
             vec![],
         )
@@ -839,20 +839,20 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn test_report_output_counts_template_missing_value_warnings(
+    async fn test_export_output_counts_template_missing_value_warnings(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let classes = create_test_classes(&context, "report_warning_count").await;
+        let classes = create_test_classes(&context, "export_warning_count").await;
         let class = classes[0].clone();
-        let _ = create_report_objects(&context.pool, &class).await;
+        let _ = create_export_objects(&context.pool, &class).await;
         let template_id = create_template(
             &context.pool,
             class.collection_id,
             class.id,
-            ReportScopeKind::ObjectsInClass,
+            ExportScopeKind::ObjectsInClass,
             "warning-template",
-            ReportContentType::TextPlain,
+            ExportContentType::TextPlain,
             "{% for item in items %}{{ item.name }}={{ item.data.primary_contact }}\n{% endfor %}",
         )
         .await;
@@ -865,7 +865,7 @@ mod tests {
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/templates/{template_id}/reports"),
+            &format!("/api/v1/export-templates/{template_id}/exports"),
             &body,
             vec![],
         )
@@ -879,21 +879,21 @@ mod tests {
         let output = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/reports/{}/output", task.id),
+            &format!("/api/v1/exports/{}/output", task.id),
         )
         .await;
         let output = assert_response_status(output, StatusCode::OK).await;
         assert_eq!(
-            header_value(&output, "X-Hubuum-Report-Warnings"),
+            header_value(&output, "X-Hubuum-Export-Warnings"),
             Some("1".to_string())
         );
         let body = String::from_utf8(test::read_body(output).await.to_vec()).unwrap();
-        assert_eq!(body, "report-app-01=\nreport-db-01=\n");
+        assert_eq!(body, "export-app-01=\nexport-db-01=\n");
 
         let projection = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/reports/{}", task.id),
+            &format!("/api/v1/exports/{}", task.id),
         )
         .await;
         let projection = assert_response_status(projection, StatusCode::OK).await;
@@ -901,13 +901,13 @@ mod tests {
         let details = projection
             .details
             .as_ref()
-            .and_then(|details| details.report.as_ref())
-            .expect("report details");
+            .and_then(|details| details.export.as_ref())
+            .expect("export details");
         assert!(details.output_available);
         assert_eq!(details.template_name.as_deref(), Some("warning-template"));
         assert_eq!(
             details.output_content_type.as_deref(),
-            Some(ReportContentType::TextPlain.as_mime())
+            Some(ExportContentType::TextPlain.as_mime())
         );
         assert_eq!(details.warning_count, Some(1));
         assert_eq!(details.truncated, Some(false));
@@ -918,16 +918,16 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn test_report_idempotency_returns_same_task(#[future(awt)] test_context: TestContext) {
+    async fn test_export_idempotency_returns_same_task(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let classes = create_test_classes(&context, "report_same_task").await;
+        let classes = create_test_classes(&context, "export_same_task").await;
         let class = classes[0].clone();
-        let _ = create_report_objects(&context.pool, &class).await;
+        let _ = create_export_objects(&context.pool, &class).await;
         let idempotency_key = context.scoped_name("same-task");
 
-        let body = ReportRequest {
-            scope: ReportScope {
-                kind: ReportScopeKind::ObjectsInClass,
+        let body = ExportRequest {
+            scope: ExportScope {
+                kind: ExportScopeKind::ObjectsInClass,
                 class_id: Some(class.id),
                 object_id: None,
             },
@@ -941,7 +941,7 @@ mod tests {
         let first = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            REPORTS_ENDPOINT,
+            EXPORTS_ENDPOINT,
             &body,
             vec![(
                 header::HeaderName::from_static("idempotency-key"),
@@ -955,7 +955,7 @@ mod tests {
         let second = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            REPORTS_ENDPOINT,
+            EXPORTS_ENDPOINT,
             &body,
             vec![(
                 header::HeaderName::from_static("idempotency-key"),
@@ -973,19 +973,19 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn test_report_idempotency_conflicts_for_non_report_task_or_changed_payload(
+    async fn test_export_idempotency_conflicts_for_non_export_task_or_changed_payload(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let report_key = context.scoped_name("foreign-task-idempotency");
-        let report_task = NewTaskRecord {
+        let export_key = context.scoped_name("foreign-task-idempotency");
+        let export_task = NewTaskRecord {
             kind: TaskKind::Import.as_str().to_string(),
             status: TaskStatus::Queued.as_str().to_string(),
             submitted_by: Some(context.admin_user.id),
             submitted_token_id: None,
             submitted_token_scoped: false,
             submitted_token_scopes: serde_json::json!([]),
-            idempotency_key: Some(report_key.clone()),
+            idempotency_key: Some(export_key.clone()),
             request_hash: Some(context.scoped_name("foreign-task-hash")),
             request_payload: None,
             summary: None,
@@ -1001,12 +1001,12 @@ mod tests {
         .await
         .unwrap();
 
-        let classes = create_test_classes(&context, "report_conflict").await;
+        let classes = create_test_classes(&context, "export_conflict").await;
         let class = classes[0].clone();
 
-        let body = ReportRequest {
-            scope: ReportScope {
-                kind: ReportScopeKind::ObjectsInClass,
+        let body = ExportRequest {
+            scope: ExportScope {
+                kind: ExportScopeKind::ObjectsInClass,
                 class_id: Some(class.id),
                 object_id: None,
             },
@@ -1020,11 +1020,11 @@ mod tests {
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            REPORTS_ENDPOINT,
+            EXPORTS_ENDPOINT,
             &body,
             vec![(
                 header::HeaderName::from_static("idempotency-key"),
-                report_key,
+                export_key,
             )],
         )
         .await;
@@ -1033,27 +1033,27 @@ mod tests {
         let reused = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/tasks/{}", report_task.id),
+            &format!("/api/v1/tasks/{}", export_task.id),
         )
         .await;
         assert_response_status(reused, StatusCode::OK).await;
 
-        let report_idempotency = context.scoped_name("report-task-idempotency");
+        let export_idempotency = context.scoped_name("export-task-idempotency");
         let first = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            REPORTS_ENDPOINT,
+            EXPORTS_ENDPOINT,
             &body,
             vec![(
                 header::HeaderName::from_static("idempotency-key"),
-                report_idempotency.clone(),
+                export_idempotency.clone(),
             )],
         )
         .await;
         let first = assert_response_status(first, StatusCode::ACCEPTED).await;
         let first_task: TaskResponse = test::read_body_json(first).await;
 
-        let changed_body = ReportRequest {
+        let changed_body = ExportRequest {
             query: Some("sort=name.desc".to_string()),
             ..body
         };
@@ -1061,11 +1061,11 @@ mod tests {
         let second = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            REPORTS_ENDPOINT,
+            EXPORTS_ENDPOINT,
             &changed_body,
             vec![(
                 header::HeaderName::from_static("idempotency-key"),
-                report_idempotency,
+                export_idempotency,
             )],
         )
         .await;
@@ -1079,19 +1079,19 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn test_report_rejects_template_permission_failure_before_task_creation(
+    async fn test_export_rejects_template_permission_failure_before_task_creation(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let classes = create_test_classes(&context, "report_template_permission").await;
+        let classes = create_test_classes(&context, "export_template_permission").await;
         let class = classes[0].clone();
         let template_id = create_template(
             &context.pool,
             class.collection_id,
             class.id,
-            ReportScopeKind::ObjectsInClass,
+            ExportScopeKind::ObjectsInClass,
             "restricted-template",
-            ReportContentType::TextPlain,
+            ExportContentType::TextPlain,
             "{{ items|length }}",
         )
         .await;
@@ -1101,7 +1101,7 @@ mod tests {
         let resp = post_request_with_headers(
             &context.pool,
             &context.normal_token,
-            &format!("/api/v1/templates/{template_id}/reports"),
+            &format!("/api/v1/export-templates/{template_id}/exports"),
             &body,
             vec![],
         )
@@ -1113,17 +1113,17 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn test_report_projection_and_output_hide_foreign_tasks(
+    async fn test_export_projection_and_output_hide_foreign_tasks(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let classes = create_test_classes(&context, "report_visibility").await;
+        let classes = create_test_classes(&context, "export_visibility").await;
         let class = classes[0].clone();
-        let _ = create_report_objects(&context.pool, &class).await;
+        let _ = create_export_objects(&context.pool, &class).await;
 
-        let body = ReportRequest {
-            scope: ReportScope {
-                kind: ReportScopeKind::ObjectsInClass,
+        let body = ExportRequest {
+            scope: ExportScope {
+                kind: ExportScopeKind::ObjectsInClass,
                 class_id: Some(class.id),
                 object_id: None,
             },
@@ -1137,7 +1137,7 @@ mod tests {
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            REPORTS_ENDPOINT,
+            EXPORTS_ENDPOINT,
             &body,
             vec![],
         )
@@ -1153,18 +1153,18 @@ mod tests {
             .unwrap()
             .get_token();
 
-        let report_resp = get_request(
+        let export_resp = get_request(
             &context.pool,
             &other_token,
-            &format!("/api/v1/reports/{}", task.id),
+            &format!("/api/v1/exports/{}", task.id),
         )
         .await;
-        assert_response_status(report_resp, StatusCode::NOT_FOUND).await;
+        assert_response_status(export_resp, StatusCode::NOT_FOUND).await;
 
         let output_resp = get_request(
             &context.pool,
             &other_token,
-            &format!("/api/v1/reports/{}/output", task.id),
+            &format!("/api/v1/exports/{}/output", task.id),
         )
         .await;
         assert_response_status(output_resp, StatusCode::NOT_FOUND).await;
@@ -1178,11 +1178,11 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn test_report_events_include_running_steps_and_related_output(
+    async fn test_export_events_include_running_steps_and_related_output(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let collection = context.collection_fixture("report_related_output").await;
+        let collection = context.collection_fixture("export_related_output").await;
         let host_class = create_named_class(
             &context.pool,
             collection.collection.id,
@@ -1260,9 +1260,9 @@ mod tests {
             &context.pool,
             collection.collection.id,
             host_class.id,
-            ReportScopeKind::RelatedObjects,
+            ExportScopeKind::RelatedObjects,
             "reachable-template",
-            ReportContentType::TextPlain,
+            ExportContentType::TextPlain,
             "{% for host in items %}Host: {{ host.name }} {% for person in host.reachable.persons %}{{ person.name }}{% endfor %}{% endfor %}",
         )
         .await;
@@ -1274,7 +1274,7 @@ mod tests {
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/templates/{template_id}/reports"),
+            &format!("/api/v1/export-templates/{template_id}/exports"),
             &body,
             vec![],
         )
@@ -1288,7 +1288,7 @@ mod tests {
         let output_resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/reports/{}/output", task.id),
+            &format!("/api/v1/exports/{}/output", task.id),
         )
         .await;
         let output_resp = assert_response_status(output_resp, StatusCode::OK).await;
@@ -1308,22 +1308,22 @@ mod tests {
             .map(|event| event.message.as_str())
             .collect::<Vec<_>>();
 
-        assert!(messages.contains(&"Report execution started"));
+        assert!(messages.contains(&"Export execution started"));
         assert!(messages.contains(&"Query execution started"));
         assert!(messages.contains(&"Hydrating relation-aware template context"));
-        assert!(messages.contains(&"Rendering report output"));
-        assert!(messages.contains(&"Persisting report output"));
+        assert!(messages.contains(&"Rendering export output"));
+        assert!(messages.contains(&"Persisting export output"));
 
         collection.cleanup().await.unwrap();
     }
 
     #[rstest]
     #[actix_web::test]
-    async fn test_report_relation_aliases_and_paths_are_available_in_templates(
+    async fn test_export_relation_aliases_and_paths_are_available_in_templates(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let collection = context.collection_fixture("report_paths_aliases").await;
+        let collection = context.collection_fixture("export_paths_aliases").await;
         let host_class = create_named_class(
             &context.pool,
             collection.collection.id,
@@ -1418,9 +1418,9 @@ mod tests {
             &context.pool,
             collection.collection.id,
             host_class.id,
-            ReportScopeKind::RelatedObjects,
+            ExportScopeKind::RelatedObjects,
             "paths-template",
-            ReportContentType::TextPlain,
+            ExportContentType::TextPlain,
             "{% for host in items %}rooms={% for room in host.related.rooms %}{{ room.name }} {% endfor %}|reachable={% for person in host.reachable.persons %}{{ person.name }} {% endfor %}|paths={% for person in host.paths.persons %}[{{ person.name }} via {{ person.path_objects[1].name }}]{% endfor %}{% endfor %}",
         )
         .await;
@@ -1432,7 +1432,7 @@ mod tests {
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/templates/{template_id}/reports"),
+            &format!("/api/v1/export-templates/{template_id}/exports"),
             &body,
             vec![],
         )
@@ -1444,7 +1444,7 @@ mod tests {
         let output = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/reports/{}/output", task.id),
+            &format!("/api/v1/exports/{}/output", task.id),
         )
         .await;
         let output = assert_response_status(output, StatusCode::OK).await;
@@ -1460,22 +1460,22 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn test_report_output_cleanup_removes_expired_artifacts(
+    async fn test_export_output_cleanup_removes_expired_artifacts(
         #[future(awt)] test_context: TestContext,
     ) {
         use diesel::prelude::*;
 
         let context = test_context;
-        let classes = create_test_classes(&context, "report_cleanup").await;
+        let classes = create_test_classes(&context, "export_cleanup").await;
         let class = classes[0].clone();
-        let _ = create_report_objects(&context.pool, &class).await;
+        let _ = create_export_objects(&context.pool, &class).await;
         let template_id = create_template(
             &context.pool,
             class.collection_id,
             class.id,
-            ReportScopeKind::ObjectsInClass,
+            ExportScopeKind::ObjectsInClass,
             "cleanup-template",
-            ReportContentType::TextPlain,
+            ExportContentType::TextPlain,
             "{% for item in items %}{{ item.name }}\n{% endfor %}",
         )
         .await;
@@ -1487,7 +1487,7 @@ mod tests {
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/templates/{template_id}/reports"),
+            &format!("/api/v1/export-templates/{template_id}/exports"),
             &body,
             vec![],
         )
@@ -1501,11 +1501,11 @@ mod tests {
         let _purge_guard = lock_test_mutex(&EXPIRED_OUTPUT_PURGE_LOCK).await;
 
         crate::db::with_connection(&context.pool, |conn| {
-            use crate::schema::report_task_outputs::dsl::{
-                output_expires_at, report_task_outputs, task_id,
+            use crate::schema::export_task_outputs::dsl::{
+                export_task_outputs, output_expires_at, task_id,
             };
 
-            diesel::update(report_task_outputs.filter(task_id.eq(task.id)))
+            diesel::update(export_task_outputs.filter(task_id.eq(task.id)))
                 .set(
                     output_expires_at
                         .eq(chrono::Utc::now().naive_utc() - chrono::Duration::hours(1)),
@@ -1516,7 +1516,7 @@ mod tests {
 
         // The purge is process-wide; assert it cleaned *our* task rather than asserting it cleaned
         // nothing else, so other suites' expired rows can't make this brittle.
-        let cleaned = purge_expired_report_outputs(&context.pool).await.unwrap();
+        let cleaned = purge_expired_export_outputs(&context.pool).await.unwrap();
         assert!(
             cleaned.contains(&task.id),
             "expected purge to include task {}, got {cleaned:?}",
@@ -1526,7 +1526,7 @@ mod tests {
         let projection = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/reports/{}", task.id),
+            &format!("/api/v1/exports/{}", task.id),
         )
         .await;
         let projection = assert_response_status(projection, StatusCode::OK).await;
@@ -1534,15 +1534,15 @@ mod tests {
         let details = projection
             .details
             .as_ref()
-            .and_then(|details| details.report.as_ref())
-            .expect("report details");
+            .and_then(|details| details.export.as_ref())
+            .expect("export details");
         assert!(!details.output_available);
         assert_eq!(details.output_expires_at, None);
 
         let output = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/reports/{}/output", task.id),
+            &format!("/api/v1/exports/{}/output", task.id),
         )
         .await;
         assert_response_status(output, StatusCode::NOT_FOUND).await;
@@ -1566,25 +1566,25 @@ mod tests {
 
     /// An output whose retention has lapsed but which the purge job has not yet deleted must read as
     /// explicitly expired (410 Gone + `output_expired`) rather than as a generic 404 that looks like
-    /// the report was never produced.
+    /// the export was never produced.
     #[rstest]
     #[actix_web::test]
-    async fn test_report_output_returns_gone_when_expired_before_purge(
+    async fn test_export_output_returns_gone_when_expired_before_purge(
         #[future(awt)] test_context: TestContext,
     ) {
         use diesel::prelude::*;
 
         let context = test_context;
-        let classes = create_test_classes(&context, "report_expired").await;
+        let classes = create_test_classes(&context, "export_expired").await;
         let class = classes[0].clone();
-        let _ = create_report_objects(&context.pool, &class).await;
+        let _ = create_export_objects(&context.pool, &class).await;
         let template_id = create_template(
             &context.pool,
             class.collection_id,
             class.id,
-            ReportScopeKind::ObjectsInClass,
+            ExportScopeKind::ObjectsInClass,
             "expired-template",
-            ReportContentType::TextPlain,
+            ExportContentType::TextPlain,
             "{% for item in items %}{{ item.name }}\n{% endfor %}",
         )
         .await;
@@ -1592,7 +1592,7 @@ mod tests {
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/templates/{template_id}/reports"),
+            &format!("/api/v1/export-templates/{template_id}/exports"),
             &serde_json::json!({ "query": "sort=name" }),
             vec![],
         )
@@ -1614,11 +1614,11 @@ mod tests {
             .and_hms_opt(0, 0, 0)
             .unwrap();
         crate::db::with_connection(&context.pool, |conn| {
-            use crate::schema::report_task_outputs::dsl::{
-                output_expires_at, report_task_outputs, task_id,
+            use crate::schema::export_task_outputs::dsl::{
+                export_task_outputs, output_expires_at, task_id,
             };
 
-            diesel::update(report_task_outputs.filter(task_id.eq(task.id)))
+            diesel::update(export_task_outputs.filter(task_id.eq(task.id)))
                 .set(output_expires_at.eq(backdated_expiry))
                 .execute(conn)
         })
@@ -1628,7 +1628,7 @@ mod tests {
         let output = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/reports/{}/output", task.id),
+            &format!("/api/v1/exports/{}/output", task.id),
         )
         .await;
         assert_response_status(output, StatusCode::GONE).await;
@@ -1636,7 +1636,7 @@ mod tests {
         let projection = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/reports/{}", task.id),
+            &format!("/api/v1/exports/{}", task.id),
         )
         .await;
         let projection = assert_response_status(projection, StatusCode::OK).await;
@@ -1644,8 +1644,8 @@ mod tests {
         let details = projection
             .details
             .as_ref()
-            .and_then(|details| details.report.as_ref())
-            .expect("report details");
+            .and_then(|details| details.export.as_ref())
+            .expect("export details");
         assert!(!details.output_available);
         assert!(details.output_expired);
         assert_eq!(details.output_expires_at, Some(backdated_expiry));
@@ -1657,7 +1657,7 @@ mod tests {
             &context.pool,
             &context.admin_token,
             &format!(
-                "/api/v1/tasks?submitted_by={}&kind=report&limit=50",
+                "/api/v1/tasks?submitted_by={}&kind=export&limit=50",
                 context.admin_user.id
             ),
         )
@@ -1668,8 +1668,8 @@ mod tests {
             .iter()
             .find(|entry| entry.id == task.id)
             .and_then(|entry| entry.details.as_ref())
-            .and_then(|details| details.report.as_ref())
-            .expect("expired report task present in task list with report details");
+            .and_then(|details| details.export.as_ref())
+            .expect("expired export task present in task list with export details");
         assert!(!listed_details.output_available);
         assert!(listed_details.output_expired);
         assert_eq!(listed_details.output_expires_at, Some(backdated_expiry));
@@ -1677,26 +1677,26 @@ mod tests {
         cleanup(&classes).await;
     }
 
-    /// Re-finalizing a report task must not trip the `report_task_outputs.task_id` UNIQUE
+    /// Re-finalizing an export task must not trip the `export_task_outputs.task_id` UNIQUE
     /// constraint: the second call is a no-op for the output row and leaves the task advanced.
     #[rstest]
     #[actix_web::test]
-    async fn test_finalize_report_with_output_is_idempotent(
+    async fn test_finalize_export_with_output_is_idempotent(
         #[future(awt)] test_context: TestContext,
     ) {
         use diesel::prelude::*;
 
         let context = test_context;
-        let classes = create_test_classes(&context, "report_refinalize").await;
+        let classes = create_test_classes(&context, "export_refinalize").await;
         let class = classes[0].clone();
-        let _ = create_report_objects(&context.pool, &class).await;
+        let _ = create_export_objects(&context.pool, &class).await;
         let template_id = create_template(
             &context.pool,
             class.collection_id,
             class.id,
-            ReportScopeKind::ObjectsInClass,
+            ExportScopeKind::ObjectsInClass,
             "refinalize-template",
-            ReportContentType::TextPlain,
+            ExportContentType::TextPlain,
             "{% for item in items %}{{ item.name }}\n{% endfor %}",
         )
         .await;
@@ -1704,7 +1704,7 @@ mod tests {
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/templates/{template_id}/reports"),
+            &format!("/api/v1/export-templates/{template_id}/exports"),
             &serde_json::json!({ "query": "sort=name" }),
             vec![],
         )
@@ -1714,7 +1714,7 @@ mod tests {
         let _ = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
 
         let task_handle = TaskID::new(task.id).expect("valid task id");
-        let duplicate_output = NewReportTaskOutputRecord {
+        let duplicate_output = NewExportTaskOutputRecord {
             task_id: task.id,
             template_name: Some("refinalize-template".to_string()),
             content_type: "text/plain".to_string(),
@@ -1732,7 +1732,7 @@ mod tests {
         };
 
         let record = task_handle
-            .finalize_report_with_output(
+            .finalize_export_with_output(
                 &context.pool,
                 TaskStateUpdate {
                     status: TaskStatus::Succeeded,
@@ -1758,15 +1758,15 @@ mod tests {
         // The output row is untouched: exactly one row, and the original body, not the duplicate.
         let (count, text): (i64, Option<String>) =
             crate::db::with_connection(&context.pool, |conn| {
-                use crate::schema::report_task_outputs::dsl::{
-                    report_task_outputs, task_id, text_output,
+                use crate::schema::export_task_outputs::dsl::{
+                    export_task_outputs, task_id, text_output,
                 };
 
-                let count = report_task_outputs
+                let count = export_task_outputs
                     .filter(task_id.eq(task.id))
                     .count()
                     .get_result::<i64>(conn)?;
-                let text = report_task_outputs
+                let text = export_task_outputs
                     .filter(task_id.eq(task.id))
                     .select(text_output)
                     .first::<Option<String>>(conn)?;
@@ -1781,20 +1781,20 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn test_report_text_output_exceeding_max_bytes_fails(
+    async fn test_export_text_output_exceeding_max_bytes_fails(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let classes = create_test_classes(&context, "report_text_limit").await;
+        let classes = create_test_classes(&context, "export_text_limit").await;
         let class = classes[0].clone();
-        let _ = create_report_objects(&context.pool, &class).await;
+        let _ = create_export_objects(&context.pool, &class).await;
         let template_id = create_template(
             &context.pool,
             class.collection_id,
             class.id,
-            ReportScopeKind::ObjectsInClass,
+            ExportScopeKind::ObjectsInClass,
             "oversized-template",
-            ReportContentType::TextPlain,
+            ExportContentType::TextPlain,
             "{% for item in items %}{{ item.name }} has a description of {{ item.description }} and lives forever\n{% endfor %}",
         )
         .await;
@@ -1802,7 +1802,7 @@ mod tests {
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/templates/{template_id}/reports"),
+            &format!("/api/v1/export-templates/{template_id}/exports"),
             &serde_json::json!({ "limits": { "max_output_bytes": 8 } }),
             vec![],
         )
@@ -1822,12 +1822,12 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn test_report_objects_in_class_hydration_keys_per_root(
+    async fn test_export_objects_in_class_hydration_keys_per_root(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
         let collection = context
-            .collection_fixture("report_multiroot_hydration")
+            .collection_fixture("export_multiroot_hydration")
             .await;
         let host_class = create_named_class(
             &context.pool,
@@ -1882,18 +1882,18 @@ mod tests {
         let _ = create_object_relation(&context.pool, host_b.id, room_b.id, host_room_relation.id)
             .await;
 
-        let template = NewReportTemplate {
+        let template = NewExportTemplate {
                 collection_id: collection.collection.id,
                 name: "multiroot-template".to_string(),
-                description: "report template".to_string(),
-                content_type: ReportContentType::TextPlain,
+                description: "export template".to_string(),
+                content_type: ExportContentType::TextPlain,
                 template: "{% for host in items %}{{ host.name }}:{% for room in host.related.rooms %}{{ room.name }},{% endfor %};{% endfor %}".to_string(),
-                kind: ReportTemplateKind::Report,
-                scope_kind: Some(ReportScopeKind::ObjectsInClass),
+                kind: ExportTemplateKind::Export,
+                scope_kind: Some(ExportScopeKind::ObjectsInClass),
                 class_id: Some(host_class.id),
                 default_query: Some("sort=name".to_string()),
                 include: None,
-                relation_context: Some(ReportRelationContext { depth: Some(1) }),
+                relation_context: Some(ExportRelationContext { depth: Some(1) }),
                 default_missing_data_policy: None,
                 default_limits: None,
             }
@@ -1904,7 +1904,7 @@ mod tests {
         let resp = post_request_with_headers(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/templates/{}/reports", template.id),
+            &format!("/api/v1/export-templates/{}/exports", template.id),
             &serde_json::json!({}),
             vec![],
         )
@@ -1916,7 +1916,7 @@ mod tests {
         let output = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/reports/{}/output", task.id),
+            &format!("/api/v1/exports/{}/output", task.id),
         )
         .await;
         let output = assert_response_status(output, StatusCode::OK).await;
@@ -1933,11 +1933,11 @@ mod tests {
     // differs from name order, so `name` and `created_at` produce distinct, unambiguous orderings.
     #[rstest]
     #[actix_web::test]
-    async fn test_report_include_related_objects_respects_sort_order(
+    async fn test_export_include_related_objects_respects_sort_order(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let collection = context.collection_fixture("report_include_sort").await;
+        let collection = context.collection_fixture("export_include_sort").await;
         let host_class = create_named_class(
             &context.pool,
             collection.collection.id,
@@ -2011,7 +2011,7 @@ mod tests {
             let resp = post_request_with_headers(
                 &context.pool,
                 &context.admin_token,
-                REPORTS_ENDPOINT,
+                EXPORTS_ENDPOINT,
                 &body,
                 vec![],
             )
@@ -2022,12 +2022,12 @@ mod tests {
             let output = get_request(
                 &context.pool,
                 &context.admin_token,
-                &format!("/api/v1/reports/{}/output", task.id),
+                &format!("/api/v1/exports/{}/output", task.id),
             )
             .await;
             let output = assert_response_status(output, StatusCode::OK).await;
-            let report: ReportJsonResponse = test::read_body_json(output).await;
-            report.items[0]["related"]["rooms"]
+            let export: ExportJsonResponse = test::read_body_json(output).await;
+            export.items[0]["related"]["rooms"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -2061,7 +2061,7 @@ mod tests {
         collection.cleanup().await.unwrap();
     }
 
-    // Ignored benchmark: prints hydration_duration_ms for templated ObjectsInClass reports at
+    // Ignored benchmark: prints hydration_duration_ms for templated ObjectsInClass exports at
     // increasing root counts, so the O(N)->O(1) round-trip change can be observed empirically.
     // Run with: source .env && ./run_tests.sh bench_objects_in_class_hydration_scaling -- --ignored --nocapture
     #[rstest]
@@ -2069,7 +2069,7 @@ mod tests {
     #[ignore]
     async fn bench_objects_in_class_hydration_scaling(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let collection = context.collection_fixture("report_hydration_bench").await;
+        let collection = context.collection_fixture("export_hydration_bench").await;
         let host_class = create_named_class(
             &context.pool,
             collection.collection.id,
@@ -2091,18 +2091,18 @@ mod tests {
         .save_without_events(&context.pool)
         .await
         .unwrap();
-        let template = NewReportTemplate {
+        let template = NewExportTemplate {
                 collection_id: collection.collection.id,
                 name: "bench-template".to_string(),
-                description: "report template".to_string(),
-                content_type: ReportContentType::TextPlain,
+                description: "export template".to_string(),
+                content_type: ExportContentType::TextPlain,
                 template: "{% for host in items %}{{ host.name }}:{% for room in host.related.rooms %}{{ room.name }},{% endfor %};{% endfor %}".to_string(),
-                kind: ReportTemplateKind::Report,
-                scope_kind: Some(ReportScopeKind::ObjectsInClass),
+                kind: ExportTemplateKind::Export,
+                scope_kind: Some(ExportScopeKind::ObjectsInClass),
                 class_id: Some(host_class.id),
                 default_query: None,
                 include: None,
-                relation_context: Some(ReportRelationContext { depth: Some(1) }),
+                relation_context: Some(ExportRelationContext { depth: Some(1) }),
                 default_missing_data_policy: None,
                 default_limits: None,
             }
@@ -2147,7 +2147,7 @@ mod tests {
             let resp = post_request_with_headers(
                 &context.pool,
                 &context.admin_token,
-                &format!("/api/v1/templates/{}/reports", template.id),
+                &format!("/api/v1/export-templates/{}/exports", template.id),
                 &serde_json::json!({}),
                 vec![],
             )
@@ -2168,7 +2168,7 @@ mod tests {
                 .iter()
                 .rev()
                 .find_map(|event| event.data.as_ref())
-                .expect("a report event carrying timing data");
+                .expect("an export event carrying timing data");
             let hydration_ms = timing["hydration_duration_ms"].as_i64().unwrap_or(-1);
             let total_ms = timing["total_duration_ms"].as_i64().unwrap_or(-1);
             results.push((target, hydration_ms, total_ms));

@@ -43,7 +43,6 @@ pub struct TaskQueueStateResponse {
     partially_succeeded_tasks: i64,
     cancelled_tasks: i64,
     import_tasks: i64,
-    report_tasks: i64,
     export_tasks: i64,
     reindex_tasks: i64,
     total_task_events: i64,
@@ -83,8 +82,6 @@ struct TaskQueueState {
     cancelled_tasks: i64,
     #[diesel(sql_type = BigInt)]
     import_tasks: i64,
-    #[diesel(sql_type = BigInt)]
-    report_tasks: i64,
     #[diesel(sql_type = BigInt)]
     export_tasks: i64,
     #[diesel(sql_type = BigInt)]
@@ -215,7 +212,6 @@ pub async fn get_task_queue_state(
           COUNT(*) FILTER (WHERE status = 'partially_succeeded')::bigint AS partially_succeeded_tasks,
           COUNT(*) FILTER (WHERE status = 'cancelled')::bigint AS cancelled_tasks,
           COUNT(*) FILTER (WHERE kind = 'import')::bigint AS import_tasks,
-          COUNT(*) FILTER (WHERE kind = 'report')::bigint AS report_tasks,
           COUNT(*) FILTER (WHERE kind = 'export')::bigint AS export_tasks,
           COUNT(*) FILTER (WHERE kind = 'reindex')::bigint AS reindex_tasks,
           (SELECT COUNT(*) FROM events WHERE entity_type = 'task')::bigint AS total_task_events,
@@ -250,7 +246,6 @@ pub async fn get_task_queue_state(
         partially_succeeded_tasks: state.partially_succeeded_tasks,
         cancelled_tasks: state.cancelled_tasks,
         import_tasks: state.import_tasks,
-        report_tasks: state.report_tasks,
         export_tasks: state.export_tasks,
         reindex_tasks: state.reindex_tasks,
         total_task_events: state.total_task_events,

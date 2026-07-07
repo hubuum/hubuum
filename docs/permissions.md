@@ -123,24 +123,24 @@ The following permissions are available for relationships between classes:
 | `DeleteClassRelation` | Allows deleting the relationship. |
 | `CreateObjectRelation` | Allows creating relationships between objects adhering of the class relationship. |
 
-### Permissions for templates
+### Permissions for export templates
 
-Report templates are used to format report output and are scoped to collections. The following permissions control access to templates:
+Export templates are used to format export output and are scoped to collections. The following permissions control access to export templates:
 
 | Permission | Description |
 | --- | --- |
-| `ReadTemplate` | Allows reading templates and using them in report generation. Required to view template definitions or to reference a template when running a report. |
-| `CreateTemplate` | Allows creating new templates within the collection. Also required when moving a template to a different collection (as the target collection permission). |
-| `UpdateTemplate` | Allows modifying existing templates (name, description, template content, collection). Required when moving a template to a different collection (as the source collection permission). |
-| `DeleteTemplate` | Allows deleting templates from the collection. |
+| `ReadTemplate` | Allows reading export templates and using them in export generation. Required to view template definitions or to reference a template when running an export. |
+| `CreateTemplate` | Allows creating new export templates within the collection. Also required when moving a template to a different collection (as the target collection permission). |
+| `UpdateTemplate` | Allows modifying existing export templates (name, description, template content, collection). Required when moving a template to a different collection (as the source collection permission). |
+| `DeleteTemplate` | Allows deleting export_templates from the collection. |
 
 **Important notes about template permissions:**
 
 - Templates are collection-scoped, meaning all template operations require the appropriate permission on the template's collection.
-- Using a template in a report requires `read_template` permission on the collection containing the template.
+- Using a template in an export requires `read_template` permission on the collection containing the template.
 - Moving a template between collections requires both `update_template` on the source collection and `create_template` on the target collection.
 - Templates with the same name cannot exist within the same collection (enforced by a unique constraint).
-- Valid template content types are: `text/plain`, `text/html`, and `text/csv`. The `application/json` content type is reserved for the default JSON report output and cannot be used for stored templates.
+- Valid template content types are: `text/plain`, `text/html`, and `text/csv`. The `application/json` content type is reserved for the default JSON export output and cannot be used for stored export templates.
 
 ### Permissions for remote targets
 

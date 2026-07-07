@@ -39,11 +39,11 @@ use crate::models::object::{NewHubuumObject, UpdateHubuumObject};
 use crate::models::token::{create_principal_token, revoke_token_by_id_for_principal};
 use crate::models::{
     CollectionID, EventDelivery, EventDeliveryID, EventDeliveryStatus, EventSink as EventSinkModel,
-    EventSinkID, EventSinkKind, EventSubscription, GroupID, HubuumClassRelationID, NewEventSink,
-    NewEventSubscription, NewHubuumClassRelation, NewHubuumObjectRelation, NewRemoteTargetRow,
-    NewReportTemplate, NewUser, Permissions, PermissionsList, PrincipalToken, RemoteTargetID,
-    ReportContentType, ReportTemplateID, ReportTemplateKind, Token, UpdateRemoteTargetRow,
-    UpdateReportTemplate, UpdateUser,
+    EventSinkID, EventSinkKind, EventSubscription, ExportContentType, ExportTemplateID,
+    ExportTemplateKind, GroupID, HubuumClassRelationID, NewEventSink, NewEventSubscription,
+    NewExportTemplate, NewHubuumClassRelation, NewHubuumObjectRelation, NewRemoteTargetRow,
+    NewUser, Permissions, PermissionsList, PrincipalToken, RemoteTargetID, Token,
+    UpdateExportTemplate, UpdateRemoteTargetRow, UpdateUser,
 };
 use crate::schema::events::dsl::events;
 use crate::tests::{
@@ -1519,22 +1519,22 @@ async fn permission_writes_emit_granted_revoked_events() {
 }
 
 #[actix_web::test]
-async fn report_template_writes_emit_lifecycle_events() {
+async fn export_template_writes_emit_lifecycle_events() {
     let scope = test_scope();
     let fixture = scope.with_collection().await;
     let context = EventContext::user(
         26,
         Some(Uuid::new_v4()),
-        Some("report-template-correlation".into()),
+        Some("export-template-correlation".into()),
     );
 
-    let template = NewReportTemplate {
+    let template = NewExportTemplate {
         collection_id: fixture.collection.id,
         name: scope.scoped_name("event_template"),
         description: "before".to_string(),
-        content_type: ReportContentType::TextPlain,
+        content_type: ExportContentType::TextPlain,
         template: "Hello {{ name }}".to_string(),
-        kind: ReportTemplateKind::Fragment,
+        kind: ExportTemplateKind::Fragment,
         scope_kind: None,
         class_id: None,
         default_query: None,
@@ -1547,7 +1547,7 @@ async fn report_template_writes_emit_lifecycle_events() {
     .await
     .unwrap();
 
-    let updated = UpdateReportTemplate {
+    let updated = UpdateExportTemplate {
         collection_id: None,
         name: None,
         description: Some("after".to_string()),
@@ -1565,20 +1565,20 @@ async fn report_template_writes_emit_lifecycle_events() {
     .await
     .unwrap();
 
-    ReportTemplateID::new(updated.id)
+    ExportTemplateID::new(updated.id)
         .unwrap()
         .delete(&scope.pool, &context)
         .await
         .unwrap();
 
-    let rows = events_for(&scope, "report_template", template.id);
+    let rows = events_for(&scope, "export_template", template.id);
     assert_eq!(rows.len(), 3);
 
     assert_eq!(rows[0].action, "created");
     assert_eq!(rows[0].actor_user_id, Some(26));
     assert_eq!(
         rows[0].correlation_id.as_deref(),
-        Some("report-template-correlation")
+        Some("export-template-correlation")
     );
     assert_eq!(rows[0].collection_id, Some(fixture.collection.id));
     assert_eq!(rows[0].entity_name.as_deref(), Some(template.name.as_str()));

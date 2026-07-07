@@ -45,7 +45,7 @@ pub fn service_account(service_account_id: i32) -> Result<ResponseLocation, ApiE
 }
 
 pub fn template(template_id: i32) -> Result<ResponseLocation, ApiError> {
-    api_v1(format!("templates/{template_id}"))
+    api_v1(format!("export-templates/{template_id}"))
 }
 
 pub fn task(task_id: i32) -> Result<ResponseLocation, ApiError> {

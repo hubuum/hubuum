@@ -23,13 +23,13 @@ impl TaskID {
             .await
     }
 
-    /// Load this task, additionally requiring it to be a report task.
-    pub async fn load_authorized_report(
+    /// Load this task, additionally requiring it to be an export task.
+    pub async fn load_authorized_export(
         &self,
         pool: &DbPool,
         requestor: &impl AuthzSubject,
     ) -> Result<TaskRecord, ApiError> {
-        self.load_authorized_of_kind(pool, requestor, Some(TaskKind::Report), "Report task")
+        self.load_authorized_of_kind(pool, requestor, Some(TaskKind::Export), "Export task")
             .await
     }
 

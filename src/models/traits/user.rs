@@ -2,10 +2,9 @@ use std::iter::IntoIterator;
 
 use crate::models::search::QueryOptions;
 use crate::models::{
-    ClassGraphRow, Collection, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation,
-    HubuumObject, HubuumObjectRelation, Permissions, RelatedObjectForRootRow,
-    RelatedObjectGraphRow, RelatedObjectIncludeRow, ReportIncludeRelatedQuery, UnifiedSearchSpec,
-    User, UserID,
+    ClassGraphRow, Collection, ExportIncludeRelatedQuery, Group, HubuumClass, HubuumClassExpanded,
+    HubuumClassRelation, HubuumObject, HubuumObjectRelation, Permissions, RelatedObjectForRootRow,
+    RelatedObjectGraphRow, RelatedObjectIncludeRow, UnifiedSearchSpec, User, UserID,
 };
 
 use crate::db::DbPool;
@@ -254,7 +253,7 @@ pub trait Search: UserCollectionAccessors {
         &self,
         backend: &C,
         root_object_ids: &[i32],
-        include: ReportIncludeRelatedQuery,
+        include: ExportIncludeRelatedQuery,
         scopes: Option<&[Permissions]>,
     ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError>
     where

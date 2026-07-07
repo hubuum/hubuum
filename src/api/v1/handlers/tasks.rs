@@ -4,13 +4,13 @@ use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::db::traits::task::{
-    TaskBackend, list_report_task_output_summaries, list_tasks_with_total_count,
+    TaskBackend, list_export_task_output_summaries, list_tasks_with_total_count,
 };
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::search::parse_query_parameter_with_passthrough;
 use crate::models::{
-    ReportOutputLookup, TaskEventResponse, TaskID, TaskKind, TaskResponse, TaskStatus,
+    ExportOutputLookup, TaskEventResponse, TaskID, TaskKind, TaskResponse, TaskStatus,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::tasks::ensure_task_worker_running;
@@ -35,7 +35,8 @@ fn parse_task_list_query(
         }
         Some(mut values) => Some(TaskKind::from_db(values.remove(0).as_str()).map_err(|_| {
             ApiError::BadRequest(
-                "invalid kind filter; expected one of import, report, export, reindex".to_string(),
+                "invalid kind filter; expected one of import, export, reindex, remote_call"
+                    .to_string(),
             )
         })?),
         None => None,
@@ -80,7 +81,7 @@ fn parse_task_list_query(
     tag = "tasks",
     security(("bearer_auth" = [])),
     params(
-        ("kind" = String, Query, description = "Optional task kind filter (import|report|export|reindex)"),
+        ("kind" = String, Query, description = "Optional task kind filter (import|export|export|reindex)"),
         ("status" = String, Query, description = "Optional task status filter"),
         ("submitted_by" = i32, Query, description = "Optional submitter user id filter (effective only for admins)"),
         ("limit" = usize, Query, description = "Cursor page size"),
@@ -119,12 +120,12 @@ pub async fn get_tasks(
     )
     .await?;
     let tasks = tasks.into_iter().collect::<Vec<_>>();
-    let report_task_ids = tasks
+    let export_task_ids = tasks
         .iter()
-        .filter(|task| task.kind == TaskKind::Report.as_str())
+        .filter(|task| task.kind == TaskKind::Export.as_str())
         .map(|task| task.id)
         .collect::<Vec<_>>();
-    let report_outputs = list_report_task_output_summaries(&pool, &report_task_ids)
+    let export_outputs = list_export_task_output_summaries(&pool, &export_task_ids)
         .await?
         .into_iter()
         .map(|output| (output.task_id, output))
@@ -134,17 +135,17 @@ pub async fn get_tasks(
         .into_iter()
         .map(|task| {
             // Classify each summary the same way the single-task lookups do, so `output_expired`
-            // is reported consistently here as on GET /tasks/{id} and GET /reports/{id}.
-            let report_output = match report_outputs.get(&task.id) {
+            // is exported consistently here as on GET /tasks/{id} and GET /exports/{id}.
+            let export_output = match export_outputs.get(&task.id) {
                 Some(summary) if summary.output_expires_at > now => {
-                    ReportOutputLookup::Available(summary)
+                    ExportOutputLookup::Available(summary)
                 }
-                Some(summary) => ReportOutputLookup::Expired {
+                Some(summary) => ExportOutputLookup::Expired {
                     expires_at: summary.output_expires_at,
                 },
-                None => ReportOutputLookup::Missing,
+                None => ExportOutputLookup::Missing,
             };
-            task.to_response_with_report_output(report_output)
+            task.to_response_with_export_output(export_output)
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -177,13 +178,13 @@ pub async fn get_task(
         .into_inner()
         .load_authorized(&pool, &requestor.principal)
         .await?;
-    let report_output = if task.kind == TaskKind::Report.as_str() {
-        task.find_report_output_summary(&pool).await?
+    let export_output = if task.kind == TaskKind::Export.as_str() {
+        task.find_export_output_summary(&pool).await?
     } else {
-        ReportOutputLookup::Missing
+        ExportOutputLookup::Missing
     };
     Ok(ApiResponse::new(
-        task.to_response_with_report_output(report_output.as_ref())?,
+        task.to_response_with_export_output(export_output.as_ref())?,
         StatusCode::OK,
     ))
 }

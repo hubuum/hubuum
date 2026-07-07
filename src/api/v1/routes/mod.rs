@@ -3,14 +3,14 @@ use actix_web::web;
 
 pub mod classes;
 pub mod collections;
+pub mod export_templates;
+pub mod exports;
 pub mod groups;
 pub mod imports;
 pub mod relations;
 pub mod remote_targets;
-pub mod reports;
 pub mod search;
 pub mod tasks;
-pub mod templates;
 pub mod users;
 
 pub fn config(cfg: &mut web::ServiceConfig) {
@@ -32,12 +32,12 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         )
         .service(web::scope("/classes").configure(classes::config))
         .service(web::scope("/search").configure(search::config))
-        .service(web::scope("/reports").configure(reports::config))
+        .service(web::scope("/exports").configure(exports::config))
         .service(web::scope("/event-deliveries").configure(event_deliveries::config))
         .service(web::scope("/event-sinks").configure(event_sinks::config))
         .service(web::scope("/tasks").configure(tasks::config))
         .service(web::scope("/events").configure(events::config))
-        .service(web::scope("/templates").configure(templates::config))
+        .service(web::scope("/export-templates").configure(export_templates::config))
         .service(web::scope("/remote-targets").configure(remote_targets::config))
         .service(web::scope("/relations").configure(relations::config));
 }

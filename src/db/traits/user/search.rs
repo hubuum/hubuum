@@ -1794,7 +1794,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         root_object_ids: &[i32],
-        include: ReportIncludeRelatedQuery,
+        include: ExportIncludeRelatedQuery,
         scopes: Option<&[Permissions]>,
     ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
@@ -1812,7 +1812,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         root_object_ids: &[i32],
-        include: ReportIncludeRelatedQuery,
+        include: ExportIncludeRelatedQuery,
         is_admin: bool,
         scopes: Option<&[Permissions]>,
     ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError> {
@@ -1953,14 +1953,14 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 }
 
 fn related_include_object_edges_sql(
-    direction: ReportIncludeRelatedDirection,
+    direction: ExportIncludeRelatedDirection,
     class_relation_id: Option<i32>,
     bind_variables: &mut Vec<SQLValue>,
 ) -> String {
     let mut selects = Vec::new();
 
     match direction {
-        ReportIncludeRelatedDirection::Any | ReportIncludeRelatedDirection::Outgoing => {
+        ExportIncludeRelatedDirection::Any | ExportIncludeRelatedDirection::Outgoing => {
             selects.push(related_include_object_edge_select_sql(
                 "from_hubuum_object_id",
                 "to_hubuum_object_id",
@@ -1968,11 +1968,11 @@ fn related_include_object_edges_sql(
                 bind_variables,
             ));
         }
-        ReportIncludeRelatedDirection::Incoming => {}
+        ExportIncludeRelatedDirection::Incoming => {}
     }
 
     match direction {
-        ReportIncludeRelatedDirection::Any | ReportIncludeRelatedDirection::Incoming => {
+        ExportIncludeRelatedDirection::Any | ExportIncludeRelatedDirection::Incoming => {
             selects.push(related_include_object_edge_select_sql(
                 "to_hubuum_object_id",
                 "from_hubuum_object_id",
@@ -1980,7 +1980,7 @@ fn related_include_object_edges_sql(
                 bind_variables,
             ));
         }
-        ReportIncludeRelatedDirection::Outgoing => {}
+        ExportIncludeRelatedDirection::Outgoing => {}
     }
 
     selects.join("\n\n    UNION ALL\n\n")
@@ -2014,15 +2014,15 @@ fn related_include_object_edge_select_sql(
     )
 }
 
-fn related_include_order_sql(sort: ReportIncludeRelatedSort) -> &'static str {
+fn related_include_order_sql(sort: ExportIncludeRelatedSort) -> &'static str {
     match sort {
-        ReportIncludeRelatedSort::Path => {
+        ExportIncludeRelatedSort::Path => {
             "deduped_walk.path ASC, deduped_walk.descendant_object_id ASC"
         }
-        ReportIncludeRelatedSort::Name => {
+        ExportIncludeRelatedSort::Name => {
             "target_object.name ASC, target_object.id ASC, deduped_walk.path ASC"
         }
-        ReportIncludeRelatedSort::CreatedAt => {
+        ExportIncludeRelatedSort::CreatedAt => {
             "target_object.created_at ASC, target_object.id ASC, deduped_walk.path ASC"
         }
     }
@@ -2032,9 +2032,9 @@ fn related_include_order_sql(sort: ReportIncludeRelatedSort) -> &'static str {
 enum GraphWalkEdges {
     /// Both relation directions, unfiltered — used by templated relation hydration.
     Bidirectional,
-    /// Direction- and (optionally) class-relation-filtered — used by the report include path.
+    /// Direction- and (optionally) class-relation-filtered — used by the export include path.
     Directional {
-        direction: ReportIncludeRelatedDirection,
+        direction: ExportIncludeRelatedDirection,
         class_relation_id: Option<i32>,
     },
 }
@@ -2046,7 +2046,7 @@ enum GraphWalkRanking {
     /// Restrict to a target class and order by the include sort option.
     ByTargetClass {
         class_id: i32,
-        sort: ReportIncludeRelatedSort,
+        sort: ExportIncludeRelatedSort,
     },
 }
 

@@ -6,7 +6,7 @@ use utoipa::ToSchema;
 use crate::errors::ApiError;
 use crate::events::Event;
 use crate::models::search::{FilterField, SortParam};
-use crate::schema::{import_task_results, report_task_outputs, tasks};
+use crate::schema::{export_task_outputs, import_task_results, tasks};
 use crate::traits::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
@@ -15,7 +15,6 @@ use crate::traits::{
 #[serde(rename_all = "snake_case")]
 pub enum TaskKind {
     Import,
-    Report,
     Export,
     Reindex,
     RemoteCall,
@@ -25,7 +24,6 @@ impl TaskKind {
     pub fn as_str(self) -> &'static str {
         match self {
             TaskKind::Import => "import",
-            TaskKind::Report => "report",
             TaskKind::Export => "export",
             TaskKind::Reindex => "reindex",
             TaskKind::RemoteCall => "remote_call",
@@ -35,7 +33,6 @@ impl TaskKind {
     pub fn from_db(value: &str) -> Result<Self, ApiError> {
         match value {
             "import" => Ok(TaskKind::Import),
-            "report" => Ok(TaskKind::Report),
             "export" => Ok(TaskKind::Export),
             "reindex" => Ok(TaskKind::Reindex),
             "remote_call" => Ok(TaskKind::RemoteCall),
@@ -241,8 +238,8 @@ pub struct TaskLinks {
     pub events: String,
     pub import: Option<String>,
     pub import_results: Option<String>,
-    pub report: Option<String>,
-    pub report_output: Option<String>,
+    pub export: Option<String>,
+    pub export_output: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -251,11 +248,11 @@ pub struct ImportTaskDetails {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
-pub struct ReportTaskDetails {
+pub struct ExportTaskDetails {
     pub output_url: String,
     pub output_available: bool,
     /// True when output was produced but has since passed its retention window. Distinguishes an
-    /// expired report from one that was never generated (both have `output_available = false`).
+    /// expired export from one that was never generated (both have `output_available = false`).
     pub output_expired: bool,
     pub output_expires_at: Option<NaiveDateTime>,
     pub template_name: Option<String>,
@@ -267,7 +264,7 @@ pub struct ReportTaskDetails {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct TaskDetails {
     pub import: Option<ImportTaskDetails>,
-    pub report: Option<ReportTaskDetails>,
+    pub export: Option<ExportTaskDetails>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -311,8 +308,8 @@ pub struct ImportTaskResultResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable)]
-#[diesel(table_name = report_task_outputs)]
-pub struct ReportTaskOutputRecord {
+#[diesel(table_name = export_task_outputs)]
+pub struct ExportTaskOutputRecord {
     pub id: i32,
     pub task_id: i32,
     pub template_name: Option<String>,
@@ -332,8 +329,8 @@ pub struct ReportTaskOutputRecord {
 }
 
 #[derive(Debug, Clone, Insertable)]
-#[diesel(table_name = report_task_outputs)]
-pub struct NewReportTaskOutputRecord {
+#[diesel(table_name = export_task_outputs)]
+pub struct NewExportTaskOutputRecord {
     pub task_id: i32,
     pub template_name: Option<String>,
     pub content_type: String,
@@ -350,35 +347,35 @@ pub struct NewReportTaskOutputRecord {
     pub render_duration_ms: i32,
 }
 
-/// Outcome of looking up a report task's stored output.
+/// Outcome of looking up an export task's stored output.
 ///
 /// Retention can lapse before the cleanup job purges the row, so a present-but-expired output is
 /// distinct from one that never existed. Callers map `Expired` to `410 Gone` and `Missing` to
 /// `404 Not Found` rather than collapsing both into a 404 that looks like data loss.
 #[derive(Debug, Clone)]
-pub enum ReportOutputLookup<T> {
+pub enum ExportOutputLookup<T> {
     Available(T),
     Expired { expires_at: NaiveDateTime },
     Missing,
 }
 
-impl<T> ReportOutputLookup<T> {
+impl<T> ExportOutputLookup<T> {
     /// Borrow the contained value, mirroring `Option::as_ref`.
-    pub fn as_ref(&self) -> ReportOutputLookup<&T> {
+    pub fn as_ref(&self) -> ExportOutputLookup<&T> {
         match self {
-            ReportOutputLookup::Available(value) => ReportOutputLookup::Available(value),
-            ReportOutputLookup::Expired { expires_at } => ReportOutputLookup::Expired {
+            ExportOutputLookup::Available(value) => ExportOutputLookup::Available(value),
+            ExportOutputLookup::Expired { expires_at } => ExportOutputLookup::Expired {
                 expires_at: *expires_at,
             },
-            ReportOutputLookup::Missing => ReportOutputLookup::Missing,
+            ExportOutputLookup::Missing => ExportOutputLookup::Missing,
         }
     }
 }
 
 #[derive(Debug, Clone, Queryable, Selectable)]
-#[diesel(table_name = report_task_outputs)]
+#[diesel(table_name = export_task_outputs)]
 #[allow(dead_code)]
-pub struct ReportTaskOutputSummaryRecord {
+pub struct ExportTaskOutputSummaryRecord {
     pub id: i32,
     pub task_id: i32,
     pub template_name: Option<String>,
@@ -395,12 +392,12 @@ pub struct ReportTaskOutputSummaryRecord {
 
 impl TaskRecord {
     pub fn to_response(&self) -> Result<TaskResponse, ApiError> {
-        self.to_response_with_report_output(ReportOutputLookup::Missing)
+        self.to_response_with_export_output(ExportOutputLookup::Missing)
     }
 
-    pub fn to_response_with_report_output(
+    pub fn to_response_with_export_output(
         &self,
-        report_output: ReportOutputLookup<&ReportTaskOutputSummaryRecord>,
+        export_output: ExportOutputLookup<&ExportTaskOutputSummaryRecord>,
     ) -> Result<TaskResponse, ApiError> {
         let kind = TaskKind::from_db(&self.kind)?;
         let status = TaskStatus::from_db(&self.status)?;
@@ -408,23 +405,23 @@ impl TaskRecord {
         let import_url = (kind == TaskKind::Import).then(|| format!("/api/v1/imports/{}", self.id));
         let import_results =
             (kind == TaskKind::Import).then(|| format!("/api/v1/imports/{}/results", self.id));
-        let report_url = (kind == TaskKind::Report).then(|| format!("/api/v1/reports/{}", self.id));
-        let report_output_url =
-            (kind == TaskKind::Report).then(|| format!("/api/v1/reports/{}/output", self.id));
+        let export_url = (kind == TaskKind::Export).then(|| format!("/api/v1/exports/{}", self.id));
+        let export_output_url =
+            (kind == TaskKind::Export).then(|| format!("/api/v1/exports/{}/output", self.id));
         let details = match kind {
             TaskKind::Import => import_results.clone().map(|results_url| TaskDetails {
                 import: Some(ImportTaskDetails { results_url }),
-                report: None,
+                export: None,
             }),
-            TaskKind::Report => report_output_url.clone().map(|output_url| {
-                let (output_summary, output_expired, expired_expires_at) = match report_output {
-                    ReportOutputLookup::Available(summary) => (Some(summary), false, None),
-                    ReportOutputLookup::Expired { expires_at } => (None, true, Some(expires_at)),
-                    ReportOutputLookup::Missing => (None, false, None),
+            TaskKind::Export => export_output_url.clone().map(|output_url| {
+                let (output_summary, output_expired, expired_expires_at) = match export_output {
+                    ExportOutputLookup::Available(summary) => (Some(summary), false, None),
+                    ExportOutputLookup::Expired { expires_at } => (None, true, Some(expires_at)),
+                    ExportOutputLookup::Missing => (None, false, None),
                 };
                 TaskDetails {
                     import: None,
-                    report: Some(ReportTaskDetails {
+                    export: Some(ExportTaskDetails {
                         output_url,
                         output_available: output_summary.is_some(),
                         output_expired,
@@ -464,8 +461,8 @@ impl TaskRecord {
                 events: format!("{task_url}/events"),
                 import: import_url.clone(),
                 import_results: import_results.clone(),
-                report: report_url,
-                report_output: report_output_url,
+                export: export_url,
+                export_output: export_output_url,
             },
             details,
         })

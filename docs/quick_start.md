@@ -44,7 +44,7 @@ Probe paths bypass the client IP allowlist so platform health checks are not rej
 | `HUBUUM_DATABASE_URL` | `postgres://localhost` | PostgreSQL connection URL |
 | `HUBUUM_DB_POOL_SIZE` | `10` | Maximum number of database connections in the pool |
 | `HUBUUM_SKIP_MIGRATIONS` | `false` | If true, the container waits for the database but does not run Diesel migrations on startup |
-| `HUBUUM_DB_STATEMENT_TIMEOUT_MS` | `0` | Pool-global Postgres `statement_timeout` in ms (`0` disables). Cancels any query exceeding it server-side; applies to **all** DB work, not just reports |
+| `HUBUUM_DB_STATEMENT_TIMEOUT_MS` | `0` | Pool-global Postgres `statement_timeout` in ms (`0` disables). Cancels any query exceeding it server-side; applies to **all** DB work, not just exports |
 
 ### Task System Configuration
 
@@ -83,21 +83,21 @@ defaults to disabled because it deletes audit rows. See
 [Event And Audit](events.md) for audit querying, sink/subscription setup,
 delivery semantics, operational health, and retention behavior.
 
-### Report and Template Execution Configuration
+### Export and Template Execution Configuration
 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
-| `HUBUUM_REPORT_OUTPUT_RETENTION_HOURS` | `168` | How long successful async report outputs remain refetchable before cleanup |
-| `HUBUUM_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS` | `300` | How often workers attempt cleanup of expired stored report outputs |
-| `HUBUUM_REPORT_MAX_ACTIVE_TASKS_PER_USER` | `100` | Maximum queued, validating, or running report tasks one user may have at once |
-| `HUBUUM_REPORT_TEMPLATE_RECURSION_LIMIT` | `64` | MiniJinja recursion and template composition depth limit |
-| `HUBUUM_REPORT_TEMPLATE_FUEL` | `50000` | MiniJinja fuel budget for one render |
-| `HUBUUM_REPORT_TEMPLATE_MAX_OBJECTS` | `2000` | Maximum hydrated relation-aware template objects per report |
-| `HUBUUM_REPORT_MAX_OUTPUT_BYTES` | `262144` | Server maximum for rendered report output size; request-level `limits.max_output_bytes` cannot exceed this |
-| `HUBUUM_REPORT_STAGE_TIMEOUT_MS` | `10000` | Post-completion rejection budget per report stage (ms). Rejects a report *after* a stage finishes if it exceeded this; it does not interrupt in-flight work. Use `HUBUUM_DB_STATEMENT_TIMEOUT_MS` to actually cancel slow queries |
-| `HUBUUM_REPORT_DB_STATEMENT_TIMEOUT_MS` | `0` | Report-scoped Postgres `statement_timeout` in ms (`0` disables). Cancels slow queries in-flight **only while executing reports** (applied as a transaction-local `SET LOCAL`), without affecting imports or other DB work. Typically set `<= HUBUUM_REPORT_STAGE_TIMEOUT_MS` |
+| `HUBUUM_EXPORT_OUTPUT_RETENTION_HOURS` | `168` | How long successful async export outputs remain refetchable before cleanup |
+| `HUBUUM_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS` | `300` | How often workers attempt cleanup of expired stored export outputs |
+| `HUBUUM_EXPORT_MAX_ACTIVE_TASKS_PER_USER` | `100` | Maximum queued, validating, or running export tasks one user may have at once |
+| `HUBUUM_EXPORT_TEMPLATE_RECURSION_LIMIT` | `64` | MiniJinja recursion and template composition depth limit |
+| `HUBUUM_EXPORT_TEMPLATE_FUEL` | `50000` | MiniJinja fuel budget for one render |
+| `HUBUUM_EXPORT_TEMPLATE_MAX_OBJECTS` | `2000` | Maximum hydrated relation-aware template objects per export |
+| `HUBUUM_EXPORT_MAX_OUTPUT_BYTES` | `262144` | Server maximum for rendered export output size; request-level `limits.max_output_bytes` cannot exceed this |
+| `HUBUUM_EXPORT_STAGE_TIMEOUT_MS` | `10000` | Post-completion rejection budget per export stage (ms). Rejects an export *after* a stage finishes if it exceeded this; it does not interrupt in-flight work. Use `HUBUUM_DB_STATEMENT_TIMEOUT_MS` to actually cancel slow queries |
+| `HUBUUM_EXPORT_DB_STATEMENT_TIMEOUT_MS` | `0` | Export-scoped Postgres `statement_timeout` in ms (`0` disables). Cancels slow queries in-flight **only while executing exports** (applied as a transaction-local `SET LOCAL`), without affecting imports or other DB work. Typically set `<= HUBUUM_EXPORT_STAGE_TIMEOUT_MS` |
 
-**Report/template note**: These settings control async report task behavior, including stored output retention, template execution limits, and relation hydration guardrails. See [Report API](report_api.md) and [Template Guide](template_guide.md) for the user-facing behavior these limits affect.
+**Export/template note**: These settings control async export task behavior, including stored output retention, template execution limits, and relation hydration guardrails. See [Export API](export_api.md) and [Export Template Guide](export_template_guide.md) for the user-facing behavior these limits affect.
 
 ### Pagination Configuration
 
@@ -228,6 +228,6 @@ services:
 - [Event And Audit](events.md) - Audit log, event delivery, sink subscriptions, retention, and operational health
 - [Relationships](relationship_endpoints.md) - Working with object relationships
 - [Task System](task_system.md) - Background workers, queue claiming, and task execution flow
-- [Report API](report_api.md) - Server-side report execution and templated output
+- [Export API](export_api.md) - Server-side export execution and templated output
 - [Remote Target API](remote_targets.md) - Collection-scoped outbound subject actions
-- [Template Guide](template_guide.md) - Stored template syntax, context, and examples
+- [Export Template Guide](export_template_guide.md) - Stored template syntax, context, and examples

@@ -5,62 +5,62 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::db::DbPool;
-use crate::db::traits::report_template::{
-    self as backend, DeleteReportTemplateRecord, LoadReportTemplateRecord,
-    ReportTemplateCollectionLookup, SaveReportTemplateRecord, UpdateReportTemplateRecord,
+use crate::db::traits::export_template::{
+    self as backend, DeleteExportTemplateRecord, ExportTemplateCollectionLookup,
+    LoadExportTemplateRecord, SaveExportTemplateRecord, UpdateExportTemplateRecord,
 };
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::search::{FilterField, QueryOptions, SortParam, parse_query_parameter};
 use crate::models::{
-    Collection, CollectionID, ReportContentType, ReportInclude, ReportLimits,
-    ReportMissingDataPolicy, ReportRelationContext, ReportRequest, ReportScope, ReportScopeKind,
-    ReportTemplateRunRequest,
+    Collection, CollectionID, ExportContentType, ExportInclude, ExportLimits,
+    ExportMissingDataPolicy, ExportRelationContext, ExportRequest, ExportScope, ExportScopeKind,
+    ExportTemplateRunRequest,
 };
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
-use crate::schema::report_templates;
+use crate::schema::export_templates;
 use crate::traits::BackendContext;
 use crate::traits::accessors::{
     CollectionAccessors, CollectionAdapter, IdAccessor, InstanceAdapter,
 };
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
-use crate::utilities::reporting::validate_template;
+use crate::utilities::exporting::validate_template;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ReportTemplateKind {
-    Report,
+pub enum ExportTemplateKind {
+    Export,
     Fragment,
 }
 
-impl ReportTemplateKind {
+impl ExportTemplateKind {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Report => "report",
+            Self::Export => "export",
             Self::Fragment => "fragment",
         }
     }
 }
 
-impl FromStr for ReportTemplateKind {
+impl FromStr for ExportTemplateKind {
     type Err = ApiError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "report" => Ok(Self::Report),
+            "export" => Ok(Self::Export),
             "fragment" => Ok(Self::Fragment),
             _ => Err(ApiError::BadRequest(format!(
-                "Unsupported report template kind: '{value}'"
+                "Unsupported export template kind: '{value}'"
             ))),
         }
     }
 }
 
 #[derive(Debug, Clone, Queryable, Selectable)]
-#[diesel(table_name = report_templates)]
-pub(crate) struct ReportTemplateRow {
+#[diesel(table_name = export_templates)]
+pub(crate) struct ExportTemplateRow {
     id: i32,
     collection_id: i32,
     name: String,
@@ -79,7 +79,7 @@ pub(crate) struct ReportTemplateRow {
     updated_at: chrono::NaiveDateTime,
 }
 
-impl ReportTemplateRow {
+impl ExportTemplateRow {
     pub(crate) fn id(&self) -> i32 {
         self.id
     }
@@ -115,61 +115,61 @@ impl ReportTemplateRow {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
-#[schema(example = report_template_example)]
-pub struct ReportTemplate {
+#[schema(example = export_template_example)]
+pub struct ExportTemplate {
     pub id: i32,
     pub collection_id: i32,
     pub name: String,
     pub description: String,
-    pub content_type: ReportContentType,
+    pub content_type: ExportContentType,
     pub template: String,
-    pub kind: ReportTemplateKind,
-    pub scope_kind: Option<ReportScopeKind>,
+    pub kind: ExportTemplateKind,
+    pub scope_kind: Option<ExportScopeKind>,
     pub class_id: Option<i32>,
     pub default_query: Option<String>,
-    pub include: Option<ReportInclude>,
-    pub relation_context: Option<ReportRelationContext>,
-    pub default_missing_data_policy: Option<ReportMissingDataPolicy>,
-    pub default_limits: Option<ReportLimits>,
+    pub include: Option<ExportInclude>,
+    pub relation_context: Option<ExportRelationContext>,
+    pub default_missing_data_policy: Option<ExportMissingDataPolicy>,
+    pub default_limits: Option<ExportLimits>,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
 }
 
 crate::int_id_newtype! {
-    /// Identifier wrapper for a [`ReportTemplate`].
-    pub struct ReportTemplateID;
-    noun = "report template id";
+    /// Identifier wrapper for a [`ExportTemplate`].
+    pub struct ExportTemplateID;
+    noun = "export template id";
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
-#[schema(example = new_report_template_example)]
-pub struct NewReportTemplate {
+#[schema(example = new_export_template_example)]
+pub struct NewExportTemplate {
     pub collection_id: i32,
     pub name: String,
     pub description: String,
-    pub content_type: ReportContentType,
+    pub content_type: ExportContentType,
     pub template: String,
-    pub kind: ReportTemplateKind,
-    pub scope_kind: Option<ReportScopeKind>,
+    pub kind: ExportTemplateKind,
+    pub scope_kind: Option<ExportScopeKind>,
     pub class_id: Option<i32>,
     pub default_query: Option<String>,
-    pub include: Option<ReportInclude>,
-    pub relation_context: Option<ReportRelationContext>,
-    pub default_missing_data_policy: Option<ReportMissingDataPolicy>,
-    pub default_limits: Option<ReportLimits>,
+    pub include: Option<ExportInclude>,
+    pub relation_context: Option<ExportRelationContext>,
+    pub default_missing_data_policy: Option<ExportMissingDataPolicy>,
+    pub default_limits: Option<ExportLimits>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
-#[schema(example = update_report_template_example)]
-pub struct UpdateReportTemplate {
+#[schema(example = update_export_template_example)]
+pub struct UpdateExportTemplate {
     pub collection_id: Option<i32>,
     pub name: Option<String>,
     pub description: Option<String>,
     pub template: Option<String>,
-    pub kind: Option<ReportTemplateKind>,
-    pub scope_kind: Option<ReportScopeKind>,
+    pub kind: Option<ExportTemplateKind>,
+    pub scope_kind: Option<ExportScopeKind>,
     pub class_id: Option<i32>,
-    // The nullable report-profile fields use double `Option` so a PATCH can distinguish an
+    // The nullable export-profile fields use double `Option` so a PATCH can distinguish an
     // omitted field (outer `None` — keep the current value) from an explicit JSON `null`
     // (`Some(None)` — clear the value). A plain `Option` collapses both to `None`.
     // `deserialize_double_option` makes serde populate the outer `Some` only when the key is
@@ -187,29 +187,29 @@ pub struct UpdateReportTemplate {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "deserialize_double_option"
     )]
-    #[schema(value_type = Option<ReportInclude>)]
-    pub include: Option<Option<ReportInclude>>,
+    #[schema(value_type = Option<ExportInclude>)]
+    pub include: Option<Option<ExportInclude>>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "deserialize_double_option"
     )]
-    #[schema(value_type = Option<ReportRelationContext>)]
-    pub relation_context: Option<Option<ReportRelationContext>>,
+    #[schema(value_type = Option<ExportRelationContext>)]
+    pub relation_context: Option<Option<ExportRelationContext>>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "deserialize_double_option"
     )]
-    #[schema(value_type = Option<ReportMissingDataPolicy>)]
-    pub default_missing_data_policy: Option<Option<ReportMissingDataPolicy>>,
+    #[schema(value_type = Option<ExportMissingDataPolicy>)]
+    pub default_missing_data_policy: Option<Option<ExportMissingDataPolicy>>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "deserialize_double_option"
     )]
-    #[schema(value_type = Option<ReportLimits>)]
-    pub default_limits: Option<Option<ReportLimits>>,
+    #[schema(value_type = Option<ExportLimits>)]
+    pub default_limits: Option<Option<ExportLimits>>,
 }
 
 /// Deserialize a tri-state PATCH field. serde only invokes a field's `deserialize_with` when the
@@ -224,8 +224,8 @@ where
 }
 
 #[derive(Debug, Clone, Insertable)]
-#[diesel(table_name = report_templates)]
-pub(crate) struct NewReportTemplateRow {
+#[diesel(table_name = export_templates)]
+pub(crate) struct NewExportTemplateRow {
     collection_id: i32,
     name: String,
     description: String,
@@ -242,8 +242,8 @@ pub(crate) struct NewReportTemplateRow {
 }
 
 #[derive(Debug, Clone, AsChangeset)]
-#[diesel(table_name = report_templates)]
-pub(crate) struct UpdateReportTemplateRow {
+#[diesel(table_name = export_templates)]
+pub(crate) struct UpdateExportTemplateRow {
     collection_id: Option<i32>,
     name: Option<String>,
     description: Option<String>,
@@ -258,22 +258,22 @@ pub(crate) struct UpdateReportTemplateRow {
     default_limits: Option<Option<serde_json::Value>>,
 }
 
-impl TryFrom<ReportTemplateRow> for ReportTemplate {
+impl TryFrom<ExportTemplateRow> for ExportTemplate {
     type Error = ApiError;
 
-    fn try_from(row: ReportTemplateRow) -> Result<Self, Self::Error> {
+    fn try_from(row: ExportTemplateRow) -> Result<Self, Self::Error> {
         Ok(Self {
             id: row.id,
             collection_id: row.collection_id,
             name: row.name,
             description: row.description,
-            content_type: ReportContentType::from_mime(&row.content_type)?,
+            content_type: ExportContentType::from_mime(&row.content_type)?,
             template: row.template,
-            kind: ReportTemplateKind::from_str(&row.kind)?,
+            kind: ExportTemplateKind::from_str(&row.kind)?,
             scope_kind: row
                 .scope_kind
                 .as_deref()
-                .map(ReportScopeKind::from_str)
+                .map(ExportScopeKind::from_str)
                 .transpose()?,
             class_id: row.class_id,
             default_query: row.default_query,
@@ -282,7 +282,7 @@ impl TryFrom<ReportTemplateRow> for ReportTemplate {
             default_missing_data_policy: row
                 .default_missing_data_policy
                 .as_deref()
-                .map(ReportMissingDataPolicy::from_str)
+                .map(ExportMissingDataPolicy::from_str)
                 .transpose()?,
             default_limits: from_optional_json(row.default_limits)?,
             created_at: row.created_at,
@@ -291,11 +291,11 @@ impl TryFrom<ReportTemplateRow> for ReportTemplate {
     }
 }
 
-impl NewReportTemplate {
-    fn into_row(self) -> Result<NewReportTemplateRow, ApiError> {
+impl NewExportTemplate {
+    fn into_row(self) -> Result<NewExportTemplateRow, ApiError> {
         let content_type = self.content_type.ensure_template_output()?.as_mime();
 
-        Ok(NewReportTemplateRow {
+        Ok(NewExportTemplateRow {
             collection_id: self.collection_id,
             name: self.name,
             description: self.description,
@@ -315,7 +315,7 @@ impl NewReportTemplate {
     }
 }
 
-impl UpdateReportTemplate {
+impl UpdateExportTemplate {
     fn is_empty(&self) -> bool {
         self.collection_id.is_none()
             && self.name.is_none()
@@ -332,34 +332,34 @@ impl UpdateReportTemplate {
     }
 }
 
-impl ReportTemplate {
-    /// Build the report request to execute this template for a given run. Validates that the
-    /// template is an executable report and that the run's `object_id` matches the template scope:
+impl ExportTemplate {
+    /// Build the export request to execute this template for a given run. Validates that the
+    /// template is an executable export and that the run's `object_id` matches the template scope:
     /// `related_objects` requires one, the other scopes reject one, and `class_id` comes from the
     /// template for the class-bound scopes. Runtime values override the template defaults.
-    pub fn build_report_request(
+    pub fn build_export_request(
         &self,
-        run: ReportTemplateRunRequest,
-    ) -> Result<ReportRequest, ApiError> {
-        if self.kind != ReportTemplateKind::Report {
+        run: ExportTemplateRunRequest,
+    ) -> Result<ExportRequest, ApiError> {
+        if self.kind != ExportTemplateKind::Export {
             return Err(ApiError::BadRequest(
-                "Only report templates can be executed".to_string(),
+                "Only export templates can be executed".to_string(),
             ));
         }
 
         let scope_kind = self.scope_kind.ok_or_else(|| {
-            ApiError::BadRequest("Executable report template is missing scope_kind".to_string())
+            ApiError::BadRequest("Executable export template is missing scope_kind".to_string())
         })?;
 
         let template_class_id = || {
             self.class_id.ok_or_else(|| {
-                ApiError::BadRequest("Executable report template is missing class_id".to_string())
+                ApiError::BadRequest("Executable export template is missing class_id".to_string())
             })
         };
         let reject_object_id = || {
             if run.object_id.is_some() {
                 return Err(ApiError::BadRequest(format!(
-                    "object_id is not accepted for {} report templates",
+                    "object_id is not accepted for {} export templates",
                     scope_kind.as_str()
                 )));
             }
@@ -367,29 +367,29 @@ impl ReportTemplate {
         };
 
         let (class_id, object_id) = match scope_kind {
-            ReportScopeKind::ObjectsInClass => {
+            ExportScopeKind::ObjectsInClass => {
                 reject_object_id()?;
                 (Some(template_class_id()?), None)
             }
-            ReportScopeKind::RelatedObjects => {
+            ExportScopeKind::RelatedObjects => {
                 let object_id = run.object_id.ok_or_else(|| {
                     ApiError::BadRequest(
-                        "related_objects report templates require object_id".to_string(),
+                        "related_objects export templates require object_id".to_string(),
                     )
                 })?;
                 (Some(template_class_id()?), Some(object_id))
             }
-            ReportScopeKind::Collections
-            | ReportScopeKind::Classes
-            | ReportScopeKind::ClassRelations
-            | ReportScopeKind::ObjectRelations => {
+            ExportScopeKind::Collections
+            | ExportScopeKind::Classes
+            | ExportScopeKind::ClassRelations
+            | ExportScopeKind::ObjectRelations => {
                 reject_object_id()?;
                 (None, None)
             }
         };
 
-        Ok(ReportRequest {
-            scope: ReportScope {
+        Ok(ExportRequest {
+            scope: ExportScope {
                 kind: scope_kind,
                 class_id,
                 object_id,
@@ -402,30 +402,30 @@ impl ReportTemplate {
         })
     }
 
-    /// The other report templates sharing this template's collection (this template excluded).
+    /// The other export templates sharing this template's collection (this template excluded).
     #[allow(dead_code)]
     pub async fn collection_siblings(
         &self,
         pool: &DbPool,
-    ) -> Result<Vec<ReportTemplate>, ApiError> {
-        self.report_templates(pool, Some(self.id)).await
+    ) -> Result<Vec<ExportTemplate>, ApiError> {
+        self.export_templates(pool, Some(self.id)).await
     }
 
-    /// Every report template across all collections.
+    /// Every export template across all collections.
     #[allow(dead_code)]
-    pub async fn list_all(pool: &DbPool) -> Result<Vec<ReportTemplate>, ApiError> {
+    pub async fn list_all(pool: &DbPool) -> Result<Vec<ExportTemplate>, ApiError> {
         let rows = backend::load_all_rows(pool).await?;
 
         rows.into_iter().map(TryInto::try_into).collect()
     }
 
-    /// List report templates (sorted/paginated per `query_options`) together with the total count
+    /// List export templates (sorted/paginated per `query_options`) together with the total count
     /// matching the filters, scoped to the collections the caller may see.
     pub async fn list_with_total_count(
         pool: &DbPool,
         allowed_collection_ids: &[i32],
         query_options: &QueryOptions,
-    ) -> Result<(Vec<ReportTemplate>, i64), ApiError> {
+    ) -> Result<(Vec<ExportTemplate>, i64), ApiError> {
         if allowed_collection_ids.is_empty() {
             return Ok((Vec::new(), 0));
         }
@@ -443,26 +443,26 @@ impl ReportTemplate {
     }
 }
 
-/// List the report templates in a value's collection. Available on anything that resolves to a
-/// collection via [`CollectionAccessors`] — `CollectionID`, `Collection`, `ReportTemplate`, classes,
+/// List the export templates in a value's collection. Available on anything that resolves to a
+/// collection via [`CollectionAccessors`] — `CollectionID`, `Collection`, `ExportTemplate`, classes,
 /// objects, and so on. For id-only types whose collection must be looked up (e.g.
-/// `ReportTemplateID`) this performs that lookup before listing.
+/// `ExportTemplateID`) this performs that lookup before listing.
 ///
-/// Defined here, rather than in `models::collection`, so the collection layer stays unaware of report
+/// Defined here, rather than in `models::collection`, so the collection layer stays unaware of export
 /// templates: the dependency points from this feature module to the core accessor trait.
-pub trait CollectionReportTemplates: CollectionAccessors {
-    /// The report templates in this value's collection, optionally excluding one template id (so a
+pub trait CollectionExportTemplates: CollectionAccessors {
+    /// The export templates in this value's collection, optionally excluding one template id (so a
     /// template's own row is not treated as a sibling when validating its body against the set).
-    async fn report_templates<C>(
+    async fn export_templates<C>(
         &self,
         backend: &C,
         exclude_template_id: Option<i32>,
-    ) -> Result<Vec<ReportTemplate>, ApiError>
+    ) -> Result<Vec<ExportTemplate>, ApiError>
     where
         C: BackendContext + ?Sized,
     {
         let collection_id = self.collection_id(backend).await?.id();
-        let rows = crate::db::traits::report_template::load_rows_in_collection(
+        let rows = crate::db::traits::export_template::load_rows_in_collection(
             backend.db_pool(),
             collection_id,
             exclude_template_id,
@@ -473,37 +473,37 @@ pub trait CollectionReportTemplates: CollectionAccessors {
     }
 }
 
-impl<T: CollectionAccessors> CollectionReportTemplates for T {}
+impl<T: CollectionAccessors> CollectionExportTemplates for T {}
 
-impl SaveAdapter for NewReportTemplate {
-    type Output = ReportTemplate;
+impl SaveAdapter for NewExportTemplate {
+    type Output = ExportTemplate;
 
-    async fn save_adapter_without_events(&self, pool: &DbPool) -> Result<ReportTemplate, ApiError> {
-        self.save_report_template(pool, None).await
+    async fn save_adapter_without_events(&self, pool: &DbPool) -> Result<ExportTemplate, ApiError> {
+        self.save_export_template(pool, None).await
     }
 
     async fn save_adapter(
         &self,
         pool: &DbPool,
         context: &EventContext,
-    ) -> Result<ReportTemplate, ApiError> {
-        self.save_report_template(pool, Some(context)).await
+    ) -> Result<ExportTemplate, ApiError> {
+        self.save_export_template(pool, Some(context)).await
     }
 }
 
-impl NewReportTemplate {
-    async fn save_report_template(
+impl NewExportTemplate {
+    async fn save_export_template(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
-    ) -> Result<ReportTemplate, ApiError> {
+    ) -> Result<ExportTemplate, ApiError> {
         let new_row = self.clone().into_row()?;
         ensure_template_name_is_available(pool, new_row.collection_id, &new_row.name, None).await?;
-        validate_report_profile(
+        validate_export_profile(
             pool,
             new_row.collection_id,
-            ReportProfileRef {
-                kind: ReportTemplateKind::from_str(&new_row.kind)?,
+            ExportProfileRef {
+                kind: ExportTemplateKind::from_str(&new_row.kind)?,
                 scope_kind: new_row.scope_kind.as_deref(),
                 class_id: new_row.class_id,
                 default_query: new_row.default_query.as_deref(),
@@ -515,30 +515,30 @@ impl NewReportTemplate {
         )
         .await?;
         let collection_templates = CollectionID::new(new_row.collection_id)?
-            .report_templates(pool, None)
+            .export_templates(pool, None)
             .await?;
         validate_template(
             &new_row.name,
             &new_row.template,
             new_row.collection_id,
             &collection_templates,
-            ReportContentType::from_mime(&new_row.content_type)?,
+            ExportContentType::from_mime(&new_row.content_type)?,
         )?;
-        let row = new_row.save_report_template_record(pool, context).await?;
+        let row = new_row.save_export_template_record(pool, context).await?;
 
         row.try_into()
     }
 }
 
-impl UpdateAdapter for UpdateReportTemplate {
-    type Output = ReportTemplate;
+impl UpdateAdapter for UpdateExportTemplate {
+    type Output = ExportTemplate;
 
     async fn update_adapter_without_events(
         &self,
         pool: &DbPool,
         entry_id: i32,
-    ) -> Result<ReportTemplate, ApiError> {
-        apply_report_template_update(pool, entry_id, self.clone(), None).await
+    ) -> Result<ExportTemplate, ApiError> {
+        apply_export_template_update(pool, entry_id, self.clone(), None).await
     }
 
     async fn update_adapter(
@@ -546,26 +546,26 @@ impl UpdateAdapter for UpdateReportTemplate {
         pool: &DbPool,
         entry_id: i32,
         context: &EventContext,
-    ) -> Result<ReportTemplate, ApiError> {
-        apply_report_template_update(pool, entry_id, self.clone(), Some(context)).await
+    ) -> Result<ExportTemplate, ApiError> {
+        apply_export_template_update(pool, entry_id, self.clone(), Some(context)).await
     }
 }
 
-async fn apply_report_template_update(
+async fn apply_export_template_update(
     pool: &DbPool,
     template_id: i32,
-    update: UpdateReportTemplate,
+    update: UpdateExportTemplate,
     context: Option<&EventContext>,
-) -> Result<ReportTemplate, ApiError> {
-    let current_row = ReportTemplateID::new(template_id)?
-        .load_report_template_record(pool)
+) -> Result<ExportTemplate, ApiError> {
+    let current_row = ExportTemplateID::new(template_id)?
+        .load_export_template_record(pool)
         .await?;
 
     if update.is_empty() {
         return current_row.try_into();
     }
 
-    let current = ReportTemplate::try_from(current_row.clone())?;
+    let current = ExportTemplate::try_from(current_row.clone())?;
     let target_collection_id = update.collection_id.unwrap_or(current.collection_id);
     let target_name = update.name.clone().unwrap_or_else(|| current.name.clone());
     let target_description = update
@@ -578,13 +578,13 @@ async fn apply_report_template_update(
         .unwrap_or_else(|| current.template.clone());
     let target_kind = update.kind.unwrap_or(current.kind);
 
-    if target_kind == ReportTemplateKind::Fragment && update_report_fields_present(&update) {
+    if target_kind == ExportTemplateKind::Fragment && update_export_fields_present(&update) {
         return Err(ApiError::BadRequest(
-            "Fragment templates cannot define report execution metadata".to_string(),
+            "Fragment templates cannot define export execution metadata".to_string(),
         ));
     }
 
-    let ResolvedReportProfile {
+    let ResolvedExportProfile {
         scope_kind: target_scope_kind,
         class_id: target_class_id,
         default_query: target_default_query,
@@ -592,31 +592,31 @@ async fn apply_report_template_update(
         relation_context: target_relation_context,
         default_missing_data_policy: target_default_missing_data_policy,
         default_limits: target_default_limits,
-    } = resolve_report_profile(target_kind, update, &current);
+    } = resolve_export_profile(target_kind, update, &current);
 
     ensure_template_name_is_available(pool, target_collection_id, &target_name, Some(template_id))
         .await?;
     let include_json = to_optional_json(target_include)?;
     let relation_context_json = to_optional_json(target_relation_context)?;
     let default_limits_json = to_optional_json(target_default_limits)?;
-    validate_report_profile(
+    validate_export_profile(
         pool,
         target_collection_id,
-        ReportProfileRef {
+        ExportProfileRef {
             kind: target_kind,
-            scope_kind: target_scope_kind.map(ReportScopeKind::as_str),
+            scope_kind: target_scope_kind.map(ExportScopeKind::as_str),
             class_id: target_class_id,
             default_query: target_default_query.as_deref(),
             include: include_json.as_ref(),
             relation_context: relation_context_json.as_ref(),
             default_missing_data_policy: target_default_missing_data_policy
-                .map(ReportMissingDataPolicy::as_str),
+                .map(ExportMissingDataPolicy::as_str),
             default_limits: default_limits_json.as_ref(),
         },
     )
     .await?;
     let collection_templates = CollectionID::new(target_collection_id)?
-        .report_templates(pool, Some(template_id))
+        .export_templates(pool, Some(template_id))
         .await?;
     validate_template(
         &target_name,
@@ -626,7 +626,7 @@ async fn apply_report_template_update(
         current.content_type,
     )?;
 
-    let changeset = UpdateReportTemplateRow {
+    let changeset = UpdateExportTemplateRow {
         collection_id: Some(target_collection_id),
         name: Some(target_name),
         description: Some(target_description),
@@ -643,36 +643,36 @@ async fn apply_report_template_update(
         default_limits: Some(default_limits_json),
     };
     let row = changeset
-        .update_report_template_record(pool, template_id, context)
+        .update_export_template_record(pool, template_id, context)
         .await?;
 
     row.try_into()
 }
 
-/// The report-execution metadata resolved for an update, after applying the patch over the current
+/// The export-execution metadata resolved for an update, after applying the patch over the current
 /// template and reconciling fields against the target scope.
-struct ResolvedReportProfile {
-    scope_kind: Option<ReportScopeKind>,
+struct ResolvedExportProfile {
+    scope_kind: Option<ExportScopeKind>,
     class_id: Option<i32>,
     default_query: Option<String>,
-    include: Option<ReportInclude>,
-    relation_context: Option<ReportRelationContext>,
-    default_missing_data_policy: Option<ReportMissingDataPolicy>,
-    default_limits: Option<ReportLimits>,
+    include: Option<ExportInclude>,
+    relation_context: Option<ExportRelationContext>,
+    default_missing_data_policy: Option<ExportMissingDataPolicy>,
+    default_limits: Option<ExportLimits>,
 }
 
-/// Resolve the target report-execution metadata for an update. A fragment clears everything.
+/// Resolve the target export-execution metadata for an update. A fragment clears everything.
 /// Otherwise each field is the patch value falling back to the current value, except that fields the
 /// target scope cannot hold (class_id/include/relation_context for the collection scopes, include
 /// for the non-`objects_in_class` scopes) drop their carried-forward value. An explicitly supplied
-/// incompatible value is preserved so `validate_report_profile` rejects it, matching the create path.
-fn resolve_report_profile(
-    target_kind: ReportTemplateKind,
-    update: UpdateReportTemplate,
-    current: &ReportTemplate,
-) -> ResolvedReportProfile {
-    if target_kind == ReportTemplateKind::Fragment {
-        return ResolvedReportProfile {
+/// incompatible value is preserved so `validate_export_profile` rejects it, matching the create path.
+fn resolve_export_profile(
+    target_kind: ExportTemplateKind,
+    update: UpdateExportTemplate,
+    current: &ExportTemplate,
+) -> ResolvedExportProfile {
+    if target_kind == ExportTemplateKind::Fragment {
+        return ResolvedExportProfile {
             scope_kind: None,
             class_id: None,
             default_query: None,
@@ -685,12 +685,12 @@ fn resolve_report_profile(
 
     let scope_kind = update.scope_kind.or(current.scope_kind);
     let scope_allows_class = scope_kind
-        .map(ReportScopeKind::requires_class_id)
+        .map(ExportScopeKind::requires_class_id)
         .unwrap_or(false);
-    let scope_allows_include = scope_kind == Some(ReportScopeKind::ObjectsInClass);
+    let scope_allows_include = scope_kind == Some(ExportScopeKind::ObjectsInClass);
     let scope_allows_relation_context = matches!(
         scope_kind,
-        Some(ReportScopeKind::ObjectsInClass) | Some(ReportScopeKind::RelatedObjects)
+        Some(ExportScopeKind::ObjectsInClass) | Some(ExportScopeKind::RelatedObjects)
     );
 
     let class_id = if scope_allows_class {
@@ -699,7 +699,7 @@ fn resolve_report_profile(
         update.class_id
     };
 
-    ResolvedReportProfile {
+    ResolvedExportProfile {
         scope_kind,
         class_id,
         default_query: update
@@ -724,24 +724,24 @@ fn resolve_report_profile(
     }
 }
 
-impl DeleteAdapter for ReportTemplateID {
+impl DeleteAdapter for ExportTemplateID {
     async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
-        self.delete_report_template_record_without_events(pool)
+        self.delete_export_template_record_without_events(pool)
             .await
     }
 
     async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
-        self.delete_report_template_record(pool, Some(context))
+        self.delete_export_template_record(pool, Some(context))
             .await
     }
 }
 
-/// Borrowed view of the report-execution metadata validated together. Bundled so
-/// `validate_report_profile` stays within a sensible argument count and both the create and
+/// Borrowed view of the export-execution metadata validated together. Bundled so
+/// `validate_export_profile` stays within a sensible argument count and both the create and
 /// update paths share one shape.
 #[derive(Debug, Clone, Copy)]
-struct ReportProfileRef<'a> {
-    kind: ReportTemplateKind,
+struct ExportProfileRef<'a> {
+    kind: ExportTemplateKind,
     scope_kind: Option<&'a str>,
     class_id: Option<i32>,
     default_query: Option<&'a str>,
@@ -751,15 +751,15 @@ struct ReportProfileRef<'a> {
     default_limits: Option<&'a serde_json::Value>,
 }
 
-async fn validate_report_profile(
+async fn validate_export_profile(
     pool: &DbPool,
     target_collection_id: i32,
-    profile: ReportProfileRef<'_>,
+    profile: ExportProfileRef<'_>,
 ) -> Result<(), ApiError> {
     match profile.kind {
-        ReportTemplateKind::Fragment => validate_fragment_metadata(&profile)?,
-        ReportTemplateKind::Report => {
-            validate_report_scope_metadata(pool, target_collection_id, &profile).await?
+        ExportTemplateKind::Fragment => validate_fragment_metadata(&profile)?,
+        ExportTemplateKind::Export => {
+            validate_export_scope_metadata(pool, target_collection_id, &profile).await?
         }
     }
 
@@ -767,26 +767,26 @@ async fn validate_report_profile(
 }
 
 /// Fragments are reusable partials with no execution metadata.
-fn validate_fragment_metadata(profile: &ReportProfileRef<'_>) -> Result<(), ApiError> {
+fn validate_fragment_metadata(profile: &ExportProfileRef<'_>) -> Result<(), ApiError> {
     if profile.scope_kind.is_some() || profile.class_id.is_some() {
         return Err(ApiError::BadRequest(
-            "Fragment templates cannot define report execution metadata".to_string(),
+            "Fragment templates cannot define export execution metadata".to_string(),
         ));
     }
 
     Ok(())
 }
 
-/// Validate the scope/class binding of an executable report template.
-async fn validate_report_scope_metadata(
+/// Validate the scope/class binding of an executable export template.
+async fn validate_export_scope_metadata(
     pool: &DbPool,
     target_collection_id: i32,
-    profile: &ReportProfileRef<'_>,
+    profile: &ExportProfileRef<'_>,
 ) -> Result<(), ApiError> {
     let scope_kind = profile
         .scope_kind
-        .ok_or_else(|| ApiError::BadRequest("Report templates require scope_kind".into()))
-        .and_then(ReportScopeKind::from_str)?;
+        .ok_or_else(|| ApiError::BadRequest("Export templates require scope_kind".into()))
+        .and_then(ExportScopeKind::from_str)?;
 
     // `objects_in_class` and `related_objects` are scoped to a single class and require
     // `class_id`; the collection scopes (`collections`, `classes`, `class_relations`,
@@ -794,19 +794,19 @@ async fn validate_report_scope_metadata(
     if scope_kind.requires_class_id() {
         let class_id = profile.class_id.ok_or_else(|| {
             ApiError::BadRequest(format!(
-                "Report templates with scope '{}' require class_id",
+                "Export templates with scope '{}' require class_id",
                 scope_kind.as_str()
             ))
         })?;
         if class_id <= 0 {
             return Err(ApiError::BadRequest(
-                "Report template class_id must be greater than 0".to_string(),
+                "Export template class_id must be greater than 0".to_string(),
             ));
         }
         ensure_template_class_in_collection(pool, target_collection_id, class_id).await?;
     } else if profile.class_id.is_some() {
         return Err(ApiError::BadRequest(format!(
-            "Report templates with scope '{}' must not set class_id",
+            "Export templates with scope '{}' must not set class_id",
             scope_kind.as_str()
         )));
     }
@@ -815,20 +815,20 @@ async fn validate_report_scope_metadata(
         parse_query_parameter(query)?;
     }
 
-    if profile.include.is_some() && scope_kind != ReportScopeKind::ObjectsInClass {
+    if profile.include.is_some() && scope_kind != ExportScopeKind::ObjectsInClass {
         return Err(ApiError::BadRequest(
-            "include is only supported for objects_in_class report templates".to_string(),
+            "include is only supported for objects_in_class export templates".to_string(),
         ));
     }
 
     if profile.relation_context.is_some()
         && !matches!(
             scope_kind,
-            ReportScopeKind::ObjectsInClass | ReportScopeKind::RelatedObjects
+            ExportScopeKind::ObjectsInClass | ExportScopeKind::RelatedObjects
         )
     {
         return Err(ApiError::BadRequest(
-            "relation_context is only supported for objects_in_class and related_objects report templates"
+            "relation_context is only supported for objects_in_class and related_objects export templates"
                 .to_string(),
         ));
     }
@@ -838,7 +838,7 @@ async fn validate_report_scope_metadata(
 
 /// Validate the profile fields whose rules are the same for every kind/scope: the
 /// include/relation_context exclusivity and the shape of each optional blob.
-fn validate_common_profile_fields(profile: &ReportProfileRef<'_>) -> Result<(), ApiError> {
+fn validate_common_profile_fields(profile: &ExportProfileRef<'_>) -> Result<(), ApiError> {
     if profile.include.is_some() && profile.relation_context.is_some() {
         return Err(ApiError::BadRequest(
             "include cannot be combined with relation_context".to_string(),
@@ -846,11 +846,11 @@ fn validate_common_profile_fields(profile: &ReportProfileRef<'_>) -> Result<(), 
     }
 
     if let Some(include) = profile.include {
-        let include: ReportInclude = serde_json::from_value(include.clone())?;
+        let include: ExportInclude = serde_json::from_value(include.clone())?;
         include.validate_related_objects()?;
     }
     if let Some(relation_context) = profile.relation_context {
-        let context: ReportRelationContext = serde_json::from_value(relation_context.clone())?;
+        let context: ExportRelationContext = serde_json::from_value(relation_context.clone())?;
         if let Some(depth) = context.depth
             && !(1..=2).contains(&depth)
         {
@@ -860,10 +860,10 @@ fn validate_common_profile_fields(profile: &ReportProfileRef<'_>) -> Result<(), 
         }
     }
     if let Some(policy) = profile.default_missing_data_policy {
-        ReportMissingDataPolicy::from_str(policy)?;
+        ExportMissingDataPolicy::from_str(policy)?;
     }
     if let Some(limits) = profile.default_limits {
-        let _limits: ReportLimits = serde_json::from_value(limits.clone())?;
+        let _limits: ExportLimits = serde_json::from_value(limits.clone())?;
     }
 
     Ok(())
@@ -880,14 +880,14 @@ async fn ensure_template_class_in_collection(
 
     if class_collection_id != target_collection_id {
         return Err(ApiError::BadRequest(format!(
-            "Report template class {target_class_id} belongs to collection {class_collection_id}, not template collection {target_collection_id}"
+            "Export template class {target_class_id} belongs to collection {class_collection_id}, not template collection {target_collection_id}"
         )));
     }
 
     Ok(())
 }
 
-fn update_report_fields_present(update: &UpdateReportTemplate) -> bool {
+fn update_export_fields_present(update: &UpdateExportTemplate) -> bool {
     update.scope_kind.is_some()
         || update.class_id.is_some()
         || update.default_query.is_some()
@@ -901,7 +901,7 @@ fn update_report_fields_present(update: &UpdateReportTemplate) -> bool {
 /// When the scope `allowed`s the field, this behaves like a normal tri-state resolve
 /// (absent keeps current, `Some(None)` clears, `Some(Some)` sets). When the scope forbids
 /// it, a carried-forward current value is dropped, but an explicitly supplied value is kept
-/// so `validate_report_profile` can reject it (matching the create path).
+/// so `validate_export_profile` can reject it (matching the create path).
 fn resolve_gated_patch<T>(
     update: Option<Option<T>>,
     current: Option<T>,
@@ -957,31 +957,31 @@ async fn ensure_template_name_is_available(
     Ok(())
 }
 
-impl IdAccessor for ReportTemplate {
+impl IdAccessor for ExportTemplate {
     fn accessor_id(&self) -> i32 {
         self.id
     }
 }
 
-impl InstanceAdapter<ReportTemplate> for ReportTemplate {
-    async fn instance_adapter(&self, _pool: &DbPool) -> Result<ReportTemplate, ApiError> {
+impl InstanceAdapter<ExportTemplate> for ExportTemplate {
+    async fn instance_adapter(&self, _pool: &DbPool) -> Result<ExportTemplate, ApiError> {
         Ok(self.clone())
     }
 }
 
-impl IdAccessor for ReportTemplateID {
+impl IdAccessor for ExportTemplateID {
     fn accessor_id(&self) -> i32 {
         self.0
     }
 }
 
-impl InstanceAdapter<ReportTemplate> for ReportTemplateID {
-    async fn instance_adapter(&self, pool: &DbPool) -> Result<ReportTemplate, ApiError> {
-        self.load_report_template_record(pool).await?.try_into()
+impl InstanceAdapter<ExportTemplate> for ExportTemplateID {
+    async fn instance_adapter(&self, pool: &DbPool) -> Result<ExportTemplate, ApiError> {
+        self.load_export_template_record(pool).await?.try_into()
     }
 }
 
-impl CollectionAdapter for ReportTemplate {
+impl CollectionAdapter for ExportTemplate {
     async fn collection_adapter(&self, pool: &DbPool) -> Result<Collection, ApiError> {
         CollectionID::new(self.collection_id)?
             .collection_adapter(pool)
@@ -993,7 +993,7 @@ impl CollectionAdapter for ReportTemplate {
     }
 }
 
-impl CollectionAdapter for ReportTemplateID {
+impl CollectionAdapter for ExportTemplateID {
     async fn collection_adapter(&self, pool: &DbPool) -> Result<Collection, ApiError> {
         self.collection_id_adapter(pool)
             .await?
@@ -1002,11 +1002,11 @@ impl CollectionAdapter for ReportTemplateID {
     }
 
     async fn collection_id_adapter(&self, pool: &DbPool) -> Result<CollectionID, ApiError> {
-        self.lookup_report_template_collection_id(pool).await
+        self.lookup_export_template_collection_id(pool).await
     }
 }
 
-impl CursorPaginated for ReportTemplate {
+impl CursorPaginated for ExportTemplate {
     fn supports_sort(field: &FilterField) -> bool {
         matches!(
             field,
@@ -1032,7 +1032,7 @@ impl CursorPaginated for ReportTemplate {
             FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
             _ => {
                 return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for report templates",
+                    "Field '{}' is not orderable for export templates",
                     field
                 )));
             }
@@ -1051,42 +1051,42 @@ impl CursorPaginated for ReportTemplate {
     }
 }
 
-impl CursorSqlMapping for ReportTemplate {
+impl CursorSqlMapping for ExportTemplate {
     fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
         Ok(match field {
             FilterField::Id => CursorSqlField {
-                column: "report_templates.id",
+                column: "export_templates.id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
             FilterField::Name => CursorSqlField {
-                column: "report_templates.name",
+                column: "export_templates.name",
                 sql_type: CursorSqlType::String,
                 nullable: false,
             },
             FilterField::Description => CursorSqlField {
-                column: "report_templates.description",
+                column: "export_templates.description",
                 sql_type: CursorSqlType::String,
                 nullable: false,
             },
             FilterField::Collections | FilterField::CollectionId => CursorSqlField {
-                column: "report_templates.collection_id",
+                column: "export_templates.collection_id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
             FilterField::CreatedAt => CursorSqlField {
-                column: "report_templates.created_at",
+                column: "export_templates.created_at",
                 sql_type: CursorSqlType::DateTime,
                 nullable: false,
             },
             FilterField::UpdatedAt => CursorSqlField {
-                column: "report_templates.updated_at",
+                column: "export_templates.updated_at",
                 sql_type: CursorSqlType::DateTime,
                 nullable: false,
             },
             _ => {
                 return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for report templates",
+                    "Field '{}' is not orderable for export templates",
                     field
                 )));
             }
@@ -1095,27 +1095,27 @@ impl CursorSqlMapping for ReportTemplate {
 }
 
 #[allow(dead_code)]
-fn report_template_example() -> ReportTemplate {
+fn export_template_example() -> ExportTemplate {
     let example_timestamp = chrono::NaiveDate::from_ymd_opt(2026, 3, 6)
         .and_then(|date| date.and_hms_opt(12, 0, 0))
         .expect("static OpenAPI example timestamp must be valid");
 
-    ReportTemplate {
+    ExportTemplate {
         id: 1,
         collection_id: 7,
-        name: "owner-report".to_string(),
+        name: "owner-export".to_string(),
         description: "Template for owner listing".to_string(),
-        content_type: ReportContentType::TextPlain,
+        content_type: ExportContentType::TextPlain,
         template: "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}"
             .to_string(),
-        kind: ReportTemplateKind::Report,
-        scope_kind: Some(ReportScopeKind::ObjectsInClass),
+        kind: ExportTemplateKind::Export,
+        scope_kind: Some(ExportScopeKind::ObjectsInClass),
         class_id: Some(42),
         default_query: Some("sort=name".to_string()),
         include: None,
         relation_context: None,
-        default_missing_data_policy: Some(ReportMissingDataPolicy::Strict),
-        default_limits: Some(ReportLimits {
+        default_missing_data_policy: Some(ExportMissingDataPolicy::Strict),
+        default_limits: Some(ExportLimits {
             max_items: Some(100),
             max_output_bytes: Some(262_144),
         }),
@@ -1125,22 +1125,22 @@ fn report_template_example() -> ReportTemplate {
 }
 
 #[allow(dead_code)]
-fn new_report_template_example() -> NewReportTemplate {
-    NewReportTemplate {
+fn new_export_template_example() -> NewExportTemplate {
+    NewExportTemplate {
         collection_id: 7,
-        name: "owner-report".to_string(),
+        name: "owner-export".to_string(),
         description: "Template for owner listing".to_string(),
-        content_type: ReportContentType::TextPlain,
+        content_type: ExportContentType::TextPlain,
         template: "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}"
             .to_string(),
-        kind: ReportTemplateKind::Report,
-        scope_kind: Some(ReportScopeKind::ObjectsInClass),
+        kind: ExportTemplateKind::Export,
+        scope_kind: Some(ExportScopeKind::ObjectsInClass),
         class_id: Some(42),
         default_query: Some("sort=name".to_string()),
         include: None,
         relation_context: None,
-        default_missing_data_policy: Some(ReportMissingDataPolicy::Strict),
-        default_limits: Some(ReportLimits {
+        default_missing_data_policy: Some(ExportMissingDataPolicy::Strict),
+        default_limits: Some(ExportLimits {
             max_items: Some(100),
             max_output_bytes: Some(262_144),
         }),
@@ -1148,10 +1148,10 @@ fn new_report_template_example() -> NewReportTemplate {
 }
 
 #[allow(dead_code)]
-fn update_report_template_example() -> UpdateReportTemplate {
-    UpdateReportTemplate {
+fn update_export_template_example() -> UpdateExportTemplate {
+    UpdateExportTemplate {
         collection_id: Some(9),
-        name: Some("owner-report-v2".to_string()),
+        name: Some("owner-export-v2".to_string()),
         description: Some("Updated template description".to_string()),
         template: Some("{% for item in items %}{{ item.name }}\n{% endfor %}".to_string()),
         kind: None,
@@ -1166,8 +1166,8 @@ fn update_report_template_example() -> UpdateReportTemplate {
 }
 
 #[derive(serde::Serialize, diesel::Queryable, Clone, Debug, ToSchema)]
-#[diesel(table_name = crate::schema::report_templates_history)]
-pub struct ReportTemplateHistory {
+#[diesel(table_name = crate::schema::export_templates_history)]
+pub struct ExportTemplateHistory {
     pub id: i32,
     pub collection_id: i32,
     pub name: String,
@@ -1191,4 +1191,4 @@ pub struct ReportTemplateHistory {
     pub history_id: i64,
 }
 
-crate::impl_history_pagination!(ReportTemplateHistory, "report_templates_history");
+crate::impl_history_pagination!(ExportTemplateHistory, "export_templates_history");

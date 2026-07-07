@@ -124,9 +124,9 @@ cargo bench --bench password_hashing_criterion -- --noplot
 
 ### CI behavior
 
-- The benchmark workflow runs both backends in one combined `backend: all` job, so PRs get a single consolidated benchmark report.
+- The benchmark workflow runs both backends in one combined `backend: all` job, so PRs get a single consolidated benchmark export.
 - `iai-callgrind` remains the practical gating signal with a low regression threshold.
-- Criterion still runs in the same combined job, but uses a very high regression threshold so it reports timing changes without acting as a meaningful gate.
+- Criterion still runs in the same combined job, but uses a very high regression threshold so it exports timing changes without acting as a meaningful gate.
 - The current benchmark set is fully self-contained and does not require a database in CI.
 
 ### Adding or modifying benchmarks

@@ -12,27 +12,27 @@ use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::collection::user_can_on_any;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    CollectionID, NewReportTemplate, Permissions, ReportTemplate, ReportTemplateID,
-    ReportTemplateRunRequest, TaskResponse, UpdateReportTemplate,
+    CollectionID, ExportTemplate, ExportTemplateID, ExportTemplateRunRequest, NewExportTemplate,
+    Permissions, TaskResponse, UpdateExportTemplate,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::traits::{CanDelete, CanSave, CanUpdate, CollectionAccessors, SelfAccessors};
 
 crate::history_db_fns!(
-    report_template_history_paginated_with_total_count,
-    report_template_as_of,
-    crate::schema::report_templates_history,
-    crate::models::ReportTemplateHistory
+    export_template_history_paginated_with_total_count,
+    export_template_as_of,
+    crate::schema::export_templates_history,
+    crate::models::ExportTemplateHistory
 );
 
 #[utoipa::path(
     post,
-    path = "/api/v1/templates",
-    tag = "templates",
+    path = "/api/v1/export-templates",
+    tag = "export-templates",
     security(("bearer_auth" = [])),
-    request_body = NewReportTemplate,
+    request_body = NewExportTemplate,
     responses(
-        (status = 201, description = "Template created", body = ReportTemplate),
+        (status = 201, description = "Template created", body = ExportTemplate),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
@@ -45,14 +45,14 @@ crate::history_db_fns!(
 pub async fn create_template(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    template: web::Json<NewReportTemplate>,
+    template: web::Json<NewExportTemplate>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let template = template.into_inner();
 
     debug!(
-        message = "Report template create requested",
+        message = "Export template create requested",
         user_id = user.id,
         collection_id = template.collection_id,
         template_name = template.name
@@ -75,11 +75,11 @@ pub async fn create_template(
 
 #[utoipa::path(
     get,
-    path = "/api/v1/templates",
-    tag = "templates",
+    path = "/api/v1/export-templates",
+    tag = "export-templates",
     security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "Templates visible to caller", body = [ReportTemplate]),
+        (status = 200, description = "Templates visible to caller", body = [ExportTemplate]),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse)
     )
@@ -96,11 +96,11 @@ pub async fn get_templates(
     let params = parse_query_parameter(req.query_string())?;
 
     info!(
-        message = "Report template list requested",
+        message = "Export template list requested",
         user_id = user.id
     );
 
-    let search_params = prepare_db_pagination::<ReportTemplate>(&params)?;
+    let search_params = prepare_db_pagination::<ExportTemplate>(&params)?;
     let allowed_collection_ids =
         user_can_on_any(&pool, user, Permissions::ReadTemplate, requestor.scopes())
             .await?
@@ -109,7 +109,7 @@ pub async fn get_templates(
             .collect::<Vec<_>>();
 
     let (templates, total_count) =
-        ReportTemplate::list_with_total_count(&pool, &allowed_collection_ids, &search_params)
+        ExportTemplate::list_with_total_count(&pool, &allowed_collection_ids, &search_params)
             .await?;
 
     ApiResponse::paginated(templates, total_count, &params)
@@ -117,14 +117,14 @@ pub async fn get_templates(
 
 #[utoipa::path(
     get,
-    path = "/api/v1/templates/{template_id}",
-    tag = "templates",
+    path = "/api/v1/export-templates/{template_id}",
+    tag = "export-templates",
     security(("bearer_auth" = [])),
     params(
         ("template_id" = i32, Path, description = "Template ID")
     ),
     responses(
-        (status = 200, description = "Template", body = ReportTemplate),
+        (status = 200, description = "Template", body = ExportTemplate),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
         (status = 404, description = "Template not found", body = ApiErrorResponse)
@@ -134,13 +134,13 @@ pub async fn get_templates(
 pub async fn get_template(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    template_id: web::Path<ReportTemplateID>,
+    template_id: web::Path<ExportTemplateID>,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let template_id = template_id.into_inner();
 
     debug!(
-        message = "Report template get requested",
+        message = "Export template get requested",
         user_id = user.id,
         template_id = template_id.id()
     );
@@ -160,37 +160,37 @@ pub async fn get_template(
 
 #[utoipa::path(
     post,
-    path = "/api/v1/templates/{template_id}/reports",
-    tag = "templates",
+    path = "/api/v1/export-templates/{template_id}/exports",
+    tag = "export-templates",
     security(("bearer_auth" = [])),
     params(
-        ("template_id" = i32, Path, description = "Executable report template ID")
+        ("template_id" = i32, Path, description = "Executable export template ID")
     ),
-    request_body = ReportTemplateRunRequest,
+    request_body = ExportTemplateRunRequest,
     responses(
-        (status = 202, description = "Report task accepted", body = TaskResponse),
+        (status = 202, description = "Export task accepted", body = TaskResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
         (status = 404, description = "Template not found", body = ApiErrorResponse),
         (status = 409, description = "Conflict", body = ApiErrorResponse),
-        (status = 429, description = "Too many active report tasks", body = ApiErrorResponse)
+        (status = 429, description = "Too many active export tasks", body = ApiErrorResponse)
     )
 )]
-#[post("/{template_id}/reports")]
-pub async fn run_template_report(
+#[post("/{template_id}/exports")]
+pub async fn run_template_export(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     req: HttpRequest,
-    template_id: web::Path<ReportTemplateID>,
-    run: web::Json<ReportTemplateRunRequest>,
+    template_id: web::Path<ExportTemplateID>,
+    run: web::Json<ExportTemplateRunRequest>,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let template_id = template_id.into_inner();
     let run = run.into_inner();
 
     debug!(
-        message = "Report template execution requested",
+        message = "Export template execution requested",
         user_id = user.id,
         template_id = template_id.id()
     );
@@ -205,14 +205,14 @@ pub async fn run_template_report(
         CollectionID::new(template.collection_id)?
     );
 
-    let report = template.build_report_request(run)?;
-    let task = crate::api::v1::handlers::reports::submit_report_task(
+    let export = template.build_export_request(run)?;
+    let task = crate::api::v1::handlers::exports::submit_export_task(
         &pool,
         user,
         requestor.scopes(),
         Some(requestor.token_meta.id),
         req,
-        report,
+        export,
         Some(template),
     )
     .await?;
@@ -226,15 +226,15 @@ pub async fn run_template_report(
 
 #[utoipa::path(
     patch,
-    path = "/api/v1/templates/{template_id}",
-    tag = "templates",
+    path = "/api/v1/export-templates/{template_id}",
+    tag = "export-templates",
     security(("bearer_auth" = [])),
     params(
         ("template_id" = i32, Path, description = "Template ID")
     ),
-    request_body = UpdateReportTemplate,
+    request_body = UpdateExportTemplate,
     responses(
-        (status = 200, description = "Template updated", body = ReportTemplate),
+        (status = 200, description = "Template updated", body = ExportTemplate),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
@@ -246,8 +246,8 @@ pub async fn run_template_report(
 pub async fn patch_template(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    template_id: web::Path<ReportTemplateID>,
-    update: web::Json<UpdateReportTemplate>,
+    template_id: web::Path<ExportTemplateID>,
+    update: web::Json<UpdateExportTemplate>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
@@ -255,7 +255,7 @@ pub async fn patch_template(
     let update = update.into_inner();
 
     debug!(
-        message = "Report template patch requested",
+        message = "Export template patch requested",
         user_id = user.id,
         template_id = template_id.id()
     );
@@ -290,8 +290,8 @@ pub async fn patch_template(
 
 #[utoipa::path(
     delete,
-    path = "/api/v1/templates/{template_id}",
-    tag = "templates",
+    path = "/api/v1/export-templates/{template_id}",
+    tag = "export-templates",
     security(("bearer_auth" = [])),
     params(
         ("template_id" = i32, Path, description = "Template ID")
@@ -307,14 +307,14 @@ pub async fn patch_template(
 pub async fn delete_template(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    template_id: web::Path<ReportTemplateID>,
+    template_id: web::Path<ExportTemplateID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let template_id = template_id.into_inner();
 
     debug!(
-        message = "Report template delete requested",
+        message = "Export template delete requested",
         user_id = user.id,
         template_id = template_id.id()
     );
@@ -337,12 +337,12 @@ pub async fn delete_template(
 
 #[utoipa::path(
     get,
-    path = "/api/v1/templates/{template_id}/history",
-    tag = "templates",
+    path = "/api/v1/export-templates/{template_id}/history",
+    tag = "export-templates",
     security(("bearer_auth" = [])),
     params(("template_id" = i32, Path, description = "Template ID")),
     responses(
-        (status = 200, description = "Template history", body = [crate::api::v1::handlers::history::HistoryResponse<crate::models::ReportTemplateHistory>]),
+        (status = 200, description = "Template history", body = [crate::api::v1::handlers::history::HistoryResponse<crate::models::ExportTemplateHistory>]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
         (status = 404, description = "Template not found", body = ApiErrorResponse)
@@ -352,7 +352,7 @@ pub async fn delete_template(
 pub async fn get_template_history(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    template_id: web::Path<ReportTemplateID>,
+    template_id: web::Path<ExportTemplateID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
@@ -381,9 +381,9 @@ pub async fn get_template_history(
     };
 
     let params = parse_query_parameter(req.query_string())?;
-    let search_params = prepare_db_pagination::<crate::models::ReportTemplateHistory>(&params)?;
+    let search_params = prepare_db_pagination::<crate::models::ExportTemplateHistory>(&params)?;
     let (rows, total_count) =
-        report_template_history_paginated_with_total_count(entity_id, &pool, &search_params)
+        export_template_history_paginated_with_total_count(entity_id, &pool, &search_params)
             .await?;
     if require_history && total_count == 0 {
         return Err(ApiError::NotFound(format!(
@@ -409,15 +409,15 @@ pub async fn get_template_history(
 
 #[utoipa::path(
     get,
-    path = "/api/v1/templates/{template_id}/history/as-of",
-    tag = "templates",
+    path = "/api/v1/export-templates/{template_id}/history/as-of",
+    tag = "export-templates",
     security(("bearer_auth" = [])),
     params(
         ("template_id" = i32, Path, description = "Template ID"),
         ("at" = String, Query, description = "RFC3339 timestamp")
     ),
     responses(
-        (status = 200, description = "Template version at timestamp", body = crate::api::v1::handlers::history::HistoryResponse<crate::models::ReportTemplateHistory>),
+        (status = 200, description = "Template version at timestamp", body = crate::api::v1::handlers::history::HistoryResponse<crate::models::ExportTemplateHistory>),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
@@ -428,7 +428,7 @@ pub async fn get_template_history(
 pub async fn get_template_as_of(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    template_id: web::Path<ReportTemplateID>,
+    template_id: web::Path<ExportTemplateID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
@@ -455,7 +455,7 @@ pub async fn get_template_as_of(
     };
 
     let at = parse_as_of(req.query_string())?;
-    let row = report_template_as_of(entity_id, at, &pool)
+    let row = export_template_as_of(entity_id, at, &pool)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("no version of template {entity_id} at {at}")))?;
 

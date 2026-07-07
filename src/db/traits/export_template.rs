@@ -1,7 +1,7 @@
-//! Backend persistence for report templates.
+//! Backend persistence for export templates.
 //!
-//! All Diesel/Postgres query construction for `report_templates` lives here so the model layer
-//! (`crate::models::report_template`) stays thin and free of backend details, mirroring the other
+//! All Diesel/Postgres query construction for `export_templates` lives here so the model layer
+//! (`crate::models::export_template`) stays thin and free of backend details, mirroring the other
 //! entities under `src/db/traits/`. Instance-scoped CRUD is exposed as self-methods via the record
 //! traits below (matching `LoadClassRecord` and friends); collection, search, cross-table, and
 //! aggregate queries — which have no single owning instance — stay free functions, as elsewhere in
@@ -13,21 +13,21 @@ use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::collection::CollectionID;
-use crate::models::report_template::{
-    NewReportTemplateRow, ReportTemplate, ReportTemplateID, ReportTemplateRow,
-    UpdateReportTemplateRow,
+use crate::models::export_template::{
+    ExportTemplate, ExportTemplateID, ExportTemplateRow, NewExportTemplateRow,
+    UpdateExportTemplateRow,
 };
 use crate::models::search::{FilterField, QueryOptions};
 use crate::{date_search, numeric_search, string_search};
 
-fn report_template_event(
-    row: &ReportTemplateRow,
+fn export_template_event(
+    row: &ExportTemplateRow,
     action: Action,
     context: &EventContext,
     summary: impl Into<String>,
 ) -> Result<NewEvent, ApiError> {
     Ok(NewEvent::new(
-        EntityType::ReportTemplate,
+        EntityType::ExportTemplate,
         action,
         context.actor_kind(),
         summary,
@@ -38,80 +38,80 @@ fn report_template_event(
     .with_collection_id(row.collection_id()))
 }
 
-/// Load the report-template row identified by this id.
-pub(crate) trait LoadReportTemplateRecord {
-    async fn load_report_template_record(
+/// Load the export-template row identified by this id.
+pub(crate) trait LoadExportTemplateRecord {
+    async fn load_export_template_record(
         &self,
         pool: &DbPool,
-    ) -> Result<ReportTemplateRow, ApiError>;
+    ) -> Result<ExportTemplateRow, ApiError>;
 }
 
-impl LoadReportTemplateRecord for ReportTemplateID {
-    async fn load_report_template_record(
+impl LoadExportTemplateRecord for ExportTemplateID {
+    async fn load_export_template_record(
         &self,
         pool: &DbPool,
-    ) -> Result<ReportTemplateRow, ApiError> {
-        use crate::schema::report_templates::dsl::{id, report_templates};
+    ) -> Result<ExportTemplateRow, ApiError> {
+        use crate::schema::export_templates::dsl::{export_templates, id};
 
         with_connection(pool, |conn| {
-            report_templates
+            export_templates
                 .filter(id.eq(self.id()))
-                .first::<ReportTemplateRow>(conn)
+                .first::<ExportTemplateRow>(conn)
         })
     }
 }
 
-/// Insert this new report-template row and return the persisted row.
-pub(crate) trait SaveReportTemplateRecord {
-    async fn save_report_template_record_without_events(
+/// Insert this new export-template row and return the persisted row.
+pub(crate) trait SaveExportTemplateRecord {
+    async fn save_export_template_record_without_events(
         &self,
         pool: &DbPool,
-    ) -> Result<ReportTemplateRow, ApiError>;
+    ) -> Result<ExportTemplateRow, ApiError>;
 
-    async fn save_report_template_record(
+    async fn save_export_template_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
-    ) -> Result<ReportTemplateRow, ApiError> {
+    ) -> Result<ExportTemplateRow, ApiError> {
         let _ = context;
-        self.save_report_template_record_without_events(pool).await
+        self.save_export_template_record_without_events(pool).await
     }
 }
 
-impl SaveReportTemplateRecord for NewReportTemplateRow {
-    async fn save_report_template_record_without_events(
+impl SaveExportTemplateRecord for NewExportTemplateRow {
+    async fn save_export_template_record_without_events(
         &self,
         pool: &DbPool,
-    ) -> Result<ReportTemplateRow, ApiError> {
-        use crate::schema::report_templates::dsl::report_templates;
+    ) -> Result<ExportTemplateRow, ApiError> {
+        use crate::schema::export_templates::dsl::export_templates;
 
         with_connection(pool, |conn| {
-            diesel::insert_into(report_templates)
+            diesel::insert_into(export_templates)
                 .values(self)
-                .get_result::<ReportTemplateRow>(conn)
+                .get_result::<ExportTemplateRow>(conn)
         })
     }
 
-    async fn save_report_template_record(
+    async fn save_export_template_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
-    ) -> Result<ReportTemplateRow, ApiError> {
+    ) -> Result<ExportTemplateRow, ApiError> {
         let Some(context) = context else {
-            return self.save_report_template_record_without_events(pool).await;
+            return self.save_export_template_record_without_events(pool).await;
         };
 
-        use crate::schema::report_templates::dsl::report_templates;
+        use crate::schema::export_templates::dsl::export_templates;
 
-        with_transaction(pool, |conn| -> Result<ReportTemplateRow, ApiError> {
-            let row = diesel::insert_into(report_templates)
+        with_transaction(pool, |conn| -> Result<ExportTemplateRow, ApiError> {
+            let row = diesel::insert_into(export_templates)
                 .values(self)
-                .get_result::<ReportTemplateRow>(conn)?;
-            let event = report_template_event(
+                .get_result::<ExportTemplateRow>(conn)?;
+            let event = export_template_event(
                 &row,
                 Action::Created,
                 context,
-                format!("Report template '{}' created", row.name()),
+                format!("Export template '{}' created", row.name()),
             )?
             .with_after(row.audit_snapshot());
             emit_event(conn, &event)?;
@@ -120,71 +120,71 @@ impl SaveReportTemplateRecord for NewReportTemplateRow {
     }
 }
 
-/// Apply this changeset to the report-template row with the given id and return the updated row.
-pub(crate) trait UpdateReportTemplateRecord {
-    async fn update_report_template_record_without_events(
+/// Apply this changeset to the export-template row with the given id and return the updated row.
+pub(crate) trait UpdateExportTemplateRecord {
+    async fn update_export_template_record_without_events(
         &self,
         pool: &DbPool,
         template_id: i32,
-    ) -> Result<ReportTemplateRow, ApiError>;
+    ) -> Result<ExportTemplateRow, ApiError>;
 
-    async fn update_report_template_record(
+    async fn update_export_template_record(
         &self,
         pool: &DbPool,
         template_id: i32,
         context: Option<&EventContext>,
-    ) -> Result<ReportTemplateRow, ApiError> {
+    ) -> Result<ExportTemplateRow, ApiError> {
         let _ = context;
-        self.update_report_template_record_without_events(pool, template_id)
+        self.update_export_template_record_without_events(pool, template_id)
             .await
     }
 }
 
-impl UpdateReportTemplateRecord for UpdateReportTemplateRow {
-    async fn update_report_template_record_without_events(
+impl UpdateExportTemplateRecord for UpdateExportTemplateRow {
+    async fn update_export_template_record_without_events(
         &self,
         pool: &DbPool,
         template_id: i32,
-    ) -> Result<ReportTemplateRow, ApiError> {
-        use crate::schema::report_templates::dsl::{id, report_templates};
+    ) -> Result<ExportTemplateRow, ApiError> {
+        use crate::schema::export_templates::dsl::{export_templates, id};
 
         with_connection(pool, |conn| {
             crate::db::updated_or_current(
-                diesel::update(report_templates.filter(id.eq(template_id)))
+                diesel::update(export_templates.filter(id.eq(template_id)))
                     .set(self)
-                    .get_result::<ReportTemplateRow>(conn)
+                    .get_result::<ExportTemplateRow>(conn)
                     .optional(),
-                || report_templates.filter(id.eq(template_id)).first(conn),
+                || export_templates.filter(id.eq(template_id)).first(conn),
             )
         })
     }
 
-    async fn update_report_template_record(
+    async fn update_export_template_record(
         &self,
         pool: &DbPool,
         template_id: i32,
         context: Option<&EventContext>,
-    ) -> Result<ReportTemplateRow, ApiError> {
+    ) -> Result<ExportTemplateRow, ApiError> {
         let Some(context) = context else {
             return self
-                .update_report_template_record_without_events(pool, template_id)
+                .update_export_template_record_without_events(pool, template_id)
                 .await;
         };
 
-        use crate::schema::report_templates::dsl::{id, report_templates};
+        use crate::schema::export_templates::dsl::{export_templates, id};
 
-        with_transaction(pool, |conn| -> Result<ReportTemplateRow, ApiError> {
-            let before = report_templates
+        with_transaction(pool, |conn| -> Result<ExportTemplateRow, ApiError> {
+            let before = export_templates
                 .filter(id.eq(template_id))
-                .first::<ReportTemplateRow>(conn)?;
-            let after = diesel::update(report_templates.filter(id.eq(template_id)))
+                .first::<ExportTemplateRow>(conn)?;
+            let after = diesel::update(export_templates.filter(id.eq(template_id)))
                 .set(self)
-                .get_result::<ReportTemplateRow>(conn)?;
-            let event = report_template_event(
+                .get_result::<ExportTemplateRow>(conn)?;
+            let event = export_template_event(
                 &after,
                 Action::Updated,
                 context,
-                format!("Report template '{}' updated", after.name()),
+                format!("Export template '{}' updated", after.name()),
             )?
             .with_before(before.audit_snapshot())
             .with_after(after.audit_snapshot());
@@ -194,61 +194,61 @@ impl UpdateReportTemplateRecord for UpdateReportTemplateRow {
     }
 }
 
-/// Delete the report-template row identified by this id.
-pub(crate) trait DeleteReportTemplateRecord {
-    async fn delete_report_template_record_without_events(
+/// Delete the export-template row identified by this id.
+pub(crate) trait DeleteExportTemplateRecord {
+    async fn delete_export_template_record_without_events(
         &self,
         pool: &DbPool,
     ) -> Result<(), ApiError>;
 
-    async fn delete_report_template_record(
+    async fn delete_export_template_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let _ = context;
-        self.delete_report_template_record_without_events(pool)
+        self.delete_export_template_record_without_events(pool)
             .await
     }
 }
 
-impl DeleteReportTemplateRecord for ReportTemplateID {
-    async fn delete_report_template_record_without_events(
+impl DeleteExportTemplateRecord for ExportTemplateID {
+    async fn delete_export_template_record_without_events(
         &self,
         pool: &DbPool,
     ) -> Result<(), ApiError> {
-        use crate::schema::report_templates::dsl::{id, report_templates};
+        use crate::schema::export_templates::dsl::{export_templates, id};
 
         with_connection(pool, |conn| {
-            diesel::delete(report_templates.filter(id.eq(self.id()))).execute(conn)
+            diesel::delete(export_templates.filter(id.eq(self.id()))).execute(conn)
         })?;
 
         Ok(())
     }
 
-    async fn delete_report_template_record(
+    async fn delete_export_template_record(
         &self,
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let Some(context) = context else {
             return self
-                .delete_report_template_record_without_events(pool)
+                .delete_export_template_record_without_events(pool)
                 .await;
         };
 
-        use crate::schema::report_templates::dsl::{id, report_templates};
+        use crate::schema::export_templates::dsl::{export_templates, id};
 
         with_transaction(pool, |conn| -> Result<(), ApiError> {
-            let before = report_templates
+            let before = export_templates
                 .filter(id.eq(self.id()))
-                .first::<ReportTemplateRow>(conn)?;
-            diesel::delete(report_templates.filter(id.eq(self.id()))).execute(conn)?;
-            let event = report_template_event(
+                .first::<ExportTemplateRow>(conn)?;
+            diesel::delete(export_templates.filter(id.eq(self.id()))).execute(conn)?;
+            let event = export_template_event(
                 &before,
                 Action::Deleted,
                 context,
-                format!("Report template '{}' deleted", before.name()),
+                format!("Export template '{}' deleted", before.name()),
             )?
             .with_before(before.audit_snapshot());
             emit_event(conn, &event)?;
@@ -257,23 +257,23 @@ impl DeleteReportTemplateRecord for ReportTemplateID {
     }
 }
 
-/// Look up the collection id of the report template identified by this id.
-pub(crate) trait ReportTemplateCollectionLookup {
-    async fn lookup_report_template_collection_id(
+/// Look up the collection id of the export template identified by this id.
+pub(crate) trait ExportTemplateCollectionLookup {
+    async fn lookup_export_template_collection_id(
         &self,
         pool: &DbPool,
     ) -> Result<CollectionID, ApiError>;
 }
 
-impl ReportTemplateCollectionLookup for ReportTemplateID {
-    async fn lookup_report_template_collection_id(
+impl ExportTemplateCollectionLookup for ExportTemplateID {
+    async fn lookup_export_template_collection_id(
         &self,
         pool: &DbPool,
     ) -> Result<CollectionID, ApiError> {
-        use crate::schema::report_templates::dsl::{collection_id, id, report_templates};
+        use crate::schema::export_templates::dsl::{collection_id, export_templates, id};
 
         let raw = with_connection(pool, |conn| {
-            report_templates
+            export_templates
                 .filter(id.eq(self.id()))
                 .select(collection_id)
                 .first::<i32>(conn)
@@ -282,31 +282,31 @@ impl ReportTemplateCollectionLookup for ReportTemplateID {
     }
 }
 
-/// Load all report-template rows in a collection, optionally excluding one template id.
+/// Load all export-template rows in a collection, optionally excluding one template id.
 pub(crate) async fn load_rows_in_collection(
     pool: &DbPool,
     target_collection_id: i32,
     exclude_template_id: Option<i32>,
-) -> Result<Vec<ReportTemplateRow>, ApiError> {
-    use crate::schema::report_templates::dsl::{collection_id, id, report_templates};
+) -> Result<Vec<ExportTemplateRow>, ApiError> {
+    use crate::schema::export_templates::dsl::{collection_id, export_templates, id};
 
     with_connection(pool, |conn| {
-        let mut query = report_templates
+        let mut query = export_templates
             .into_boxed()
             .filter(collection_id.eq(target_collection_id));
         if let Some(exclude_template_id) = exclude_template_id {
             query = query.filter(id.ne(exclude_template_id));
         }
-        query.load::<ReportTemplateRow>(conn)
+        query.load::<ExportTemplateRow>(conn)
     })
 }
 
-/// Load every report-template row.
-pub(crate) async fn load_all_rows(pool: &DbPool) -> Result<Vec<ReportTemplateRow>, ApiError> {
-    use crate::schema::report_templates::dsl::report_templates;
+/// Load every export-template row.
+pub(crate) async fn load_all_rows(pool: &DbPool) -> Result<Vec<ExportTemplateRow>, ApiError> {
+    use crate::schema::export_templates::dsl::export_templates;
 
     with_connection(pool, |conn| {
-        report_templates.load::<ReportTemplateRow>(conn)
+        export_templates.load::<ExportTemplateRow>(conn)
     })
 }
 
@@ -318,17 +318,17 @@ pub(crate) async fn name_conflict_exists(
     target_name: &str,
     exclude_template_id: Option<i32>,
 ) -> Result<bool, ApiError> {
-    use crate::schema::report_templates::dsl::{collection_id, id, name, report_templates};
+    use crate::schema::export_templates::dsl::{collection_id, export_templates, id, name};
 
     let existing = with_connection(pool, |conn| {
-        let mut query = report_templates
+        let mut query = export_templates
             .into_boxed()
             .filter(collection_id.eq(target_collection_id))
             .filter(name.eq(target_name));
         if let Some(exclude_template_id) = exclude_template_id {
             query = query.filter(id.ne(exclude_template_id));
         }
-        query.first::<ReportTemplateRow>(conn).optional()
+        query.first::<ExportTemplateRow>(conn).optional()
     })?;
 
     Ok(existing.is_some())
@@ -350,24 +350,24 @@ pub(crate) async fn class_collection_id(
     })
 }
 
-/// Build the filtered (but unsorted, unpaginated) query for listing report templates within the
+/// Build the filtered (but unsorted, unpaginated) query for listing export templates within the
 /// collections the caller may see.
 fn build_list_query<'a>(
     allowed_collection_ids: &'a [i32],
     query_options: &'a QueryOptions,
-) -> Result<crate::schema::report_templates::BoxedQuery<'a, diesel::pg::Pg>, ApiError> {
-    use crate::schema::report_templates::dsl::{
-        class_id, collection_id, created_at, description, id, kind, name, report_templates,
+) -> Result<crate::schema::export_templates::BoxedQuery<'a, diesel::pg::Pg>, ApiError> {
+    use crate::schema::export_templates::dsl::{
+        class_id, collection_id, created_at, description, export_templates, id, kind, name,
         updated_at,
     };
 
     if allowed_collection_ids.is_empty() {
-        return Ok(report_templates
+        return Ok(export_templates
             .into_boxed()
             .filter(collection_id.eq_any(allowed_collection_ids)));
     }
 
-    let mut query = report_templates
+    let mut query = export_templates
         .into_boxed()
         .filter(collection_id.eq_any(allowed_collection_ids));
 
@@ -386,7 +386,7 @@ fn build_list_query<'a>(
             FilterField::UpdatedAt => date_search!(query, param, operator, updated_at),
             _ => {
                 return Err(ApiError::BadRequest(format!(
-                    "Field '{}' isn't searchable (or does not exist) for report templates",
+                    "Field '{}' isn't searchable (or does not exist) for export templates",
                     param.field
                 )));
             }
@@ -396,19 +396,19 @@ fn build_list_query<'a>(
     Ok(query)
 }
 
-/// List report-template rows (sorted/paginated per `query_options`) together with the total count
+/// List export-template rows (sorted/paginated per `query_options`) together with the total count
 /// matching the filters, scoped to the collections the caller may see.
 pub(crate) async fn list_rows_with_total_count(
     pool: &DbPool,
     allowed_collection_ids: &[i32],
     query_options: &QueryOptions,
-) -> Result<(Vec<ReportTemplateRow>, i64), ApiError> {
+) -> Result<(Vec<ExportTemplateRow>, i64), ApiError> {
     let query = build_list_query(allowed_collection_ids, query_options)?;
     let total_count = with_connection(pool, |conn| query.count().get_result::<i64>(conn))?;
 
     let mut query = build_list_query(allowed_collection_ids, query_options)?;
-    crate::apply_query_options!(query, query_options, ReportTemplate);
-    let rows = with_connection(pool, |conn| query.load::<ReportTemplateRow>(conn))?;
+    crate::apply_query_options!(query, query_options, ExportTemplate);
+    let rows = with_connection(pool, |conn| query.load::<ExportTemplateRow>(conn))?;
 
     Ok((rows, total_count))
 }

@@ -75,6 +75,6 @@ This file is the human-oriented summary. For exact route definitions and generat
 
 - [querying.md](querying.md)
 - [relationship_endpoints.md](relationship_endpoints.md)
-- [report_api.md](report_api.md)
+- [export_api.md](export_api.md)
 - [remote_targets.md](remote_targets.md)
 - [openapi.json](openapi.json)

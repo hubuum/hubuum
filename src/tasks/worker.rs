@@ -6,11 +6,11 @@ use actix_rt::time::sleep;
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
-use crate::api::v1::handlers::reports::execute_report_task;
+use crate::api::v1::handlers::exports::execute_export_task;
 use crate::config::{DEFAULT_TASK_POLL_INTERVAL_MS, get_config};
 use crate::db::DbPool;
 use crate::db::traits::task::{
-    TaskBackend, TaskStateUpdate, claim_next_queued_task, purge_expired_report_outputs,
+    TaskBackend, TaskStateUpdate, claim_next_queued_task, purge_expired_export_outputs,
 };
 use crate::errors::ApiError;
 use crate::models::{NewTaskEventRecord, TaskKind, TaskRecord, TaskResultCounts, TaskStatus};
@@ -22,14 +22,14 @@ use super::types::WorkerLoopAction;
 
 static TASK_WORKER: Once = Once::new();
 static TASK_WORKER_NOTIFY: OnceLock<Notify> = OnceLock::new();
-static REPORT_OUTPUT_CLEANUP_STATE: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+static EXPORT_OUTPUT_CLEANUP_STATE: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 
 fn get_task_worker_notify() -> &'static Notify {
     TASK_WORKER_NOTIFY.get_or_init(Notify::new)
 }
 
 fn cleanup_state() -> &'static Mutex<Option<Instant>> {
-    REPORT_OUTPUT_CLEANUP_STATE.get_or_init(|| Mutex::new(None))
+    EXPORT_OUTPUT_CLEANUP_STATE.get_or_init(|| Mutex::new(None))
 }
 
 fn configured_task_worker_count() -> usize {
@@ -107,7 +107,7 @@ pub fn kick_task_worker(pool: DbPool) {
 }
 
 pub(super) async fn process_one_task(pool: &DbPool) -> Result<bool, ApiError> {
-    maybe_cleanup_expired_report_outputs(pool).await?;
+    maybe_cleanup_expired_export_outputs(pool).await?;
 
     let Some(task) = claim_next_queued_task(pool).await? else {
         return Ok(false);
@@ -128,9 +128,9 @@ pub(super) async fn process_one_task(pool: &DbPool) -> Result<bool, ApiError> {
     Ok(true)
 }
 
-async fn maybe_cleanup_expired_report_outputs(pool: &DbPool) -> Result<(), ApiError> {
+async fn maybe_cleanup_expired_export_outputs(pool: &DbPool) -> Result<(), ApiError> {
     let cleanup_interval = get_config()
-        .map(|config| config.report_output_cleanup_interval_seconds)
+        .map(|config| config.export_output_cleanup_interval_seconds)
         .unwrap_or(300);
     let previous_last_run = {
         let mut state = cleanup_state().lock().map_err(|_| {
@@ -147,7 +147,7 @@ async fn maybe_cleanup_expired_report_outputs(pool: &DbPool) -> Result<(), ApiEr
         }
     };
 
-    if let Err(error) = purge_expired_report_outputs(pool).await {
+    if let Err(error) = purge_expired_export_outputs(pool).await {
         let mut state = cleanup_state().lock().map_err(|_| {
             ApiError::InternalServerError("Cleanup state lock poisoned".to_string())
         })?;
@@ -206,7 +206,7 @@ async fn process_claimed_task(pool: &DbPool, task: &TaskRecord) -> Result<(), Ap
 
     match TaskKind::from_db(&task.kind)? {
         TaskKind::Import => execute_import_task(pool, task, &principal, scopes).await,
-        TaskKind::Report => execute_report_task(pool, task, &principal, scopes).await,
+        TaskKind::Export => execute_export_task(pool, task, &principal, scopes).await,
         TaskKind::RemoteCall => execute_remote_call_task(pool, task, &principal, scopes).await,
         other => Err(ApiError::BadRequest(format!(
             "Task kind '{}' is not implemented",
@@ -223,7 +223,7 @@ pub(super) async fn mark_claimed_task_failed(
     let summary = sanitize_error_for_storage(err);
     let counts = match TaskKind::from_db(&task.kind)? {
         TaskKind::Import => task.count_import_results(pool).await?,
-        TaskKind::Report => TaskResultCounts::new(1, 0, 1)?,
+        TaskKind::Export => TaskResultCounts::new(1, 0, 1)?,
         TaskKind::RemoteCall => TaskResultCounts::new(1, 0, 1)?,
         _ => TaskResultCounts::default(),
     };

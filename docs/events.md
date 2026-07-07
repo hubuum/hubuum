@@ -62,7 +62,7 @@ GET /api/v1/classes/34/events
 GET /api/v1/classes/34/56/events
 GET /api/v1/iam/users/78/events
 GET /api/v1/iam/groups/90/events
-GET /api/v1/templates/11/events
+GET /api/v1/export-templates/11/events
 GET /api/v1/remote-targets/22/events
 ```
 
@@ -310,7 +310,7 @@ The subscription `routing` object holds the message recipients:
 `to` is accepted as an alias for `recipients`.
 
 The sink `config` holds the SMTP connection URL, sender, optional reply-to
-address, and MiniJinja templates for the subject and text body:
+address, and MiniJinja export templates for the subject and text body:
 
 ```json
 {

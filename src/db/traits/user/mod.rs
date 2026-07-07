@@ -9,10 +9,10 @@ use crate::models::search::{
 use crate::models::traits::ExpandCollectionFromMap;
 use crate::models::traits::user::UserCollectionAccessors;
 use crate::models::{
-    ClassGraphRow, Collection, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation,
+    ClassGraphRow, Collection, ExportIncludeRelatedDirection, ExportIncludeRelatedQuery,
+    ExportIncludeRelatedSort, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation,
     HubuumObject, HubuumObjectRelation, NewUser, Permissions, PermissionsList, PrincipalToken,
-    RelatedObjectGraphRow, RelatedObjectIncludeRow, ReportIncludeRelatedDirection,
-    ReportIncludeRelatedQuery, ReportIncludeRelatedSort, Token, UpdateUser, User, UserID,
+    RelatedObjectGraphRow, RelatedObjectIncludeRow, Token, UpdateUser, User, UserID,
 };
 use crate::traits::{ClassAccessors, CollectionAccessors, GroupAccessors, SelfAccessors};
 use crate::utilities::auth::hash_password;

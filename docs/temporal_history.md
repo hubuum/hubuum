@@ -14,7 +14,7 @@ Every versioned table has a companion `<table>_history` table that records all m
 - `collections` → `collections_history`
 - `hubuumclass_relation` → `hubuumclass_relation_history`
 - `hubuumobject_relation` → `hubuumobject_relation_history`
-- `report_templates` → `report_templates_history`
+- `export_templates` → `export_templates_history`
 - `remote_targets` → `remote_targets_history`
 
 ### Row Structure
@@ -98,7 +98,7 @@ CREATE TRIGGER hubuumclass_history_trg AFTER INSERT OR UPDATE OR DELETE ON hubuu
 ### No-Op Updates
 
 For temporal domain tables (`hubuumclass`, `hubuumobject`, `collections`,
-`report_templates`, and `remote_targets`), an `UPDATE` whose domain data is
+`export_templates`, and `remote_targets`), an `UPDATE` whose domain data is
 identical to the existing row is suppressed by a `BEFORE UPDATE` trigger.
 `updated_at` is intentionally excluded from the comparison.
 
@@ -221,7 +221,7 @@ DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY[
     'hubuumclass','hubuumobject','collections','hubuumclass_relation',
-    'hubuumobject_relation','report_templates','remote_targets',
+    'hubuumobject_relation','export_templates','remote_targets',
     'new_table'  -- Add here
   ]
   LOOP
@@ -316,7 +316,7 @@ ALTER TABLE users ADD COLUMN anonymized_at TIMESTAMP NULL;
 This column is NULL until anonymization occurs. It serves as:
 - A **flag** indicating the user has been anonymized.
 - An **audit timestamp** for when the anonymization was performed.
-- A **query filter** for compliance reporting (e.g., "show all anonymized users in the past 30 days").
+- A **query filter** for compliance exporting (e.g., "show all anonymized users in the past 30 days").
 
 ## Security Considerations
 
@@ -372,7 +372,7 @@ The temporal history system now exposes read-only access to historical versions 
 
 ### Endpoints
 
-For each of the five versioned resources (classes, objects, collections, report templates, remote targets), two history endpoints are available:
+For each of the five versioned resources (classes, objects, collections, export templates, remote targets), two history endpoints are available:
 
 #### 1. List History Versions (Cursor-Paginated)
 
@@ -382,7 +382,7 @@ Returns all historical versions for a specific entity, ordered newest-first by d
 - `GET /api/v1/classes/{class_id}/history`
 - `GET /api/v1/classes/{class_id}/{object_id}/history`
 - `GET /api/v1/collections/{collection_id}/history`
-- `GET /api/v1/templates/{template_id}/history`
+- `GET /api/v1/export-templates/{template_id}/history`
 - `GET /api/v1/remote-targets/{remote_target_id}/history`
 
 **Query Parameters:**
@@ -440,7 +440,7 @@ Returns the historical version of an entity that was valid at a specific instant
 - `GET /api/v1/classes/{class_id}/history/as-of?at=<rfc3339>`
 - `GET /api/v1/classes/{class_id}/{object_id}/history/as-of?at=<rfc3339>`
 - `GET /api/v1/collections/{collection_id}/history/as-of?at=<rfc3339>`
-- `GET /api/v1/templates/{template_id}/history/as-of?at=<rfc3339>`
+- `GET /api/v1/export-templates/{template_id}/history/as-of?at=<rfc3339>`
 - `GET /api/v1/remote-targets/{remote_target_id}/history/as-of?at=<rfc3339>`
 
 **Query Parameters:**
@@ -461,7 +461,7 @@ History read access mirrors the base resource's Read permission:
 - **Classes**: Requires `Permissions::ReadClass` on the class entity
 - **Objects**: Requires `Permissions::ReadObject` on the object entity
 - **Collections**: Requires `Permissions::ReadCollection` on the collection entity
-- **Report Templates**: Requires `Permissions::ReadTemplate` on the template's parent collection
+- **Export Templates**: Requires `Permissions::ReadTemplate` on the template's parent collection
 - **Remote Targets**: Requires `Permissions::ReadRemoteTarget` on the remote target's parent collection
 
 **Deleted Entity Handling:**

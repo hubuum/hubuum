@@ -79,7 +79,7 @@ pub(crate) async fn principal_permissions_response(
     let rows = principal_all_permissions(pool, principal).await?;
 
     // Fold (collection, group, permission-row) tuples into a per-collection,
-    // per-group report. BTreeMap keeps collections in a stable id order; groups
+    // per-group export. BTreeMap keeps collections in a stable id order; groups
     // with no granted flags are dropped.
     let mut by_collection: BTreeMap<i32, PrincipalCollectionPermissions> = BTreeMap::new();
     for (collection, group, permission) in rows {
@@ -327,6 +327,6 @@ pub async fn list_principal_permissions(
     let principal = pid.principal(&pool).await?;
     ensure_can_manage_principal(&pool, &requestor, &principal).await?;
 
-    let report = principal_permissions_response(&pool, &pid).await?;
-    Ok(ApiResponse::new(report, StatusCode::OK))
+    let export = principal_permissions_response(&pool, &pid).await?;
+    Ok(ApiResponse::new(export, StatusCode::OK))
 }

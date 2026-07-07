@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::config::{
-    DEFAULT_REPORT_TEMPLATE_FUEL, DEFAULT_REPORT_TEMPLATE_RECURSION_LIMIT, get_config,
+    DEFAULT_EXPORT_TEMPLATE_FUEL, DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT, get_config,
 };
 use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
@@ -932,13 +932,13 @@ fn remote_template_limits() -> (usize, u64) {
     get_config()
         .map(|config| {
             (
-                config.report_template_recursion_limit,
-                config.report_template_fuel,
+                config.export_template_recursion_limit,
+                config.export_template_fuel,
             )
         })
         .unwrap_or((
-            DEFAULT_REPORT_TEMPLATE_RECURSION_LIMIT,
-            DEFAULT_REPORT_TEMPLATE_FUEL,
+            DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT,
+            DEFAULT_EXPORT_TEMPLATE_FUEL,
         ))
 }
 

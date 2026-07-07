@@ -309,7 +309,7 @@ mod tests {
     }
 
     #[actix_rt::test]
-    async fn resolver_reports_unsupported_sink_kind() {
+    async fn resolver_exports_unsupported_sink_kind() {
         let now = chrono::Utc::now().naive_utc();
         let envelope = EventEnvelope {
             id: 1,

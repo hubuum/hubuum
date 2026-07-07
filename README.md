@@ -54,8 +54,8 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/iam/users
 - The `openapi.info.version` value is tied to `Cargo.toml` package version (`CARGO_PKG_VERSION`).
 - `docs/openapi.json` is the canonical committed spec for the current code.
 - CI generates the spec and fails if it drifts from `docs/openapi.json`.
-- The report endpoint is documented in [docs/report_api.md](docs/report_api.md).
-- Stored template examples are documented in [docs/template_guide.md](docs/template_guide.md).
+- The export endpoint is documented in [docs/export_api.md](docs/export_api.md).
+- Stored template examples are documented in [docs/export_template_guide.md](docs/export_template_guide.md).
 - Remote target actions are documented in [docs/remote_targets.md](docs/remote_targets.md).
 - Event audit and delivery behavior is documented in [docs/events.md](docs/events.md).
 - Temporal history, actor capture, and GDPR anonymization are documented in [docs/temporal_history.md](docs/temporal_history.md).
@@ -133,7 +133,7 @@ inspecting and releasing throttled scopes), see [docs/login_rate_limiting.md](do
 ### Configuration Reference
 
 - The canonical environment-variable reference lives in [docs/quick_start.md](docs/quick_start.md).
-- Task-worker and async report-template tuning settings are documented there alongside the core server, DB, auth, and TLS settings.
+- Task-worker and async export-template tuning settings are documented there alongside the core server, DB, auth, and TLS settings.
 
 ### Deployment
 

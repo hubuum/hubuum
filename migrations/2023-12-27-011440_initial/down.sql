@@ -3,14 +3,14 @@
 
 -- Tables (reverse dependency order)
 DROP TABLE IF EXISTS remote_targets_history CASCADE;
-DROP TABLE IF EXISTS report_templates_history CASCADE;
+DROP TABLE IF EXISTS export_templates_history CASCADE;
 DROP TABLE IF EXISTS hubuumobject_relation_history CASCADE;
 DROP TABLE IF EXISTS hubuumclass_relation_history CASCADE;
 DROP TABLE IF EXISTS collections_history CASCADE;
 DROP TABLE IF EXISTS hubuumobject_history CASCADE;
 DROP TABLE IF EXISTS hubuumclass_history CASCADE;
 DROP TABLE IF EXISTS remote_call_results CASCADE;
-DROP TABLE IF EXISTS report_task_outputs CASCADE;
+DROP TABLE IF EXISTS export_task_outputs CASCADE;
 DROP TABLE IF EXISTS import_task_results CASCADE;
 DROP TABLE IF EXISTS event_deliveries CASCADE;
 DROP TABLE IF EXISTS event_subscriptions CASCADE;
@@ -20,7 +20,7 @@ DROP TABLE IF EXISTS tasks CASCADE;
 DROP TABLE IF EXISTS token_scopes CASCADE;
 DROP TABLE IF EXISTS tokens CASCADE;
 DROP TABLE IF EXISTS remote_targets CASCADE;
-DROP TABLE IF EXISTS report_templates CASCADE;
+DROP TABLE IF EXISTS export_templates CASCADE;
 DROP TABLE IF EXISTS hubuumobject_relation CASCADE;
 DROP TABLE IF EXISTS hubuumclass_reachability CASCADE;
 DROP TABLE IF EXISTS hubuumclass_relation CASCADE;

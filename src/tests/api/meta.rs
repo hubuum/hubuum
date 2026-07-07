@@ -124,7 +124,7 @@ mod tests {
         assert_eq!(entry["locked"], true);
         let id = entry["id"].as_str().unwrap().to_string();
 
-        // Releasing it by id reports success.
+        // Releasing it by id exports success.
         let resp = delete_request(
             &context.pool,
             &context.admin_token,

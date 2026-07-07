@@ -86,7 +86,7 @@ pub async fn principal_on_from_backend<S: AuthzSubject, T: CollectionAccessors>(
 /// All of a principal's direct permission rows across every collection, as
 /// `(collection, group, permission-row)` tuples — one per `(collection, group)`
 /// where a group the principal belongs to holds a permission. The handler folds
-/// these into a per-collection, per-group report.
+/// these into a per-collection, per-group export.
 pub async fn principal_all_permissions_from_backend<S: AuthzSubject>(
     pool: &DbPool,
     principal: S,

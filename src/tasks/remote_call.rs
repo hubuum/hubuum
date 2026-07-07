@@ -7,9 +7,9 @@ use std::time::Instant;
 use tracing::warn;
 
 use crate::config::{
+    DEFAULT_EXPORT_TEMPLATE_FUEL, DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT,
     DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS, DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES,
-    DEFAULT_REMOTE_CALL_TIMEOUT_MS, DEFAULT_REPORT_TEMPLATE_FUEL,
-    DEFAULT_REPORT_TEMPLATE_RECURSION_LIMIT, get_config,
+    DEFAULT_REMOTE_CALL_TIMEOUT_MS, get_config,
 };
 use crate::db::DbPool;
 use crate::db::traits::remote_target::insert_remote_call_result;
@@ -319,13 +319,13 @@ fn remote_template_limits() -> (usize, u64) {
     get_config()
         .map(|config| {
             (
-                config.report_template_recursion_limit,
-                config.report_template_fuel,
+                config.export_template_recursion_limit,
+                config.export_template_fuel,
             )
         })
         .unwrap_or((
-            DEFAULT_REPORT_TEMPLATE_RECURSION_LIMIT,
-            DEFAULT_REPORT_TEMPLATE_FUEL,
+            DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT,
+            DEFAULT_EXPORT_TEMPLATE_FUEL,
         ))
 }
 
