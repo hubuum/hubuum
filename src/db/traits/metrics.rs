@@ -6,13 +6,13 @@ use crate::db::with_connection;
 use crate::errors::ApiError;
 use crate::models::TaskStatus;
 use crate::schema::{
-    groups, hubuumclass, hubuumobject, namespaces, remote_targets, service_accounts, tasks, users,
+    collections, groups, hubuumclass, hubuumobject, remote_targets, service_accounts, tasks, users,
 };
 use crate::traits::BackendContext;
 
 #[derive(Debug, Clone, Copy)]
 pub struct InventoryMetricsSnapshot {
-    pub namespaces: i64,
+    pub collections: i64,
     pub classes: i64,
     pub objects: i64,
     pub users: i64,
@@ -47,7 +47,7 @@ where
     async fn metrics_inventory_snapshot(&self) -> Result<InventoryMetricsSnapshot, ApiError> {
         with_connection(self.db_pool(), |conn| {
             Ok::<_, diesel::result::Error>(InventoryMetricsSnapshot {
-                namespaces: namespaces::table.select(count_star()).get_result(conn)?,
+                collections: collections::table.select(count_star()).get_result(conn)?,
                 classes: hubuumclass::table.select(count_star()).get_result(conn)?,
                 objects: hubuumobject::table.select(count_star()).get_result(conn)?,
                 users: users::table.select(count_star()).get_result(conn)?,

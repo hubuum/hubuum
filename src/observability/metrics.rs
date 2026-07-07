@@ -591,7 +591,7 @@ fn store_inventory_snapshot(metrics: &Metrics, snapshot: InventoryMetricsSnapsho
 }
 
 fn record_inventory_snapshot(metrics: &Metrics, row: &InventoryMetricsSnapshot) {
-    record_inventory(metrics, "namespaces", row.namespaces);
+    record_inventory(metrics, "collections", row.collections);
     record_inventory(metrics, "classes", row.classes);
     record_inventory(metrics, "objects", row.objects);
     record_inventory(metrics, "users", row.users);

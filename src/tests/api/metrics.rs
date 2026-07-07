@@ -41,7 +41,7 @@ async fn metrics_endpoint_exports_prometheus_text(#[future(awt)] test_context: T
     assert!(body.contains("# TYPE hubuum_http_requests_total counter"));
     assert!(body.contains("hubuum_http_requests_total"));
     assert!(body.contains("hubuum_inventory_entities"));
-    assert!(body.contains("entity_type=\"namespaces\""));
+    assert!(body.contains("entity_type=\"collections\""));
 }
 
 #[actix_web::test]

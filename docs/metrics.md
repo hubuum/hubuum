@@ -15,7 +15,7 @@ Database-backed gauges are refreshed on a short in-process cache and are best-ef
 
 ## Cardinality Rules
 
-Metric labels must stay bounded. Hubuum metrics do not use usernames, user IDs, client IPs, raw URL paths, object IDs, class names, namespace names, rendered remote URLs, template names, idempotency keys, or error messages.
+Metric labels must stay bounded. Hubuum metrics do not use usernames, user IDs, client IPs, raw URL paths, object IDs, class names, collection names, rendered remote URLs, template names, idempotency keys, or error messages.
 
 Use admin JSON/API endpoints for detailed high-cardinality views.
 
@@ -51,7 +51,7 @@ Use admin JSON/API endpoints for detailed high-cardinality views.
 | `hubuum_remote_call_results_total` | `method`, `status_family`, `outcome` | Remote call result counters |
 | `hubuum_login_attempts_total` | `outcome` | Login attempts by success, bad credentials, rate-limited, or internal error |
 | `hubuum_login_limiter_entries` | `state` | Active and locked login limiter entries |
-| `hubuum_inventory_entities` | `entity_type` | Total namespaces, classes, objects, users, groups, service accounts, and remote targets |
+| `hubuum_inventory_entities` | `entity_type` | Total collections, classes, objects, users, groups, service accounts, and remote targets |
 
 ## Alert Starting Points
 
