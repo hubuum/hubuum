@@ -198,7 +198,7 @@ ALTER TABLE hubuumclass_history ADD COLUMN color varchar;
 
 ### History Closure and ID Reuse
 
-The trigger's `UPDATE` logic (lines 64, 70) that closes old history versions relies on a critical assumption:
+The trigger's `UPDATE` logic that closes superseded history versions relies on a critical assumption:
 
 ```sql
 UPDATE <table>_history SET valid_to = <ts> WHERE id = <id> AND valid_to IS NULL

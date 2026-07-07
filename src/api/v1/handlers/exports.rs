@@ -163,10 +163,10 @@ impl HydrationBudget {
     }
 }
 
-// Reproduces the per-root capacity check the old per-root query path applied:
-// `remaining_related_capacity()` reserves one slot for the root, the query fetched
-// `cap + 1` rows, and a root over `cap` errored with the fetched count (`cap + 1`).
-// Roots are processed in `items` order so the shared budget shrinks exactly as before.
+// Preserve the per-root capacity contract: reserve one slot for the root, inspect
+// at most `cap + 1` related rows, and return the fetched count when a root exceeds
+// its remaining capacity. Roots are processed in `items` order so the shared budget
+// shrinks predictably.
 fn take_related_within_budget(
     budget: &HydrationBudget,
     mut related: Vec<HubuumObjectWithPath>,

@@ -1,7 +1,7 @@
     -- Greenfield squashed schema. Defines the entire database in final form:
     -- principal abstraction (humans + service accounts), principal-centric group
     -- membership and tokens, rich token lifecycle + scopes, and the folded
-    -- remote-target schema. No backwards-compatibility shims.
+    -- remote-target schema.
 
     ----------------------
     ---- Drop (reverse dependency order; CASCADE covers the rest)

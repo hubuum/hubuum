@@ -209,8 +209,8 @@ async fn load_principal_with_user(
     })
 }
 
-/// Resolve the self-target principal id from the path (`principal_id` preferred,
-/// `user_id` accepted for not-yet-renamed routes).
+/// Resolve the self-target principal id from the path. Principal routes use
+/// `principal_id`; user routes use `user_id`.
 fn self_target_id(path: &actix_web::dev::Path<actix_web::dev::Url>) -> Result<i32, ApiError> {
     if let Ok(id) = path.query("principal_id").parse::<i32>() {
         return Ok(id);
