@@ -5,7 +5,7 @@ and *how* a request is authorized. It also covers **service accounts** (non-huma
 API principals) and **token scopes**, which narrow what an automated credential may
 do.
 
-For the namespace/group permission model itself (what `ReadCollection`,
+For the collection/group permission model itself (what `ReadCollection`,
 `CreateClass`, … mean), see [permissions.md](permissions.md). This page is about
 identity, tokens, and the authority gates that sit in front of those permissions.
 
@@ -61,7 +61,7 @@ Key consequences:
 
 Hubuum authorization is entirely **group → collection** (see
 [permissions.md](permissions.md)). Principals do not hold permissions directly;
-they hold **group memberships**, and groups hold permissions on namespaces
+they hold **group memberships**, and groups hold permissions on collections
 (collections).
 
 - Membership lives in `group_memberships(principal_id, group_id)` — it is
@@ -71,12 +71,12 @@ they hold **group memberships**, and groups hold permissions on namespaces
   `group_memberships`, so the same authorization path serves humans and service
   accounts identically.
 - A principal is an **admin** iff it is a member of the configured admin group
-  (`HUBUUM_ADMIN_GROUPNAME`, default `admin`). Admin membership grants namespace
+  (`HUBUUM_ADMIN_GROUPNAME`, default `admin`). Admin membership grants collection
   authority — but, by itself, it does **not** make a service account a human IAM
   administrator (see [Privilege separation](#privilege-separation)).
 
 A freshly created service account has its `owner_group_id` set for *management*
-purposes only; that does **not** grant it any runtime namespace permission. A
+purposes only; that does **not** grant it any runtime collection permission. A
 service account gets permissions only via an explicit `group_memberships` insert
 (i.e. by being added to a group).
 
@@ -146,7 +146,7 @@ Enforcement details:
   scopes — the admin "all access" fast paths apply only when the token is unscoped.
 - Scopes apply to *every* authority-bearing path, not just `can!` checks:
   search/list/report visibility is intersected with scopes too. An admin's scoped
-  token, for example, lists only `scope ∩ grant` namespaces.
+  token, for example, lists only `scope ∩ grant` collections.
 - Scopes may name permissions the principal does not currently hold — scoping only
   narrows, so unheld permissions in a scope set are simply inert.
 
@@ -236,8 +236,8 @@ serves both kinds:
 | `GET /api/v1/iam/principals/{principal_id}/tokens` | List token metadata (never the hash) | same as above |
 | `POST /api/v1/iam/principals/{principal_id}/tokens/{token_id}/revoke` | Soft-revoke a token | same as above |
 | `GET /api/v1/iam/principals/{principal_id}/groups` | List the principal's groups | same as above |
-| `GET /api/v1/iam/principals/{principal_id}/permissions` | Effective permissions across **all** namespaces, grouped by granting group | same as above |
-| `GET /api/v1/namespaces/{namespace_id}/permissions/principal/{principal_id}` | Effective permissions on a single namespace | namespace read authority |
+| `GET /api/v1/iam/principals/{principal_id}/permissions` | Effective permissions across **all** collections, grouped by granting group | same as above |
+| `GET /api/v1/collections/{collection_id}/permissions/principal/{principal_id}` | Effective permissions on a single collection | collection read authority |
 | `POST` / `DELETE /api/v1/iam/groups/{group_id}/members/{principal_id}` | Add/remove a member (human or SA) | **admin only** |
 
 Mint accepts `name`, `description`, `expires_at`, and `scopes`.
@@ -249,7 +249,7 @@ Two safety properties worth calling out:
   cannot revoke principal B's token by guessing its id (mismatch → `404`).
 - **Group-membership mutation is admin-only.** Being a human owner-group member lets
   you manage an SA and its credentials, but it does **not** let you grant that SA
-  runtime namespace access by adding it to arbitrary groups.
+  runtime collection access by adding it to arbitrary groups.
 
 ---
 
@@ -261,7 +261,7 @@ Each handler declares the authority it requires. There are two families.
 
 - `Authenticated` — resolves the principal and, if the token is scoped, its scope
   set. Every downstream authority decision threads the scopes into the fail-closed
-  pre-filter. All resource and task-creating endpoints (namespaces, classes,
+  pre-filter. All resource and task-creating endpoints (collections, classes,
   objects, relations, templates, search, reports, imports, remote-target invocation)
   use this.
 
@@ -299,7 +299,7 @@ IAM/credential-management surfaces.
 The model guarantees, structurally, that **a service account is never a human IAM
 administrator**, regardless of its group membership or token:
 
-- An SA may be granted runtime namespace authority by being placed in a group (even
+- An SA may be granted runtime collection authority by being placed in a group (even
   the admin group) — that is a deliberate, grantable capability.
 - But the `kind = 'human'` gate on the IAM/management extractors means an SA can
   never create/modify users, manage service accounts, manage credentials, or mutate

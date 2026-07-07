@@ -3,7 +3,7 @@ mod tests {
     use actix_web::{http::StatusCode, test};
 
     use crate::models::{
-        Namespace, NewHubuumClass, NewNamespaceWithAssignee, NewReportTemplate, Permissions,
+        Collection, NewCollectionWithAssignee, NewHubuumClass, NewReportTemplate, Permissions,
         PermissionsList, ReportContentType, ReportLimits, ReportMissingDataPolicy, ReportScopeKind,
         ReportTemplate, ReportTemplateKind, UpdateReportTemplate,
     };
@@ -16,12 +16,12 @@ mod tests {
 
     const TEMPLATES_ENDPOINT: &str = "/api/v1/templates";
 
-    async fn create_namespace(pool: &crate::db::DbPool, suffix: &str) -> Namespace {
+    async fn create_collection(pool: &crate::db::DbPool, suffix: &str) -> Collection {
         let admin_group = ensure_admin_group(pool).await;
 
-        NewNamespaceWithAssignee {
-            name: format!("template_ns_{suffix}"),
-            description: "template test namespace".to_string(),
+        NewCollectionWithAssignee {
+            name: format!("template_collection_{suffix}"),
+            description: "template test collection".to_string(),
             group_id: admin_group.id,
         }
         .save_without_events(pool)
@@ -29,9 +29,9 @@ mod tests {
         .unwrap()
     }
 
-    fn new_template_payload(namespace_id: i32, name: &str) -> NewReportTemplate {
+    fn new_template_payload(collection_id: i32, name: &str) -> NewReportTemplate {
         NewReportTemplate {
-            namespace_id,
+            collection_id,
             name: name.to_string(),
             description: "template description".to_string(),
             content_type: ReportContentType::TextPlain,
@@ -48,12 +48,12 @@ mod tests {
     }
 
     fn new_template_payload_with_content_type(
-        namespace_id: i32,
+        collection_id: i32,
         name: &str,
         content_type: ReportContentType,
     ) -> NewReportTemplate {
         NewReportTemplate {
-            namespace_id,
+            collection_id,
             name: name.to_string(),
             description: "template description".to_string(),
             content_type,
@@ -71,7 +71,7 @@ mod tests {
 
     fn empty_update_template_payload() -> UpdateReportTemplate {
         UpdateReportTemplate {
-            namespace_id: None,
+            collection_id: None,
             name: None,
             description: None,
             template: None,
@@ -89,14 +89,14 @@ mod tests {
     #[actix_web::test]
     async fn test_template_crud_admin() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let namespace = create_namespace(&pool, "crud").await;
+        let collection = create_collection(&pool, "crud").await;
 
-        let create_payload = new_template_payload(namespace.id, "tmpl-crud");
+        let create_payload = new_template_payload(collection.id, "tmpl-crud");
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &create_payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
         let created: ReportTemplate = test::read_body_json(resp).await;
 
-        assert_eq!(created.namespace_id, namespace.id);
+        assert_eq!(created.collection_id, collection.id);
         assert_eq!(created.name, "tmpl-crud");
         assert_eq!(created.content_type, ReportContentType::TextPlain);
 
@@ -111,7 +111,7 @@ mod tests {
         assert_eq!(fetched.id, created.id);
 
         let patch_payload = UpdateReportTemplate {
-            namespace_id: None,
+            collection_id: None,
             name: Some("tmpl-crud-v2".to_string()),
             description: Some("updated".to_string()),
             template: Some(
@@ -151,34 +151,34 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::NOT_FOUND).await;
 
-        namespace.delete_without_events(&pool).await.unwrap();
+        collection.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
     async fn test_template_list_total_count_matches_paginated_results() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let namespace = create_namespace(&pool, "pagination").await;
+        let collection = create_collection(&pool, "pagination").await;
 
         let expected_ids = vec![
             post_request(
                 &pool,
                 &admin_token,
                 TEMPLATES_ENDPOINT,
-                &new_template_payload(namespace.id, "tmpl-page-a"),
+                &new_template_payload(collection.id, "tmpl-page-a"),
             )
             .await,
             post_request(
                 &pool,
                 &admin_token,
                 TEMPLATES_ENDPOINT,
-                &new_template_payload(namespace.id, "tmpl-page-b"),
+                &new_template_payload(collection.id, "tmpl-page-b"),
             )
             .await,
             post_request(
                 &pool,
                 &admin_token,
                 TEMPLATES_ENDPOINT,
-                &new_template_payload(namespace.id, "tmpl-page-c"),
+                &new_template_payload(collection.id, "tmpl-page-c"),
             )
             .await,
         ];
@@ -197,12 +197,12 @@ mod tests {
                 10,
                 |cursor| match cursor {
                     Some(cursor) => format!(
-                        "{TEMPLATES_ENDPOINT}?namespace_id={}&sort=id&limit=2&cursor={cursor}",
-                        namespace.id
+                        "{TEMPLATES_ENDPOINT}?collection_id={}&sort=id&limit=2&cursor={cursor}",
+                        collection.id
                     ),
                     None => format!(
-                        "{TEMPLATES_ENDPOINT}?namespace_id={}&sort=id&limit=2",
-                        namespace.id
+                        "{TEMPLATES_ENDPOINT}?collection_id={}&sort=id&limit=2",
+                        collection.id
                     ),
                 },
             )
@@ -217,28 +217,28 @@ mod tests {
             created_ids
         );
 
-        namespace.delete_without_events(&pool).await.unwrap();
+        collection.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
     async fn test_template_create_requires_permission() {
         let (pool, _admin_token, normal_token) = setup_pool_and_tokens().await;
-        let namespace = create_namespace(&pool, "forbidden_create").await;
+        let collection = create_collection(&pool, "forbidden_create").await;
 
-        let create_payload = new_template_payload(namespace.id, "tmpl-forbidden");
+        let create_payload = new_template_payload(collection.id, "tmpl-forbidden");
         let resp = post_request(&pool, &normal_token, TEMPLATES_ENDPOINT, &create_payload).await;
         assert_response_status(resp, StatusCode::FORBIDDEN).await;
 
-        namespace.delete_without_events(&pool).await.unwrap();
+        collection.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
     async fn test_template_create_rejects_legacy_handlebars_syntax() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let namespace = create_namespace(&pool, "legacy_syntax").await;
+        let collection = create_collection(&pool, "legacy_syntax").await;
 
         let payload = NewReportTemplate {
-            namespace_id: namespace.id,
+            collection_id: collection.id,
             name: "tmpl-legacy".to_string(),
             description: "legacy syntax".to_string(),
             content_type: ReportContentType::TextPlain,
@@ -256,16 +256,16 @@ mod tests {
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
 
-        namespace.delete_without_events(&pool).await.unwrap();
+        collection.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
-    async fn test_template_create_accepts_same_namespace_composition() {
+    async fn test_template_create_accepts_same_collection_composition() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let namespace = create_namespace(&pool, "same_namespace_composition").await;
+        let collection = create_collection(&pool, "same_collection_composition").await;
 
         let layout = NewReportTemplate {
-            namespace_id: namespace.id,
+            collection_id: collection.id,
             name: "layout.html".to_string(),
             description: "layout".to_string(),
             content_type: ReportContentType::TextHtml,
@@ -283,7 +283,7 @@ mod tests {
         assert_response_status(resp, StatusCode::CREATED).await;
 
         let child = NewReportTemplate {
-            namespace_id: namespace.id,
+            collection_id: collection.id,
             name: "child.html".to_string(),
             description: "child".to_string(),
             content_type: ReportContentType::TextHtml,
@@ -302,16 +302,16 @@ mod tests {
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &child).await;
         assert_response_status(resp, StatusCode::CREATED).await;
 
-        namespace.delete_without_events(&pool).await.unwrap();
+        collection.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
     async fn test_template_create_accepts_curated_helper_filters_and_functions() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let namespace = create_namespace(&pool, "helper_validation").await;
+        let collection = create_collection(&pool, "helper_validation").await;
 
         let payload = NewReportTemplate {
-            namespace_id: namespace.id,
+            collection_id: collection.id,
             name: "report.hosts".to_string(),
             description: "helper coverage".to_string(),
             content_type: ReportContentType::TextPlain,
@@ -329,17 +329,17 @@ mod tests {
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
         assert_response_status(resp, StatusCode::CREATED).await;
 
-        namespace.delete_without_events(&pool).await.unwrap();
+        collection.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
-    async fn test_template_create_rejects_cross_namespace_composition() {
+    async fn test_template_create_rejects_cross_collection_composition() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let source_namespace = create_namespace(&pool, "cross_namespace_source").await;
-        let target_namespace = create_namespace(&pool, "cross_namespace_target").await;
+        let source_collection = create_collection(&pool, "cross_collection_source").await;
+        let target_collection = create_collection(&pool, "cross_collection_target").await;
 
         let layout = NewReportTemplate {
-            namespace_id: source_namespace.id,
+            collection_id: source_collection.id,
             name: "layout.html".to_string(),
             description: "layout".to_string(),
             content_type: ReportContentType::TextHtml,
@@ -357,7 +357,7 @@ mod tests {
         assert_response_status(resp, StatusCode::CREATED).await;
 
         let child = NewReportTemplate {
-            namespace_id: target_namespace.id,
+            collection_id: target_collection.id,
             name: "child.html".to_string(),
             description: "child".to_string(),
             content_type: ReportContentType::TextHtml,
@@ -376,17 +376,23 @@ mod tests {
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &child).await;
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
 
-        source_namespace.delete_without_events(&pool).await.unwrap();
-        target_namespace.delete_without_events(&pool).await.unwrap();
+        source_collection
+            .delete_without_events(&pool)
+            .await
+            .unwrap();
+        target_collection
+            .delete_without_events(&pool)
+            .await
+            .unwrap();
     }
 
     #[actix_web::test]
-    async fn test_template_move_requires_create_on_target_namespace() {
+    async fn test_template_move_requires_create_on_target_collection() {
         let (pool, admin_token, _normal_token) = setup_pool_and_tokens().await;
-        let source_namespace = create_namespace(&pool, "move_src").await;
-        let target_namespace = create_namespace(&pool, "move_dst").await;
+        let source_collection = create_collection(&pool, "move_src").await;
+        let target_collection = create_collection(&pool, "move_dst").await;
 
-        let create_payload = new_template_payload(source_namespace.id, "tmpl-move");
+        let create_payload = new_template_payload(source_collection.id, "tmpl-move");
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &create_payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
         let created: ReportTemplate = test::read_body_json(resp).await;
@@ -399,7 +405,7 @@ mod tests {
             .unwrap();
         let user_token = test_user.create_token(&pool).await.unwrap().get_token();
 
-        source_namespace
+        source_collection
             .grant_without_events(
                 &pool,
                 test_group.id,
@@ -409,7 +415,7 @@ mod tests {
             .unwrap();
 
         let move_payload = UpdateReportTemplate {
-            namespace_id: Some(target_namespace.id),
+            collection_id: Some(target_collection.id),
             name: None,
             description: None,
             template: None,
@@ -425,7 +431,7 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::FORBIDDEN).await;
 
-        target_namespace
+        target_collection
             .grant_without_events(
                 &pool,
                 test_group.id,
@@ -443,20 +449,26 @@ mod tests {
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let moved: ReportTemplate = test::read_body_json(resp).await;
-        assert_eq!(moved.namespace_id, target_namespace.id);
+        assert_eq!(moved.collection_id, target_collection.id);
 
-        source_namespace.delete_without_events(&pool).await.unwrap();
-        target_namespace.delete_without_events(&pool).await.unwrap();
+        source_collection
+            .delete_without_events(&pool)
+            .await
+            .unwrap();
+        target_collection
+            .delete_without_events(&pool)
+            .await
+            .unwrap();
     }
 
     #[actix_web::test]
     async fn test_template_move_conflict_on_target_name() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let source_namespace = create_namespace(&pool, "conflict_src").await;
-        let target_namespace = create_namespace(&pool, "conflict_dst").await;
+        let source_collection = create_collection(&pool, "conflict_src").await;
+        let target_collection = create_collection(&pool, "conflict_dst").await;
 
-        let src_payload = new_template_payload(source_namespace.id, "shared-name");
-        let dst_payload = new_template_payload(target_namespace.id, "shared-name");
+        let src_payload = new_template_payload(source_collection.id, "shared-name");
+        let dst_payload = new_template_payload(target_collection.id, "shared-name");
 
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &src_payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
@@ -466,7 +478,7 @@ mod tests {
         assert_response_status(resp, StatusCode::CREATED).await;
 
         let move_payload = UpdateReportTemplate {
-            namespace_id: Some(target_namespace.id),
+            collection_id: Some(target_collection.id),
             name: None,
             description: None,
             template: None,
@@ -482,32 +494,38 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::CONFLICT).await;
 
-        source_namespace.delete_without_events(&pool).await.unwrap();
-        target_namespace.delete_without_events(&pool).await.unwrap();
+        source_collection
+            .delete_without_events(&pool)
+            .await
+            .unwrap();
+        target_collection
+            .delete_without_events(&pool)
+            .await
+            .unwrap();
     }
 
     #[actix_web::test]
-    async fn test_template_create_duplicate_name_in_namespace_returns_conflict() {
+    async fn test_template_create_duplicate_name_in_collection_returns_conflict() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let namespace = create_namespace(&pool, "duplicate_create").await;
+        let collection = create_collection(&pool, "duplicate_create").await;
 
-        let payload = new_template_payload(namespace.id, "tmpl-duplicate");
+        let payload = new_template_payload(collection.id, "tmpl-duplicate");
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
         assert_response_status(resp, StatusCode::CREATED).await;
 
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
         assert_response_status(resp, StatusCode::CONFLICT).await;
 
-        namespace.delete_without_events(&pool).await.unwrap();
+        collection.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
-    async fn test_template_rename_conflict_in_same_namespace_returns_conflict() {
+    async fn test_template_rename_conflict_in_same_collection_returns_conflict() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let namespace = create_namespace(&pool, "rename_conflict").await;
+        let collection = create_collection(&pool, "rename_conflict").await;
 
-        let payload_a = new_template_payload(namespace.id, "tmpl-rename-a");
-        let payload_b = new_template_payload(namespace.id, "tmpl-rename-b");
+        let payload_a = new_template_payload(collection.id, "tmpl-rename-a");
+        let payload_b = new_template_payload(collection.id, "tmpl-rename-b");
 
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload_a).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
@@ -518,7 +536,7 @@ mod tests {
         let created_b: ReportTemplate = test::read_body_json(resp).await;
 
         let rename_payload = UpdateReportTemplate {
-            namespace_id: None,
+            collection_id: None,
             name: Some(created_a.name),
             description: None,
             template: None,
@@ -534,16 +552,16 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::CONFLICT).await;
 
-        namespace.delete_without_events(&pool).await.unwrap();
+        collection.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
-    async fn test_template_move_requires_update_on_source_namespace() {
+    async fn test_template_move_requires_update_on_source_collection() {
         let (pool, admin_token, _normal_token) = setup_pool_and_tokens().await;
-        let source_namespace = create_namespace(&pool, "move_missing_source_update_src").await;
-        let target_namespace = create_namespace(&pool, "move_missing_source_update_dst").await;
+        let source_collection = create_collection(&pool, "move_missing_source_update_src").await;
+        let target_collection = create_collection(&pool, "move_missing_source_update_dst").await;
 
-        let create_payload = new_template_payload(source_namespace.id, "tmpl-move-no-update");
+        let create_payload = new_template_payload(source_collection.id, "tmpl-move-no-update");
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &create_payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
         let created: ReportTemplate = test::read_body_json(resp).await;
@@ -556,7 +574,7 @@ mod tests {
             .unwrap();
         let user_token = test_user.create_token(&pool).await.unwrap().get_token();
 
-        target_namespace
+        target_collection
             .grant_without_events(
                 &pool,
                 test_group.id,
@@ -566,7 +584,7 @@ mod tests {
             .unwrap();
 
         let move_payload = UpdateReportTemplate {
-            namespace_id: Some(target_namespace.id),
+            collection_id: Some(target_collection.id),
             name: None,
             description: None,
             template: None,
@@ -582,8 +600,14 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::FORBIDDEN).await;
 
-        source_namespace.delete_without_events(&pool).await.unwrap();
-        target_namespace.delete_without_events(&pool).await.unwrap();
+        source_collection
+            .delete_without_events(&pool)
+            .await
+            .unwrap();
+        target_collection
+            .delete_without_events(&pool)
+            .await
+            .unwrap();
         test_group.delete_without_events(&pool).await.unwrap();
         test_user.delete_without_events(&pool).await.unwrap();
     }
@@ -591,11 +615,11 @@ mod tests {
     #[actix_web::test]
     async fn test_template_list_filters_by_read_template_permission() {
         let (pool, admin_token, _normal_token) = setup_pool_and_tokens().await;
-        let visible_namespace = create_namespace(&pool, "list_visible").await;
-        let hidden_namespace = create_namespace(&pool, "list_hidden").await;
+        let visible_collection = create_collection(&pool, "list_visible").await;
+        let hidden_collection = create_collection(&pool, "list_hidden").await;
 
-        let visible_payload = new_template_payload(visible_namespace.id, "tmpl-visible");
-        let hidden_payload = new_template_payload(hidden_namespace.id, "tmpl-hidden");
+        let visible_payload = new_template_payload(visible_collection.id, "tmpl-visible");
+        let hidden_payload = new_template_payload(hidden_collection.id, "tmpl-hidden");
 
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &visible_payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
@@ -613,7 +637,7 @@ mod tests {
             .unwrap();
         let user_token = test_user.create_token(&pool).await.unwrap().get_token();
 
-        visible_namespace
+        visible_collection
             .grant_without_events(
                 &pool,
                 test_group.id,
@@ -637,11 +661,14 @@ mod tests {
                 .any(|template| template.id == hidden_template.id)
         );
 
-        visible_namespace
+        visible_collection
             .delete_without_events(&pool)
             .await
             .unwrap();
-        hidden_namespace.delete_without_events(&pool).await.unwrap();
+        hidden_collection
+            .delete_without_events(&pool)
+            .await
+            .unwrap();
         test_group.delete_without_events(&pool).await.unwrap();
         test_user.delete_without_events(&pool).await.unwrap();
     }
@@ -649,15 +676,15 @@ mod tests {
     #[actix_web::test]
     async fn test_template_list_keeps_admin_visibility_without_template_permission_rows() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let namespace = create_namespace(&pool, "admin_list_visibility").await;
+        let collection = create_collection(&pool, "admin_list_visibility").await;
         let admin_group = ensure_admin_group(&pool).await;
 
-        let payload = new_template_payload(namespace.id, "tmpl-admin-visible");
+        let payload = new_template_payload(collection.id, "tmpl-admin-visible");
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
         let created: ReportTemplate = test::read_body_json(resp).await;
 
-        namespace
+        collection
             .revoke_without_events(
                 &pool,
                 admin_group.id,
@@ -685,15 +712,15 @@ mod tests {
 
         assert!(listed.iter().any(|template| template.id == created.id));
 
-        namespace.delete_without_events(&pool).await.unwrap();
+        collection.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
     async fn test_template_get_and_delete_require_permissions() {
         let (pool, admin_token, normal_token) = setup_pool_and_tokens().await;
-        let namespace = create_namespace(&pool, "get_delete_forbidden").await;
+        let collection = create_collection(&pool, "get_delete_forbidden").await;
 
-        let payload = new_template_payload(namespace.id, "tmpl-get-delete-forbidden");
+        let payload = new_template_payload(collection.id, "tmpl-get-delete-forbidden");
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
         let created: ReportTemplate = test::read_body_json(resp).await;
@@ -714,31 +741,31 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::FORBIDDEN).await;
 
-        namespace.delete_without_events(&pool).await.unwrap();
+        collection.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
     async fn test_template_create_rejects_invalid_content_type() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let namespace = create_namespace(&pool, "invalid_content_type").await;
+        let collection = create_collection(&pool, "invalid_content_type").await;
 
         let payload = new_template_payload_with_content_type(
-            namespace.id,
+            collection.id,
             "tmpl-invalid-content-type",
             ReportContentType::ApplicationJson,
         );
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
 
-        namespace.delete_without_events(&pool).await.unwrap();
+        collection.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
     async fn test_fragment_template_cannot_be_executed() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let namespace = create_namespace(&pool, "fragment_execution").await;
+        let collection = create_collection(&pool, "fragment_execution").await;
 
-        let payload = new_template_payload(namespace.id, "partial.not-executable");
+        let payload = new_template_payload(collection.id, "partial.not-executable");
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
         let created: ReportTemplate = test::read_body_json(resp).await;
@@ -752,17 +779,18 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
 
-        namespace.delete_without_events(&pool).await.unwrap();
+        collection.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
-    async fn test_report_template_rejects_class_in_another_namespace() {
+    async fn test_report_template_rejects_class_in_another_collection() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let template_namespace = create_namespace(&pool, "report_class_template_ns").await;
-        let class_namespace = create_namespace(&pool, "report_class_target_ns").await;
+        let template_collection =
+            create_collection(&pool, "report_class_template_collection").await;
+        let class_collection = create_collection(&pool, "report_class_target_collection").await;
         let class = NewHubuumClass {
             name: "foreign-template-class".to_string(),
-            namespace_id: class_namespace.id,
+            collection_id: class_collection.id,
             json_schema: None,
             validate_schema: Some(false),
             description: "foreign class".to_string(),
@@ -772,7 +800,7 @@ mod tests {
         .unwrap();
 
         let payload = NewReportTemplate {
-            namespace_id: template_namespace.id,
+            collection_id: template_collection.id,
             name: "report.foreign-class".to_string(),
             description: "bad report template".to_string(),
             content_type: ReportContentType::TextPlain,
@@ -790,20 +818,20 @@ mod tests {
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
 
-        template_namespace
+        template_collection
             .delete_without_events(&pool)
             .await
             .unwrap();
-        class_namespace.delete_without_events(&pool).await.unwrap();
+        class_collection.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
     async fn test_patch_report_template_class_scope_to_collection_scope() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let namespace = create_namespace(&pool, "patch_scope_change").await;
+        let collection = create_collection(&pool, "patch_scope_change").await;
         let class = NewHubuumClass {
             name: "patch-scope-class".to_string(),
-            namespace_id: namespace.id,
+            collection_id: collection.id,
             json_schema: None,
             validate_schema: Some(false),
             description: "class".to_string(),
@@ -814,7 +842,7 @@ mod tests {
 
         // Start as an objects_in_class report bound to a class.
         let create_payload = NewReportTemplate {
-            namespace_id: namespace.id,
+            collection_id: collection.id,
             name: "report.scope-change".to_string(),
             description: "scope change report".to_string(),
             content_type: ReportContentType::TextPlain,
@@ -835,7 +863,7 @@ mod tests {
         // PATCH to a collection scope without clearing class_id explicitly; the carried-forward
         // class_id must be dropped rather than rejected.
         let patch = UpdateReportTemplate {
-            scope_kind: Some(ReportScopeKind::Namespaces),
+            scope_kind: Some(ReportScopeKind::Collections),
             ..empty_update_template_payload()
         };
         let resp = patch_request(
@@ -847,19 +875,19 @@ mod tests {
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let patched: ReportTemplate = test::read_body_json(resp).await;
-        assert_eq!(patched.scope_kind, Some(ReportScopeKind::Namespaces));
+        assert_eq!(patched.scope_kind, Some(ReportScopeKind::Collections));
         assert_eq!(patched.class_id, None);
 
-        namespace.delete_without_events(&pool).await.unwrap();
+        collection.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
     async fn test_patch_report_template_clears_nullable_defaults() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let namespace = create_namespace(&pool, "patch_clear_defaults").await;
+        let collection = create_collection(&pool, "patch_clear_defaults").await;
         let class = NewHubuumClass {
             name: "patch-clear-class".to_string(),
-            namespace_id: namespace.id,
+            collection_id: collection.id,
             json_schema: None,
             validate_schema: Some(false),
             description: "class".to_string(),
@@ -869,7 +897,7 @@ mod tests {
         .unwrap();
 
         let created = NewReportTemplate {
-            namespace_id: namespace.id,
+            collection_id: collection.id,
             name: "report.clear-defaults".to_string(),
             description: "clear defaults report".to_string(),
             content_type: ReportContentType::TextPlain,
@@ -927,16 +955,16 @@ mod tests {
         assert_eq!(patched.scope_kind, Some(ReportScopeKind::ObjectsInClass));
         assert_eq!(patched.class_id, Some(class.id));
 
-        namespace.delete_without_events(&pool).await.unwrap();
+        collection.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
     async fn test_report_template_rejects_class_id_for_collection_scope() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let namespace = create_namespace(&pool, "collection_scope_class_id").await;
+        let collection = create_collection(&pool, "collection_scope_class_id").await;
         let class = NewHubuumClass {
             name: "collection-scope-class".to_string(),
-            namespace_id: namespace.id,
+            collection_id: collection.id,
             json_schema: None,
             validate_schema: Some(false),
             description: "class".to_string(),
@@ -946,13 +974,13 @@ mod tests {
         .unwrap();
 
         let payload = NewReportTemplate {
-            namespace_id: namespace.id,
-            name: "report.namespaces-with-class".to_string(),
+            collection_id: collection.id,
+            name: "report.collections-with-class".to_string(),
             description: "invalid collection report".to_string(),
             content_type: ReportContentType::TextPlain,
             template: "{% for item in items %}{{ item.name }}{% endfor %}".to_string(),
             kind: ReportTemplateKind::Report,
-            scope_kind: Some(ReportScopeKind::Namespaces),
+            scope_kind: Some(ReportScopeKind::Collections),
             class_id: Some(class.id),
             default_query: None,
             include: None,
@@ -964,17 +992,17 @@ mod tests {
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
 
-        namespace.delete_without_events(&pool).await.unwrap();
+        collection.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
     async fn test_template_list_can_filter_by_kind() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
-        let namespace = create_namespace(&pool, "kind_filter").await;
+        let collection = create_collection(&pool, "kind_filter").await;
 
         let class = NewHubuumClass {
             name: "kind-filter-class".to_string(),
-            namespace_id: namespace.id,
+            collection_id: collection.id,
             json_schema: None,
             validate_schema: Some(false),
             description: "class for kind filtering".to_string(),
@@ -983,12 +1011,12 @@ mod tests {
         .await
         .unwrap();
 
-        let fragment = new_template_payload(namespace.id, "partial.kind-fragment");
+        let fragment = new_template_payload(collection.id, "partial.kind-fragment");
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &fragment).await;
         assert_response_status(resp, StatusCode::CREATED).await;
 
         let report = NewReportTemplate {
-            namespace_id: namespace.id,
+            collection_id: collection.id,
             name: "report.kind-report".to_string(),
             description: "report template".to_string(),
             content_type: ReportContentType::TextPlain,
@@ -1009,8 +1037,8 @@ mod tests {
             &pool,
             &admin_token,
             &format!(
-                "{TEMPLATES_ENDPOINT}?namespace_id={}&kind=report",
-                namespace.id
+                "{TEMPLATES_ENDPOINT}?collection_id={}&kind=report",
+                collection.id
             ),
         )
         .await;
@@ -1024,8 +1052,8 @@ mod tests {
             &pool,
             &admin_token,
             &format!(
-                "{TEMPLATES_ENDPOINT}?namespace_id={}&kind=fragment",
-                namespace.id
+                "{TEMPLATES_ENDPOINT}?collection_id={}&kind=fragment",
+                collection.id
             ),
         )
         .await;
@@ -1039,15 +1067,15 @@ mod tests {
         );
         assert_eq!(fragments[0].name, "partial.kind-fragment");
 
-        namespace.delete_without_events(&pool).await.unwrap();
+        collection.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
     async fn test_template_update_content_requires_update_permission() {
         let (pool, admin_token, _normal_token) = setup_pool_and_tokens().await;
-        let namespace = create_namespace(&pool, "update_content_forbidden").await;
+        let collection = create_collection(&pool, "update_content_forbidden").await;
 
-        let create_payload = new_template_payload(namespace.id, "tmpl-update-test");
+        let create_payload = new_template_payload(collection.id, "tmpl-update-test");
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &create_payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
         let created: ReportTemplate = test::read_body_json(resp).await;
@@ -1061,7 +1089,7 @@ mod tests {
         let user_token = test_user.create_token(&pool).await.unwrap().get_token();
 
         // Grant only ReadTemplate, not UpdateTemplate
-        namespace
+        collection
             .grant_without_events(
                 &pool,
                 test_group.id,
@@ -1071,7 +1099,7 @@ mod tests {
             .unwrap();
 
         let update_payload = UpdateReportTemplate {
-            namespace_id: None,
+            collection_id: None,
             name: None,
             description: Some("updated description".to_string()),
             template: None,
@@ -1088,7 +1116,7 @@ mod tests {
         assert_response_status(resp, StatusCode::FORBIDDEN).await;
 
         // Now grant UpdateTemplate and verify it works
-        namespace
+        collection
             .grant_without_events(
                 &pool,
                 test_group.id,
@@ -1108,7 +1136,7 @@ mod tests {
         let updated: ReportTemplate = test::read_body_json(resp).await;
         assert_eq!(updated.description, "updated description");
 
-        namespace.delete_without_events(&pool).await.unwrap();
+        collection.delete_without_events(&pool).await.unwrap();
         test_group.delete_without_events(&pool).await.unwrap();
         test_user.delete_without_events(&pool).await.unwrap();
     }
@@ -1116,9 +1144,9 @@ mod tests {
     #[actix_web::test]
     async fn test_template_delete_requires_delete_permission() {
         let (pool, admin_token, _normal_token) = setup_pool_and_tokens().await;
-        let namespace = create_namespace(&pool, "delete_forbidden").await;
+        let collection = create_collection(&pool, "delete_forbidden").await;
 
-        let create_payload = new_template_payload(namespace.id, "tmpl-delete-test");
+        let create_payload = new_template_payload(collection.id, "tmpl-delete-test");
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &create_payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
         let created: ReportTemplate = test::read_body_json(resp).await;
@@ -1132,7 +1160,7 @@ mod tests {
         let user_token = test_user.create_token(&pool).await.unwrap().get_token();
 
         // Grant only ReadTemplate and UpdateTemplate, not DeleteTemplate
-        namespace
+        collection
             .grant_without_events(
                 &pool,
                 test_group.id,
@@ -1150,7 +1178,7 @@ mod tests {
         assert_response_status(resp, StatusCode::FORBIDDEN).await;
 
         // Now grant DeleteTemplate and verify it works
-        namespace
+        collection
             .grant_without_events(
                 &pool,
                 test_group.id,
@@ -1167,7 +1195,7 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::NO_CONTENT).await;
 
-        namespace.delete_without_events(&pool).await.unwrap();
+        collection.delete_without_events(&pool).await.unwrap();
         test_group.delete_without_events(&pool).await.unwrap();
         test_user.delete_without_events(&pool).await.unwrap();
     }
@@ -1178,18 +1206,18 @@ mod tests {
         use crate::traits::{CanSave, CanUpdate};
 
         let (pool, admin_token, _normal_token) = setup_pool_and_tokens().await;
-        let namespace = create_namespace(&pool, "template_history_api").await;
+        let collection = create_collection(&pool, "template_history_api").await;
         let event_context = hubuum_events_core::EventContext::system();
 
         // Create then update so there are two versions.
         let created = NewReportTemplate {
-            namespace_id: namespace.id,
+            collection_id: collection.id,
             name: "template_history_api".to_string(),
             description: "v1".to_string(),
             content_type: crate::models::ReportContentType::TextPlain,
             template: "content".to_string(),
             kind: crate::models::ReportTemplateKind::Report,
-            scope_kind: Some(crate::models::ReportScopeKind::Namespaces),
+            scope_kind: Some(crate::models::ReportScopeKind::Collections),
             class_id: None,
             default_query: None,
             include: None,
@@ -1202,7 +1230,7 @@ mod tests {
         .unwrap();
 
         UpdateReportTemplate {
-            namespace_id: None,
+            collection_id: None,
             name: None,
             description: Some("v2".to_string()),
             template: None,
@@ -1252,7 +1280,7 @@ mod tests {
         let snap: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(snap["description"], "v1");
 
-        namespace.delete(&pool, &event_context).await.unwrap();
+        collection.delete(&pool, &event_context).await.unwrap();
     }
 
     #[actix_web::test]

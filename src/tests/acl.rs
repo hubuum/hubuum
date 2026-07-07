@@ -63,7 +63,7 @@ async fn test_endpoint_access() {
         ("/api/v1/iam/users", Method::GET, AccessLevel::Admin, None),
         (normal_user_endpoint, Method::GET, AccessLevel::User, None),
         (admin_user_endpoint, Method::GET, AccessLevel::Admin, None),
-        ("/api/v1/namespaces", Method::GET, AccessLevel::User, None),
+        ("/api/v1/collections", Method::GET, AccessLevel::User, None),
     ];
 
     let access_levels = vec![AccessLevel::Open, AccessLevel::User, AccessLevel::Admin];

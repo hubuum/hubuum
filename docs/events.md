@@ -14,7 +14,7 @@ Audit readers query the canonical stream with `GET /api/v1/events`. The
 endpoint is cursor-paginated and supports the normal pagination headers:
 
 ```http
-GET /api/v1/events?entity_type=namespace&action=created&limit=50&sort=-occurred_at
+GET /api/v1/events?entity_type=collection&action=created&limit=50&sort=-occurred_at
 Authorization: Bearer <token>
 ```
 
@@ -22,29 +22,29 @@ Supported audit filters are:
 
 | Filter | Meaning |
 | ------ | ------- |
-| `entity_type` | Event entity type, such as `namespace`, `class`, `object`, or `task` |
+| `entity_type` | Event entity type, such as `collection`, `class`, `object`, or `task` |
 | `entity_id` | Integer id of the affected entity |
 | `action` | Event action for the entity type, such as `created`, `updated`, or `deleted` |
 | `actor_kind` | Actor class, such as `user`, `service_account`, or `system` |
 | `actor_user_id` | Principal id for user or service-account actors |
-| `namespace_id` | Namespace directly attached to the event |
+| `collection_id` | Collection directly attached to the event |
 | `occurred_after` | Lower `occurred_at` bound; accepts RFC 3339 or `YYYY-MM-DD` |
 | `occurred_before` | Upper `occurred_at` bound; accepts RFC 3339 or `YYYY-MM-DD` |
 
 Supported sorts are `id` and `occurred_at`, with `-` for descending order.
 For example, `sort=-occurred_at` returns the newest visible events first.
 
-Audit visibility is namespace-scoped:
+Audit visibility is collection-scoped:
 
-- A caller sees namespace events only for namespaces where the caller has
+- A caller sees collection events only for collections where the caller has
   `ReadAudit`.
-- Events that reference related namespaces in event metadata are visible to a
-  caller with `ReadAudit` on one of those related namespaces.
-  Related-namespace-only visibility returns the event identity, actor, summary,
+- Events that reference related collections in event metadata are visible to a
+  caller with `ReadAudit` on one of those related collections.
+  Related-collection-only visibility returns the event identity, actor, summary,
   metadata, and schema version, but redacts `before` and `after` snapshots.
   A caller sees snapshots only when they also have direct `ReadAudit` on the
-  event's own namespace.
-- Namespace-less events are visible only to unscoped admins.
+  event's own collection.
+- Collection-less events are visible only to unscoped admins.
 - Scoped tokens are constrained by both their token scope and the caller's
   underlying permissions.
 
@@ -54,10 +54,10 @@ authorization model and returns task-focused history.
 
 Convenience audit routes are available for common resources. These routes are
 thin wrappers around `GET /api/v1/events`, apply the same `ReadAudit` scoping,
-and accept the same pagination, actor, action, namespace, and time filters:
+and accept the same pagination, actor, action, collection, and time filters:
 
 ```http
-GET /api/v1/namespaces/12/events
+GET /api/v1/collections/12/events
 GET /api/v1/classes/34/events
 GET /api/v1/classes/34/56/events
 GET /api/v1/iam/users/78/events
@@ -76,9 +76,9 @@ External delivery is configured in two layers:
 
 - Event sinks are global transport definitions. Admins manage them through
   `/api/v1/event-sinks`.
-- Event subscriptions are namespace-scoped routing rules. Callers need
-  `ManageEventSubscription` on the namespace and manage them through
-  `/api/v1/namespaces/{namespace_id}/event-subscriptions`.
+- Event subscriptions are collection-scoped routing rules. Callers need
+  `ManageEventSubscription` on the collection and manage them through
+  `/api/v1/collections/{collection_id}/event-subscriptions`.
 
 A sink describes how to deliver. A subscription describes which events should
 be delivered to a sink. The primary subscription filters are `entity_types` and
@@ -91,8 +91,8 @@ Supported `filter` fields are:
 
 | Field | Meaning |
 | ----- | ------- |
-| `namespace_ids` | Match events directly attached to one of these namespaces |
-| `related_namespace_ids` | Match events whose metadata references one of these related namespaces |
+| `collection_ids` | Match events directly attached to one of these collections |
+| `related_collection_ids` | Match events whose metadata references one of these related collections |
 | `entity_ids` | Match affected entity ids |
 | `entity_names` | Match affected entity names exactly |
 | `actor_kinds` | Match actor kinds: `user`, `system`, or `worker` |
@@ -103,7 +103,7 @@ Supported `filter` fields are:
 Each field is optional. Empty and omitted fields match all events for that
 dimension. Multiple populated fields are combined with AND; values inside one
 field are combined with OR. The filter can only narrow the subscription's
-namespace-scoped visibility. It cannot deliver unrelated namespace events to a
+collection-scoped visibility. It cannot deliver unrelated collection events to a
 subscription.
 
 Example sink:
@@ -122,14 +122,14 @@ Example sink:
 }
 ```
 
-Example namespace subscription:
+Example collection subscription:
 
 ```json
 {
   "sink_id": 1,
-  "name": "namespace-lifecycle-to-inventory",
-  "description": "Send namespace lifecycle events to inventory",
-  "entity_types": ["namespace"],
+  "name": "collection-lifecycle-to-inventory",
+  "description": "Send collection lifecycle events to inventory",
+  "entity_types": ["collection"],
   "actions": ["created", "updated", "deleted"],
   "filter": {
     "actor_kinds": ["user"]
@@ -143,13 +143,13 @@ Example namespace subscription:
 
 For email sinks, create narrow subscriptions rather than sending every audit
 event to human recipients. For example, this subscription sends only failed
-task lifecycle events from a namespace to the configured mailbox:
+task lifecycle events from a collection to the configured mailbox:
 
 ```json
 {
   "sink_id": 2,
   "name": "task-failures-to-ops",
-  "description": "Email ops when namespace tasks fail",
+  "description": "Email ops when collection tasks fail",
   "entity_types": ["task"],
   "actions": ["failed"],
   "filter": {
@@ -239,7 +239,7 @@ Literal credentials in sink URIs are rejected; use `{secret}` plus `secret_ref`
 instead.
 
 The routing key is always `{entity_type}.{action}`, such as
-`namespace.created`. Hubuum sets the AMQP `message_id` property to the event
+`collection.created`. Hubuum sets the AMQP `message_id` property to the event
 UUID and enables publisher confirms for each delivery attempt. Consumers should
 deduplicate by `event_id` or `message_id`.
 

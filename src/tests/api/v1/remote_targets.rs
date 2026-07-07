@@ -37,8 +37,8 @@ mod tests {
     const LOCALHOST_CERT_DER_B64: &str = "MIIDHzCCAgegAwIBAgIUT7YypqM2YgvdrXLHby8OFyeNEEIwDQYJKoZIhvcNAQELBQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MDYyMzA0MDEyMloXDTI2MDYyNDA0MDEyMlowFDESMBAGA1UEAwwJbG9jYWxob3N0MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAn3A378veyRzeP7MSS/S61EPpE+v9Z+fGlFC4qB8SOUHvO1D6+QZrqcKkUJZb/HKnQyDydMNMBJfjswid5l18ogPVFmfGInGp50T3ceH8i1DAnN1Bj6g6h/QgKe64elkYDukaoHkqLGiQ7Nwsllm8UqwdgFa+B1hYD6uoYAcd/4gv5ClxOx6bkwganvWas+PXyHEEdYW7YBRAyPrJHIInWjck5k5UJPn5Vy551ptGpurvUqf2M7VcmnxjHAldTnc9br+chIvLtyulWg8pBAdFwu+4ZM0jWQpTRhVi5lWB+q7mmI8Da4izV0/K2a1bDnSN6j4rmAzEknok0fMoGXzWjQIDAQABo2kwZzAdBgNVHQ4EFgQUDp9XEjhqPBb8Ef0vyJXXDqLjcDwwHwYDVR0jBBgwFoAUDp9XEjhqPBb8Ef0vyJXXDqLjcDwwDwYDVR0TAQH/BAUwAwEB/zAUBgNVHREEDTALgglsb2NhbGhvc3QwDQYJKoZIhvcNAQELBQADggEBAJFxe1GtT9g/PI0Ht912WKwCJc8Oj0U49zUK8TRe9VZHMaJriozeS+4P6I6RhmMR4RV2bPtvjQjzv9ZCHoGoiPUupHd+PUGn8oyezDWoGLuwlPE0dQyn3OAdV1no6q/HI6PFThHTd2o/cLl3nfyIu56sCRLiwrMg6xH3UZ6VJ4qjtxTuyYloMNrb09Uyo7G1Qpw7qfiOB8whyJcjC8Gx1H1JTmF/h/CU2u79yAcVIRA4N6zJLAdtsseUjyTb5CAagmvZ6wZBqB+XNCwXzV09+56zt5fFtopF7mBgQcE21wtlzoKKLUyivc5FzgOHPv3YDJiooYyFXcOOobY1B0k8ih8=";
     const LOCALHOST_KEY_DER_B64: &str = "MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCfcDfvy97JHN4/sxJL9LrUQ+kT6/1n58aUULioHxI5Qe87UPr5BmupwqRQllv8cqdDIPJ0w0wEl+OzCJ3mXXyiA9UWZ8YicannRPdx4fyLUMCc3UGPqDqH9CAp7rh6WRgO6RqgeSosaJDs3CyWWbxSrB2AVr4HWFgPq6hgBx3/iC/kKXE7HpuTCBqe9Zqz49fIcQR1hbtgFEDI+skcgidaNyTmTlQk+flXLnnWm0am6u9Sp/YztVyafGMcCV1Odz1uv5yEi8u3K6VaDykEB0XC77hkzSNZClNGFWLmVYH6ruaYjwNriLNXT8rZrVsOdI3qPiuYDMSSeiTR8ygZfNaNAgMBAAECggEAAQH66ebA1Y9whamibqggtQiyrd6HAohCnR1CEhpOWCcaXPbuAtJNkUapRSf72gAAND4v3j2ikL1S+P9Yxhc7lBclbMoV+3uxk5+qFYVxzNlzsz1RoLUMs0IkCtEt6L/UyIaLDjLGUCavrIAKuxNKlM0/EOOgCcyljFuUUAIKIwOcOKv7rG/t7GC+wZMTT3oyICgihwsN7D527BTKRlk6zcSCj38B21drfgLAMreGRt8NGcByhzo3BuazRkYyEw8SP9LCEbDQKwWGR2xJtxwnSHcrvYvSklhDAB3EP29URstGUxapRg4re25e3MRVIjVdYtCeGt8Ie71UZgO/lgwYAQKBgQDPL192FKjTUwqfhjICpXYiNbbseXw7dvvNfLOZvuE20zPTkwwEWkpF2dxQX44RfYS625jzj9GHRijKwL6HlV89i+pNw+N2OWLUdWkkeMVqqknSPgJavZ4O3WKpk+cSgVm0VgaxNfvwoNi+TnLQblP6YFoXMG/luY3wYg0CviHzAQKBgQDFAPGIU/G6SYAnD5SJcojUXKzH3ivvciBYuLJt4FGUlfym9fnkQNbGNJAL4c3otPTcR/r0br2JIrxod5/w4c93Q4EKmXEwMdW26npxDR8uO/caSvFGZweikqxIj0Im5UlGV3cuanFb+u0jZWjCjFxMO2sWGRMdwrgQm+GyG7z/jQKBgA+vxIiKM+YcKXe+j1bH9FPOwVTSNefCsHn0cRy46RBfmVLxlT1XILx9LEMhmP4WBNCpA8GdJ/4X/8qqIULeumFMkKbmp/gxjBwN77IFOt1Cm2hBraf1J1x0wp2YRyyNgp82zDbqoXKsmvx9sA+76rvQQ8Hxtucrz2Vd5yJIBwYBAoGAaLd7q8+TKkZvjFPHzNfIy7kHTqZWDE1JzF9A2Q7nzmd7iPQvBJlCkNDX0LkSTqQBlCXey5chwIdqRs1vgwdE1ExZh1zQwaF7zGMO+pDTBixxyNQVNCsH7+6vDVK5AxvVu0I6471IzG+xJaN98AvT8+GRpollk+gxFwMFETuVVvECgYAJ8qBnL/YnusNmORCdItqG6adl+0H4ohikxNurIP8cBRjKGJ6XSC2Qs3BmljiqL9aLluKTcbhOBKlH6iq63vA8KxF7JjVBj2NXClDh6MO6hr/4gWTi7VMpC3CWT80IijoMAth37y+MImdaJhG2kut+XcT14KFakVJM1JCbe0Ygdw==";
 
-    /// Create a namespace + class + object owned by the admin group so the admin token holds
-    /// every remote-target permission for it. Returns (namespace_id, class_id, object_id).
+    /// Create a collection + class + object owned by the admin group so the admin token holds
+    /// every remote-target permission for it. Returns (collection_id, class_id, object_id).
     async fn setup_object(context: &TestContext, label: &str) -> (i32, i32, i32) {
         let fixture = context
             .object_fixture(
@@ -46,14 +46,14 @@ mod tests {
                 NewHubuumClass {
                     name: context.scoped_name(&format!("{label}-class")),
                     description: "remote target test class".to_string(),
-                    namespace_id: 0,
+                    collection_id: 0,
                     json_schema: None,
                     validate_schema: Some(false),
                 },
                 vec![NewHubuumObject {
                     name: context.scoped_name(&format!("{label}-object")),
                     description: "remote target test object".to_string(),
-                    namespace_id: 0,
+                    collection_id: 0,
                     hubuum_class_id: 0,
                     data: serde_json::json!({"hostname": "host-01"}),
                 }],
@@ -62,21 +62,21 @@ mod tests {
             .unwrap();
 
         (
-            fixture.namespace_id(),
+            fixture.collection_id(),
             fixture.class_id(),
             fixture.objects[0].id,
         )
     }
 
-    async fn create_object_in_namespace(
+    async fn create_object_in_collection(
         context: &TestContext,
-        namespace_id: i32,
+        collection_id: i32,
         label: &str,
     ) -> (i32, i32) {
         let class = NewHubuumClass {
             name: context.scoped_name(&format!("{label}-class")),
             description: "remote target alternate class".to_string(),
-            namespace_id,
+            collection_id,
             json_schema: None,
             validate_schema: Some(false),
         }
@@ -86,7 +86,7 @@ mod tests {
         let object = NewHubuumObject {
             name: context.scoped_name(&format!("{label}-object")),
             description: "remote target alternate object".to_string(),
-            namespace_id,
+            collection_id,
             hubuum_class_id: class.id,
             data: serde_json::json!({"hostname": "other-host"}),
         }
@@ -98,13 +98,13 @@ mod tests {
     }
 
     fn target_payload(
-        namespace_id: i32,
+        collection_id: i32,
         class_id: i32,
         name: &str,
         url_template: &str,
     ) -> serde_json::Value {
         target_payload_with_subjects(
-            namespace_id,
+            collection_id,
             Some(class_id),
             name,
             url_template,
@@ -113,14 +113,14 @@ mod tests {
     }
 
     fn target_payload_with_subjects(
-        namespace_id: i32,
+        collection_id: i32,
         class_id: Option<i32>,
         name: &str,
         url_template: &str,
         allowed_subject_types: serde_json::Value,
     ) -> serde_json::Value {
         serde_json::json!({
-            "namespace_id": namespace_id,
+            "collection_id": collection_id,
             "class_id": class_id,
             "name": name,
             "description": "test target",
@@ -161,11 +161,11 @@ mod tests {
         format!("{RT_ENDPOINT}/{target_id}/invoke")
     }
 
-    fn namespace_invoke_body(namespace_id: i32) -> serde_json::Value {
+    fn collection_invoke_body(collection_id: i32) -> serde_json::Value {
         serde_json::json!({
             "subject": {
-                "type": "namespace",
-                "namespace_id": namespace_id,
+                "type": "collection",
+                "collection_id": collection_id,
             }
         })
     }
@@ -188,13 +188,13 @@ mod tests {
         })
     }
 
-    async fn setup_cross_namespace_object_relation(
+    async fn setup_cross_collection_object_relation(
         context: &TestContext,
         label: &str,
     ) -> (i32, i32, i32, HubuumClassRelation, HubuumObjectRelation) {
-        let (from_namespace_id, from_class_id, from_object_id) =
+        let (from_collection_id, from_class_id, from_object_id) =
             setup_object(context, &format!("{label}_from")).await;
-        let (to_namespace_id, to_class_id, to_object_id) =
+        let (to_collection_id, to_class_id, to_object_id) =
             setup_object(context, &format!("{label}_to")).await;
         let class_relation = NewHubuumClassRelation {
             from_hubuum_class_id: from_class_id,
@@ -215,8 +215,8 @@ mod tests {
         .unwrap();
 
         (
-            from_namespace_id,
-            to_namespace_id,
+            from_collection_id,
+            to_collection_id,
             from_class_id,
             class_relation,
             object_relation,
@@ -225,7 +225,7 @@ mod tests {
 
     async fn create_target(
         context: &TestContext,
-        namespace_id: i32,
+        collection_id: i32,
         class_id: i32,
         name: &str,
         url_template: &str,
@@ -234,7 +234,7 @@ mod tests {
             &context.pool,
             &context.admin_token,
             RT_ENDPOINT,
-            target_payload(namespace_id, class_id, name, url_template),
+            target_payload(collection_id, class_id, name, url_template),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
@@ -358,11 +358,11 @@ mod tests {
     #[actix_web::test]
     async fn crud_lifecycle_as_admin() {
         let context = TestContext::new().await;
-        let (namespace_id, class_id, _object_id) = setup_object(&context, "rt_crud").await;
+        let (collection_id, class_id, _object_id) = setup_object(&context, "rt_crud").await;
 
         // Create
         let create = serde_json::json!({
-            "namespace_id": namespace_id,
+            "collection_id": collection_id,
             "class_id": class_id,
             "name": "crud-target",
             "description": "created",
@@ -375,7 +375,7 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
         let location = header_value(&resp, "Location").expect("Location header");
         let created: RemoteTarget = test::read_body_json(resp).await;
-        assert_eq!(created.namespace_id, namespace_id);
+        assert_eq!(created.collection_id, collection_id);
         assert_eq!(location, format!("{RT_ENDPOINT}/{}", created.id));
         assert_eq!(
             created.body_template.as_deref(),
@@ -433,7 +433,7 @@ mod tests {
     #[actix_web::test]
     async fn create_requires_create_permission() {
         let context = TestContext::new().await;
-        let (namespace_id, class_id, _) = setup_object(&context, "rt_perm").await;
+        let (collection_id, class_id, _) = setup_object(&context, "rt_perm").await;
 
         // Normal user with no permission is forbidden.
         let resp = post_request(
@@ -441,7 +441,7 @@ mod tests {
             &context.normal_token,
             RT_ENDPOINT,
             target_payload(
-                namespace_id,
+                collection_id,
                 class_id,
                 "perm-target",
                 "https://service.example.com/hook",
@@ -450,18 +450,18 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::FORBIDDEN).await;
 
-        // After granting CreateRemoteTarget on the object's namespace, the request succeeds.
+        // After granting CreateRemoteTarget on the object's collection, the request succeeds.
         let group = create_test_group(&context.pool).await;
         group
             .add_member_without_events(&context.pool, &context.normal_user)
             .await
             .unwrap();
-        let namespace = crate::models::NamespaceID::new(namespace_id)
+        let collection = crate::models::CollectionID::new(collection_id)
             .unwrap()
             .instance(&context.pool)
             .await
             .unwrap();
-        namespace
+        collection
             .grant_without_events(
                 &context.pool,
                 group.id,
@@ -475,7 +475,7 @@ mod tests {
             &context.normal_token,
             RT_ENDPOINT,
             target_payload(
-                namespace_id,
+                collection_id,
                 class_id,
                 "perm-target",
                 "https://service.example.com/hook",
@@ -488,7 +488,7 @@ mod tests {
     #[actix_web::test]
     async fn create_rejects_invalid_template_and_secret() {
         let context = TestContext::new().await;
-        let (namespace_id, class_id, _) = setup_object(&context, "rt_invalid").await;
+        let (collection_id, class_id, _) = setup_object(&context, "rt_invalid").await;
 
         // Broken minijinja template.
         let resp = post_request(
@@ -496,7 +496,7 @@ mod tests {
             &context.admin_token,
             RT_ENDPOINT,
             target_payload(
-                namespace_id,
+                collection_id,
                 class_id,
                 "bad-template",
                 "https://x.example.com/{{",
@@ -507,7 +507,7 @@ mod tests {
 
         // Auth secret reference with an illegal character.
         let payload = serde_json::json!({
-            "namespace_id": namespace_id,
+            "collection_id": collection_id,
             "class_id": class_id,
             "name": "bad-secret",
             "description": "test",
@@ -523,14 +523,14 @@ mod tests {
     #[actix_web::test]
     async fn create_rejects_empty_or_duplicate_allowed_subject_types() {
         let context = TestContext::new().await;
-        let (namespace_id, class_id, _) = setup_object(&context, "rt_subject_validation").await;
+        let (collection_id, class_id, _) = setup_object(&context, "rt_subject_validation").await;
 
         let resp = post_request(
             &context.pool,
             &context.admin_token,
             RT_ENDPOINT,
             target_payload_with_subjects(
-                namespace_id,
+                collection_id,
                 None,
                 "empty-subjects",
                 "https://x.example.com/hook",
@@ -545,7 +545,7 @@ mod tests {
             &context.admin_token,
             RT_ENDPOINT,
             target_payload_with_subjects(
-                namespace_id,
+                collection_id,
                 Some(class_id),
                 "duplicate-subjects",
                 "https://x.example.com/hook",
@@ -557,14 +557,14 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn create_object_target_requires_class_scope_in_target_namespace() {
+    async fn create_object_target_requires_class_scope_in_target_collection() {
         let context = TestContext::new().await;
-        let (namespace_id, _class_id, _) = setup_object(&context, "rt_class_scope").await;
-        let (other_namespace_id, other_class_id, _) =
+        let (collection_id, _class_id, _) = setup_object(&context, "rt_class_scope").await;
+        let (other_collection_id, other_class_id, _) =
             setup_object(&context, "rt_class_scope_other").await;
 
         let payload_without_class = serde_json::json!({
-            "namespace_id": namespace_id,
+            "collection_id": collection_id,
             "name": "object-without-class",
             "description": "test",
             "method": "post",
@@ -581,7 +581,7 @@ mod tests {
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
 
         let payload_with_foreign_class = serde_json::json!({
-            "namespace_id": namespace_id,
+            "collection_id": collection_id,
             "class_id": other_class_id,
             "name": "object-with-foreign-class",
             "description": "test",
@@ -589,7 +589,7 @@ mod tests {
             "url_template": "https://x.example.com/hook",
             "allowed_subject_types": ["object"],
         });
-        assert_ne!(namespace_id, other_namespace_id);
+        assert_ne!(collection_id, other_collection_id);
         let resp = post_request(
             &context.pool,
             &context.admin_token,
@@ -601,15 +601,15 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn move_requires_create_on_target_namespace() {
+    async fn move_requires_create_on_target_collection() {
         let context = TestContext::new().await;
-        let (source_ns, class_id, _) = setup_object(&context, "rt_move_src").await;
-        let target_namespace = context.namespace_fixture("rt_move_dst").await;
-        let target_ns = target_namespace.namespace.id;
+        let (source_collection, class_id, _) = setup_object(&context, "rt_move_src").await;
+        let target_collection = context.collection_fixture("rt_move_dst").await;
+        let target_collection_id = target_collection.collection.id;
 
         let created = create_target(
             &context,
-            source_ns,
+            source_collection,
             class_id,
             "move-target",
             "https://x.example.com/h",
@@ -626,12 +626,12 @@ mod tests {
             .unwrap();
         let user_token = user.create_token(&context.pool).await.unwrap().get_token();
 
-        let source_namespace = crate::models::NamespaceID::new(source_ns)
+        let source_collection = crate::models::CollectionID::new(source_collection)
             .unwrap()
             .instance(&context.pool)
             .await
             .unwrap();
-        source_namespace
+        source_collection
             .grant_without_events(
                 &context.pool,
                 group.id,
@@ -641,9 +641,9 @@ mod tests {
             .unwrap();
 
         let move_payload = serde_json::json!({
-            "namespace_id": target_ns,
+            "collection_id": target_collection_id,
             "class_id": null,
-            "allowed_subject_types": ["namespace"],
+            "allowed_subject_types": ["collection"],
         });
         let resp = patch_request(
             &context.pool,
@@ -654,9 +654,9 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::FORBIDDEN).await;
 
-        // Granting CreateRemoteTarget on the target namespace unblocks the move.
-        target_namespace
-            .namespace
+        // Granting CreateRemoteTarget on the target collection unblocks the move.
+        target_collection
+            .collection
             .grant_without_events(
                 &context.pool,
                 group.id,
@@ -673,17 +673,17 @@ mod tests {
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let moved: RemoteTarget = test::read_body_json(resp).await;
-        assert_eq!(moved.namespace_id, target_ns);
+        assert_eq!(moved.collection_id, target_collection_id);
     }
 
     #[actix_web::test]
     async fn invoke_creates_task_and_ssrf_guard_fails_private_target() {
         let context = TestContext::new().await;
-        let (namespace_id, class_id, object_id) = setup_object(&context, "rt_invoke").await;
+        let (collection_id, class_id, object_id) = setup_object(&context, "rt_invoke").await;
         // The rendered URL points at loopback, which the SSRF guard must refuse.
         let target = create_target(
             &context,
-            namespace_id,
+            collection_id,
             class_id,
             "invoke-target",
             "https://127.0.0.1/hook",
@@ -708,19 +708,19 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn invoke_accepts_namespace_and_class_subjects() {
+    async fn invoke_accepts_collection_and_class_subjects() {
         let context = TestContext::new().await;
-        let (namespace_id, class_id, _) = setup_object(&context, "rt_scope_subjects").await;
+        let (collection_id, class_id, _) = setup_object(&context, "rt_scope_subjects").await;
         let resp = post_request(
             &context.pool,
             &context.admin_token,
             RT_ENDPOINT,
             target_payload_with_subjects(
-                namespace_id,
+                collection_id,
                 None,
                 "scope-subject-target",
                 "https://127.0.0.1/hook",
-                serde_json::json!(["namespace", "class"]),
+                serde_json::json!(["collection", "class"]),
             ),
         )
         .await;
@@ -731,7 +731,7 @@ mod tests {
             &context.pool,
             &context.admin_token,
             &invoke_endpoint(target.id),
-            namespace_invoke_body(namespace_id),
+            collection_invoke_body(collection_id),
         )
         .await;
         assert_response_status(resp, StatusCode::ACCEPTED).await;
@@ -749,14 +749,14 @@ mod tests {
     #[actix_web::test]
     async fn invoke_rejects_subject_type_not_allowed_by_target() {
         let context = TestContext::new().await;
-        let (namespace_id, class_id, object_id) =
+        let (collection_id, class_id, object_id) =
             setup_object(&context, "rt_subject_allowed").await;
         let resp = post_request(
             &context.pool,
             &context.admin_token,
             RT_ENDPOINT,
             target_payload_with_subjects(
-                namespace_id,
+                collection_id,
                 None,
                 "class-only-target",
                 "https://x.example.com/hook",
@@ -780,15 +780,15 @@ mod tests {
     #[actix_web::test]
     async fn invoke_object_requires_target_class_scope() {
         let context = TestContext::new().await;
-        let (namespace_id, target_class_id, _target_object_id) =
+        let (collection_id, target_class_id, _target_object_id) =
             setup_object(&context, "rt_target_class").await;
         let (other_class_id, other_object_id) =
-            create_object_in_namespace(&context, namespace_id, "rt_other_class").await;
+            create_object_in_collection(&context, collection_id, "rt_other_class").await;
         assert_ne!(target_class_id, other_class_id);
 
         let target = create_target(
             &context,
-            namespace_id,
+            collection_id,
             target_class_id,
             "class-scoped-object-target",
             "https://x.example.com/h",
@@ -808,10 +808,10 @@ mod tests {
     #[actix_web::test]
     async fn invoke_rejects_non_object_parameters_and_body_override() {
         let context = TestContext::new().await;
-        let (namespace_id, class_id, object_id) = setup_object(&context, "rt_newtypes").await;
+        let (collection_id, class_id, object_id) = setup_object(&context, "rt_newtypes").await;
         let target = create_target(
             &context,
-            namespace_id,
+            collection_id,
             class_id,
             "newtype-target",
             "https://x.example.com/h",
@@ -851,9 +851,9 @@ mod tests {
         }
         let context = TestContext::new().await;
         let (port, request_rx) = spawn_https_remote_server().await;
-        let (namespace_id, class_id, object_id) = setup_object(&context, "rt_success").await;
+        let (collection_id, class_id, object_id) = setup_object(&context, "rt_success").await;
         let payload = serde_json::json!({
-            "namespace_id": namespace_id,
+            "collection_id": collection_id,
             "class_id": class_id,
             "name": "success-target",
             "description": "test",
@@ -923,10 +923,10 @@ mod tests {
         let context = TestContext::new().await;
         let (port, request_rx) =
             spawn_https_remote_server_with_body(b"before\0after".to_vec()).await;
-        let (namespace_id, class_id, object_id) = setup_object(&context, "rt_nul_preview").await;
+        let (collection_id, class_id, object_id) = setup_object(&context, "rt_nul_preview").await;
         let target = create_target(
             &context,
-            namespace_id,
+            collection_id,
             class_id,
             "nul-preview-target",
             &format!("https://localhost:{port}/hook"),
@@ -964,9 +964,9 @@ mod tests {
     #[actix_web::test]
     async fn invoke_disabled_target_returns_400() {
         let context = TestContext::new().await;
-        let (namespace_id, class_id, object_id) = setup_object(&context, "rt_disabled").await;
+        let (collection_id, class_id, object_id) = setup_object(&context, "rt_disabled").await;
         let payload = serde_json::json!({
-            "namespace_id": namespace_id,
+            "collection_id": collection_id,
             "class_id": class_id,
             "name": "disabled-target",
             "description": "test",
@@ -992,10 +992,10 @@ mod tests {
     #[actix_web::test]
     async fn invoke_checks_execute_before_disclosing_disabled_target() {
         let context = TestContext::new().await;
-        let (namespace_id, class_id, object_id) =
+        let (collection_id, class_id, object_id) =
             setup_object(&context, "rt_disabled_forbidden").await;
         let payload = serde_json::json!({
-            "namespace_id": namespace_id,
+            "collection_id": collection_id,
             "class_id": class_id,
             "name": "disabled-forbidden-target",
             "description": "test",
@@ -1021,10 +1021,10 @@ mod tests {
     #[actix_web::test]
     async fn invoke_class_mismatch_returns_404() {
         let context = TestContext::new().await;
-        let (namespace_id, class_id, object_id) = setup_object(&context, "rt_mismatch").await;
+        let (collection_id, class_id, object_id) = setup_object(&context, "rt_mismatch").await;
         let target = create_target(
             &context,
-            namespace_id,
+            collection_id,
             class_id,
             "mismatch-target",
             "https://x.example.com/h",
@@ -1045,10 +1045,10 @@ mod tests {
     #[actix_web::test]
     async fn invoke_requires_execute_permission() {
         let context = TestContext::new().await;
-        let (namespace_id, class_id, object_id) = setup_object(&context, "rt_exec").await;
+        let (collection_id, class_id, object_id) = setup_object(&context, "rt_exec").await;
         let target = create_target(
             &context,
-            namespace_id,
+            collection_id,
             class_id,
             "exec-target",
             "https://x.example.com/h",
@@ -1061,12 +1061,12 @@ mod tests {
             .add_member_without_events(&context.pool, &context.normal_user)
             .await
             .unwrap();
-        let namespace = crate::models::NamespaceID::new(namespace_id)
+        let collection = crate::models::CollectionID::new(collection_id)
             .unwrap()
             .instance(&context.pool)
             .await
             .unwrap();
-        namespace
+        collection
             .grant_without_events(
                 &context.pool,
                 group.id,
@@ -1086,17 +1086,22 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn invoke_accepts_cross_namespace_relations_when_target_is_anchored_on_subject_namespace()
-    {
+    async fn invoke_accepts_cross_collection_relations_when_target_is_anchored_on_subject_collection()
+     {
         let context = TestContext::new().await;
-        let (from_namespace_id, _to_namespace_id, _from_class_id, class_relation, object_relation) =
-            setup_cross_namespace_object_relation(&context, "rt_relation_accept").await;
+        let (
+            from_collection_id,
+            _to_collection_id,
+            _from_class_id,
+            class_relation,
+            object_relation,
+        ) = setup_cross_collection_object_relation(&context, "rt_relation_accept").await;
         let resp = post_request(
             &context.pool,
             &context.admin_token,
             RT_ENDPOINT,
             target_payload_with_subjects(
-                from_namespace_id,
+                from_collection_id,
                 None,
                 "relation-target",
                 "https://127.0.0.1/hook",
@@ -1132,16 +1137,21 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn invoke_relation_requires_read_on_both_namespaces() {
+    async fn invoke_relation_requires_read_on_both_collections() {
         let context = TestContext::new().await;
-        let (from_namespace_id, to_namespace_id, _from_class_id, _class_relation, object_relation) =
-            setup_cross_namespace_object_relation(&context, "rt_relation_read").await;
+        let (
+            from_collection_id,
+            to_collection_id,
+            _from_class_id,
+            _class_relation,
+            object_relation,
+        ) = setup_cross_collection_object_relation(&context, "rt_relation_read").await;
         let resp = post_request(
             &context.pool,
             &context.admin_token,
             RT_ENDPOINT,
             target_payload_with_subjects(
-                from_namespace_id,
+                from_collection_id,
                 None,
                 "relation-read-target",
                 "https://127.0.0.1/hook",
@@ -1157,12 +1167,12 @@ mod tests {
             .add_member_without_events(&context.pool, &context.normal_user)
             .await
             .unwrap();
-        let from_namespace = crate::models::NamespaceID::new(from_namespace_id)
+        let from_collection = crate::models::CollectionID::new(from_collection_id)
             .unwrap()
             .instance(&context.pool)
             .await
             .unwrap();
-        from_namespace
+        from_collection
             .grant_without_events(
                 &context.pool,
                 group.id,
@@ -1183,12 +1193,12 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::FORBIDDEN).await;
 
-        let to_namespace = crate::models::NamespaceID::new(to_namespace_id)
+        let to_collection = crate::models::CollectionID::new(to_collection_id)
             .unwrap()
             .instance(&context.pool)
             .await
             .unwrap();
-        to_namespace
+        to_collection
             .grant_one(&context.pool, group.id, Permissions::ReadObjectRelation)
             .await
             .unwrap();
@@ -1204,22 +1214,22 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn invoke_relation_returns_404_when_target_namespace_is_not_part_of_subject() {
+    async fn invoke_relation_returns_404_when_target_collection_is_not_part_of_subject() {
         let context = TestContext::new().await;
         let (
-            _from_namespace_id,
-            _to_namespace_id,
+            _from_collection_id,
+            _to_collection_id,
             _from_class_id,
             _class_relation,
             object_relation,
-        ) = setup_cross_namespace_object_relation(&context, "rt_relation_scope").await;
-        let unrelated_namespace = context.namespace_fixture("rt_relation_unrelated").await;
+        ) = setup_cross_collection_object_relation(&context, "rt_relation_scope").await;
+        let unrelated_collection = context.collection_fixture("rt_relation_unrelated").await;
         let resp = post_request(
             &context.pool,
             &context.admin_token,
             RT_ENDPOINT,
             target_payload_with_subjects(
-                unrelated_namespace.namespace.id,
+                unrelated_collection.collection.id,
                 None,
                 "relation-unrelated-target",
                 "https://x.example.com/hook",
@@ -1243,10 +1253,10 @@ mod tests {
     #[actix_web::test]
     async fn invoke_idempotency_key_conflict() {
         let context = TestContext::new().await;
-        let (namespace_id, class_id, object_id) = setup_object(&context, "rt_idem").await;
+        let (collection_id, class_id, object_id) = setup_object(&context, "rt_idem").await;
         let target = create_target(
             &context,
-            namespace_id,
+            collection_id,
             class_id,
             "idem-target",
             "https://127.0.0.1/hook",
@@ -1313,11 +1323,11 @@ mod tests {
     #[actix_web::test]
     async fn invoke_idempotency_key_reuses_task_under_concurrent_submissions() {
         let context = TestContext::new().await;
-        let (namespace_id, class_id, object_id) =
+        let (collection_id, class_id, object_id) =
             setup_object(&context, "rt_idem_concurrent").await;
         let target = create_target(
             &context,
-            namespace_id,
+            collection_id,
             class_id,
             "idem-concurrent-target",
             "https://127.0.0.1/hook",
@@ -1362,13 +1372,13 @@ mod tests {
     #[actix_web::test]
     async fn test_api_remote_target_history_list_and_as_of() {
         let context = TestContext::new().await;
-        let (namespace_id, class_id, _object_id) =
+        let (collection_id, class_id, _object_id) =
             setup_object(&context, "remote_target_history_api").await;
 
         // Create a remote target.
         let created = create_target(
             &context,
-            namespace_id,
+            collection_id,
             class_id,
             "remote_target_history_api",
             "https://example.com/v1",

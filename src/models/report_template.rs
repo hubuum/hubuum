@@ -7,13 +7,13 @@ use utoipa::ToSchema;
 use crate::db::DbPool;
 use crate::db::traits::report_template::{
     self as backend, DeleteReportTemplateRecord, LoadReportTemplateRecord,
-    ReportTemplateNamespaceLookup, SaveReportTemplateRecord, UpdateReportTemplateRecord,
+    ReportTemplateCollectionLookup, SaveReportTemplateRecord, UpdateReportTemplateRecord,
 };
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::search::{FilterField, QueryOptions, SortParam, parse_query_parameter};
 use crate::models::{
-    Namespace, NamespaceID, ReportContentType, ReportInclude, ReportLimits,
+    Collection, CollectionID, ReportContentType, ReportInclude, ReportLimits,
     ReportMissingDataPolicy, ReportRelationContext, ReportRequest, ReportScope, ReportScopeKind,
     ReportTemplateRunRequest,
 };
@@ -22,7 +22,9 @@ use crate::pagination::{
 };
 use crate::schema::report_templates;
 use crate::traits::BackendContext;
-use crate::traits::accessors::{IdAccessor, InstanceAdapter, NamespaceAccessors, NamespaceAdapter};
+use crate::traits::accessors::{
+    CollectionAccessors, CollectionAdapter, IdAccessor, InstanceAdapter,
+};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 use crate::utilities::reporting::validate_template;
 
@@ -60,7 +62,7 @@ impl FromStr for ReportTemplateKind {
 #[diesel(table_name = report_templates)]
 pub(crate) struct ReportTemplateRow {
     id: i32,
-    namespace_id: i32,
+    collection_id: i32,
     name: String,
     description: String,
     content_type: String,
@@ -82,8 +84,8 @@ impl ReportTemplateRow {
         self.id
     }
 
-    pub(crate) fn namespace_id(&self) -> i32 {
-        self.namespace_id
+    pub(crate) fn collection_id(&self) -> i32 {
+        self.collection_id
     }
 
     pub(crate) fn name(&self) -> &str {
@@ -93,7 +95,7 @@ impl ReportTemplateRow {
     pub(crate) fn audit_snapshot(&self) -> serde_json::Value {
         serde_json::json!({
             "id": self.id,
-            "namespace_id": self.namespace_id,
+            "collection_id": self.collection_id,
             "name": self.name,
             "description": self.description,
             "content_type": self.content_type,
@@ -116,7 +118,7 @@ impl ReportTemplateRow {
 #[schema(example = report_template_example)]
 pub struct ReportTemplate {
     pub id: i32,
-    pub namespace_id: i32,
+    pub collection_id: i32,
     pub name: String,
     pub description: String,
     pub content_type: ReportContentType,
@@ -142,7 +144,7 @@ crate::int_id_newtype! {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[schema(example = new_report_template_example)]
 pub struct NewReportTemplate {
-    pub namespace_id: i32,
+    pub collection_id: i32,
     pub name: String,
     pub description: String,
     pub content_type: ReportContentType,
@@ -160,7 +162,7 @@ pub struct NewReportTemplate {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[schema(example = update_report_template_example)]
 pub struct UpdateReportTemplate {
-    pub namespace_id: Option<i32>,
+    pub collection_id: Option<i32>,
     pub name: Option<String>,
     pub description: Option<String>,
     pub template: Option<String>,
@@ -224,7 +226,7 @@ where
 #[derive(Debug, Clone, Insertable)]
 #[diesel(table_name = report_templates)]
 pub(crate) struct NewReportTemplateRow {
-    namespace_id: i32,
+    collection_id: i32,
     name: String,
     description: String,
     content_type: String,
@@ -242,7 +244,7 @@ pub(crate) struct NewReportTemplateRow {
 #[derive(Debug, Clone, AsChangeset)]
 #[diesel(table_name = report_templates)]
 pub(crate) struct UpdateReportTemplateRow {
-    namespace_id: Option<i32>,
+    collection_id: Option<i32>,
     name: Option<String>,
     description: Option<String>,
     template: Option<String>,
@@ -262,7 +264,7 @@ impl TryFrom<ReportTemplateRow> for ReportTemplate {
     fn try_from(row: ReportTemplateRow) -> Result<Self, Self::Error> {
         Ok(Self {
             id: row.id,
-            namespace_id: row.namespace_id,
+            collection_id: row.collection_id,
             name: row.name,
             description: row.description,
             content_type: ReportContentType::from_mime(&row.content_type)?,
@@ -294,7 +296,7 @@ impl NewReportTemplate {
         let content_type = self.content_type.ensure_template_output()?.as_mime();
 
         Ok(NewReportTemplateRow {
-            namespace_id: self.namespace_id,
+            collection_id: self.collection_id,
             name: self.name,
             description: self.description,
             content_type: content_type.to_string(),
@@ -315,7 +317,7 @@ impl NewReportTemplate {
 
 impl UpdateReportTemplate {
     fn is_empty(&self) -> bool {
-        self.namespace_id.is_none()
+        self.collection_id.is_none()
             && self.name.is_none()
             && self.description.is_none()
             && self.template.is_none()
@@ -377,7 +379,7 @@ impl ReportTemplate {
                 })?;
                 (Some(template_class_id()?), Some(object_id))
             }
-            ReportScopeKind::Namespaces
+            ReportScopeKind::Collections
             | ReportScopeKind::Classes
             | ReportScopeKind::ClassRelations
             | ReportScopeKind::ObjectRelations => {
@@ -400,13 +402,16 @@ impl ReportTemplate {
         })
     }
 
-    /// The other report templates sharing this template's namespace (this template excluded).
+    /// The other report templates sharing this template's collection (this template excluded).
     #[allow(dead_code)]
-    pub async fn namespace_siblings(&self, pool: &DbPool) -> Result<Vec<ReportTemplate>, ApiError> {
+    pub async fn collection_siblings(
+        &self,
+        pool: &DbPool,
+    ) -> Result<Vec<ReportTemplate>, ApiError> {
         self.report_templates(pool, Some(self.id)).await
     }
 
-    /// Every report template across all namespaces.
+    /// Every report template across all collections.
     #[allow(dead_code)]
     pub async fn list_all(pool: &DbPool) -> Result<Vec<ReportTemplate>, ApiError> {
         let rows = backend::load_all_rows(pool).await?;
@@ -415,18 +420,19 @@ impl ReportTemplate {
     }
 
     /// List report templates (sorted/paginated per `query_options`) together with the total count
-    /// matching the filters, scoped to the namespaces the caller may see.
+    /// matching the filters, scoped to the collections the caller may see.
     pub async fn list_with_total_count(
         pool: &DbPool,
-        allowed_namespace_ids: &[i32],
+        allowed_collection_ids: &[i32],
         query_options: &QueryOptions,
     ) -> Result<(Vec<ReportTemplate>, i64), ApiError> {
-        if allowed_namespace_ids.is_empty() {
+        if allowed_collection_ids.is_empty() {
             return Ok((Vec::new(), 0));
         }
 
         let (rows, total_count) =
-            backend::list_rows_with_total_count(pool, allowed_namespace_ids, query_options).await?;
+            backend::list_rows_with_total_count(pool, allowed_collection_ids, query_options)
+                .await?;
 
         let items = rows
             .into_iter()
@@ -437,15 +443,15 @@ impl ReportTemplate {
     }
 }
 
-/// List the report templates in a value's namespace. Available on anything that resolves to a
-/// namespace via [`NamespaceAccessors`] — `NamespaceID`, `Namespace`, `ReportTemplate`, classes,
-/// objects, and so on. For id-only types whose namespace must be looked up (e.g.
+/// List the report templates in a value's collection. Available on anything that resolves to a
+/// collection via [`CollectionAccessors`] — `CollectionID`, `Collection`, `ReportTemplate`, classes,
+/// objects, and so on. For id-only types whose collection must be looked up (e.g.
 /// `ReportTemplateID`) this performs that lookup before listing.
 ///
-/// Defined here, rather than in `models::namespace`, so the namespace layer stays unaware of report
+/// Defined here, rather than in `models::collection`, so the collection layer stays unaware of report
 /// templates: the dependency points from this feature module to the core accessor trait.
-pub trait NamespaceReportTemplates: NamespaceAccessors {
-    /// The report templates in this value's namespace, optionally excluding one template id (so a
+pub trait CollectionReportTemplates: CollectionAccessors {
+    /// The report templates in this value's collection, optionally excluding one template id (so a
     /// template's own row is not treated as a sibling when validating its body against the set).
     async fn report_templates<C>(
         &self,
@@ -455,10 +461,10 @@ pub trait NamespaceReportTemplates: NamespaceAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        let namespace_id = self.namespace_id(backend).await?.id();
-        let rows = crate::db::traits::report_template::load_rows_in_namespace(
+        let collection_id = self.collection_id(backend).await?.id();
+        let rows = crate::db::traits::report_template::load_rows_in_collection(
             backend.db_pool(),
-            namespace_id,
+            collection_id,
             exclude_template_id,
         )
         .await?;
@@ -467,7 +473,7 @@ pub trait NamespaceReportTemplates: NamespaceAccessors {
     }
 }
 
-impl<T: NamespaceAccessors> NamespaceReportTemplates for T {}
+impl<T: CollectionAccessors> CollectionReportTemplates for T {}
 
 impl SaveAdapter for NewReportTemplate {
     type Output = ReportTemplate;
@@ -492,10 +498,10 @@ impl NewReportTemplate {
         context: Option<&EventContext>,
     ) -> Result<ReportTemplate, ApiError> {
         let new_row = self.clone().into_row()?;
-        ensure_template_name_is_available(pool, new_row.namespace_id, &new_row.name, None).await?;
+        ensure_template_name_is_available(pool, new_row.collection_id, &new_row.name, None).await?;
         validate_report_profile(
             pool,
-            new_row.namespace_id,
+            new_row.collection_id,
             ReportProfileRef {
                 kind: ReportTemplateKind::from_str(&new_row.kind)?,
                 scope_kind: new_row.scope_kind.as_deref(),
@@ -508,14 +514,14 @@ impl NewReportTemplate {
             },
         )
         .await?;
-        let namespace_templates = NamespaceID::new(new_row.namespace_id)?
+        let collection_templates = CollectionID::new(new_row.collection_id)?
             .report_templates(pool, None)
             .await?;
         validate_template(
             &new_row.name,
             &new_row.template,
-            new_row.namespace_id,
-            &namespace_templates,
+            new_row.collection_id,
+            &collection_templates,
             ReportContentType::from_mime(&new_row.content_type)?,
         )?;
         let row = new_row.save_report_template_record(pool, context).await?;
@@ -560,7 +566,7 @@ async fn apply_report_template_update(
     }
 
     let current = ReportTemplate::try_from(current_row.clone())?;
-    let target_namespace_id = update.namespace_id.unwrap_or(current.namespace_id);
+    let target_collection_id = update.collection_id.unwrap_or(current.collection_id);
     let target_name = update.name.clone().unwrap_or_else(|| current.name.clone());
     let target_description = update
         .description
@@ -588,14 +594,14 @@ async fn apply_report_template_update(
         default_limits: target_default_limits,
     } = resolve_report_profile(target_kind, update, &current);
 
-    ensure_template_name_is_available(pool, target_namespace_id, &target_name, Some(template_id))
+    ensure_template_name_is_available(pool, target_collection_id, &target_name, Some(template_id))
         .await?;
     let include_json = to_optional_json(target_include)?;
     let relation_context_json = to_optional_json(target_relation_context)?;
     let default_limits_json = to_optional_json(target_default_limits)?;
     validate_report_profile(
         pool,
-        target_namespace_id,
+        target_collection_id,
         ReportProfileRef {
             kind: target_kind,
             scope_kind: target_scope_kind.map(ReportScopeKind::as_str),
@@ -609,19 +615,19 @@ async fn apply_report_template_update(
         },
     )
     .await?;
-    let namespace_templates = NamespaceID::new(target_namespace_id)?
+    let collection_templates = CollectionID::new(target_collection_id)?
         .report_templates(pool, Some(template_id))
         .await?;
     validate_template(
         &target_name,
         &target_template,
-        target_namespace_id,
-        &namespace_templates,
+        target_collection_id,
+        &collection_templates,
         current.content_type,
     )?;
 
     let changeset = UpdateReportTemplateRow {
-        namespace_id: Some(target_namespace_id),
+        collection_id: Some(target_collection_id),
         name: Some(target_name),
         description: Some(target_description),
         template: Some(target_template),
@@ -747,13 +753,13 @@ struct ReportProfileRef<'a> {
 
 async fn validate_report_profile(
     pool: &DbPool,
-    target_namespace_id: i32,
+    target_collection_id: i32,
     profile: ReportProfileRef<'_>,
 ) -> Result<(), ApiError> {
     match profile.kind {
         ReportTemplateKind::Fragment => validate_fragment_metadata(&profile)?,
         ReportTemplateKind::Report => {
-            validate_report_scope_metadata(pool, target_namespace_id, &profile).await?
+            validate_report_scope_metadata(pool, target_collection_id, &profile).await?
         }
     }
 
@@ -774,7 +780,7 @@ fn validate_fragment_metadata(profile: &ReportProfileRef<'_>) -> Result<(), ApiE
 /// Validate the scope/class binding of an executable report template.
 async fn validate_report_scope_metadata(
     pool: &DbPool,
-    target_namespace_id: i32,
+    target_collection_id: i32,
     profile: &ReportProfileRef<'_>,
 ) -> Result<(), ApiError> {
     let scope_kind = profile
@@ -783,7 +789,7 @@ async fn validate_report_scope_metadata(
         .and_then(ReportScopeKind::from_str)?;
 
     // `objects_in_class` and `related_objects` are scoped to a single class and require
-    // `class_id`; the collection scopes (`namespaces`, `classes`, `class_relations`,
+    // `class_id`; the collection scopes (`collections`, `classes`, `class_relations`,
     // `object_relations`) are class-agnostic and must not set it.
     if scope_kind.requires_class_id() {
         let class_id = profile.class_id.ok_or_else(|| {
@@ -797,7 +803,7 @@ async fn validate_report_scope_metadata(
                 "Report template class_id must be greater than 0".to_string(),
             ));
         }
-        ensure_template_class_in_namespace(pool, target_namespace_id, class_id).await?;
+        ensure_template_class_in_collection(pool, target_collection_id, class_id).await?;
     } else if profile.class_id.is_some() {
         return Err(ApiError::BadRequest(format!(
             "Report templates with scope '{}' must not set class_id",
@@ -863,18 +869,18 @@ fn validate_common_profile_fields(profile: &ReportProfileRef<'_>) -> Result<(), 
     Ok(())
 }
 
-async fn ensure_template_class_in_namespace(
+async fn ensure_template_class_in_collection(
     pool: &DbPool,
-    target_namespace_id: i32,
+    target_collection_id: i32,
     target_class_id: i32,
 ) -> Result<(), ApiError> {
-    let class_namespace_id = backend::class_namespace_id(pool, target_class_id)
+    let class_collection_id = backend::class_collection_id(pool, target_class_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Class {target_class_id} not found")))?;
 
-    if class_namespace_id != target_namespace_id {
+    if class_collection_id != target_collection_id {
         return Err(ApiError::BadRequest(format!(
-            "Report template class {target_class_id} belongs to namespace {class_namespace_id}, not template namespace {target_namespace_id}"
+            "Report template class {target_class_id} belongs to collection {class_collection_id}, not template collection {target_collection_id}"
         )));
     }
 
@@ -933,18 +939,18 @@ where
 
 async fn ensure_template_name_is_available(
     pool: &DbPool,
-    target_namespace_id: i32,
+    target_collection_id: i32,
     target_name: &str,
     exclude_template_id: Option<i32>,
 ) -> Result<(), ApiError> {
     let conflict =
-        backend::name_conflict_exists(pool, target_namespace_id, target_name, exclude_template_id)
+        backend::name_conflict_exists(pool, target_collection_id, target_name, exclude_template_id)
             .await?;
 
     if conflict {
         return Err(ApiError::Conflict(format!(
-            "Template name '{}' already exists in namespace {}",
-            target_name, target_namespace_id
+            "Template name '{}' already exists in collection {}",
+            target_name, target_collection_id
         )));
     }
 
@@ -975,28 +981,28 @@ impl InstanceAdapter<ReportTemplate> for ReportTemplateID {
     }
 }
 
-impl NamespaceAdapter for ReportTemplate {
-    async fn namespace_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        NamespaceID::new(self.namespace_id)?
-            .namespace_adapter(pool)
+impl CollectionAdapter for ReportTemplate {
+    async fn collection_adapter(&self, pool: &DbPool) -> Result<Collection, ApiError> {
+        CollectionID::new(self.collection_id)?
+            .collection_adapter(pool)
             .await
     }
 
-    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<NamespaceID, ApiError> {
-        NamespaceID::new(self.namespace_id)
+    async fn collection_id_adapter(&self, _pool: &DbPool) -> Result<CollectionID, ApiError> {
+        CollectionID::new(self.collection_id)
     }
 }
 
-impl NamespaceAdapter for ReportTemplateID {
-    async fn namespace_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        self.namespace_id_adapter(pool)
+impl CollectionAdapter for ReportTemplateID {
+    async fn collection_adapter(&self, pool: &DbPool) -> Result<Collection, ApiError> {
+        self.collection_id_adapter(pool)
             .await?
-            .namespace_adapter(pool)
+            .collection_adapter(pool)
             .await
     }
 
-    async fn namespace_id_adapter(&self, pool: &DbPool) -> Result<NamespaceID, ApiError> {
-        self.lookup_report_template_namespace_id(pool).await
+    async fn collection_id_adapter(&self, pool: &DbPool) -> Result<CollectionID, ApiError> {
+        self.lookup_report_template_collection_id(pool).await
     }
 }
 
@@ -1007,8 +1013,8 @@ impl CursorPaginated for ReportTemplate {
             FilterField::Id
                 | FilterField::Name
                 | FilterField::Description
-                | FilterField::Namespaces
-                | FilterField::NamespaceId
+                | FilterField::Collections
+                | FilterField::CollectionId
                 | FilterField::CreatedAt
                 | FilterField::UpdatedAt
         )
@@ -1019,8 +1025,8 @@ impl CursorPaginated for ReportTemplate {
             FilterField::Id => CursorValue::Integer(self.id as i64),
             FilterField::Name => CursorValue::String(self.name.clone()),
             FilterField::Description => CursorValue::String(self.description.clone()),
-            FilterField::Namespaces | FilterField::NamespaceId => {
-                CursorValue::Integer(self.namespace_id as i64)
+            FilterField::Collections | FilterField::CollectionId => {
+                CursorValue::Integer(self.collection_id as i64)
             }
             FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
             FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
@@ -1063,8 +1069,8 @@ impl CursorSqlMapping for ReportTemplate {
                 sql_type: CursorSqlType::String,
                 nullable: false,
             },
-            FilterField::Namespaces | FilterField::NamespaceId => CursorSqlField {
-                column: "report_templates.namespace_id",
+            FilterField::Collections | FilterField::CollectionId => CursorSqlField {
+                column: "report_templates.collection_id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
@@ -1096,7 +1102,7 @@ fn report_template_example() -> ReportTemplate {
 
     ReportTemplate {
         id: 1,
-        namespace_id: 7,
+        collection_id: 7,
         name: "owner-report".to_string(),
         description: "Template for owner listing".to_string(),
         content_type: ReportContentType::TextPlain,
@@ -1121,7 +1127,7 @@ fn report_template_example() -> ReportTemplate {
 #[allow(dead_code)]
 fn new_report_template_example() -> NewReportTemplate {
     NewReportTemplate {
-        namespace_id: 7,
+        collection_id: 7,
         name: "owner-report".to_string(),
         description: "Template for owner listing".to_string(),
         content_type: ReportContentType::TextPlain,
@@ -1144,7 +1150,7 @@ fn new_report_template_example() -> NewReportTemplate {
 #[allow(dead_code)]
 fn update_report_template_example() -> UpdateReportTemplate {
     UpdateReportTemplate {
-        namespace_id: Some(9),
+        collection_id: Some(9),
         name: Some("owner-report-v2".to_string()),
         description: Some("Updated template description".to_string()),
         template: Some("{% for item in items %}{{ item.name }}\n{% endfor %}".to_string()),
@@ -1163,7 +1169,7 @@ fn update_report_template_example() -> UpdateReportTemplate {
 #[diesel(table_name = crate::schema::report_templates_history)]
 pub struct ReportTemplateHistory {
     pub id: i32,
-    pub namespace_id: i32,
+    pub collection_id: i32,
     pub name: String,
     pub description: String,
     pub content_type: String,

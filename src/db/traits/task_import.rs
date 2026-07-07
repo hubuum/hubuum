@@ -3,80 +3,81 @@ use diesel::prelude::*;
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::{
-    Group, HubuumClass, HubuumClassRelation, HubuumObject, HubuumObjectRelation, ImportClassInput,
-    ImportNamespaceInput, ImportObjectInput, Namespace, NewHubuumClass, NewHubuumClassRelation,
-    NewHubuumObject, NewHubuumObjectRelation, NewPermission, Permission, Permissions,
-    PermissionsList, UpdateHubuumClass, UpdateHubuumObject, UpdateNamespace, UpdatePermission,
+    Collection, Group, HubuumClass, HubuumClassRelation, HubuumObject, HubuumObjectRelation,
+    ImportClassInput, ImportCollectionInput, ImportObjectInput, NewHubuumClass,
+    NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewPermission, Permission,
+    Permissions, PermissionsList, UpdateCollection, UpdateHubuumClass, UpdateHubuumObject,
+    UpdatePermission,
 };
 use crate::utilities::aliases::normalize_template_alias;
 
-pub async fn lookup_namespace_by_name(
+pub async fn lookup_collection_by_name(
     pool: &DbPool,
     value: &str,
-) -> Result<Option<Namespace>, ApiError> {
-    use crate::schema::namespaces::dsl::{name, namespaces};
+) -> Result<Option<Collection>, ApiError> {
+    use crate::schema::collections::dsl::{collections, name};
 
     with_connection(pool, |conn| {
-        namespaces
+        collections
             .filter(name.eq(value))
-            .first::<Namespace>(conn)
+            .first::<Collection>(conn)
             .optional()
     })
 }
 
-pub async fn lookup_namespaces_by_names(
+pub async fn lookup_collections_by_names(
     pool: &DbPool,
     values: &[String],
-) -> Result<Vec<Namespace>, ApiError> {
-    use crate::schema::namespaces::dsl::{name, namespaces};
+) -> Result<Vec<Collection>, ApiError> {
+    use crate::schema::collections::dsl::{collections, name};
 
     if values.is_empty() {
         return Ok(Vec::new());
     }
 
     with_connection(pool, |conn| {
-        namespaces
+        collections
             .filter(name.eq_any(values))
-            .load::<Namespace>(conn)
+            .load::<Collection>(conn)
     })
 }
 
-pub async fn lookup_namespace_by_id(
+pub async fn lookup_collection_by_id(
     pool: &DbPool,
-    namespace_id: i32,
-) -> Result<Option<Namespace>, ApiError> {
-    use crate::schema::namespaces::dsl::{id, namespaces};
+    collection_id: i32,
+) -> Result<Option<Collection>, ApiError> {
+    use crate::schema::collections::dsl::{collections, id};
 
     with_connection(pool, |conn| {
-        namespaces
-            .filter(id.eq(namespace_id))
-            .first::<Namespace>(conn)
+        collections
+            .filter(id.eq(collection_id))
+            .first::<Collection>(conn)
             .optional()
     })
 }
 
-pub async fn lookup_class_by_namespace_and_name(
+pub async fn lookup_class_by_collection_and_name(
     pool: &DbPool,
-    namespace_id_value: i32,
+    collection_id_value: i32,
     class_name: &str,
 ) -> Result<Option<HubuumClass>, ApiError> {
-    use crate::schema::hubuumclass::dsl::{hubuumclass, name, namespace_id};
+    use crate::schema::hubuumclass::dsl::{collection_id, hubuumclass, name};
 
     with_connection(pool, |conn| {
         hubuumclass
-            .filter(namespace_id.eq(namespace_id_value))
+            .filter(collection_id.eq(collection_id_value))
             .filter(name.eq(class_name))
             .first::<HubuumClass>(conn)
             .optional()
     })
 }
 
-pub async fn lookup_classes_by_namespace_and_names(
+pub async fn lookup_classes_by_collection_and_names(
     pool: &DbPool,
-    namespace_id_value: i32,
+    collection_id_value: i32,
     class_names: &[String],
 ) -> Result<Vec<HubuumClass>, ApiError> {
-    use crate::schema::hubuumclass::dsl::{hubuumclass, name, namespace_id};
+    use crate::schema::hubuumclass::dsl::{collection_id, hubuumclass, name};
 
     if class_names.is_empty() {
         return Ok(Vec::new());
@@ -84,7 +85,7 @@ pub async fn lookup_classes_by_namespace_and_names(
 
     with_connection(pool, |conn| {
         hubuumclass
-            .filter(namespace_id.eq(namespace_id_value))
+            .filter(collection_id.eq(collection_id_value))
             .filter(name.eq_any(class_names))
             .load::<HubuumClass>(conn)
     })
@@ -174,28 +175,28 @@ pub async fn lookup_group_by_name(pool: &DbPool, value: &str) -> Result<Option<G
     })
 }
 
-pub fn lookup_namespace_by_name_db(
+pub fn lookup_collection_by_name_db(
     conn: &mut diesel::PgConnection,
     value: &str,
-) -> Result<Option<Namespace>, ApiError> {
-    use crate::schema::namespaces::dsl::{name, namespaces};
+) -> Result<Option<Collection>, ApiError> {
+    use crate::schema::collections::dsl::{collections, name};
 
-    namespaces
+    collections
         .filter(name.eq(value))
-        .first::<Namespace>(conn)
+        .first::<Collection>(conn)
         .optional()
         .map_err(ApiError::from)
 }
 
-pub fn lookup_class_by_namespace_and_name_db(
+pub fn lookup_class_by_collection_and_name_db(
     conn: &mut diesel::PgConnection,
-    namespace_id_value: i32,
+    collection_id_value: i32,
     class_name: &str,
 ) -> Result<Option<HubuumClass>, ApiError> {
-    use crate::schema::hubuumclass::dsl::{hubuumclass, name, namespace_id};
+    use crate::schema::hubuumclass::dsl::{collection_id, hubuumclass, name};
 
     hubuumclass
-        .filter(namespace_id.eq(namespace_id_value))
+        .filter(collection_id.eq(collection_id_value))
         .filter(name.eq(class_name))
         .first::<HubuumClass>(conn)
         .optional()
@@ -230,39 +231,39 @@ pub fn lookup_group_by_name_db(
         .map_err(ApiError::from)
 }
 
-pub fn create_namespace_db(
+pub fn create_collection_db(
     conn: &mut diesel::PgConnection,
-    input: &ImportNamespaceInput,
-) -> Result<Namespace, ApiError> {
-    use crate::schema::namespaces::dsl::namespaces;
+    input: &ImportCollectionInput,
+) -> Result<Collection, ApiError> {
+    use crate::schema::collections::dsl::collections;
 
-    diesel::insert_into(namespaces)
+    diesel::insert_into(collections)
         .values((
-            crate::schema::namespaces::name.eq(&input.name),
-            crate::schema::namespaces::description.eq(&input.description),
+            crate::schema::collections::name.eq(&input.name),
+            crate::schema::collections::description.eq(&input.description),
         ))
-        .get_result::<Namespace>(conn)
+        .get_result::<Collection>(conn)
         .map_err(ApiError::from)
 }
 
-pub fn update_namespace_db(
+pub fn update_collection_db(
     conn: &mut diesel::PgConnection,
-    namespace_id_value: i32,
-    input: &ImportNamespaceInput,
-) -> Result<Namespace, ApiError> {
-    use crate::schema::namespaces::dsl::{id, namespaces};
+    collection_id_value: i32,
+    input: &ImportCollectionInput,
+) -> Result<Collection, ApiError> {
+    use crate::schema::collections::dsl::{collections, id};
 
-    let update = UpdateNamespace {
+    let update = UpdateCollection {
         name: Some(input.name.clone()),
         description: Some(input.description.clone()),
     };
 
     crate::db::updated_or_current(
-        diesel::update(namespaces.filter(id.eq(namespace_id_value)))
+        diesel::update(collections.filter(id.eq(collection_id_value)))
             .set(&update)
-            .get_result::<Namespace>(conn)
+            .get_result::<Collection>(conn)
             .optional(),
-        || namespaces.filter(id.eq(namespace_id_value)).first(conn),
+        || collections.filter(id.eq(collection_id_value)).first(conn),
     )
     .map_err(ApiError::from)
 }
@@ -270,13 +271,13 @@ pub fn update_namespace_db(
 pub fn create_class_db(
     conn: &mut diesel::PgConnection,
     input: &ImportClassInput,
-    namespace_id_value: i32,
+    collection_id_value: i32,
 ) -> Result<HubuumClass, ApiError> {
     use crate::schema::hubuumclass::dsl::hubuumclass;
 
     let new_class = NewHubuumClass {
         name: input.name.clone(),
-        namespace_id: namespace_id_value,
+        collection_id: collection_id_value,
         json_schema: input.json_schema.clone(),
         validate_schema: input.validate_schema,
         description: input.description.clone(),
@@ -297,7 +298,7 @@ pub fn update_class_db(
 
     let update = UpdateHubuumClass {
         name: Some(input.name.clone()),
-        namespace_id: None,
+        collection_id: None,
         json_schema: input.json_schema.clone(),
         validate_schema: input.validate_schema,
         description: Some(input.description.clone()),
@@ -322,7 +323,7 @@ pub fn create_object_db(
 
     let new_object = NewHubuumObject {
         name: input.name.clone(),
-        namespace_id: class.namespace_id,
+        collection_id: class.collection_id,
         hubuum_class_id: class.id,
         data: input.data.clone(),
         description: input.description.clone(),
@@ -343,7 +344,7 @@ pub fn update_object_db(
 
     let update = UpdateHubuumObject {
         name: Some(input.name.clone()),
-        namespace_id: None,
+        collection_id: None,
         hubuum_class_id: None,
         data: Some(input.data.clone()),
         description: Some(input.description.clone()),
@@ -427,17 +428,17 @@ pub fn create_object_relation_db(
 
 pub fn apply_permissions_db(
     conn: &mut diesel::PgConnection,
-    namespace_id_value: i32,
+    collection_id_value: i32,
     group_id_value: i32,
     permissions: &[Permissions],
     replace_existing: bool,
 ) -> Result<Permission, ApiError> {
     use crate::schema::permissions::dsl::{
-        group_id, namespace_id, permissions as permissions_table,
+        collection_id, group_id, permissions as permissions_table,
     };
 
     let existing = permissions_table
-        .filter(namespace_id.eq(namespace_id_value))
+        .filter(collection_id.eq(collection_id_value))
         .filter(group_id.eq(group_id_value))
         .first::<Permission>(conn)
         .optional()?;
@@ -447,10 +448,10 @@ pub fn apply_permissions_db(
         Some(_) => {
             let mut update = if replace_existing {
                 UpdatePermission {
-                    has_read_namespace: Some(false),
-                    has_update_namespace: Some(false),
-                    has_delete_namespace: Some(false),
-                    has_delegate_namespace: Some(false),
+                    has_read_collection: Some(false),
+                    has_update_collection: Some(false),
+                    has_delete_collection: Some(false),
+                    has_delegate_collection: Some(false),
                     has_create_class: Some(false),
                     has_read_class: Some(false),
                     has_update_class: Some(false),
@@ -486,7 +487,7 @@ pub fn apply_permissions_db(
 
             diesel::update(
                 permissions_table
-                    .filter(namespace_id.eq(namespace_id_value))
+                    .filter(collection_id.eq(collection_id_value))
                     .filter(group_id.eq(group_id_value)),
             )
             .set(&update)
@@ -495,12 +496,12 @@ pub fn apply_permissions_db(
         }
         None => {
             let new_entry = NewPermission {
-                namespace_id: namespace_id_value,
+                collection_id: collection_id_value,
                 group_id: group_id_value,
-                has_read_namespace: permission_list.contains(&Permissions::ReadCollection),
-                has_update_namespace: permission_list.contains(&Permissions::UpdateCollection),
-                has_delete_namespace: permission_list.contains(&Permissions::DeleteCollection),
-                has_delegate_namespace: permission_list.contains(&Permissions::DelegateCollection),
+                has_read_collection: permission_list.contains(&Permissions::ReadCollection),
+                has_update_collection: permission_list.contains(&Permissions::UpdateCollection),
+                has_delete_collection: permission_list.contains(&Permissions::DeleteCollection),
+                has_delegate_collection: permission_list.contains(&Permissions::DelegateCollection),
                 has_create_class: permission_list.contains(&Permissions::CreateClass),
                 has_read_class: permission_list.contains(&Permissions::ReadClass),
                 has_update_class: permission_list.contains(&Permissions::UpdateClass),
@@ -561,10 +562,10 @@ fn normalize_pair(left: i32, right: i32) -> (i32, i32) {
 fn apply_permission_list_to_update(update: &mut UpdatePermission, permissions: &[Permissions]) {
     for permission in permissions {
         match permission {
-            Permissions::ReadCollection => update.has_read_namespace = Some(true),
-            Permissions::UpdateCollection => update.has_update_namespace = Some(true),
-            Permissions::DeleteCollection => update.has_delete_namespace = Some(true),
-            Permissions::DelegateCollection => update.has_delegate_namespace = Some(true),
+            Permissions::ReadCollection => update.has_read_collection = Some(true),
+            Permissions::UpdateCollection => update.has_update_collection = Some(true),
+            Permissions::DeleteCollection => update.has_delete_collection = Some(true),
+            Permissions::DelegateCollection => update.has_delegate_collection = Some(true),
             Permissions::CreateClass => update.has_create_class = Some(true),
             Permissions::ReadClass => update.has_read_class = Some(true),
             Permissions::UpdateClass => update.has_update_class = Some(true),

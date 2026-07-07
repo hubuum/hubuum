@@ -10,16 +10,16 @@ mod tests {
 
     use crate::db::with_connection;
     use crate::models::{
-        GroupKey, ImportAtomicity, ImportClassInput, ImportCollisionPolicy, ImportGraph,
-        ImportMode, ImportNamespaceInput, ImportNamespacePermissionInput, ImportObjectInput,
-        ImportPermissionPolicy, ImportRequest, ImportTaskResultResponse, NamespaceKey,
+        CollectionKey, GroupKey, ImportAtomicity, ImportClassInput, ImportCollectionInput,
+        ImportCollectionPermissionInput, ImportCollisionPolicy, ImportGraph, ImportMode,
+        ImportObjectInput, ImportPermissionPolicy, ImportRequest, ImportTaskResultResponse,
         NewTaskRecord, Permissions, TaskEventResponse, TaskKind, TaskResponse, TaskStatus,
     };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
-    use crate::schema::hubuumclass::dsl::{hubuumclass, name as class_name_col, namespace_id};
-    use crate::schema::namespaces::dsl::{
-        description as namespace_description, id as namespace_id_field, namespaces,
+    use crate::schema::collections::dsl::{
+        collections, description as collection_description, id as collection_id_field,
     };
+    use crate::schema::hubuumclass::dsl::{collection_id, hubuumclass, name as class_name_col};
     use crate::schema::tasks::dsl::{
         id as task_id_field, request_payload, request_redacted_at, tasks,
     };
@@ -62,7 +62,7 @@ mod tests {
         panic!("Task {task_id} did not reach a terminal status in time");
     }
 
-    fn namespace_import_request(
+    fn collection_import_request(
         name: String,
         description: &str,
         mode: ImportMode,
@@ -72,8 +72,8 @@ mod tests {
             dry_run: Some(false),
             mode: Some(mode),
             graph: ImportGraph {
-                namespaces: vec![ImportNamespaceInput {
-                    ref_: Some("ns:primary".to_string()),
+                collections: vec![ImportCollectionInput {
+                    ref_: Some("collection:primary".to_string()),
                     name,
                     description: description.to_string(),
                 }],
@@ -89,7 +89,7 @@ mod tests {
     ) {
         let context = test_context;
         let delegate_group = create_test_group(&context.pool).await;
-        let import_namespace_name = context.scoped_name("import_ns");
+        let import_collection_name = context.scoped_name("import_collection");
         let import_class_name = context.scoped_name("import_class");
         let object_name = context.scoped_name("import_object");
 
@@ -102,10 +102,10 @@ mod tests {
                 permission_policy: None,
             }),
             graph: ImportGraph {
-                namespaces: vec![ImportNamespaceInput {
-                    ref_: Some("ns:primary".to_string()),
-                    name: import_namespace_name.clone(),
-                    description: "Imported namespace".to_string(),
+                collections: vec![ImportCollectionInput {
+                    ref_: Some("collection:primary".to_string()),
+                    name: import_collection_name.clone(),
+                    description: "Imported collection".to_string(),
                 }],
                 classes: vec![ImportClassInput {
                     ref_: Some("class:primary".to_string()),
@@ -113,8 +113,8 @@ mod tests {
                     description: "Imported class".to_string(),
                     json_schema: None,
                     validate_schema: Some(false),
-                    namespace_ref: Some("ns:primary".to_string()),
-                    namespace_key: None,
+                    collection_ref: Some("collection:primary".to_string()),
+                    collection_key: None,
                 }],
                 objects: vec![ImportObjectInput {
                     ref_: Some("object:primary".to_string()),
@@ -124,10 +124,10 @@ mod tests {
                     class_ref: Some("class:primary".to_string()),
                     class_key: None,
                 }],
-                namespace_permissions: vec![ImportNamespacePermissionInput {
+                collection_permissions: vec![ImportCollectionPermissionInput {
                     ref_: Some("acl:primary".to_string()),
-                    namespace_ref: Some("ns:primary".to_string()),
-                    namespace_key: None,
+                    collection_ref: Some("collection:primary".to_string()),
+                    collection_key: None,
                     group_key: GroupKey {
                         groupname: delegate_group.groupname.clone(),
                     },
@@ -290,7 +290,7 @@ mod tests {
     #[actix_web::test]
     async fn test_import_idempotency_returns_same_task(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let import_namespace_name = context.scoped_name("idempotent_import_ns");
+        let import_collection_name = context.scoped_name("idempotent_import_collection");
         let idempotency = context.scoped_name("same-task");
 
         let body = ImportRequest {
@@ -298,10 +298,10 @@ mod tests {
             dry_run: Some(true),
             mode: None,
             graph: ImportGraph {
-                namespaces: vec![ImportNamespaceInput {
-                    ref_: Some("ns:dry".to_string()),
-                    name: import_namespace_name,
-                    description: "Dry run namespace".to_string(),
+                collections: vec![ImportCollectionInput {
+                    ref_: Some("collection:dry".to_string()),
+                    name: import_collection_name,
+                    description: "Dry run collection".to_string(),
                 }],
                 ..ImportGraph::default()
             },
@@ -352,11 +352,12 @@ mod tests {
                 dry_run: Some(true),
                 mode: None,
                 graph: ImportGraph {
-                    namespaces: vec![ImportNamespaceInput {
-                        ref_: Some("ns:dry".to_string()),
-                        name: context
-                            .scoped_name(&format!("idempotent_import_ns_concurrent_{iteration}")),
-                        description: "Dry run namespace".to_string(),
+                    collections: vec![ImportCollectionInput {
+                        ref_: Some("collection:dry".to_string()),
+                        name: context.scoped_name(&format!(
+                            "idempotent_import_collection_concurrent_{iteration}"
+                        )),
+                        description: "Dry run collection".to_string(),
                     }],
                     ..ImportGraph::default()
                 },
@@ -428,10 +429,10 @@ mod tests {
             dry_run: Some(true),
             mode: None,
             graph: ImportGraph {
-                namespaces: vec![ImportNamespaceInput {
-                    ref_: Some("ns:conflict".to_string()),
-                    name: context.scoped_name("idempotency_conflict_namespace"),
-                    description: "Dry run namespace".to_string(),
+                collections: vec![ImportCollectionInput {
+                    ref_: Some("collection:conflict".to_string()),
+                    name: context.scoped_name("idempotency_conflict_collection"),
+                    description: "Dry run collection".to_string(),
                 }],
                 ..ImportGraph::default()
             },
@@ -485,10 +486,10 @@ mod tests {
             dry_run: Some(true),
             mode: None,
             graph: ImportGraph {
-                namespaces: vec![ImportNamespaceInput {
-                    ref_: Some("ns:conflict".to_string()),
-                    name: context.scoped_name("idempotency_conflict_namespace_changed"),
-                    description: "Changed dry run namespace".to_string(),
+                collections: vec![ImportCollectionInput {
+                    ref_: Some("collection:conflict".to_string()),
+                    name: context.scoped_name("idempotency_conflict_collection_changed"),
+                    description: "Changed dry run collection".to_string(),
                 }],
                 ..ImportGraph::default()
             },
@@ -520,8 +521,8 @@ mod tests {
             dry_run: Some(true),
             mode: None,
             graph: ImportGraph {
-                namespaces: vec![ImportNamespaceInput {
-                    ref_: Some("ns:unsupported".to_string()),
+                collections: vec![ImportCollectionInput {
+                    ref_: Some("collection:unsupported".to_string()),
                     name: context.scoped_name("unsupported_import_version"),
                     description: "unsupported".to_string(),
                 }],
@@ -563,10 +564,10 @@ mod tests {
                 permission_policy: None,
             }),
             graph: ImportGraph {
-                namespaces: vec![ImportNamespaceInput {
-                    ref_: Some("ns:page".to_string()),
-                    name: context.scoped_name("paged_import_ns"),
-                    description: "Imported namespace".to_string(),
+                collections: vec![ImportCollectionInput {
+                    ref_: Some("collection:page".to_string()),
+                    name: context.scoped_name("paged_import_collection"),
+                    description: "Imported collection".to_string(),
                 }],
                 classes: vec![ImportClassInput {
                     ref_: Some("class:page".to_string()),
@@ -574,8 +575,8 @@ mod tests {
                     description: "Imported class".to_string(),
                     json_schema: None,
                     validate_schema: Some(false),
-                    namespace_ref: Some("ns:page".to_string()),
-                    namespace_key: None,
+                    collection_ref: Some("collection:page".to_string()),
+                    collection_key: None,
                 }],
                 objects: vec![ImportObjectInput {
                     ref_: Some("object:page".to_string()),
@@ -585,10 +586,10 @@ mod tests {
                     class_ref: Some("class:page".to_string()),
                     class_key: None,
                 }],
-                namespace_permissions: vec![ImportNamespacePermissionInput {
+                collection_permissions: vec![ImportCollectionPermissionInput {
                     ref_: Some("acl:page".to_string()),
-                    namespace_ref: Some("ns:page".to_string()),
-                    namespace_key: None,
+                    collection_ref: Some("collection:page".to_string()),
+                    collection_key: None,
                     group_key: GroupKey {
                         groupname: delegate_group.groupname.clone(),
                     },
@@ -684,10 +685,10 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let fixture = context.namespace_fixture("collision_abort").await;
+        let fixture = context.collection_fixture("collision_abort").await;
 
-        let body = namespace_import_request(
-            fixture.namespace.name.clone(),
+        let body = collection_import_request(
+            fixture.collection.name.clone(),
             "updated-by-import",
             ImportMode {
                 atomicity: Some(ImportAtomicity::Strict),
@@ -710,13 +711,13 @@ mod tests {
         assert_eq!(completed.status, TaskStatus::Failed);
 
         let description = with_connection(&context.pool, |conn| {
-            namespaces
-                .filter(namespace_id_field.eq(fixture.namespace.id))
-                .select(namespace_description)
+            collections
+                .filter(collection_id_field.eq(fixture.collection.id))
+                .select(collection_description)
                 .first::<String>(conn)
         })
         .unwrap();
-        assert_eq!(description, fixture.namespace.description);
+        assert_eq!(description, fixture.collection.description);
     }
 
     #[rstest]
@@ -725,11 +726,11 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let fixture = context.namespace_fixture("collision_overwrite").await;
+        let fixture = context.collection_fixture("collision_overwrite").await;
         let updated_description = context.scoped_name("collision_overwrite_description");
 
-        let body = namespace_import_request(
-            fixture.namespace.name.clone(),
+        let body = collection_import_request(
+            fixture.collection.name.clone(),
             &updated_description,
             ImportMode {
                 atomicity: Some(ImportAtomicity::Strict),
@@ -752,9 +753,9 @@ mod tests {
         assert_eq!(completed.status, TaskStatus::Succeeded);
 
         let description = with_connection(&context.pool, |conn| {
-            namespaces
-                .filter(namespace_id_field.eq(fixture.namespace.id))
-                .select(namespace_description)
+            collections
+                .filter(collection_id_field.eq(fixture.collection.id))
+                .select(collection_description)
                 .first::<String>(conn)
         })
         .unwrap();
@@ -768,10 +769,10 @@ mod tests {
     ) {
         let context = test_context;
         let allowed = context
-            .namespace_fixture("permission_continue_allowed")
+            .collection_fixture("permission_continue_allowed")
             .await;
         let forbidden = context
-            .namespace_fixture("permission_continue_forbidden")
+            .collection_fixture("permission_continue_forbidden")
             .await;
         allowed
             .owner_group
@@ -797,9 +798,9 @@ mod tests {
                         description: "allowed".to_string(),
                         json_schema: None,
                         validate_schema: Some(false),
-                        namespace_ref: None,
-                        namespace_key: Some(NamespaceKey {
-                            name: allowed.namespace.name.clone(),
+                        collection_ref: None,
+                        collection_key: Some(CollectionKey {
+                            name: allowed.collection.name.clone(),
                         }),
                     },
                     ImportClassInput {
@@ -808,9 +809,9 @@ mod tests {
                         description: "forbidden".to_string(),
                         json_schema: None,
                         validate_schema: Some(false),
-                        namespace_ref: None,
-                        namespace_key: Some(NamespaceKey {
-                            name: forbidden.namespace.name.clone(),
+                        collection_ref: None,
+                        collection_key: Some(CollectionKey {
+                            name: forbidden.collection.name.clone(),
                         }),
                     },
                 ],
@@ -840,7 +841,7 @@ mod tests {
         let created = with_connection(&context.pool, |conn| {
             hubuumclass
                 .filter(class_name_col.eq(&allowed_class))
-                .filter(namespace_id.eq(allowed.namespace.id))
+                .filter(collection_id.eq(allowed.collection.id))
                 .count()
                 .get_result::<i64>(conn)
         })
@@ -848,7 +849,7 @@ mod tests {
         let blocked = with_connection(&context.pool, |conn| {
             hubuumclass
                 .filter(class_name_col.eq(&forbidden_class))
-                .filter(namespace_id.eq(forbidden.namespace.id))
+                .filter(collection_id.eq(forbidden.collection.id))
                 .count()
                 .get_result::<i64>(conn)
         })
@@ -887,9 +888,9 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let allowed = context.namespace_fixture("permission_abort_allowed").await;
+        let allowed = context.collection_fixture("permission_abort_allowed").await;
         let forbidden = context
-            .namespace_fixture("permission_abort_forbidden")
+            .collection_fixture("permission_abort_forbidden")
             .await;
         allowed
             .owner_group
@@ -915,9 +916,9 @@ mod tests {
                         description: "allowed".to_string(),
                         json_schema: None,
                         validate_schema: Some(false),
-                        namespace_ref: None,
-                        namespace_key: Some(NamespaceKey {
-                            name: allowed.namespace.name.clone(),
+                        collection_ref: None,
+                        collection_key: Some(CollectionKey {
+                            name: allowed.collection.name.clone(),
                         }),
                     },
                     ImportClassInput {
@@ -926,9 +927,9 @@ mod tests {
                         description: "forbidden".to_string(),
                         json_schema: None,
                         validate_schema: Some(false),
-                        namespace_ref: None,
-                        namespace_key: Some(NamespaceKey {
-                            name: forbidden.namespace.name.clone(),
+                        collection_ref: None,
+                        collection_key: Some(CollectionKey {
+                            name: forbidden.collection.name.clone(),
                         }),
                     },
                 ],
@@ -976,9 +977,9 @@ mod tests {
             dry_run: Some(true),
             mode: None,
             graph: ImportGraph {
-                namespaces: vec![ImportNamespaceInput {
-                    ref_: Some("ns:private".to_string()),
-                    name: context.scoped_name("private_task_namespace"),
+                collections: vec![ImportCollectionInput {
+                    ref_: Some("collection:private".to_string()),
+                    name: context.scoped_name("private_task_collection"),
                     description: "private".to_string(),
                 }],
                 ..ImportGraph::default()

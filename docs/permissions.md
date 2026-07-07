@@ -71,40 +71,40 @@ The following permissions are available for relationships between classes:
 
 ### Permissions for templates
 
-Report templates are used to format report output and are scoped to namespaces. The following permissions control access to templates:
+Report templates are used to format report output and are scoped to collections. The following permissions control access to templates:
 
 | Permission | Description |
 | --- | --- |
 | `ReadTemplate` | Allows reading templates and using them in report generation. Required to view template definitions or to reference a template when running a report. |
-| `CreateTemplate` | Allows creating new templates within the namespace. Also required when moving a template to a different namespace (as the target namespace permission). |
-| `UpdateTemplate` | Allows modifying existing templates (name, description, template content, namespace). Required when moving a template to a different namespace (as the source namespace permission). |
-| `DeleteTemplate` | Allows deleting templates from the namespace. |
+| `CreateTemplate` | Allows creating new templates within the collection. Also required when moving a template to a different collection (as the target collection permission). |
+| `UpdateTemplate` | Allows modifying existing templates (name, description, template content, collection). Required when moving a template to a different collection (as the source collection permission). |
+| `DeleteTemplate` | Allows deleting templates from the collection. |
 
 **Important notes about template permissions:**
 
-- Templates are namespace-scoped, meaning all template operations require the appropriate permission on the template's namespace.
-- Using a template in a report requires `read_template` permission on the namespace containing the template.
-- Moving a template between namespaces requires both `update_template` on the source namespace and `create_template` on the target namespace.
-- Templates with the same name cannot exist within the same namespace (enforced by a unique constraint).
+- Templates are collection-scoped, meaning all template operations require the appropriate permission on the template's collection.
+- Using a template in a report requires `read_template` permission on the collection containing the template.
+- Moving a template between collections requires both `update_template` on the source collection and `create_template` on the target collection.
+- Templates with the same name cannot exist within the same collection (enforced by a unique constraint).
 - Valid template content types are: `text/plain`, `text/html`, and `text/csv`. The `application/json` content type is reserved for the default JSON report output and cannot be used for stored templates.
 
 ### Permissions for remote targets
 
-Remote targets define outbound subject actions and are scoped to namespaces. The following permissions
+Remote targets define outbound subject actions and are scoped to collections. The following permissions
 control target management and invocation:
 
 | Permission | Description |
 | --- | --- |
-| `ReadRemoteTarget` | Allows listing and reading remote target definitions in the namespace. |
-| `CreateRemoteTarget` | Allows creating remote targets in the namespace. Also required when moving a target into a namespace. |
-| `UpdateRemoteTarget` | Allows modifying existing targets in the namespace. Required on the source namespace when moving a target. |
-| `DeleteRemoteTarget` | Allows deleting targets from the namespace. |
-| `ExecuteRemoteTarget` | Allows invoking targets in the namespace. |
+| `ReadRemoteTarget` | Allows listing and reading remote target definitions in the collection. |
+| `CreateRemoteTarget` | Allows creating remote targets in the collection. Also required when moving a target into a collection. |
+| `UpdateRemoteTarget` | Allows modifying existing targets in the collection. Required on the source collection when moving a target. |
+| `DeleteRemoteTarget` | Allows deleting targets from the collection. |
+| `ExecuteRemoteTarget` | Allows invoking targets in the collection. |
 
-Invoking a remote target also requires read permission for the selected subject. Namespace subjects
+Invoking a remote target also requires read permission for the selected subject. Collection subjects
 require `ReadCollection`; class subjects require `ReadClass`; object subjects require `ReadObject`;
-class relation subjects require `ReadClassRelation` on both endpoint namespaces; object relation
-subjects require `ReadObjectRelation` on both endpoint namespaces. The worker re-checks both subject
+class relation subjects require `ReadClassRelation` on both endpoint collections; object relation
+subjects require `ReadObjectRelation` on both endpoint collections. The worker re-checks both subject
 read permission and `ExecuteRemoteTarget` for the submitting user before executing the outbound HTTP
 call. `ReadRemoteTarget` is not required to invoke a target by ID.
 

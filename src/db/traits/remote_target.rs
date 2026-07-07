@@ -26,7 +26,7 @@ fn remote_target_event(
     .with_context(context)
     .with_entity_id(row.id)
     .with_entity_name(row.name.clone())
-    .with_namespace_id(row.namespace_id))
+    .with_collection_id(row.collection_id))
 }
 
 pub(crate) trait LoadRemoteTargetRecord {
@@ -252,7 +252,7 @@ pub(crate) async fn emit_remote_target_invoked_event(
         .with_context(context)
         .with_entity_id(target.id)
         .with_entity_name(target.name.clone())
-        .with_namespace_id(target.namespace_id)
+        .with_collection_id(target.collection_id)
         .with_metadata(serde_json::json!({
             "task_id": task_id,
             "subject_type": subject_type,
@@ -265,13 +265,13 @@ pub(crate) async fn emit_remote_target_invoked_event(
 
 pub(crate) async fn list_rows_with_total_count(
     pool: &DbPool,
-    allowed_namespace_ids: &[i32],
+    allowed_collection_ids: &[i32],
     query_options: &QueryOptions,
 ) -> Result<(Vec<RemoteTargetRow>, i64), ApiError> {
-    let query = build_list_query(allowed_namespace_ids, query_options)?;
+    let query = build_list_query(allowed_collection_ids, query_options)?;
     let total_count = with_connection(pool, |conn| query.count().get_result::<i64>(conn))?;
 
-    let mut query = build_list_query(allowed_namespace_ids, query_options)?;
+    let mut query = build_list_query(allowed_collection_ids, query_options)?;
     apply_query_options!(query, query_options, RemoteTarget);
     let rows = with_connection(pool, |conn| query.load::<RemoteTargetRow>(conn))?;
 
@@ -279,17 +279,17 @@ pub(crate) async fn list_rows_with_total_count(
 }
 
 fn build_list_query<'a>(
-    allowed_namespace_ids: &'a [i32],
+    allowed_collection_ids: &'a [i32],
     query_options: &'a QueryOptions,
 ) -> Result<crate::schema::remote_targets::BoxedQuery<'a, diesel::pg::Pg>, ApiError> {
     use crate::schema::remote_targets::dsl::{
-        class_id, created_at, description, id, method, name, namespace_id, remote_targets,
+        class_id, collection_id, created_at, description, id, method, name, remote_targets,
         updated_at,
     };
 
     let mut query = remote_targets
         .into_boxed()
-        .filter(namespace_id.eq_any(allowed_namespace_ids));
+        .filter(collection_id.eq_any(allowed_collection_ids));
 
     for param in &query_options.filters {
         let operator = param.operator.clone();
@@ -297,8 +297,8 @@ fn build_list_query<'a>(
             FilterField::Id => numeric_search!(query, param, operator, id),
             FilterField::Name => string_search!(query, param, operator, name),
             FilterField::Description => string_search!(query, param, operator, description),
-            FilterField::NamespaceId | FilterField::Namespaces => {
-                numeric_search!(query, param, operator, namespace_id)
+            FilterField::CollectionId | FilterField::Collections => {
+                numeric_search!(query, param, operator, collection_id)
             }
             FilterField::ClassId => numeric_search!(query, param, operator, class_id),
             FilterField::Kind => string_search!(query, param, operator, method),
@@ -355,11 +355,11 @@ impl RemoteTargetID {
 impl RemoteTarget {
     pub async fn list_with_total_count(
         pool: &DbPool,
-        allowed_namespace_ids: &[i32],
+        allowed_collection_ids: &[i32],
         query_options: &QueryOptions,
     ) -> Result<(Vec<RemoteTarget>, i64), ApiError> {
         let (rows, total) =
-            list_rows_with_total_count(pool, allowed_namespace_ids, query_options).await?;
+            list_rows_with_total_count(pool, allowed_collection_ids, query_options).await?;
         let targets = rows
             .into_iter()
             .map(RemoteTarget::try_from)

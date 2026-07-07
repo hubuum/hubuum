@@ -26,8 +26,8 @@ pub trait CanDelete {
 
 /// Persist `self` and return the saved representation.
 ///
-/// `Output` is usually the persisted model type. For example, saving a `NewNamespace` returns a
-/// `Namespace`, while saving an existing value may also return the updated persisted value.
+/// `Output` is usually the persisted model type. For example, saving a `NewCollection` returns a
+/// `Collection`, while saving an existing value may also return the updated persisted value.
 pub trait CanSave {
     type Output;
     /// Persist without emitting domain events.

@@ -5,7 +5,7 @@ use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::{
-    ClassIdSet, HubuumClass, HubuumClassID, HubuumClassRelation, HubuumClassRelationID, Namespace,
+    ClassIdSet, Collection, HubuumClass, HubuumClassID, HubuumClassRelation, HubuumClassRelationID,
     NewHubuumClass, NewHubuumClassRelation, UpdateHubuumClass,
 };
 
@@ -13,7 +13,7 @@ fn class_snapshot(class: &HubuumClass) -> serde_json::Value {
     serde_json::json!({
         "id": class.id,
         "name": class.name,
-        "namespace_id": class.namespace_id,
+        "collection_id": class.collection_id,
         "json_schema": class.json_schema,
         "validate_schema": class.validate_schema,
         "description": class.description,
@@ -33,7 +33,7 @@ fn class_event(
             .with_context(context)
             .with_entity_id(class.id)
             .with_entity_name(class.name.clone())
-            .with_namespace_id(class.namespace_id),
+            .with_collection_id(class.collection_id),
     )
 }
 
@@ -327,27 +327,27 @@ impl DeleteClassRecord for HubuumClass {
     }
 }
 
-pub trait ClassNamespaceLookup {
-    async fn lookup_class_namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError>;
+pub trait ClassCollectionLookup {
+    async fn lookup_class_collection(&self, pool: &DbPool) -> Result<Collection, ApiError>;
 }
 
-impl ClassNamespaceLookup for HubuumClass {
-    async fn lookup_class_namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        use crate::schema::namespaces::dsl::{id, namespaces};
+impl ClassCollectionLookup for HubuumClass {
+    async fn lookup_class_collection(&self, pool: &DbPool) -> Result<Collection, ApiError> {
+        use crate::schema::collections::dsl::{collections, id};
 
         with_connection(pool, |conn| {
-            namespaces
-                .filter(id.eq(self.namespace_id))
-                .first::<Namespace>(conn)
+            collections
+                .filter(id.eq(self.collection_id))
+                .first::<Collection>(conn)
         })
     }
 }
 
-impl ClassNamespaceLookup for HubuumClassID {
-    async fn lookup_class_namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
+impl ClassCollectionLookup for HubuumClassID {
+    async fn lookup_class_collection(&self, pool: &DbPool) -> Result<Collection, ApiError> {
         self.load_class_record(pool)
             .await?
-            .lookup_class_namespace(pool)
+            .lookup_class_collection(pool)
             .await
     }
 }

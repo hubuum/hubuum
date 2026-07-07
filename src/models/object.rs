@@ -20,7 +20,7 @@ pub struct HubuumObject {
     #[diesel(sql_type = Text)]
     pub name: String,
     #[diesel(sql_type = Integer)]
-    pub namespace_id: i32,
+    pub collection_id: i32,
     #[diesel(sql_type = Integer)]
     pub hubuum_class_id: i32,
     #[diesel(sql_type = Jsonb)]
@@ -39,7 +39,7 @@ pub struct HubuumObject {
 #[diesel(table_name = hubuumobject)]
 pub struct NewHubuumObject {
     pub name: String,
-    pub namespace_id: i32,
+    pub collection_id: i32,
     pub hubuum_class_id: i32,
     pub data: serde_json::Value,
     pub description: String,
@@ -49,7 +49,7 @@ pub struct NewHubuumObject {
 #[diesel(table_name = hubuumobject)]
 pub struct UpdateHubuumObject {
     pub name: Option<String>,
-    pub namespace_id: Option<i32>,
+    pub collection_id: Option<i32>,
     pub hubuum_class_id: Option<i32>,
     pub data: Option<serde_json::Value>,
     pub description: Option<String>,
@@ -74,7 +74,7 @@ pub struct ObjectsByClass {
 pub struct HubuumObjectWithPath {
     pub id: i32,
     pub name: String,
-    pub namespace_id: i32,
+    pub collection_id: i32,
     pub hubuum_class_id: i32,
     pub data: serde_json::Value,
     pub description: String,
@@ -101,7 +101,7 @@ where
 fn new_hubuum_object_example() -> NewHubuumObject {
     NewHubuumObject {
         name: "srv-01".to_string(),
-        namespace_id: 1,
+        collection_id: 1,
         hubuum_class_id: 2,
         data: serde_json::json!({"hostname": "srv-01", "ip": "10.0.0.10"}),
         description: "Primary application server".to_string(),
@@ -112,7 +112,7 @@ fn new_hubuum_object_example() -> NewHubuumObject {
 fn update_hubuum_object_example() -> UpdateHubuumObject {
     UpdateHubuumObject {
         name: Some("srv-01".to_string()),
-        namespace_id: None,
+        collection_id: None,
         hubuum_class_id: None,
         data: Some(serde_json::json!({"hostname": "srv-01", "status": "active"})),
         description: Some("Primary application server (updated)".to_string()),
@@ -124,7 +124,7 @@ fn update_hubuum_object_example() -> UpdateHubuumObject {
 pub struct HubuumObjectHistory {
     pub id: i32,
     pub name: String,
-    pub namespace_id: i32,
+    pub collection_id: i32,
     pub hubuum_class_id: i32,
     pub data: serde_json::Value,
     pub description: String,
@@ -145,37 +145,37 @@ pub mod tests {
     use crate::db::DbPool;
     use crate::models::class::HubuumClass;
     use crate::models::class::tests::{create_class, verify_no_such_class};
-    use crate::models::namespace::Namespace;
+    use crate::models::collection::Collection;
     use crate::tests::TestScope;
     use crate::traits::{CanDelete, CanSave, SelfAccessors};
 
     #[allow(dead_code)]
     async fn setup_test_objects(
         pool: &DbPool,
-        namespace: &Namespace,
+        collection: &Collection,
         class: &HubuumClass,
     ) -> Vec<HubuumObject> {
         let simple_data = serde_json::json!({"key": "value"});
         let nested_data = serde_json::json!({"key": "value", "nested": {"key": "nested_value"}});
         let list_data = serde_json::json!({"key": "value", "list": [1, 2, 3]});
 
-        let nid = namespace.id;
+        let target_collection_id = collection.id;
         let hid = class.id;
 
         let test_objects = vec![
-            ("Object 1", hid, nid, simple_data.clone()),
-            ("Object 2", hid, nid, simple_data.clone()),
-            ("Object 3", hid, nid, simple_data.clone()),
-            ("Object 4", hid, nid, nested_data.clone()),
-            ("Object 5", hid, nid, nested_data.clone()),
-            ("Object 6", hid, nid, list_data.clone()),
+            ("Object 1", hid, target_collection_id, simple_data.clone()),
+            ("Object 2", hid, target_collection_id, simple_data.clone()),
+            ("Object 3", hid, target_collection_id, simple_data.clone()),
+            ("Object 4", hid, target_collection_id, nested_data.clone()),
+            ("Object 5", hid, target_collection_id, nested_data.clone()),
+            ("Object 6", hid, target_collection_id, list_data.clone()),
         ];
 
         let mut ret_vec = Vec::new();
 
-        for (name, hid, nid, object_data) in test_objects {
+        for (name, hid, target_collection_id, object_data) in test_objects {
             ret_vec.push(
-                create_object(pool, hid, nid, name, object_data)
+                create_object(pool, hid, target_collection_id, name, object_data)
                     .await
                     .unwrap(),
             );
@@ -202,13 +202,13 @@ pub mod tests {
     pub async fn create_object(
         pool: &DbPool,
         hubuum_class_id: i32,
-        namespace_id: i32,
+        collection_id: i32,
         object_name: &str,
         object_data: serde_json::Value,
     ) -> Result<HubuumObject, ApiError> {
         let object = NewHubuumObject {
             name: object_name.to_string(),
-            namespace_id,
+            collection_id,
             hubuum_class_id,
             data: object_data,
             description: "Test object".to_string(),
@@ -225,8 +225,8 @@ pub mod tests {
     async fn test_creating_object_manual_delete() {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
-        let namespace = scope.namespace_fixture("object_manual_test").await;
-        let class = create_class(&pool, &namespace.namespace, "test creating object").await;
+        let collection = scope.collection_fixture("object_manual_test").await;
+        let class = create_class(&pool, &collection.collection, "test creating object").await;
 
         let obj_name = "test manual object creation";
 
@@ -235,7 +235,7 @@ pub mod tests {
         let object = create_object(
             &pool,
             class.id,
-            namespace.namespace.id,
+            collection.collection.id,
             obj_name,
             object_data.clone(),
         )
@@ -254,6 +254,6 @@ pub mod tests {
         class.delete_without_events(&pool).await.unwrap();
         verify_no_such_class(&pool, class.id).await;
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 }

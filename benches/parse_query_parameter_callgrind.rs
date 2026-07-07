@@ -10,7 +10,7 @@ const COMPLEX_QUERY: &str = concat!(
     "name__not_icontains=archived",
     "&description__icontains=router",
     "&permissions=CanRead",
-    "&namespaces=1-3,8",
+    "&collections=1-3,8",
     "&validate_schema=true",
     "&json_data__contains=metadata,owner=platform",
     "&json_data__gte=metrics,cpu=42",

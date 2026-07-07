@@ -8,9 +8,9 @@ mod tests {
     use crate::db::with_connection;
     use crate::models::search::{DataType, SearchOperator};
     use crate::models::{
-        HubuumClass, HubuumClassExpanded, HubuumObject, HubuumObjectWithPath, Namespace,
-        NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
-        NewNamespaceWithAssignee,
+        Collection, HubuumClass, HubuumClassExpanded, HubuumObject, HubuumObjectWithPath,
+        NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
+        NewHubuumObjectRelation,
     };
     use crate::schema::hubuumobject::dsl::{
         created_at as object_created_at, hubuumobject, id as hubuumobject_id,
@@ -18,7 +18,7 @@ mod tests {
     };
     use crate::tests::api_operations::get_request;
     use crate::tests::asserts::assert_response_status;
-    use crate::tests::{NamespaceFixture, TestContext, ensure_admin_group, test_context};
+    use crate::tests::{CollectionFixture, TestContext, ensure_admin_group, test_context};
     use crate::traits::{CanDelete, CanSave};
 
     const STRING_OPERATORS: &[&str] = &[
@@ -89,10 +89,10 @@ mod tests {
         context: &TestContext,
         label: &str,
         names: &[&str],
-    ) -> (NamespaceFixture, HubuumClass, Vec<HubuumObject>) {
-        let namespace = context.namespace_fixture(label).await;
+    ) -> (CollectionFixture, HubuumClass, Vec<HubuumObject>) {
+        let collection = context.collection_fixture(label).await;
         let class = NewHubuumClass {
-            namespace_id: namespace.namespace.id,
+            collection_id: collection.collection.id,
             name: format!("{label}_class"),
             description: format!("{label}_class"),
             json_schema: None,
@@ -106,7 +106,7 @@ mod tests {
         for name in names {
             objects.push(
                 NewHubuumObject {
-                    namespace_id: namespace.namespace.id,
+                    collection_id: collection.collection.id,
                     hubuum_class_id: class.id,
                     data: serde_json::json!({ "name": name }),
                     name: (*name).to_string(),
@@ -118,7 +118,7 @@ mod tests {
             );
         }
 
-        (namespace, class, objects)
+        (collection, class, objects)
     }
 
     fn set_object_created_at(
@@ -137,8 +137,8 @@ mod tests {
         .unwrap();
     }
 
-    async fn create_boolean_class_fixture(context: &TestContext, label: &str) -> NamespaceFixture {
-        let namespace = context.namespace_fixture(label).await;
+    async fn create_boolean_class_fixture(context: &TestContext, label: &str) -> CollectionFixture {
+        let collection = context.collection_fixture(label).await;
 
         for (name, validate_schema) in [
             ("bool-true-a", true),
@@ -146,7 +146,7 @@ mod tests {
             ("bool-true-b", true),
         ] {
             NewHubuumClass {
-                namespace_id: namespace.namespace.id,
+                collection_id: collection.collection.id,
                 name: format!("{label}-{name}"),
                 description: format!("{label}-{name}"),
                 json_schema: None,
@@ -157,20 +157,20 @@ mod tests {
             .unwrap();
         }
 
-        namespace
+        collection
     }
 
     async fn create_related_objects_fixture(
         context: &TestContext,
         label: &str,
-    ) -> (NamespaceFixture, Vec<HubuumClass>, Vec<HubuumObject>) {
-        let namespace = context.namespace_fixture(label).await;
+    ) -> (CollectionFixture, Vec<HubuumClass>, Vec<HubuumObject>) {
+        let collection = context.collection_fixture(label).await;
 
         let mut classes = Vec::new();
         for suffix in ["a", "b", "c"] {
             classes.push(
                 NewHubuumClass {
-                    namespace_id: namespace.namespace.id,
+                    collection_id: collection.collection.id,
                     name: format!("{label}-class-{suffix}"),
                     description: format!("{label}-class-{suffix}"),
                     json_schema: None,
@@ -205,7 +205,7 @@ mod tests {
         for (index, class) in classes.iter().enumerate() {
             objects.push(
                 NewHubuumObject {
-                    namespace_id: namespace.namespace.id,
+                    collection_id: collection.collection.id,
                     hubuum_class_id: class.id,
                     data: serde_json::json!({ "index": index }),
                     name: format!("{label}-object-{index}"),
@@ -234,7 +234,7 @@ mod tests {
         .await
         .unwrap();
 
-        (namespace, classes, objects)
+        (collection, classes, objects)
     }
 
     #[rstest]
@@ -364,16 +364,16 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let namespace_name = format!(
+        let collection_name = format!(
             "querying_strings_{}",
             query
                 .chars()
                 .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
                 .collect::<String>()
         );
-        let (namespace, class, _) = create_objects_fixture(
+        let (collection, class, _) = create_objects_fixture(
             &context,
-            &namespace_name,
+            &collection_name,
             &["Alpha-One", "alpha-two", "Beta-ONE", "Gamma-Three"],
         )
         .await;
@@ -394,7 +394,7 @@ mod tests {
         let object_names: Vec<&str> = objects.iter().map(|object| object.name.as_str()).collect();
         assert_eq!(object_names, expected_names);
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -420,7 +420,7 @@ mod tests {
                 .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
                 .collect::<String>()
         );
-        let (namespace, class, objects) =
+        let (collection, class, objects) =
             create_objects_fixture(&context, &label, &["n0", "n1", "n2"]).await;
 
         let query = objects
@@ -450,7 +450,7 @@ mod tests {
         let fetched_ids: Vec<i32> = response_objects.iter().map(|object| object.id).collect();
         assert_eq!(fetched_ids, expected_ids);
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -476,7 +476,7 @@ mod tests {
                 .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
                 .collect::<String>()
         );
-        let (namespace, class, objects) =
+        let (collection, class, objects) =
             create_objects_fixture(&context, &label, &["dated-0", "dated-1", "dated-2"]).await;
 
         for (object, (year, month, day)) in
@@ -510,7 +510,7 @@ mod tests {
             .collect();
         assert_eq!(object_names, expected_names);
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -530,7 +530,7 @@ mod tests {
                 .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
                 .collect::<String>()
         );
-        let (namespace, classes, objects) = create_related_objects_fixture(&context, &label).await;
+        let (collection, classes, objects) = create_related_objects_fixture(&context, &label).await;
 
         let query = objects
             .iter()
@@ -559,7 +559,7 @@ mod tests {
         let fetched_ids: Vec<i32> = related_objects.iter().map(|object| object.id).collect();
         assert_eq!(fetched_ids, expected_ids);
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -574,14 +574,14 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let namespace = create_boolean_class_fixture(&context, "querying_booleans").await;
+        let collection = create_boolean_class_fixture(&context, "querying_booleans").await;
 
         let resp = get_request(
             &context.pool,
             &context.admin_token,
             &format!(
-                "/api/v1/classes?namespaces={}&{}&sort=name.asc",
-                namespace.namespace.id, query
+                "/api/v1/classes?collections={}&{}&sort=name.asc",
+                collection.collection.id, query
             ),
         )
         .await;
@@ -592,35 +592,35 @@ mod tests {
         let class_names: Vec<&str> = classes.iter().map(|class| class.name.as_str()).collect();
         assert_eq!(class_names, expected_names);
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
     }
 
     #[rstest]
     #[actix_web::test]
-    async fn test_sort_by_description_for_classes_namespaces_and_objects(
+    async fn test_sort_by_description_for_classes_collections_and_objects(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
         let admin_group = ensure_admin_group(&context.pool).await;
 
-        let namespace_z = NewNamespaceWithAssignee {
-            name: "querying_sort_description_ns_z".to_string(),
+        let collection_z = NewCollectionWithAssignee {
+            name: "querying_sort_description_collection_z".to_string(),
             description: "querying-sort-description-z".to_string(),
             group_id: admin_group.id,
         }
         .save_without_events(&context.pool)
         .await
         .unwrap();
-        let namespace_a = NewNamespaceWithAssignee {
-            name: "querying_sort_description_ns_a".to_string(),
+        let collection_a = NewCollectionWithAssignee {
+            name: "querying_sort_description_collection_a".to_string(),
             description: "querying-sort-description-a".to_string(),
             group_id: admin_group.id,
         }
         .save_without_events(&context.pool)
         .await
         .unwrap();
-        let namespace_m = NewNamespaceWithAssignee {
-            name: "querying_sort_description_ns_m".to_string(),
+        let collection_m = NewCollectionWithAssignee {
+            name: "querying_sort_description_collection_m".to_string(),
             description: "querying-sort-description-m".to_string(),
             group_id: admin_group.id,
         }
@@ -631,18 +631,18 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            "/api/v1/namespaces?name__contains=querying_sort_description_ns_&sort=description.asc",
+            "/api/v1/collections?name__contains=querying_sort_description_collection_&sort=description.asc",
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let namespaces: Vec<Namespace> = actix_test::read_body_json(resp).await;
+        let collections: Vec<Collection> = actix_test::read_body_json(resp).await;
 
-        let namespace_descriptions: Vec<&str> = namespaces
+        let collection_descriptions: Vec<&str> = collections
             .iter()
-            .map(|namespace| namespace.description.as_str())
+            .map(|collection| collection.description.as_str())
             .collect();
         assert_eq!(
-            namespace_descriptions,
+            collection_descriptions,
             vec![
                 "querying-sort-description-a",
                 "querying-sort-description-m",
@@ -651,7 +651,7 @@ mod tests {
         );
 
         NewHubuumClass {
-            namespace_id: namespace_a.id,
+            collection_id: collection_a.id,
             name: "querying_sort_description_class_z".to_string(),
             description: "querying-sort-description-z".to_string(),
             json_schema: None,
@@ -661,7 +661,7 @@ mod tests {
         .await
         .unwrap();
         NewHubuumClass {
-            namespace_id: namespace_a.id,
+            collection_id: collection_a.id,
             name: "querying_sort_description_class_a".to_string(),
             description: "querying-sort-description-a".to_string(),
             json_schema: None,
@@ -671,7 +671,7 @@ mod tests {
         .await
         .unwrap();
         NewHubuumClass {
-            namespace_id: namespace_a.id,
+            collection_id: collection_a.id,
             name: "querying_sort_description_class_m".to_string(),
             description: "querying-sort-description-m".to_string(),
             json_schema: None,
@@ -685,8 +685,8 @@ mod tests {
             &context.pool,
             &context.admin_token,
             &format!(
-                "/api/v1/classes?namespaces={}&name__contains=querying_sort_description_class_&sort=description.asc",
-                namespace_a.id
+                "/api/v1/classes?collections={}&name__contains=querying_sort_description_class_&sort=description.asc",
+                collection_a.id
             ),
         )
         .await;
@@ -707,7 +707,7 @@ mod tests {
         );
 
         let object_class = NewHubuumClass {
-            namespace_id: namespace_a.id,
+            collection_id: collection_a.id,
             name: "querying_sort_description_object_class".to_string(),
             description: "querying-sort-description-object-class".to_string(),
             json_schema: None,
@@ -718,7 +718,7 @@ mod tests {
         .unwrap();
 
         NewHubuumObject {
-            namespace_id: namespace_a.id,
+            collection_id: collection_a.id,
             hubuum_class_id: object_class.id,
             data: serde_json::json!({ "i": 1 }),
             name: "querying_sort_description_object_z".to_string(),
@@ -728,7 +728,7 @@ mod tests {
         .await
         .unwrap();
         NewHubuumObject {
-            namespace_id: namespace_a.id,
+            collection_id: collection_a.id,
             hubuum_class_id: object_class.id,
             data: serde_json::json!({ "i": 2 }),
             name: "querying_sort_description_object_a".to_string(),
@@ -738,7 +738,7 @@ mod tests {
         .await
         .unwrap();
         NewHubuumObject {
-            namespace_id: namespace_a.id,
+            collection_id: collection_a.id,
             hubuum_class_id: object_class.id,
             data: serde_json::json!({ "i": 3 }),
             name: "querying_sort_description_object_m".to_string(),
@@ -773,15 +773,15 @@ mod tests {
             ]
         );
 
-        namespace_a
+        collection_a
             .delete_without_events(&context.pool)
             .await
             .unwrap();
-        namespace_m
+        collection_m
             .delete_without_events(&context.pool)
             .await
             .unwrap();
-        namespace_z
+        collection_z
             .delete_without_events(&context.pool)
             .await
             .unwrap();
@@ -793,7 +793,7 @@ mod tests {
         let context = test_context;
         let admin_group = ensure_admin_group(&context.pool).await;
 
-        let ns_z = NewNamespaceWithAssignee {
+        let collection_z = NewCollectionWithAssignee {
             name: "descending_sort_z".to_string(),
             description: "z-description".to_string(),
             group_id: admin_group.id,
@@ -801,7 +801,7 @@ mod tests {
         .save_without_events(&context.pool)
         .await
         .unwrap();
-        let ns_a = NewNamespaceWithAssignee {
+        let collection_a = NewCollectionWithAssignee {
             name: "descending_sort_a".to_string(),
             description: "a-description".to_string(),
             group_id: admin_group.id,
@@ -809,7 +809,7 @@ mod tests {
         .save_without_events(&context.pool)
         .await
         .unwrap();
-        let ns_m = NewNamespaceWithAssignee {
+        let collection_m = NewCollectionWithAssignee {
             name: "descending_sort_m".to_string(),
             description: "m-description".to_string(),
             group_id: admin_group.id,
@@ -821,23 +821,32 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            "/api/v1/namespaces?name__contains=descending_sort_&sort=description.desc",
+            "/api/v1/collections?name__contains=descending_sort_&sort=description.desc",
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let namespaces: Vec<Namespace> = actix_test::read_body_json(resp).await;
+        let collections: Vec<Collection> = actix_test::read_body_json(resp).await;
 
-        let namespace_descriptions: Vec<&str> = namespaces
+        let collection_descriptions: Vec<&str> = collections
             .iter()
-            .map(|namespace| namespace.description.as_str())
+            .map(|collection| collection.description.as_str())
             .collect();
         assert_eq!(
-            namespace_descriptions,
+            collection_descriptions,
             vec!["z-description", "m-description", "a-description",]
         );
 
-        ns_a.delete_without_events(&context.pool).await.unwrap();
-        ns_m.delete_without_events(&context.pool).await.unwrap();
-        ns_z.delete_without_events(&context.pool).await.unwrap();
+        collection_a
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
+        collection_m
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
+        collection_z
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
     }
 }

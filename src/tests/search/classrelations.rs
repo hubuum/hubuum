@@ -8,7 +8,7 @@ mod test {
     use crate::models::group::GroupID;
     use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, SearchOperator};
     use crate::models::{
-        HubuumClass, HubuumClassRelation, Namespace, NewHubuumClassRelation, NewNamespace,
+        Collection, HubuumClass, HubuumClassRelation, NewCollection, NewHubuumClassRelation,
     };
     use crate::tests::{TestContext, ensure_admin_group, test_context};
     use crate::traits::{CanDelete, CanSave, Search};
@@ -16,14 +16,14 @@ mod test {
     async fn create_data(
         pool: &DbPool,
         prefix: &str,
-    ) -> (Namespace, Vec<HubuumClass>, Vec<HubuumClassRelation>) {
+    ) -> (Collection, Vec<HubuumClass>, Vec<HubuumClassRelation>) {
         let admin_group = ensure_admin_group(pool).await;
         let crname = format!("{prefix}-classrelation");
-        let namespace = NewNamespace {
+        let collection = NewCollection {
             name: crname.clone(),
             description: crname.clone(),
         };
-        let namespace = namespace
+        let collection = collection
             .save_and_grant_all_to(pool, GroupID::new(admin_group.id).unwrap())
             .await
             .unwrap();
@@ -34,7 +34,7 @@ mod test {
             let class = NewHubuumClass {
                 name: label.clone(),
                 description: label,
-                namespace_id: namespace.id,
+                collection_id: collection.id,
                 json_schema: None,
                 validate_schema: None,
             };
@@ -66,7 +66,7 @@ mod test {
         relations.push(rel1);
         relations.push(rel2);
 
-        (namespace, classes, relations)
+        (collection, classes, relations)
     }
 
     fn relations_constraint_query(relations: &[HubuumClassRelation]) -> ParsedQueryParam {
@@ -124,7 +124,7 @@ mod test {
     ) {
         let context = test_context;
         let prefix = format!("test_filter_by_class_field_{field}_{operator}_{value}");
-        let (namespace, _classes, relations) = create_data(&context.pool, &prefix).await;
+        let (collection, _classes, relations) = create_data(&context.pool, &prefix).await;
 
         let re = Regex::new(r"<(\d+)>").unwrap();
         let value = re.replace_all(value, |caps: &regex::Captures| {
@@ -183,7 +183,7 @@ mod test {
             _ => {}
         }
 
-        namespace
+        collection
             .delete_without_events(&context.pool)
             .await
             .unwrap();

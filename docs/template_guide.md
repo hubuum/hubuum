@@ -34,7 +34,7 @@ Assume you have a class called `server` with objects like these:
     "id": 101,
     "name": "srv-app-01",
     "description": "Application server",
-    "namespace_id": 7,
+    "collection_id": 7,
     "hubuum_class_id": 42,
     "data": {
       "owner": "alice",
@@ -47,7 +47,7 @@ Assume you have a class called `server` with objects like these:
     "id": 102,
     "name": "srv-db-01",
     "description": "Database server",
-    "namespace_id": 7,
+    "collection_id": 7,
     "hubuum_class_id": 42,
     "data": {
       "owner": "bob",
@@ -63,7 +63,7 @@ If you create an executable template for that class:
 
 ```json
 {
-  "namespace_id": 7,
+  "collection_id": 7,
   "name": "report.servers",
   "description": "Server owner report",
   "content_type": "text/plain",
@@ -135,7 +135,7 @@ Common features:
 - `{{ meta.count }}` interpolates a value
 - `{% for item in items %}...{% endfor %}` iterates arrays
 - `{% if ... %}...{% endif %}` handles conditionals
-- `{% include "name" %}`, `{% import "name" as macros %}`, and `{% extends "name" %}` resolve templates by name within the same namespace
+- `{% include "name" %}`, `{% import "name" as macros %}`, and `{% extends "name" %}` resolve templates by name within the same collection
 - normal Jinja expressions, filters, `set`, and macros are supported
 
 Examples:
@@ -212,12 +212,12 @@ What we do not add on top of MiniJinja:
 
 - no custom database lookup functions from templates
 - no filesystem template loading
-- no cross-namespace template loading
+- no cross-collection template loading
 - no relation helper functions such as `related_to(...)`
 
 ## Stored template composition
 
-Stored templates can compose other stored templates in the same namespace by name.
+Stored templates can compose other stored templates in the same collection by name.
 
 Recommended naming for reusable stored templates:
 
@@ -259,8 +259,8 @@ Example child template:
 
 Composition rules:
 
-- template names are resolved only inside the selected template's namespace
-- cross-namespace loading is rejected
+- template names are resolved only inside the selected template's collection
+- cross-collection loading is rejected
 - filesystem loading is not available
 - names containing `/` or `::` are rejected by the loader
 
@@ -392,7 +392,7 @@ Example executable template:
 
 ```json
 {
-  "namespace_id": 7,
+  "collection_id": 7,
   "name": "report.host-related",
   "description": "Related host report",
   "content_type": "text/plain",
@@ -431,7 +431,7 @@ Example executable template:
 
 ```json
 {
-  "namespace_id": 7,
+  "collection_id": 7,
   "name": "report.host-room",
   "description": "Host room report",
   "content_type": "text/plain",
@@ -514,7 +514,7 @@ Hydrated objects keep the normal object fields:
 - `id`
 - `name`
 - `description`
-- `namespace_id`
+- `collection_id`
 - `hubuum_class_id`
 - `data`
 - `created_at`
@@ -756,10 +756,10 @@ host,room,person
 
 - Stored templates support only `text/plain`, `text/html`, and `text/csv`
 - `application/json` does not use stored templates; submit JSON reports with `POST /api/v1/reports`
-- Executable report templates support every scope kind (`namespaces`, `classes`, `objects_in_class`,
+- Executable report templates support every scope kind (`collections`, `classes`, `objects_in_class`,
   `class_relations`, `object_relations`, `related_objects`); `class_id` is set only for
   `objects_in_class` and `related_objects`, and `include`/`relation_context` apply only to those scopes
-- Template loading for `include`/`import`/`extends` is limited to the same namespace
+- Template loading for `include`/`import`/`extends` is limited to the same collection
 - HTML templates are autoescaped; plain text and CSV templates should use `tojson` or `csv_cell`
   when embedding JSON- or CSV-sensitive values
 - Hydrated relation templates are limited to relation depth `<= 2`

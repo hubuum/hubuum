@@ -74,7 +74,7 @@ static NESTED_DATA: LazyLock<serde_json::Value> = LazyLock::new(|| {
 fn bench_validate_nested_schema() -> usize {
     let object = NewHubuumObject {
         name: "nested-object".to_string(),
-        namespace_id: 1,
+        collection_id: 1,
         hubuum_class_id: 1,
         data: NESTED_DATA.clone(),
         description: "Benchmark nested validation payload".to_string(),

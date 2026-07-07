@@ -71,10 +71,10 @@ To keep backend code navigable, large trait backends are split into focused modu
 
 - `src/db/traits/user/`:
   `auth.rs`, `membership.rs`, `permissions.rs`, `search.rs`
-- `src/db/traits/namespace/`:
+- `src/db/traits/collection/`:
   `relations.rs`, `records.rs`, `permissions.rs`
 
-The `mod.rs` files in these folders re-export the public backend traits so existing imports (`crate::db::traits::user::*`, `crate::db::traits::namespace::*`) keep working.
+The `mod.rs` files in these folders re-export the public backend traits so existing imports (`crate::db::traits::user::*`, `crate::db::traits::collection::*`) keep working.
 
 ## Benchmarks
 

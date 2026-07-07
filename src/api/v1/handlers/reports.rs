@@ -24,8 +24,8 @@ use crate::models::search::{
     parse_query_parameter,
 };
 use crate::models::{
-    ClassIdSet, HubuumClassID, HubuumClassRelation, HubuumObject, HubuumObjectID,
-    HubuumObjectRelation, HubuumObjectWithPath, NamespaceID, NamespaceReportTemplates,
+    ClassIdSet, CollectionID, CollectionReportTemplates, HubuumClassID, HubuumClassRelation,
+    HubuumObject, HubuumObjectID, HubuumObjectRelation, HubuumObjectWithPath,
     NewReportTaskOutputRecord, NewTaskEventRecord, Permissions, RELATED_INCLUDE_DEFAULT_LIMIT,
     RELATED_INCLUDE_DEFAULT_MAX_DEPTH, ReportContentType, ReportIncludeRelatedDirection,
     ReportIncludeRelatedQuery, ReportIncludeRelatedSort, ReportJsonResponse, ReportMeta,
@@ -37,10 +37,10 @@ use crate::pagination::page_limits_or_defaults;
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
-use crate::traits::{AuthzSubject, NamespaceAccessors, SelfAccessors};
+use crate::traits::{AuthzSubject, CollectionAccessors, SelfAccessors};
 use crate::utilities::reporting::{SizeLimitedWriter, render_template};
 
-use super::check_if_object_in_class;
+use crate::models::traits::check_if_object_in_class;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredReportTaskPayload {
@@ -66,7 +66,7 @@ struct ReportRuntime {
     content_type: ReportContentType,
     missing_data_policy: ReportMissingDataPolicy,
     template: Option<ReportTemplate>,
-    namespace_templates: Vec<ReportTemplate>,
+    collection_templates: Vec<ReportTemplate>,
 }
 
 struct ReportExecution {
@@ -89,7 +89,7 @@ struct ReportExecutionTimings {
 struct HydratedTemplateObject {
     id: i32,
     name: String,
-    namespace_id: i32,
+    collection_id: i32,
     hubuum_class_id: i32,
     data: serde_json::Value,
     description: String,
@@ -106,7 +106,7 @@ struct HydratedTemplateObject {
 struct HydratedTemplatePathObject {
     id: i32,
     name: String,
-    namespace_id: i32,
+    collection_id: i32,
     hubuum_class_id: i32,
 }
 
@@ -356,9 +356,9 @@ async fn prepare_report_runtime(
     report.scope.validate()?;
     validate_report_include(&report)?;
 
-    let namespace_templates = match &template {
+    let collection_templates = match &template {
         Some(template) => {
-            NamespaceID::new(template.namespace_id)?
+            CollectionID::new(template.collection_id)?
                 .report_templates(pool, None)
                 .await?
         }
@@ -375,7 +375,7 @@ async fn prepare_report_runtime(
             .missing_data_policy
             .unwrap_or(ReportMissingDataPolicy::Strict),
         template,
-        namespace_templates,
+        collection_templates,
         report,
     })
 }
@@ -396,7 +396,7 @@ async fn resolve_template(
         subject,
         scopes,
         [Permissions::ReadTemplate],
-        NamespaceID::new(template.namespace_id)?
+        CollectionID::new(template.collection_id)?
     );
 
     Ok(Some(template))
@@ -787,7 +787,7 @@ fn build_text_report_artifact(
         .unwrap_or_else(configured_report_max_output_bytes);
     let (rendered, template_warnings) = render_template(
         template,
-        &runtime.namespace_templates,
+        &runtime.collection_templates,
         &context,
         runtime.content_type,
         runtime.missing_data_policy,
@@ -1686,7 +1686,7 @@ fn hydrate_object(
     Ok(HydratedTemplateObject {
         id: object.id,
         name: object.name.clone(),
-        namespace_id: object.namespace_id,
+        collection_id: object.collection_id,
         hubuum_class_id: object.hubuum_class_id,
         data: object.data.clone(),
         description: object.description.clone(),
@@ -1936,7 +1936,7 @@ fn build_path_objects(
             Ok(HydratedTemplatePathObject {
                 id: object.id,
                 name: object.name.clone(),
-                namespace_id: object.namespace_id,
+                collection_id: object.collection_id,
                 hubuum_class_id: object.hubuum_class_id,
             })
         })
@@ -1973,7 +1973,7 @@ fn object_with_root_path(object: &HubuumObject) -> HubuumObjectWithPath {
     HubuumObjectWithPath {
         id: object.id,
         name: object.name.clone(),
-        namespace_id: object.namespace_id,
+        collection_id: object.collection_id,
         hubuum_class_id: object.hubuum_class_id,
         data: object.data.clone(),
         description: object.description.clone(),
@@ -1993,9 +1993,9 @@ async fn execute_scope(
     let item_limit = query_options.limit.unwrap_or(1).saturating_sub(1).max(1);
 
     let data = match scope.kind {
-        ReportScopeKind::Namespaces => to_json_items(
+        ReportScopeKind::Collections => to_json_items(
             subject
-                .search_namespaces(pool, query_options, scopes)
+                .search_collections(pool, query_options, scopes)
                 .await?,
         )?,
         ReportScopeKind::Classes => {
@@ -2285,7 +2285,7 @@ mod tests {
         crate::models::HubuumObjectWithPath {
             id,
             name: format!("object-{id}"),
-            namespace_id: 1,
+            collection_id: 1,
             hubuum_class_id: 1,
             data: serde_json::json!({}),
             description: String::new(),
@@ -2387,7 +2387,7 @@ mod tests {
             missing_data_policy: ReportMissingDataPolicy::Strict,
             template: Some(ReportTemplate {
                 id: 1,
-                namespace_id: 1,
+                collection_id: 1,
                 name: "summary".to_string(),
                 description: String::new(),
                 content_type: ReportContentType::TextPlain,
@@ -2403,7 +2403,7 @@ mod tests {
                 created_at: test_timestamp(),
                 updated_at: test_timestamp(),
             }),
-            namespace_templates: Vec::new(),
+            collection_templates: Vec::new(),
         }
     }
 

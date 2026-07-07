@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use crate::models::{
-        Group, GroupPermission, Namespace, NewGroup, NewNamespaceWithAssignee, Permission,
-        Permissions, UpdateNamespace,
+        Collection, Group, GroupPermission, NewCollectionWithAssignee, NewGroup, Permission,
+        Permissions, UpdateCollection,
     };
 
     use crate::pagination::NEXT_CURSOR_HEADER;
@@ -13,7 +13,7 @@ mod tests {
         assert_paginated_collection_total_count, assert_response_status, header_value,
     };
     use crate::tests::{
-        NamespaceFixture, TestContext, create_test_group, create_test_user, ensure_admin_group,
+        CollectionFixture, TestContext, create_test_group, create_test_user, ensure_admin_group,
         test_context,
     };
     use crate::traits::{CanDelete, PermissionController};
@@ -21,108 +21,109 @@ mod tests {
     use actix_web::{http, test};
     use rstest::rstest;
 
-    const NAMESPACE_ENDPOINT: &str = "/api/v1/namespaces";
+    const COLLECTION_ENDPOINT: &str = "/api/v1/collections";
 
-    async fn create_namespaces(
+    async fn create_collections(
         context: &TestContext,
         prefix: &str,
         count: usize,
-    ) -> Vec<NamespaceFixture> {
-        context.namespace_fixtures(prefix, count).await
+    ) -> Vec<CollectionFixture> {
+        context.collection_fixtures(prefix, count).await
     }
 
     #[rstest]
     #[actix_web::test]
-    async fn test_looking_up_namespaces(#[future(awt)] test_context: TestContext) {
+    async fn test_looking_up_collections(#[future(awt)] test_context: TestContext) {
         let context = test_context;
 
-        let resp = get_request(&context.pool, "", NAMESPACE_ENDPOINT).await;
+        let resp = get_request(&context.pool, "", COLLECTION_ENDPOINT).await;
         let _ = assert_response_status(resp, http::StatusCode::UNAUTHORIZED).await;
 
-        let created_namespace1 = context.namespace_fixture("test_namespace_lookup1").await;
+        let created_collection1 = context.collection_fixture("test_collection_lookup1").await;
         let resp = get_request(
             &context.pool,
             &context.admin_token,
             &format!(
-                "{NAMESPACE_ENDPOINT}?name__equals={}",
-                created_namespace1.namespace.name
+                "{COLLECTION_ENDPOINT}?name__equals={}",
+                created_collection1.collection.name
             ),
         )
         .await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
-        let namespaces: Vec<crate::models::namespace::Namespace> = test::read_body_json(resp).await;
-        assert_contains!(&namespaces, &created_namespace1.namespace);
+        let collections: Vec<crate::models::collection::Collection> =
+            test::read_body_json(resp).await;
+        assert_contains!(&collections, &created_collection1.collection);
 
-        let created_namespace2 = context.namespace_fixture("test_namespace_lookup2").await;
+        let created_collection2 = context.collection_fixture("test_collection_lookup2").await;
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{NAMESPACE_ENDPOINT}/?name__contains=test_namespace_lookup"),
+            &format!("{COLLECTION_ENDPOINT}/?name__contains=test_collection_lookup"),
         )
         .await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
-        let updated_namespaces: Vec<crate::models::namespace::Namespace> =
+        let updated_collections: Vec<crate::models::collection::Collection> =
             test::read_body_json(resp).await;
 
         assert_contains_all!(
-            &updated_namespaces,
+            &updated_collections,
             &[
-                created_namespace1.namespace.clone(),
-                created_namespace2.namespace.clone()
+                created_collection1.collection.clone(),
+                created_collection2.collection.clone()
             ]
         );
 
-        created_namespace1.cleanup().await.unwrap();
-        created_namespace2.cleanup().await.unwrap();
+        created_collection1.cleanup().await.unwrap();
+        created_collection2.cleanup().await.unwrap();
     }
 
     #[rstest]
     #[actix_web::test]
-    async fn test_admin_can_list_namespaces_without_direct_owner_group_membership(
+    async fn test_admin_can_list_collections_without_direct_owner_group_membership(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let detached_namespace = context
+        let detached_collection = context
             .scope
-            .namespace_fixture("admin_lists_hidden_namespace")
+            .collection_fixture("admin_lists_hidden_collection")
             .await;
 
         let resp = get_request(
             &context.pool,
             &context.admin_token,
             &format!(
-                "{NAMESPACE_ENDPOINT}?id={}",
-                detached_namespace.namespace.id
+                "{COLLECTION_ENDPOINT}?id={}",
+                detached_collection.collection.id
             ),
         )
         .await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
-        let namespaces: Vec<Namespace> = test::read_body_json(resp).await;
+        let collections: Vec<Collection> = test::read_body_json(resp).await;
 
-        assert_eq!(namespaces, vec![detached_namespace.namespace.clone()]);
+        assert_eq!(collections, vec![detached_collection.collection.clone()]);
 
-        detached_namespace.cleanup().await.unwrap();
+        detached_collection.cleanup().await.unwrap();
     }
 
     #[rstest]
     #[actix_web::test]
-    async fn test_create_patch_delete_namespace(#[future(awt)] test_context: TestContext) {
+    async fn test_create_patch_delete_collection(#[future(awt)] test_context: TestContext) {
         let context = test_context;
         let admin_group = ensure_admin_group(&context.pool).await;
 
-        let resp = get_request(&context.pool, "", NAMESPACE_ENDPOINT).await;
+        let resp = get_request(&context.pool, "", COLLECTION_ENDPOINT).await;
         let _ = assert_response_status(resp, http::StatusCode::UNAUTHORIZED).await;
 
-        let content = NewNamespaceWithAssignee {
-            name: "test_namespace_create".to_string(),
-            description: "test namespace create description".to_string(),
+        let content = NewCollectionWithAssignee {
+            name: "test_collection_create".to_string(),
+            description: "test collection create description".to_string(),
             group_id: admin_group.id,
         };
 
         let resp = post_request(
             &context.pool,
             &context.normal_token,
-            NAMESPACE_ENDPOINT,
+            COLLECTION_ENDPOINT,
             &content,
         )
         .await;
@@ -131,33 +132,33 @@ mod tests {
         let resp = post_request(
             &context.pool,
             &context.admin_token,
-            NAMESPACE_ENDPOINT,
+            COLLECTION_ENDPOINT,
             &content,
         )
         .await;
         let resp = assert_response_status(resp, http::StatusCode::CREATED).await;
 
         let headers = resp.headers().clone();
-        let created_ns_url = headers.get("Location").unwrap().to_str().unwrap();
-        let created_ns_from_create: Namespace = test::read_body_json(resp).await;
+        let created_collection_url = headers.get("Location").unwrap().to_str().unwrap();
+        let created_collection_from_create: Collection = test::read_body_json(resp).await;
 
-        let resp = get_request(&context.pool, &context.admin_token, created_ns_url).await;
+        let resp = get_request(&context.pool, &context.admin_token, created_collection_url).await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
 
-        let created_ns_from_get: Namespace = test::read_body_json(resp).await;
-        assert_eq!(created_ns_from_get.name, content.name);
-        assert_eq!(created_ns_from_get.description, content.description);
-        assert_eq!(created_ns_from_create, created_ns_from_get);
+        let created_collection_from_get: Collection = test::read_body_json(resp).await;
+        assert_eq!(created_collection_from_get.name, content.name);
+        assert_eq!(created_collection_from_get.description, content.description);
+        assert_eq!(created_collection_from_create, created_collection_from_get);
 
-        let patch_content = UpdateNamespace {
-            name: Some("test_namespace_patch".to_string()),
-            description: Some("test namespace patch description".to_string()),
+        let patch_content = UpdateCollection {
+            name: Some("test_collection_patch".to_string()),
+            description: Some("test collection patch description".to_string()),
         };
 
         let resp = patch_request(
             &context.pool,
             &context.normal_token,
-            created_ns_url,
+            created_collection_url,
             &patch_content,
         )
         .await;
@@ -166,30 +167,35 @@ mod tests {
         let resp = patch_request(
             &context.pool,
             &context.admin_token,
-            created_ns_url,
+            created_collection_url,
             &patch_content,
         )
         .await;
         let _ = assert_response_status(resp, http::StatusCode::ACCEPTED).await;
 
-        let resp = get_request(&context.pool, &context.admin_token, created_ns_url).await;
+        let resp = get_request(&context.pool, &context.admin_token, created_collection_url).await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
 
-        let patched_ns: Namespace = test::read_body_json(resp).await;
-        assert_eq!(patched_ns.name, patch_content.name.unwrap());
-        assert_eq!(patched_ns.description, patch_content.description.unwrap());
+        let patched_collection: Collection = test::read_body_json(resp).await;
+        assert_eq!(patched_collection.name, patch_content.name.unwrap());
+        assert_eq!(
+            patched_collection.description,
+            patch_content.description.unwrap()
+        );
 
-        let resp = delete_request(&context.pool, &context.normal_token, created_ns_url).await;
+        let resp =
+            delete_request(&context.pool, &context.normal_token, created_collection_url).await;
         let _ = assert_response_status(resp, http::StatusCode::FORBIDDEN).await;
 
-        let resp = delete_request(&context.pool, &context.admin_token, created_ns_url).await;
+        let resp =
+            delete_request(&context.pool, &context.admin_token, created_collection_url).await;
         let _ = assert_response_status(resp, http::StatusCode::NO_CONTENT).await;
 
-        let resp = get_request(&context.pool, &context.admin_token, created_ns_url).await;
+        let resp = get_request(&context.pool, &context.admin_token, created_collection_url).await;
         let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;
     }
 
-    // Invalid namespace ids are refused during path extraction (`NamespaceID`'s validating
+    // Invalid collection ids are refused during path extraction (`CollectionID`'s validating
     // `Deserialize` plus the `PathConfig` error handler), so the request is rejected at the edge
     // with a `400` rather than surfacing as a confusing lookup miss further in. Covers
     // non-positive values rejected by `new` and non-integer segments rejected while parsing `i32`.
@@ -200,7 +206,7 @@ mod tests {
     #[case::non_numeric("abc")]
     #[case::non_integer("1.5")]
     #[actix_web::test]
-    async fn test_invalid_namespace_id_in_path_is_rejected(
+    async fn test_invalid_collection_id_in_path_is_rejected(
         #[future(awt)] test_context: TestContext,
         #[case] invalid_id: &str,
     ) {
@@ -209,7 +215,7 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{NAMESPACE_ENDPOINT}/{invalid_id}"),
+            &format!("{COLLECTION_ENDPOINT}/{invalid_id}"),
         )
         .await;
         let _ = assert_response_status(resp, http::StatusCode::BAD_REQUEST).await;
@@ -217,39 +223,39 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn test_api_namespace_permissions(#[future(awt)] test_context: TestContext) {
+    async fn test_api_collection_permissions(#[future(awt)] test_context: TestContext) {
         let context = test_context;
         let admin_group = ensure_admin_group(&context.pool).await;
 
-        let content = NewNamespaceWithAssignee {
-            name: "test_namespace_permissions".to_string(),
-            description: "test namespace permissions description".to_string(),
+        let content = NewCollectionWithAssignee {
+            name: "test_collection_permissions".to_string(),
+            description: "test collection permissions description".to_string(),
             group_id: admin_group.id,
         };
 
         let resp = post_request(
             &context.pool,
             &context.admin_token,
-            NAMESPACE_ENDPOINT,
+            COLLECTION_ENDPOINT,
             &content,
         )
         .await;
         let resp = assert_response_status(resp, http::StatusCode::CREATED).await;
 
         let headers = resp.headers().clone();
-        let created_ns_url = headers.get("Location").unwrap().to_str().unwrap();
+        let created_collection_url = headers.get("Location").unwrap().to_str().unwrap();
 
-        let resp = get_request(&context.pool, &context.admin_token, created_ns_url).await;
+        let resp = get_request(&context.pool, &context.admin_token, created_collection_url).await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
-        let created_ns: Namespace = test::read_body_json(resp).await;
+        let created_collection: Collection = test::read_body_json(resp).await;
 
-        let resp = get_request(&context.pool, &context.normal_token, created_ns_url).await;
+        let resp = get_request(&context.pool, &context.normal_token, created_collection_url).await;
         let _ = assert_response_status(resp, http::StatusCode::FORBIDDEN).await;
 
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{created_ns_url}/permissions"),
+            &format!("{created_collection_url}/permissions"),
         )
         .await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
@@ -257,11 +263,11 @@ mod tests {
         assert_eq!(permissions.len(), 1);
         let np = permissions[0].permission;
         assert_eq!(np.group_id, admin_group.id);
-        assert_eq!(np.namespace_id, created_ns.id);
-        assert!(np.has_read_namespace);
-        assert!(np.has_update_namespace);
-        assert!(np.has_delete_namespace);
-        assert!(np.has_delegate_namespace);
+        assert_eq!(np.collection_id, created_collection.id);
+        assert!(np.has_read_collection);
+        assert!(np.has_update_collection);
+        assert!(np.has_delete_collection);
+        assert!(np.has_delegate_collection);
         assert!(np.has_create_class);
         assert!(np.has_read_class);
         assert!(np.has_update_class);
@@ -279,7 +285,7 @@ mod tests {
         // Revoke create object permission
         let endpoint = &format!(
             "{}/permissions/group/{}/CreateObject",
-            created_ns_url, admin_group.id
+            created_collection_url, admin_group.id
         );
         let resp = delete_request(&context.pool, &context.admin_token, endpoint).await;
         let _ = assert_response_status(resp, http::StatusCode::NO_CONTENT).await;
@@ -287,7 +293,7 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{created_ns_url}/permissions"),
+            &format!("{created_collection_url}/permissions"),
         )
         .await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
@@ -295,11 +301,11 @@ mod tests {
         assert_eq!(permissions.len(), 1);
         let np = permissions[0].permission;
         assert_eq!(np.group_id, admin_group.id);
-        assert_eq!(np.namespace_id, created_ns.id);
-        assert!(np.has_read_namespace);
-        assert!(np.has_update_namespace);
-        assert!(np.has_delete_namespace);
-        assert!(np.has_delegate_namespace);
+        assert_eq!(np.collection_id, created_collection.id);
+        assert!(np.has_read_collection);
+        assert!(np.has_update_collection);
+        assert!(np.has_delete_collection);
+        assert!(np.has_delegate_collection);
         assert!(np.has_create_class);
         assert!(np.has_read_class);
         assert!(np.has_update_class);
@@ -314,7 +320,7 @@ mod tests {
         assert!(np.has_delete_template);
         assert_eq!(permissions[0].group, admin_group);
 
-        created_ns
+        created_collection
             .delete_without_events(&context.pool)
             .await
             .unwrap();
@@ -322,14 +328,14 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn test_api_namespace_permissions_grant_and_delete_all(
+    async fn test_api_collection_permissions_grant_and_delete_all(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
         let _admin_group = ensure_admin_group(&context.pool).await;
 
-        let ns = context
-            .namespace_fixture("test_namespace_permissions_grant")
+        let collection_fixture = context
+            .collection_fixture("test_collection_permissions_grant")
             .await;
 
         let normal_group = create_test_group(&context.pool).await;
@@ -340,7 +346,7 @@ mod tests {
             &context.admin_token,
             &format!(
                 "{}/{}/permissions/group/{}",
-                NAMESPACE_ENDPOINT, ns.namespace.id, normal_group.id
+                COLLECTION_ENDPOINT, collection_fixture.collection.id, normal_group.id
             ),
         )
         .await;
@@ -349,7 +355,7 @@ mod tests {
         // Grant read permission to normal group
         let endpoint = &format!(
             "{}/{}/permissions/group/{}/ReadCollection",
-            NAMESPACE_ENDPOINT, ns.namespace.id, normal_group.id
+            COLLECTION_ENDPOINT, collection_fixture.collection.id, normal_group.id
         );
 
         let resp = post_request(&context.pool, &context.admin_token, endpoint, &()).await;
@@ -361,7 +367,7 @@ mod tests {
             &context.admin_token,
             &format!(
                 "{}/{}/permissions/group/{}",
-                NAMESPACE_ENDPOINT, ns.namespace.id, normal_group.id
+                COLLECTION_ENDPOINT, collection_fixture.collection.id, normal_group.id
             ),
         )
         .await;
@@ -369,11 +375,11 @@ mod tests {
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
         let np: Permission = test::read_body_json(resp).await;
         assert_eq!(np.group_id, normal_group.id);
-        assert_eq!(np.namespace_id, ns.namespace.id);
-        assert!(np.has_read_namespace);
-        assert!(!np.has_update_namespace);
-        assert!(!np.has_delete_namespace);
-        assert!(!np.has_delegate_namespace);
+        assert_eq!(np.collection_id, collection_fixture.collection.id);
+        assert!(np.has_read_collection);
+        assert!(!np.has_update_collection);
+        assert!(!np.has_delete_collection);
+        assert!(!np.has_delegate_collection);
         assert!(!np.has_create_class);
         assert!(!np.has_read_class);
         assert!(!np.has_update_class);
@@ -393,7 +399,7 @@ mod tests {
             &context.admin_token,
             &format!(
                 "{}/{}/permissions/group/{}",
-                NAMESPACE_ENDPOINT, ns.namespace.id, normal_group.id
+                COLLECTION_ENDPOINT, collection_fixture.collection.id, normal_group.id
             ),
         )
         .await;
@@ -406,13 +412,13 @@ mod tests {
             &context.admin_token,
             &format!(
                 "{}/{}/permissions/group/{}",
-                NAMESPACE_ENDPOINT, ns.namespace.id, normal_group.id
+                COLLECTION_ENDPOINT, collection_fixture.collection.id, normal_group.id
             ),
         )
         .await;
         let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;
 
-        ns.cleanup().await.unwrap();
+        collection_fixture.cleanup().await.unwrap();
         normal_group
             .delete_without_events(&context.pool)
             .await
@@ -421,20 +427,20 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn test_api_namespace_permissions_put_empty_is_bad_request(
+    async fn test_api_collection_permissions_put_empty_is_bad_request(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
         let _admin_group = ensure_admin_group(&context.pool).await;
 
-        let ns = context
-            .namespace_fixture("test_namespace_permissions_put_empty")
+        let collection_fixture = context
+            .collection_fixture("test_collection_permissions_put_empty")
             .await;
         let normal_group = create_test_group(&context.pool).await;
 
         let endpoint = &format!(
             "{}/{}/permissions/group/{}",
-            NAMESPACE_ENDPOINT, ns.namespace.id, normal_group.id
+            COLLECTION_ENDPOINT, collection_fixture.collection.id, normal_group.id
         );
 
         let resp = put_request(
@@ -446,7 +452,7 @@ mod tests {
         .await;
         let _ = assert_response_status(resp, http::StatusCode::BAD_REQUEST).await;
 
-        ns.cleanup().await.unwrap();
+        collection_fixture.cleanup().await.unwrap();
         normal_group
             .delete_without_events(&context.pool)
             .await
@@ -457,9 +463,9 @@ mod tests {
     /// the action that the permission grants.
     #[rstest]
     #[actix_web::test]
-    async fn test_api_namespace_grants_work(#[future(awt)] test_context: TestContext) {
+    async fn test_api_collection_grants_work(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let ns = context.namespace_fixture("test_namespace_grants").await;
+        let collection_fixture = context.collection_fixture("test_collection_grants").await;
         let test_group = create_test_group(&context.pool).await;
         let test_user = create_test_user(&context.pool).await;
 
@@ -473,84 +479,91 @@ mod tests {
             .unwrap()
             .get_token();
 
-        let ns_endpoint = &format!("{NAMESPACE_ENDPOINT}/{}", ns.namespace.id);
-        // First, let us verify that test_user can't read the namespace.
-        let resp = get_request(&context.pool, &token, ns_endpoint).await;
+        let collection_endpoint =
+            &format!("{COLLECTION_ENDPOINT}/{}", collection_fixture.collection.id);
+        // First, let us verify that test_user can't read the collection.
+        let resp = get_request(&context.pool, &token, collection_endpoint).await;
         let _ = assert_response_status(resp, http::StatusCode::FORBIDDEN).await;
 
         // We can verify this by checking the permissions for the user
         let user_perm_endpoint = &format!(
-            "{NAMESPACE_ENDPOINT}/{}/permissions/principal/{}",
-            ns.namespace.id, test_user.id
+            "{COLLECTION_ENDPOINT}/{}/permissions/principal/{}",
+            collection_fixture.collection.id, test_user.id
         );
         let resp = get_request(&context.pool, &context.admin_token, user_perm_endpoint).await;
         let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;
 
-        // Now, let us grant test_group read permission to the namespace
+        // Now, let us grant test_group read permission to the collection
         let np_read = Permissions::ReadCollection;
-        ns.namespace
+        collection_fixture
+            .collection
             .grant_one(&context.pool, test_group.id, np_read)
             .await
             .unwrap();
 
-        // Let's try reading the namespace again
-        let resp = get_request(&context.pool, &token, ns_endpoint).await;
+        // Let's try reading the collection again
+        let resp = get_request(&context.pool, &token, collection_endpoint).await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
-        let ns_fetched: Namespace = test::read_body_json(resp).await;
-        assert_eq!(ns.namespace, ns_fetched);
+        let collection_fetched: Collection = test::read_body_json(resp).await;
+        assert_eq!(collection_fixture.collection, collection_fetched);
 
         // We can verify this by checking the permissions for the user, as the user.
         let resp = get_request(&context.pool, &token, user_perm_endpoint).await;
         let _ = assert_response_status(resp, http::StatusCode::OK).await;
 
-        // Now, let us grant test_group update permission to the namespace
+        // Now, let us grant test_group update permission to the collection
         let np_update = Permissions::UpdateCollection;
-        ns.namespace
+        collection_fixture
+            .collection
             .grant_one(&context.pool, test_group.id, np_update)
             .await
             .unwrap();
 
-        // Let's try updating the namespace
-        let update_content = UpdateNamespace {
-            name: Some("test_namespace_grants_update".to_string()),
-            description: Some("test namespace grants update description".to_string()),
+        // Let's try updating the collection
+        let update_content = UpdateCollection {
+            name: Some("test_collection_grants_update".to_string()),
+            description: Some("test collection grants update description".to_string()),
         };
 
-        let resp = patch_request(&context.pool, &token, ns_endpoint, &update_content).await;
+        let resp = patch_request(&context.pool, &token, collection_endpoint, &update_content).await;
         let _ = assert_response_status(resp, http::StatusCode::ACCEPTED).await;
 
-        // We can verify this by fetching the namespace again
-        let resp = get_request(&context.pool, &token, ns_endpoint).await;
+        // We can verify this by fetching the collection again
+        let resp = get_request(&context.pool, &token, collection_endpoint).await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
-        let ns_fetched: Namespace = test::read_body_json(resp).await;
-        assert_eq!(ns_fetched.name, update_content.name.unwrap());
-        assert_eq!(ns_fetched.description, update_content.description.unwrap());
+        let collection_fetched: Collection = test::read_body_json(resp).await;
+        assert_eq!(collection_fetched.name, update_content.name.unwrap());
+        assert_eq!(
+            collection_fetched.description,
+            update_content.description.unwrap()
+        );
 
-        // Verify that the user doesn't have permission to delete the namespace
-        let resp = delete_request(&context.pool, &token, ns_endpoint).await;
+        // Verify that the user doesn't have permission to delete the collection
+        let resp = delete_request(&context.pool, &token, collection_endpoint).await;
         let _ = assert_response_status(resp, http::StatusCode::FORBIDDEN).await;
 
-        // Grant test_group delegate permission to the namespace
+        // Grant test_group delegate permission to the collection
         let np_delegate = Permissions::DelegateCollection;
-        ns.namespace
+        collection_fixture
+            .collection
             .grant_one(&context.pool, test_group.id, np_delegate)
             .await
             .unwrap();
 
-        // And now give ourselves permission to delete the namespace
+        // And now give ourselves permission to delete the collection
         let grant_endpoint = &format!(
             "{}/{}/permissions/group/{}/DeleteCollection",
-            NAMESPACE_ENDPOINT, ns.namespace.id, test_group.id
+            COLLECTION_ENDPOINT, collection_fixture.collection.id, test_group.id
         );
         let resp = post_request(&context.pool, &token, grant_endpoint, &()).await;
         let _ = assert_response_status(resp, http::StatusCode::CREATED).await;
 
-        // Let's try deleting the namespace
-        let resp = delete_request(&context.pool, &token, ns_endpoint).await;
+        // Let's try deleting the collection
+        let resp = delete_request(&context.pool, &token, collection_endpoint).await;
         let _ = assert_response_status(resp, http::StatusCode::NO_CONTENT).await;
 
-        // Verify that the namespace is gone
-        let resp = get_request(&context.pool, &context.admin_token, ns_endpoint).await;
+        // Verify that the collection is gone
+        let resp = get_request(&context.pool, &context.admin_token, collection_endpoint).await;
         let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;
 
         test_group
@@ -565,47 +578,55 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn test_api_namespace_permissions_sorted_and_limited(
+    async fn test_api_collection_permissions_sorted_and_limited(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let ns = context
-            .namespace_fixture("test_namespace_permissions_sorted_and_limited")
+        let collection_fixture = context
+            .collection_fixture("test_collection_permissions_sorted_and_limited")
             .await;
 
         let group_one = NewGroup {
-            groupname: format!("test_namespace_permissions_sorted_{}_a", ns.namespace.id),
+            groupname: format!(
+                "test_collection_permissions_sorted_{}_a",
+                collection_fixture.collection.id
+            ),
             description: Some(format!(
-                "test_namespace_permissions_sorted_{}_description_a",
-                ns.namespace.id
+                "test_collection_permissions_sorted_{}_description_a",
+                collection_fixture.collection.id
             )),
         }
         .save_without_events(&context.pool)
         .await
         .unwrap();
         let group_two = NewGroup {
-            groupname: format!("test_namespace_permissions_sorted_{}_b", ns.namespace.id),
+            groupname: format!(
+                "test_collection_permissions_sorted_{}_b",
+                collection_fixture.collection.id
+            ),
             description: Some(format!(
-                "test_namespace_permissions_sorted_{}_description_b",
-                ns.namespace.id
+                "test_collection_permissions_sorted_{}_description_b",
+                collection_fixture.collection.id
             )),
         }
         .save_without_events(&context.pool)
         .await
         .unwrap();
 
-        ns.namespace
+        collection_fixture
+            .collection
             .grant_one(&context.pool, group_one.id, Permissions::ReadCollection)
             .await
             .unwrap();
-        ns.namespace
+        collection_fixture
+            .collection
             .grant_one(&context.pool, group_two.id, Permissions::ReadCollection)
             .await
             .unwrap();
 
         let sorted_endpoint = format!(
-            "{NAMESPACE_ENDPOINT}/{}/permissions?permissions=ReadCollection&sort=id.desc",
-            ns.namespace.id
+            "{COLLECTION_ENDPOINT}/{}/permissions?permissions=ReadCollection&sort=id.desc",
+            collection_fixture.collection.id
         );
         let resp = get_request(&context.pool, &context.admin_token, &sorted_endpoint).await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
@@ -617,8 +638,8 @@ mod tests {
         assert!(permissions.iter().any(|p| p.group.id == group_two.id));
 
         let filtered_endpoint = format!(
-            "{NAMESPACE_ENDPOINT}/{}/permissions?groupname__contains={}&sort=id",
-            ns.namespace.id, group_one.groupname
+            "{COLLECTION_ENDPOINT}/{}/permissions?groupname__contains={}&sort=id",
+            collection_fixture.collection.id, group_one.groupname
         );
         let resp = get_request(&context.pool, &context.admin_token, &filtered_endpoint).await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
@@ -627,8 +648,8 @@ mod tests {
         assert_eq!(filtered_permissions[0].group.id, group_one.id);
 
         let limited_endpoint = format!(
-            "{NAMESPACE_ENDPOINT}/{}/permissions?permissions=ReadCollection&sort=id&limit=1",
-            ns.namespace.id
+            "{COLLECTION_ENDPOINT}/{}/permissions?permissions=ReadCollection&sort=id&limit=1",
+            collection_fixture.collection.id
         );
         let resp = get_request(&context.pool, &context.admin_token, &limited_endpoint).await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
@@ -643,34 +664,43 @@ mod tests {
             .delete_without_events(&context.pool)
             .await
             .unwrap();
-        ns.cleanup().await.unwrap();
+        collection_fixture.cleanup().await.unwrap();
     }
 
     #[rstest]
     #[actix_web::test]
-    async fn test_namespace_permission_listings_total_count_match_paginated_results(
+    async fn test_collection_permission_listings_total_count_match_paginated_results(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let ns = context
-            .namespace_fixture("namespace_permissions_total_count")
+        let collection_fixture = context
+            .collection_fixture("collection_permissions_total_count")
             .await;
         let group_one = NewGroup {
-            groupname: format!("ns-total-count-group-a-{}", ns.namespace.id),
+            groupname: format!(
+                "collection-total-count-group-a-{}",
+                collection_fixture.collection.id
+            ),
             description: Some("group a".to_string()),
         }
         .save_without_events(&context.pool)
         .await
         .unwrap();
         let group_two = NewGroup {
-            groupname: format!("ns-total-count-group-b-{}", ns.namespace.id),
+            groupname: format!(
+                "collection-total-count-group-b-{}",
+                collection_fixture.collection.id
+            ),
             description: Some("group b".to_string()),
         }
         .save_without_events(&context.pool)
         .await
         .unwrap();
         let group_three = NewGroup {
-            groupname: format!("ns-total-count-group-c-{}", ns.namespace.id),
+            groupname: format!(
+                "collection-total-count-group-c-{}",
+                collection_fixture.collection.id
+            ),
             description: Some("group c".to_string()),
         }
         .save_without_events(&context.pool)
@@ -688,7 +718,8 @@ mod tests {
             .unwrap();
 
         for group in [&group_one, &group_two, &group_three] {
-            ns.namespace
+            collection_fixture
+                .collection
                 .grant_one(&context.pool, group.id, Permissions::ReadCollection)
                 .await
                 .unwrap();
@@ -701,12 +732,12 @@ mod tests {
             10,
             |cursor| match cursor {
                 Some(cursor) => format!(
-                    "{NAMESPACE_ENDPOINT}/{}/permissions?permissions=ReadCollection&groupname__contains=ns-total-count-group&sort=id&limit=2&cursor={cursor}",
-                    ns.namespace.id
+                    "{COLLECTION_ENDPOINT}/{}/permissions?permissions=ReadCollection&groupname__contains=collection-total-count-group&sort=id&limit=2&cursor={cursor}",
+                    collection_fixture.collection.id
                 ),
                 None => format!(
-                    "{NAMESPACE_ENDPOINT}/{}/permissions?permissions=ReadCollection&groupname__contains=ns-total-count-group&sort=id&limit=2",
-                    ns.namespace.id
+                    "{COLLECTION_ENDPOINT}/{}/permissions?permissions=ReadCollection&groupname__contains=collection-total-count-group&sort=id&limit=2",
+                    collection_fixture.collection.id
                 ),
             },
         )
@@ -721,12 +752,12 @@ mod tests {
             10,
             |cursor| match cursor {
                 Some(cursor) => format!(
-                    "{NAMESPACE_ENDPOINT}/{}/permissions/principal/{}?sort=id&limit=1&cursor={cursor}",
-                    ns.namespace.id, user.id
+                    "{COLLECTION_ENDPOINT}/{}/permissions/principal/{}?sort=id&limit=1&cursor={cursor}",
+                    collection_fixture.collection.id, user.id
                 ),
                 None => format!(
-                    "{NAMESPACE_ENDPOINT}/{}/permissions/principal/{}?sort=id&limit=1",
-                    ns.namespace.id, user.id
+                    "{COLLECTION_ENDPOINT}/{}/permissions/principal/{}?sort=id&limit=1",
+                    collection_fixture.collection.id, user.id
                 ),
             },
         )
@@ -740,12 +771,12 @@ mod tests {
             10,
             |cursor| match cursor {
                 Some(cursor) => format!(
-                    "{NAMESPACE_ENDPOINT}/{}/has_permissions/ReadCollection?groupname__contains=ns-total-count-group&sort=id&limit=2&cursor={cursor}",
-                    ns.namespace.id
+                    "{COLLECTION_ENDPOINT}/{}/has_permissions/ReadCollection?groupname__contains=collection-total-count-group&sort=id&limit=2&cursor={cursor}",
+                    collection_fixture.collection.id
                 ),
                 None => format!(
-                    "{NAMESPACE_ENDPOINT}/{}/has_permissions/ReadCollection?groupname__contains=ns-total-count-group&sort=id&limit=2",
-                    ns.namespace.id
+                    "{COLLECTION_ENDPOINT}/{}/has_permissions/ReadCollection?groupname__contains=collection-total-count-group&sort=id&limit=2",
+                    collection_fixture.collection.id
                 ),
             },
         )
@@ -766,7 +797,7 @@ mod tests {
             .await
             .unwrap();
         user.delete_without_events(&context.pool).await.unwrap();
-        ns.cleanup().await.unwrap();
+        collection_fixture.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -778,15 +809,15 @@ mod tests {
     #[case::sorted_created_at_asc("created_at.asc", &[0, 1, 2])]
     #[case::sorted_created_at_desc("created_at.desc", &[3, 2, 1])]
     #[actix_web::test]
-    async fn test_api_namespaces_sorted(
+    async fn test_api_collections_sorted(
         #[case] sort_order: &str,
         #[case] expected_id_order: &[usize],
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let created_namespaces = create_namespaces(
+        let created_collections = create_collections(
             &context,
-            &format!("api_namespaces_sorted_{sort_order}_{expected_id_order:?}"),
+            &format!("api_collections_sorted_{sort_order}_{expected_id_order:?}"),
             4,
         )
         .await;
@@ -797,35 +828,35 @@ mod tests {
             &format!("&sort={sort_order}")
         };
 
-        let comma_separated_ids = created_namespaces
+        let comma_separated_ids = created_collections
             .iter()
-            .map(|fixture| fixture.namespace.id.to_string())
+            .map(|fixture| fixture.collection.id.to_string())
             .collect::<Vec<_>>()
             .join(",");
 
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{NAMESPACE_ENDPOINT}/?id={comma_separated_ids}{sort_order}"),
+            &format!("{COLLECTION_ENDPOINT}/?id={comma_separated_ids}{sort_order}"),
         )
         .await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
-        let objects: Vec<Namespace> = test::read_body_json(resp).await;
-        assert_eq!(objects.len(), created_namespaces.len());
+        let objects: Vec<Collection> = test::read_body_json(resp).await;
+        assert_eq!(objects.len(), created_collections.len());
         assert_eq!(
             objects[0].id,
-            created_namespaces[expected_id_order[0]].namespace.id
+            created_collections[expected_id_order[0]].collection.id
         );
         assert_eq!(
             objects[1].id,
-            created_namespaces[expected_id_order[1]].namespace.id
+            created_collections[expected_id_order[1]].collection.id
         );
         assert_eq!(
             objects[2].id,
-            created_namespaces[expected_id_order[2]].namespace.id
+            created_collections[expected_id_order[2]].collection.id
         );
 
-        NamespaceFixture::cleanup_all(&created_namespaces)
+        CollectionFixture::cleanup_all(&created_collections)
             .await
             .unwrap();
     }
@@ -835,16 +866,16 @@ mod tests {
     #[case::limit_5(5)]
     #[case::limit_7(6)]
     #[actix_web::test]
-    async fn test_api_namespaces_limit(
+    async fn test_api_collections_limit(
         #[case] limit: usize,
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let created_namespaces =
-            create_namespaces(&context, &format!("api_namespaces_limit_{limit}"), 6).await;
-        let comma_separated_ids = created_namespaces
+        let created_collections =
+            create_collections(&context, &format!("api_collections_limit_{limit}"), 6).await;
+        let comma_separated_ids = created_collections
             .iter()
-            .map(|fixture| fixture.namespace.id.to_string())
+            .map(|fixture| fixture.collection.id.to_string())
             .collect::<Vec<_>>()
             .join(",");
 
@@ -852,77 +883,77 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{NAMESPACE_ENDPOINT}/?id={comma_separated_ids}&limit={limit}&sort=id"),
+            &format!("{COLLECTION_ENDPOINT}/?id={comma_separated_ids}&limit={limit}&sort=id"),
         )
         .await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
-        let objects: Vec<Namespace> = test::read_body_json(resp).await;
+        let objects: Vec<Collection> = test::read_body_json(resp).await;
         assert_eq!(objects.len(), limit);
 
-        NamespaceFixture::cleanup_all(&created_namespaces)
+        CollectionFixture::cleanup_all(&created_collections)
             .await
             .unwrap();
     }
 
     #[rstest]
     #[actix_web::test]
-    async fn test_api_namespaces_cursor_pagination(#[future(awt)] test_context: TestContext) {
+    async fn test_api_collections_cursor_pagination(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let created_namespaces = create_namespaces(&context, "api_namespaces_cursor", 6).await;
-        let comma_separated_ids = created_namespaces
+        let created_collections = create_collections(&context, "api_collections_cursor", 6).await;
+        let comma_separated_ids = created_collections
             .iter()
-            .map(|fixture| fixture.namespace.id.to_string())
+            .map(|fixture| fixture.collection.id.to_string())
             .collect::<Vec<_>>()
             .join(",");
 
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{NAMESPACE_ENDPOINT}/?id={comma_separated_ids}&limit=2&sort=id"),
+            &format!("{COLLECTION_ENDPOINT}/?id={comma_separated_ids}&limit=2&sort=id"),
         )
         .await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
         let next_cursor = header_value(&resp, NEXT_CURSOR_HEADER);
-        let objects: Vec<Namespace> = test::read_body_json(resp).await;
+        let objects: Vec<Collection> = test::read_body_json(resp).await;
 
         assert_eq!(objects.len(), 2);
-        assert_eq!(objects[0].id, created_namespaces[0].namespace.id);
-        assert_eq!(objects[1].id, created_namespaces[1].namespace.id);
+        assert_eq!(objects[0].id, created_collections[0].collection.id);
+        assert_eq!(objects[1].id, created_collections[1].collection.id);
         assert!(next_cursor.is_some());
 
         let resp = get_request(
             &context.pool,
             &context.admin_token,
             &format!(
-                "{NAMESPACE_ENDPOINT}/?id={comma_separated_ids}&limit=2&sort=id&cursor={}",
+                "{COLLECTION_ENDPOINT}/?id={comma_separated_ids}&limit=2&sort=id&cursor={}",
                 next_cursor.unwrap()
             ),
         )
         .await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
-        let objects: Vec<Namespace> = test::read_body_json(resp).await;
+        let objects: Vec<Collection> = test::read_body_json(resp).await;
         assert_eq!(objects.len(), 2);
-        assert_eq!(objects[0].id, created_namespaces[2].namespace.id);
-        assert_eq!(objects[1].id, created_namespaces[3].namespace.id);
+        assert_eq!(objects[0].id, created_collections[2].collection.id);
+        assert_eq!(objects[1].id, created_collections[3].collection.id);
 
-        NamespaceFixture::cleanup_all(&created_namespaces)
+        CollectionFixture::cleanup_all(&created_collections)
             .await
             .unwrap();
     }
 
     #[rstest]
     #[actix_web::test]
-    async fn test_api_namespace_history_list_and_as_of(#[future(awt)] test_context: TestContext) {
-        use crate::models::UpdateNamespace;
+    async fn test_api_collection_history_list_and_as_of(#[future(awt)] test_context: TestContext) {
+        use crate::models::UpdateCollection;
         use crate::traits::CanUpdate;
 
         let context = test_context;
-        let ns = context.namespace_fixture("namespace_history_api").await;
+        let collection_fixture = context.collection_fixture("collection_history_api").await;
         let event_context = hubuum_events_core::EventContext::system();
 
         // Create then update so there are two versions.
-        let created = ns.namespace.clone();
-        UpdateNamespace {
+        let created = collection_fixture.collection.clone();
+        UpdateCollection {
             name: None,
             description: Some("v2".to_string()),
         }
@@ -934,7 +965,7 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{}/{}/history", NAMESPACE_ENDPOINT, created.id),
+            &format!("{}/{}/history", COLLECTION_ENDPOINT, created.id),
         )
         .await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
@@ -955,7 +986,7 @@ mod tests {
             &context.admin_token,
             &format!(
                 "{}/{}/history/as-of?at={}",
-                NAMESPACE_ENDPOINT, created.id, &v1_from
+                COLLECTION_ENDPOINT, created.id, &v1_from
             ),
         )
         .await;
@@ -963,17 +994,17 @@ mod tests {
         let snap: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(snap["description"], created.description);
 
-        ns.cleanup().await.unwrap();
+        collection_fixture.cleanup().await.unwrap();
     }
 
     #[rstest]
     #[actix_web::test]
-    async fn test_api_namespace_history_404_for_missing(#[future(awt)] test_context: TestContext) {
+    async fn test_api_collection_history_404_for_missing(#[future(awt)] test_context: TestContext) {
         let context = test_context;
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{}/2147483647/history", NAMESPACE_ENDPOINT),
+            &format!("{}/2147483647/history", COLLECTION_ENDPOINT),
         )
         .await;
         assert_response_status(resp, http::StatusCode::NOT_FOUND).await;

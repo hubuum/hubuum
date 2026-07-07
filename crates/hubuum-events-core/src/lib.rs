@@ -126,7 +126,7 @@ impl EventContext {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EntityType {
-    Namespace,
+    Collection,
     Class,
     Object,
     ClassRelation,
@@ -147,7 +147,7 @@ pub enum EntityType {
 impl EntityType {
     pub fn as_str(self) -> &'static str {
         match self {
-            EntityType::Namespace => "namespace",
+            EntityType::Collection => "collection",
             EntityType::Class => "class",
             EntityType::Object => "object",
             EntityType::ClassRelation => "class_relation",
@@ -168,7 +168,7 @@ impl EntityType {
 
     pub fn from_db(value: &str) -> Result<Self, EventCatalogError> {
         match value {
-            "namespace" => Ok(EntityType::Namespace),
+            "collection" => Ok(EntityType::Collection),
             "class" => Ok(EntityType::Class),
             "object" => Ok(EntityType::Object),
             "class_relation" => Ok(EntityType::ClassRelation),
@@ -274,7 +274,7 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
     use Action as A;
     use EntityType as E;
     match entity_type {
-        E::Namespace | E::Class | E::Object | E::User | E::Group | E::ReportTemplate => {
+        E::Collection | E::Class | E::Object | E::User | E::Group | E::ReportTemplate => {
             &[A::Created, A::Updated, A::Deleted]
         }
         E::ServiceAccount => &[A::Created, A::Updated, A::Disabled, A::Deleted],
@@ -307,7 +307,7 @@ pub struct EventEnvelope {
     pub entity_type: String,
     pub entity_id: Option<i32>,
     pub entity_name: Option<String>,
-    pub namespace_id: Option<i32>,
+    pub collection_id: Option<i32>,
     pub action: String,
     pub actor_user_id: Option<i32>,
     pub actor_kind: String,
@@ -321,9 +321,9 @@ pub struct EventEnvelope {
 }
 
 impl EventEnvelope {
-    pub fn related_namespace_ids(&self) -> Vec<i32> {
+    pub fn related_collection_ids(&self) -> Vec<i32> {
         self.metadata
-            .get("related_namespace_ids")
+            .get("related_collection_ids")
             .and_then(serde_json::Value::as_array)
             .map(|values| {
                 values
@@ -350,9 +350,9 @@ impl EventEnvelope {
 #[cfg_attr(feature = "schema", derive(ToSchema))]
 pub struct EventSubscriptionFilter {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub namespace_ids: Vec<i32>,
+    pub collection_ids: Vec<i32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub related_namespace_ids: Vec<i32>,
+    pub related_collection_ids: Vec<i32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub entity_ids: Vec<i32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -369,8 +369,11 @@ pub struct EventSubscriptionFilter {
 
 impl EventSubscriptionFilter {
     pub fn matches(&self, event: &EventEnvelope) -> bool {
-        matches_optional_i32(&self.namespace_ids, event.namespace_id)
-            && matches_any_i32(&self.related_namespace_ids, &event.related_namespace_ids())
+        matches_optional_i32(&self.collection_ids, event.collection_id)
+            && matches_any_i32(
+                &self.related_collection_ids,
+                &event.related_collection_ids(),
+            )
             && matches_optional_i32(&self.entity_ids, event.entity_id)
             && matches_optional_str(&self.entity_names, event.entity_name.as_deref())
             && matches_str(&self.actor_kinds, &event.actor_kind)
@@ -380,8 +383,8 @@ impl EventSubscriptionFilter {
     }
 
     pub fn validate(&self) -> Result<(), EventFilterError> {
-        ensure_unique_i32("namespace_ids", &self.namespace_ids)?;
-        ensure_unique_i32("related_namespace_ids", &self.related_namespace_ids)?;
+        ensure_unique_i32("collection_ids", &self.collection_ids)?;
+        ensure_unique_i32("related_collection_ids", &self.related_collection_ids)?;
         ensure_unique_i32("entity_ids", &self.entity_ids)?;
         ensure_unique_str("entity_names", &self.entity_names)?;
         ensure_unique_str("actor_kinds", &self.actor_kinds)?;
@@ -389,11 +392,11 @@ impl EventSubscriptionFilter {
         ensure_unique_uuid("request_ids", &self.request_ids)?;
         ensure_unique_str("correlation_ids", &self.correlation_ids)?;
 
-        for value in &self.namespace_ids {
-            ensure_positive("namespace_ids", *value)?;
+        for value in &self.collection_ids {
+            ensure_positive("collection_ids", *value)?;
         }
-        for value in &self.related_namespace_ids {
-            ensure_positive("related_namespace_ids", *value)?;
+        for value in &self.related_collection_ids {
+            ensure_positive("related_collection_ids", *value)?;
         }
         for value in &self.entity_ids {
             ensure_positive("entity_ids", *value)?;
@@ -640,7 +643,7 @@ mod tests {
     #[test]
     fn entity_type_round_trips() {
         let all = [
-            EntityType::Namespace,
+            EntityType::Collection,
             EntityType::Class,
             EntityType::Object,
             EntityType::ClassRelation,
@@ -758,8 +761,8 @@ mod tests {
             ..envelope()
         };
         let filter = EventSubscriptionFilter {
-            namespace_ids: vec![10],
-            related_namespace_ids: vec![20],
+            collection_ids: vec![10],
+            related_collection_ids: vec![20],
             entity_ids: vec![30],
             entity_names: vec!["test entity".to_string()],
             actor_kinds: vec!["user".to_string()],
@@ -794,13 +797,13 @@ mod tests {
         ));
 
         let filter = EventSubscriptionFilter {
-            namespace_ids: vec![10, 10],
+            collection_ids: vec![10, 10],
             ..EventSubscriptionFilter::default()
         };
 
         assert!(matches!(
             filter.validate(),
-            Err(EventFilterError::DuplicateValue { field, .. }) if field == "namespace_ids"
+            Err(EventFilterError::DuplicateValue { field, .. }) if field == "collection_ids"
         ));
     }
 
@@ -812,10 +815,10 @@ mod tests {
                 .unwrap()
                 .and_hms_opt(0, 0, 0)
                 .unwrap(),
-            entity_type: "namespace".to_string(),
+            entity_type: "collection".to_string(),
             entity_id: Some(30),
             entity_name: Some("test entity".to_string()),
-            namespace_id: Some(10),
+            collection_id: Some(10),
             action: "created".to_string(),
             actor_user_id: Some(40),
             actor_kind: "user".to_string(),
@@ -824,7 +827,7 @@ mod tests {
             summary: "summary".to_string(),
             before: None,
             after: None,
-            metadata: serde_json::json!({"related_namespace_ids": [20, "21"]}),
+            metadata: serde_json::json!({"related_collection_ids": [20, "21"]}),
             schema_version: 1,
         }
     }

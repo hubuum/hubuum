@@ -222,11 +222,11 @@ services:
 - [Authentication & Authorization Model](auth_model.md) - Principals, service accounts, tokens, and scopes
 - [Permissions](permissions.md) - Access control and authorization system
 - [Querying](querying.md) - API query syntax and filtering
-- [Unified search](search_api.md) - grouped search across namespaces, classes, and objects
+- [Unified search](search_api.md) - grouped search across collections, classes, and objects
 - [Query Support Matrix](query_support_matrix.md) - Endpoint-by-endpoint filter and sort support
 - [Event And Audit](events.md) - Audit log, event delivery, sink subscriptions, retention, and operational health
 - [Relationships](relationship_endpoints.md) - Working with object relationships
 - [Task System](task_system.md) - Background workers, queue claiming, and task execution flow
 - [Report API](report_api.md) - Server-side report execution and templated output
-- [Remote Target API](remote_targets.md) - Namespace-scoped outbound subject actions
+- [Remote Target API](remote_targets.md) - Collection-scoped outbound subject actions
 - [Template Guide](template_guide.md) - Stored template syntax, context, and examples

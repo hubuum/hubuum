@@ -12,7 +12,7 @@ use diesel::prelude::*;
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
-use crate::models::namespace::NamespaceID;
+use crate::models::collection::CollectionID;
 use crate::models::report_template::{
     NewReportTemplateRow, ReportTemplate, ReportTemplateID, ReportTemplateRow,
     UpdateReportTemplateRow,
@@ -35,7 +35,7 @@ fn report_template_event(
     .with_context(context)
     .with_entity_id(row.id())
     .with_entity_name(row.name().to_string())
-    .with_namespace_id(row.namespace_id()))
+    .with_collection_id(row.collection_id()))
 }
 
 /// Load the report-template row identified by this id.
@@ -257,43 +257,43 @@ impl DeleteReportTemplateRecord for ReportTemplateID {
     }
 }
 
-/// Look up the namespace id of the report template identified by this id.
-pub(crate) trait ReportTemplateNamespaceLookup {
-    async fn lookup_report_template_namespace_id(
+/// Look up the collection id of the report template identified by this id.
+pub(crate) trait ReportTemplateCollectionLookup {
+    async fn lookup_report_template_collection_id(
         &self,
         pool: &DbPool,
-    ) -> Result<NamespaceID, ApiError>;
+    ) -> Result<CollectionID, ApiError>;
 }
 
-impl ReportTemplateNamespaceLookup for ReportTemplateID {
-    async fn lookup_report_template_namespace_id(
+impl ReportTemplateCollectionLookup for ReportTemplateID {
+    async fn lookup_report_template_collection_id(
         &self,
         pool: &DbPool,
-    ) -> Result<NamespaceID, ApiError> {
-        use crate::schema::report_templates::dsl::{id, namespace_id, report_templates};
+    ) -> Result<CollectionID, ApiError> {
+        use crate::schema::report_templates::dsl::{collection_id, id, report_templates};
 
         let raw = with_connection(pool, |conn| {
             report_templates
                 .filter(id.eq(self.id()))
-                .select(namespace_id)
+                .select(collection_id)
                 .first::<i32>(conn)
         })?;
-        NamespaceID::new(raw)
+        CollectionID::new(raw)
     }
 }
 
-/// Load all report-template rows in a namespace, optionally excluding one template id.
-pub(crate) async fn load_rows_in_namespace(
+/// Load all report-template rows in a collection, optionally excluding one template id.
+pub(crate) async fn load_rows_in_collection(
     pool: &DbPool,
-    target_namespace_id: i32,
+    target_collection_id: i32,
     exclude_template_id: Option<i32>,
 ) -> Result<Vec<ReportTemplateRow>, ApiError> {
-    use crate::schema::report_templates::dsl::{id, namespace_id, report_templates};
+    use crate::schema::report_templates::dsl::{collection_id, id, report_templates};
 
     with_connection(pool, |conn| {
         let mut query = report_templates
             .into_boxed()
-            .filter(namespace_id.eq(target_namespace_id));
+            .filter(collection_id.eq(target_collection_id));
         if let Some(exclude_template_id) = exclude_template_id {
             query = query.filter(id.ne(exclude_template_id));
         }
@@ -310,20 +310,20 @@ pub(crate) async fn load_all_rows(pool: &DbPool) -> Result<Vec<ReportTemplateRow
     })
 }
 
-/// Whether a template with `target_name` already exists in the namespace, optionally ignoring one
+/// Whether a template with `target_name` already exists in the collection, optionally ignoring one
 /// template id (used so an update does not conflict with itself).
 pub(crate) async fn name_conflict_exists(
     pool: &DbPool,
-    target_namespace_id: i32,
+    target_collection_id: i32,
     target_name: &str,
     exclude_template_id: Option<i32>,
 ) -> Result<bool, ApiError> {
-    use crate::schema::report_templates::dsl::{id, name, namespace_id, report_templates};
+    use crate::schema::report_templates::dsl::{collection_id, id, name, report_templates};
 
     let existing = with_connection(pool, |conn| {
         let mut query = report_templates
             .into_boxed()
-            .filter(namespace_id.eq(target_namespace_id))
+            .filter(collection_id.eq(target_collection_id))
             .filter(name.eq(target_name));
         if let Some(exclude_template_id) = exclude_template_id {
             query = query.filter(id.ne(exclude_template_id));
@@ -334,42 +334,42 @@ pub(crate) async fn name_conflict_exists(
     Ok(existing.is_some())
 }
 
-/// The namespace a class belongs to, or `None` if the class does not exist.
-pub(crate) async fn class_namespace_id(
+/// The collection a class belongs to, or `None` if the class does not exist.
+pub(crate) async fn class_collection_id(
     pool: &DbPool,
     target_class_id: i32,
 ) -> Result<Option<i32>, ApiError> {
-    use crate::schema::hubuumclass::dsl::{hubuumclass, id, namespace_id};
+    use crate::schema::hubuumclass::dsl::{collection_id, hubuumclass, id};
 
     with_connection(pool, |conn| {
         hubuumclass
             .filter(id.eq(target_class_id))
-            .select(namespace_id)
+            .select(collection_id)
             .first::<i32>(conn)
             .optional()
     })
 }
 
 /// Build the filtered (but unsorted, unpaginated) query for listing report templates within the
-/// namespaces the caller may see.
+/// collections the caller may see.
 fn build_list_query<'a>(
-    allowed_namespace_ids: &'a [i32],
+    allowed_collection_ids: &'a [i32],
     query_options: &'a QueryOptions,
 ) -> Result<crate::schema::report_templates::BoxedQuery<'a, diesel::pg::Pg>, ApiError> {
     use crate::schema::report_templates::dsl::{
-        class_id, created_at, description, id, kind, name, namespace_id, report_templates,
+        class_id, collection_id, created_at, description, id, kind, name, report_templates,
         updated_at,
     };
 
-    if allowed_namespace_ids.is_empty() {
+    if allowed_collection_ids.is_empty() {
         return Ok(report_templates
             .into_boxed()
-            .filter(namespace_id.eq_any(allowed_namespace_ids)));
+            .filter(collection_id.eq_any(allowed_collection_ids)));
     }
 
     let mut query = report_templates
         .into_boxed()
-        .filter(namespace_id.eq_any(allowed_namespace_ids));
+        .filter(collection_id.eq_any(allowed_collection_ids));
 
     for param in &query_options.filters {
         let operator = param.operator.clone();
@@ -377,8 +377,8 @@ fn build_list_query<'a>(
             FilterField::Id => numeric_search!(query, param, operator, id),
             FilterField::Name => string_search!(query, param, operator, name),
             FilterField::Description => string_search!(query, param, operator, description),
-            FilterField::Namespaces | FilterField::NamespaceId => {
-                numeric_search!(query, param, operator, namespace_id)
+            FilterField::Collections | FilterField::CollectionId => {
+                numeric_search!(query, param, operator, collection_id)
             }
             FilterField::Kind => string_search!(query, param, operator, kind),
             FilterField::ClassId => numeric_search!(query, param, operator, class_id),
@@ -397,16 +397,16 @@ fn build_list_query<'a>(
 }
 
 /// List report-template rows (sorted/paginated per `query_options`) together with the total count
-/// matching the filters, scoped to the namespaces the caller may see.
+/// matching the filters, scoped to the collections the caller may see.
 pub(crate) async fn list_rows_with_total_count(
     pool: &DbPool,
-    allowed_namespace_ids: &[i32],
+    allowed_collection_ids: &[i32],
     query_options: &QueryOptions,
 ) -> Result<(Vec<ReportTemplateRow>, i64), ApiError> {
-    let query = build_list_query(allowed_namespace_ids, query_options)?;
+    let query = build_list_query(allowed_collection_ids, query_options)?;
     let total_count = with_connection(pool, |conn| query.count().get_result::<i64>(conn))?;
 
-    let mut query = build_list_query(allowed_namespace_ids, query_options)?;
+    let mut query = build_list_query(allowed_collection_ids, query_options)?;
     crate::apply_query_options!(query, query_options, ReportTemplate);
     let rows = with_connection(pool, |conn| query.load::<ReportTemplateRow>(conn))?;
 

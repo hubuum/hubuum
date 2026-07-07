@@ -8,8 +8,8 @@ use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::{
-    HubuumClass, HubuumClassID, HubuumObject, HubuumObjectID, HubuumObjectRelation,
-    HubuumObjectRelationID, Namespace, NewHubuumObject, NewHubuumObjectRelation, ObjectsByClass,
+    Collection, HubuumClass, HubuumClassID, HubuumObject, HubuumObjectID, HubuumObjectRelation,
+    HubuumObjectRelationID, NewHubuumObject, NewHubuumObjectRelation, ObjectsByClass,
     UpdateHubuumObject,
 };
 use crate::traits::{ClassAccessors, SelfAccessors};
@@ -18,7 +18,7 @@ fn object_snapshot(object: &HubuumObject) -> serde_json::Value {
     serde_json::json!({
         "id": object.id,
         "name": object.name,
-        "namespace_id": object.namespace_id,
+        "collection_id": object.collection_id,
         "hubuum_class_id": object.hubuum_class_id,
         "data": object.data,
         "description": object.description,
@@ -38,7 +38,7 @@ fn object_event(
             .with_context(context)
             .with_entity_id(object.id)
             .with_entity_name(object.name.clone())
-            .with_namespace_id(object.namespace_id)
+            .with_collection_id(object.collection_id)
             .with_metadata(serde_json::json!({ "class_id": object.hubuum_class_id })),
     )
 }
@@ -255,10 +255,10 @@ impl ValidateObjectRecord for NewHubuumObject {
             .class(pool)
             .await?;
 
-        if self.namespace_id != class.namespace_id {
+        if self.collection_id != class.collection_id {
             return Err(ApiError::BadRequest(format!(
-                "Object namespace_id {} does not match class namespace_id {}",
-                self.namespace_id, class.namespace_id
+                "Object collection_id {} does not match class collection_id {}",
+                self.collection_id, class.collection_id
             )));
         }
 
@@ -280,10 +280,10 @@ impl ValidateObjectRecord for (&UpdateHubuumObject, i32) {
             .class(pool)
             .await?;
 
-        if merged.namespace_id != class.namespace_id {
+        if merged.collection_id != class.collection_id {
             return Err(ApiError::BadRequest(format!(
-                "Object namespace_id {} does not match class namespace_id {}",
-                merged.namespace_id, class.namespace_id
+                "Object collection_id {} does not match class collection_id {}",
+                merged.collection_id, class.collection_id
             )));
         }
 
@@ -319,7 +319,7 @@ impl SaveObjectRecord for HubuumObject {
     ) -> Result<HubuumObject, ApiError> {
         let updated_object = UpdateHubuumObject {
             name: Some(self.name.clone()),
-            namespace_id: Some(self.namespace_id),
+            collection_id: Some(self.collection_id),
             hubuum_class_id: Some(self.hubuum_class_id),
             data: Some(self.data.clone()),
             description: Some(self.description.clone()),
@@ -340,7 +340,7 @@ impl SaveObjectRecord for HubuumObject {
     ) -> Result<HubuumObject, ApiError> {
         let updated_object = UpdateHubuumObject {
             name: Some(self.name.clone()),
-            namespace_id: Some(self.namespace_id),
+            collection_id: Some(self.collection_id),
             hubuum_class_id: Some(self.hubuum_class_id),
             data: Some(self.data.clone()),
             description: Some(self.description.clone()),
@@ -497,27 +497,27 @@ impl DeleteObjectRecord for HubuumObject {
     }
 }
 
-pub trait ObjectNamespaceLookup {
-    async fn lookup_object_namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError>;
+pub trait ObjectCollectionLookup {
+    async fn lookup_object_collection(&self, pool: &DbPool) -> Result<Collection, ApiError>;
 }
 
-impl ObjectNamespaceLookup for HubuumObject {
-    async fn lookup_object_namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        use crate::schema::namespaces::dsl::{id, namespaces};
+impl ObjectCollectionLookup for HubuumObject {
+    async fn lookup_object_collection(&self, pool: &DbPool) -> Result<Collection, ApiError> {
+        use crate::schema::collections::dsl::{collections, id};
 
         with_connection(pool, |conn| {
-            namespaces
-                .filter(id.eq(self.namespace_id))
-                .first::<Namespace>(conn)
+            collections
+                .filter(id.eq(self.collection_id))
+                .first::<Collection>(conn)
         })
     }
 }
 
-impl ObjectNamespaceLookup for HubuumObjectID {
-    async fn lookup_object_namespace(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
+impl ObjectCollectionLookup for HubuumObjectID {
+    async fn lookup_object_collection(&self, pool: &DbPool) -> Result<Collection, ApiError> {
         self.load_object_record(pool)
             .await?
-            .lookup_object_namespace(pool)
+            .lookup_object_collection(pool)
             .await
     }
 }

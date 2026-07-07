@@ -8,9 +8,9 @@ Hubuum exposes a grouped unified search API for discovery-oriented clients:
 Common query parameters:
 
 - `q`: required plain-text query
-- `kinds`: optional comma-separated subset of `namespace,class,object`
+- `kinds`: optional comma-separated subset of `collection,class,object`
 - `limit_per_kind`: optional per-kind page size
-- `cursor_namespaces`, `cursor_classes`, `cursor_objects`: opaque per-kind cursors
+- `cursor_collections`, `cursor_classes`, `cursor_objects`: opaque per-kind cursors
 - `search_class_schema=true|false`: opt in to class schema text matching
 - `search_object_data=true|false`: opt in to object JSON string-value matching
 
@@ -20,12 +20,12 @@ The JSON endpoint returns grouped results and grouped next cursors:
 {
   "query": "server",
   "results": {
-    "namespaces": [],
+    "collections": [],
     "classes": [],
     "objects": []
   },
   "next": {
-    "namespaces": null,
+    "collections": null,
     "classes": null,
     "objects": null
   }

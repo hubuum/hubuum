@@ -7,7 +7,7 @@ use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::{
     NewPermission, Permission, PermissionFilter, Permissions, PermissionsList, UpdatePermission,
 };
-use crate::traits::NamespaceAccessors;
+use crate::traits::CollectionAccessors;
 
 use super::authz::{AuthzSubject, scope_allows};
 
@@ -22,7 +22,7 @@ fn granted_permission_names(permission: &Permission) -> Vec<String> {
 fn permission_snapshot(permission: &Permission) -> serde_json::Value {
     serde_json::json!({
         "id": permission.id,
-        "namespace_id": permission.namespace_id,
+        "collection_id": permission.collection_id,
         "group_id": permission.group_id,
         "granted_permissions": granted_permission_names(permission),
         "created_at": permission.created_at,
@@ -36,7 +36,7 @@ fn permission_metadata(
     replace_existing: Option<bool>,
 ) -> serde_json::Value {
     let mut metadata = serde_json::json!({
-        "namespace_id": permission.namespace_id,
+        "collection_id": permission.collection_id,
         "group_id": permission.group_id,
         "requested_permissions": permission_names(requested_permissions),
         "granted_permissions": granted_permission_names(permission),
@@ -65,7 +65,7 @@ fn permission_event(
     )?
     .with_context(context)
     .with_entity_id(permission.id)
-    .with_namespace_id(permission.namespace_id)
+    .with_collection_id(permission.collection_id)
     .with_metadata(permission_metadata(
         permission,
         requested_permissions,
@@ -79,10 +79,10 @@ fn update_permission_for_grant(
 ) -> UpdatePermission {
     let mut update_perm = if replace_existing {
         UpdatePermission {
-            has_read_namespace: Some(false),
-            has_update_namespace: Some(false),
-            has_delete_namespace: Some(false),
-            has_delegate_namespace: Some(false),
+            has_read_collection: Some(false),
+            has_update_collection: Some(false),
+            has_delete_collection: Some(false),
+            has_delegate_collection: Some(false),
             has_create_class: Some(false),
             has_read_class: Some(false),
             has_update_class: Some(false),
@@ -117,10 +117,10 @@ fn update_permission_for_grant(
 
     for permission in permission_list {
         match permission {
-            Permissions::ReadCollection => update_perm.has_read_namespace = Some(true),
-            Permissions::UpdateCollection => update_perm.has_update_namespace = Some(true),
-            Permissions::DeleteCollection => update_perm.has_delete_namespace = Some(true),
-            Permissions::DelegateCollection => update_perm.has_delegate_namespace = Some(true),
+            Permissions::ReadCollection => update_perm.has_read_collection = Some(true),
+            Permissions::UpdateCollection => update_perm.has_update_collection = Some(true),
+            Permissions::DeleteCollection => update_perm.has_delete_collection = Some(true),
+            Permissions::DelegateCollection => update_perm.has_delegate_collection = Some(true),
             Permissions::CreateClass => update_perm.has_create_class = Some(true),
             Permissions::ReadClass => update_perm.has_read_class = Some(true),
             Permissions::UpdateClass => update_perm.has_update_class = Some(true),
@@ -174,10 +174,10 @@ fn update_permission_for_revoke(
     let mut update_perm = UpdatePermission::default();
     for permission in permission_list {
         match permission {
-            Permissions::ReadCollection => update_perm.has_read_namespace = Some(false),
-            Permissions::UpdateCollection => update_perm.has_update_namespace = Some(false),
-            Permissions::DeleteCollection => update_perm.has_delete_namespace = Some(false),
-            Permissions::DelegateCollection => update_perm.has_delegate_namespace = Some(false),
+            Permissions::ReadCollection => update_perm.has_read_collection = Some(false),
+            Permissions::UpdateCollection => update_perm.has_update_collection = Some(false),
+            Permissions::DeleteCollection => update_perm.has_delete_collection = Some(false),
+            Permissions::DelegateCollection => update_perm.has_delegate_collection = Some(false),
             Permissions::CreateClass => update_perm.has_create_class = Some(false),
             Permissions::ReadClass => update_perm.has_read_class = Some(false),
             Permissions::UpdateClass => update_perm.has_update_class = Some(false),
@@ -227,17 +227,17 @@ fn update_permission_for_revoke(
 }
 
 fn new_permission_from_list(
-    nid: i32,
+    target_collection_id: i32,
     gid: i32,
     permission_list: &PermissionsList<Permissions>,
 ) -> NewPermission {
     NewPermission {
-        namespace_id: nid,
+        collection_id: target_collection_id,
         group_id: gid,
-        has_read_namespace: permission_list.contains(&Permissions::ReadCollection),
-        has_update_namespace: permission_list.contains(&Permissions::UpdateCollection),
-        has_delete_namespace: permission_list.contains(&Permissions::DeleteCollection),
-        has_delegate_namespace: permission_list.contains(&Permissions::DelegateCollection),
+        has_read_collection: permission_list.contains(&Permissions::ReadCollection),
+        has_update_collection: permission_list.contains(&Permissions::UpdateCollection),
+        has_delete_collection: permission_list.contains(&Permissions::DeleteCollection),
+        has_delegate_collection: permission_list.contains(&Permissions::DelegateCollection),
         has_create_class: permission_list.contains(&Permissions::CreateClass),
         has_read_class: permission_list.contains(&Permissions::ReadClass),
         has_update_class: permission_list.contains(&Permissions::UpdateClass),
@@ -269,7 +269,7 @@ fn new_permission_from_list(
     }
 }
 
-pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
+pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
     async fn user_can_all_from_backend<S: AuthzSubject>(
         &self,
         pool: &DbPool,
@@ -279,7 +279,7 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
     ) -> Result<bool, ApiError> {
         let lookup_table = crate::schema::permissions::dsl::permissions;
         let group_id_field = crate::schema::permissions::dsl::group_id;
-        let namespace_id_field = crate::schema::permissions::dsl::namespace_id;
+        let collection_id_field = crate::schema::permissions::dsl::collection_id;
 
         // Fail-closed token-scope pre-filter, applied BEFORE the admin bypass so
         // a scoped admin token can never exceed its scopes.
@@ -294,7 +294,7 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
         let group_id_subquery = subject.group_ids_subquery();
         let mut base_query = lookup_table
             .into_boxed()
-            .filter(namespace_id_field.eq(self.namespace_id(pool).await?.id()))
+            .filter(collection_id_field.eq(self.collection_id(pool).await?.id()))
             .filter(group_id_field.eq_any(group_id_subquery));
 
         for permission in permissions_requested {
@@ -316,11 +316,11 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
     ) -> Result<Permission, ApiError> {
         use crate::schema::permissions::dsl::*;
 
-        let nid = self.namespace_id(pool).await?.id();
+        let target_collection_id = self.collection_id(pool).await?.id();
 
         with_transaction(pool, |conn| -> Result<Permission, ApiError> {
             let existing_entry = permissions
-                .filter(namespace_id.eq(nid))
+                .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_grant))
                 .first::<Permission>(conn)
                 .optional()?;
@@ -329,10 +329,10 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                 Some(_) => {
                     let mut update_perm = if replace_existing {
                         UpdatePermission {
-                            has_read_namespace: Some(false),
-                            has_update_namespace: Some(false),
-                            has_delete_namespace: Some(false),
-                            has_delegate_namespace: Some(false),
+                            has_read_collection: Some(false),
+                            has_update_collection: Some(false),
+                            has_delete_collection: Some(false),
+                            has_delegate_collection: Some(false),
                             has_create_class: Some(false),
                             has_read_class: Some(false),
                             has_update_class: Some(false),
@@ -368,16 +368,16 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                     for permission in permission_list.into_iter() {
                         match permission {
                             Permissions::ReadCollection => {
-                                update_perm.has_read_namespace = Some(true);
+                                update_perm.has_read_collection = Some(true);
                             }
                             Permissions::UpdateCollection => {
-                                update_perm.has_update_namespace = Some(true);
+                                update_perm.has_update_collection = Some(true);
                             }
                             Permissions::DeleteCollection => {
-                                update_perm.has_delete_namespace = Some(true);
+                                update_perm.has_delete_collection = Some(true);
                             }
                             Permissions::DelegateCollection => {
-                                update_perm.has_delegate_namespace = Some(true);
+                                update_perm.has_delegate_collection = Some(true);
                             }
                             Permissions::CreateClass => {
                                 update_perm.has_create_class = Some(true);
@@ -464,21 +464,21 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                     }
 
                     Ok(diesel::update(permissions)
-                        .filter(namespace_id.eq(nid))
+                        .filter(collection_id.eq(target_collection_id))
                         .filter(group_id.eq(group_id_for_grant))
                         .set(&update_perm)
                         .get_result(conn)?)
                 }
                 None => {
                     let new_entry = NewPermission {
-                        namespace_id: nid,
+                        collection_id: target_collection_id,
                         group_id: group_id_for_grant,
-                        has_read_namespace: permission_list.contains(&Permissions::ReadCollection),
-                        has_update_namespace: permission_list
+                        has_read_collection: permission_list.contains(&Permissions::ReadCollection),
+                        has_update_collection: permission_list
                             .contains(&Permissions::UpdateCollection),
-                        has_delete_namespace: permission_list
+                        has_delete_collection: permission_list
                             .contains(&Permissions::DeleteCollection),
-                        has_delegate_namespace: permission_list
+                        has_delegate_collection: permission_list
                             .contains(&Permissions::DelegateCollection),
                         has_create_class: permission_list.contains(&Permissions::CreateClass),
                         has_read_class: permission_list.contains(&Permissions::ReadClass),
@@ -552,12 +552,12 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
 
         use crate::schema::permissions::dsl::*;
 
-        let nid = self.namespace_id(pool).await?.id();
+        let target_collection_id = self.collection_id(pool).await?.id();
         let requested = permission_list.iter().copied().collect::<Vec<_>>();
 
         with_transaction(pool, |conn| -> Result<Permission, ApiError> {
             let before = permissions
-                .filter(namespace_id.eq(nid))
+                .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_grant))
                 .first::<Permission>(conn)
                 .optional()?;
@@ -567,14 +567,17 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                     let update_perm =
                         update_permission_for_grant(&permission_list, replace_existing);
                     diesel::update(permissions)
-                        .filter(namespace_id.eq(nid))
+                        .filter(collection_id.eq(target_collection_id))
                         .filter(group_id.eq(group_id_for_grant))
                         .set(&update_perm)
                         .get_result::<Permission>(conn)?
                 }
                 None => {
-                    let new_entry =
-                        new_permission_from_list(nid, group_id_for_grant, &permission_list);
+                    let new_entry = new_permission_from_list(
+                        target_collection_id,
+                        group_id_for_grant,
+                        &permission_list,
+                    );
                     diesel::insert_into(permissions)
                         .values(&new_entry)
                         .get_result::<Permission>(conn)?
@@ -586,8 +589,8 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                 Action::Granted,
                 context,
                 format!(
-                    "Permissions granted to group {} on namespace {}",
-                    group_id_for_grant, nid
+                    "Permissions granted to group {} on collection {}",
+                    group_id_for_grant, target_collection_id
                 ),
                 &requested,
                 Some(replace_existing),
@@ -612,11 +615,11 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
     ) -> Result<Permission, ApiError> {
         use crate::schema::permissions::dsl::*;
 
-        let nid = self.namespace_id(pool).await?.id();
+        let target_collection_id = self.collection_id(pool).await?.id();
 
         with_transaction(pool, |conn| -> Result<Permission, ApiError> {
             permissions
-                .filter(namespace_id.eq(nid))
+                .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_revoke))
                 .first::<Permission>(conn)?;
 
@@ -624,16 +627,16 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
             for permission in permission_list.into_iter() {
                 match permission {
                     Permissions::ReadCollection => {
-                        update_perm.has_read_namespace = Some(false);
+                        update_perm.has_read_collection = Some(false);
                     }
                     Permissions::UpdateCollection => {
-                        update_perm.has_update_namespace = Some(false);
+                        update_perm.has_update_collection = Some(false);
                     }
                     Permissions::DeleteCollection => {
-                        update_perm.has_delete_namespace = Some(false);
+                        update_perm.has_delete_collection = Some(false);
                     }
                     Permissions::DelegateCollection => {
-                        update_perm.has_delegate_namespace = Some(false);
+                        update_perm.has_delegate_collection = Some(false);
                     }
                     Permissions::CreateClass => {
                         update_perm.has_create_class = Some(false);
@@ -720,7 +723,7 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
             }
 
             Ok(diesel::update(permissions)
-                .filter(namespace_id.eq(nid))
+                .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_revoke))
                 .set(&update_perm)
                 .get_result(conn)?)
@@ -746,18 +749,18 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
 
         use crate::schema::permissions::dsl::*;
 
-        let nid = self.namespace_id(pool).await?.id();
+        let target_collection_id = self.collection_id(pool).await?.id();
         let requested = permission_list.iter().copied().collect::<Vec<_>>();
 
         with_transaction(pool, |conn| -> Result<Permission, ApiError> {
             let before = permissions
-                .filter(namespace_id.eq(nid))
+                .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_revoke))
                 .first::<Permission>(conn)?;
 
             let update_perm = update_permission_for_revoke(&permission_list);
             let after = diesel::update(permissions)
-                .filter(namespace_id.eq(nid))
+                .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_revoke))
                 .set(&update_perm)
                 .get_result::<Permission>(conn)?;
@@ -767,8 +770,8 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                 Action::Revoked,
                 context,
                 format!(
-                    "Permissions revoked from group {} on namespace {}",
-                    group_id_for_revoke, nid
+                    "Permissions revoked from group {} on collection {}",
+                    group_id_for_revoke, target_collection_id
                 ),
                 &requested,
                 None,
@@ -787,10 +790,10 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
     ) -> Result<(), ApiError> {
         use crate::schema::permissions::dsl::*;
 
-        let namespace_id_for_revoke = self.namespace_id(pool).await?.id();
+        let collection_id_for_revoke = self.collection_id(pool).await?.id();
         with_connection(pool, |conn| {
             diesel::delete(permissions)
-                .filter(namespace_id.eq(namespace_id_for_revoke))
+                .filter(collection_id.eq(collection_id_for_revoke))
                 .filter(group_id.eq(group_id_for_revoke))
                 .execute(conn)
         })?;
@@ -812,16 +815,16 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
 
         use crate::schema::permissions::dsl::*;
 
-        let namespace_id_for_revoke = self.namespace_id(pool).await?.id();
+        let collection_id_for_revoke = self.collection_id(pool).await?.id();
         with_transaction(pool, |conn| -> Result<(), ApiError> {
             let before = permissions
-                .filter(namespace_id.eq(namespace_id_for_revoke))
+                .filter(collection_id.eq(collection_id_for_revoke))
                 .filter(group_id.eq(group_id_for_revoke))
                 .first::<Permission>(conn)
                 .optional()?;
 
             diesel::delete(permissions)
-                .filter(namespace_id.eq(namespace_id_for_revoke))
+                .filter(collection_id.eq(collection_id_for_revoke))
                 .filter(group_id.eq(group_id_for_revoke))
                 .execute(conn)?;
 
@@ -832,8 +835,8 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
                     Action::Revoked,
                     context,
                     format!(
-                        "All permissions revoked from group {} on namespace {}",
-                        group_id_for_revoke, namespace_id_for_revoke
+                        "All permissions revoked from group {} on collection {}",
+                        group_id_for_revoke, collection_id_for_revoke
                     ),
                     &requested,
                     None,
@@ -847,4 +850,4 @@ pub trait PermissionControllerBackend: Serialize + NamespaceAccessors {
     }
 }
 
-impl<T: ?Sized> PermissionControllerBackend for T where T: Serialize + NamespaceAccessors {}
+impl<T: ?Sized> PermissionControllerBackend for T where T: Serialize + CollectionAccessors {}

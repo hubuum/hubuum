@@ -33,13 +33,13 @@ use crate::events::{
     Action, ActorKind, EntityType, Event, EventContext, NewEvent, RequestProvenance, emit_event,
 };
 use crate::models::class::{NewHubuumClass, UpdateHubuumClass};
+use crate::models::collection::{NewCollectionWithAssignee, UpdateCollection};
 use crate::models::group::{NewGroup, UpdateGroup};
-use crate::models::namespace::{NewNamespaceWithAssignee, UpdateNamespace};
 use crate::models::object::{NewHubuumObject, UpdateHubuumObject};
 use crate::models::token::{create_principal_token, revoke_token_by_id_for_principal};
 use crate::models::{
-    EventDelivery, EventDeliveryID, EventDeliveryStatus, EventSink as EventSinkModel, EventSinkID,
-    EventSinkKind, EventSubscription, GroupID, HubuumClassRelationID, NamespaceID, NewEventSink,
+    CollectionID, EventDelivery, EventDeliveryID, EventDeliveryStatus, EventSink as EventSinkModel,
+    EventSinkID, EventSinkKind, EventSubscription, GroupID, HubuumClassRelationID, NewEventSink,
     NewEventSubscription, NewHubuumClassRelation, NewHubuumObjectRelation, NewRemoteTargetRow,
     NewReportTemplate, NewUser, Permissions, PermissionsList, PrincipalToken, RemoteTargetID,
     ReportContentType, ReportTemplateID, ReportTemplateKind, Token, UpdateRemoteTargetRow,
@@ -72,15 +72,15 @@ fn emit_event_respects_transaction_outcome(#[case] rollback: bool) {
     let pool = scope.pool.clone();
 
     let new_event = NewEvent::new(
-        EntityType::Namespace,
+        EntityType::Collection,
         Action::Created,
         ActorKind::System,
         "test event",
     )
     .unwrap()
-    .with_namespace_id(1)
+    .with_collection_id(1)
     .with_entity_id(1)
-    .with_entity_name("ns-test")
+    .with_entity_name("collection_fixture-test")
     .with_request_id(Uuid::new_v4())
     .with_correlation_id("client-provided-correlation-id")
     .with_metadata(serde_json::json!({"k": "v"}));
@@ -136,9 +136,14 @@ fn new_event_rejects_invalid_action_for_type() {
 
 #[test]
 fn new_event_accepts_arbitrary_correlation_id() {
-    let ev = NewEvent::new(EntityType::Namespace, Action::Created, ActorKind::User, "n")
-        .unwrap()
-        .with_correlation_id("any-arbitrary-client-value-!@#$%");
+    let ev = NewEvent::new(
+        EntityType::Collection,
+        Action::Created,
+        ActorKind::User,
+        "n",
+    )
+    .unwrap()
+    .with_correlation_id("any-arbitrary-client-value-!@#$%");
     // correlation_id accepts arbitrary caller-provided header values (#71).
     assert_eq!(
         ev.correlation_id(),
@@ -153,10 +158,10 @@ fn new_event_applies_event_context() {
     let context = provenance.user_event_context(42);
 
     let ev = NewEvent::new(
-        EntityType::Namespace,
+        EntityType::Collection,
         Action::Created,
         ActorKind::System,
-        "created namespace",
+        "created collection",
     )
     .unwrap()
     .with_context(&context);
@@ -189,15 +194,15 @@ fn fanout_backlog_index_exists() {
     .unwrap();
 }
 
-async fn create_namespace_event_subscription(
+async fn create_collection_event_subscription(
     scope: &TestScope,
-    namespace_id: i32,
+    collection_id: i32,
     label: &str,
     enabled: bool,
 ) -> i32 {
-    create_namespace_event_subscription_with_filter(
+    create_collection_event_subscription_with_filter(
         scope,
-        namespace_id,
+        collection_id,
         label,
         enabled,
         hubuum_events_core::EventSubscriptionFilter::default(),
@@ -205,9 +210,9 @@ async fn create_namespace_event_subscription(
     .await
 }
 
-async fn create_namespace_event_subscription_with_filter(
+async fn create_collection_event_subscription_with_filter(
     scope: &TestScope,
-    namespace_id: i32,
+    collection_id: i32,
     label: &str,
     enabled: bool,
     filter: hubuum_events_core::EventSubscriptionFilter,
@@ -229,13 +234,13 @@ async fn create_namespace_event_subscription_with_filter(
         sink_id: EventSinkID::new(sink.id).unwrap(),
         name: scope.scoped_name(&format!("{label}_subscription")),
         description: String::new(),
-        entity_types: vec![EntityType::Namespace.as_str().to_string()],
+        entity_types: vec![EntityType::Collection.as_str().to_string()],
         actions: vec![Action::Created.as_str().to_string()],
         filter,
         routing: serde_json::json!({}),
         enabled,
     }
-    .into_row(NamespaceID::new(namespace_id).unwrap())
+    .into_row(CollectionID::new(collection_id).unwrap())
     .unwrap()
     .save_event_subscription_record_without_events(&scope.pool)
     .await
@@ -243,29 +248,29 @@ async fn create_namespace_event_subscription_with_filter(
     .id
 }
 
-fn emit_namespace_created_event(scope: &TestScope, namespace_id: i32) -> Event {
+fn emit_collection_created_event(scope: &TestScope, collection_id: i32) -> Event {
     let event = NewEvent::new(
-        EntityType::Namespace,
+        EntityType::Collection,
         Action::Created,
         ActorKind::System,
-        "namespace fanout test",
+        "collection fanout test",
     )
     .unwrap()
-    .with_namespace_id(namespace_id)
-    .with_entity_id(namespace_id)
-    .with_entity_name(scope.scoped_name("fanout_namespace"));
+    .with_collection_id(collection_id)
+    .with_entity_id(collection_id)
+    .with_entity_name(scope.scoped_name("fanout_collection"));
 
     with_connection(&scope.pool, |conn| emit_event(conn, &event)).unwrap()
 }
 
-fn insert_namespace_created_event_at(
+fn insert_collection_created_event_at(
     scope: &TestScope,
-    namespace_id: i32,
+    collection_id: i32,
     occurred_at_value: chrono::NaiveDateTime,
 ) -> Event {
     use crate::schema::events::dsl::{
-        action, actor_kind, entity_id, entity_name, entity_type, event_id, events, metadata,
-        namespace_id as event_namespace_id, occurred_at, summary,
+        action, actor_kind, collection_id as event_collection_id, entity_id, entity_name,
+        entity_type, event_id, events, metadata, occurred_at, summary,
     };
 
     with_connection(&scope.pool, |conn| {
@@ -273,13 +278,13 @@ fn insert_namespace_created_event_at(
             .values((
                 event_id.eq(Uuid::new_v4()),
                 occurred_at.eq(occurred_at_value),
-                entity_type.eq(EntityType::Namespace.as_str()),
-                entity_id.eq(Some(namespace_id)),
-                entity_name.eq(Some(scope.scoped_name("retention_namespace"))),
-                event_namespace_id.eq(Some(namespace_id)),
+                entity_type.eq(EntityType::Collection.as_str()),
+                entity_id.eq(Some(collection_id)),
+                entity_name.eq(Some(scope.scoped_name("retention_collection"))),
+                event_collection_id.eq(Some(collection_id)),
                 action.eq(Action::Created.as_str()),
                 actor_kind.eq(ActorKind::System.as_str()),
-                summary.eq("namespace retention test"),
+                summary.eq("collection retention test"),
                 metadata.eq(serde_json::json!({})),
             ))
             .get_result::<Event>(conn)
@@ -363,10 +368,10 @@ impl crate::events::Sink for SuccessfulSink {
         use futures::FutureExt;
 
         async move {
-            assert_eq!(envelope.entity_type, EntityType::Namespace.as_str());
+            assert_eq!(envelope.entity_type, EntityType::Collection.as_str());
             assert_eq!(
                 subscription.entity_types,
-                vec![EntityType::Namespace.as_str().to_string()]
+                vec![EntityType::Collection.as_str().to_string()]
             );
             assert_eq!(sink.kind, EventSinkKind::Webhook);
             Ok(())
@@ -393,10 +398,10 @@ impl crate::events::Sink for FailingSink {
 #[actix_web::test]
 async fn event_fanout_creates_delivery_for_each_matching_subscription_once() {
     let scope = test_scope();
-    let fixture = scope.with_namespace().await;
-    create_namespace_event_subscription(&scope, fixture.namespace.id, "fanout_one", true).await;
-    create_namespace_event_subscription(&scope, fixture.namespace.id, "fanout_two", true).await;
-    let event = emit_namespace_created_event(&scope, fixture.namespace.id);
+    let fixture = scope.with_collection().await;
+    create_collection_event_subscription(&scope, fixture.collection.id, "fanout_one", true).await;
+    create_collection_event_subscription(&scope, fixture.collection.id, "fanout_two", true).await;
+    let event = emit_collection_created_event(&scope, fixture.collection.id);
 
     let inserted = fanout_event(&scope.pool, event.id).await.unwrap();
     assert_eq!(inserted, 2);
@@ -420,10 +425,10 @@ async fn event_fanout_creates_delivery_for_each_matching_subscription_once() {
 #[actix_web::test]
 async fn event_fanout_skips_disabled_subscriptions() {
     let scope = test_scope();
-    let fixture = scope.with_namespace().await;
-    create_namespace_event_subscription(&scope, fixture.namespace.id, "fanout_disabled", false)
+    let fixture = scope.with_collection().await;
+    create_collection_event_subscription(&scope, fixture.collection.id, "fanout_disabled", false)
         .await;
-    let event = emit_namespace_created_event(&scope, fixture.namespace.id);
+    let event = emit_collection_created_event(&scope, fixture.collection.id);
 
     let inserted = fanout_event(&scope.pool, event.id).await.unwrap();
 
@@ -439,30 +444,30 @@ async fn event_fanout_skips_disabled_subscriptions() {
 #[actix_web::test]
 async fn event_fanout_applies_subscription_filter_before_creating_delivery() {
     let scope = test_scope();
-    let fixture = scope.with_namespace().await;
-    create_namespace_event_subscription_with_filter(
+    let fixture = scope.with_collection().await;
+    create_collection_event_subscription_with_filter(
         &scope,
-        fixture.namespace.id,
+        fixture.collection.id,
         "fanout_filter_match",
         true,
         hubuum_events_core::EventSubscriptionFilter {
-            entity_ids: vec![fixture.namespace.id],
+            entity_ids: vec![fixture.collection.id],
             ..hubuum_events_core::EventSubscriptionFilter::default()
         },
     )
     .await;
-    create_namespace_event_subscription_with_filter(
+    create_collection_event_subscription_with_filter(
         &scope,
-        fixture.namespace.id,
+        fixture.collection.id,
         "fanout_filter_miss",
         true,
         hubuum_events_core::EventSubscriptionFilter {
-            entity_ids: vec![fixture.namespace.id + 10_000],
+            entity_ids: vec![fixture.collection.id + 10_000],
             ..hubuum_events_core::EventSubscriptionFilter::default()
         },
     )
     .await;
-    let event = emit_namespace_created_event(&scope, fixture.namespace.id);
+    let event = emit_collection_created_event(&scope, fixture.collection.id);
 
     let inserted = fanout_event(&scope.pool, event.id).await.unwrap();
 
@@ -478,8 +483,8 @@ async fn event_fanout_applies_subscription_filter_before_creating_delivery() {
 #[actix_web::test]
 async fn event_fanout_reclaims_expired_claims() {
     let scope = test_scope();
-    let fixture = scope.with_namespace().await;
-    let event = emit_namespace_created_event(&scope, fixture.namespace.id);
+    let fixture = scope.with_collection().await;
+    let event = emit_collection_created_event(&scope, fixture.collection.id);
     let settings = EventFanoutSettings {
         batch_size: 100_000,
         lock_timeout_ms: 30_000,
@@ -515,7 +520,7 @@ async fn event_fanout_reclaims_expired_claims() {
 #[actix_web::test]
 async fn ordinary_event_delete_is_rejected_by_append_only_trigger() {
     let scope = test_scope();
-    let event = emit_namespace_created_event(&scope, 1);
+    let event = emit_collection_created_event(&scope, 1);
 
     let error = with_connection(&scope.pool, |conn| {
         diesel::delete(events.filter(crate::schema::events::dsl::id.eq(event.id))).execute(conn)
@@ -534,7 +539,7 @@ async fn ordinary_event_delete_is_rejected_by_append_only_trigger() {
 async fn event_retention_purge_deletes_old_events_through_guarded_path() {
     let _lock = lock_test_mutex(&EVENT_RETENTION_TEST_LOCK).await;
     let scope = test_scope();
-    let old_event = insert_namespace_created_event_at(
+    let old_event = insert_collection_created_event_at(
         &scope,
         1,
         chrono::Utc::now().naive_utc() - chrono::Duration::days(400),
@@ -559,7 +564,7 @@ async fn event_retention_purge_deletes_old_events_through_guarded_path() {
 async fn event_retention_purge_keeps_events_pending_fanout() {
     let _lock = lock_test_mutex(&EVENT_RETENTION_TEST_LOCK).await;
     let scope = test_scope();
-    let old_event = insert_namespace_created_event_at(
+    let old_event = insert_collection_created_event_at(
         &scope,
         1,
         chrono::Utc::now().naive_utc() - chrono::Duration::days(400),
@@ -583,12 +588,12 @@ async fn event_retention_purge_keeps_events_pending_fanout() {
 async fn event_retention_purge_keeps_events_with_active_deliveries() {
     let _lock = lock_test_mutex(&EVENT_RETENTION_TEST_LOCK).await;
     let scope = test_scope();
-    let fixture = scope.with_namespace().await;
-    create_namespace_event_subscription(&scope, fixture.namespace.id, "retention_active", true)
+    let fixture = scope.with_collection().await;
+    create_collection_event_subscription(&scope, fixture.collection.id, "retention_active", true)
         .await;
-    let old_event = insert_namespace_created_event_at(
+    let old_event = insert_collection_created_event_at(
         &scope,
-        fixture.namespace.id,
+        fixture.collection.id,
         chrono::Utc::now().naive_utc() - chrono::Duration::days(400),
     );
     fanout_event(&scope.pool, old_event.id).await.unwrap();
@@ -611,15 +616,15 @@ async fn event_retention_purge_keeps_events_with_active_deliveries() {
 async fn event_retention_purge_deletes_old_terminal_deliveries_without_deleting_event() {
     let _lock = lock_test_mutex(&EVENT_RETENTION_TEST_LOCK).await;
     let scope = test_scope();
-    let fixture = scope.with_namespace().await;
-    let subscription_id = create_namespace_event_subscription(
+    let fixture = scope.with_collection().await;
+    let subscription_id = create_collection_event_subscription(
         &scope,
-        fixture.namespace.id,
+        fixture.collection.id,
         "retention_terminal",
         true,
     )
     .await;
-    let event = emit_namespace_created_event(&scope, fixture.namespace.id);
+    let event = emit_collection_created_event(&scope, fixture.collection.id);
     let old_timestamp = chrono::Utc::now().naive_utc() - chrono::Duration::days(40);
     use crate::schema::event_deliveries::dsl::{
         created_at, event_deliveries, event_id, status,
@@ -664,10 +669,10 @@ async fn event_retention_purge_deletes_old_terminal_deliveries_without_deleting_
 async fn event_delivery_worker_marks_successful_delivery_succeeded() {
     let _lock = lock_test_mutex(&EVENT_DELIVERY_TEST_LOCK).await;
     let scope = test_scope();
-    let fixture = scope.with_namespace().await;
-    create_namespace_event_subscription(&scope, fixture.namespace.id, "delivery_success", true)
+    let fixture = scope.with_collection().await;
+    create_collection_event_subscription(&scope, fixture.collection.id, "delivery_success", true)
         .await;
-    let event = emit_namespace_created_event(&scope, fixture.namespace.id);
+    let event = emit_collection_created_event(&scope, fixture.collection.id);
     fanout_event(&scope.pool, event.id).await.unwrap();
     let sink = SuccessfulSink;
     let resolver = StaticSinkResolver { sink: &sink };
@@ -693,9 +698,10 @@ async fn event_delivery_worker_marks_successful_delivery_succeeded() {
 async fn event_delivery_worker_retries_with_backoff_then_marks_dead() {
     let _lock = lock_test_mutex(&EVENT_DELIVERY_TEST_LOCK).await;
     let scope = test_scope();
-    let fixture = scope.with_namespace().await;
-    create_namespace_event_subscription(&scope, fixture.namespace.id, "delivery_retry", true).await;
-    let event = emit_namespace_created_event(&scope, fixture.namespace.id);
+    let fixture = scope.with_collection().await;
+    create_collection_event_subscription(&scope, fixture.collection.id, "delivery_retry", true)
+        .await;
+    let event = emit_collection_created_event(&scope, fixture.collection.id);
     fanout_event(&scope.pool, event.id).await.unwrap();
     let sink = FailingSink;
     let resolver = StaticSinkResolver { sink: &sink };
@@ -740,10 +746,10 @@ async fn event_delivery_worker_retries_with_backoff_then_marks_dead() {
 async fn event_delivery_claims_expired_in_flight_rows_again() {
     let _lock = lock_test_mutex(&EVENT_DELIVERY_TEST_LOCK).await;
     let scope = test_scope();
-    let fixture = scope.with_namespace().await;
-    create_namespace_event_subscription(&scope, fixture.namespace.id, "delivery_reclaim", true)
+    let fixture = scope.with_collection().await;
+    create_collection_event_subscription(&scope, fixture.collection.id, "delivery_reclaim", true)
         .await;
-    let event = emit_namespace_created_event(&scope, fixture.namespace.id);
+    let event = emit_collection_created_event(&scope, fixture.collection.id);
     fanout_event(&scope.pool, event.id).await.unwrap();
     let settings = make_delivery_settings(3);
 
@@ -775,10 +781,15 @@ async fn event_delivery_claims_expired_in_flight_rows_again() {
 async fn event_delivery_failed_mark_respects_claim_token() {
     let _lock = lock_test_mutex(&EVENT_DELIVERY_TEST_LOCK).await;
     let scope = test_scope();
-    let fixture = scope.with_namespace().await;
-    create_namespace_event_subscription(&scope, fixture.namespace.id, "delivery_claim_token", true)
-        .await;
-    let event = emit_namespace_created_event(&scope, fixture.namespace.id);
+    let fixture = scope.with_collection().await;
+    create_collection_event_subscription(
+        &scope,
+        fixture.collection.id,
+        "delivery_claim_token",
+        true,
+    )
+    .await;
+    let event = emit_collection_created_event(&scope, fixture.collection.id);
     fanout_event(&scope.pool, event.id).await.unwrap();
     let settings = make_delivery_settings(3);
     let mut claimed = claim_event_deliveries(&scope.pool, settings).await.unwrap();
@@ -794,14 +805,14 @@ async fn event_delivery_failed_mark_respects_claim_token() {
 }
 
 #[actix_web::test]
-async fn namespace_writes_emit_lifecycle_events_in_transaction() {
+async fn collection_writes_emit_lifecycle_events_in_transaction() {
     let scope = test_scope();
-    let fixture = scope.with_namespace().await;
+    let fixture = scope.with_collection().await;
     let context = EventContext::user(7, Some(Uuid::new_v4()), Some("audit-correlation".into()));
-    let namespace_name = scope.scoped_name("audited_namespace");
+    let collection_name = scope.scoped_name("audited_collection");
 
-    let namespace = NewNamespaceWithAssignee {
-        name: namespace_name.clone(),
+    let collection = NewCollectionWithAssignee {
+        name: collection_name.clone(),
         description: "before".to_string(),
         group_id: fixture.owner_group.id,
     }
@@ -809,25 +820,25 @@ async fn namespace_writes_emit_lifecycle_events_in_transaction() {
     .await
     .unwrap();
 
-    let updated = UpdateNamespace {
-        name: Some(namespace_name.clone()),
+    let updated = UpdateCollection {
+        name: Some(collection_name.clone()),
         description: Some("after".to_string()),
     }
-    .update(&scope.pool, namespace.id, &context)
+    .update(&scope.pool, collection.id, &context)
     .await
     .unwrap();
 
     updated.delete(&scope.pool, &context).await.unwrap();
 
-    let rows = events_for(&scope, "namespace", namespace.id);
+    let rows = events_for(&scope, "collection", collection.id);
     assert_eq!(rows.len(), 3);
 
     assert_eq!(rows[0].action, "created");
     assert_eq!(
         rows[0].entity_name.as_deref(),
-        Some(namespace_name.as_str())
+        Some(collection_name.as_str())
     );
-    assert_eq!(rows[0].namespace_id, Some(namespace.id));
+    assert_eq!(rows[0].collection_id, Some(collection.id));
     assert_eq!(rows[0].actor_user_id, Some(7));
     assert_eq!(rows[0].correlation_id.as_deref(), Some("audit-correlation"));
     assert_eq!(rows[0].after.as_ref().unwrap()["description"], "before");
@@ -850,13 +861,13 @@ async fn namespace_writes_emit_lifecycle_events_in_transaction() {
 #[actix_web::test]
 async fn class_writes_emit_lifecycle_events_in_transaction() {
     let scope = test_scope();
-    let fixture = scope.with_namespace().await;
+    let fixture = scope.with_collection().await;
     let context = EventContext::user(9, Some(Uuid::new_v4()), Some("class-correlation".into()));
     let class_name = scope.scoped_name("audited_class");
 
     let class = NewHubuumClass {
         name: class_name.clone(),
-        namespace_id: fixture.namespace.id,
+        collection_id: fixture.collection.id,
         json_schema: Some(serde_json::json!({"type": "object"})),
         validate_schema: Some(true),
         description: "before".to_string(),
@@ -867,7 +878,7 @@ async fn class_writes_emit_lifecycle_events_in_transaction() {
 
     let updated = UpdateHubuumClass {
         name: Some(class_name.clone()),
-        namespace_id: None,
+        collection_id: None,
         json_schema: Some(serde_json::json!({"type": "object", "additionalProperties": true})),
         validate_schema: Some(false),
         description: Some("after".to_string()),
@@ -883,7 +894,7 @@ async fn class_writes_emit_lifecycle_events_in_transaction() {
 
     assert_eq!(rows[0].action, "created");
     assert_eq!(rows[0].entity_name.as_deref(), Some(class_name.as_str()));
-    assert_eq!(rows[0].namespace_id, Some(fixture.namespace.id));
+    assert_eq!(rows[0].collection_id, Some(fixture.collection.id));
     assert_eq!(rows[0].actor_user_id, Some(9));
     assert_eq!(rows[0].correlation_id.as_deref(), Some("class-correlation"));
     assert_eq!(rows[0].after.as_ref().unwrap()["description"], "before");
@@ -904,14 +915,14 @@ async fn class_writes_emit_lifecycle_events_in_transaction() {
 #[actix_web::test]
 async fn object_writes_emit_lifecycle_events_in_transaction() {
     let scope = test_scope();
-    let fixture = scope.with_namespace().await;
+    let fixture = scope.with_collection().await;
     let context = EventContext::user(11, Some(Uuid::new_v4()), Some("object-correlation".into()));
     let class_name = scope.scoped_name("object_event_class");
     let object_name = scope.scoped_name("audited_object");
 
     let class = NewHubuumClass {
         name: class_name,
-        namespace_id: fixture.namespace.id,
+        collection_id: fixture.collection.id,
         json_schema: None,
         validate_schema: Some(false),
         description: "class".to_string(),
@@ -922,7 +933,7 @@ async fn object_writes_emit_lifecycle_events_in_transaction() {
 
     let object = NewHubuumObject {
         name: object_name.clone(),
-        namespace_id: fixture.namespace.id,
+        collection_id: fixture.collection.id,
         hubuum_class_id: class.id,
         data: serde_json::json!({"state": "before"}),
         description: "before".to_string(),
@@ -933,7 +944,7 @@ async fn object_writes_emit_lifecycle_events_in_transaction() {
 
     let updated = UpdateHubuumObject {
         name: Some(object_name.clone()),
-        namespace_id: None,
+        collection_id: None,
         hubuum_class_id: None,
         data: Some(serde_json::json!({"state": "after"})),
         description: Some("after".to_string()),
@@ -949,7 +960,7 @@ async fn object_writes_emit_lifecycle_events_in_transaction() {
 
     assert_eq!(rows[0].action, "created");
     assert_eq!(rows[0].entity_name.as_deref(), Some(object_name.as_str()));
-    assert_eq!(rows[0].namespace_id, Some(fixture.namespace.id));
+    assert_eq!(rows[0].collection_id, Some(fixture.collection.id));
     assert_eq!(rows[0].actor_user_id, Some(11));
     assert_eq!(
         rows[0].correlation_id.as_deref(),
@@ -973,7 +984,7 @@ async fn object_writes_emit_lifecycle_events_in_transaction() {
 #[actix_web::test]
 async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
     let scope = test_scope();
-    let fixture = scope.with_namespace().await;
+    let fixture = scope.with_collection().await;
     let context = EventContext::user(
         13,
         Some(Uuid::new_v4()),
@@ -982,7 +993,7 @@ async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
 
     let class_a = NewHubuumClass {
         name: scope.scoped_name("relation_class_a"),
-        namespace_id: fixture.namespace.id,
+        collection_id: fixture.collection.id,
         json_schema: None,
         validate_schema: Some(false),
         description: "a".to_string(),
@@ -992,7 +1003,7 @@ async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
     .unwrap();
     let class_b = NewHubuumClass {
         name: scope.scoped_name("relation_class_b"),
-        namespace_id: fixture.namespace.id,
+        collection_id: fixture.collection.id,
         json_schema: None,
         validate_schema: Some(false),
         description: "b".to_string(),
@@ -1035,8 +1046,8 @@ async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
         serde_json::json!(class_b.id)
     );
     assert_eq!(
-        rows[0].metadata["related_namespace_ids"],
-        serde_json::json!([fixture.namespace.id, fixture.namespace.id])
+        rows[0].metadata["related_collection_ids"],
+        serde_json::json!([fixture.collection.id, fixture.collection.id])
     );
     assert_eq!(
         rows[0].after.as_ref().unwrap()["forward_template_alias"],
@@ -1045,8 +1056,8 @@ async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
 
     assert_eq!(rows[1].action, "deleted");
     assert_eq!(
-        rows[1].metadata["related_namespace_ids"],
-        serde_json::json!([fixture.namespace.id, fixture.namespace.id])
+        rows[1].metadata["related_collection_ids"],
+        serde_json::json!([fixture.collection.id, fixture.collection.id])
     );
     assert_eq!(
         rows[1].before.as_ref().unwrap()["reverse_template_alias"],
@@ -1062,7 +1073,7 @@ async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
 #[actix_web::test]
 async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
     let scope = test_scope();
-    let fixture = scope.with_namespace().await;
+    let fixture = scope.with_collection().await;
     let context = EventContext::user(
         15,
         Some(Uuid::new_v4()),
@@ -1071,7 +1082,7 @@ async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
 
     let class_a = NewHubuumClass {
         name: scope.scoped_name("object_relation_class_a"),
-        namespace_id: fixture.namespace.id,
+        collection_id: fixture.collection.id,
         json_schema: None,
         validate_schema: Some(false),
         description: "a".to_string(),
@@ -1081,7 +1092,7 @@ async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
     .unwrap();
     let class_b = NewHubuumClass {
         name: scope.scoped_name("object_relation_class_b"),
-        namespace_id: fixture.namespace.id,
+        collection_id: fixture.collection.id,
         json_schema: None,
         validate_schema: Some(false),
         description: "b".to_string(),
@@ -1101,7 +1112,7 @@ async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
 
     let object_a = NewHubuumObject {
         name: scope.scoped_name("object_relation_object_a"),
-        namespace_id: fixture.namespace.id,
+        collection_id: fixture.collection.id,
         hubuum_class_id: class_a.id,
         data: serde_json::json!({}),
         description: "a".to_string(),
@@ -1111,7 +1122,7 @@ async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
     .unwrap();
     let object_b = NewHubuumObject {
         name: scope.scoped_name("object_relation_object_b"),
-        namespace_id: fixture.namespace.id,
+        collection_id: fixture.collection.id,
         hubuum_class_id: class_b.id,
         data: serde_json::json!({}),
         description: "b".to_string(),
@@ -1416,7 +1427,7 @@ async fn token_writes_emit_created_revoked_events_without_token_material() {
 #[actix_web::test]
 async fn permission_writes_emit_granted_revoked_events() {
     let scope = test_scope();
-    let fixture = scope.with_namespace().await;
+    let fixture = scope.with_collection().await;
     let context = EventContext::user(
         25,
         Some(Uuid::new_v4()),
@@ -1431,7 +1442,7 @@ async fn permission_writes_emit_granted_revoked_events() {
     .unwrap();
 
     let permission = fixture
-        .namespace
+        .collection
         .grant(
             &scope.pool,
             group.id,
@@ -1442,7 +1453,7 @@ async fn permission_writes_emit_granted_revoked_events() {
         .unwrap();
 
     fixture
-        .namespace
+        .collection
         .revoke(
             &scope.pool,
             group.id,
@@ -1453,7 +1464,7 @@ async fn permission_writes_emit_granted_revoked_events() {
         .unwrap();
 
     fixture
-        .namespace
+        .collection
         .revoke_all(&scope.pool, group.id, Some(&context))
         .await
         .unwrap();
@@ -1468,8 +1479,8 @@ async fn permission_writes_emit_granted_revoked_events() {
         Some("permission-correlation")
     );
     assert_eq!(
-        rows[0].metadata["namespace_id"],
-        serde_json::json!(fixture.namespace.id)
+        rows[0].metadata["collection_id"],
+        serde_json::json!(fixture.collection.id)
     );
     assert_eq!(rows[0].metadata["group_id"], serde_json::json!(group.id));
     assert_eq!(
@@ -1509,7 +1520,7 @@ async fn permission_writes_emit_granted_revoked_events() {
 #[actix_web::test]
 async fn report_template_writes_emit_lifecycle_events() {
     let scope = test_scope();
-    let fixture = scope.with_namespace().await;
+    let fixture = scope.with_collection().await;
     let context = EventContext::user(
         26,
         Some(Uuid::new_v4()),
@@ -1517,7 +1528,7 @@ async fn report_template_writes_emit_lifecycle_events() {
     );
 
     let template = NewReportTemplate {
-        namespace_id: fixture.namespace.id,
+        collection_id: fixture.collection.id,
         name: scope.scoped_name("event_template"),
         description: "before".to_string(),
         content_type: ReportContentType::TextPlain,
@@ -1536,7 +1547,7 @@ async fn report_template_writes_emit_lifecycle_events() {
     .unwrap();
 
     let updated = UpdateReportTemplate {
-        namespace_id: None,
+        collection_id: None,
         name: None,
         description: Some("after".to_string()),
         template: Some("Goodbye {{ name }}".to_string()),
@@ -1568,7 +1579,7 @@ async fn report_template_writes_emit_lifecycle_events() {
         rows[0].correlation_id.as_deref(),
         Some("report-template-correlation")
     );
-    assert_eq!(rows[0].namespace_id, Some(fixture.namespace.id));
+    assert_eq!(rows[0].collection_id, Some(fixture.collection.id));
     assert_eq!(rows[0].entity_name.as_deref(), Some(template.name.as_str()));
     assert_eq!(rows[0].after.as_ref().unwrap()["description"], "before");
 
@@ -1586,7 +1597,7 @@ async fn report_template_writes_emit_lifecycle_events() {
 #[actix_web::test]
 async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_auth() {
     let scope = test_scope();
-    let fixture = scope.with_namespace().await;
+    let fixture = scope.with_collection().await;
     let context = EventContext::user(
         27,
         Some(Uuid::new_v4()),
@@ -1594,7 +1605,7 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
     );
 
     let row = NewRemoteTargetRow {
-        namespace_id: fixture.namespace.id,
+        collection_id: fixture.collection.id,
         class_id: None,
         name: scope.scoped_name("event_remote_target"),
         description: "before".to_string(),
@@ -1607,7 +1618,7 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
             "header": "X-Api-Key",
             "secret": "super-secret"
         }),
-        allowed_subject_types: serde_json::json!(["namespace"]),
+        allowed_subject_types: serde_json::json!(["collection"]),
         timeout_ms: 1000,
         enabled: true,
     }
@@ -1616,7 +1627,7 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
     .unwrap();
 
     let updated = UpdateRemoteTargetRow {
-        namespace_id: None,
+        collection_id: None,
         class_id: None,
         name: None,
         description: Some("after".to_string()),
@@ -1639,8 +1650,8 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
         &target,
         &context,
         12345,
-        "namespace",
-        fixture.namespace.id,
+        "collection",
+        fixture.collection.id,
     )
     .await
     .unwrap();
@@ -1660,7 +1671,7 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
         rows[0].correlation_id.as_deref(),
         Some("remote-target-correlation")
     );
-    assert_eq!(rows[0].namespace_id, Some(fixture.namespace.id));
+    assert_eq!(rows[0].collection_id, Some(fixture.collection.id));
     assert_eq!(rows[0].after.as_ref().unwrap()["description"], "before");
     assert_eq!(
         rows[0].after.as_ref().unwrap()["auth_config"],
@@ -1677,10 +1688,10 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
 
     assert_eq!(rows[2].action, "invoked");
     assert_eq!(rows[2].metadata["task_id"], serde_json::json!(12345));
-    assert_eq!(rows[2].metadata["subject_type"], "namespace");
+    assert_eq!(rows[2].metadata["subject_type"], "collection");
     assert_eq!(
         rows[2].metadata["subject_id"],
-        serde_json::json!(fixture.namespace.id)
+        serde_json::json!(fixture.collection.id)
     );
     assert!(rows[2].before.is_none());
     assert!(rows[2].after.is_none());

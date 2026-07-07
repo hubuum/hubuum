@@ -6,15 +6,15 @@ use tracing::debug;
 use crate::models::search::{
     FilterField, ParsedQueryParam, QueryOptions, QueryParamsExt, SearchOperator,
 };
-use crate::models::traits::ExpandNamespaceFromMap;
-use crate::models::traits::user::UserNamespaceAccessors;
+use crate::models::traits::ExpandCollectionFromMap;
+use crate::models::traits::user::UserCollectionAccessors;
 use crate::models::{
-    ClassGraphRow, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
-    HubuumObjectRelation, Namespace, NewUser, Permissions, PermissionsList, PrincipalToken,
+    ClassGraphRow, Collection, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation,
+    HubuumObject, HubuumObjectRelation, NewUser, Permissions, PermissionsList, PrincipalToken,
     RelatedObjectGraphRow, RelatedObjectIncludeRow, ReportIncludeRelatedDirection,
     ReportIncludeRelatedQuery, ReportIncludeRelatedSort, Token, UpdateUser, User, UserID,
 };
-use crate::traits::{ClassAccessors, GroupAccessors, NamespaceAccessors, SelfAccessors};
+use crate::traits::{ClassAccessors, CollectionAccessors, GroupAccessors, SelfAccessors};
 use crate::utilities::auth::hash_password;
 
 use crate::db::{DbPool, with_connection, with_transaction};
@@ -45,34 +45,34 @@ mod tests {
     use crate::traits::AuthzSubject;
     use crate::traits::PermissionController;
 
-    // user_idx, namespaces_idx, permissions, expected
+    // user_idx, collections_idx, permissions, expected
     #[rstest]
-    #[case::u1_ns1_classread_true(0, vec![0], vec![P::ReadClass], true)]
-    #[case::u1_ns1_classcreate_true(0, vec![0], vec![P::CreateClass], true)]
-    #[case::u1_ns1_classreadcreate_true(0, vec![0], vec![P::ReadClass, P::CreateClass], true)]
-    #[case::u1_ns2_classdelete_true(0, vec![1], vec![P::DeleteClass], true)]
-    #[case::u1_ns2_classcreate_true(0, vec![1], vec![P::CreateClass], true)]
-    #[case::u1_ns2_classcreatedelete_true(0, vec![1], vec![P::CreateClass, P::DeleteClass], true)]
-    #[case::u1_ns12_classcreate_true(0, vec![0, 1], vec![P::CreateClass], true)]
-    #[case::u1_ns1_objectread_false(0, vec![0], vec![P::ReadObject], false)]
-    #[case::u1_ns1_namespacecreate_false(0, vec![0], vec![P::ReadCollection], false)]
-    #[case::u1_ns12_classreadcreate_false(0, vec![0, 1], vec![P::CreateClass, P::ReadClass], false)]
-    #[case::u1_ns12_classreadcreatedelete_false(
+    #[case::u1_collection1_classread_true(0, vec![0], vec![P::ReadClass], true)]
+    #[case::u1_collection1_classcreate_true(0, vec![0], vec![P::CreateClass], true)]
+    #[case::u1_collection1_classreadcreate_true(0, vec![0], vec![P::ReadClass, P::CreateClass], true)]
+    #[case::u1_collection2_classdelete_true(0, vec![1], vec![P::DeleteClass], true)]
+    #[case::u1_collection2_classcreate_true(0, vec![1], vec![P::CreateClass], true)]
+    #[case::u1_collection2_classcreatedelete_true(0, vec![1], vec![P::CreateClass, P::DeleteClass], true)]
+    #[case::u1_collection12_classcreate_true(0, vec![0, 1], vec![P::CreateClass], true)]
+    #[case::u1_collection1_objectread_false(0, vec![0], vec![P::ReadObject], false)]
+    #[case::u1_collection1_collectioncreate_false(0, vec![0], vec![P::ReadCollection], false)]
+    #[case::u1_collection12_classreadcreate_false(0, vec![0, 1], vec![P::CreateClass, P::ReadClass], false)]
+    #[case::u1_collection12_classreadcreatedelete_false(
         0,
         vec![0, 1],
         vec![P::CreateClass, P::ReadClass, P::DeleteClass],
         false
     )]
-    #[case::u2_ns1_objectread_true(1, vec![0], vec![P::ReadObject], true)]
-    #[case::u2_ns1_objectcreate_true(1, vec![0], vec![P::CreateObject], true)]
-    #[case::u2_ns1_objectreadcreate_true(1, vec![0], vec![P::ReadObject, P::CreateObject], true)]
-    #[case::u2_ns2_objectdelete_true(1, vec![1], vec![P::DeleteObject], true)]
-    #[case::u2_ns2_objectcreate_true(1, vec![1], vec![P::CreateObject], true)]
-    #[case::u2_ns2_objectcreatedelete_true(1, vec![1], vec![P::CreateObject, P::DeleteObject], true)]
+    #[case::u2_collection1_objectread_true(1, vec![0], vec![P::ReadObject], true)]
+    #[case::u2_collection1_objectcreate_true(1, vec![0], vec![P::CreateObject], true)]
+    #[case::u2_collection1_objectreadcreate_true(1, vec![0], vec![P::ReadObject, P::CreateObject], true)]
+    #[case::u2_collection2_objectdelete_true(1, vec![1], vec![P::DeleteObject], true)]
+    #[case::u2_collection2_objectcreate_true(1, vec![1], vec![P::CreateObject], true)]
+    #[case::u2_collection2_objectcreatedelete_true(1, vec![1], vec![P::CreateObject, P::DeleteObject], true)]
     #[actix_web::test]
     async fn test_user_can(
         #[case] user_idx: usize,
-        #[case] namespaces_idx: Vec<usize>,
+        #[case] collections_idx: Vec<usize>,
         #[case] permissions: Vec<Permissions>,
         #[case] expected: bool,
     ) {
@@ -81,7 +81,7 @@ mod tests {
         let suffix = format!(
             "_{}_{}_{}_{}",
             user_idx,
-            namespaces_idx
+            collections_idx
                 .iter()
                 .map(|&x| x.to_string())
                 .collect::<Vec<String>>()
@@ -94,12 +94,12 @@ mod tests {
             expected
         );
 
-        let namespaces = [
+        let collections = [
             scope
-                .namespace_fixture(&format!("test_user_can_ns1_{suffix}"))
+                .collection_fixture(&format!("test_user_can_collection1_{suffix}"))
                 .await,
             scope
-                .namespace_fixture(&format!("test_user_can_ns2_{suffix}"))
+                .collection_fixture(&format!("test_user_can_collection2_{suffix}"))
                 .await,
         ];
         let groups = [
@@ -120,8 +120,8 @@ mod tests {
             .await
             .unwrap();
 
-        namespaces[0]
-            .namespace
+        collections[0]
+            .collection
             .grant_without_events(
                 &pool,
                 groups[0].id,
@@ -129,8 +129,8 @@ mod tests {
             )
             .await
             .unwrap();
-        namespaces[1]
-            .namespace
+        collections[1]
+            .collection
             .grant_without_events(
                 &pool,
                 groups[0].id,
@@ -139,8 +139,8 @@ mod tests {
             .await
             .unwrap();
 
-        namespaces[0]
-            .namespace
+        collections[0]
+            .collection
             .grant_without_events(
                 &pool,
                 groups[1].id,
@@ -148,8 +148,8 @@ mod tests {
             )
             .await
             .unwrap();
-        namespaces[1]
-            .namespace
+        collections[1]
+            .collection
             .grant_without_events(
                 &pool,
                 groups[1].id,
@@ -159,12 +159,12 @@ mod tests {
             .unwrap();
 
         let user = &users[user_idx];
-        let namespaces = namespaces_idx
+        let collections = collections_idx
             .iter()
-            .map(|i| &namespaces[*i].namespace)
+            .map(|i| &collections[*i].collection)
             .collect::<Vec<_>>();
 
-        let result = user.can(&pool, permissions, namespaces, None).await;
+        let result = user.can(&pool, permissions, collections, None).await;
 
         match (result, expected) {
             (Ok(()), true) => {

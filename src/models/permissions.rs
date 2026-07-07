@@ -204,7 +204,7 @@ pub trait PermissionFilter<'a, Q> {
     /// ```text
     /// use crate::models::Permissions;
     /// use crate::models::PermissionFilter;
-    /// use crate::schema::permissions::dsl::{permissions, group_id, namespace_id};
+    /// use crate::schema::permissions::dsl::{permissions, group_id, collection_id};
     ///
     /// let permissions_list = vec![
     ///  Permissions::ReadCollection,
@@ -212,7 +212,7 @@ pub trait PermissionFilter<'a, Q> {
     /// ];
     /// let mut base_query = permissions
     ///   .into_boxed()
-    ///   .filter(namespace_id.eq_any(vec![1, 2, 3]))
+    ///   .filter(collection_id.eq_any(vec![1, 2, 3]))
     ///
     /// for perm in permissions_list {
     ///   base_query = perm.create_boxed_filter(base_query, true);
@@ -228,15 +228,17 @@ impl<'a> PermissionFilter<'a, permissions::BoxedQuery<'a, diesel::pg::Pg>> for P
         target: bool,
     ) -> permissions::BoxedQuery<diesel::pg::Pg> {
         match self {
-            Permissions::ReadCollection => query.filter(permissions::has_read_namespace.eq(target)),
+            Permissions::ReadCollection => {
+                query.filter(permissions::has_read_collection.eq(target))
+            }
             Permissions::UpdateCollection => {
-                query.filter(permissions::has_update_namespace.eq(target))
+                query.filter(permissions::has_update_collection.eq(target))
             }
             Permissions::DeleteCollection => {
-                query.filter(permissions::has_delete_namespace.eq(target))
+                query.filter(permissions::has_delete_collection.eq(target))
             }
             Permissions::DelegateCollection => {
-                query.filter(permissions::has_delegate_namespace.eq(target))
+                query.filter(permissions::has_delegate_collection.eq(target))
             }
             Permissions::CreateClass => query.filter(permissions::has_create_class.eq(target)),
             Permissions::ReadClass => query.filter(permissions::has_read_class.eq(target)),
@@ -307,12 +309,12 @@ impl<'a> PermissionFilter<'a, permissions::BoxedQuery<'a, diesel::pg::Pg>> for P
 #[diesel(table_name = permissions)]
 pub struct Permission {
     pub id: i32,
-    pub namespace_id: i32,
+    pub collection_id: i32,
     pub group_id: i32,
-    pub has_read_namespace: bool,
-    pub has_update_namespace: bool,
-    pub has_delete_namespace: bool,
-    pub has_delegate_namespace: bool,
+    pub has_read_collection: bool,
+    pub has_update_collection: bool,
+    pub has_delete_collection: bool,
+    pub has_delegate_collection: bool,
     pub has_create_class: bool,
     pub has_read_class: bool,
     pub has_update_class: bool,
@@ -349,10 +351,13 @@ impl Permission {
     /// mapped to their [`Permissions`] variant.
     pub fn granted(&self) -> Vec<Permissions> {
         [
-            (self.has_read_namespace, Permissions::ReadCollection),
-            (self.has_update_namespace, Permissions::UpdateCollection),
-            (self.has_delete_namespace, Permissions::DeleteCollection),
-            (self.has_delegate_namespace, Permissions::DelegateCollection),
+            (self.has_read_collection, Permissions::ReadCollection),
+            (self.has_update_collection, Permissions::UpdateCollection),
+            (self.has_delete_collection, Permissions::DeleteCollection),
+            (
+                self.has_delegate_collection,
+                Permissions::DelegateCollection,
+            ),
             (self.has_create_class, Permissions::CreateClass),
             (self.has_read_class, Permissions::ReadClass),
             (self.has_update_class, Permissions::UpdateClass),
@@ -427,12 +432,12 @@ impl Permission {
 #[derive(Debug, Serialize, Deserialize, Insertable)]
 #[diesel(table_name = permissions)]
 pub struct NewPermission {
-    pub namespace_id: i32,
+    pub collection_id: i32,
     pub group_id: i32,
-    pub has_read_namespace: bool,
-    pub has_update_namespace: bool,
-    pub has_delete_namespace: bool,
-    pub has_delegate_namespace: bool,
+    pub has_read_collection: bool,
+    pub has_update_collection: bool,
+    pub has_delete_collection: bool,
+    pub has_delegate_collection: bool,
     pub has_create_class: bool,
     pub has_read_class: bool,
     pub has_update_class: bool,
@@ -465,10 +470,10 @@ pub struct NewPermission {
 #[derive(Debug, Serialize, Deserialize, AsChangeset, Default)]
 #[diesel(table_name = permissions)]
 pub struct UpdatePermission {
-    pub has_read_namespace: Option<bool>,
-    pub has_update_namespace: Option<bool>,
-    pub has_delete_namespace: Option<bool>,
-    pub has_delegate_namespace: Option<bool>,
+    pub has_read_collection: Option<bool>,
+    pub has_update_collection: Option<bool>,
+    pub has_delete_collection: Option<bool>,
+    pub has_delegate_collection: Option<bool>,
     pub has_create_class: Option<bool>,
     pub has_read_class: Option<bool>,
     pub has_update_class: Option<bool>,

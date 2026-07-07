@@ -85,25 +85,25 @@ where
     }
 }
 
-pub trait LoadPermittedNamespaces: GroupAccessors + AuthzSubject {
-    /// Load all namespaces the subject has the given permissions on, intersected
+pub trait LoadPermittedCollections: GroupAccessors + AuthzSubject {
+    /// Load all collections the subject has the given permissions on, intersected
     /// with the token scope set.
     ///
-    /// * `scopes = None` — unscoped (admins get all namespaces via the fast path).
+    /// * `scopes = None` — unscoped (admins get all collections via the fast path).
     /// * `scopes = Some(..)` — the requested permissions must be within scope; a
-    ///   scoped admin falls through to the per-namespace permission query rather
-    ///   than the all-namespaces fast path.
-    async fn load_namespaces_with_permissions<'a, I>(
+    ///   scoped admin falls through to the per-collection permission query rather
+    ///   than the all-collections fast path.
+    async fn load_collections_with_permissions<'a, I>(
         &self,
         pool: &DbPool,
         permissions_list: &'a I,
         scopes: Option<&[Permissions]>,
-    ) -> Result<Vec<Namespace>, ApiError>
+    ) -> Result<Vec<Collection>, ApiError>
     where
         &'a I: IntoIterator<Item = &'a Permissions>,
     {
         let is_admin = AuthzSubject::is_admin(self, pool).await?;
-        self.load_namespaces_with_permissions_with_admin_status(
+        self.load_collections_with_permissions_with_admin_status(
             pool,
             permissions_list,
             is_admin,
@@ -112,39 +112,39 @@ pub trait LoadPermittedNamespaces: GroupAccessors + AuthzSubject {
         .await
     }
 
-    async fn load_namespaces_with_permissions_with_admin_status<'a, I>(
+    async fn load_collections_with_permissions_with_admin_status<'a, I>(
         &self,
         pool: &DbPool,
         permissions_list: &'a I,
         is_admin: bool,
         scopes: Option<&[Permissions]>,
-    ) -> Result<Vec<Namespace>, ApiError>
+    ) -> Result<Vec<Collection>, ApiError>
     where
         &'a I: IntoIterator<Item = &'a Permissions>;
 }
 
-impl<T: ?Sized> LoadPermittedNamespaces for T
+impl<T: ?Sized> LoadPermittedCollections for T
 where
     T: GroupAccessors + AuthzSubject,
 {
-    async fn load_namespaces_with_permissions_with_admin_status<'a, I>(
+    async fn load_collections_with_permissions_with_admin_status<'a, I>(
         &self,
         pool: &DbPool,
         permissions_list: &'a I,
         is_admin: bool,
         scopes: Option<&[Permissions]>,
-    ) -> Result<Vec<Namespace>, ApiError>
+    ) -> Result<Vec<Collection>, ApiError>
     where
         &'a I: IntoIterator<Item = &'a Permissions>,
     {
         use crate::models::PermissionFilter;
-        use crate::schema::namespaces::dsl::{id as namespaces_table_id, namespaces};
-        use crate::schema::permissions::dsl::{group_id, namespace_id, permissions};
+        use crate::schema::collections::dsl::{collections, id as collections_table_id};
+        use crate::schema::permissions::dsl::{collection_id, group_id, permissions};
 
         let requested: Vec<Permissions> = permissions_list.into_iter().copied().collect();
 
         // Fail-closed: a scoped token that requests anything outside its scope
-        // can see no namespaces through that request.
+        // can see no collections through that request.
         if !scope_allows(scopes, &requested) {
             return Ok(Vec::new());
         }
@@ -153,9 +153,9 @@ where
         // permission query so their token scope still bounds the listing.
         if is_admin && scopes.is_none() {
             return with_connection(pool, |conn| {
-                namespaces
-                    .select(namespaces::all_columns())
-                    .load::<Namespace>(conn)
+                collections
+                    .select(collections::all_columns())
+                    .load::<Collection>(conn)
             });
         }
 
@@ -171,9 +171,9 @@ where
 
         with_connection(pool, |conn| {
             base_query
-                .inner_join(namespaces.on(namespace_id.eq(namespaces_table_id)))
-                .select(namespaces::all_columns())
-                .load::<Namespace>(conn)
+                .inner_join(collections.on(collection_id.eq(collections_table_id)))
+                .select(collections::all_columns())
+                .load::<Collection>(conn)
         })
     }
 }

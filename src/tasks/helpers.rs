@@ -6,13 +6,13 @@ use crate::db::DbPool;
 use crate::db::traits::task::insert_import_results;
 use crate::errors::ApiError;
 use crate::models::{
-    HubuumClass, HubuumObject, ImportAtomicity, ImportCollisionPolicy, ImportMode,
-    ImportPermissionPolicy, Namespace,
+    Collection, HubuumClass, HubuumObject, ImportAtomicity, ImportCollisionPolicy, ImportMode,
+    ImportPermissionPolicy,
 };
 
 use super::types::{
-    ClassResolution, ExecutionAccumulator, FailureKind, IMPORT_RESULTS_BATCH_SIZE,
-    NamespaceResolution, ObjectResolution, PlannedTaskResult,
+    ClassResolution, CollectionResolution, ExecutionAccumulator, FailureKind,
+    IMPORT_RESULTS_BATCH_SIZE, ObjectResolution, PlannedTaskResult,
 };
 
 pub fn request_hash(payload: &serde_json::Value) -> Result<String, ApiError> {
@@ -132,15 +132,15 @@ pub(super) fn planned_result(
     }
 }
 
-pub(super) fn identifier_namespace(namespace: &NamespaceResolution) -> String {
-    namespace.name.clone()
+pub(super) fn identifier_collection(collection: &CollectionResolution) -> String {
+    collection.name.clone()
 }
 
-pub(super) fn namespace_to_resolution(namespace: Namespace) -> NamespaceResolution {
-    NamespaceResolution {
-        id: namespace.id,
-        name: namespace.name,
-        description: namespace.description,
+pub(super) fn collection_to_resolution(collection: Collection) -> CollectionResolution {
+    CollectionResolution {
+        id: collection.id,
+        name: collection.name,
+        description: collection.description,
         exists_in_db: true,
     }
 }
@@ -149,7 +149,7 @@ pub(super) fn class_to_resolution(class: HubuumClass) -> ClassResolution {
     ClassResolution {
         id: class.id,
         name: class.name,
-        namespace_id: class.namespace_id,
+        collection_id: class.collection_id,
         json_schema: class.json_schema,
         validate_schema: class.validate_schema,
         exists_in_db: true,
@@ -160,7 +160,7 @@ pub(super) fn object_to_resolution(object: HubuumObject) -> ObjectResolution {
     ObjectResolution {
         id: object.id,
         name: object.name,
-        namespace_id: object.namespace_id,
+        collection_id: object.collection_id,
         class_id: object.hubuum_class_id,
         exists_in_db: true,
     }

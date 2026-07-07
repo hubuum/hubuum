@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use utoipa::ToSchema;
 
 use crate::errors::ApiError;
-use crate::models::NamespaceID;
+use crate::models::CollectionID;
 use crate::models::search::{FilterField, SortParam};
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
@@ -151,7 +151,7 @@ pub(crate) struct UpdateEventSinkRow {
 #[diesel(table_name = event_subscriptions)]
 pub(crate) struct EventSubscriptionRow {
     pub id: i32,
-    pub namespace_id: i32,
+    pub collection_id: i32,
     pub sink_id: i32,
     pub name: String,
     pub description: String,
@@ -167,7 +167,7 @@ pub(crate) struct EventSubscriptionRow {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct EventSubscription {
     pub id: i32,
-    pub namespace_id: i32,
+    pub collection_id: i32,
     pub sink_id: i32,
     pub name: String,
     pub description: String,
@@ -212,7 +212,7 @@ pub struct UpdateEventSubscription {
 #[derive(Debug, Clone, Insertable)]
 #[diesel(table_name = event_subscriptions)]
 pub(crate) struct NewEventSubscriptionRow {
-    pub namespace_id: i32,
+    pub collection_id: i32,
     pub sink_id: i32,
     pub name: String,
     pub description: String,
@@ -259,7 +259,7 @@ impl TryFrom<EventSubscriptionRow> for EventSubscription {
     fn try_from(row: EventSubscriptionRow) -> Result<Self, Self::Error> {
         Ok(Self {
             id: row.id,
-            namespace_id: row.namespace_id,
+            collection_id: row.collection_id,
             sink_id: row.sink_id,
             name: row.name,
             description: row.description,
@@ -320,7 +320,7 @@ impl UpdateEventSink {
 impl NewEventSubscription {
     pub(crate) fn into_row(
         self,
-        namespace_id: NamespaceID,
+        collection_id: CollectionID,
     ) -> Result<NewEventSubscriptionRow, ApiError> {
         validate_subscription_parts(
             &self.entity_types,
@@ -329,7 +329,7 @@ impl NewEventSubscription {
             &self.routing,
         )?;
         Ok(NewEventSubscriptionRow {
-            namespace_id: namespace_id.id(),
+            collection_id: collection_id.id(),
             sink_id: self.sink_id.id(),
             name: self.name,
             description: self.description,

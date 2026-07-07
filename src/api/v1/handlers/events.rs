@@ -8,7 +8,7 @@ use crate::errors::ApiError;
 use crate::events::{EntityType, EventResponse};
 use crate::extractors::Authenticated;
 use crate::models::Permissions;
-use crate::models::namespace::user_can_on_any;
+use crate::models::collection::user_can_on_any;
 use crate::models::search::parse_query_parameter_with_passthrough;
 use crate::pagination::prepare_db_pagination;
 use crate::traits::AuthzSubject;
@@ -24,7 +24,7 @@ use crate::traits::AuthzSubject;
         ("action" = Option<String>, Query, description = "Optional action filter"),
         ("actor_kind" = Option<String>, Query, description = "Optional actor kind filter"),
         ("actor_user_id" = Option<i32>, Query, description = "Optional actor principal id filter"),
-        ("namespace_id" = Option<i32>, Query, description = "Optional namespace id filter"),
+        ("collection_id" = Option<i32>, Query, description = "Optional collection id filter"),
         ("occurred_after" = Option<String>, Query, description = "Optional lower occurred_at bound, RFC3339 or YYYY-MM-DD"),
         ("occurred_before" = Option<String>, Query, description = "Optional upper occurred_at bound, RFC3339 or YYYY-MM-DD"),
         ("limit" = Option<usize>, Query, description = "Cursor page size"),
@@ -58,7 +58,7 @@ async fn list_visible_events(
         "action",
         "actor_kind",
         "actor_user_id",
-        "namespace_id",
+        "collection_id",
         "occurred_after",
         "occurred_before",
     ];
@@ -81,24 +81,24 @@ async fn list_visible_events(
         filters.entity_id = Some(entity_id);
     }
     let search_params = prepare_db_pagination::<EventResponse>(&params)?;
-    let visible_namespaces = user_can_on_any(
+    let visible_collections = user_can_on_any(
         &pool,
         &requestor.principal,
         Permissions::ReadAudit,
         requestor.scopes(),
     )
     .await?;
-    let accessible_namespace_ids = visible_namespaces
+    let accessible_collection_ids = visible_collections
         .iter()
-        .map(|namespace| namespace.id)
+        .map(|collection| collection.id)
         .collect::<Vec<_>>();
-    let include_namespace_less =
+    let include_collection_less =
         requestor.scopes().is_none() && requestor.principal.is_admin(&pool).await?;
 
     let (events, total_count) = list_events_with_total_count(
         &pool,
-        &accessible_namespace_ids,
-        include_namespace_less,
+        &accessible_collection_ids,
+        include_collection_less,
         &filters,
         &search_params,
     )
@@ -108,11 +108,11 @@ async fn list_visible_events(
 
 #[utoipa::path(
     get,
-    path = "/api/v1/namespaces/{namespace_id}/events",
+    path = "/api/v1/collections/{collection_id}/events",
     tag = "events",
     security(("bearer_auth" = [])),
     params(
-        ("namespace_id" = i32, Path, description = "Namespace id"),
+        ("collection_id" = i32, Path, description = "Collection id"),
         ("action" = Option<String>, Query, description = "Optional action filter"),
         ("actor_kind" = Option<String>, Query, description = "Optional actor kind filter"),
         ("actor_user_id" = Option<i32>, Query, description = "Optional actor principal id filter"),
@@ -123,23 +123,23 @@ async fn list_visible_events(
         ("cursor" = Option<String>, Query, description = "Cursor token from X-Next-Cursor")
     ),
     responses(
-        (status = 200, description = "Visible namespace audit events", body = [EventResponse]),
+        (status = 200, description = "Visible collection audit events", body = [EventResponse]),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse)
     )
 )]
-#[get("/{namespace_id}/events")]
-pub async fn get_namespace_events(
+#[get("/{collection_id}/events")]
+pub async fn get_collection_events(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     req: HttpRequest,
-    namespace_id: web::Path<i32>,
+    collection_id: web::Path<i32>,
 ) -> Result<impl Responder, ApiError> {
     list_visible_events(
         pool,
         requestor,
         req,
-        Some((EntityType::Namespace, namespace_id.into_inner())),
+        Some((EntityType::Collection, collection_id.into_inner())),
     )
     .await
 }
@@ -154,7 +154,7 @@ pub async fn get_namespace_events(
         ("action" = Option<String>, Query, description = "Optional action filter"),
         ("actor_kind" = Option<String>, Query, description = "Optional actor kind filter"),
         ("actor_user_id" = Option<i32>, Query, description = "Optional actor principal id filter"),
-        ("namespace_id" = Option<i32>, Query, description = "Optional namespace id filter"),
+        ("collection_id" = Option<i32>, Query, description = "Optional collection id filter"),
         ("occurred_after" = Option<String>, Query, description = "Optional lower occurred_at bound, RFC3339 or YYYY-MM-DD"),
         ("occurred_before" = Option<String>, Query, description = "Optional upper occurred_at bound, RFC3339 or YYYY-MM-DD"),
         ("limit" = Option<usize>, Query, description = "Cursor page size"),
@@ -194,7 +194,7 @@ pub async fn get_class_events(
         ("action" = Option<String>, Query, description = "Optional action filter"),
         ("actor_kind" = Option<String>, Query, description = "Optional actor kind filter"),
         ("actor_user_id" = Option<i32>, Query, description = "Optional actor principal id filter"),
-        ("namespace_id" = Option<i32>, Query, description = "Optional namespace id filter"),
+        ("collection_id" = Option<i32>, Query, description = "Optional collection id filter"),
         ("occurred_after" = Option<String>, Query, description = "Optional lower occurred_at bound, RFC3339 or YYYY-MM-DD"),
         ("occurred_before" = Option<String>, Query, description = "Optional upper occurred_at bound, RFC3339 or YYYY-MM-DD"),
         ("limit" = Option<usize>, Query, description = "Cursor page size"),
@@ -228,7 +228,7 @@ pub async fn get_object_events(
         ("action" = Option<String>, Query, description = "Optional action filter"),
         ("actor_kind" = Option<String>, Query, description = "Optional actor kind filter"),
         ("actor_user_id" = Option<i32>, Query, description = "Optional actor principal id filter"),
-        ("namespace_id" = Option<i32>, Query, description = "Optional namespace id filter"),
+        ("collection_id" = Option<i32>, Query, description = "Optional collection id filter"),
         ("occurred_after" = Option<String>, Query, description = "Optional lower occurred_at bound, RFC3339 or YYYY-MM-DD"),
         ("occurred_before" = Option<String>, Query, description = "Optional upper occurred_at bound, RFC3339 or YYYY-MM-DD"),
         ("limit" = Option<usize>, Query, description = "Cursor page size"),
@@ -267,7 +267,7 @@ pub async fn get_user_events(
         ("action" = Option<String>, Query, description = "Optional action filter"),
         ("actor_kind" = Option<String>, Query, description = "Optional actor kind filter"),
         ("actor_user_id" = Option<i32>, Query, description = "Optional actor principal id filter"),
-        ("namespace_id" = Option<i32>, Query, description = "Optional namespace id filter"),
+        ("collection_id" = Option<i32>, Query, description = "Optional collection id filter"),
         ("occurred_after" = Option<String>, Query, description = "Optional lower occurred_at bound, RFC3339 or YYYY-MM-DD"),
         ("occurred_before" = Option<String>, Query, description = "Optional upper occurred_at bound, RFC3339 or YYYY-MM-DD"),
         ("limit" = Option<usize>, Query, description = "Cursor page size"),
@@ -306,7 +306,7 @@ pub async fn get_group_events(
         ("action" = Option<String>, Query, description = "Optional action filter"),
         ("actor_kind" = Option<String>, Query, description = "Optional actor kind filter"),
         ("actor_user_id" = Option<i32>, Query, description = "Optional actor principal id filter"),
-        ("namespace_id" = Option<i32>, Query, description = "Optional namespace id filter"),
+        ("collection_id" = Option<i32>, Query, description = "Optional collection id filter"),
         ("occurred_after" = Option<String>, Query, description = "Optional lower occurred_at bound, RFC3339 or YYYY-MM-DD"),
         ("occurred_before" = Option<String>, Query, description = "Optional upper occurred_at bound, RFC3339 or YYYY-MM-DD"),
         ("limit" = Option<usize>, Query, description = "Cursor page size"),
@@ -345,7 +345,7 @@ pub async fn get_report_template_events(
         ("action" = Option<String>, Query, description = "Optional action filter"),
         ("actor_kind" = Option<String>, Query, description = "Optional actor kind filter"),
         ("actor_user_id" = Option<i32>, Query, description = "Optional actor principal id filter"),
-        ("namespace_id" = Option<i32>, Query, description = "Optional namespace id filter"),
+        ("collection_id" = Option<i32>, Query, description = "Optional collection id filter"),
         ("occurred_after" = Option<String>, Query, description = "Optional lower occurred_at bound, RFC3339 or YYYY-MM-DD"),
         ("occurred_before" = Option<String>, Query, description = "Optional upper occurred_at bound, RFC3339 or YYYY-MM-DD"),
         ("limit" = Option<usize>, Query, description = "Cursor page size"),

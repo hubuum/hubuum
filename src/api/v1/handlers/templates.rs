@@ -9,14 +9,14 @@ use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
-use crate::models::namespace::user_can_on_any;
+use crate::models::collection::user_can_on_any;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    NamespaceID, NewReportTemplate, Permissions, ReportTemplate, ReportTemplateID,
+    CollectionID, NewReportTemplate, Permissions, ReportTemplate, ReportTemplateID,
     ReportTemplateRunRequest, TaskResponse, UpdateReportTemplate,
 };
 use crate::pagination::prepare_db_pagination;
-use crate::traits::{CanDelete, CanSave, CanUpdate, NamespaceAccessors, SelfAccessors};
+use crate::traits::{CanDelete, CanSave, CanUpdate, CollectionAccessors, SelfAccessors};
 
 crate::history_db_fns!(
     report_template_history_paginated_with_total_count,
@@ -54,7 +54,7 @@ pub async fn create_template(
     debug!(
         message = "Report template create requested",
         user_id = user.id,
-        namespace_id = template.namespace_id,
+        collection_id = template.collection_id,
         template_name = template.name
     );
 
@@ -63,7 +63,7 @@ pub async fn create_template(
         user,
         requestor.scopes(),
         [Permissions::CreateTemplate],
-        NamespaceID::new(template.namespace_id)?
+        CollectionID::new(template.collection_id)?
     );
 
     let event_context = requestor.event_context(&req);
@@ -101,15 +101,15 @@ pub async fn get_templates(
     );
 
     let search_params = prepare_db_pagination::<ReportTemplate>(&params)?;
-    let allowed_namespace_ids =
+    let allowed_collection_ids =
         user_can_on_any(&pool, user, Permissions::ReadTemplate, requestor.scopes())
             .await?
             .into_iter()
-            .map(|namespace| namespace.id)
+            .map(|collection| collection.id)
             .collect::<Vec<_>>();
 
     let (templates, total_count) =
-        ReportTemplate::list_with_total_count(&pool, &allowed_namespace_ids, &search_params)
+        ReportTemplate::list_with_total_count(&pool, &allowed_collection_ids, &search_params)
             .await?;
 
     ApiResponse::paginated(templates, total_count, &params)
@@ -152,7 +152,7 @@ pub async fn get_template(
         user,
         requestor.scopes(),
         [Permissions::ReadTemplate],
-        NamespaceID::new(template.namespace_id)?
+        CollectionID::new(template.collection_id)?
     );
 
     Ok(ApiResponse::new(template, StatusCode::OK))
@@ -202,7 +202,7 @@ pub async fn run_template_report(
         user.clone(),
         requestor.scopes(),
         [Permissions::ReadTemplate],
-        NamespaceID::new(template.namespace_id)?
+        CollectionID::new(template.collection_id)?
     );
 
     let report = template.build_report_request(run)?;
@@ -267,18 +267,18 @@ pub async fn patch_template(
         user.clone(),
         requestor.scopes(),
         [Permissions::UpdateTemplate],
-        NamespaceID::new(existing.namespace_id)?
+        CollectionID::new(existing.collection_id)?
     );
 
-    if let Some(target_namespace) = update.namespace_id
-        && target_namespace != existing.namespace_id
+    if let Some(target_collection) = update.collection_id
+        && target_collection != existing.collection_id
     {
         can!(
             &pool,
             user,
             requestor.scopes(),
             [Permissions::CreateTemplate],
-            NamespaceID::new(target_namespace)?
+            CollectionID::new(target_collection)?
         );
     }
 
@@ -326,7 +326,7 @@ pub async fn delete_template(
         user,
         requestor.scopes(),
         [Permissions::DeleteTemplate],
-        NamespaceID::new(template.namespace_id)?
+        CollectionID::new(template.collection_id)?
     );
 
     let event_context = requestor.event_context(&req);
@@ -370,7 +370,7 @@ pub async fn get_template_history(
                 user,
                 requestor.scopes(),
                 [Permissions::ReadTemplate],
-                NamespaceID::new(instance.namespace_id)?
+                CollectionID::new(instance.collection_id)?
             );
             (instance.id, false)
         }
@@ -444,7 +444,7 @@ pub async fn get_template_as_of(
                 user,
                 requestor.scopes(),
                 [Permissions::ReadTemplate],
-                NamespaceID::new(instance.namespace_id)?
+                CollectionID::new(instance.collection_id)?
             );
             instance.id
         }

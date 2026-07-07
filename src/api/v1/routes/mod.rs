@@ -2,9 +2,9 @@ use crate::api::v1::handlers::{event_deliveries, event_sinks, event_subscription
 use actix_web::web;
 
 pub mod classes;
+pub mod collections;
 pub mod groups;
 pub mod imports;
-pub mod namespaces;
 pub mod relations;
 pub mod remote_targets;
 pub mod reports;
@@ -26,8 +26,8 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(web::scope("/iam/me").configure(me::config))
         .service(web::scope("/imports").configure(imports::config))
         .service(
-            web::scope("/namespaces")
-                .configure(namespaces::config)
+            web::scope("/collections")
+                .configure(collections::config)
                 .configure(event_subscriptions::config),
         )
         .service(web::scope("/classes").configure(classes::config))

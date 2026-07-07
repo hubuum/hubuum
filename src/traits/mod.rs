@@ -6,7 +6,7 @@ pub mod crud;
 pub mod pagination;
 pub mod permissions;
 
-pub use accessors::{ClassAccessors, NamespaceAccessors, ObjectAccessors, SelfAccessors};
+pub use accessors::{ClassAccessors, CollectionAccessors, ObjectAccessors, SelfAccessors};
 pub use context::BackendContext;
 pub use crud::{CanDelete, CanSave, CanUpdate, Validate, ValidateAgainstSchema};
 pub use pagination::*;

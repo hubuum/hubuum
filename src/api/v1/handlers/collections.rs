@@ -4,8 +4,8 @@ use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess, Authenticated};
 use crate::models::{
-    Group, GroupID, GroupPermission, Namespace, NamespaceID, NewNamespaceWithAssignee, Permission,
-    Permissions, PermissionsList, UpdateNamespace,
+    Collection, CollectionID, Group, GroupID, GroupPermission, NewCollectionWithAssignee,
+    Permission, Permissions, PermissionsList, UpdateCollection,
 };
 
 use crate::models::search::parse_query_parameter;
@@ -21,23 +21,23 @@ use crate::can;
 
 use crate::db::traits::UserPermissions;
 use crate::traits::{
-    CanDelete, CanSave, CanUpdate, NamespaceAccessors, PermissionController, Search, SelfAccessors,
+    CanDelete, CanSave, CanUpdate, CollectionAccessors, PermissionController, Search, SelfAccessors,
 };
 
 crate::history_db_fns!(
-    namespace_history_paginated_with_total_count,
-    namespace_as_of,
-    crate::schema::namespaces_history,
-    crate::models::NamespaceHistory
+    collection_history_paginated_with_total_count,
+    collection_as_of,
+    crate::schema::collections_history,
+    crate::models::CollectionHistory
 );
 
 #[utoipa::path(
     get,
-    path = "/api/v1/namespaces",
-    tag = "namespaces",
+    path = "/api/v1/collections",
+    tag = "collections",
     security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "Namespaces matching optional query filters", body = [Namespace]),
+        (status = 200, description = "Collections matching optional query filters", body = [Collection]),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse)
     )
@@ -45,13 +45,13 @@ crate::history_db_fns!(
 #[routes]
 #[get("")]
 #[get("/")]
-pub async fn get_namespaces(
+pub async fn get_collections(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
-    debug!(message = "Namespace list requested", requestor = user.name);
+    debug!(message = "Collection list requested", requestor = user.name);
 
     let query_string = req.query_string();
 
@@ -61,23 +61,23 @@ pub async fn get_namespaces(
     };
 
     let total_count = user
-        .count_namespaces(&pool, count_query_options(&params), requestor.scopes())
+        .count_collections(&pool, count_query_options(&params), requestor.scopes())
         .await?;
-    let search_params = prepare_db_pagination::<Namespace>(&params)?;
+    let search_params = prepare_db_pagination::<Collection>(&params)?;
     let result = user
-        .search_namespaces(&pool, search_params, requestor.scopes())
+        .search_collections(&pool, search_params, requestor.scopes())
         .await?;
     ApiResponse::paginated(result, total_count, &params)
 }
 
 #[utoipa::path(
     post,
-    path = "/api/v1/namespaces",
-    tag = "namespaces",
+    path = "/api/v1/collections",
+    tag = "collections",
     security(("bearer_auth" = [])),
-    request_body = NewNamespaceWithAssignee,
+    request_body = NewCollectionWithAssignee,
     responses(
-        (status = 201, description = "Namespace created", body = Namespace),
+        (status = 201, description = "Collection created", body = Collection),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 409, description = "Conflict", body = ApiErrorResponse)
@@ -86,198 +86,198 @@ pub async fn get_namespaces(
 #[routes]
 #[post("")]
 #[post("/")]
-pub async fn create_namespace(
+pub async fn create_collection(
     pool: web::Data<DbPool>,
-    new_namespace_request: web::Json<NewNamespaceWithAssignee>,
+    new_collection_request: web::Json<NewCollectionWithAssignee>,
     requestor: AdminAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let new_namespace_request = new_namespace_request.into_inner();
+    let new_collection_request = new_collection_request.into_inner();
     debug!(
-        message = "Namespace create requested",
+        message = "Collection create requested",
         requestor = requestor.user.id,
-        new_namespace = new_namespace_request.name
+        new_collection = new_collection_request.name
     );
 
     let event_context = requestor.event_context(&req);
-    let created_namespace = new_namespace_request.save(&pool, &event_context).await?;
+    let created_collection = new_collection_request.save(&pool, &event_context).await?;
 
-    let location = api_locations::namespace(created_namespace.id)?;
-    Ok(ApiResponse::created(created_namespace, location))
+    let location = api_locations::collection(created_collection.id)?;
+    Ok(ApiResponse::created(created_collection, location))
 }
 
 #[utoipa::path(
     get,
-    path = "/api/v1/namespaces/{namespace_id}",
-    tag = "namespaces",
+    path = "/api/v1/collections/{collection_id}",
+    tag = "collections",
     security(("bearer_auth" = [])),
     params(
-        ("namespace_id" = i32, Path, description = "Namespace ID")
+        ("collection_id" = i32, Path, description = "Collection ID")
     ),
     responses(
-        (status = 200, description = "Namespace", body = Namespace),
+        (status = 200, description = "Collection", body = Collection),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 404, description = "Namespace not found", body = ApiErrorResponse)
+        (status = 404, description = "Collection not found", body = ApiErrorResponse)
     )
 )]
-#[get("/{namespace_id}")]
-pub async fn get_namespace(
+#[get("/{collection_id}")]
+pub async fn get_collection(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    namespace_id: web::Path<NamespaceID>,
+    collection_id: web::Path<CollectionID>,
 ) -> Result<impl Responder, ApiError> {
     debug!(
-        message = "Namespace get requested",
+        message = "Collection get requested",
         requestor = requestor.principal.name,
-        namespace_id = namespace_id.id()
+        collection_id = collection_id.id()
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let collection = collection_id.instance(&pool).await?;
 
     can!(
         &pool,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ReadCollection],
-        namespace
+        collection
     );
 
-    Ok(ApiResponse::new(namespace, StatusCode::OK))
+    Ok(ApiResponse::new(collection, StatusCode::OK))
 }
 
 #[utoipa::path(
     patch,
-    path = "/api/v1/namespaces/{namespace_id}",
-    tag = "namespaces",
+    path = "/api/v1/collections/{collection_id}",
+    tag = "collections",
     security(("bearer_auth" = [])),
     params(
-        ("namespace_id" = i32, Path, description = "Namespace ID")
+        ("collection_id" = i32, Path, description = "Collection ID")
     ),
-    request_body = UpdateNamespace,
+    request_body = UpdateCollection,
     responses(
-        (status = 202, description = "Namespace updated", body = Namespace),
+        (status = 202, description = "Collection updated", body = Collection),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 404, description = "Namespace not found", body = ApiErrorResponse)
+        (status = 404, description = "Collection not found", body = ApiErrorResponse)
     )
 )]
-#[patch("/{namespace_id}")]
-pub async fn update_namespace(
+#[patch("/{collection_id}")]
+pub async fn update_collection(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    namespace_id: web::Path<NamespaceID>,
-    update_data: web::Json<UpdateNamespace>,
+    collection_id: web::Path<CollectionID>,
+    update_data: web::Json<UpdateCollection>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     debug!(
-        message = "Namespace update requested",
+        message = "Collection update requested",
         requestor = requestor.principal.name,
-        namespace_id = namespace_id.id()
+        collection_id = collection_id.id()
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let collection = collection_id.instance(&pool).await?;
 
     can!(
         &pool,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::UpdateCollection],
-        namespace
+        collection
     );
 
     let event_context = requestor.event_context(&req);
-    let updated_namespace = update_data
+    let updated_collection = update_data
         .into_inner()
-        .update(&pool, namespace.id, &event_context)
+        .update(&pool, collection.id, &event_context)
         .await?;
-    Ok(ApiResponse::accepted(updated_namespace))
+    Ok(ApiResponse::accepted(updated_collection))
 }
 
 #[utoipa::path(
     delete,
-    path = "/api/v1/namespaces/{namespace_id}",
-    tag = "namespaces",
+    path = "/api/v1/collections/{collection_id}",
+    tag = "collections",
     security(("bearer_auth" = [])),
     params(
-        ("namespace_id" = i32, Path, description = "Namespace ID")
+        ("collection_id" = i32, Path, description = "Collection ID")
     ),
     responses(
-        (status = 204, description = "Namespace deleted"),
+        (status = 204, description = "Collection deleted"),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 404, description = "Namespace not found", body = ApiErrorResponse)
+        (status = 404, description = "Collection not found", body = ApiErrorResponse)
     )
 )]
-#[delete("/{namespace_id}")]
-pub async fn delete_namespace(
+#[delete("/{collection_id}")]
+pub async fn delete_collection(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    namespace_id: web::Path<NamespaceID>,
+    collection_id: web::Path<CollectionID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     debug!(
-        message = "Namespace delete requested",
+        message = "Collection delete requested",
         requestor = requestor.principal.name,
-        namespace_id = namespace_id.id()
+        collection_id = collection_id.id()
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let collection = collection_id.instance(&pool).await?;
     can!(
         &pool,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::DeleteCollection],
-        namespace
+        collection
     );
 
     let event_context = requestor.event_context(&req);
-    namespace.delete(&pool, &event_context).await?;
+    collection.delete(&pool, &event_context).await?;
     Ok(ApiResponse::no_content())
 }
 
-/// List all groups who have permissions for a namespace
+/// List all groups who have permissions for a collection
 #[utoipa::path(
     get,
-    path = "/api/v1/namespaces/{namespace_id}/permissions",
-    tag = "namespaces",
+    path = "/api/v1/collections/{collection_id}/permissions",
+    tag = "collections",
     security(("bearer_auth" = [])),
     params(
-        ("namespace_id" = i32, Path, description = "Namespace ID")
+        ("collection_id" = i32, Path, description = "Collection ID")
     ),
     responses(
-        (status = 200, description = "Group permissions on namespace", body = [GroupPermission]),
+        (status = 200, description = "Group permissions on collection", body = [GroupPermission]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 404, description = "Namespace not found", body = ApiErrorResponse)
+        (status = 404, description = "Collection not found", body = ApiErrorResponse)
     )
 )]
-#[get("/{namespace_id}/permissions")]
-pub async fn get_namespace_permissions(
+#[get("/{collection_id}/permissions")]
+pub async fn get_collection_permissions(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    namespace_id: web::Path<NamespaceID>,
+    collection_id: web::Path<CollectionID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     info!(
-        message = "Namespace permissions list requested",
+        message = "Collection permissions list requested",
         requestor = requestor.principal.name,
-        namespace_id = namespace_id.id()
+        collection_id = collection_id.id()
     );
 
     let params = parse_query_parameter(req.query_string())?;
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let collection = collection_id.instance(&pool).await?;
     can!(
         &pool,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ReadCollection],
-        namespace
+        collection
     );
 
     let search_params = prepare_db_pagination::<GroupPermission>(&params)?;
     let (permissions, total_count) =
-        crate::models::namespace::groups_on_paginated_with_total_count(
+        crate::models::collection::groups_on_paginated_with_total_count(
             &pool,
-            namespace.clone(),
+            collection.clone(),
             vec![],
             &search_params,
         )
@@ -285,55 +285,55 @@ pub async fn get_namespace_permissions(
     ApiResponse::paginated(permissions, total_count, &params)
 }
 
-/// List all permissions for a given group on a namespace
+/// List all permissions for a given group on a collection
 #[utoipa::path(
     get,
-    path = "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}",
-    tag = "namespaces",
+    path = "/api/v1/collections/{collection_id}/permissions/group/{group_id}",
+    tag = "collections",
     security(("bearer_auth" = [])),
     params(
-        ("namespace_id" = i32, Path, description = "Namespace ID"),
+        ("collection_id" = i32, Path, description = "Collection ID"),
         ("group_id" = i32, Path, description = "Group ID")
     ),
     responses(
         (status = 200, description = "Permission record", body = Permission),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 404, description = "Namespace or group not found", body = ApiErrorResponse)
+        (status = 404, description = "Collection or group not found", body = ApiErrorResponse)
     )
 )]
-#[get("/{namespace_id}/permissions/group/{group_id}")]
-pub async fn get_namespace_group_permissions(
+#[get("/{collection_id}/permissions/group/{group_id}")]
+pub async fn get_collection_group_permissions(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    params: web::Path<(NamespaceID, GroupID)>,
+    params: web::Path<(CollectionID, GroupID)>,
 ) -> Result<impl Responder, ApiError> {
-    use crate::models::namespace::group_on;
+    use crate::models::collection::group_on;
     use crate::models::permissions::Permissions;
 
-    let (namespace_id, group_id) = params.into_inner();
+    let (collection_id, group_id) = params.into_inner();
 
     info!(
-        message = "Namespace group permissions list requested",
+        message = "Collection group permissions list requested",
         requestor = requestor.principal.name,
-        namespace_id = namespace_id.id(),
+        collection_id = collection_id.id(),
         group_id = group_id.id()
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let collection = collection_id.instance(&pool).await?;
     can!(
         &pool,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ReadCollection],
-        namespace
+        collection
     );
 
-    let permissions = group_on(&pool, namespace.id, group_id.id()).await?;
+    let permissions = group_on(&pool, collection.id, group_id.id()).await?;
 
     Ok(ApiResponse::new(permissions, StatusCode::OK))
 }
 
-/// Post a permission set to a group on a namespace
+/// Post a permission set to a group on a collection
 /// This will create a new entry if the group had no permissions,
 /// or add to the existing entry if it did.
 /// The body should be a JSON array of permissions:
@@ -345,11 +345,11 @@ pub async fn get_namespace_group_permissions(
 /// ```
 #[utoipa::path(
     post,
-    path = "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}",
-    tag = "namespaces",
+    path = "/api/v1/collections/{collection_id}/permissions/group/{group_id}",
+    tag = "collections",
     security(("bearer_auth" = [])),
     params(
-        ("namespace_id" = i32, Path, description = "Namespace ID"),
+        ("collection_id" = i32, Path, description = "Collection ID"),
         ("group_id" = i32, Path, description = "Group ID")
     ),
     request_body = Vec<Permissions>,
@@ -357,54 +357,54 @@ pub async fn get_namespace_group_permissions(
         (status = 201, description = "Permissions set"),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 404, description = "Namespace or group not found", body = ApiErrorResponse)
+        (status = 404, description = "Collection or group not found", body = ApiErrorResponse)
     )
 )]
-#[post("/{namespace_id}/permissions/group/{group_id}")]
-pub async fn grant_namespace_group_permissions(
+#[post("/{collection_id}/permissions/group/{group_id}")]
+pub async fn grant_collection_group_permissions(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    params: web::Path<(NamespaceID, GroupID)>,
+    params: web::Path<(CollectionID, GroupID)>,
     permissions: web::Json<Vec<Permissions>>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let (namespace_id, group_id) = params.into_inner();
+    let (collection_id, group_id) = params.into_inner();
     let permissions = PermissionsList::new(permissions.into_inner());
 
     info!(
-        message = "Namespace group permissions grant requested",
+        message = "Collection group permissions grant requested",
         requestor = requestor.principal.id,
-        namespace_id = namespace_id.id(),
+        collection_id = collection_id.id(),
         group_id = group_id.id(),
         permissions = ?permissions
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let collection = collection_id.instance(&pool).await?;
     can!(
         &pool,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::DelegateCollection],
-        namespace
+        collection
     );
 
     let event_context = requestor.event_context(&req);
-    namespace
+    collection
         .grant(&pool, group_id.id(), permissions, Some(&event_context))
         .await?;
 
     Ok(ApiResponse::created_empty())
 }
 
-/// Replace all permissions for a group on a namespace
+/// Replace all permissions for a group on a collection
 /// This removes any existing permissions and applies the new set.
 #[utoipa::path(
     put,
-    path = "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}",
-    tag = "namespaces",
+    path = "/api/v1/collections/{collection_id}/permissions/group/{group_id}",
+    tag = "collections",
     security(("bearer_auth" = [])),
     params(
-        ("namespace_id" = i32, Path, description = "Namespace ID"),
+        ("collection_id" = i32, Path, description = "Collection ID"),
         ("group_id" = i32, Path, description = "Group ID")
     ),
     request_body = Vec<Permissions>,
@@ -412,35 +412,35 @@ pub async fn grant_namespace_group_permissions(
         (status = 200, description = "Permissions replaced"),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 404, description = "Namespace or group not found", body = ApiErrorResponse)
+        (status = 404, description = "Collection or group not found", body = ApiErrorResponse)
     )
 )]
-#[put("/{namespace_id}/permissions/group/{group_id}")]
-pub async fn replace_namespace_group_permissions(
+#[put("/{collection_id}/permissions/group/{group_id}")]
+pub async fn replace_collection_group_permissions(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    params: web::Path<(NamespaceID, GroupID)>,
+    params: web::Path<(CollectionID, GroupID)>,
     permissions: web::Json<Vec<Permissions>>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let (namespace_id, group_id) = params.into_inner();
+    let (collection_id, group_id) = params.into_inner();
     let permissions = PermissionsList::new(permissions.into_inner());
 
     info!(
-        message = "Namespace group permissions replace requested",
+        message = "Collection group permissions replace requested",
         requestor = requestor.principal.id,
-        namespace_id = namespace_id.id(),
+        collection_id = collection_id.id(),
         group_id = group_id.id(),
         permissions = ?permissions
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let collection = collection_id.instance(&pool).await?;
     can!(
         &pool,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::DelegateCollection],
-        namespace
+        collection
     );
 
     if permissions.iter().next().is_none() {
@@ -451,70 +451,70 @@ pub async fn replace_namespace_group_permissions(
     }
 
     let event_context = requestor.event_context(&req);
-    namespace
+    collection
         .set_permissions(&pool, group_id.id(), permissions, Some(&event_context))
         .await?;
 
     Ok(ApiResponse::ok_empty())
 }
 
-/// Revoke a permission set from a group on a namespace
+/// Revoke a permission set from a group on a collection
 #[utoipa::path(
     delete,
-    path = "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}",
-    tag = "namespaces",
+    path = "/api/v1/collections/{collection_id}/permissions/group/{group_id}",
+    tag = "collections",
     security(("bearer_auth" = [])),
     params(
-        ("namespace_id" = i32, Path, description = "Namespace ID"),
+        ("collection_id" = i32, Path, description = "Collection ID"),
         ("group_id" = i32, Path, description = "Group ID")
     ),
     responses(
         (status = 204, description = "Permissions revoked"),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 404, description = "Namespace or group not found", body = ApiErrorResponse)
+        (status = 404, description = "Collection or group not found", body = ApiErrorResponse)
     )
 )]
-#[delete("/{namespace_id}/permissions/group/{group_id}")]
-pub async fn revoke_namespace_group_permissions(
+#[delete("/{collection_id}/permissions/group/{group_id}")]
+pub async fn revoke_collection_group_permissions(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    params: web::Path<(NamespaceID, GroupID)>,
+    params: web::Path<(CollectionID, GroupID)>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let (namespace_id, group_id) = params.into_inner();
+    let (collection_id, group_id) = params.into_inner();
 
     info!(
-        message = "Namespace group permissions revoke requested",
+        message = "Collection group permissions revoke requested",
         requestor = requestor.principal.name,
-        namespace_id = namespace_id.id(),
+        collection_id = collection_id.id(),
         group_id = group_id.id()
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let collection = collection_id.instance(&pool).await?;
     can!(
         &pool,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::DelegateCollection],
-        namespace
+        collection
     );
 
     let event_context = requestor.event_context(&req);
-    namespace
+    collection
         .revoke_all(&pool, group_id.id(), Some(&event_context))
         .await?;
 
     Ok(ApiResponse::no_content())
 }
 
-/// Check a specific permission for a group on a namespace
+/// Check a specific permission for a group on a collection
 #[utoipa::path(
     get,
-    path = "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}/{permission}",
-    tag = "namespaces",
+    path = "/api/v1/collections/{collection_id}/permissions/group/{group_id}/{permission}",
+    tag = "collections",
     security(("bearer_auth" = [])),
     params(
-        ("namespace_id" = i32, Path, description = "Namespace ID"),
+        ("collection_id" = i32, Path, description = "Collection ID"),
         ("group_id" = i32, Path, description = "Group ID"),
         ("permission" = Permissions, Path, description = "Permission value")
     ),
@@ -523,85 +523,85 @@ pub async fn revoke_namespace_group_permissions(
         (status = 404, description = "Group missing permission", body = ApiErrorResponse)
     )
 )]
-#[get("/{namespace_id}/permissions/group/{group_id}/{permission}")]
-pub async fn get_namespace_group_permission(
+#[get("/{collection_id}/permissions/group/{group_id}/{permission}")]
+pub async fn get_collection_group_permission(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    params: web::Path<(NamespaceID, GroupID, Permissions)>,
+    params: web::Path<(CollectionID, GroupID, Permissions)>,
 ) -> Result<impl Responder, ApiError> {
-    use crate::models::namespace::group_can_on;
+    use crate::models::collection::group_can_on;
 
-    let (namespace_id, group_id, permission) = params.into_inner();
+    let (collection_id, group_id, permission) = params.into_inner();
 
     info!(
-        message = "Namespace group permission check requested",
+        message = "Collection group permission check requested",
         requestor = requestor.principal.name,
-        namespace_id = namespace_id.id(),
+        collection_id = collection_id.id(),
         group_id = group_id.id(),
         permission = ?permission
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let collection = collection_id.instance(&pool).await?;
     can!(
         &pool,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ReadCollection],
-        namespace
+        collection
     );
 
-    if group_can_on(&pool, group_id.id(), namespace, permission).await? {
+    if group_can_on(&pool, group_id.id(), collection, permission).await? {
         return Ok(ApiResponse::no_content());
     }
     Ok(ApiResponse::not_found_empty())
 }
 
-/// Grant a specific permission to a group on a namespace
+/// Grant a specific permission to a group on a collection
 /// If the group previously had no permissions, a new entry is created
 #[utoipa::path(
     post,
-    path = "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}/{permission}",
-    tag = "namespaces",
+    path = "/api/v1/collections/{collection_id}/permissions/group/{group_id}/{permission}",
+    tag = "collections",
     security(("bearer_auth" = [])),
     params(
-        ("namespace_id" = i32, Path, description = "Namespace ID"),
+        ("collection_id" = i32, Path, description = "Collection ID"),
         ("group_id" = i32, Path, description = "Group ID"),
         ("permission" = Permissions, Path, description = "Permission value")
     ),
     responses(
         (status = 201, description = "Permission granted"),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 404, description = "Namespace or group not found", body = ApiErrorResponse)
+        (status = 404, description = "Collection or group not found", body = ApiErrorResponse)
     )
 )]
-#[post("/{namespace_id}/permissions/group/{group_id}/{permission}")]
-pub async fn grant_namespace_group_permission(
+#[post("/{collection_id}/permissions/group/{group_id}/{permission}")]
+pub async fn grant_collection_group_permission(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    params: web::Path<(NamespaceID, GroupID, Permissions)>,
+    params: web::Path<(CollectionID, GroupID, Permissions)>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let (namespace_id, group_id, permission) = params.into_inner();
+    let (collection_id, group_id, permission) = params.into_inner();
 
     info!(
-        message = "Namespace group permission grant requested",
+        message = "Collection group permission grant requested",
         requestor = requestor.principal.name,
-        namespace_id = namespace_id.id(),
+        collection_id = collection_id.id(),
         group_id = group_id.id(),
         permission = ?permission
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let collection = collection_id.instance(&pool).await?;
     can!(
         &pool,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::DelegateCollection],
-        namespace
+        collection
     );
 
     let event_context = requestor.event_context(&req);
-    namespace
+    collection
         .grant(
             &pool,
             group_id.id(),
@@ -613,51 +613,51 @@ pub async fn grant_namespace_group_permission(
     Ok(ApiResponse::created_empty())
 }
 
-/// Revoke a specific permission from a group on a namespace
+/// Revoke a specific permission from a group on a collection
 #[utoipa::path(
     delete,
-    path = "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}/{permission}",
-    tag = "namespaces",
+    path = "/api/v1/collections/{collection_id}/permissions/group/{group_id}/{permission}",
+    tag = "collections",
     security(("bearer_auth" = [])),
     params(
-        ("namespace_id" = i32, Path, description = "Namespace ID"),
+        ("collection_id" = i32, Path, description = "Collection ID"),
         ("group_id" = i32, Path, description = "Group ID"),
         ("permission" = Permissions, Path, description = "Permission value")
     ),
     responses(
         (status = 204, description = "Permission revoked"),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 404, description = "Namespace or group not found", body = ApiErrorResponse)
+        (status = 404, description = "Collection or group not found", body = ApiErrorResponse)
     )
 )]
-#[delete("/{namespace_id}/permissions/group/{group_id}/{permission}")]
-pub async fn revoke_namespace_group_permission(
+#[delete("/{collection_id}/permissions/group/{group_id}/{permission}")]
+pub async fn revoke_collection_group_permission(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    params: web::Path<(NamespaceID, GroupID, Permissions)>,
+    params: web::Path<(CollectionID, GroupID, Permissions)>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let (namespace_id, group_id, permission) = params.into_inner();
+    let (collection_id, group_id, permission) = params.into_inner();
 
     info!(
-        message = "Namespace group permission revoke requested",
+        message = "Collection group permission revoke requested",
         requestor = requestor.principal.name,
-        namespace_id = namespace_id.id(),
+        collection_id = collection_id.id(),
         group_id = group_id.id(),
         permission = ?permission
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let collection = collection_id.instance(&pool).await?;
     can!(
         &pool,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::DelegateCollection],
-        namespace
+        collection
     );
 
     let event_context = requestor.event_context(&req);
-    namespace
+    collection
         .revoke(
             &pool,
             group_id.id(),
@@ -669,14 +669,14 @@ pub async fn revoke_namespace_group_permission(
     Ok(ApiResponse::no_content())
 }
 
-/// List all permissions for a principal on a namespace
+/// List all permissions for a principal on a collection
 #[utoipa::path(
     get,
-    path = "/api/v1/namespaces/{namespace_id}/permissions/principal/{principal_id}",
-    tag = "namespaces",
+    path = "/api/v1/collections/{collection_id}/permissions/principal/{principal_id}",
+    tag = "collections",
     security(("bearer_auth" = [])),
     params(
-        ("namespace_id" = i32, Path, description = "Namespace ID"),
+        ("collection_id" = i32, Path, description = "Collection ID"),
         ("principal_id" = i32, Path, description = "Principal ID")
     ),
     responses(
@@ -685,38 +685,38 @@ pub async fn revoke_namespace_group_permission(
         (status = 404, description = "No permissions found", body = ApiErrorResponse)
     )
 )]
-#[get("/{namespace_id}/permissions/principal/{principal_id}")]
-pub async fn get_namespace_principal_permissions(
+#[get("/{collection_id}/permissions/principal/{principal_id}")]
+pub async fn get_collection_principal_permissions(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    params: web::Path<(NamespaceID, crate::models::PrincipalID)>,
+    params: web::Path<(CollectionID, crate::models::PrincipalID)>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let (namespace_id, principal_id) = params.into_inner();
+    let (collection_id, principal_id) = params.into_inner();
     let query_options = parse_query_parameter(req.query_string())?;
 
     info!(
-        message = "Namespace principal permissions list requested",
+        message = "Collection principal permissions list requested",
         requestor = requestor.principal.name,
-        namespace_id = namespace_id.id(),
+        collection_id = collection_id.id(),
         principal_id = principal_id.id()
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let collection = collection_id.instance(&pool).await?;
     can!(
         &pool,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ReadCollection],
-        namespace
+        collection
     );
 
     let search_params = prepare_db_pagination::<GroupPermission>(&query_options)?;
     let (permissions, total_count) =
-        crate::models::namespace::principal_on_paginated_with_total_count(
+        crate::models::collection::principal_on_paginated_with_total_count(
             &pool,
             principal_id,
-            namespace.clone(),
+            collection.clone(),
             &search_params,
         )
         .await?;
@@ -728,78 +728,79 @@ pub async fn get_namespace_principal_permissions(
     ApiResponse::paginated(permissions, total_count, &query_options)
 }
 
-/// List all groups that have any permissions on a namespace
+/// List all groups that have any permissions on a collection
 #[utoipa::path(
     get,
-    path = "/api/v1/namespaces/{namespace_id}/has_permissions/{permission}",
-    tag = "namespaces",
+    path = "/api/v1/collections/{collection_id}/has_permissions/{permission}",
+    tag = "collections",
     security(("bearer_auth" = [])),
     params(
-        ("namespace_id" = i32, Path, description = "Namespace ID"),
+        ("collection_id" = i32, Path, description = "Collection ID"),
         ("permission" = Permissions, Path, description = "Permission value")
     ),
     responses(
         (status = 200, description = "Groups with permission", body = [Group]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 404, description = "Namespace not found", body = ApiErrorResponse)
+        (status = 404, description = "Collection not found", body = ApiErrorResponse)
     )
 )]
-#[get("/{namespace_id}/has_permissions/{permission}")]
-pub async fn get_namespace_groups_with_permission(
+#[get("/{collection_id}/has_permissions/{permission}")]
+pub async fn get_collection_groups_with_permission(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    params: web::Path<(NamespaceID, Permissions)>,
+    params: web::Path<(CollectionID, Permissions)>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let (namespace_id, permission) = params.into_inner();
+    let (collection_id, permission) = params.into_inner();
     let query_options = parse_query_parameter(req.query_string())?;
 
     info!(
-        message = "Namespace groups with permission list requested",
+        message = "Collection groups with permission list requested",
         requestor = requestor.principal.name,
-        namespace_id = namespace_id.id(),
+        collection_id = collection_id.id(),
         permission = ?permission
     );
 
-    let namespace = namespace_id.instance(&pool).await?;
+    let collection = collection_id.instance(&pool).await?;
     can!(
         &pool,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ReadCollection],
-        namespace
+        collection
     );
 
     let search_params = prepare_db_pagination::<Group>(&query_options)?;
-    let (groups, total_count) = crate::models::namespace::groups_can_on_paginated_with_total_count(
-        &pool,
-        namespace.id,
-        permission,
-        &search_params,
-    )
-    .await?;
+    let (groups, total_count) =
+        crate::models::collection::groups_can_on_paginated_with_total_count(
+            &pool,
+            collection.id,
+            permission,
+            &search_params,
+        )
+        .await?;
 
     ApiResponse::paginated(groups, total_count, &query_options)
 }
 
 #[utoipa::path(
     get,
-    path = "/api/v1/namespaces/{namespace_id}/history",
-    tag = "namespaces",
+    path = "/api/v1/collections/{collection_id}/history",
+    tag = "collections",
     security(("bearer_auth" = [])),
-    params(("namespace_id" = i32, Path, description = "Namespace ID")),
+    params(("collection_id" = i32, Path, description = "Collection ID")),
     responses(
-        (status = 200, description = "Namespace history", body = [crate::api::v1::handlers::history::HistoryResponse<crate::models::NamespaceHistory>]),
+        (status = 200, description = "Collection history", body = [crate::api::v1::handlers::history::HistoryResponse<crate::models::CollectionHistory>]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
-        (status = 404, description = "Namespace not found", body = ApiErrorResponse)
+        (status = 404, description = "Collection not found", body = ApiErrorResponse)
     )
 )]
-#[get("/{namespace_id}/history")]
-pub async fn get_namespace_history(
+#[get("/{collection_id}/history")]
+pub async fn get_collection_history(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    namespace_id: web::Path<NamespaceID>,
+    collection_id: web::Path<CollectionID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
@@ -807,8 +808,8 @@ pub async fn get_namespace_history(
     };
 
     let user = &requestor.principal;
-    let namespace_id = namespace_id.into_inner();
-    let (entity_id, require_history) = match namespace_id.instance(&pool).await {
+    let collection_id = collection_id.into_inner();
+    let (entity_id, require_history) = match collection_id.instance(&pool).await {
         Ok(instance) => {
             can!(
                 &pool,
@@ -820,18 +821,18 @@ pub async fn get_namespace_history(
             (instance.id, false)
         }
         Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
-            (namespace_id.id(), true)
+            (collection_id.id(), true)
         }
         Err(err) => return Err(err),
     };
 
     let params = parse_query_parameter(req.query_string())?;
-    let search_params = prepare_db_pagination::<crate::models::NamespaceHistory>(&params)?;
+    let search_params = prepare_db_pagination::<crate::models::CollectionHistory>(&params)?;
     let (rows, total_count) =
-        namespace_history_paginated_with_total_count(entity_id, &pool, &search_params).await?;
+        collection_history_paginated_with_total_count(entity_id, &pool, &search_params).await?;
     if require_history && total_count == 0 {
         return Err(ApiError::NotFound(format!(
-            "namespace {entity_id} not found"
+            "collection {entity_id} not found"
         )));
     }
 
@@ -853,26 +854,26 @@ pub async fn get_namespace_history(
 
 #[utoipa::path(
     get,
-    path = "/api/v1/namespaces/{namespace_id}/history/as-of",
-    tag = "namespaces",
+    path = "/api/v1/collections/{collection_id}/history/as-of",
+    tag = "collections",
     security(("bearer_auth" = [])),
     params(
-        ("namespace_id" = i32, Path, description = "Namespace ID"),
+        ("collection_id" = i32, Path, description = "Collection ID"),
         ("at" = String, Query, description = "RFC3339 timestamp")
     ),
     responses(
-        (status = 200, description = "Namespace version at timestamp", body = crate::api::v1::handlers::history::HistoryResponse<crate::models::NamespaceHistory>),
+        (status = 200, description = "Collection version at timestamp", body = crate::api::v1::handlers::history::HistoryResponse<crate::models::CollectionHistory>),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
-        (status = 404, description = "Namespace or version not found", body = ApiErrorResponse)
+        (status = 404, description = "Collection or version not found", body = ApiErrorResponse)
     )
 )]
-#[get("/{namespace_id}/history/as-of")]
-pub async fn get_namespace_as_of(
+#[get("/{collection_id}/history/as-of")]
+pub async fn get_collection_as_of(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    namespace_id: web::Path<NamespaceID>,
+    collection_id: web::Path<CollectionID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
@@ -880,8 +881,8 @@ pub async fn get_namespace_as_of(
     };
 
     let user = &requestor.principal;
-    let namespace_id = namespace_id.into_inner();
-    let entity_id = match namespace_id.instance(&pool).await {
+    let collection_id = collection_id.into_inner();
+    let entity_id = match collection_id.instance(&pool).await {
         Ok(instance) => {
             can!(
                 &pool,
@@ -893,16 +894,16 @@ pub async fn get_namespace_as_of(
             instance.id
         }
         Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
-            namespace_id.id()
+            collection_id.id()
         }
         Err(err) => return Err(err),
     };
 
     let at = parse_as_of(req.query_string())?;
-    let row = namespace_as_of(entity_id, at, &pool)
+    let row = collection_as_of(entity_id, at, &pool)
         .await?
         .ok_or_else(|| {
-            ApiError::NotFound(format!("no version of namespace {entity_id} at {at}"))
+            ApiError::NotFound(format!("no version of collection {entity_id} at {at}"))
         })?;
 
     let actor_map = resolve_actor_usernames(&pool, row.actor_id.into_iter().collect()).await?;

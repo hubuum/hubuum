@@ -1,6 +1,31 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    collections (id) {
+        id -> Int4,
+        name -> Varchar,
+        description -> Varchar,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    collections_history (history_id) {
+        id -> Int4,
+        name -> Varchar,
+        description -> Varchar,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+        op -> Varchar,
+        valid_from -> Timestamptz,
+        valid_to -> Nullable<Timestamptz>,
+        actor_id -> Nullable<Int4>,
+        history_id -> Int8,
+    }
+}
+
+diesel::table! {
     event_deliveries (id) {
         id -> Int8,
         event_id -> Int8,
@@ -32,7 +57,7 @@ diesel::table! {
 diesel::table! {
     event_subscriptions (id) {
         id -> Int4,
-        namespace_id -> Int4,
+        collection_id -> Int4,
         sink_id -> Int4,
         name -> Varchar,
         description -> Varchar,
@@ -54,7 +79,7 @@ diesel::table! {
         entity_type -> Text,
         entity_id -> Nullable<Int4>,
         entity_name -> Nullable<Text>,
-        namespace_id -> Nullable<Int4>,
+        collection_id -> Nullable<Int4>,
         action -> Text,
         actor_user_id -> Nullable<Int4>,
         actor_kind -> Text,
@@ -94,7 +119,7 @@ diesel::table! {
     hubuumclass (id) {
         id -> Int4,
         name -> Varchar,
-        namespace_id -> Int4,
+        collection_id -> Int4,
         json_schema -> Nullable<Jsonb>,
         validate_schema -> Bool,
         description -> Varchar,
@@ -107,7 +132,7 @@ diesel::table! {
     hubuumclass_history (history_id) {
         id -> Int4,
         name -> Varchar,
-        namespace_id -> Int4,
+        collection_id -> Int4,
         json_schema -> Nullable<Jsonb>,
         validate_schema -> Bool,
         description -> Varchar,
@@ -164,7 +189,7 @@ diesel::table! {
     hubuumobject (id) {
         id -> Int4,
         name -> Varchar,
-        namespace_id -> Int4,
+        collection_id -> Int4,
         hubuum_class_id -> Int4,
         data -> Jsonb,
         description -> Varchar,
@@ -177,7 +202,7 @@ diesel::table! {
     hubuumobject_history (history_id) {
         id -> Int4,
         name -> Varchar,
-        namespace_id -> Int4,
+        collection_id -> Int4,
         hubuum_class_id -> Int4,
         data -> Jsonb,
         description -> Varchar,
@@ -234,39 +259,14 @@ diesel::table! {
 }
 
 diesel::table! {
-    namespaces (id) {
-        id -> Int4,
-        name -> Varchar,
-        description -> Varchar,
-        created_at -> Timestamp,
-        updated_at -> Timestamp,
-    }
-}
-
-diesel::table! {
-    namespaces_history (history_id) {
-        id -> Int4,
-        name -> Varchar,
-        description -> Varchar,
-        created_at -> Timestamp,
-        updated_at -> Timestamp,
-        op -> Varchar,
-        valid_from -> Timestamptz,
-        valid_to -> Nullable<Timestamptz>,
-        actor_id -> Nullable<Int4>,
-        history_id -> Int8,
-    }
-}
-
-diesel::table! {
     permissions (id) {
         id -> Int4,
-        namespace_id -> Int4,
+        collection_id -> Int4,
         group_id -> Int4,
-        has_read_namespace -> Bool,
-        has_update_namespace -> Bool,
-        has_delete_namespace -> Bool,
-        has_delegate_namespace -> Bool,
+        has_read_collection -> Bool,
+        has_update_collection -> Bool,
+        has_delete_collection -> Bool,
+        has_delegate_collection -> Bool,
         has_create_class -> Bool,
         has_read_class -> Bool,
         has_update_class -> Bool,
@@ -331,7 +331,7 @@ diesel::table! {
 diesel::table! {
     remote_targets (id) {
         id -> Int4,
-        namespace_id -> Int4,
+        collection_id -> Int4,
         class_id -> Nullable<Int4>,
         name -> Varchar,
         description -> Varchar,
@@ -351,7 +351,7 @@ diesel::table! {
 diesel::table! {
     remote_targets_history (history_id) {
         id -> Int4,
-        namespace_id -> Int4,
+        collection_id -> Int4,
         class_id -> Nullable<Int4>,
         name -> Varchar,
         description -> Varchar,
@@ -397,7 +397,7 @@ diesel::table! {
 diesel::table! {
     report_templates (id) {
         id -> Int4,
-        namespace_id -> Int4,
+        collection_id -> Int4,
         name -> Varchar,
         description -> Varchar,
         content_type -> Varchar,
@@ -418,7 +418,7 @@ diesel::table! {
 diesel::table! {
     report_templates_history (history_id) {
         id -> Int4,
-        namespace_id -> Int4,
+        collection_id -> Int4,
         name -> Varchar,
         description -> Varchar,
         content_type -> Varchar,
@@ -518,30 +518,32 @@ diesel::table! {
 
 diesel::joinable!(event_deliveries -> event_subscriptions (subscription_id));
 diesel::joinable!(event_deliveries -> events (event_id));
+diesel::joinable!(event_subscriptions -> collections (collection_id));
 diesel::joinable!(event_subscriptions -> event_sinks (sink_id));
-diesel::joinable!(event_subscriptions -> namespaces (namespace_id));
 diesel::joinable!(group_memberships -> groups (group_id));
 diesel::joinable!(group_memberships -> principals (principal_id));
-diesel::joinable!(hubuumclass -> namespaces (namespace_id));
+diesel::joinable!(hubuumclass -> collections (collection_id));
+diesel::joinable!(hubuumobject -> collections (collection_id));
 diesel::joinable!(hubuumobject -> hubuumclass (hubuum_class_id));
-diesel::joinable!(hubuumobject -> namespaces (namespace_id));
 diesel::joinable!(hubuumobject_relation -> hubuumclass_relation (class_relation_id));
 diesel::joinable!(import_task_results -> tasks (task_id));
+diesel::joinable!(permissions -> collections (collection_id));
 diesel::joinable!(permissions -> groups (group_id));
-diesel::joinable!(permissions -> namespaces (namespace_id));
 diesel::joinable!(remote_call_results -> remote_targets (target_id));
 diesel::joinable!(remote_call_results -> tasks (task_id));
+diesel::joinable!(remote_targets -> collections (collection_id));
 diesel::joinable!(remote_targets -> hubuumclass (class_id));
-diesel::joinable!(remote_targets -> namespaces (namespace_id));
 diesel::joinable!(report_task_outputs -> tasks (task_id));
+diesel::joinable!(report_templates -> collections (collection_id));
 diesel::joinable!(report_templates -> hubuumclass (class_id));
-diesel::joinable!(report_templates -> namespaces (namespace_id));
 diesel::joinable!(service_accounts -> groups (owner_group_id));
 diesel::joinable!(tasks -> tokens (submitted_token_id));
 diesel::joinable!(token_scopes -> tokens (token_id));
 diesel::joinable!(tokens -> principals (principal_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    collections,
+    collections_history,
     event_deliveries,
     event_sinks,
     event_subscriptions,
@@ -558,8 +560,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     hubuumobject_relation,
     hubuumobject_relation_history,
     import_task_results,
-    namespaces,
-    namespaces_history,
     permissions,
     principals,
     remote_call_results,

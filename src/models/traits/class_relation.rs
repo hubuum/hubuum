@@ -7,18 +7,18 @@ use crate::events::EventContext;
 
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
-    ClassGraphRow, HubuumClass, HubuumClassID, HubuumClassRelation, HubuumClassRelationID,
-    HubuumClassRelationTransitive, HubuumClassWithPath, HubuumObject, HubuumObjectID,
-    HubuumObjectRelation, HubuumObjectRelationID, Namespace, NamespaceID, NewHubuumClassRelation,
+    ClassGraphRow, Collection, CollectionID, HubuumClass, HubuumClassID, HubuumClassRelation,
+    HubuumClassRelationID, HubuumClassRelationTransitive, HubuumClassWithPath, HubuumObject,
+    HubuumObjectID, HubuumObjectRelation, HubuumObjectRelationID, NewHubuumClassRelation,
     NewHubuumObjectRelation, ObjectGraphRow, RelatedObjectGraphRow,
 };
 use crate::traits::accessors::{
-    ClassAdapter, IdAccessor, InstanceAdapter, NamespaceAdapter, ObjectAdapter,
+    ClassAdapter, CollectionAdapter, IdAccessor, InstanceAdapter, ObjectAdapter,
 };
 use crate::traits::crud::{DeleteAdapter, SaveAdapter};
 use crate::traits::{
-    ClassAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-    NamespaceAccessors, ObjectAccessors, SelfAccessors,
+    ClassAccessors, CollectionAccessors, CursorPaginated, CursorSqlField, CursorSqlMapping,
+    CursorSqlType, CursorValue, ObjectAccessors, SelfAccessors,
 };
 
 impl IdAccessor for HubuumClassRelationID {
@@ -86,82 +86,113 @@ impl DeleteAdapter for HubuumClassRelationID {
     }
 }
 
-impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)>
+impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
     for NewHubuumClassRelation
 {
-    async fn namespace_adapter(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
-        use crate::db::traits::GetNamespace;
-        self.namespace_from_backend(pool).await
-    }
-
-    async fn namespace_id_adapter(
+    async fn collection_adapter(
         &self,
         pool: &DbPool,
-    ) -> Result<(NamespaceID, NamespaceID), ApiError> {
-        let (ns1, ns2) = self.namespace(pool).await?;
-        Ok((NamespaceID::new(ns1.id)?, NamespaceID::new(ns2.id)?))
+    ) -> Result<(Collection, Collection), ApiError> {
+        use crate::db::traits::GetCollection;
+        self.collection_from_backend(pool).await
+    }
+
+    async fn collection_id_adapter(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(CollectionID, CollectionID), ApiError> {
+        let (collection_one, collection_two) = self.collection(pool).await?;
+        Ok((
+            CollectionID::new(collection_one.id)?,
+            CollectionID::new(collection_two.id)?,
+        ))
     }
 }
 
-impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)>
+impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
     for NewHubuumObjectRelation
 {
-    async fn namespace_adapter(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
-        use crate::db::traits::GetNamespace;
-        self.namespace_from_backend(pool).await
-    }
-
-    async fn namespace_id_adapter(
+    async fn collection_adapter(
         &self,
         pool: &DbPool,
-    ) -> Result<(NamespaceID, NamespaceID), ApiError> {
-        let (ns1, ns2) = self.namespace(pool).await?;
-        Ok((NamespaceID::new(ns1.id)?, NamespaceID::new(ns2.id)?))
+    ) -> Result<(Collection, Collection), ApiError> {
+        use crate::db::traits::GetCollection;
+        self.collection_from_backend(pool).await
+    }
+
+    async fn collection_id_adapter(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(CollectionID, CollectionID), ApiError> {
+        let (collection_one, collection_two) = self.collection(pool).await?;
+        Ok((
+            CollectionID::new(collection_one.id)?,
+            CollectionID::new(collection_two.id)?,
+        ))
     }
 }
 
-impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)>
+impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
     for HubuumObjectRelationID
 {
-    async fn namespace_adapter(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
-        self.instance(pool).await?.namespace(pool).await
-    }
-
-    async fn namespace_id_adapter(
+    async fn collection_adapter(
         &self,
         pool: &DbPool,
-    ) -> Result<(NamespaceID, NamespaceID), ApiError> {
-        self.instance(pool).await?.namespace_id(pool).await
+    ) -> Result<(Collection, Collection), ApiError> {
+        self.instance(pool).await?.collection(pool).await
+    }
+
+    async fn collection_id_adapter(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(CollectionID, CollectionID), ApiError> {
+        self.instance(pool).await?.collection_id(pool).await
     }
 }
 
-impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)> for HubuumObjectRelation {
-    async fn namespace_adapter(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
-        use crate::db::traits::GetNamespace;
-        self.namespace_from_backend(pool).await
-    }
-
-    async fn namespace_id_adapter(
+impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
+    for HubuumObjectRelation
+{
+    async fn collection_adapter(
         &self,
         pool: &DbPool,
-    ) -> Result<(NamespaceID, NamespaceID), ApiError> {
-        let (ns1, ns2) = self.namespace(pool).await?;
-        Ok((NamespaceID::new(ns1.id)?, NamespaceID::new(ns2.id)?))
+    ) -> Result<(Collection, Collection), ApiError> {
+        use crate::db::traits::GetCollection;
+        self.collection_from_backend(pool).await
+    }
+
+    async fn collection_id_adapter(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(CollectionID, CollectionID), ApiError> {
+        let (collection_one, collection_two) = self.collection(pool).await?;
+        Ok((
+            CollectionID::new(collection_one.id)?,
+            CollectionID::new(collection_two.id)?,
+        ))
     }
 }
 
-impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)> for HubuumClassRelation {
-    async fn namespace_adapter(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
-        use crate::db::traits::GetNamespace;
-        self.namespace_from_backend(pool).await
-    }
-
-    async fn namespace_id_adapter(
+impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
+    for HubuumClassRelation
+{
+    async fn collection_adapter(
         &self,
         pool: &DbPool,
-    ) -> Result<(NamespaceID, NamespaceID), ApiError> {
-        let (ns1, ns2) = self.namespace(pool).await?;
-        Ok((NamespaceID::new(ns1.id)?, NamespaceID::new(ns2.id)?))
+    ) -> Result<(Collection, Collection), ApiError> {
+        use crate::db::traits::GetCollection;
+        self.collection_from_backend(pool).await
+    }
+
+    async fn collection_id_adapter(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(CollectionID, CollectionID), ApiError> {
+        let (collection_one, collection_two) = self.collection(pool).await?;
+        Ok((
+            CollectionID::new(collection_one.id)?,
+            CollectionID::new(collection_two.id)?,
+        ))
     }
 }
 
@@ -184,18 +215,21 @@ impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)>
     }
 }
 
-impl NamespaceAdapter<(Namespace, Namespace), (NamespaceID, NamespaceID)>
+impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
     for HubuumClassRelationID
 {
-    async fn namespace_adapter(&self, pool: &DbPool) -> Result<(Namespace, Namespace), ApiError> {
-        self.instance(pool).await?.namespace(pool).await
-    }
-
-    async fn namespace_id_adapter(
+    async fn collection_adapter(
         &self,
         pool: &DbPool,
-    ) -> Result<(NamespaceID, NamespaceID), ApiError> {
-        self.instance(pool).await?.namespace_id(pool).await
+    ) -> Result<(Collection, Collection), ApiError> {
+        self.instance(pool).await?.collection(pool).await
+    }
+
+    async fn collection_id_adapter(
+        &self,
+        pool: &DbPool,
+    ) -> Result<(CollectionID, CollectionID), ApiError> {
+        self.instance(pool).await?.collection_id(pool).await
     }
 }
 
@@ -303,7 +337,7 @@ impl ClassGraphRow {
         HubuumClass {
             id: self.ancestor_class_id,
             name: self.ancestor_name.clone(),
-            namespace_id: self.ancestor_namespace_id,
+            collection_id: self.ancestor_collection_id,
             description: self.ancestor_description.clone(),
             json_schema: self.ancestor_json_schema.clone(),
             validate_schema: self.ancestor_validate_schema,
@@ -317,7 +351,7 @@ impl ClassGraphRow {
         HubuumClass {
             id: self.descendant_class_id,
             name: self.descendant_name.clone(),
-            namespace_id: self.descendant_namespace_id,
+            collection_id: self.descendant_collection_id,
             description: self.descendant_description.clone(),
             json_schema: self.descendant_json_schema.clone(),
             validate_schema: self.descendant_validate_schema,
@@ -331,7 +365,7 @@ impl ClassGraphRow {
         HubuumClassWithPath {
             id: self.descendant_class_id,
             name: self.descendant_name.clone(),
-            namespace_id: self.descendant_namespace_id,
+            collection_id: self.descendant_collection_id,
             description: self.descendant_description.clone(),
             json_schema: self.descendant_json_schema.clone(),
             validate_schema: self.descendant_validate_schema,
@@ -632,16 +666,16 @@ impl CursorPaginated for ClassGraphRow {
             FilterField::Id
                 | FilterField::Name
                 | FilterField::Description
-                | FilterField::Namespaces
-                | FilterField::NamespaceId
+                | FilterField::Collections
+                | FilterField::CollectionId
                 | FilterField::ClassId
                 | FilterField::Classes
                 | FilterField::CreatedAt
                 | FilterField::UpdatedAt
                 | FilterField::ClassFrom
                 | FilterField::ClassTo
-                | FilterField::NamespacesFrom
-                | FilterField::NamespacesTo
+                | FilterField::CollectionsFrom
+                | FilterField::CollectionsTo
                 | FilterField::NameFrom
                 | FilterField::NameTo
                 | FilterField::DescriptionFrom
@@ -670,10 +704,12 @@ impl CursorPaginated for ClassGraphRow {
                 CursorValue::String(self.descendant_description.clone())
             }
             FilterField::DescriptionFrom => CursorValue::String(self.ancestor_description.clone()),
-            FilterField::Namespaces | FilterField::NamespaceId | FilterField::NamespacesTo => {
-                CursorValue::Integer(self.descendant_namespace_id as i64)
+            FilterField::Collections | FilterField::CollectionId | FilterField::CollectionsTo => {
+                CursorValue::Integer(self.descendant_collection_id as i64)
             }
-            FilterField::NamespacesFrom => CursorValue::Integer(self.ancestor_namespace_id as i64),
+            FilterField::CollectionsFrom => {
+                CursorValue::Integer(self.ancestor_collection_id as i64)
+            }
             FilterField::CreatedAt | FilterField::CreatedAtTo => {
                 CursorValue::DateTime(self.descendant_created_at)
             }
@@ -747,15 +783,15 @@ impl CursorSqlMapping for ClassGraphRow {
                 sql_type: CursorSqlType::String,
                 nullable: false,
             },
-            FilterField::Namespaces | FilterField::NamespaceId | FilterField::NamespacesTo => {
+            FilterField::Collections | FilterField::CollectionId | FilterField::CollectionsTo => {
                 CursorSqlField {
-                    column: "related_classes.descendant_namespace_id",
+                    column: "related_classes.descendant_collection_id",
                     sql_type: CursorSqlType::Integer,
                     nullable: false,
                 }
             }
-            FilterField::NamespacesFrom => CursorSqlField {
-                column: "related_classes.ancestor_namespace_id",
+            FilterField::CollectionsFrom => CursorSqlField {
+                column: "related_classes.ancestor_collection_id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
@@ -806,8 +842,8 @@ impl CursorPaginated for ObjectGraphRow {
             FilterField::Id
                 | FilterField::Name
                 | FilterField::Description
-                | FilterField::Namespaces
-                | FilterField::NamespaceId
+                | FilterField::Collections
+                | FilterField::CollectionId
                 | FilterField::ClassId
                 | FilterField::Classes
                 | FilterField::CreatedAt
@@ -816,8 +852,8 @@ impl CursorPaginated for ObjectGraphRow {
                 | FilterField::ObjectTo
                 | FilterField::ClassFrom
                 | FilterField::ClassTo
-                | FilterField::NamespacesFrom
-                | FilterField::NamespacesTo
+                | FilterField::CollectionsFrom
+                | FilterField::CollectionsTo
                 | FilterField::NameFrom
                 | FilterField::NameTo
                 | FilterField::DescriptionFrom
@@ -845,10 +881,12 @@ impl CursorPaginated for ObjectGraphRow {
                 CursorValue::String(self.descendant_description.clone())
             }
             FilterField::DescriptionFrom => CursorValue::String(self.ancestor_description.clone()),
-            FilterField::Namespaces | FilterField::NamespaceId | FilterField::NamespacesTo => {
-                CursorValue::Integer(self.descendant_namespace_id as i64)
+            FilterField::Collections | FilterField::CollectionId | FilterField::CollectionsTo => {
+                CursorValue::Integer(self.descendant_collection_id as i64)
             }
-            FilterField::NamespacesFrom => CursorValue::Integer(self.ancestor_namespace_id as i64),
+            FilterField::CollectionsFrom => {
+                CursorValue::Integer(self.ancestor_collection_id as i64)
+            }
             FilterField::ClassId | FilterField::Classes | FilterField::ClassTo => {
                 CursorValue::Integer(self.descendant_class_id as i64)
             }
@@ -923,15 +961,15 @@ impl CursorSqlMapping for ObjectGraphRow {
                 sql_type: CursorSqlType::String,
                 nullable: false,
             },
-            FilterField::Namespaces | FilterField::NamespaceId | FilterField::NamespacesTo => {
+            FilterField::Collections | FilterField::CollectionId | FilterField::CollectionsTo => {
                 CursorSqlField {
-                    column: "descendant_namespace_id",
+                    column: "descendant_collection_id",
                     sql_type: CursorSqlType::Integer,
                     nullable: false,
                 }
             }
-            FilterField::NamespacesFrom => CursorSqlField {
-                column: "ancestor_namespace_id",
+            FilterField::CollectionsFrom => CursorSqlField {
+                column: "ancestor_collection_id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
@@ -992,8 +1030,8 @@ impl CursorPaginated for RelatedObjectGraphRow {
             FilterField::Id
                 | FilterField::Name
                 | FilterField::Description
-                | FilterField::Namespaces
-                | FilterField::NamespaceId
+                | FilterField::Collections
+                | FilterField::CollectionId
                 | FilterField::ClassId
                 | FilterField::Classes
                 | FilterField::CreatedAt
@@ -1002,8 +1040,8 @@ impl CursorPaginated for RelatedObjectGraphRow {
                 | FilterField::ObjectTo
                 | FilterField::ClassFrom
                 | FilterField::ClassTo
-                | FilterField::NamespacesFrom
-                | FilterField::NamespacesTo
+                | FilterField::CollectionsFrom
+                | FilterField::CollectionsTo
                 | FilterField::NameFrom
                 | FilterField::NameTo
                 | FilterField::DescriptionFrom
@@ -1031,10 +1069,12 @@ impl CursorPaginated for RelatedObjectGraphRow {
                 CursorValue::String(self.descendant_description.clone())
             }
             FilterField::DescriptionFrom => CursorValue::String(self.ancestor_description.clone()),
-            FilterField::Namespaces | FilterField::NamespaceId | FilterField::NamespacesTo => {
-                CursorValue::Integer(self.descendant_namespace_id as i64)
+            FilterField::Collections | FilterField::CollectionId | FilterField::CollectionsTo => {
+                CursorValue::Integer(self.descendant_collection_id as i64)
             }
-            FilterField::NamespacesFrom => CursorValue::Integer(self.ancestor_namespace_id as i64),
+            FilterField::CollectionsFrom => {
+                CursorValue::Integer(self.ancestor_collection_id as i64)
+            }
             FilterField::ClassId | FilterField::Classes | FilterField::ClassTo => {
                 CursorValue::Integer(self.descendant_class_id as i64)
             }
@@ -1109,15 +1149,15 @@ impl CursorSqlMapping for RelatedObjectGraphRow {
                 sql_type: CursorSqlType::String,
                 nullable: false,
             },
-            FilterField::Namespaces | FilterField::NamespaceId | FilterField::NamespacesTo => {
+            FilterField::Collections | FilterField::CollectionId | FilterField::CollectionsTo => {
                 CursorSqlField {
-                    column: "related_objects.descendant_namespace_id",
+                    column: "related_objects.descendant_collection_id",
                     sql_type: CursorSqlType::Integer,
                     nullable: false,
                 }
             }
-            FilterField::NamespacesFrom => CursorSqlField {
-                column: "related_objects.ancestor_namespace_id",
+            FilterField::CollectionsFrom => CursorSqlField {
+                column: "related_objects.ancestor_collection_id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },

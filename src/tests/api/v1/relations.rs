@@ -5,8 +5,8 @@ mod tests {
 
     use crate::db::DbPool;
     use crate::models::{
-        HubuumClass, HubuumClassRelation, HubuumClassWithPath, HubuumObject, HubuumObjectRelation,
-        HubuumObjectWithPath, NamespaceID, NewHubuumClass, NewHubuumClassRelation,
+        CollectionID, HubuumClass, HubuumClassRelation, HubuumClassWithPath, HubuumObject,
+        HubuumObjectRelation, HubuumObjectWithPath, NewHubuumClass, NewHubuumClassRelation,
         NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation, Permissions,
         RelatedClassGraph, RelatedObjectGraph,
     };
@@ -109,18 +109,18 @@ mod tests {
             &context.pool,
             context
                 .scope
-                .namespace_fixture(&format!("{prefix}_hidden_namespace"))
+                .collection_fixture(&format!("{prefix}_hidden_collection"))
                 .await,
             vec![
                 NewHubuumClass {
-                    namespace_id: 0,
+                    collection_id: 0,
                     name: format!("{prefix}_class_1"),
                     description: format!("{prefix}_class_1"),
                     json_schema: None,
                     validate_schema: Some(false),
                 },
                 NewHubuumClass {
-                    namespace_id: 0,
+                    collection_id: 0,
                     name: format!("{prefix}_class_2"),
                     description: format!("{prefix}_class_2"),
                     json_schema: None,
@@ -185,7 +185,7 @@ mod tests {
 
             let object = NewHubuumObject {
                 hubuum_class_id: class.id,
-                namespace_id: class.namespace_id,
+                collection_id: class.collection_id,
                 name: format!("object_in_{}", class.name),
                 description: format!("Object in class {}", class.description),
                 data,
@@ -214,7 +214,7 @@ mod tests {
         let relations_fetched_all: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
 
         // Filter only on relations created from this test.
-        let relations_in_namespace: Vec<HubuumClassRelation> = relations_fetched_all
+        let relations_in_collection: Vec<HubuumClassRelation> = relations_fetched_all
             .iter()
             .filter(|r| {
                 classes
@@ -224,8 +224,8 @@ mod tests {
             .cloned()
             .collect();
 
-        assert_contains_same_ids!(&relations, &relations_in_namespace);
-        assert_contains_all!(&relations, &relations_in_namespace);
+        assert_contains_same_ids!(&relations, &relations_in_collection);
+        assert_contains_all!(&relations, &relations_in_collection);
 
         cleanup(&classes).await;
     }
@@ -799,7 +799,7 @@ mod tests {
 
         let (classes, relations) =
             create_classes_and_relations(&context, "get_class_relation_with_permissions").await;
-        let namespace = NamespaceID::new(classes[0].namespace_id)
+        let collection = CollectionID::new(classes[0].collection_id)
             .unwrap()
             .instance(&context.pool)
             .await
@@ -818,7 +818,7 @@ mod tests {
         let _ = assert_response_status(resp, StatusCode::FORBIDDEN).await;
 
         // Grant permissions to the group (and indirectly to the user).
-        namespace
+        collection
             .grant_one(&context.pool, group.id, Permissions::ReadClassRelation)
             .await
             .unwrap();
@@ -851,7 +851,7 @@ mod tests {
 
         let from_object = NewHubuumObject {
             hubuum_class_id: classes[0].id,
-            namespace_id: classes[0].namespace_id,
+            collection_id: classes[0].collection_id,
             name: "hidden relation source".to_string(),
             description: "hidden relation source".to_string(),
             data: serde_json::json!({"role": "source"}),
@@ -862,7 +862,7 @@ mod tests {
 
         let to_object = NewHubuumObject {
             hubuum_class_id: classes[1].id,
-            namespace_id: classes[1].namespace_id,
+            collection_id: classes[1].collection_id,
             name: "hidden relation target".to_string(),
             description: "hidden relation target".to_string(),
             data: serde_json::json!({"role": "target"}),
@@ -1162,7 +1162,7 @@ mod tests {
     }
 
     // class_idx object_idx, expected_code, filter, expected_object_ids
-    // TODO: Add tests against _classes / _namespaces / _object
+    // TODO: Add tests against _classes / _collections / _object
     // Note that <int> in the filter will be replaced with the object id with that index.
     #[rstest]
     #[case::rel_0_0_empty(0, 0, StatusCode::OK, "", vec![1, 2, 4])]
@@ -1623,7 +1623,7 @@ mod tests {
 
         let machine_a = NewHubuumObject {
             hubuum_class_id: classes[0].id,
-            namespace_id: classes[0].namespace_id,
+            collection_id: classes[0].collection_id,
             name: "machine_a".to_string(),
             description: "machine_a".to_string(),
             data: serde_json::json!({"role": "machine_a"}),
@@ -1633,7 +1633,7 @@ mod tests {
         .unwrap();
         let jack = NewHubuumObject {
             hubuum_class_id: classes[1].id,
-            namespace_id: classes[1].namespace_id,
+            collection_id: classes[1].collection_id,
             name: "jack".to_string(),
             description: "jack".to_string(),
             data: serde_json::json!({"role": "jack"}),
@@ -1643,7 +1643,7 @@ mod tests {
         .unwrap();
         let machine_b = NewHubuumObject {
             hubuum_class_id: classes[0].id,
-            namespace_id: classes[0].namespace_id,
+            collection_id: classes[0].collection_id,
             name: "machine_b".to_string(),
             description: "machine_b".to_string(),
             data: serde_json::json!({"role": "machine_b"}),
@@ -1653,7 +1653,7 @@ mod tests {
         .unwrap();
         let room = NewHubuumObject {
             hubuum_class_id: classes[2].id,
-            namespace_id: classes[2].namespace_id,
+            collection_id: classes[2].collection_id,
             name: "room".to_string(),
             description: "room".to_string(),
             data: serde_json::json!({"role": "room"}),
@@ -1713,7 +1713,7 @@ mod tests {
 
         let machine = NewHubuumObject {
             hubuum_class_id: classes[0].id,
-            namespace_id: classes[0].namespace_id,
+            collection_id: classes[0].collection_id,
             name: "machine".to_string(),
             description: "machine".to_string(),
             data: serde_json::json!({"role": "machine"}),
@@ -1723,7 +1723,7 @@ mod tests {
         .unwrap();
         let jack = NewHubuumObject {
             hubuum_class_id: classes[1].id,
-            namespace_id: classes[1].namespace_id,
+            collection_id: classes[1].collection_id,
             name: "jack".to_string(),
             description: "jack".to_string(),
             data: serde_json::json!({"role": "jack"}),
@@ -1733,7 +1733,7 @@ mod tests {
         .unwrap();
         let room = NewHubuumObject {
             hubuum_class_id: classes[2].id,
-            namespace_id: classes[2].namespace_id,
+            collection_id: classes[2].collection_id,
             name: "room".to_string(),
             description: "room".to_string(),
             data: serde_json::json!({"role": "room"}),
@@ -1888,12 +1888,12 @@ mod tests {
         let _ = create_object_relation(&context.pool, &objects[0], &objects[4], &class_relation_15)
             .await;
 
-        let namespace = NamespaceID::new(classes[0].namespace_id)
+        let collection = CollectionID::new(classes[0].collection_id)
             .unwrap()
             .instance(&context.pool)
             .await
             .unwrap();
-        namespace
+        collection
             .grant_one(&context.pool, group.id, Permissions::ReadObject)
             .await
             .unwrap();
@@ -1967,7 +1967,7 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn test_related_endpoints_hide_cross_namespace_relations_without_permission(
+    async fn test_related_endpoints_hide_cross_collection_relations_without_permission(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
@@ -1978,13 +1978,13 @@ mod tests {
             .unwrap();
 
         let visible_classes =
-            create_test_classes(&context, "related_endpoints_cross_namespace_visible").await;
+            create_test_classes(&context, "related_endpoints_cross_collection_visible").await;
         let hidden_classes =
-            create_hidden_classes(&context, "related_endpoints_cross_namespace").await;
+            create_hidden_classes(&context, "related_endpoints_cross_collection").await;
 
         let visible_relation =
             create_relation(&context.pool, &visible_classes[0], &visible_classes[1]).await;
-        let cross_namespace_relation =
+        let cross_collection_relation =
             create_relation(&context.pool, &visible_classes[0], &hidden_classes[0]).await;
 
         let visible_objects = create_objects_in_classes(&context.pool, &visible_classes[..2]).await;
@@ -2001,20 +2001,20 @@ mod tests {
             &context.pool,
             &visible_objects[0],
             &hidden_objects[0],
-            &cross_namespace_relation,
+            &cross_collection_relation,
         )
         .await;
 
-        let visible_namespace = NamespaceID::new(visible_classes[0].namespace_id)
+        let visible_collection = CollectionID::new(visible_classes[0].collection_id)
             .unwrap()
             .instance(&context.pool)
             .await
             .unwrap();
-        visible_namespace
+        visible_collection
             .grant_one(&context.pool, group.id, Permissions::ReadObject)
             .await
             .unwrap();
-        visible_namespace
+        visible_collection
             .grant_one(&context.pool, group.id, Permissions::ReadObjectRelation)
             .await
             .unwrap();

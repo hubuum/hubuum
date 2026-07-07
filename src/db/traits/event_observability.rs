@@ -88,7 +88,7 @@ struct SubscriptionHealthRow {
     #[diesel(sql_type = Text)]
     subscription_name: String,
     #[diesel(sql_type = Integer)]
-    namespace_id: i32,
+    collection_id: i32,
     #[diesel(sql_type = Integer)]
     sink_id: i32,
     #[diesel(sql_type = Text)]
@@ -293,7 +293,7 @@ fn load_subscription_health(
         SELECT
             sub.id AS subscription_id,
             sub.name AS subscription_name,
-            sub.namespace_id AS namespace_id,
+            sub.collection_id AS collection_id,
             s.id AS sink_id,
             s.name AS sink_name,
             s.kind AS sink_kind,
@@ -331,7 +331,7 @@ fn load_subscription_health(
         FROM event_subscriptions sub
         INNER JOIN event_sinks s ON s.id = sub.sink_id
         LEFT JOIN event_deliveries d ON d.subscription_id = sub.id
-        GROUP BY sub.id, sub.name, sub.namespace_id, s.id, s.name, s.kind, sub.enabled, s.enabled
+        GROUP BY sub.id, sub.name, sub.collection_id, s.id, s.name, s.kind, sub.enabled, s.enabled
         ORDER BY sub.id
         "#,
     )
@@ -344,7 +344,7 @@ fn load_subscription_health(
             EventSubscriptionDeliveryHealth {
                 subscription_id: row.subscription_id,
                 subscription_name: row.subscription_name,
-                namespace_id: row.namespace_id,
+                collection_id: row.collection_id,
                 sink_id: row.sink_id,
                 sink_name: row.sink_name,
                 sink_kind: row.sink_kind,

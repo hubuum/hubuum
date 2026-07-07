@@ -1247,9 +1247,9 @@
             }
           },
           {
-            "name": "namespace_id",
+            "name": "collection_id",
             "in": "query",
-            "description": "Optional namespace id filter",
+            "description": "Optional collection id filter",
             "required": false,
             "schema": {
               "type": "integer",
@@ -1938,7 +1938,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Namespace-group permission mappings for class namespace The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Collection-group permission mappings for class collection The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
@@ -2988,9 +2988,9 @@
             }
           },
           {
-            "name": "namespace_id",
+            "name": "collection_id",
             "in": "query",
-            "description": "Optional namespace id filter",
+            "description": "Optional collection id filter",
             "required": false,
             "schema": {
               "type": "integer",
@@ -3291,6 +3291,1934 @@
           },
           "404": {
             "description": "Class, object, or version not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/collections": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Get Api V1 Collections",
+        "description": "Auto-generated documentation for GET /api/v1/collections. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1Collections",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Collections matching optional query filters The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Collection"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Post Api V1 Collections",
+        "description": "Auto-generated documentation for POST /api/v1/collections.",
+        "operationId": "postApiV1Collections",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewCollectionWithAssignee"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Collection created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Collection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/collections/{collection_id}": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Get Api V1 Collections By Collection Id",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}.",
+        "operationId": "getApiV1CollectionsByCollectionId",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Collection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Collection"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Delete Api V1 Collections By Collection Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/collections/{collection_id}.",
+        "operationId": "deleteApiV1CollectionsByCollectionId",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Collection deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Patch Api V1 Collections By Collection Id",
+        "description": "Auto-generated documentation for PATCH /api/v1/collections/{collection_id}.",
+        "operationId": "patchApiV1CollectionsByCollectionId",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCollection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Collection updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Collection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/collections/{collection_id}/event-subscriptions": {
+      "get": {
+        "tags": [
+          "event-subscriptions"
+        ],
+        "summary": "Get Api V1 Collections By Collection Id Event Subscriptions",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/event-subscriptions.",
+        "operationId": "getApiV1CollectionsByCollectionIdEventSubscriptions",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event subscriptions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventSubscription"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "event-subscriptions"
+        ],
+        "summary": "Post Api V1 Collections By Collection Id Event Subscriptions",
+        "description": "Auto-generated documentation for POST /api/v1/collections/{collection_id}/event-subscriptions.",
+        "operationId": "postApiV1CollectionsByCollectionIdEventSubscriptions",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewEventSubscription"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Event subscription created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventSubscription"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection or sink not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/collections/{collection_id}/event-subscriptions/{subscription_id}": {
+      "get": {
+        "tags": [
+          "event-subscriptions"
+        ],
+        "summary": "Get Api V1 Collections By Collection Id Event Subscriptions By Subscription Id",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/event-subscriptions/{subscription_id}.",
+        "operationId": "getApiV1CollectionsByCollectionIdEventSubscriptionsBySubscriptionId",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "subscription_id",
+            "in": "path",
+            "description": "Event subscription ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event subscription",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventSubscription"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event subscription not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "event-subscriptions"
+        ],
+        "summary": "Delete Api V1 Collections By Collection Id Event Subscriptions By Subscription Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/collections/{collection_id}/event-subscriptions/{subscription_id}.",
+        "operationId": "deleteApiV1CollectionsByCollectionIdEventSubscriptionsBySubscriptionId",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "subscription_id",
+            "in": "path",
+            "description": "Event subscription ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Event subscription deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event subscription not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "event-subscriptions"
+        ],
+        "summary": "Patch Api V1 Collections By Collection Id Event Subscriptions By Subscription Id",
+        "description": "Auto-generated documentation for PATCH /api/v1/collections/{collection_id}/event-subscriptions/{subscription_id}.",
+        "operationId": "patchApiV1CollectionsByCollectionIdEventSubscriptionsBySubscriptionId",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "subscription_id",
+            "in": "path",
+            "description": "Event subscription ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateEventSubscription"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Event subscription updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventSubscription"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event subscription not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/collections/{collection_id}/events": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Get Api V1 Collections By Collection Id Events",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/events.",
+        "operationId": "getApiV1CollectionsByCollectionIdEvents",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "description": "Optional action filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_kind",
+            "in": "query",
+            "description": "Optional actor kind filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_user_id",
+            "in": "query",
+            "description": "Optional actor principal id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "occurred_after",
+            "in": "query",
+            "description": "Optional lower occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "occurred_before",
+            "in": "query",
+            "description": "Optional upper occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Cursor page size",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Supported fields: id, occurred_at",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor token from X-Next-Cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Visible collection audit events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/collections/{collection_id}/has_permissions/{permission}": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "List all groups that have any permissions on a collection",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/has_permissions/{permission}. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1CollectionsByCollectionIdHasPermissionsByPermission",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "permission",
+            "in": "path",
+            "description": "Permission value",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Permissions"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Groups with permission The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Group"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/collections/{collection_id}/history": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Get Api V1 Collections By Collection Id History",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/history. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1CollectionsByCollectionIdHistory",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Collection history The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HistoryResponse_CollectionHistory"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/collections/{collection_id}/history/as-of": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Get Api V1 Collections By Collection Id History As Of",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/history/as-of.",
+        "operationId": "getApiV1CollectionsByCollectionIdHistoryAsOf",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "at",
+            "in": "query",
+            "description": "RFC3339 timestamp",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Collection version at timestamp",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryResponse_CollectionHistory"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection or version not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/collections/{collection_id}/permissions": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "List all groups who have permissions for a collection",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/permissions. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1CollectionsByCollectionIdPermissions",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Group permissions on collection The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GroupPermission"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/collections/{collection_id}/permissions/group/{group_id}": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "List all permissions for a given group on a collection",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/permissions/group/{group_id}.",
+        "operationId": "getApiV1CollectionsByCollectionIdPermissionsGroupByGroupId",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Permission record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Permission"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Replace all permissions for a group on a collection\nThis removes any existing permissions and applies the new set.",
+        "description": "Auto-generated documentation for PUT /api/v1/collections/{collection_id}/permissions/group/{group_id}.",
+        "operationId": "putApiV1CollectionsByCollectionIdPermissionsGroupByGroupId",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Permissions"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Permissions replaced"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Post a permission set to a group on a collection\nThis will create a new entry if the group had no permissions,\nor add to the existing entry if it did.\nThe body should be a JSON array of permissions:\n```json\n[\n  \"CreateObject\",\n  \"ReadCollection\"\n]\n```",
+        "description": "Auto-generated documentation for POST /api/v1/collections/{collection_id}/permissions/group/{group_id}.",
+        "operationId": "postApiV1CollectionsByCollectionIdPermissionsGroupByGroupId",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Permissions"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Permissions set"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Revoke a permission set from a group on a collection",
+        "description": "Auto-generated documentation for DELETE /api/v1/collections/{collection_id}/permissions/group/{group_id}.",
+        "operationId": "deleteApiV1CollectionsByCollectionIdPermissionsGroupByGroupId",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Permissions revoked"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/collections/{collection_id}/permissions/group/{group_id}/{permission}": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Check a specific permission for a group on a collection",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/permissions/group/{group_id}/{permission}.",
+        "operationId": "getApiV1CollectionsByCollectionIdPermissionsGroupByGroupIdByPermission",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "permission",
+            "in": "path",
+            "description": "Permission value",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Permissions"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Group has permission"
+          },
+          "404": {
+            "description": "Group missing permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Grant a specific permission to a group on a collection\nIf the group previously had no permissions, a new entry is created",
+        "description": "Auto-generated documentation for POST /api/v1/collections/{collection_id}/permissions/group/{group_id}/{permission}.",
+        "operationId": "postApiV1CollectionsByCollectionIdPermissionsGroupByGroupIdByPermission",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "permission",
+            "in": "path",
+            "description": "Permission value",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Permissions"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Permission granted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Revoke a specific permission from a group on a collection",
+        "description": "Auto-generated documentation for DELETE /api/v1/collections/{collection_id}/permissions/group/{group_id}/{permission}.",
+        "operationId": "deleteApiV1CollectionsByCollectionIdPermissionsGroupByGroupIdByPermission",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "permission",
+            "in": "path",
+            "description": "Permission value",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Permissions"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Permission revoked"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/collections/{collection_id}/permissions/principal/{principal_id}": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "List all permissions for a principal on a collection",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/permissions/principal/{principal_id}. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1CollectionsByCollectionIdPermissionsPrincipalByPrincipalId",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "principal_id",
+            "in": "path",
+            "description": "Principal ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Principal permissions via group memberships The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GroupPermission"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No permissions found",
             "content": {
               "application/json": {
                 "schema": {
@@ -4079,9 +6007,9 @@
             }
           },
           {
-            "name": "namespace_id",
+            "name": "collection_id",
             "in": "query",
-            "description": "Optional namespace id filter",
+            "description": "Optional collection id filter",
             "required": false,
             "schema": {
               "type": "integer",
@@ -4579,9 +6507,9 @@
             }
           },
           {
-            "name": "namespace_id",
+            "name": "collection_id",
             "in": "query",
-            "description": "Optional namespace id filter",
+            "description": "Optional collection id filter",
             "required": false,
             "schema": {
               "type": "integer",
@@ -5032,13 +6960,13 @@
         "operationId": "getApiV1IamMePermissions",
         "responses": {
           "200": {
-            "description": "Current principal effective permissions per namespace, grouped by granting group",
+            "description": "Current principal effective permissions per collection, grouped by granting group",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/PrincipalNamespacePermissions"
+                    "$ref": "#/components/schemas/PrincipalCollectionPermissions"
                   }
                 }
               }
@@ -5280,13 +7208,13 @@
         ],
         "responses": {
           "200": {
-            "description": "Effective permissions per namespace, grouped by granting group",
+            "description": "Effective permissions per collection, grouped by granting group",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/PrincipalNamespacePermissions"
+                    "$ref": "#/components/schemas/PrincipalCollectionPermissions"
                   }
                 }
               }
@@ -6489,9 +8417,9 @@
             }
           },
           {
-            "name": "namespace_id",
+            "name": "collection_id",
             "in": "query",
-            "description": "Optional namespace id filter",
+            "description": "Optional collection id filter",
             "required": false,
             "schema": {
               "type": "integer",
@@ -6779,1934 +8707,6 @@
           },
           "404": {
             "description": "Import task not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/namespaces": {
-      "get": {
-        "tags": [
-          "namespaces"
-        ],
-        "summary": "Get Api V1 Namespaces",
-        "description": "Auto-generated documentation for GET /api/v1/namespaces. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
-        "operationId": "getApiV1Namespaces",
-        "parameters": [
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "name": "sort",
-            "in": "query",
-            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Namespaces matching optional query filters The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
-            "headers": {
-              "X-Next-Cursor": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
-              },
-              "X-Total-Count": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Namespace"
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      },
-      "post": {
-        "tags": [
-          "namespaces"
-        ],
-        "summary": "Post Api V1 Namespaces",
-        "description": "Auto-generated documentation for POST /api/v1/namespaces.",
-        "operationId": "postApiV1Namespaces",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/NewNamespaceWithAssignee"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Namespace created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Namespace"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/namespaces/{namespace_id}": {
-      "get": {
-        "tags": [
-          "namespaces"
-        ],
-        "summary": "Get Api V1 Namespaces By Namespace Id",
-        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}.",
-        "operationId": "getApiV1NamespacesByNamespaceId",
-        "parameters": [
-          {
-            "name": "namespace_id",
-            "in": "path",
-            "description": "Namespace ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Namespace",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Namespace"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Namespace not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      },
-      "delete": {
-        "tags": [
-          "namespaces"
-        ],
-        "summary": "Delete Api V1 Namespaces By Namespace Id",
-        "description": "Auto-generated documentation for DELETE /api/v1/namespaces/{namespace_id}.",
-        "operationId": "deleteApiV1NamespacesByNamespaceId",
-        "parameters": [
-          {
-            "name": "namespace_id",
-            "in": "path",
-            "description": "Namespace ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Namespace deleted"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Namespace not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      },
-      "patch": {
-        "tags": [
-          "namespaces"
-        ],
-        "summary": "Patch Api V1 Namespaces By Namespace Id",
-        "description": "Auto-generated documentation for PATCH /api/v1/namespaces/{namespace_id}.",
-        "operationId": "patchApiV1NamespacesByNamespaceId",
-        "parameters": [
-          {
-            "name": "namespace_id",
-            "in": "path",
-            "description": "Namespace ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateNamespace"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "description": "Namespace updated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Namespace"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Namespace not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/namespaces/{namespace_id}/event-subscriptions": {
-      "get": {
-        "tags": [
-          "event-subscriptions"
-        ],
-        "summary": "Get Api V1 Namespaces By Namespace Id Event Subscriptions",
-        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/event-subscriptions.",
-        "operationId": "getApiV1NamespacesByNamespaceIdEventSubscriptions",
-        "parameters": [
-          {
-            "name": "namespace_id",
-            "in": "path",
-            "description": "Namespace ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Event subscriptions",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/EventSubscription"
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      },
-      "post": {
-        "tags": [
-          "event-subscriptions"
-        ],
-        "summary": "Post Api V1 Namespaces By Namespace Id Event Subscriptions",
-        "description": "Auto-generated documentation for POST /api/v1/namespaces/{namespace_id}/event-subscriptions.",
-        "operationId": "postApiV1NamespacesByNamespaceIdEventSubscriptions",
-        "parameters": [
-          {
-            "name": "namespace_id",
-            "in": "path",
-            "description": "Namespace ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/NewEventSubscription"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Event subscription created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EventSubscription"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Namespace or sink not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/namespaces/{namespace_id}/event-subscriptions/{subscription_id}": {
-      "get": {
-        "tags": [
-          "event-subscriptions"
-        ],
-        "summary": "Get Api V1 Namespaces By Namespace Id Event Subscriptions By Subscription Id",
-        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/event-subscriptions/{subscription_id}.",
-        "operationId": "getApiV1NamespacesByNamespaceIdEventSubscriptionsBySubscriptionId",
-        "parameters": [
-          {
-            "name": "namespace_id",
-            "in": "path",
-            "description": "Namespace ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "subscription_id",
-            "in": "path",
-            "description": "Event subscription ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Event subscription",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EventSubscription"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Event subscription not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      },
-      "delete": {
-        "tags": [
-          "event-subscriptions"
-        ],
-        "summary": "Delete Api V1 Namespaces By Namespace Id Event Subscriptions By Subscription Id",
-        "description": "Auto-generated documentation for DELETE /api/v1/namespaces/{namespace_id}/event-subscriptions/{subscription_id}.",
-        "operationId": "deleteApiV1NamespacesByNamespaceIdEventSubscriptionsBySubscriptionId",
-        "parameters": [
-          {
-            "name": "namespace_id",
-            "in": "path",
-            "description": "Namespace ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "subscription_id",
-            "in": "path",
-            "description": "Event subscription ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Event subscription deleted"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Event subscription not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      },
-      "patch": {
-        "tags": [
-          "event-subscriptions"
-        ],
-        "summary": "Patch Api V1 Namespaces By Namespace Id Event Subscriptions By Subscription Id",
-        "description": "Auto-generated documentation for PATCH /api/v1/namespaces/{namespace_id}/event-subscriptions/{subscription_id}.",
-        "operationId": "patchApiV1NamespacesByNamespaceIdEventSubscriptionsBySubscriptionId",
-        "parameters": [
-          {
-            "name": "namespace_id",
-            "in": "path",
-            "description": "Namespace ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "subscription_id",
-            "in": "path",
-            "description": "Event subscription ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateEventSubscription"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Event subscription updated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EventSubscription"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Event subscription not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/namespaces/{namespace_id}/events": {
-      "get": {
-        "tags": [
-          "events"
-        ],
-        "summary": "Get Api V1 Namespaces By Namespace Id Events",
-        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/events.",
-        "operationId": "getApiV1NamespacesByNamespaceIdEvents",
-        "parameters": [
-          {
-            "name": "namespace_id",
-            "in": "path",
-            "description": "Namespace id",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "action",
-            "in": "query",
-            "description": "Optional action filter",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "actor_kind",
-            "in": "query",
-            "description": "Optional actor kind filter",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "actor_user_id",
-            "in": "query",
-            "description": "Optional actor principal id filter",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "occurred_after",
-            "in": "query",
-            "description": "Optional lower occurred_at bound, RFC3339 or YYYY-MM-DD",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "occurred_before",
-            "in": "query",
-            "description": "Optional upper occurred_at bound, RFC3339 or YYYY-MM-DD",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Cursor page size",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0
-            }
-          },
-          {
-            "name": "sort",
-            "in": "query",
-            "description": "Comma-separated sort fields. Supported fields: id, occurred_at",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "Cursor token from X-Next-Cursor",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Visible namespace audit events",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/EventResponse"
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/namespaces/{namespace_id}/has_permissions/{permission}": {
-      "get": {
-        "tags": [
-          "namespaces"
-        ],
-        "summary": "List all groups that have any permissions on a namespace",
-        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/has_permissions/{permission}. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
-        "operationId": "getApiV1NamespacesByNamespaceIdHasPermissionsByPermission",
-        "parameters": [
-          {
-            "name": "namespace_id",
-            "in": "path",
-            "description": "Namespace ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "permission",
-            "in": "path",
-            "description": "Permission value",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/Permissions"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "name": "sort",
-            "in": "query",
-            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Groups with permission The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
-            "headers": {
-              "X-Next-Cursor": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
-              },
-              "X-Total-Count": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Group"
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Namespace not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/namespaces/{namespace_id}/history": {
-      "get": {
-        "tags": [
-          "namespaces"
-        ],
-        "summary": "Get Api V1 Namespaces By Namespace Id History",
-        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/history. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
-        "operationId": "getApiV1NamespacesByNamespaceIdHistory",
-        "parameters": [
-          {
-            "name": "namespace_id",
-            "in": "path",
-            "description": "Namespace ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "name": "sort",
-            "in": "query",
-            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Namespace history The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
-            "headers": {
-              "X-Next-Cursor": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
-              },
-              "X-Total-Count": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/HistoryResponse_NamespaceHistory"
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Namespace not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/namespaces/{namespace_id}/history/as-of": {
-      "get": {
-        "tags": [
-          "namespaces"
-        ],
-        "summary": "Get Api V1 Namespaces By Namespace Id History As Of",
-        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/history/as-of.",
-        "operationId": "getApiV1NamespacesByNamespaceIdHistoryAsOf",
-        "parameters": [
-          {
-            "name": "namespace_id",
-            "in": "path",
-            "description": "Namespace ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "at",
-            "in": "query",
-            "description": "RFC3339 timestamp",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Namespace version at timestamp",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HistoryResponse_NamespaceHistory"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Namespace or version not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/namespaces/{namespace_id}/permissions": {
-      "get": {
-        "tags": [
-          "namespaces"
-        ],
-        "summary": "List all groups who have permissions for a namespace",
-        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/permissions. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
-        "operationId": "getApiV1NamespacesByNamespaceIdPermissions",
-        "parameters": [
-          {
-            "name": "namespace_id",
-            "in": "path",
-            "description": "Namespace ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "name": "sort",
-            "in": "query",
-            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Group permissions on namespace The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
-            "headers": {
-              "X-Next-Cursor": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
-              },
-              "X-Total-Count": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/GroupPermission"
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Namespace not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}": {
-      "get": {
-        "tags": [
-          "namespaces"
-        ],
-        "summary": "List all permissions for a given group on a namespace",
-        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/permissions/group/{group_id}.",
-        "operationId": "getApiV1NamespacesByNamespaceIdPermissionsGroupByGroupId",
-        "parameters": [
-          {
-            "name": "namespace_id",
-            "in": "path",
-            "description": "Namespace ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "group_id",
-            "in": "path",
-            "description": "Group ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Permission record",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Permission"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Namespace or group not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      },
-      "put": {
-        "tags": [
-          "namespaces"
-        ],
-        "summary": "Replace all permissions for a group on a namespace\nThis removes any existing permissions and applies the new set.",
-        "description": "Auto-generated documentation for PUT /api/v1/namespaces/{namespace_id}/permissions/group/{group_id}.",
-        "operationId": "putApiV1NamespacesByNamespaceIdPermissionsGroupByGroupId",
-        "parameters": [
-          {
-            "name": "namespace_id",
-            "in": "path",
-            "description": "Namespace ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "group_id",
-            "in": "path",
-            "description": "Group ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/Permissions"
-                }
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Permissions replaced"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Namespace or group not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      },
-      "post": {
-        "tags": [
-          "namespaces"
-        ],
-        "summary": "Post a permission set to a group on a namespace\nThis will create a new entry if the group had no permissions,\nor add to the existing entry if it did.\nThe body should be a JSON array of permissions:\n```json\n[\n  \"CreateObject\",\n  \"ReadCollection\"\n]\n```",
-        "description": "Auto-generated documentation for POST /api/v1/namespaces/{namespace_id}/permissions/group/{group_id}.",
-        "operationId": "postApiV1NamespacesByNamespaceIdPermissionsGroupByGroupId",
-        "parameters": [
-          {
-            "name": "namespace_id",
-            "in": "path",
-            "description": "Namespace ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "group_id",
-            "in": "path",
-            "description": "Group ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/Permissions"
-                }
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Permissions set"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Namespace or group not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      },
-      "delete": {
-        "tags": [
-          "namespaces"
-        ],
-        "summary": "Revoke a permission set from a group on a namespace",
-        "description": "Auto-generated documentation for DELETE /api/v1/namespaces/{namespace_id}/permissions/group/{group_id}.",
-        "operationId": "deleteApiV1NamespacesByNamespaceIdPermissionsGroupByGroupId",
-        "parameters": [
-          {
-            "name": "namespace_id",
-            "in": "path",
-            "description": "Namespace ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "group_id",
-            "in": "path",
-            "description": "Group ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Permissions revoked"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Namespace or group not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/namespaces/{namespace_id}/permissions/group/{group_id}/{permission}": {
-      "get": {
-        "tags": [
-          "namespaces"
-        ],
-        "summary": "Check a specific permission for a group on a namespace",
-        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/permissions/group/{group_id}/{permission}.",
-        "operationId": "getApiV1NamespacesByNamespaceIdPermissionsGroupByGroupIdByPermission",
-        "parameters": [
-          {
-            "name": "namespace_id",
-            "in": "path",
-            "description": "Namespace ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "group_id",
-            "in": "path",
-            "description": "Group ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "permission",
-            "in": "path",
-            "description": "Permission value",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/Permissions"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Group has permission"
-          },
-          "404": {
-            "description": "Group missing permission",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      },
-      "post": {
-        "tags": [
-          "namespaces"
-        ],
-        "summary": "Grant a specific permission to a group on a namespace\nIf the group previously had no permissions, a new entry is created",
-        "description": "Auto-generated documentation for POST /api/v1/namespaces/{namespace_id}/permissions/group/{group_id}/{permission}.",
-        "operationId": "postApiV1NamespacesByNamespaceIdPermissionsGroupByGroupIdByPermission",
-        "parameters": [
-          {
-            "name": "namespace_id",
-            "in": "path",
-            "description": "Namespace ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "group_id",
-            "in": "path",
-            "description": "Group ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "permission",
-            "in": "path",
-            "description": "Permission value",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/Permissions"
-            }
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": "Permission granted"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Namespace or group not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      },
-      "delete": {
-        "tags": [
-          "namespaces"
-        ],
-        "summary": "Revoke a specific permission from a group on a namespace",
-        "description": "Auto-generated documentation for DELETE /api/v1/namespaces/{namespace_id}/permissions/group/{group_id}/{permission}.",
-        "operationId": "deleteApiV1NamespacesByNamespaceIdPermissionsGroupByGroupIdByPermission",
-        "parameters": [
-          {
-            "name": "namespace_id",
-            "in": "path",
-            "description": "Namespace ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "group_id",
-            "in": "path",
-            "description": "Group ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "permission",
-            "in": "path",
-            "description": "Permission value",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/Permissions"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Permission revoked"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Namespace or group not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/namespaces/{namespace_id}/permissions/principal/{principal_id}": {
-      "get": {
-        "tags": [
-          "namespaces"
-        ],
-        "summary": "List all permissions for a principal on a namespace",
-        "description": "Auto-generated documentation for GET /api/v1/namespaces/{namespace_id}/permissions/principal/{principal_id}. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
-        "operationId": "getApiV1NamespacesByNamespaceIdPermissionsPrincipalByPrincipalId",
-        "parameters": [
-          {
-            "name": "namespace_id",
-            "in": "path",
-            "description": "Namespace ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "principal_id",
-            "in": "path",
-            "description": "Principal ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "name": "sort",
-            "in": "query",
-            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Principal permissions via group memberships The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
-            "headers": {
-              "X-Next-Cursor": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
-              },
-              "X-Total-Count": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/GroupPermission"
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "No permissions found",
             "content": {
               "application/json": {
                 "schema": {
@@ -9857,9 +9857,9 @@
             }
           },
           {
-            "name": "namespace_id",
+            "name": "collection_id",
             "in": "query",
-            "description": "Optional namespace id filter",
+            "description": "Optional collection id filter",
             "required": false,
             "schema": {
               "type": "integer",
@@ -10295,7 +10295,7 @@
           {
             "name": "kinds",
             "in": "query",
-            "description": "Comma-separated kinds: namespace,class,object",
+            "description": "Comma-separated kinds: collection,class,object",
             "required": false,
             "schema": {
               "type": "string"
@@ -10312,9 +10312,9 @@
             }
           },
           {
-            "name": "cursor_namespaces",
+            "name": "cursor_collections",
             "in": "query",
-            "description": "Opaque cursor for namespace results",
+            "description": "Opaque cursor for collection results",
             "required": false,
             "schema": {
               "type": "string"
@@ -10417,7 +10417,7 @@
           {
             "name": "kinds",
             "in": "query",
-            "description": "Comma-separated kinds: namespace,class,object",
+            "description": "Comma-separated kinds: collection,class,object",
             "required": false,
             "schema": {
               "type": "string"
@@ -10434,9 +10434,9 @@
             }
           },
           {
-            "name": "cursor_namespaces",
+            "name": "cursor_collections",
             "in": "query",
-            "description": "Opaque cursor for namespace results",
+            "description": "Opaque cursor for collection results",
             "required": false,
             "schema": {
               "type": "string"
@@ -11216,9 +11216,9 @@
             }
           },
           {
-            "name": "namespace_id",
+            "name": "collection_id",
             "in": "query",
-            "description": "Optional namespace id filter",
+            "description": "Optional collection id filter",
             "required": false,
             "schema": {
               "type": "integer",
@@ -11706,24 +11706,24 @@
           "name"
         ],
         "properties": {
-          "name": {
-            "type": "string"
-          },
-          "namespace_key": {
+          "collection_key": {
             "oneOf": [
               {
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/NamespaceKey"
+                "$ref": "#/components/schemas/CollectionKey"
               }
             ]
           },
-          "namespace_ref": {
+          "collection_ref": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "name": {
+            "type": "string"
           }
         }
       },
@@ -11739,12 +11739,116 @@
           }
         }
       },
+      "Collection": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CollectionHistory": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "created_at",
+          "updated_at",
+          "op",
+          "valid_from",
+          "history_id"
+        ],
+        "properties": {
+          "actor_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "history_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          },
+          "op": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "valid_from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "valid_to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "CollectionID": {
+        "type": "integer",
+        "format": "int32",
+        "description": "Identifier wrapper for a [`Collection`]."
+      },
+      "CollectionKey": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "CountsResponse": {
         "type": "object",
         "required": [
           "total_objects",
           "total_classes",
-          "total_namespaces",
+          "total_collections",
           "objects_per_class"
         ],
         "properties": {
@@ -11758,7 +11862,7 @@
             "type": "integer",
             "format": "int64"
           },
-          "total_namespaces": {
+          "total_collections": {
             "type": "integer",
             "format": "int64"
           },
@@ -11775,7 +11879,7 @@
             }
           ],
           "total_classes": 7,
-          "total_namespaces": 3,
+          "total_collections": 3,
           "total_objects": 42
         }
       },
@@ -12117,6 +12221,13 @@
           },
           "after": {},
           "before": {},
+          "collection_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
           "correlation_id": {
             "type": [
               "string",
@@ -12148,13 +12259,6 @@
             "format": "int64"
           },
           "metadata": {},
-          "namespace_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          },
           "occurred_at": {
             "type": "string",
             "format": "date-time"
@@ -12280,7 +12384,7 @@
         "type": "object",
         "required": [
           "id",
-          "namespace_id",
+          "collection_id",
           "sink_id",
           "name",
           "description",
@@ -12297,6 +12401,10 @@
             "items": {
               "type": "string"
             }
+          },
+          "collection_id": {
+            "type": "integer",
+            "format": "int32"
           },
           "created_at": {
             "type": "string",
@@ -12324,10 +12432,6 @@
           "name": {
             "type": "string"
           },
-          "namespace_id": {
-            "type": "integer",
-            "format": "int32"
-          },
           "routing": {},
           "sink_id": {
             "type": "integer",
@@ -12344,7 +12448,7 @@
         "required": [
           "subscription_id",
           "subscription_name",
-          "namespace_id",
+          "collection_id",
           "sink_id",
           "sink_name",
           "sink_kind",
@@ -12354,12 +12458,12 @@
           "stale_claims"
         ],
         "properties": {
-          "counts": {
-            "$ref": "#/components/schemas/EventDeliveryStatusCounts"
-          },
-          "namespace_id": {
+          "collection_id": {
             "type": "integer",
             "format": "int32"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/EventDeliveryStatusCounts"
           },
           "oldest_due_age_seconds": {
             "type": [
@@ -12414,6 +12518,13 @@
               "format": "int32"
             }
           },
+          "collection_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
           "correlation_ids": {
             "type": "array",
             "items": {
@@ -12433,14 +12544,7 @@
               "type": "string"
             }
           },
-          "namespace_ids": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          "related_namespace_ids": {
+          "related_collection_ids": {
             "type": "array",
             "items": {
               "type": "integer",
@@ -12546,7 +12650,7 @@
       },
       "GroupGrant": {
         "type": "object",
-        "description": "One group's contribution to a principal's effective permissions on a namespace.",
+        "description": "One group's contribution to a principal's effective permissions on a collection.",
         "required": [
           "group_id",
           "groupname",
@@ -12594,15 +12698,13 @@
           }
         }
       },
-      "HistoryResponse_HubuumClassHistory": {
+      "HistoryResponse_CollectionHistory": {
         "allOf": [
           {
             "type": "object",
             "required": [
               "id",
               "name",
-              "namespace_id",
-              "validate_schema",
               "description",
               "created_at",
               "updated_at",
@@ -12633,13 +12735,89 @@
                 "type": "integer",
                 "format": "int32"
               },
-              "json_schema": {},
               "name": {
                 "type": "string"
               },
-              "namespace_id": {
+              "op": {
+                "type": "string"
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "valid_from": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "valid_to": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "actor_username": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A serialized history row plus the resolved username of its actor (if any)."
+      },
+      "HistoryResponse_HubuumClassHistory": {
+        "allOf": [
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "collection_id",
+              "validate_schema",
+              "description",
+              "created_at",
+              "updated_at",
+              "op",
+              "valid_from",
+              "history_id"
+            ],
+            "properties": {
+              "actor_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32"
+              },
+              "collection_id": {
                 "type": "integer",
                 "format": "int32"
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "description": {
+                "type": "string"
+              },
+              "history_id": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "id": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "json_schema": {},
+              "name": {
+                "type": "string"
               },
               "op": {
                 "type": "string"
@@ -12685,7 +12863,7 @@
             "required": [
               "id",
               "name",
-              "namespace_id",
+              "collection_id",
               "hubuum_class_id",
               "data",
               "description",
@@ -12703,6 +12881,10 @@
                 ],
                 "format": "int32"
               },
+              "collection_id": {
+                "type": "integer",
+                "format": "int32"
+              },
               "created_at": {
                 "type": "string",
                 "format": "date-time"
@@ -12718,84 +12900,6 @@
               "hubuum_class_id": {
                 "type": "integer",
                 "format": "int32"
-              },
-              "id": {
-                "type": "integer",
-                "format": "int32"
-              },
-              "name": {
-                "type": "string"
-              },
-              "namespace_id": {
-                "type": "integer",
-                "format": "int32"
-              },
-              "op": {
-                "type": "string"
-              },
-              "updated_at": {
-                "type": "string",
-                "format": "date-time"
-              },
-              "valid_from": {
-                "type": "string",
-                "format": "date-time"
-              },
-              "valid_to": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "format": "date-time"
-              }
-            }
-          },
-          {
-            "type": "object",
-            "properties": {
-              "actor_username": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            }
-          }
-        ],
-        "description": "A serialized history row plus the resolved username of its actor (if any)."
-      },
-      "HistoryResponse_NamespaceHistory": {
-        "allOf": [
-          {
-            "type": "object",
-            "required": [
-              "id",
-              "name",
-              "description",
-              "created_at",
-              "updated_at",
-              "op",
-              "valid_from",
-              "history_id"
-            ],
-            "properties": {
-              "actor_id": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "format": "int32"
-              },
-              "created_at": {
-                "type": "string",
-                "format": "date-time"
-              },
-              "description": {
-                "type": "string"
-              },
-              "history_id": {
-                "type": "integer",
-                "format": "int64"
               },
               "id": {
                 "type": "integer",
@@ -12844,7 +12948,7 @@
             "type": "object",
             "required": [
               "id",
-              "namespace_id",
+              "collection_id",
               "name",
               "description",
               "method",
@@ -12883,6 +12987,10 @@
                 ],
                 "format": "int32"
               },
+              "collection_id": {
+                "type": "integer",
+                "format": "int32"
+              },
               "created_at": {
                 "type": "string",
                 "format": "date-time"
@@ -12907,10 +13015,6 @@
               },
               "name": {
                 "type": "string"
-              },
-              "namespace_id": {
-                "type": "integer",
-                "format": "int32"
               },
               "op": {
                 "type": "string"
@@ -12959,7 +13063,7 @@
             "type": "object",
             "required": [
               "id",
-              "namespace_id",
+              "collection_id",
               "name",
               "description",
               "content_type",
@@ -12984,6 +13088,10 @@
                   "integer",
                   "null"
                 ],
+                "format": "int32"
+              },
+              "collection_id": {
+                "type": "integer",
                 "format": "int32"
               },
               "content_type": {
@@ -13023,10 +13131,6 @@
               },
               "name": {
                 "type": "string"
-              },
-              "namespace_id": {
-                "type": "integer",
-                "format": "int32"
               },
               "op": {
                 "type": "string"
@@ -13077,13 +13181,17 @@
         "required": [
           "id",
           "name",
-          "namespace_id",
+          "collection_id",
           "validate_schema",
           "description",
           "created_at",
           "updated_at"
         ],
         "properties": {
+          "collection_id": {
+            "type": "integer",
+            "format": "int32"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -13098,10 +13206,6 @@
           "json_schema": {},
           "name": {
             "type": "string"
-          },
-          "namespace_id": {
-            "type": "integer",
-            "format": "int32"
           },
           "updated_at": {
             "type": "string",
@@ -13117,13 +13221,16 @@
         "required": [
           "id",
           "name",
-          "namespace",
+          "collection",
           "validate_schema",
           "description",
           "created_at",
           "updated_at"
         ],
         "properties": {
+          "collection": {
+            "$ref": "#/components/schemas/Collection"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -13139,9 +13246,6 @@
           "name": {
             "type": "string"
           },
-          "namespace": {
-            "$ref": "#/components/schemas/Namespace"
-          },
           "updated_at": {
             "type": "string",
             "format": "date-time"
@@ -13156,7 +13260,7 @@
         "required": [
           "id",
           "name",
-          "namespace_id",
+          "collection_id",
           "validate_schema",
           "description",
           "created_at",
@@ -13171,6 +13275,10 @@
               "integer",
               "null"
             ],
+            "format": "int32"
+          },
+          "collection_id": {
+            "type": "integer",
             "format": "int32"
           },
           "created_at": {
@@ -13191,10 +13299,6 @@
           "json_schema": {},
           "name": {
             "type": "string"
-          },
-          "namespace_id": {
-            "type": "integer",
-            "format": "int32"
           },
           "op": {
             "type": "string"
@@ -13278,7 +13382,7 @@
         "required": [
           "id",
           "name",
-          "namespace_id",
+          "collection_id",
           "validate_schema",
           "description",
           "created_at",
@@ -13286,6 +13390,10 @@
           "path"
         ],
         "properties": {
+          "collection_id": {
+            "type": "integer",
+            "format": "int32"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -13300,10 +13408,6 @@
           "json_schema": {},
           "name": {
             "type": "string"
-          },
-          "namespace_id": {
-            "type": "integer",
-            "format": "int32"
           },
           "path": {
             "type": "array",
@@ -13326,7 +13430,7 @@
         "required": [
           "id",
           "name",
-          "namespace_id",
+          "collection_id",
           "hubuum_class_id",
           "data",
           "description",
@@ -13334,6 +13438,10 @@
           "updated_at"
         ],
         "properties": {
+          "collection_id": {
+            "type": "integer",
+            "format": "int32"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -13353,10 +13461,6 @@
           "name": {
             "type": "string"
           },
-          "namespace_id": {
-            "type": "integer",
-            "format": "int32"
-          },
           "updated_at": {
             "type": "string",
             "format": "date-time"
@@ -13368,7 +13472,7 @@
         "required": [
           "id",
           "name",
-          "namespace_id",
+          "collection_id",
           "hubuum_class_id",
           "data",
           "description",
@@ -13384,6 +13488,10 @@
               "integer",
               "null"
             ],
+            "format": "int32"
+          },
+          "collection_id": {
+            "type": "integer",
             "format": "int32"
           },
           "created_at": {
@@ -13408,10 +13516,6 @@
           },
           "name": {
             "type": "string"
-          },
-          "namespace_id": {
-            "type": "integer",
-            "format": "int32"
           },
           "op": {
             "type": "string"
@@ -13485,7 +13589,7 @@
         "required": [
           "id",
           "name",
-          "namespace_id",
+          "collection_id",
           "hubuum_class_id",
           "data",
           "description",
@@ -13494,6 +13598,10 @@
           "path"
         ],
         "properties": {
+          "collection_id": {
+            "type": "integer",
+            "format": "int32"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -13512,10 +13620,6 @@
           },
           "name": {
             "type": "string"
-          },
-          "namespace_id": {
-            "type": "integer",
-            "format": "int32"
           },
           "path": {
             "type": "array",
@@ -13544,28 +13648,28 @@
           "description"
         ],
         "properties": {
+          "collection_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CollectionKey"
+              }
+            ]
+          },
+          "collection_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "description": {
             "type": "string"
           },
           "json_schema": {},
           "name": {
             "type": "string"
-          },
-          "namespace_key": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/NamespaceKey"
-              }
-            ]
-          },
-          "namespace_ref": {
-            "type": [
-              "string",
-              "null"
-            ]
           },
           "ref": {
             "type": [
@@ -13636,6 +13740,73 @@
           }
         }
       },
+      "ImportCollectionInput": {
+        "type": "object",
+        "required": [
+          "name",
+          "description"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ImportCollectionPermissionInput": {
+        "type": "object",
+        "required": [
+          "group_key",
+          "permissions"
+        ],
+        "properties": {
+          "collection_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CollectionKey"
+              }
+            ]
+          },
+          "collection_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "group_key": {
+            "$ref": "#/components/schemas/GroupKey"
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Permissions"
+            }
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "replace_existing": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      },
       "ImportCollisionPolicy": {
         "type": "string",
         "enum": [
@@ -13658,16 +13829,16 @@
               "$ref": "#/components/schemas/ImportClassInput"
             }
           },
-          "namespace_permissions": {
+          "collection_permissions": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ImportNamespacePermissionInput"
+              "$ref": "#/components/schemas/ImportCollectionPermissionInput"
             }
           },
-          "namespaces": {
+          "collections": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ImportNamespaceInput"
+              "$ref": "#/components/schemas/ImportCollectionInput"
             }
           },
           "object_relations": {
@@ -13715,73 +13886,6 @@
               {
                 "$ref": "#/components/schemas/ImportPermissionPolicy"
               }
-            ]
-          }
-        }
-      },
-      "ImportNamespaceInput": {
-        "type": "object",
-        "required": [
-          "name",
-          "description"
-        ],
-        "properties": {
-          "description": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "ref": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        }
-      },
-      "ImportNamespacePermissionInput": {
-        "type": "object",
-        "required": [
-          "group_key",
-          "permissions"
-        ],
-        "properties": {
-          "group_key": {
-            "$ref": "#/components/schemas/GroupKey"
-          },
-          "namespace_key": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/NamespaceKey"
-              }
-            ]
-          },
-          "namespace_ref": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "permissions": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Permissions"
-            }
-          },
-          "ref": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "replace_existing": {
-            "type": [
-              "boolean",
-              "null"
             ]
           }
         }
@@ -14189,108 +14293,30 @@
           "message": "Token is valid."
         }
       },
-      "Namespace": {
+      "NewCollectionWithAssignee": {
         "type": "object",
+        "description": "A new collection, with an assignee. Used for creating new collection entries\ninto the database and assign all permissions to the group given as group_id.\n\nThis wraps the NewCollection struct and uses the group_id to grant all permissions\nto the group in a single transaction.",
         "required": [
-          "id",
           "name",
           "description",
-          "created_at",
-          "updated_at"
+          "group_id"
         ],
         "properties": {
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
           "description": {
             "type": "string"
           },
-          "id": {
+          "group_id": {
             "type": "integer",
             "format": "int32"
           },
           "name": {
             "type": "string"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
           }
-        }
-      },
-      "NamespaceHistory": {
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "description",
-          "created_at",
-          "updated_at",
-          "op",
-          "valid_from",
-          "history_id"
-        ],
-        "properties": {
-          "actor_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "description": {
-            "type": "string"
-          },
-          "history_id": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "id": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "name": {
-            "type": "string"
-          },
-          "op": {
-            "type": "string"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "valid_from": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "valid_to": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          }
-        }
-      },
-      "NamespaceID": {
-        "type": "integer",
-        "format": "int32",
-        "description": "Identifier wrapper for a [`Namespace`]."
-      },
-      "NamespaceKey": {
-        "type": "object",
-        "required": [
-          "name"
-        ],
-        "properties": {
-          "name": {
-            "type": "string"
-          }
+        },
+        "example": {
+          "description": "Shared assets and metadata",
+          "group_id": 1,
+          "name": "global-assets"
         }
       },
       "NewEventSink": {
@@ -14382,20 +14408,20 @@
         "type": "object",
         "required": [
           "name",
-          "namespace_id",
+          "collection_id",
           "description"
         ],
         "properties": {
+          "collection_id": {
+            "type": "integer",
+            "format": "int32"
+          },
           "description": {
             "type": "string"
           },
           "json_schema": {},
           "name": {
             "type": "string"
-          },
-          "namespace_id": {
-            "type": "integer",
-            "format": "int32"
           },
           "validate_schema": {
             "type": [
@@ -14405,10 +14431,10 @@
           }
         },
         "example": {
+          "collection_id": 1,
           "description": "Server inventory class",
           "json_schema": null,
           "name": "server",
-          "namespace_id": 1,
           "validate_schema": false
         }
       },
@@ -14481,12 +14507,16 @@
         "type": "object",
         "required": [
           "name",
-          "namespace_id",
+          "collection_id",
           "hubuum_class_id",
           "data",
           "description"
         ],
         "properties": {
+          "collection_id": {
+            "type": "integer",
+            "format": "int32"
+          },
           "data": {},
           "description": {
             "type": "string"
@@ -14497,21 +14527,17 @@
           },
           "name": {
             "type": "string"
-          },
-          "namespace_id": {
-            "type": "integer",
-            "format": "int32"
           }
         },
         "example": {
+          "collection_id": 1,
           "data": {
             "hostname": "srv-01",
             "ip": "10.0.0.10"
           },
           "description": "Primary application server",
           "hubuum_class_id": 2,
-          "name": "srv-01",
-          "namespace_id": 1
+          "name": "srv-01"
         }
       },
       "NewHubuumObjectRelation": {
@@ -14541,36 +14567,10 @@
           "to_hubuum_object_id": 20
         }
       },
-      "NewNamespaceWithAssignee": {
-        "type": "object",
-        "description": "A new namespace, with an assignee. Used for creating new namespace entries\ninto the database and assign all permissions to the group given as group_id.\n\nThis wraps the NewNamespace struct and uses the group_id to grant all permissions\nto the group in a single transaction.",
-        "required": [
-          "name",
-          "description",
-          "group_id"
-        ],
-        "properties": {
-          "description": {
-            "type": "string"
-          },
-          "group_id": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "name": {
-            "type": "string"
-          }
-        },
-        "example": {
-          "description": "Shared assets and metadata",
-          "group_id": 1,
-          "name": "global-assets"
-        }
-      },
       "NewRemoteTarget": {
         "type": "object",
         "required": [
-          "namespace_id",
+          "collection_id",
           "name",
           "description",
           "method",
@@ -14603,6 +14603,9 @@
               }
             ]
           },
+          "collection_id": {
+            "$ref": "#/components/schemas/CollectionID"
+          },
           "description": {
             "type": "string"
           },
@@ -14616,9 +14619,6 @@
           "name": {
             "type": "string"
           },
-          "namespace_id": {
-            "$ref": "#/components/schemas/NamespaceID"
-          },
           "timeout_ms": {
             "type": "integer",
             "format": "int32"
@@ -14631,7 +14631,7 @@
       "NewReportTemplate": {
         "type": "object",
         "required": [
-          "namespace_id",
+          "collection_id",
           "name",
           "description",
           "content_type",
@@ -14644,6 +14644,10 @@
               "integer",
               "null"
             ],
+            "format": "int32"
+          },
+          "collection_id": {
+            "type": "integer",
             "format": "int32"
           },
           "content_type": {
@@ -14694,10 +14698,6 @@
           "name": {
             "type": "string"
           },
-          "namespace_id": {
-            "type": "integer",
-            "format": "int32"
-          },
           "relation_context": {
             "oneOf": [
               {
@@ -14724,6 +14724,7 @@
         },
         "example": {
           "class_id": 42,
+          "collection_id": 7,
           "content_type": "text/plain",
           "default_limits": {
             "max_items": 100,
@@ -14735,7 +14736,6 @@
           "include": null,
           "kind": "report",
           "name": "owner-report",
-          "namespace_id": 7,
           "relation_context": null,
           "scope_kind": "objects_in_class",
           "template": "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}"
@@ -14885,12 +14885,12 @@
         "type": "object",
         "required": [
           "id",
-          "namespace_id",
+          "collection_id",
           "group_id",
-          "has_read_namespace",
-          "has_update_namespace",
-          "has_delete_namespace",
-          "has_delegate_namespace",
+          "has_read_collection",
+          "has_update_collection",
+          "has_delete_collection",
+          "has_delegate_collection",
           "has_create_class",
           "has_read_class",
           "has_update_class",
@@ -14922,6 +14922,10 @@
           "has_manage_event_subscription"
         ],
         "properties": {
+          "collection_id": {
+            "type": "integer",
+            "format": "int32"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -14948,7 +14952,7 @@
           "has_create_template": {
             "type": "boolean"
           },
-          "has_delegate_namespace": {
+          "has_delegate_collection": {
             "type": "boolean"
           },
           "has_delete_class": {
@@ -14957,7 +14961,7 @@
           "has_delete_class_relation": {
             "type": "boolean"
           },
-          "has_delete_namespace": {
+          "has_delete_collection": {
             "type": "boolean"
           },
           "has_delete_object": {
@@ -14987,7 +14991,7 @@
           "has_read_class_relation": {
             "type": "boolean"
           },
-          "has_read_namespace": {
+          "has_read_collection": {
             "type": "boolean"
           },
           "has_read_object": {
@@ -15008,7 +15012,7 @@
           "has_update_class_relation": {
             "type": "boolean"
           },
-          "has_update_namespace": {
+          "has_update_collection": {
             "type": "boolean"
           },
           "has_update_object": {
@@ -15024,10 +15028,6 @@
             "type": "boolean"
           },
           "id": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "namespace_id": {
             "type": "integer",
             "format": "int32"
           },
@@ -15073,6 +15073,30 @@
           "ManageEventSubscription"
         ]
       },
+      "PrincipalCollectionPermissions": {
+        "type": "object",
+        "description": "A principal's effective permissions on a single collection, broken down by the\ngroup that grants them.",
+        "required": [
+          "collection_id",
+          "collection_name",
+          "grants"
+        ],
+        "properties": {
+          "collection_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "collection_name": {
+            "type": "string"
+          },
+          "grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupGrant"
+            }
+          }
+        }
+      },
       "PrincipalMemberResponse": {
         "type": "object",
         "description": "Public representation of a group member (a principal of either kind).",
@@ -15091,30 +15115,6 @@
           "principal_id": {
             "type": "integer",
             "format": "int32"
-          }
-        }
-      },
-      "PrincipalNamespacePermissions": {
-        "type": "object",
-        "description": "A principal's effective permissions on a single namespace, broken down by the\ngroup that grants them.",
-        "required": [
-          "namespace_id",
-          "namespace_name",
-          "grants"
-        ],
-        "properties": {
-          "grants": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/GroupGrant"
-            }
-          },
-          "namespace_id": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "namespace_name": {
-            "type": "string"
           }
         }
       },
@@ -15477,17 +15477,17 @@
           {
             "type": "object",
             "required": [
-              "namespace_id",
+              "collection_id",
               "type"
             ],
             "properties": {
-              "namespace_id": {
-                "$ref": "#/components/schemas/NamespaceID"
+              "collection_id": {
+                "$ref": "#/components/schemas/CollectionID"
               },
               "type": {
                 "type": "string",
                 "enum": [
-                  "namespace"
+                  "collection"
                 ]
               }
             }
@@ -15574,7 +15574,7 @@
         "type": "object",
         "required": [
           "id",
-          "namespace_id",
+          "collection_id",
           "name",
           "description",
           "method",
@@ -15610,6 +15610,10 @@
             ],
             "format": "int32"
           },
+          "collection_id": {
+            "type": "integer",
+            "format": "int32"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -15631,10 +15635,6 @@
           "name": {
             "type": "string"
           },
-          "namespace_id": {
-            "type": "integer",
-            "format": "int32"
-          },
           "timeout_ms": {
             "type": "integer",
             "format": "int32"
@@ -15652,7 +15652,7 @@
         "type": "object",
         "required": [
           "id",
-          "namespace_id",
+          "collection_id",
           "name",
           "description",
           "method",
@@ -15691,6 +15691,10 @@
             ],
             "format": "int32"
           },
+          "collection_id": {
+            "type": "integer",
+            "format": "int32"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -15715,10 +15719,6 @@
           },
           "name": {
             "type": "string"
-          },
-          "namespace_id": {
-            "type": "integer",
-            "format": "int32"
           },
           "op": {
             "type": "string"
@@ -15772,7 +15772,7 @@
       "RemoteTargetSubjectType": {
         "type": "string",
         "enum": [
-          "namespace",
+          "collection",
           "class",
           "object",
           "class_relation",
@@ -16106,7 +16106,7 @@
       "ReportScopeKind": {
         "type": "string",
         "enum": [
-          "namespaces",
+          "collections",
           "classes",
           "objects_in_class",
           "class_relations",
@@ -16170,7 +16170,7 @@
         "type": "object",
         "required": [
           "id",
-          "namespace_id",
+          "collection_id",
           "name",
           "description",
           "content_type",
@@ -16185,6 +16185,10 @@
               "integer",
               "null"
             ],
+            "format": "int32"
+          },
+          "collection_id": {
+            "type": "integer",
             "format": "int32"
           },
           "content_type": {
@@ -16243,10 +16247,6 @@
           "name": {
             "type": "string"
           },
-          "namespace_id": {
-            "type": "integer",
-            "format": "int32"
-          },
           "relation_context": {
             "oneOf": [
               {
@@ -16277,6 +16277,7 @@
         },
         "example": {
           "class_id": 42,
+          "collection_id": 7,
           "content_type": "text/plain",
           "created_at": "2026-03-06T12:00:00",
           "default_limits": {
@@ -16290,7 +16291,6 @@
           "include": null,
           "kind": "report",
           "name": "owner-report",
-          "namespace_id": 7,
           "relation_context": null,
           "scope_kind": "objects_in_class",
           "template": "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}",
@@ -16301,7 +16301,7 @@
         "type": "object",
         "required": [
           "id",
-          "namespace_id",
+          "collection_id",
           "name",
           "description",
           "content_type",
@@ -16326,6 +16326,10 @@
               "integer",
               "null"
             ],
+            "format": "int32"
+          },
+          "collection_id": {
+            "type": "integer",
             "format": "int32"
           },
           "content_type": {
@@ -16365,10 +16369,6 @@
           },
           "name": {
             "type": "string"
-          },
-          "namespace_id": {
-            "type": "integer",
-            "format": "int32"
           },
           "op": {
             "type": "string"
@@ -16871,7 +16871,7 @@
         "type": "object",
         "required": [
           "kind",
-          "namespaces",
+          "collections",
           "classes",
           "objects"
         ],
@@ -16882,14 +16882,14 @@
               "$ref": "#/components/schemas/HubuumClassExpanded"
             }
           },
-          "kind": {
-            "type": "string"
-          },
-          "namespaces": {
+          "collections": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Namespace"
+              "$ref": "#/components/schemas/Collection"
             }
+          },
+          "kind": {
+            "type": "string"
           },
           "next": {
             "type": [
@@ -16930,7 +16930,7 @@
       "UnifiedSearchKind": {
         "type": "string",
         "enum": [
-          "namespace",
+          "collection",
           "class",
           "object"
         ]
@@ -16944,7 +16944,7 @@
               "null"
             ]
           },
-          "namespaces": {
+          "collections": {
             "type": [
               "string",
               "null"
@@ -16980,7 +16980,7 @@
       "UnifiedSearchResults": {
         "type": "object",
         "required": [
-          "namespaces",
+          "collections",
           "classes",
           "objects"
         ],
@@ -16991,10 +16991,10 @@
               "$ref": "#/components/schemas/HubuumClassExpanded"
             }
           },
-          "namespaces": {
+          "collections": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Namespace"
+              "$ref": "#/components/schemas/Collection"
             }
           },
           "objects": {
@@ -17014,6 +17014,27 @@
           "query": {
             "type": "string"
           }
+        }
+      },
+      "UpdateCollection": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "example": {
+          "description": "Shared assets and metadata",
+          "name": "global-assets"
         }
       },
       "UpdateEventSink": {
@@ -17129,6 +17150,13 @@
       "UpdateHubuumClass": {
         "type": "object",
         "properties": {
+          "collection_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
           "description": {
             "type": [
               "string",
@@ -17142,13 +17170,6 @@
               "null"
             ]
           },
-          "namespace_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          },
           "validate_schema": {
             "type": [
               "boolean",
@@ -17157,16 +17178,23 @@
           }
         },
         "example": {
+          "collection_id": 1,
           "description": "Validated server inventory class",
           "json_schema": null,
           "name": "server",
-          "namespace_id": 1,
           "validate_schema": true
         }
       },
       "UpdateHubuumObject": {
         "type": "object",
         "properties": {
+          "collection_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
           "data": {},
           "description": {
             "type": [
@@ -17186,45 +17214,17 @@
               "string",
               "null"
             ]
-          },
-          "namespace_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
           }
         },
         "example": {
+          "collection_id": null,
           "data": {
             "hostname": "srv-01",
             "status": "active"
           },
           "description": "Primary application server (updated)",
           "hubuum_class_id": null,
-          "name": "srv-01",
-          "namespace_id": null
-        }
-      },
-      "UpdateNamespace": {
-        "type": "object",
-        "properties": {
-          "description": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "example": {
-          "description": "Shared assets and metadata",
-          "name": "global-assets"
+          "name": "srv-01"
         }
       },
       "UpdateRemoteTarget": {
@@ -17262,6 +17262,16 @@
             ],
             "format": "int32"
           },
+          "collection_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CollectionID"
+              }
+            ]
+          },
           "description": {
             "type": [
               "string",
@@ -17291,16 +17301,6 @@
               "null"
             ]
           },
-          "namespace_id": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/NamespaceID"
-              }
-            ]
-          },
           "timeout_ms": {
             "type": [
               "integer",
@@ -17320,6 +17320,13 @@
         "type": "object",
         "properties": {
           "class_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "collection_id": {
             "type": [
               "integer",
               "null"
@@ -17384,13 +17391,6 @@
               "null"
             ]
           },
-          "namespace_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          },
           "relation_context": {
             "oneOf": [
               {
@@ -17420,11 +17420,11 @@
         },
         "example": {
           "class_id": null,
+          "collection_id": 9,
           "default_query": "sort=name.desc",
           "description": "Updated template description",
           "kind": null,
           "name": "owner-report-v2",
-          "namespace_id": 9,
           "scope_kind": null,
           "template": "{% for item in items %}{{ item.name }}\n{% endfor %}"
         }
@@ -17550,8 +17550,8 @@
       "description": "Group management endpoints"
     },
     {
-      "name": "namespaces",
-      "description": "Namespace and permission endpoints"
+      "name": "collections",
+      "description": "Collection and permission endpoints"
     },
     {
       "name": "relations",
@@ -17583,7 +17583,7 @@
     },
     {
       "name": "remote-targets",
-      "description": "Namespace-scoped remote target management and invocation endpoints"
+      "description": "Collection-scoped remote target management and invocation endpoints"
     }
   ]
 }

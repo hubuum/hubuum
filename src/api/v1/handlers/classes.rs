@@ -10,23 +10,21 @@ use crate::db::DbPool;
 use crate::db::traits::{ClassRelation, ObjectRelationMemberships, UserPermissions};
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
-use crate::models::traits::{ExpandNamespace, ToHubuumObjects};
+use crate::models::traits::{ExpandCollection, ToHubuumObjects, check_if_object_in_class};
 use crate::pagination::{
     count_query_options, page_limits, prepare_db_pagination, validate_page_limit,
 };
 
 use crate::models::{
-    ClassGraphRow, GroupPermission, HubuumClass, HubuumClassExpanded, HubuumClassID,
+    ClassGraphRow, CollectionID, GroupPermission, HubuumClass, HubuumClassExpanded, HubuumClassID,
     HubuumClassRelation, HubuumClassRelationID, HubuumClassWithPath, HubuumObject, HubuumObjectID,
-    HubuumObjectRelation, HubuumObjectWithPath, NamespaceID, NewHubuumClass,
-    NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation, Permissions,
-    RelatedClassGraph, RelatedObjectGraph, RelatedObjectGraphRow, UpdateHubuumClass,
-    UpdateHubuumObject,
+    HubuumObjectRelation, HubuumObjectWithPath, NewHubuumClass, NewHubuumClassRelationFromClass,
+    NewHubuumObject, NewHubuumObjectRelation, Permissions, RelatedClassGraph, RelatedObjectGraph,
+    RelatedObjectGraphRow, UpdateHubuumClass, UpdateHubuumObject,
 };
-use crate::traits::{CanDelete, CanSave, CanUpdate, NamespaceAccessors, Search, SelfAccessors};
+use crate::traits::{CanDelete, CanSave, CanUpdate, CollectionAccessors, Search, SelfAccessors};
 use crate::utilities::extensions::CustomStringExtensions;
 
-use super::check_if_object_in_class;
 use crate::models::search::{
     FilterField, QueryOptions, QueryParamsExt, SearchOperator, parse_query_parameter,
     parse_query_parameter_with_passthrough,
@@ -93,7 +91,7 @@ fn object_with_root_path(object: &HubuumObject) -> HubuumObjectWithPath {
     HubuumObjectWithPath {
         id: object.id,
         name: object.name.clone(),
-        namespace_id: object.namespace_id,
+        collection_id: object.collection_id,
         hubuum_class_id: object.hubuum_class_id,
         data: object.data.clone(),
         description: object.description.clone(),
@@ -107,7 +105,7 @@ fn class_with_root_path(class: &HubuumClass) -> HubuumClassWithPath {
     HubuumClassWithPath {
         id: class.id,
         name: class.name.clone(),
-        namespace_id: class.namespace_id,
+        collection_id: class.collection_id,
         json_schema: class.json_schema.clone(),
         validate_schema: class.validate_schema,
         description: class.description.clone(),
@@ -166,10 +164,10 @@ fn ensure_new_object_matches_path_class(
         )));
     }
 
-    if object.namespace_id != class.namespace_id {
+    if object.collection_id != class.collection_id {
         return Err(ApiError::BadRequest(format!(
-            "Object namespace_id {} does not match class namespace_id {}",
-            object.namespace_id, class.namespace_id
+            "Object collection_id {} does not match class collection_id {}",
+            object.collection_id, class.collection_id
         )));
     }
 
@@ -188,11 +186,12 @@ fn ensure_object_update_stays_in_path_class(
         ));
     }
 
-    if let Some(namespace_id) = update.namespace_id
-        && namespace_id != object.namespace_id
+    if let Some(collection_id) = update.collection_id
+        && collection_id != object.collection_id
     {
         return Err(ApiError::BadRequest(
-            "Object namespace cannot be changed through a class-scoped object endpoint".to_string(),
+            "Object collection cannot be changed through a class-scoped object endpoint"
+                .to_string(),
         ));
     }
 
@@ -301,20 +300,20 @@ async fn create_class(
         class_name = class_data.name
     );
 
-    let namespace = NamespaceID::new(class_data.namespace_id)?;
+    let collection = CollectionID::new(class_data.collection_id)?;
     can!(
         &pool,
         user,
         requestor.scopes(),
         [Permissions::CreateClass],
-        namespace
+        collection
     );
 
     let event_context = requestor.event_context(&req);
     let class = class_data
         .save(&pool, &event_context)
         .await?
-        .expand_namespace(&pool)
+        .expand_collection(&pool)
         .await?;
 
     let location = api_locations::class(class.id)?;
@@ -358,7 +357,7 @@ async fn get_class(
         [Permissions::ReadClass],
         class
     );
-    let class = class.expand_namespace(&pool).await?;
+    let class = class.expand_collection(&pool).await?;
 
     Ok(ApiResponse::new(class, StatusCode::OK))
 }
@@ -406,15 +405,15 @@ async fn update_class(
         class
     );
 
-    if let Some(target_namespace_id) = class_data.namespace_id
-        && target_namespace_id != class.namespace_id
+    if let Some(target_collection_id) = class_data.collection_id
+        && target_collection_id != class.collection_id
     {
         can!(
             &pool,
             user,
             requestor.scopes(),
             [Permissions::CreateClass],
-            NamespaceID::new(target_namespace_id)?
+            CollectionID::new(target_collection_id)?
         );
     }
 
@@ -422,7 +421,7 @@ async fn update_class(
     let class = class_data
         .update(&pool, class.id, &event_context)
         .await?
-        .expand_namespace(&pool)
+        .expand_collection(&pool)
         .await?;
     Ok(ApiResponse::new(class, StatusCode::OK))
 }
@@ -480,7 +479,7 @@ async fn delete_class(
         ("class_id" = i32, Path, description = "Class ID")
     ),
     responses(
-        (status = 200, description = "Namespace-group permission mappings for class namespace", body = [GroupPermission]),
+        (status = 200, description = "Collection-group permission mappings for class collection", body = [GroupPermission]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Class not found", body = ApiErrorResponse)
     )
@@ -492,8 +491,8 @@ async fn get_class_permissions(
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    use crate::models::namespace::groups_on_paginated;
-    use crate::traits::NamespaceAccessors;
+    use crate::models::collection::groups_on_paginated;
+    use crate::traits::CollectionAccessors;
 
     let user = &requestor.principal;
     let class_id = class_id.into_inner();
@@ -514,11 +513,11 @@ async fn get_class_permissions(
         class
     );
 
-    let nid = class.namespace_id(&pool).await?;
+    let target_collection_id = class.collection_id(&pool).await?;
     let count_params = count_query_options(&params);
-    let total_count = crate::models::namespace::count_groups_on_paginated(
+    let total_count = crate::models::collection::count_groups_on_paginated(
         &pool,
-        nid,
+        target_collection_id,
         vec![
             Permissions::CreateClass,
             Permissions::UpdateClass,
@@ -531,7 +530,7 @@ async fn get_class_permissions(
     let search_params = prepare_db_pagination::<GroupPermission>(&params)?;
     let permissions = groups_on_paginated(
         &pool,
-        nid,
+        target_collection_id,
         vec![
             Permissions::CreateClass,
             Permissions::UpdateClass,
@@ -619,7 +618,7 @@ async fn create_class_relation(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::models::NewHubuumClassRelation;
-    use crate::traits::NamespaceAccessors;
+    use crate::traits::CollectionAccessors;
 
     let user = &requestor.principal;
     let class_id = class_id.into_inner();
@@ -639,7 +638,7 @@ async fn create_class_relation(
         reverse_template_alias: partial_relation.reverse_template_alias.clone(),
     };
 
-    let ids = relation.namespace_id(&pool).await?;
+    let ids = relation.collection_id(&pool).await?;
     can!(
         &pool,
         user,
@@ -679,7 +678,7 @@ async fn delete_class_relation(
     paths: web::Path<(HubuumClassID, HubuumClassRelationID)>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    use crate::traits::NamespaceAccessors;
+    use crate::traits::CollectionAccessors;
 
     let user = &requestor.principal;
     let (class_id, relation_id) = paths.into_inner();
@@ -693,7 +692,7 @@ async fn delete_class_relation(
 
     let relation = relation_id.instance(&pool).await?;
 
-    let ids = relation_id.namespace_id(&pool).await?;
+    let ids = relation_id.collection_id(&pool).await?;
 
     can!(
         &pool,

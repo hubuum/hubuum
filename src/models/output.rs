@@ -17,7 +17,7 @@ pub struct GroupPermission {
 pub struct HubuumClassExpanded {
     pub id: i32,
     pub name: String,
-    pub namespace: crate::models::namespace::Namespace,
+    pub collection: crate::models::collection::Collection,
     pub json_schema: Option<serde_json::Value>,
     pub validate_schema: bool,
     pub description: String,
@@ -29,7 +29,7 @@ impl PartialEq<HubuumClass> for HubuumClassExpanded {
     fn eq(&self, other: &HubuumClass) -> bool {
         self.id == other.id
             && self.name == other.name
-            && self.namespace.id == other.namespace_id
+            && self.collection.id == other.collection_id
             && self.json_schema == other.json_schema
             && self.validate_schema == other.validate_schema
             && self.description == other.description
@@ -42,7 +42,7 @@ impl PartialEq<HubuumClassExpanded> for HubuumClass {
     fn eq(&self, other: &HubuumClassExpanded) -> bool {
         self.id == other.id
             && self.name == other.name
-            && self.namespace_id == other.namespace.id
+            && self.collection_id == other.collection.id
             && self.json_schema == other.json_schema
             && self.validate_schema == other.validate_schema
             && self.description == other.description

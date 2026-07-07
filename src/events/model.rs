@@ -66,7 +66,7 @@ pub struct Event {
     pub entity_type: String,
     pub entity_id: Option<i32>,
     pub entity_name: Option<String>,
-    pub namespace_id: Option<i32>,
+    pub collection_id: Option<i32>,
     pub action: String,
     pub actor_user_id: Option<i32>,
     pub actor_kind: String,
@@ -90,7 +90,7 @@ pub struct EventResponse {
     pub entity_type: String,
     pub entity_id: Option<i32>,
     pub entity_name: Option<String>,
-    pub namespace_id: Option<i32>,
+    pub collection_id: Option<i32>,
     pub action: String,
     pub actor_user_id: Option<i32>,
     pub actor_kind: String,
@@ -129,7 +129,7 @@ impl From<Event> for EventResponse {
             entity_type: value.entity_type,
             entity_id: value.entity_id,
             entity_name: value.entity_name,
-            namespace_id: value.namespace_id,
+            collection_id: value.collection_id,
             action: value.action,
             actor_user_id: value.actor_user_id,
             actor_kind: value.actor_kind,
@@ -221,7 +221,7 @@ pub struct NewEvent {
     entity_type: String,
     entity_id: Option<i32>,
     entity_name: Option<String>,
-    namespace_id: Option<i32>,
+    collection_id: Option<i32>,
     action: String,
     actor_user_id: Option<i32>,
     actor_kind: String,
@@ -259,7 +259,7 @@ impl NewEvent {
             entity_type: entity_type.as_str().to_string(),
             entity_id: None,
             entity_name: None,
-            namespace_id: None,
+            collection_id: None,
             action: action.as_str().to_string(),
             actor_user_id: None,
             actor_kind: actor_kind.as_str().to_string(),
@@ -283,8 +283,8 @@ impl NewEvent {
         self
     }
 
-    pub fn with_namespace_id(mut self, namespace_id: i32) -> Self {
-        self.namespace_id = Some(namespace_id);
+    pub fn with_collection_id(mut self, collection_id: i32) -> Self {
+        self.collection_id = Some(collection_id);
         self
     }
 

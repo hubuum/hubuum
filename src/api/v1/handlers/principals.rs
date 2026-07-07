@@ -9,7 +9,7 @@ use crate::db::DbPool;
 use crate::db::traits::ActiveTokens;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, ManagementAccess};
-use crate::models::namespace::principal_all_permissions;
+use crate::models::collection::principal_all_permissions;
 use crate::models::principal::{Principal, PrincipalKind};
 use crate::models::search::parse_query_parameter;
 use crate::models::service_account::{
@@ -75,23 +75,23 @@ async fn ensure_can_manage_principal(
 pub(crate) async fn principal_permissions_response(
     pool: &DbPool,
     principal: &impl AuthzSubject,
-) -> Result<Vec<PrincipalNamespacePermissions>, ApiError> {
+) -> Result<Vec<PrincipalCollectionPermissions>, ApiError> {
     let rows = principal_all_permissions(pool, principal).await?;
 
-    // Fold (namespace, group, permission-row) tuples into a per-namespace,
-    // per-group report. BTreeMap keeps namespaces in a stable id order; groups
+    // Fold (collection, group, permission-row) tuples into a per-collection,
+    // per-group report. BTreeMap keeps collections in a stable id order; groups
     // with no granted flags are dropped.
-    let mut by_namespace: BTreeMap<i32, PrincipalNamespacePermissions> = BTreeMap::new();
-    for (namespace, group, permission) in rows {
+    let mut by_collection: BTreeMap<i32, PrincipalCollectionPermissions> = BTreeMap::new();
+    for (collection, group, permission) in rows {
         let permissions = permission.granted();
         if permissions.is_empty() {
             continue;
         }
-        by_namespace
-            .entry(namespace.id)
-            .or_insert_with(|| PrincipalNamespacePermissions {
-                namespace_id: namespace.id,
-                namespace_name: namespace.name.clone(),
+        by_collection
+            .entry(collection.id)
+            .or_insert_with(|| PrincipalCollectionPermissions {
+                collection_id: collection.id,
+                collection_name: collection.name.clone(),
                 grants: Vec::new(),
             })
             .grants
@@ -102,7 +102,7 @@ pub(crate) async fn principal_permissions_response(
             });
     }
 
-    Ok(by_namespace.into_values().collect())
+    Ok(by_collection.into_values().collect())
 }
 
 #[utoipa::path(
@@ -288,7 +288,7 @@ pub async fn list_principal_groups(
     ApiResponse::paginated(groups, total_count, &params)
 }
 
-/// One group's contribution to a principal's effective permissions on a namespace.
+/// One group's contribution to a principal's effective permissions on a collection.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct GroupGrant {
     pub group_id: i32,
@@ -296,12 +296,12 @@ pub struct GroupGrant {
     pub permissions: Vec<Permissions>,
 }
 
-/// A principal's effective permissions on a single namespace, broken down by the
+/// A principal's effective permissions on a single collection, broken down by the
 /// group that grants them.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct PrincipalNamespacePermissions {
-    pub namespace_id: i32,
-    pub namespace_name: String,
+pub struct PrincipalCollectionPermissions {
+    pub collection_id: i32,
+    pub collection_name: String,
     pub grants: Vec<GroupGrant>,
 }
 
@@ -312,7 +312,7 @@ pub struct PrincipalNamespacePermissions {
     security(("bearer_auth" = [])),
     params(("principal_id" = i32, Path, description = "Principal id")),
     responses(
-        (status = 200, description = "Effective permissions per namespace, grouped by granting group", body = [PrincipalNamespacePermissions]),
+        (status = 200, description = "Effective permissions per collection, grouped by granting group", body = [PrincipalCollectionPermissions]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse)
     )

@@ -87,7 +87,7 @@ impl ObjectGraphRow {
         HubuumObjectWithPath {
             id: self.descendant_object_id,
             name: self.descendant_name.clone(),
-            namespace_id: self.descendant_namespace_id,
+            collection_id: self.descendant_collection_id,
             hubuum_class_id: self.descendant_class_id,
             data: self.descendant_data.clone(),
             description: self.descendant_description.clone(),
@@ -103,7 +103,7 @@ impl RelatedObjectGraphRow {
         HubuumObjectWithPath {
             id: self.descendant_object_id,
             name: self.descendant_name.clone(),
-            namespace_id: self.descendant_namespace_id,
+            collection_id: self.descendant_collection_id,
             hubuum_class_id: self.descendant_class_id,
             data: self.descendant_data.clone(),
             description: self.descendant_description.clone(),
@@ -119,7 +119,7 @@ impl RelatedObjectIncludeRow {
         HubuumObjectWithPath {
             id: self.descendant_object_id,
             name: self.descendant_name.clone(),
-            namespace_id: self.descendant_namespace_id,
+            collection_id: self.descendant_collection_id,
             hubuum_class_id: self.descendant_class_id,
             data: self.descendant_data.clone(),
             description: self.descendant_description.clone(),
@@ -135,7 +135,7 @@ impl RelatedObjectForRootRow {
         HubuumObjectWithPath {
             id: self.descendant_object_id,
             name: self.descendant_name.clone(),
-            namespace_id: self.descendant_namespace_id,
+            collection_id: self.descendant_collection_id,
             hubuum_class_id: self.descendant_class_id,
             data: self.descendant_data.clone(),
             description: self.descendant_description.clone(),

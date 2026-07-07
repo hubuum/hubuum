@@ -3,10 +3,10 @@ use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::traits::namespace as namespace_backend;
+use crate::db::traits::collection as collection_backend;
 use crate::models::group::Group;
 
-use crate::schema::namespaces;
+use crate::schema::collections;
 
 use crate::errors::ApiError;
 
@@ -15,11 +15,11 @@ use crate::models::search::QueryOptions;
 use crate::models::{Permission, Permissions};
 
 use crate::models::traits::GroupAccessors;
-use crate::traits::{BackendContext, NamespaceAccessors};
+use crate::traits::{BackendContext, CollectionAccessors};
 
 #[derive(Serialize, Deserialize, Queryable, PartialEq, Debug, Clone, Selectable, ToSchema)]
-#[diesel(table_name = namespaces)]
-pub struct Namespace {
+#[diesel(table_name = collections)]
+pub struct Collection {
     pub id: i32,
     pub name: String,
     pub description: String,
@@ -28,125 +28,126 @@ pub struct Namespace {
 }
 
 crate::int_id_newtype! {
-    /// Identifier wrapper for a [`Namespace`].
-    pub struct NamespaceID;
-    noun = "namespace id";
+    /// Identifier wrapper for a [`Collection`].
+    pub struct CollectionID;
+    noun = "collection id";
 }
 
 #[derive(Serialize, Deserialize, Clone, AsChangeset, ToSchema)]
-#[schema(example = update_namespace_example)]
-#[diesel(table_name = namespaces)]
-pub struct UpdateNamespace {
+#[schema(example = update_collection_example)]
+#[diesel(table_name = collections)]
+pub struct UpdateCollection {
     pub name: Option<String>,
     pub description: Option<String>,
 }
 
-/// A new namespace, with an assignee. Used for creating new namespace entries
+/// A new collection, with an assignee. Used for creating new collection entries
 /// into the database and assign all permissions to the group given as group_id.
 ///
-/// This wraps the NewNamespace struct and uses the group_id to grant all permissions
+/// This wraps the NewCollection struct and uses the group_id to grant all permissions
 /// to the group in a single transaction.
 #[derive(Serialize, Deserialize, Clone, ToSchema)]
-#[schema(example = new_namespace_with_assignee_example)]
-pub struct NewNamespaceWithAssignee {
+#[schema(example = new_collection_with_assignee_example)]
+pub struct NewCollectionWithAssignee {
     pub name: String,
     pub description: String,
     pub group_id: i32,
 }
 
-/// A new namespace, without an assignee. Used for creating new namespace entries
+/// A new collection, without an assignee. Used for creating new collection entries
 /// into the database.
 ///
-/// Odds are pretty good that you want to use NewNamespaceWithAssignee instead.
+/// Odds are pretty good that you want to use NewCollectionWithAssignee instead.
 #[derive(Serialize, Deserialize, Insertable, ToSchema)]
-#[diesel(table_name = namespaces)]
-pub struct NewNamespace {
+#[diesel(table_name = collections)]
+pub struct NewCollection {
     pub name: String,
     pub description: String,
 }
 
 #[allow(dead_code)]
-fn update_namespace_example() -> UpdateNamespace {
-    UpdateNamespace {
+fn update_collection_example() -> UpdateCollection {
+    UpdateCollection {
         name: Some("global-assets".to_string()),
         description: Some("Shared assets and metadata".to_string()),
     }
 }
 
 #[allow(dead_code)]
-fn new_namespace_with_assignee_example() -> NewNamespaceWithAssignee {
-    NewNamespaceWithAssignee {
+fn new_collection_with_assignee_example() -> NewCollectionWithAssignee {
+    NewCollectionWithAssignee {
         name: "global-assets".to_string(),
         description: "Shared assets and metadata".to_string(),
         group_id: 1,
     }
 }
 
-pub async fn total_namespace_count<C>(backend: &C) -> Result<i64, ApiError>
+pub async fn total_collection_count<C>(backend: &C) -> Result<i64, ApiError>
 where
     C: BackendContext + ?Sized,
 {
-    namespace_backend::total_namespace_count_from_backend(backend.db_pool()).await
+    collection_backend::total_collection_count_from_backend(backend.db_pool()).await
 }
 
-/// Check what permissions a user has to a given namespace
+/// Check what permissions a user has to a given collection
 ///
 /// ## Arguments
 /// * backend - Backend context used to execute the query
 /// * user_id - ID of the user to check permissions for
-/// * namespace_ref - Namespace or NamespaceID to check permissions for
+/// * collection_ref - Collection or CollectionID to check permissions for
 ///
 /// ## Returns
-/// * Ok(Vec(Group, NamespacePermissions)) - List of groups and their permissions
+/// * Ok(Vec(Group, CollectionPermissions)) - List of groups and their permissions
 /// * Err(ApiError) - On query errors only.
 #[allow(dead_code)]
 pub async fn principal_on<C, S, T>(
     backend: &C,
     principal: S,
-    namespace_ref: T,
+    collection_ref: T,
 ) -> Result<Vec<GroupPermission>, ApiError>
 where
     C: BackendContext + ?Sized,
     S: crate::db::traits::authz::AuthzSubject,
-    T: NamespaceAccessors,
+    T: CollectionAccessors,
 {
-    namespace_backend::principal_on_from_backend(backend.db_pool(), principal, namespace_ref).await
+    collection_backend::principal_on_from_backend(backend.db_pool(), principal, collection_ref)
+        .await
 }
 
-/// All of a principal's effective permissions across every namespace, as
-/// `(namespace, group, permission-row)` tuples.
+/// All of a principal's effective permissions across every collection, as
+/// `(collection, group, permission-row)` tuples.
 pub async fn principal_all_permissions<C, S>(
     backend: &C,
     principal: S,
-) -> Result<Vec<(Namespace, Group, Permission)>, ApiError>
+) -> Result<Vec<(Collection, Group, Permission)>, ApiError>
 where
     C: BackendContext + ?Sized,
     S: crate::db::traits::authz::AuthzSubject,
 {
-    namespace_backend::principal_all_permissions_from_backend(backend.db_pool(), principal).await
+    collection_backend::principal_all_permissions_from_backend(backend.db_pool(), principal).await
 }
 
 pub async fn principal_on_paginated_with_total_count<C, S, T>(
     backend: &C,
     principal: S,
-    namespace_ref: T,
+    collection_ref: T,
     query_options: &QueryOptions,
 ) -> Result<(Vec<GroupPermission>, i64), ApiError>
 where
     C: BackendContext + ?Sized,
     S: crate::db::traits::authz::AuthzSubject,
-    T: NamespaceAccessors,
+    T: CollectionAccessors,
 {
-    namespace_backend::principal_on_paginated_with_total_count_from_backend(
+    collection_backend::principal_on_paginated_with_total_count_from_backend(
         backend.db_pool(),
         principal,
-        namespace_ref,
+        collection_ref,
         query_options,
     )
     .await
 }
 
-/// Check if a user has a specific permission to any namespace
+/// Check if a user has a specific permission to any collection
 ///
 /// ## Arguments
 /// * backend - Backend context used to execute the query
@@ -154,20 +155,20 @@ where
 /// * permission_type - Type of permission to check
 ///
 /// ## Returns
-/// * Ok(Vec<Namespace>) - List of namespaces the user has the requested permission for.
-///   If no matching namespaces are found, an empty list is returned
+/// * Ok(Vec<Collection>) - List of collections the user has the requested permission for.
+///   If no matching collections are found, an empty list is returned
 /// * Err(ApiError) - On query errors only.
 pub async fn user_can_on_any<C, U>(
     backend: &C,
     user_id: U,
     permission_type: Permissions,
     scopes: Option<&[Permissions]>,
-) -> Result<Vec<Namespace>, ApiError>
+) -> Result<Vec<Collection>, ApiError>
 where
     C: BackendContext + ?Sized,
     U: GroupAccessors + crate::db::traits::authz::AuthzSubject,
 {
-    namespace_backend::user_can_on_any_from_backend(
+    collection_backend::user_can_on_any_from_backend(
         backend.db_pool(),
         user_id,
         permission_type,
@@ -176,13 +177,13 @@ where
     .await
 }
 
-/// Check if a group has a specific permission to a given namespace ID
+/// Check if a group has a specific permission to a given collection ID
 ///
 /// ## Arguments
 /// * backend - Backend context used to execute the query
 /// * gid - ID of the group to check permissions for
 /// * permission_type - Type of permission to check
-/// * namespace_ref - Namespace or NamespaceID to check permissions for
+/// * collection_ref - Collection or CollectionID to check permissions for
 ///
 /// ## Returns
 /// * Ok(bool) - True if the group has the requested permission
@@ -190,27 +191,27 @@ where
 pub async fn group_can_on<C, T>(
     backend: &C,
     gid: i32,
-    namespace_ref: T,
+    collection_ref: T,
     permission_type: Permissions,
 ) -> Result<bool, ApiError>
 where
     C: BackendContext + ?Sized,
-    T: NamespaceAccessors,
+    T: CollectionAccessors,
 {
-    namespace_backend::group_can_on_from_backend(
+    collection_backend::group_can_on_from_backend(
         backend.db_pool(),
         gid,
-        namespace_ref,
+        collection_ref,
         permission_type,
     )
     .await
 }
 
-/// Check what groups have a specific permission to a given namespace ID
+/// Check what groups have a specific permission to a given collection ID
 ///
 /// ## Arguments
 /// * backend - Backend context used to execute the query
-/// * nid - ID of the namespace to check permissions for
+/// * target_collection_id - ID of the collection to check permissions for
 /// * permission_type - Type of permission to check
 ///
 /// ## Returns
@@ -219,56 +220,61 @@ where
 #[allow(dead_code)]
 pub async fn groups_can_on<C>(
     backend: &C,
-    nid: i32,
+    target_collection_id: i32,
     permission_type: Permissions,
 ) -> Result<Vec<Group>, ApiError>
 where
     C: BackendContext + ?Sized,
 {
-    namespace_backend::groups_can_on_from_backend(backend.db_pool(), nid, permission_type).await
+    collection_backend::groups_can_on_from_backend(
+        backend.db_pool(),
+        target_collection_id,
+        permission_type,
+    )
+    .await
 }
 
 pub async fn groups_can_on_paginated_with_total_count<C>(
     backend: &C,
-    nid: i32,
+    target_collection_id: i32,
     permission_type: Permissions,
     query_options: &QueryOptions,
 ) -> Result<(Vec<Group>, i64), ApiError>
 where
     C: BackendContext + ?Sized,
 {
-    namespace_backend::groups_can_on_paginated_with_total_count_from_backend(
+    collection_backend::groups_can_on_paginated_with_total_count_from_backend(
         backend.db_pool(),
-        nid,
+        target_collection_id,
         permission_type,
         query_options,
     )
     .await
 }
 
-/// List all groups and their permissions for a namespace
+/// List all groups and their permissions for a collection
 ///
 /// ## Arguments
 /// * backend - Backend context used to execute the query
-/// * namespace_ref - Namespace or NamespaceID to check permissions for
+/// * collection_ref - Collection or CollectionID to check permissions for
 ///
 /// ## Returns
-/// * Ok(Vec<(Group, NamespacePermissions)>) - List of groups and their permissions
+/// * Ok(Vec<(Group, CollectionPermissions)>) - List of groups and their permissions
 /// * Err(ApiError) - On query errors only.
 #[allow(dead_code)]
 pub async fn groups_on<C, T>(
     backend: &C,
-    namespace_ref: T,
+    collection_ref: T,
     permissions_filter: Vec<Permissions>,
     query_options: QueryOptions,
 ) -> Result<Vec<GroupPermission>, ApiError>
 where
     C: BackendContext + ?Sized,
-    T: NamespaceAccessors,
+    T: CollectionAccessors,
 {
-    namespace_backend::groups_on_from_backend(
+    collection_backend::groups_on_from_backend(
         backend.db_pool(),
-        namespace_ref,
+        collection_ref,
         permissions_filter,
         query_options,
     )
@@ -277,17 +283,17 @@ where
 
 pub async fn groups_on_paginated<C, T>(
     backend: &C,
-    namespace_ref: T,
+    collection_ref: T,
     permissions_filter: Vec<Permissions>,
     query_options: &QueryOptions,
 ) -> Result<Vec<GroupPermission>, ApiError>
 where
     C: BackendContext + ?Sized,
-    T: NamespaceAccessors,
+    T: CollectionAccessors,
 {
-    namespace_backend::groups_on_paginated_from_backend(
+    collection_backend::groups_on_paginated_from_backend(
         backend.db_pool(),
-        namespace_ref,
+        collection_ref,
         permissions_filter,
         query_options,
     )
@@ -296,17 +302,17 @@ where
 
 pub async fn groups_on_paginated_with_total_count<C, T>(
     backend: &C,
-    namespace_ref: T,
+    collection_ref: T,
     permissions_filter: Vec<Permissions>,
     query_options: &QueryOptions,
 ) -> Result<(Vec<GroupPermission>, i64), ApiError>
 where
     C: BackendContext + ?Sized,
-    T: NamespaceAccessors,
+    T: CollectionAccessors,
 {
-    namespace_backend::groups_on_paginated_with_total_count_from_backend(
+    collection_backend::groups_on_paginated_with_total_count_from_backend(
         backend.db_pool(),
-        namespace_ref,
+        collection_ref,
         permissions_filter,
         query_options,
     )
@@ -315,34 +321,38 @@ where
 
 pub async fn count_groups_on_paginated<C, T>(
     backend: &C,
-    namespace_ref: T,
+    collection_ref: T,
     permissions_filter: Vec<Permissions>,
     query_options: &QueryOptions,
 ) -> Result<i64, ApiError>
 where
     C: BackendContext + ?Sized,
-    T: NamespaceAccessors,
+    T: CollectionAccessors,
 {
-    namespace_backend::count_groups_on_paginated_from_backend(
+    collection_backend::count_groups_on_paginated_from_backend(
         backend.db_pool(),
-        namespace_ref,
+        collection_ref,
         permissions_filter,
         query_options,
     )
     .await
 }
 
-/// List all permissions for a given group on a namespace
-pub async fn group_on<C>(backend: &C, nid: i32, gid: i32) -> Result<Permission, ApiError>
+/// List all permissions for a given group on a collection
+pub async fn group_on<C>(
+    backend: &C,
+    target_collection_id: i32,
+    gid: i32,
+) -> Result<Permission, ApiError>
 where
     C: BackendContext + ?Sized,
 {
-    namespace_backend::group_on_from_backend(backend.db_pool(), nid, gid).await
+    collection_backend::group_on_from_backend(backend.db_pool(), target_collection_id, gid).await
 }
 
 #[derive(serde::Serialize, diesel::Queryable, Clone, Debug, ToSchema)]
-#[diesel(table_name = crate::schema::namespaces_history)]
-pub struct NamespaceHistory {
+#[diesel(table_name = crate::schema::collections_history)]
+pub struct CollectionHistory {
     pub id: i32,
     pub name: String,
     pub description: String,
@@ -355,7 +365,7 @@ pub struct NamespaceHistory {
     pub history_id: i64,
 }
 
-crate::impl_history_pagination!(NamespaceHistory, "namespaces_history");
+crate::impl_history_pagination!(CollectionHistory, "collections_history");
 
 #[cfg(test)]
 mod tests {
@@ -372,14 +382,14 @@ mod tests {
 
     async fn assign_to_groups(
         pool: &DbPool,
-        namespace: &Namespace,
+        collection: &Collection,
         groups: &[Group],
         permissions: PermissionsList<Permissions>,
     ) {
-        let namespace = namespace.clone();
+        let collection = collection.clone();
 
         for group in groups {
-            namespace
+            collection
                 .clone()
                 .grant_without_events(pool, group.id, permissions.clone())
                 .await
@@ -388,13 +398,13 @@ mod tests {
             // Validate that the permissions were granted
             for permission in permissions.iter() {
                 assert!(
-                    group_can_on(pool, group.id, namespace.clone(), *permission)
+                    group_can_on(pool, group.id, collection.clone(), *permission)
                         .await
                         .unwrap(),
-                    "Group {} does not have permission {:?} on namespace {}",
+                    "Group {} does not have permission {:?} on collection {}",
                     group.id,
                     permission,
-                    namespace.id
+                    collection.id
                 );
             }
         }
@@ -402,11 +412,13 @@ mod tests {
 
     async fn groups_can_on_count(
         pool: &DbPool,
-        nid: i32,
+        target_collection_id: i32,
         permission_type: Permissions,
         expected_count: i32,
     ) {
-        let groups = groups_can_on(pool, nid, permission_type).await.unwrap();
+        let groups = groups_can_on(pool, target_collection_id, permission_type)
+            .await
+            .unwrap();
         assert_eq!(groups.len() as i32, expected_count);
     }
 
@@ -415,11 +427,11 @@ mod tests {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
 
-        let namespace = scope.namespace_fixture("grant_to_nonexistent_group").await;
+        let collection = scope.collection_fixture("grant_to_nonexistent_group").await;
 
         // This should return an ApiError::NotFound
-        let result = namespace
-            .namespace
+        let result = collection
+            .collection
             .grant_one(&pool, 99999999, Permissions::ReadCollection)
             .await;
 
@@ -446,9 +458,9 @@ mod tests {
             );
         }
 
-        // The fixture owner group is granted full permissions when the namespace is created,
+        // The fixture owner group is granted full permissions when the collection is created,
         // so we have one extra group for all permissions.
-        let namespace = scope.namespace_fixture("test_list_groups").await;
+        let collection = scope.collection_fixture("test_list_groups").await;
 
         type NP = Permissions;
         type PL = PermissionsList<Permissions>;
@@ -456,42 +468,42 @@ mod tests {
         // Note: Slicing is *NOT* inclusive, so this will assign to groups 0, 1, and 2
         assign_to_groups(
             &pool,
-            &namespace.namespace,
+            &collection.collection,
             &groups[0..3],
             PL::new([NP::ReadCollection]),
         )
         .await;
 
-        groups_can_on_count(&pool, namespace.namespace.id, NP::ReadCollection, 4).await;
-        groups_can_on_count(&pool, namespace.namespace.id, NP::UpdateCollection, 1).await;
+        groups_can_on_count(&pool, collection.collection.id, NP::ReadCollection, 4).await;
+        groups_can_on_count(&pool, collection.collection.id, NP::UpdateCollection, 1).await;
 
         assign_to_groups(
             &pool,
-            &namespace.namespace,
+            &collection.collection,
             &groups[2..4],
             PL::new([NP::ReadCollection, NP::UpdateCollection]),
         )
         .await;
 
-        groups_can_on_count(&pool, namespace.namespace.id, NP::ReadCollection, 5).await;
-        groups_can_on_count(&pool, namespace.namespace.id, NP::UpdateCollection, 3).await;
-        groups_can_on_count(&pool, namespace.namespace.id, NP::DeleteCollection, 1).await;
+        groups_can_on_count(&pool, collection.collection.id, NP::ReadCollection, 5).await;
+        groups_can_on_count(&pool, collection.collection.id, NP::UpdateCollection, 3).await;
+        groups_can_on_count(&pool, collection.collection.id, NP::DeleteCollection, 1).await;
 
         assign_to_groups(
             &pool,
-            &namespace.namespace,
+            &collection.collection,
             &groups[3..4],
             PL::new([NP::DelegateCollection]),
         )
         .await;
 
-        groups_can_on_count(&pool, namespace.namespace.id, NP::DelegateCollection, 2).await;
-        groups_can_on_count(&pool, namespace.namespace.id, NP::CreateClass, 1).await;
-        groups_can_on_count(&pool, namespace.namespace.id, NP::CreateObject, 1).await;
+        groups_can_on_count(&pool, collection.collection.id, NP::DelegateCollection, 2).await;
+        groups_can_on_count(&pool, collection.collection.id, NP::CreateClass, 1).await;
+        groups_can_on_count(&pool, collection.collection.id, NP::CreateObject, 1).await;
 
         let all_on = groups_on(
             &pool,
-            namespace.namespace.clone(),
+            collection.collection.clone(),
             vec![],
             QueryOptions {
                 filters: vec![],
@@ -504,7 +516,7 @@ mod tests {
         .unwrap();
         assert_eq!(all_on.len(), 5);
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
         for group in groups {
             group.delete_without_events(&pool).await.unwrap();
         }
@@ -535,8 +547,8 @@ mod tests {
         let subsets = generate_all_subsets(&permissions);
 
         for subset in subsets.iter() {
-            let namespace = scope
-                .namespace_fixture("test_perm_grant_combinations")
+            let collection = scope
+                .collection_fixture("test_perm_grant_combinations")
                 .await;
 
             let group = NewGroup {
@@ -549,8 +561,8 @@ mod tests {
 
             let group_id = group.id;
             // Grant this subset of permissions
-            namespace
-                .namespace
+            collection
+                .collection
                 .grant_without_events(&pool, group_id, PermissionsList::new(subset.clone()))
                 .await
                 .unwrap();
@@ -559,13 +571,13 @@ mod tests {
             for permission in permissions.iter() {
                 let expected = subset.contains(permission);
                 let actual =
-                    group_can_on(&pool, group_id, namespace.namespace.clone(), *permission)
+                    group_can_on(&pool, group_id, collection.collection.clone(), *permission)
                         .await
                         .unwrap();
                 assert_eq!(expected, actual, "Mismatch for permission {permission:?}");
             }
 
-            namespace.cleanup().await.unwrap();
+            collection.cleanup().await.unwrap();
             group.delete_without_events(&pool).await.unwrap();
         }
     }
@@ -601,8 +613,8 @@ mod tests {
             .filter(|x| !x.is_empty());
 
         for subset in subsets {
-            let namespace = scope
-                .namespace_fixture("test_perm_revoke_ombinations")
+            let collection = scope
+                .collection_fixture("test_perm_revoke_combinations")
                 .await;
 
             let group = NewGroup {
@@ -615,15 +627,15 @@ mod tests {
 
             let group_id = group.id;
             // Grant all permissions
-            namespace
-                .namespace
+            collection
+                .collection
                 .grant_without_events(&pool, group_id, PermissionsList::new(permissions.clone()))
                 .await
                 .unwrap();
 
             // Revoke this subset of permissions
-            namespace
-                .namespace
+            collection
+                .collection
                 .revoke_without_events(&pool, group_id, PermissionsList::new(subset.clone()))
                 .await
                 .unwrap();
@@ -632,13 +644,13 @@ mod tests {
             for permission in permissions.iter() {
                 let expected = !subset.contains(permission);
                 let actual =
-                    group_can_on(&pool, group_id, namespace.namespace.clone(), *permission)
+                    group_can_on(&pool, group_id, collection.collection.clone(), *permission)
                         .await
                         .unwrap();
                 assert_eq!(expected, actual, "Mismatch for permission {permission:?}");
             }
 
-            namespace.cleanup().await.unwrap();
+            collection.cleanup().await.unwrap();
             group.delete_without_events(&pool).await.unwrap();
         }
     }
@@ -652,8 +664,8 @@ mod tests {
 
         type NP = Permissions;
 
-        let namespace = scope
-            .namespace_fixture("test_perm_grant_without_side_effects")
+        let collection = scope
+            .collection_fixture("test_perm_grant_without_side_effects")
             .await;
 
         let group = NewGroup {
@@ -666,8 +678,8 @@ mod tests {
 
         let group_id = group.id;
 
-        namespace
-            .namespace
+        collection
+            .collection
             .grant_one(&pool, group_id, NP::ReadCollection)
             .await
             .unwrap();
@@ -676,7 +688,7 @@ mod tests {
             group_can_on(
                 &pool,
                 group_id,
-                namespace.namespace.clone(),
+                collection.collection.clone(),
                 NP::ReadCollection
             )
             .await
@@ -693,22 +705,22 @@ mod tests {
             NP::CreateObject,
         ] {
             assert!(
-                !group_can_on(&pool, group_id, namespace.namespace.clone(), permission)
+                !group_can_on(&pool, group_id, collection.collection.clone(), permission)
                     .await
                     .unwrap(),
                 "Permission {permission:?} should not be set",
             );
         }
 
-        namespace
-            .namespace
+        collection
+            .collection
             .grant_one(&pool, group_id, NP::UpdateCollection)
             .await
             .unwrap();
 
         for permission in [NP::ReadCollection, NP::UpdateCollection] {
             assert!(
-                group_can_on(&pool, group_id, namespace.namespace.clone(), permission)
+                group_can_on(&pool, group_id, collection.collection.clone(), permission)
                     .await
                     .unwrap(),
                 "Permission {permission:?} should be set",
@@ -722,15 +734,15 @@ mod tests {
             NP::CreateObject,
         ] {
             assert!(
-                !group_can_on(&pool, group_id, namespace.namespace.clone(), permission)
+                !group_can_on(&pool, group_id, collection.collection.clone(), permission)
                     .await
                     .unwrap(),
                 "Permission {permission:?} should not be set",
             );
         }
 
-        namespace
-            .namespace
+        collection
+            .collection
             .revoke_one(&pool, group_id, NP::UpdateCollection)
             .await
             .unwrap();
@@ -739,7 +751,7 @@ mod tests {
             group_can_on(
                 &pool,
                 group_id,
-                namespace.namespace.clone(),
+                collection.collection.clone(),
                 NP::ReadCollection
             )
             .await
@@ -756,13 +768,13 @@ mod tests {
             NP::CreateObject,
         ] {
             assert!(
-                !group_can_on(&pool, group_id, namespace.namespace.clone(), permission)
+                !group_can_on(&pool, group_id, collection.collection.clone(), permission)
                     .await
                     .unwrap(),
                 "Permission {permission:?} should not be set",
             );
         }
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
         group.delete_without_events(&pool).await.unwrap();
     }
 
@@ -771,8 +783,8 @@ mod tests {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
 
-        let namespace = scope
-            .namespace_fixture("test_template_permissions_set_grant_and_revoke")
+        let collection = scope
+            .collection_fixture("test_template_permissions_set_grant_and_revoke")
             .await;
 
         let group = NewGroup {
@@ -784,8 +796,8 @@ mod tests {
         .unwrap();
         let group_id = group.id;
 
-        namespace
-            .namespace
+        collection
+            .collection
             .set_permissions_without_events(
                 &pool,
                 group_id,
@@ -798,7 +810,7 @@ mod tests {
             group_can_on(
                 &pool,
                 group_id,
-                namespace.namespace.clone(),
+                collection.collection.clone(),
                 Permissions::ReadTemplate
             )
             .await
@@ -808,7 +820,7 @@ mod tests {
             group_can_on(
                 &pool,
                 group_id,
-                namespace.namespace.clone(),
+                collection.collection.clone(),
                 Permissions::UpdateTemplate
             )
             .await
@@ -818,7 +830,7 @@ mod tests {
             !group_can_on(
                 &pool,
                 group_id,
-                namespace.namespace.clone(),
+                collection.collection.clone(),
                 Permissions::CreateTemplate
             )
             .await
@@ -828,15 +840,15 @@ mod tests {
             !group_can_on(
                 &pool,
                 group_id,
-                namespace.namespace.clone(),
+                collection.collection.clone(),
                 Permissions::DeleteTemplate
             )
             .await
             .unwrap()
         );
 
-        namespace
-            .namespace
+        collection
+            .collection
             .grant_one(&pool, group_id, Permissions::CreateTemplate)
             .await
             .unwrap();
@@ -845,15 +857,15 @@ mod tests {
             group_can_on(
                 &pool,
                 group_id,
-                namespace.namespace.clone(),
+                collection.collection.clone(),
                 Permissions::CreateTemplate
             )
             .await
             .unwrap()
         );
 
-        namespace
-            .namespace
+        collection
+            .collection
             .revoke_one(&pool, group_id, Permissions::UpdateTemplate)
             .await
             .unwrap();
@@ -862,7 +874,7 @@ mod tests {
             !group_can_on(
                 &pool,
                 group_id,
-                namespace.namespace.clone(),
+                collection.collection.clone(),
                 Permissions::UpdateTemplate
             )
             .await
@@ -872,14 +884,14 @@ mod tests {
             group_can_on(
                 &pool,
                 group_id,
-                namespace.namespace.clone(),
+                collection.collection.clone(),
                 Permissions::ReadTemplate
             )
             .await
             .unwrap()
         );
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
         group.delete_without_events(&pool).await.unwrap();
     }
 
@@ -887,12 +899,12 @@ mod tests {
     async fn test_template_permission_backfill_updates_only_delegators() {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
-        let namespace = scope
-            .namespace_fixture("test_template_permission_backfill")
+        let collection = scope
+            .collection_fixture("test_template_permission_backfill")
             .await;
 
         let delegate_group = NewGroup {
-            groupname: format!("template_backfill_delegate_{}", namespace.namespace.id),
+            groupname: format!("template_backfill_delegate_{}", collection.collection.id),
             description: Some("Template backfill delegate group".to_string()),
         }
         .save_without_events(&pool)
@@ -900,37 +912,40 @@ mod tests {
         .unwrap();
 
         let non_delegate_group = NewGroup {
-            groupname: format!("template_backfill_non_delegate_{}", namespace.namespace.id),
+            groupname: format!(
+                "template_backfill_non_delegate_{}",
+                collection.collection.id
+            ),
             description: Some("Template backfill non-delegate group".to_string()),
         }
         .save_without_events(&pool)
         .await
         .unwrap();
 
-        namespace
-            .namespace
+        collection
+            .collection
             .grant_one(&pool, delegate_group.id, Permissions::DelegateCollection)
             .await
             .unwrap();
-        namespace
-            .namespace
+        collection
+            .collection
             .grant_one(&pool, non_delegate_group.id, Permissions::ReadCollection)
             .await
             .unwrap();
 
-        let delegate_before = group_on(&pool, namespace.namespace.id, delegate_group.id)
+        let delegate_before = group_on(&pool, collection.collection.id, delegate_group.id)
             .await
             .unwrap();
-        assert!(delegate_before.has_delegate_namespace);
+        assert!(delegate_before.has_delegate_collection);
         assert!(!delegate_before.has_read_template);
         assert!(!delegate_before.has_create_template);
         assert!(!delegate_before.has_update_template);
         assert!(!delegate_before.has_delete_template);
 
-        let non_delegate_before = group_on(&pool, namespace.namespace.id, non_delegate_group.id)
+        let non_delegate_before = group_on(&pool, collection.collection.id, non_delegate_group.id)
             .await
             .unwrap();
-        assert!(!non_delegate_before.has_delegate_namespace);
+        assert!(!non_delegate_before.has_delegate_collection);
         assert!(!non_delegate_before.has_read_template);
         assert!(!non_delegate_before.has_create_template);
         assert!(!non_delegate_before.has_update_template);
@@ -944,30 +959,30 @@ mod tests {
                  has_create_template = TRUE,
                  has_update_template = TRUE,
                  has_delete_template = TRUE
-             WHERE has_delegate_namespace = TRUE",
+             WHERE has_delegate_collection = TRUE",
         )
         .execute(&mut conn)
         .unwrap();
 
-        let delegate_after = group_on(&pool, namespace.namespace.id, delegate_group.id)
+        let delegate_after = group_on(&pool, collection.collection.id, delegate_group.id)
             .await
             .unwrap();
-        assert!(delegate_after.has_delegate_namespace);
+        assert!(delegate_after.has_delegate_collection);
         assert!(delegate_after.has_read_template);
         assert!(delegate_after.has_create_template);
         assert!(delegate_after.has_update_template);
         assert!(delegate_after.has_delete_template);
 
-        let non_delegate_after = group_on(&pool, namespace.namespace.id, non_delegate_group.id)
+        let non_delegate_after = group_on(&pool, collection.collection.id, non_delegate_group.id)
             .await
             .unwrap();
-        assert!(!non_delegate_after.has_delegate_namespace);
+        assert!(!non_delegate_after.has_delegate_collection);
         assert!(!non_delegate_after.has_read_template);
         assert!(!non_delegate_after.has_create_template);
         assert!(!non_delegate_after.has_update_template);
         assert!(!non_delegate_after.has_delete_template);
 
-        namespace.cleanup().await.unwrap();
+        collection.cleanup().await.unwrap();
         delegate_group.delete_without_events(&pool).await.unwrap();
         non_delegate_group
             .delete_without_events(&pool)

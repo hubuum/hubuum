@@ -6,7 +6,7 @@ use crate::errors::ApiError;
 use crate::extractors::AdminAccess;
 use crate::middlewares::rate_limit;
 use crate::models::class::total_class_count;
-use crate::models::namespace::total_namespace_count;
+use crate::models::collection::total_collection_count;
 use crate::models::object::{objects_per_class_count, total_object_count};
 use actix_web::{Responder, delete, get, http::StatusCode, web};
 use base64::Engine;
@@ -180,7 +180,7 @@ pub async fn get_object_and_class_count(
     let response = CountsResponse {
         total_objects: total_object_count(&pool).await?,
         total_classes: total_class_count(&pool).await?,
-        total_namespaces: total_namespace_count(&pool).await?,
+        total_collections: total_collection_count(&pool).await?,
         objects_per_class: objects_per_class_count(&pool).await?,
     };
 

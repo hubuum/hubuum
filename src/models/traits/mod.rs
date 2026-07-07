@@ -1,6 +1,6 @@
 pub mod class;
 pub mod class_relation;
-pub mod namespace;
+pub mod collection;
 pub mod object;
 pub mod object_relation;
 pub mod output;
@@ -12,7 +12,7 @@ pub use crate::models::traits::class::*;
 #[allow(unused_imports)]
 pub use crate::models::traits::class_relation::*;
 #[allow(unused_imports)]
-pub use crate::models::traits::namespace::*;
+pub use crate::models::traits::collection::*;
 #[allow(unused_imports)]
 pub use crate::models::traits::object::*;
 pub use crate::models::traits::object_relation::*;

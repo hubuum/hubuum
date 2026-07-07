@@ -28,9 +28,9 @@ fn sse_event<T: Serialize>(event: &str, payload: &T) -> Result<Bytes, ApiError> 
     security(("bearer_auth" = [])),
     params(
         ("q" = String, Query, description = "Plain-text query string"),
-        ("kinds" = Option<String>, Query, description = "Comma-separated kinds: namespace,class,object"),
+        ("kinds" = Option<String>, Query, description = "Comma-separated kinds: collection,class,object"),
         ("limit_per_kind" = Option<usize>, Query, description = "Maximum results per kind"),
-        ("cursor_namespaces" = Option<String>, Query, description = "Opaque cursor for namespace results"),
+        ("cursor_collections" = Option<String>, Query, description = "Opaque cursor for collection results"),
         ("cursor_classes" = Option<String>, Query, description = "Opaque cursor for class results"),
         ("cursor_objects" = Option<String>, Query, description = "Opaque cursor for object results"),
         ("search_class_schema" = Option<bool>, Query, description = "Include class schema text in class matching"),
@@ -61,9 +61,9 @@ pub async fn get_search(
     security(("bearer_auth" = [])),
     params(
         ("q" = String, Query, description = "Plain-text query string"),
-        ("kinds" = Option<String>, Query, description = "Comma-separated kinds: namespace,class,object"),
+        ("kinds" = Option<String>, Query, description = "Comma-separated kinds: collection,class,object"),
         ("limit_per_kind" = Option<usize>, Query, description = "Maximum results per kind"),
-        ("cursor_namespaces" = Option<String>, Query, description = "Opaque cursor for namespace results"),
+        ("cursor_collections" = Option<String>, Query, description = "Opaque cursor for collection results"),
         ("cursor_classes" = Option<String>, Query, description = "Opaque cursor for class results"),
         ("cursor_objects" = Option<String>, Query, description = "Opaque cursor for object results"),
         ("search_class_schema" = Option<bool>, Query, description = "Include class schema text in class matching"),
@@ -90,7 +90,7 @@ pub async fn stream_search(
     )?];
 
     for kind in [
-        UnifiedSearchKind::Namespace,
+        UnifiedSearchKind::Collection,
         UnifiedSearchKind::Class,
         UnifiedSearchKind::Object,
     ] {

@@ -6,7 +6,7 @@
 //! Batch 3 — authorization: principal-centric perms, scope narrowing, the
 //! `kind = 'human'` / unscoped gate on the human/IAM extractors.
 //! Batch 4 — principal routes: token management authz, path-scoped revoke,
-//! group membership, namespace effective permissions.
+//! group membership, collection effective permissions.
 //! Batch 5 — task ownership: attribution, per-principal idempotency, task load
 //! authorization, disabled-SA cancellation, scope-snapshot persistence/parse.
 
@@ -24,8 +24,8 @@ mod tests {
     use crate::db::with_connection;
     use crate::errors::ApiError;
     use crate::events::{Action, EntityType};
-    use crate::models::Namespace;
-    use crate::models::namespace::user_can_on_any;
+    use crate::models::Collection;
+    use crate::models::collection::user_can_on_any;
     use crate::models::principal::load_principal_by_id;
     use crate::models::service_account::cancel_pending_tasks_for_principal;
     use crate::models::token::{Token, create_principal_token};
@@ -496,22 +496,22 @@ mod tests {
 
     // ----- Batch 3: authz / scoped behavior -----
 
-    const NAMESPACES_ENDPOINT: &str = "/api/v1/namespaces";
+    const COLLECTIONS_ENDPOINT: &str = "/api/v1/collections";
     const USERS_ENDPOINT: &str = "/api/v1/iam/users";
 
-    /// #6 / #16: a service account gets a group's namespace permissions only via
+    /// #6 / #16: a service account gets a group's collection permissions only via
     /// explicit membership — a fresh SA (owner group set, no membership) has none.
     #[rstest]
     #[case::member_allowed(true, StatusCode::OK)]
     #[case::nonmember_denied(false, StatusCode::FORBIDDEN)]
     #[actix_web::test]
-    async fn test_service_account_namespace_access_requires_membership(
+    async fn test_service_account_collection_access_requires_membership(
         #[case] in_group: bool,
         #[case] expected: StatusCode,
     ) {
         let context = TestContext::new().await;
         let pool = &context.pool;
-        let fixture = context.with_namespace().await;
+        let fixture = context.with_collection().await;
         let sa = create_test_service_account(pool, &fixture.owner_group, None).await;
 
         if in_group {
@@ -526,7 +526,7 @@ mod tests {
         let resp = get_request(
             pool,
             &token,
-            &format!("{NAMESPACES_ENDPOINT}/{}", fixture.namespace.id),
+            &format!("{COLLECTIONS_ENDPOINT}/{}", fixture.collection.id),
         )
         .await;
 
@@ -534,12 +534,12 @@ mod tests {
     }
 
     /// #2: a scoped token allows an in-scope permission — read is in scope, so the
-    /// namespace GET (ReadCollection) succeeds even though the token is scoped.
+    /// collection GET (ReadCollection) succeeds even though the token is scoped.
     #[actix_web::test]
     async fn test_scoped_token_allows_in_scope_permission() {
         let context = TestContext::new().await;
         let pool = &context.pool;
-        let fixture = context.with_namespace().await;
+        let fixture = context.with_collection().await;
         let sa = create_test_service_account(pool, &fixture.owner_group, None).await;
         fixture
             .owner_group
@@ -551,7 +551,7 @@ mod tests {
         let resp = get_request(
             pool,
             &token,
-            &format!("{NAMESPACES_ENDPOINT}/{}", fixture.namespace.id),
+            &format!("{COLLECTIONS_ENDPOINT}/{}", fixture.collection.id),
         )
         .await;
 
@@ -564,7 +564,7 @@ mod tests {
     async fn test_scoped_token_denies_out_of_scope_permission() {
         let context = TestContext::new().await;
         let pool = &context.pool;
-        let fixture = context.with_namespace().await;
+        let fixture = context.with_collection().await;
         let sa = create_test_service_account(pool, &fixture.owner_group, None).await;
         fixture
             .owner_group
@@ -576,7 +576,7 @@ mod tests {
         let resp = patch_request(
             pool,
             &token,
-            &format!("{NAMESPACES_ENDPOINT}/{}", fixture.namespace.id),
+            &format!("{COLLECTIONS_ENDPOINT}/{}", fixture.collection.id),
             &serde_json::json!({ "description": "scoped-write-attempt" }),
         )
         .await;
@@ -628,7 +628,7 @@ mod tests {
         assert_eq!(resp.status(), expected);
     }
 
-    // ----- Batch 4: principal routes / group membership / namespace perms -----
+    // ----- Batch 4: principal routes / group membership / collection perms -----
 
     const IAM_GROUPS_ENDPOINT: &str = "/api/v1/iam/groups";
 
@@ -826,12 +826,12 @@ mod tests {
     }
 
     /// `/iam/me/permissions` is self-service for the authenticated principal and
-    /// reports effective namespace permissions through its group memberships.
+    /// reports effective collection permissions through its group memberships.
     #[actix_web::test]
     async fn test_me_permissions_route_works_for_service_account() {
         let context = TestContext::new().await;
         let pool = &context.pool;
-        let fixture = context.with_namespace().await;
+        let fixture = context.with_collection().await;
         let sa = create_test_service_account(pool, &fixture.owner_group, None).await;
         fixture
             .owner_group
@@ -842,14 +842,14 @@ mod tests {
 
         let resp = get_request(pool, &token, &format!("{ME_ENDPOINT}/permissions")).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let report: Vec<crate::api::v1::handlers::principals::PrincipalNamespacePermissions> =
+        let report: Vec<crate::api::v1::handlers::principals::PrincipalCollectionPermissions> =
             test::read_body_json(resp).await;
 
         assert!(
             report
                 .iter()
-                .any(|entry| entry.namespace_id == fixture.namespace.id),
-            "self permissions should include the fixture namespace"
+                .any(|entry| entry.collection_id == fixture.collection.id),
+            "self permissions should include the fixture collection"
         );
     }
 
@@ -886,13 +886,13 @@ mod tests {
         );
     }
 
-    /// #29: the principal-shaped namespace effective-permission route works for a
+    /// #29: the principal-shaped collection effective-permission route works for a
     /// service-account principal (it has perms via its owner group).
     #[actix_web::test]
-    async fn test_namespace_principal_permissions_route_for_service_account() {
+    async fn test_collection_principal_permissions_route_for_service_account() {
         let context = TestContext::new().await;
         let pool = &context.pool;
-        let fixture = context.with_namespace().await;
+        let fixture = context.with_collection().await;
         let sa = create_test_service_account(pool, &fixture.owner_group, None).await;
         fixture
             .owner_group
@@ -904,8 +904,8 @@ mod tests {
             pool,
             &context.admin_token,
             &format!(
-                "{NAMESPACES_ENDPOINT}/{}/permissions/principal/{}",
-                fixture.namespace.id, sa.id
+                "{COLLECTIONS_ENDPOINT}/{}/permissions/principal/{}",
+                fixture.collection.id, sa.id
             ),
         )
         .await;
@@ -945,15 +945,15 @@ mod tests {
         assert_eq!(resp.status(), expected);
     }
 
-    /// A principal's effective-permissions report lists each namespace it can act
+    /// A principal's effective-permissions report lists each collection it can act
     /// on, broken down by the granting group (here, its owner group's grant).
     #[actix_web::test]
     async fn test_principal_permissions_report_groups_by_granting_group() {
-        use crate::api::v1::handlers::principals::PrincipalNamespacePermissions;
+        use crate::api::v1::handlers::principals::PrincipalCollectionPermissions;
 
         let context = TestContext::new().await;
         let pool = &context.pool;
-        let fixture = context.with_namespace().await;
+        let fixture = context.with_collection().await;
         let sa = create_test_service_account(pool, &fixture.owner_group, None).await;
         fixture
             .owner_group
@@ -967,20 +967,20 @@ mod tests {
             &format!("{PRINCIPALS_ENDPOINT}/{}/permissions", sa.id),
         )
         .await;
-        let report: Vec<PrincipalNamespacePermissions> = test::read_body_json(resp).await;
+        let report: Vec<PrincipalCollectionPermissions> = test::read_body_json(resp).await;
 
-        let namespace = report
+        let collection = report
             .iter()
-            .find(|n| n.namespace_id == fixture.namespace.id)
-            .expect("report should include the namespace the SA has access to");
-        let grant_from_owner = namespace
+            .find(|n| n.collection_id == fixture.collection.id)
+            .expect("report should include the collection the SA has access to");
+        let grant_from_owner = collection
             .grants
             .iter()
             .any(|g| g.group_id == fixture.owner_group.id && !g.permissions.is_empty());
 
         assert!(
             grant_from_owner,
-            "report should attribute the namespace permissions to the owner group"
+            "report should attribute the collection permissions to the owner group"
         );
     }
 
@@ -1239,10 +1239,10 @@ mod tests {
     ) {
         let context = TestContext::new().await;
         let pool = &context.pool;
-        let fixture = context.with_namespace().await;
+        let fixture = context.with_collection().await;
         let group = create_test_group(pool).await;
         fixture
-            .namespace
+            .collection
             .grant_one(pool, group.id, Permissions::ReadTemplate)
             .await
             .unwrap();
@@ -1253,7 +1253,7 @@ mod tests {
             .await
             .unwrap()
             .iter()
-            .any(|n| n.id == fixture.namespace.id);
+            .any(|n| n.id == fixture.collection.id);
 
         assert_eq!(visible, expect_visible);
     }
@@ -1283,23 +1283,23 @@ mod tests {
         assert_eq!(resp.status(), expected);
     }
 
-    /// Review #3: namespace search requires `ReadCollection`, not merely *some*
+    /// Review #3: collection search requires `ReadCollection`, not merely *some*
     /// permission row — a group holding only `CreateClass` does not make the
-    /// namespace visible.
+    /// collection visible.
     #[rstest]
     #[case::read_collection_visible(Permissions::ReadCollection, true)]
     #[case::create_class_only_hidden(Permissions::CreateClass, false)]
     #[actix_web::test]
-    async fn test_namespace_search_requires_read_collection(
+    async fn test_collection_search_requires_read_collection(
         #[case] granted: Permissions,
         #[case] expect_visible: bool,
     ) {
         let context = TestContext::new().await;
         let pool = &context.pool;
-        let fixture = context.with_namespace().await;
+        let fixture = context.with_collection().await;
         let group = create_test_group(pool).await;
         fixture
-            .namespace
+            .collection
             .grant_one(pool, group.id, granted)
             .await
             .unwrap();
@@ -1307,9 +1307,9 @@ mod tests {
         group.add_member_without_events(pool, &sa).await.unwrap();
         let token = service_account_token(pool, &sa, None, None).await;
 
-        let resp = get_request(pool, &token, NAMESPACES_ENDPOINT).await;
-        let namespaces: Vec<Namespace> = test::read_body_json(resp).await;
-        let visible = namespaces.iter().any(|n| n.id == fixture.namespace.id);
+        let resp = get_request(pool, &token, COLLECTIONS_ENDPOINT).await;
+        let collections: Vec<Collection> = test::read_body_json(resp).await;
+        let visible = collections.iter().any(|n| n.id == fixture.collection.id);
 
         assert_eq!(visible, expect_visible);
     }

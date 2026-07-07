@@ -12,8 +12,8 @@ use diesel::sql_types::{Integer, Text, Timestamp, Timestamptz};
 async fn trigger_records_ops_and_actor() {
     let scope = TestScope::new();
     let pool = scope.pool.clone();
-    let ns = scope.namespace_fixture("trigger_actor").await;
-    let ns_id = ns.namespace.id;
+    let collection_fixture = scope.collection_fixture("trigger_actor").await;
+    let collection_id = collection_fixture.collection.id;
     let cname = format!("trigger_actor_class_{}", scope.scope_id);
 
     // All three DML statements in one transaction with the actor GUC set.
@@ -22,11 +22,11 @@ async fn trigger_records_ops_and_actor() {
             diesel::sql_query("SELECT set_config('hubuum.actor_id', '4242', true)")
                 .execute(conn)?;
             diesel::sql_query(
-                "INSERT INTO hubuumclass (name, namespace_id, validate_schema, description)
+                "INSERT INTO hubuumclass (name, collection_id, validate_schema, description)
                  VALUES ($1, $2, false, 'd')",
             )
             .bind::<Text, _>(&cname)
-            .bind::<Integer, _>(ns_id)
+            .bind::<Integer, _>(collection_id)
             .execute(conn)?;
 
             let cid: i32 = {
@@ -80,7 +80,7 @@ async fn trigger_records_ops_and_actor() {
         "DELETE tombstone must have valid_from == valid_to"
     );
 
-    ns.cleanup().await.unwrap();
+    collection_fixture.cleanup().await.unwrap();
 }
 
 /// The generic trigger must insert by column name, not by physical column order.
@@ -146,7 +146,7 @@ async fn trigger_inserts_history_by_column_name() {
 async fn trigger_timestamp_is_execution_time_not_transaction_start() {
     let scope = TestScope::new();
     let pool = scope.pool.clone();
-    let ns = scope.namespace_fixture("clock_timestamp").await;
+    let collection_fixture = scope.collection_fixture("clock_timestamp").await;
     let cname = format!("clock_timestamp_class_{}", scope.scope_id);
 
     let (tx_start, valid_from): (DateTime<Utc>, DateTime<Utc>) = with_connection(&pool, |conn| {
@@ -156,11 +156,11 @@ async fn trigger_timestamp_is_execution_time_not_transaction_start() {
                 .value;
             diesel::sql_query("SELECT pg_sleep(0.02)").execute(conn)?;
             diesel::sql_query(
-                "INSERT INTO hubuumclass (name, namespace_id, validate_schema, description)
+                "INSERT INTO hubuumclass (name, collection_id, validate_schema, description)
                      VALUES ($1, $2, false, 'd')",
             )
             .bind::<Text, _>(&cname)
-            .bind::<Integer, _>(ns.namespace.id)
+            .bind::<Integer, _>(collection_fixture.collection.id)
             .execute(conn)?;
             let valid_from = diesel::sql_query(
                 "SELECT valid_from AS value
@@ -182,7 +182,7 @@ async fn trigger_timestamp_is_execution_time_not_transaction_start() {
         "history timestamp should advance after transaction start"
     );
 
-    ns.cleanup().await.unwrap();
+    collection_fixture.cleanup().await.unwrap();
 }
 
 /// Idempotent updates to temporal domain rows are not data changes. They must
@@ -191,13 +191,13 @@ async fn trigger_timestamp_is_execution_time_not_transaction_start() {
 async fn unchanged_domain_update_is_noop() {
     let scope = TestScope::new();
     let pool = scope.pool.clone();
-    let ns = scope.namespace_fixture("noop_update").await;
+    let collection_fixture = scope.collection_fixture("noop_update").await;
     let cname = format!("noop_update_class_{}", scope.scope_id);
     let event_context = hubuum_events_core::EventContext::system();
 
     let class = NewHubuumClass {
         name: cname,
-        namespace_id: ns.namespace.id,
+        collection_id: collection_fixture.collection.id,
         json_schema: None,
         validate_schema: Some(false),
         description: "d".into(),
@@ -214,7 +214,7 @@ async fn unchanged_domain_update_is_noop() {
 
     let returned = UpdateHubuumClass {
         name: Some(class.name.clone()),
-        namespace_id: Some(class.namespace_id),
+        collection_id: Some(class.collection_id),
         json_schema: None,
         validate_schema: Some(class.validate_schema),
         description: Some(class.description.clone()),
@@ -245,7 +245,7 @@ async fn unchanged_domain_update_is_noop() {
     assert_eq!(after_updated_at, before_updated_at);
     assert_eq!(history_count, 1);
 
-    ns.cleanup().await.unwrap();
+    collection_fixture.cleanup().await.unwrap();
 }
 
 #[derive(QueryableByName)]
@@ -270,7 +270,7 @@ struct ColumnOrderHistoryRow {
     hist_b: String,
 }
 
-/// Deleting a namespace cascades to its classes; the AFTER trigger must still
+/// Deleting a collection cascades to its classes; the AFTER trigger must still
 /// record a 'D' history row for each cascaded class.
 #[actix_rt::test]
 async fn cascade_delete_records_history() {
@@ -279,13 +279,13 @@ async fn cascade_delete_records_history() {
 
     let scope = TestScope::new();
     let pool = scope.pool.clone();
-    let ns = scope.namespace_fixture("cascade_hist").await;
+    let collection_fixture = scope.collection_fixture("cascade_hist").await;
     let cname = format!("cascade_hist_class_{}", scope.scope_id);
     let event_context = hubuum_events_core::EventContext::system();
 
     let class = NewHubuumClass {
         name: cname.clone(),
-        namespace_id: ns.namespace.id,
+        collection_id: collection_fixture.collection.id,
         json_schema: None,
         validate_schema: Some(false),
         description: "d".into(),
@@ -294,7 +294,7 @@ async fn cascade_delete_records_history() {
     .await
     .unwrap();
 
-    ns.cleanup().await.unwrap(); // cascade-deletes the class
+    collection_fixture.cleanup().await.unwrap(); // cascade-deletes the class
 
     let ops: Vec<String> = with_connection(&pool, |conn| {
         use crate::schema::hubuumclass_history::dsl as h;
@@ -322,8 +322,8 @@ async fn actor_scope_sets_actor_and_default_is_null() {
 
     let scope = TestScope::new();
     let pool = scope.pool.clone();
-    let ns = scope.namespace_fixture("actor_scope").await;
-    let ns_id = ns.namespace.id;
+    let collection_fixture = scope.collection_fixture("actor_scope").await;
+    let collection_id = collection_fixture.collection.id;
 
     // Inside a scope -> actor recorded.
     let in_name = format!("actor_in_{}", scope.scope_id);
@@ -331,7 +331,7 @@ async fn actor_scope_sets_actor_and_default_is_null() {
         let event_context = hubuum_events_core::EventContext::system();
         NewHubuumClass {
             name: in_name.clone(),
-            namespace_id: ns_id,
+            collection_id,
             json_schema: None,
             validate_schema: Some(false),
             description: "d".into(),
@@ -347,7 +347,7 @@ async fn actor_scope_sets_actor_and_default_is_null() {
     let event_context = hubuum_events_core::EventContext::system();
     let out_class = NewHubuumClass {
         name: out_name.clone(),
-        namespace_id: ns_id,
+        collection_id,
         json_schema: None,
         validate_schema: Some(false),
         description: "d".into(),
@@ -371,7 +371,7 @@ async fn actor_scope_sets_actor_and_default_is_null() {
     assert_eq!(read_actor(in_class.id), Some(4242));
     assert_eq!(read_actor(out_class.id), None);
 
-    ns.cleanup().await.unwrap();
+    collection_fixture.cleanup().await.unwrap();
 }
 
 #[actix_rt::test]
@@ -384,7 +384,7 @@ async fn anonymize_scrubs_pii_but_keeps_history_actor() {
 
     let scope = TestScope::new();
     let pool = scope.pool.clone();
-    let ns = scope.namespace_fixture("anon").await;
+    let collection_fixture = scope.collection_fixture("anon").await;
 
     // A user who will make a change and then be anonymized.
     let uname = format!("anon_user_{}", scope.scope_id);
@@ -405,7 +405,7 @@ async fn anonymize_scrubs_pii_but_keeps_history_actor() {
         let event_context = hubuum_events_core::EventContext::system();
         NewHubuumClass {
             name: cname.clone(),
-            namespace_id: ns.namespace.id,
+            collection_id: collection_fixture.collection.id,
             json_schema: None,
             validate_schema: Some(false),
             description: "d".into(),
@@ -480,5 +480,5 @@ async fn anonymize_scrubs_pii_but_keeps_history_actor() {
     .unwrap();
     assert_eq!(actor, Some(user.id));
 
-    ns.cleanup().await.unwrap();
+    collection_fixture.cleanup().await.unwrap();
 }

@@ -5,7 +5,7 @@ mod test {
     use crate::models::class::NewHubuumClass;
     use crate::models::group::GroupID;
     use crate::models::search::{ParsedQueryParam, QueryOptions, SearchOperator};
-    use crate::models::{HubuumClass, Namespace, NewNamespace};
+    use crate::models::{Collection, HubuumClass, NewCollection};
     use crate::tests::constants::{SchemaType, get_schema};
     use crate::tests::{TestContext, ensure_admin_group, test_context};
     use crate::traits::{CanDelete, CanSave, Search};
@@ -18,22 +18,22 @@ mod test {
     async fn setup_test_structure(
         context: &TestContext,
         prefix: &str,
-    ) -> (Vec<Namespace>, Vec<HubuumClass>) {
+    ) -> (Vec<Collection>, Vec<HubuumClass>) {
         let pretty_prefix = prefix.replace("_", " ");
         let admin_group = ensure_admin_group(&context.pool).await;
 
-        let mut namespaces = vec![];
+        let mut collections = vec![];
         let mut classes = vec![];
 
         for i in 0..3 {
             let padded_i = format!("{i:02}");
-            let namespace_name = format!("{prefix}_namespace_{padded_i}");
-            let namespace_description = format!("{pretty_prefix} namespace {padded_i}");
+            let collection_name = format!("{prefix}_collection_{padded_i}");
+            let collection_description = format!("{pretty_prefix} collection {padded_i}");
 
-            namespaces.push(
-                NewNamespace {
-                    name: namespace_name,
-                    description: namespace_description,
+            collections.push(
+                NewCollection {
+                    name: collection_name,
+                    description: collection_description,
                 }
                 .save_and_grant_all_to(&context.pool, GroupID::new(admin_group.id).unwrap())
                 .await
@@ -47,13 +47,13 @@ mod test {
 
         for i in 0..10 {
             let padded_i = format!("{i:02}");
-            let mut nid = namespaces[0].id;
+            let mut collection_id = collections[0].id;
             let mut schema = blog_schema.clone();
             if i > 8 {
-                nid = namespaces[2].id; // We'll get one class in this namespace (9)
+                collection_id = collections[2].id; // We'll get one class in this collection (9)
                 schema = geo_schema.clone();
             } else if i > 5 {
-                nid = namespaces[1].id; // We'll get three classes in this namespace (6,7,8)
+                collection_id = collections[1].id; // We'll get three classes in this collection (6,7,8)
                 schema = address_schema.clone();
             }
 
@@ -63,7 +63,7 @@ mod test {
                     description: format!("{pretty_prefix} class {padded_i}"),
                     json_schema: Some(schema),
                     validate_schema: Some(false),
-                    namespace_id: nid,
+                    collection_id,
                 }
                 .save_without_events(&context.pool)
                 .await
@@ -71,7 +71,7 @@ mod test {
             );
         }
 
-        (namespaces, classes)
+        (collections, classes)
     }
 
     async fn check_test_cases(context: &TestContext, testcases: Vec<TestCase>) {
@@ -98,9 +98,12 @@ mod test {
         }
     }
 
-    async fn cleanup(context: &TestContext, namespaces: Vec<Namespace>) {
-        for ns in namespaces {
-            ns.delete_without_events(&context.pool).await.unwrap();
+    async fn cleanup(context: &TestContext, collections: Vec<Collection>) {
+        for collection_fixture in collections {
+            collection_fixture
+                .delete_without_events(&context.pool)
+                .await
+                .unwrap();
         }
     }
 
@@ -108,19 +111,19 @@ mod test {
     #[actix_rt::test]
     async fn test_equals(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let (namespaces, classes) = setup_test_structure(&context, "test_user_class_equals").await;
+        let (collections, classes) = setup_test_structure(&context, "test_user_class_equals").await;
 
-        // Set which namespaces we want to search in
-        let comma_separated_namespaces = namespaces
+        // Set which collections we want to search in
+        let comma_separated_collections = collections
             .iter()
-            .map(|ns| ns.id.to_string())
+            .map(|collection_fixture| collection_fixture.id.to_string())
             .collect::<Vec<String>>()
             .join(",");
 
-        let namespace_pgp = ParsedQueryParam::new(
-            "namespaces",
+        let collection_pgp = ParsedQueryParam::new(
+            "collections",
             Some(SearchOperator::Equals { is_negated: false }),
-            &comma_separated_namespaces,
+            &comma_separated_collections,
         )
         .unwrap();
 
@@ -133,7 +136,7 @@ mod test {
                         &classes[0].id.to_string(),
                     )
                     .unwrap(),
-                    namespace_pgp.clone(),
+                    collection_pgp.clone(),
                 ],
                 expected: 1,
             },
@@ -145,19 +148,19 @@ mod test {
                         &classes[0].name,
                     )
                     .unwrap(),
-                    namespace_pgp.clone(),
+                    collection_pgp.clone(),
                 ],
                 expected: 1,
             },
             TestCase {
                 query: vec![
                     ParsedQueryParam::new(
-                        "namespaces",
+                        "collections",
                         Some(SearchOperator::Equals { is_negated: false }),
-                        &namespaces[2].id.to_string(),
+                        &collections[2].id.to_string(),
                     )
                     .unwrap(),
-                    namespace_pgp.clone(),
+                    collection_pgp.clone(),
                 ],
                 expected: 1,
             },
@@ -169,7 +172,7 @@ mod test {
                         "true",
                     )
                     .unwrap(),
-                    namespace_pgp.clone(),
+                    collection_pgp.clone(),
                 ],
                 expected: 0,
             },
@@ -182,9 +185,9 @@ mod test {
                     )
                     .unwrap(),
                     ParsedQueryParam::new(
-                        "namespaces",
+                        "collections",
                         Some(SearchOperator::Equals { is_negated: false }),
-                        &namespaces[2].id.to_string(),
+                        &collections[2].id.to_string(),
                     )
                     .unwrap(),
                 ],
@@ -193,21 +196,21 @@ mod test {
         ];
 
         check_test_cases(&context, testcases).await;
-        cleanup(&context, namespaces).await;
+        cleanup(&context, collections).await;
     }
 
     #[rstest]
     #[actix_rt::test]
     async fn test_class_search(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let (namespaces, classes) = setup_test_structure(&context, "test_user_class_search").await;
+        let (collections, classes) = setup_test_structure(&context, "test_user_class_search").await;
 
         let nspqp = ParsedQueryParam::new(
-            "namespaces",
+            "collections",
             Some(SearchOperator::Equals { is_negated: false }),
-            &namespaces
+            &collections
                 .iter()
-                .map(|ns| ns.id.to_string())
+                .map(|collection_fixture| collection_fixture.id.to_string())
                 .collect::<Vec<String>>()
                 .join(","),
         )
@@ -229,9 +232,9 @@ mod test {
             TestCase {
                 query: vec![
                     ParsedQueryParam::new(
-                        "namespaces",
+                        "collections",
                         Some(SearchOperator::Equals { is_negated: false }),
-                        &namespaces[2].id.to_string(),
+                        &collections[2].id.to_string(),
                     )
                     .unwrap(),
                     nspqp.clone(),
@@ -277,9 +280,9 @@ mod test {
                     )
                     .unwrap(),
                     ParsedQueryParam::new(
-                        "namespaces",
+                        "collections",
                         Some(SearchOperator::Equals { is_negated: false }),
-                        &namespaces[1].id.to_string(),
+                        &collections[1].id.to_string(),
                     )
                     .unwrap(),
                     nspqp.clone(),
@@ -307,22 +310,22 @@ mod test {
         ];
 
         check_test_cases(&context, testcases).await;
-        cleanup(&context, namespaces).await;
+        cleanup(&context, collections).await;
     }
 
     #[rstest]
     #[actix_rt::test]
     async fn test_search_int_ranges(#[future(awt)] test_context: TestContext) {
         let context = test_context;
-        let (namespaces, _) = setup_test_structure(&context, "test_user_class_int_ranges").await;
+        let (collections, _) = setup_test_structure(&context, "test_user_class_int_ranges").await;
 
         let testcases = vec![
             TestCase {
                 query: vec![
                     ParsedQueryParam::new(
-                        "namespaces",
+                        "collections",
                         Some(SearchOperator::Equals { is_negated: false }),
-                        format!("{}-{}", namespaces[1].id, namespaces[2].id).as_str(),
+                        format!("{}-{}", collections[1].id, collections[2].id).as_str(),
                     )
                     .unwrap(),
                     ParsedQueryParam::new(
@@ -337,9 +340,9 @@ mod test {
             TestCase {
                 query: vec![
                     ParsedQueryParam::new(
-                        "namespaces",
+                        "collections",
                         Some(SearchOperator::Equals { is_negated: false }),
-                        format!("{},{}", namespaces[0].id, namespaces[2].id).as_str(),
+                        format!("{},{}", collections[0].id, collections[2].id).as_str(),
                     )
                     .unwrap(),
                     ParsedQueryParam::new(
@@ -354,11 +357,11 @@ mod test {
             TestCase {
                 query: vec![
                     ParsedQueryParam::new(
-                        "namespaces",
+                        "collections",
                         Some(SearchOperator::Equals { is_negated: false }),
                         format!(
                             "{},{},{}",
-                            namespaces[0].id, namespaces[1].id, namespaces[2].id
+                            collections[0].id, collections[1].id, collections[2].id
                         )
                         .as_str(),
                     )
@@ -375,9 +378,9 @@ mod test {
             TestCase {
                 query: vec![
                     ParsedQueryParam::new(
-                        "namespaces",
+                        "collections",
                         Some(SearchOperator::Equals { is_negated: false }),
-                        format!("{}-{}", namespaces[0].id, namespaces[2].id).as_str(),
+                        format!("{}-{}", collections[0].id, collections[2].id).as_str(),
                     )
                     .unwrap(),
                     ParsedQueryParam::new(
@@ -392,11 +395,11 @@ mod test {
             TestCase {
                 query: vec![
                     ParsedQueryParam::new(
-                        "namespaces",
+                        "collections",
                         Some(SearchOperator::Equals { is_negated: false }),
                         format!(
                             "{}-{},{}",
-                            namespaces[0].id, namespaces[1].id, namespaces[2].id
+                            collections[0].id, collections[1].id, collections[2].id
                         )
                         .as_str(),
                     )
@@ -413,24 +416,24 @@ mod test {
         ];
 
         check_test_cases(&context, testcases).await;
-        cleanup(&context, namespaces).await;
+        cleanup(&context, collections).await;
     }
 
     fn generate_test_case_for_json_schema(
         operator: SearchOperator,
         value: &str,
-        namespaces: Vec<Namespace>,
+        collections: Vec<Collection>,
         expected_hits: usize,
     ) -> TestCase {
-        // To ensure we're only searching within our namespaces, we bind the namespaces to the query (or
+        // To ensure we're only searching within our collections, we bind the collections to the query (or
         // vice versa, depending on how you look at it). This is required as we run async tests and use the
         // same test data for a number of tests.
-        let binding_pgp_to_our_namespace = ParsedQueryParam::new(
-            "namespaces",
+        let binding_pgp_to_our_collection = ParsedQueryParam::new(
+            "collections",
             Some(SearchOperator::Equals { is_negated: false }),
-            &namespaces
+            &collections
                 .iter()
-                .map(|ns| ns.id.to_string())
+                .map(|collection_fixture| collection_fixture.id.to_string())
                 .collect::<Vec<String>>()
                 .join(","),
         )
@@ -439,7 +442,7 @@ mod test {
         TestCase {
             query: vec![
                 ParsedQueryParam::new("json_schema", Some(operator), value).unwrap(),
-                binding_pgp_to_our_namespace.clone(),
+                binding_pgp_to_our_collection.clone(),
             ],
             expected: expected_hits,
         }
@@ -490,17 +493,17 @@ mod test {
     ) {
         let context = test_context;
         let prefix = format!("class_json_schema_{op}_{value}_{hits}");
-        let (namespaces, _) = setup_test_structure(&context, &prefix).await;
+        let (collections, _) = setup_test_structure(&context, &prefix).await;
 
         let testcases = vec![generate_test_case_for_json_schema(
             op,
             value,
-            namespaces.clone(),
+            collections.clone(),
             hits,
         )];
 
         check_test_cases(&context, testcases).await;
 
-        cleanup(&context, namespaces).await;
+        cleanup(&context, collections).await;
     }
 }

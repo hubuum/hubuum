@@ -959,7 +959,7 @@ mod tests {
     use crate::errors::ApiError;
     use crate::models::search::QueryOptions;
     use crate::models::{
-        NamespaceID, NewTaskRecord, RemoteInvocationBodyOverride, RemoteInvocationParameters,
+        CollectionID, NewTaskRecord, RemoteInvocationBodyOverride, RemoteInvocationParameters,
         RemoteInvocationSubject, RemoteTargetID, StoredRemoteCallTaskPayload, TaskID, TaskKind,
         TaskStatus,
     };
@@ -1163,8 +1163,8 @@ mod tests {
         let context = block_on(TestContext::new());
         let payload = serde_json::to_value(StoredRemoteCallTaskPayload {
             target_id: RemoteTargetID::new(1).unwrap(),
-            subject: RemoteInvocationSubject::Namespace {
-                namespace_id: NamespaceID::new(1).unwrap(),
+            subject: RemoteInvocationSubject::Collection {
+                collection_id: CollectionID::new(1).unwrap(),
             },
             parameters: RemoteInvocationParameters::default(),
             body_override: RemoteInvocationBodyOverride::default(),

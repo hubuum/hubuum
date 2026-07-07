@@ -1,6 +1,6 @@
 //! Authorization-aware task loads, as methods on the `TaskID` newtype.
 //!
-//! Tasks are user-owned rather than namespace-scoped, so they do not use the `PermissionController`
+//! Tasks are user-owned rather than collection-scoped, so they do not use the `PermissionController`
 //! path the other resources do. Authorization is "the submitter or an admin"; denial (and a kind
 //! mismatch) returns a `404` rather than a `403` so the existence of another user's task is not
 //! revealed. These methods replace the per-handler free functions that previously took a bare id.

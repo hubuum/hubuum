@@ -5,30 +5,30 @@ use chrono::Utc;
 use tracing::{Instrument, info, info_span};
 
 use super::helpers::{
-    class_to_resolution, identifier_namespace, namespace_to_resolution, normalize_pair,
+    class_to_resolution, collection_to_resolution, identifier_collection, normalize_pair,
     object_to_resolution, planned_result, sanitize_error_for_storage, should_abort_import,
 };
 use super::resolution::{
-    remember_class, remember_namespace, remember_object, resolve_class_planning,
-    resolve_namespace_by_id_planning, resolve_namespace_planning, resolve_object_planning,
+    remember_class, remember_collection, remember_object, resolve_class_planning,
+    resolve_collection_by_id_planning, resolve_collection_planning, resolve_object_planning,
 };
 use super::types::{
-    ClassResolution, FailureKind, NamespaceResolution, ObjectResolution, PlannedExecution,
+    ClassResolution, CollectionResolution, FailureKind, ObjectResolution, PlannedExecution,
     PlannedItem, PlanningFailure, PlanningOutcome, PlanningState,
 };
 use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
 use crate::db::traits::task_import::{
-    lookup_class_by_namespace_and_name, lookup_classes_by_namespace_and_names,
-    lookup_direct_class_relation, lookup_group_by_name, lookup_namespace_by_name,
-    lookup_namespaces_by_names, lookup_object_by_class_and_name, lookup_object_relation,
+    lookup_class_by_collection_and_name, lookup_classes_by_collection_and_names,
+    lookup_collection_by_name, lookup_collections_by_names, lookup_direct_class_relation,
+    lookup_group_by_name, lookup_object_by_class_and_name, lookup_object_relation,
     lookup_objects_by_class_and_names,
 };
 use crate::models::{
-    ClassKey, ImportAtomicity, ImportClassInput, ImportClassRelationInput, ImportCollisionPolicy,
-    ImportMode, ImportNamespaceInput, ImportNamespacePermissionInput, ImportObjectInput,
-    ImportObjectRelationInput, ImportPermissionPolicy, ImportRequest, Namespace, NamespaceID,
-    NamespaceKey, ObjectKey, Permissions,
+    ClassKey, Collection, CollectionID, CollectionKey, ImportAtomicity, ImportClassInput,
+    ImportClassRelationInput, ImportCollectionInput, ImportCollectionPermissionInput,
+    ImportCollisionPolicy, ImportMode, ImportObjectInput, ImportObjectRelationInput,
+    ImportPermissionPolicy, ImportRequest, ObjectKey, Permissions,
 };
 
 async fn is_import_admin(
@@ -45,46 +45,48 @@ async fn is_import_admin(
     Ok(is_admin)
 }
 
-async fn ensure_namespace_permission_cached(
+async fn ensure_collection_permission_cached(
     pool: &DbPool,
     user: &impl crate::db::traits::authz::AuthzSubject,
     state: &mut PlanningState,
-    namespace_id: i32,
-    namespace_exists_in_db: bool,
+    collection_id: i32,
+    collection_exists_in_db: bool,
     permission: Permissions,
 ) -> Result<(), String> {
-    if !namespace_exists_in_db {
-        // Admin-bypass for newly-created namespaces applies only to unscoped
-        // tokens; a scoped import can never operate on new namespaces.
+    if !collection_exists_in_db {
+        // Admin-bypass for newly-created collections applies only to unscoped
+        // tokens; a scoped import can never operate on new collections.
         if state.scopes.is_none() && is_import_admin(pool, user, state).await? {
             return Ok(());
         }
-        return Err("Only admins may operate on newly created namespaces within an import".into());
+        return Err("Only admins may operate on newly created collections within an import".into());
     }
 
-    let key = (namespace_id, permission);
-    if let Some(result) = state.namespace_permission_cache.get(&key) {
+    let key = (collection_id, permission);
+    if let Some(result) = state.collection_permission_cache.get(&key) {
         return result.clone();
     }
 
-    let namespace = NamespaceID::new(namespace_id).map_err(|err| err.to_string())?;
+    let collection = CollectionID::new(collection_id).map_err(|err| err.to_string())?;
     let scopes = state.scopes.clone();
     let result = user
-        .can(pool, vec![permission], vec![namespace], scopes.as_deref())
+        .can(pool, vec![permission], vec![collection], scopes.as_deref())
         .await
         .map_err(|err| err.to_string());
-    state.namespace_permission_cache.insert(key, result.clone());
+    state
+        .collection_permission_cache
+        .insert(key, result.clone());
     result
 }
 
 fn collect_request_class_keys(request: &ImportRequest) -> Vec<ClassKey> {
     let mut keys = Vec::new();
     for class in &request.graph.classes {
-        if class.namespace_ref.is_some() || class.namespace_key.is_some() {
+        if class.collection_ref.is_some() || class.collection_key.is_some() {
             keys.push(ClassKey {
                 name: class.name.clone(),
-                namespace_ref: class.namespace_ref.clone(),
-                namespace_key: class.namespace_key.clone(),
+                collection_ref: class.collection_ref.clone(),
+                collection_key: class.collection_key.clone(),
             });
         }
     }
@@ -136,7 +138,7 @@ fn collect_request_object_keys(request: &ImportRequest) -> Vec<ObjectKey> {
     keys
 }
 
-async fn preload_namespaces_for_class_keys(
+async fn preload_collections_for_class_keys(
     pool: &DbPool,
     state: &mut PlanningState,
     class_keys: &[ClassKey],
@@ -144,31 +146,31 @@ async fn preload_namespaces_for_class_keys(
     let names = class_keys
         .iter()
         .filter_map(|key| {
-            key.namespace_key
+            key.collection_key
                 .as_ref()
-                .map(|namespace| namespace.name.clone())
+                .map(|collection| collection.name.clone())
         })
         .filter(|name| {
-            !state.namespaces_by_name.contains_key(name)
-                && !state.missing_namespace_names.contains(name)
+            !state.collections_by_name.contains_key(name)
+                && !state.missing_collection_names.contains(name)
         })
         .collect::<HashSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
 
-    let namespaces = lookup_namespaces_by_names(pool, &names)
+    let collections = lookup_collections_by_names(pool, &names)
         .await
         .map_err(|err| err.to_string())?;
-    let found_names = namespaces
+    let found_names = collections
         .iter()
-        .map(|namespace| namespace.name.clone())
+        .map(|collection| collection.name.clone())
         .collect::<HashSet<_>>();
-    for namespace in namespaces {
-        remember_namespace(state, None, namespace_to_resolution(namespace));
+    for collection in collections {
+        remember_collection(state, None, collection_to_resolution(collection));
     }
     for name in names {
         if !found_names.contains(&name) {
-            state.missing_namespace_names.insert(name);
+            state.missing_collection_names.insert(name);
         }
     }
 
@@ -181,37 +183,38 @@ async fn preload_existing_classes(
     request: &ImportRequest,
 ) -> Result<(), String> {
     let class_keys = collect_request_class_keys(request);
-    preload_namespaces_for_class_keys(pool, state, &class_keys).await?;
+    preload_collections_for_class_keys(pool, state, &class_keys).await?;
 
     let mut requested = HashMap::<i32, HashSet<String>>::new();
     for key in class_keys {
-        let Some(namespace) = resolve_class_namespace_for_preload(pool, state, &key).await? else {
+        let Some(collection) = resolve_class_collection_for_preload(pool, state, &key).await?
+        else {
             continue;
         };
-        if !namespace.exists_in_db {
+        if !collection.exists_in_db {
             state
                 .missing_class_keys
-                .insert((namespace.id, key.name.clone()));
+                .insert((collection.id, key.name.clone()));
             continue;
         }
         if state
             .classes_by_key
-            .contains_key(&(namespace.id, key.name.clone()))
+            .contains_key(&(collection.id, key.name.clone()))
             || state
                 .missing_class_keys
-                .contains(&(namespace.id, key.name.clone()))
+                .contains(&(collection.id, key.name.clone()))
         {
             continue;
         }
         requested
-            .entry(namespace.id)
+            .entry(collection.id)
             .or_default()
             .insert(key.name.clone());
     }
 
-    for (namespace_id, names) in requested {
+    for (collection_id, names) in requested {
         let names = names.into_iter().collect::<Vec<_>>();
-        let classes = lookup_classes_by_namespace_and_names(pool, namespace_id, &names)
+        let classes = lookup_classes_by_collection_and_names(pool, collection_id, &names)
             .await
             .map_err(|err| err.to_string())?;
         let found_names = classes
@@ -223,7 +226,7 @@ async fn preload_existing_classes(
         }
         for name in names {
             if !found_names.contains(&name) {
-                state.missing_class_keys.insert((namespace_id, name));
+                state.missing_class_keys.insert((collection_id, name));
             }
         }
     }
@@ -231,30 +234,30 @@ async fn preload_existing_classes(
     Ok(())
 }
 
-async fn resolve_class_namespace_for_preload(
+async fn resolve_class_collection_for_preload(
     pool: &DbPool,
     state: &mut PlanningState,
     key: &ClassKey,
-) -> Result<Option<NamespaceResolution>, String> {
-    match (key.namespace_ref.as_deref(), key.namespace_key.as_ref()) {
-        (Some(reference), None) => Ok(state.namespaces_by_ref.get(reference).cloned()),
-        (None, Some(NamespaceKey { name })) => {
-            if let Some(namespace) = state.namespaces_by_name.get(name) {
-                return Ok(Some(namespace.clone()));
+) -> Result<Option<CollectionResolution>, String> {
+    match (key.collection_ref.as_deref(), key.collection_key.as_ref()) {
+        (Some(reference), None) => Ok(state.collections_by_ref.get(reference).cloned()),
+        (None, Some(CollectionKey { name })) => {
+            if let Some(collection) = state.collections_by_name.get(name) {
+                return Ok(Some(collection.clone()));
             }
-            if state.missing_namespace_names.contains(name) {
+            if state.missing_collection_names.contains(name) {
                 return Ok(None);
             }
-            let namespace = lookup_namespace_by_name(pool, name)
+            let collection = lookup_collection_by_name(pool, name)
                 .await
                 .map_err(|err| err.to_string())?
-                .map(namespace_to_resolution);
-            if let Some(namespace) = &namespace {
-                remember_namespace(state, None, namespace.clone());
+                .map(collection_to_resolution);
+            if let Some(collection) = &collection {
+                remember_collection(state, None, collection.clone());
             } else {
-                state.missing_namespace_names.insert(name.clone());
+                state.missing_collection_names.insert(name.clone());
             }
-            Ok(namespace)
+            Ok(collection)
         }
         _ => Ok(None),
     }
@@ -404,27 +407,27 @@ pub(super) async fn plan_import(
         }};
     }
 
-    let namespace_count = request.graph.namespaces.len();
-    let namespace_start = Instant::now();
+    let collection_count = request.graph.collections.len();
+    let collection_start = Instant::now();
     async {
-        for namespace in &request.graph.namespaces {
-            push_or_stop!(plan_namespace(pool, user, &mode, &mut state, namespace));
+        for collection in &request.graph.collections {
+            push_or_stop!(plan_collection(pool, user, &mode, &mut state, collection));
         }
     }
     .instrument(info_span!(
         "import_planning_phase",
-        phase = "namespaces",
-        item_count = namespace_count
+        phase = "collections",
+        item_count = collection_count
     ))
     .await;
     info!(
         message = "Import planning phase finished",
-        phase = "namespaces",
-        item_count = namespace_count,
+        phase = "collections",
+        item_count = collection_count,
         planned_items = planned_items.len(),
         failures = failures.len(),
         aborted = aborted,
-        elapsed = ?namespace_start.elapsed()
+        elapsed = ?collection_start.elapsed()
     );
     if aborted {
         return PlanningOutcome {
@@ -579,29 +582,29 @@ pub(super) async fn plan_import(
             aborted,
         };
     }
-    let namespace_permission_count = request.graph.namespace_permissions.len();
-    let namespace_permission_start = Instant::now();
+    let collection_permission_count = request.graph.collection_permissions.len();
+    let collection_permission_start = Instant::now();
     async {
-        for acl in &request.graph.namespace_permissions {
-            push_or_stop!(plan_namespace_permission(
+        for acl in &request.graph.collection_permissions {
+            push_or_stop!(plan_collection_permission(
                 pool, user, &mode, &mut state, acl
             ));
         }
     }
     .instrument(info_span!(
         "import_planning_phase",
-        phase = "namespace_permissions",
-        item_count = namespace_permission_count
+        phase = "collection_permissions",
+        item_count = collection_permission_count
     ))
     .await;
     info!(
         message = "Import planning phase finished",
-        phase = "namespace_permissions",
-        item_count = namespace_permission_count,
+        phase = "collection_permissions",
+        item_count = collection_permission_count,
         planned_items = planned_items.len(),
         failures = failures.len(),
         aborted = aborted,
-        elapsed = ?namespace_permission_start.elapsed()
+        elapsed = ?collection_permission_start.elapsed()
     );
 
     PlanningOutcome {
@@ -611,62 +614,62 @@ pub(super) async fn plan_import(
     }
 }
 
-pub(super) async fn plan_namespace(
+pub(super) async fn plan_collection(
     pool: &DbPool,
     user: &impl crate::db::traits::authz::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
-    input: &ImportNamespaceInput,
+    input: &ImportCollectionInput,
 ) -> Result<PlannedItem, PlanningFailure> {
     if let Some(reference) = &input.ref_
-        && state.namespaces_by_ref.contains_key(reference)
+        && state.collections_by_ref.contains_key(reference)
     {
         return Err(PlanningFailure {
             kind: FailureKind::Validation,
             item: planned_result(
-                "namespace",
+                "collection",
                 "create",
                 input.ref_.clone(),
                 Some(input.name.clone()),
             ),
-            message: format!("Duplicate namespace ref '{reference}'"),
+            message: format!("Duplicate collection ref '{reference}'"),
         });
     }
 
-    if !state.planned_namespace_names.insert(input.name.clone()) {
+    if !state.planned_collection_names.insert(input.name.clone()) {
         return Err(PlanningFailure {
             kind: FailureKind::Validation,
             item: planned_result(
-                "namespace",
+                "collection",
                 "create",
                 input.ref_.clone(),
                 Some(input.name.clone()),
             ),
             message: format!(
-                "Duplicate namespace name '{}' within import request",
+                "Duplicate collection name '{}' within import request",
                 input.name
             ),
         });
     }
 
     let existing = state
-        .namespaces_by_name
+        .collections_by_name
         .get(&input.name)
         .cloned()
-        .filter(|namespace| namespace.exists_in_db)
-        .map(|ns| Namespace {
-            id: ns.id,
-            name: ns.name,
-            description: ns.description,
+        .filter(|collection| collection.exists_in_db)
+        .map(|collection_fixture| Collection {
+            id: collection_fixture.id,
+            name: collection_fixture.name,
+            description: collection_fixture.description,
             created_at: Utc::now().naive_utc(),
             updated_at: Utc::now().naive_utc(),
         })
-        .or(lookup_namespace_by_name(pool, &input.name)
+        .or(lookup_collection_by_name(pool, &input.name)
             .await
             .map_err(|message| PlanningFailure {
                 kind: FailureKind::Runtime,
                 item: planned_result(
-                    "namespace",
+                    "collection",
                     "lookup",
                     input.ref_.clone(),
                     Some(input.name.clone()),
@@ -674,12 +677,12 @@ pub(super) async fn plan_namespace(
                 message: sanitize_error_for_storage(&message),
             })?);
 
-    if let Some(namespace) = existing {
-        ensure_namespace_permission_cached(
+    if let Some(collection) = existing {
+        ensure_collection_permission_cached(
             pool,
             user,
             state,
-            namespace.id,
+            collection.id,
             true,
             Permissions::UpdateCollection,
         )
@@ -687,10 +690,10 @@ pub(super) async fn plan_namespace(
         .map_err(|message| PlanningFailure {
             kind: FailureKind::Permission,
             item: planned_result(
-                "namespace",
+                "collection",
                 "update",
                 input.ref_.clone(),
-                Some(namespace.name.clone()),
+                Some(collection.name.clone()),
             ),
             message,
         })?;
@@ -699,32 +702,32 @@ pub(super) async fn plan_namespace(
             return Err(PlanningFailure {
                 kind: FailureKind::Collision,
                 item: planned_result(
-                    "namespace",
+                    "collection",
                     "update",
                     input.ref_.clone(),
-                    Some(namespace.name),
+                    Some(collection.name),
                 ),
-                message: format!("Namespace '{}' already exists", input.name),
+                message: format!("Collection '{}' already exists", input.name),
             });
         }
 
-        let resolution = NamespaceResolution {
-            id: namespace.id,
-            name: namespace.name.clone(),
+        let resolution = CollectionResolution {
+            id: collection.id,
+            name: collection.name.clone(),
             description: input.description.clone(),
             exists_in_db: true,
         };
-        remember_namespace(state, input.ref_.clone(), resolution.clone());
+        remember_collection(state, input.ref_.clone(), resolution.clone());
 
         Ok(PlannedItem {
             result: planned_result(
-                "namespace",
+                "collection",
                 "update",
                 input.ref_.clone(),
-                Some(identifier_namespace(&resolution)),
+                Some(identifier_collection(&resolution)),
             ),
-            execution: Some(PlannedExecution::UpdateNamespace {
-                namespace_id: namespace.id,
+            execution: Some(PlannedExecution::UpdateCollection {
+                collection_id: collection.id,
                 input: input.clone(),
             }),
         })
@@ -734,7 +737,7 @@ pub(super) async fn plan_namespace(
             .map_err(|err| PlanningFailure {
                 kind: FailureKind::Permission,
                 item: planned_result(
-                    "namespace",
+                    "collection",
                     "create",
                     input.ref_.clone(),
                     Some(input.name.clone()),
@@ -745,31 +748,31 @@ pub(super) async fn plan_namespace(
             return Err(PlanningFailure {
                 kind: FailureKind::Permission,
                 item: planned_result(
-                    "namespace",
+                    "collection",
                     "create",
                     input.ref_.clone(),
                     Some(input.name.clone()),
                 ),
-                message: "Only admins may create namespaces".to_string(),
+                message: "Only admins may create collections".to_string(),
             });
         }
 
-        let resolution = NamespaceResolution {
+        let resolution = CollectionResolution {
             id: state.next_virtual_id(),
             name: input.name.clone(),
             description: input.description.clone(),
             exists_in_db: false,
         };
-        remember_namespace(state, input.ref_.clone(), resolution.clone());
+        remember_collection(state, input.ref_.clone(), resolution.clone());
 
         Ok(PlannedItem {
             result: planned_result(
-                "namespace",
+                "collection",
                 "create",
                 input.ref_.clone(),
-                Some(identifier_namespace(&resolution)),
+                Some(identifier_collection(&resolution)),
             ),
-            execution: Some(PlannedExecution::CreateNamespace(input.clone())),
+            execution: Some(PlannedExecution::CreateCollection(input.clone())),
         })
     }
 }
@@ -796,11 +799,11 @@ pub(super) async fn plan_class(
         });
     }
 
-    let namespace = resolve_namespace_planning(
+    let collection = resolve_collection_planning(
         pool,
         state,
-        input.namespace_ref.as_deref(),
-        input.namespace_key.as_ref(),
+        input.collection_ref.as_deref(),
+        input.collection_key.as_ref(),
     )
     .await
     .map_err(|message| PlanningFailure {
@@ -814,7 +817,7 @@ pub(super) async fn plan_class(
         message,
     })?;
 
-    let class_key = (namespace.id, input.name.clone());
+    let class_key = (collection.id, input.name.clone());
     if !state.planned_class_keys.insert(class_key.clone()) {
         return Err(PlanningFailure {
             kind: FailureKind::Validation,
@@ -822,11 +825,11 @@ pub(super) async fn plan_class(
                 "class",
                 "create",
                 input.ref_.clone(),
-                Some(format!("{}::{}", namespace.name, input.name)),
+                Some(format!("{}::{}", collection.name, input.name)),
             ),
             message: format!(
-                "Duplicate class name '{}' within namespace '{}'",
-                input.name, namespace.name
+                "Duplicate class name '{}' within collection '{}'",
+                input.name, collection.name
             ),
         });
     }
@@ -841,7 +844,7 @@ pub(super) async fn plan_class(
     } else if state.missing_class_keys.contains(&class_key) {
         None
     } else {
-        lookup_class_by_namespace_and_name(pool, namespace.id, &input.name)
+        lookup_class_by_collection_and_name(pool, collection.id, &input.name)
             .await
             .map_err(|err| PlanningFailure {
                 kind: FailureKind::Runtime,
@@ -856,15 +859,15 @@ pub(super) async fn plan_class(
             .map(class_to_resolution)
     };
 
-    let identifier = format!("{}::{}", namespace.name, input.name);
+    let identifier = format!("{}::{}", collection.name, input.name);
 
     if let Some(class) = existing {
-        ensure_namespace_permission_cached(
+        ensure_collection_permission_cached(
             pool,
             user,
             state,
-            namespace.id,
-            namespace.exists_in_db,
+            collection.id,
+            collection.exists_in_db,
             Permissions::UpdateClass,
         )
         .await
@@ -884,8 +887,8 @@ pub(super) async fn plan_class(
                 kind: FailureKind::Collision,
                 item: planned_result("class", "update", input.ref_.clone(), Some(identifier)),
                 message: format!(
-                    "Class '{}' already exists in namespace '{}'",
-                    input.name, namespace.name
+                    "Class '{}' already exists in collection '{}'",
+                    input.name, collection.name
                 ),
             });
         }
@@ -893,7 +896,7 @@ pub(super) async fn plan_class(
         let updated = ClassResolution {
             id: class.id,
             name: input.name.clone(),
-            namespace_id: namespace.id,
+            collection_id: collection.id,
             json_schema: input
                 .json_schema
                 .clone()
@@ -908,7 +911,7 @@ pub(super) async fn plan_class(
                 "class",
                 "update",
                 input.ref_.clone(),
-                Some(format!("{}::{}", namespace.name, input.name)),
+                Some(format!("{}::{}", collection.name, input.name)),
             ),
             execution: Some(PlannedExecution::UpdateClass {
                 class_id: class.id,
@@ -916,12 +919,12 @@ pub(super) async fn plan_class(
             }),
         })
     } else {
-        ensure_namespace_permission_cached(
+        ensure_collection_permission_cached(
             pool,
             user,
             state,
-            namespace.id,
-            namespace.exists_in_db,
+            collection.id,
+            collection.exists_in_db,
             Permissions::CreateClass,
         )
         .await
@@ -939,7 +942,7 @@ pub(super) async fn plan_class(
         let created = ClassResolution {
             id: state.next_virtual_id(),
             name: input.name.clone(),
-            namespace_id: namespace.id,
+            collection_id: collection.id,
             json_schema: input.json_schema.clone(),
             validate_schema: input.validate_schema.unwrap_or(false),
             exists_in_db: false,
@@ -1051,7 +1054,7 @@ pub(super) async fn plan_object(
     };
 
     let identifier = format!("{}::{}", class.name, input.name);
-    let namespace = resolve_namespace_by_id_planning(pool, state, class.namespace_id)
+    let collection = resolve_collection_by_id_planning(pool, state, class.collection_id)
         .await
         .map_err(|message| PlanningFailure {
             kind: FailureKind::Resolution,
@@ -1065,12 +1068,12 @@ pub(super) async fn plan_object(
         })?;
 
     if let Some(object) = existing {
-        ensure_namespace_permission_cached(
+        ensure_collection_permission_cached(
             pool,
             user,
             state,
-            namespace.id,
-            namespace.exists_in_db,
+            collection.id,
+            collection.exists_in_db,
             Permissions::UpdateObject,
         )
         .await
@@ -1099,7 +1102,7 @@ pub(super) async fn plan_object(
         let updated = ObjectResolution {
             id: object.id,
             name: input.name.clone(),
-            namespace_id: namespace.id,
+            collection_id: collection.id,
             class_id: class.id,
             exists_in_db: true,
         };
@@ -1118,12 +1121,12 @@ pub(super) async fn plan_object(
             }),
         })
     } else {
-        ensure_namespace_permission_cached(
+        ensure_collection_permission_cached(
             pool,
             user,
             state,
-            namespace.id,
-            namespace.exists_in_db,
+            collection.id,
+            collection.exists_in_db,
             Permissions::CreateObject,
         )
         .await
@@ -1141,7 +1144,7 @@ pub(super) async fn plan_object(
         let created = ObjectResolution {
             id: state.next_virtual_id(),
             name: input.name.clone(),
-            namespace_id: namespace.id,
+            collection_id: collection.id,
             class_id: class.id,
             exists_in_db: false,
         };
@@ -1188,7 +1191,7 @@ pub(super) async fn plan_class_relation(
     let pair = normalize_pair(from_class.id, to_class.id);
     let identifier = Some(format!("{}<->{}", from_class.name, to_class.name));
 
-    let from_namespace = resolve_namespace_by_id_planning(pool, state, from_class.namespace_id)
+    let from_collection = resolve_collection_by_id_planning(pool, state, from_class.collection_id)
         .await
         .map_err(|message| PlanningFailure {
             kind: FailureKind::Resolution,
@@ -1200,7 +1203,7 @@ pub(super) async fn plan_class_relation(
             ),
             message,
         })?;
-    let to_namespace = resolve_namespace_by_id_planning(pool, state, to_class.namespace_id)
+    let to_collection = resolve_collection_by_id_planning(pool, state, to_class.collection_id)
         .await
         .map_err(|message| PlanningFailure {
             kind: FailureKind::Resolution,
@@ -1213,12 +1216,12 @@ pub(super) async fn plan_class_relation(
             message,
         })?;
 
-    ensure_namespace_permission_cached(
+    ensure_collection_permission_cached(
         pool,
         user,
         state,
-        from_namespace.id,
-        from_namespace.exists_in_db,
+        from_collection.id,
+        from_collection.exists_in_db,
         Permissions::CreateClassRelation,
     )
     .await
@@ -1232,12 +1235,12 @@ pub(super) async fn plan_class_relation(
         ),
         message,
     })?;
-    ensure_namespace_permission_cached(
+    ensure_collection_permission_cached(
         pool,
         user,
         state,
-        to_namespace.id,
-        to_namespace.exists_in_db,
+        to_collection.id,
+        to_collection.exists_in_db,
         Permissions::CreateClassRelation,
     )
     .await
@@ -1325,14 +1328,14 @@ pub(super) async fn plan_object_relation(
     })?;
     let pair = normalize_pair(from_object.id, to_object.id);
 
-    let from_namespace = resolve_namespace_by_id_planning(pool, state, from_object.namespace_id)
+    let from_collection = resolve_collection_by_id_planning(pool, state, from_object.collection_id)
         .await
         .map_err(|message| PlanningFailure {
             kind: FailureKind::Resolution,
             item: planned_result("object_relation", "create", input.ref_.clone(), None),
             message,
         })?;
-    let to_namespace = resolve_namespace_by_id_planning(pool, state, to_object.namespace_id)
+    let to_collection = resolve_collection_by_id_planning(pool, state, to_object.collection_id)
         .await
         .map_err(|message| PlanningFailure {
             kind: FailureKind::Resolution,
@@ -1340,12 +1343,12 @@ pub(super) async fn plan_object_relation(
             message,
         })?;
 
-    ensure_namespace_permission_cached(
+    ensure_collection_permission_cached(
         pool,
         user,
         state,
-        from_namespace.id,
-        from_namespace.exists_in_db,
+        from_collection.id,
+        from_collection.exists_in_db,
         Permissions::CreateObjectRelation,
     )
     .await
@@ -1354,12 +1357,12 @@ pub(super) async fn plan_object_relation(
         item: planned_result("object_relation", "create", input.ref_.clone(), None),
         message,
     })?;
-    ensure_namespace_permission_cached(
+    ensure_collection_permission_cached(
         pool,
         user,
         state,
-        to_namespace.id,
-        to_namespace.exists_in_db,
+        to_collection.id,
+        to_collection.exists_in_db,
         Permissions::CreateObjectRelation,
     )
     .await
@@ -1423,24 +1426,24 @@ pub(super) async fn plan_object_relation(
     })
 }
 
-pub(super) async fn plan_namespace_permission(
+pub(super) async fn plan_collection_permission(
     pool: &DbPool,
     user: &impl crate::db::traits::authz::AuthzSubject,
     _mode: &ImportMode,
     state: &mut PlanningState,
-    input: &ImportNamespacePermissionInput,
+    input: &ImportCollectionPermissionInput,
 ) -> Result<PlannedItem, PlanningFailure> {
-    let namespace = resolve_namespace_planning(
+    let collection = resolve_collection_planning(
         pool,
         state,
-        input.namespace_ref.as_deref(),
-        input.namespace_key.as_ref(),
+        input.collection_ref.as_deref(),
+        input.collection_key.as_ref(),
     )
     .await
     .map_err(|message| PlanningFailure {
         kind: FailureKind::Resolution,
         item: planned_result(
-            "namespace_permission",
+            "collection_permission",
             "apply",
             input.ref_.clone(),
             Some(input.group_key.groupname.clone()),
@@ -1448,22 +1451,25 @@ pub(super) async fn plan_namespace_permission(
         message,
     })?;
 
-    ensure_namespace_permission_cached(
+    ensure_collection_permission_cached(
         pool,
         user,
         state,
-        namespace.id,
-        namespace.exists_in_db,
+        collection.id,
+        collection.exists_in_db,
         Permissions::DelegateCollection,
     )
     .await
     .map_err(|message| PlanningFailure {
         kind: FailureKind::Permission,
         item: planned_result(
-            "namespace_permission",
+            "collection_permission",
             "apply",
             input.ref_.clone(),
-            Some(format!("{}::{}", namespace.name, input.group_key.groupname)),
+            Some(format!(
+                "{}::{}",
+                collection.name, input.group_key.groupname
+            )),
         ),
         message,
     })?;
@@ -1473,7 +1479,7 @@ pub(super) async fn plan_namespace_permission(
         .map_err(|err| PlanningFailure {
             kind: FailureKind::Runtime,
             item: planned_result(
-                "namespace_permission",
+                "collection_permission",
                 "lookup",
                 input.ref_.clone(),
                 Some(input.group_key.groupname.clone()),
@@ -1483,7 +1489,7 @@ pub(super) async fn plan_namespace_permission(
         .ok_or_else(|| PlanningFailure {
             kind: FailureKind::Resolution,
             item: planned_result(
-                "namespace_permission",
+                "collection_permission",
                 "apply",
                 input.ref_.clone(),
                 Some(input.group_key.groupname.clone()),
@@ -1493,15 +1499,15 @@ pub(super) async fn plan_namespace_permission(
 
     Ok(PlannedItem {
         result: planned_result(
-            "namespace_permission",
+            "collection_permission",
             if input.replace_existing.unwrap_or(false) {
                 "replace"
             } else {
                 "grant"
             },
             input.ref_.clone(),
-            Some(format!("{}::{}", namespace.name, group.groupname)),
+            Some(format!("{}::{}", collection.name, group.groupname)),
         ),
-        execution: Some(PlannedExecution::ApplyNamespacePermissions(input.clone())),
+        execution: Some(PlannedExecution::ApplyCollectionPermissions(input.clone())),
     })
 }

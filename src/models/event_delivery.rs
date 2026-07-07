@@ -162,7 +162,7 @@ pub struct EventSinkDeliveryHealth {
 pub struct EventSubscriptionDeliveryHealth {
     pub subscription_id: i32,
     pub subscription_name: String,
-    pub namespace_id: i32,
+    pub collection_id: i32,
     pub sink_id: i32,
     pub sink_name: String,
     pub sink_kind: String,

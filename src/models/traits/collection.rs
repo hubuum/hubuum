@@ -1,31 +1,33 @@
 use crate::db::DbPool;
-use crate::db::traits::namespace::{
-    DeleteNamespaceRecord, SaveNamespaceForGroupRecord, SaveNamespaceWithAssigneeRecord,
-    UpdateNamespaceRecord,
+use crate::db::traits::collection::{
+    DeleteCollectionRecord, SaveCollectionForGroupRecord, SaveCollectionWithAssigneeRecord,
+    UpdateCollectionRecord,
 };
 use crate::errors::ApiError;
 use crate::events::EventContext;
-use crate::models::group::GroupID;
-use crate::models::namespace::{
-    Namespace, NamespaceID, NewNamespace, NewNamespaceWithAssignee, UpdateNamespace,
+use crate::models::collection::{
+    Collection, CollectionID, NewCollection, NewCollectionWithAssignee, UpdateCollection,
 };
+use crate::models::group::GroupID;
 use crate::models::search::{FilterField, SortParam};
-use crate::traits::accessors::{IdAccessor, InstanceAdapter, NamespaceAdapter};
+use crate::traits::accessors::{CollectionAdapter, IdAccessor, InstanceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 use crate::traits::{
-    BackendContext, CanUpdate, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType,
-    NamespaceAccessors, PermissionController,
+    BackendContext, CanUpdate, CollectionAccessors, CursorPaginated, CursorSqlField,
+    CursorSqlMapping, CursorSqlType, PermissionController,
 };
 
-impl SaveAdapter for Namespace {
-    type Output = Namespace;
+impl SaveAdapter for Collection {
+    type Output = Collection;
 
     async fn save_adapter_without_events(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
-        let updated_namespace = UpdateNamespace {
+        let updated_collection = UpdateCollection {
             name: Some(self.name.clone()),
             description: Some(self.description.clone()),
         };
-        updated_namespace.update_without_events(pool, self.id).await
+        updated_collection
+            .update_without_events(pool, self.id)
+            .await
     }
 
     async fn save_adapter(
@@ -33,62 +35,64 @@ impl SaveAdapter for Namespace {
         pool: &DbPool,
         context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
-        let updated_namespace = UpdateNamespace {
+        let updated_collection = UpdateCollection {
             name: Some(self.name.clone()),
             description: Some(self.description.clone()),
         };
-        updated_namespace
-            .update_namespace_record(pool, self.id, Some(context))
+        updated_collection
+            .update_collection_record(pool, self.id, Some(context))
             .await
     }
 }
 
-impl DeleteAdapter for Namespace {
+impl DeleteAdapter for Collection {
     async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
-        self.delete_namespace_record_without_events(pool).await
+        self.delete_collection_record_without_events(pool).await
     }
 
     async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
-        self.delete_namespace_record(pool, Some(context)).await
+        self.delete_collection_record(pool, Some(context)).await
     }
 }
 
-impl DeleteAdapter for NamespaceID {
+impl DeleteAdapter for CollectionID {
     async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
-        self.delete_namespace_record_without_events(pool).await
+        self.delete_collection_record_without_events(pool).await
     }
 
     async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
-        self.delete_namespace_record(pool, Some(context)).await
+        self.delete_collection_record(pool, Some(context)).await
     }
 }
 
-impl UpdateAdapter for UpdateNamespace {
-    type Output = Namespace;
+impl UpdateAdapter for UpdateCollection {
+    type Output = Collection;
 
     async fn update_adapter_without_events(
         &self,
         pool: &DbPool,
-        nid: i32,
+        target_collection_id: i32,
     ) -> Result<Self::Output, ApiError> {
-        self.update_namespace_record_without_events(pool, nid).await
+        self.update_collection_record_without_events(pool, target_collection_id)
+            .await
     }
 
     async fn update_adapter(
         &self,
         pool: &DbPool,
-        nid: i32,
+        target_collection_id: i32,
         context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
-        self.update_namespace_record(pool, nid, Some(context)).await
+        self.update_collection_record(pool, target_collection_id, Some(context))
+            .await
     }
 }
 
-impl SaveAdapter for NewNamespaceWithAssignee {
-    type Output = Namespace;
+impl SaveAdapter for NewCollectionWithAssignee {
+    type Output = Collection;
 
-    async fn save_adapter_without_events(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        self.save_namespace_with_assignee_record_without_events(pool)
+    async fn save_adapter_without_events(&self, pool: &DbPool) -> Result<Collection, ApiError> {
+        self.save_collection_with_assignee_record_without_events(pool)
             .await
     }
 
@@ -96,35 +100,35 @@ impl SaveAdapter for NewNamespaceWithAssignee {
         &self,
         pool: &DbPool,
         context: &EventContext,
-    ) -> Result<Namespace, ApiError> {
-        self.save_namespace_with_assignee_record(pool, Some(context))
+    ) -> Result<Collection, ApiError> {
+        self.save_collection_with_assignee_record(pool, Some(context))
             .await
     }
 }
 
-impl IdAccessor for Namespace {
+impl IdAccessor for Collection {
     fn accessor_id(&self) -> i32 {
         self.id
     }
 }
 
-impl InstanceAdapter<Namespace> for Namespace {
-    async fn instance_adapter(&self, _pool: &DbPool) -> Result<Namespace, ApiError> {
+impl InstanceAdapter<Collection> for Collection {
+    async fn instance_adapter(&self, _pool: &DbPool) -> Result<Collection, ApiError> {
         Ok(self.clone())
     }
 }
 
-impl NamespaceAdapter for Namespace {
-    async fn namespace_adapter(&self, _pool: &DbPool) -> Result<Namespace, ApiError> {
+impl CollectionAdapter for Collection {
+    async fn collection_adapter(&self, _pool: &DbPool) -> Result<Collection, ApiError> {
         Ok(self.clone())
     }
 
-    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<NamespaceID, ApiError> {
-        NamespaceID::new(self.id)
+    async fn collection_id_adapter(&self, _pool: &DbPool) -> Result<CollectionID, ApiError> {
+        CollectionID::new(self.id)
     }
 }
 
-impl IdAccessor for NamespaceID {
+impl IdAccessor for CollectionID {
     fn accessor_id(&self) -> i32 {
         // Deref to the owned (Copy) value on purpose: with a `&self` receiver, `self.id()`
         // binds to the `SelfAccessors::id` trait method, which calls back into `accessor_id`
@@ -133,65 +137,65 @@ impl IdAccessor for NamespaceID {
     }
 }
 
-impl InstanceAdapter<Namespace> for NamespaceID {
-    async fn instance_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        self.namespace(pool).await
+impl InstanceAdapter<Collection> for CollectionID {
+    async fn instance_adapter(&self, pool: &DbPool) -> Result<Collection, ApiError> {
+        self.collection(pool).await
     }
 }
 
-impl NamespaceAdapter for NamespaceID {
-    async fn namespace_id_adapter(&self, _pool: &DbPool) -> Result<NamespaceID, ApiError> {
+impl CollectionAdapter for CollectionID {
+    async fn collection_id_adapter(&self, _pool: &DbPool) -> Result<CollectionID, ApiError> {
         Ok(*self)
     }
 
-    async fn namespace_adapter(&self, pool: &DbPool) -> Result<Namespace, ApiError> {
-        use crate::db::traits::GetNamespace;
-        self.namespace_from_backend(pool).await
+    async fn collection_adapter(&self, pool: &DbPool) -> Result<Collection, ApiError> {
+        use crate::db::traits::GetCollection;
+        self.collection_from_backend(pool).await
     }
 }
 
-impl NewNamespace {
-    /// Create a namespace and grant the full namespace permission set to the assignee group.
+impl NewCollection {
+    /// Create a collection and grant the full collection permission set to the assignee group.
     ///
-    /// This is a convenience wrapper around the backend transaction that creates the namespace
+    /// This is a convenience wrapper around the backend transaction that creates the collection
     /// record and the corresponding permission record together.
     pub async fn save_and_grant_all_to<C>(
         self,
         backend: &C,
         assignee: GroupID,
-    ) -> Result<Namespace, ApiError>
+    ) -> Result<Collection, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.save_namespace_for_group_record_without_events(backend.db_pool(), assignee.id())
+        self.save_collection_for_group_record_without_events(backend.db_pool(), assignee.id())
             .await
     }
 
-    /// Persist the namespace and apply permissions using the assignee embedded in the supplied
-    /// `NewNamespaceWithAssignee`.
+    /// Persist the collection and apply permissions using the assignee embedded in the supplied
+    /// `NewCollectionWithAssignee`.
     ///
     /// This delegates into the same backend helper as [`Self::save_and_grant_all_to`], but takes
     /// the assignee from the provided wrapper value.
     pub async fn update_with_permissions<C>(
         self,
         backend: &C,
-        ns_with_assignee: NewNamespaceWithAssignee,
-    ) -> Result<Namespace, ApiError>
+        collection_with_assignee: NewCollectionWithAssignee,
+    ) -> Result<Collection, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.save_namespace_for_group_record_without_events(
+        self.save_collection_for_group_record_without_events(
             backend.db_pool(),
-            ns_with_assignee.group_id,
+            collection_with_assignee.group_id,
         )
         .await
     }
 }
 
-impl PermissionController for Namespace {}
-impl PermissionController for NamespaceID {}
+impl PermissionController for Collection {}
+impl PermissionController for CollectionID {}
 
-impl CursorPaginated for Namespace {
+impl CursorPaginated for Collection {
     fn supports_sort(field: &FilterField) -> bool {
         matches!(
             field,
@@ -214,7 +218,7 @@ impl CursorPaginated for Namespace {
             FilterField::UpdatedAt => crate::traits::CursorValue::DateTime(self.updated_at),
             _ => {
                 return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for namespaces",
+                    "Field '{}' is not orderable for collections",
                     field
                 )));
             }
@@ -233,37 +237,37 @@ impl CursorPaginated for Namespace {
     }
 }
 
-impl CursorSqlMapping for Namespace {
+impl CursorSqlMapping for Collection {
     fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
         Ok(match field {
             FilterField::Id => CursorSqlField {
-                column: "namespaces.id",
+                column: "collections.id",
                 sql_type: CursorSqlType::Integer,
                 nullable: false,
             },
             FilterField::Name => CursorSqlField {
-                column: "namespaces.name",
+                column: "collections.name",
                 sql_type: CursorSqlType::String,
                 nullable: false,
             },
             FilterField::Description => CursorSqlField {
-                column: "namespaces.description",
+                column: "collections.description",
                 sql_type: CursorSqlType::String,
                 nullable: false,
             },
             FilterField::CreatedAt => CursorSqlField {
-                column: "namespaces.created_at",
+                column: "collections.created_at",
                 sql_type: CursorSqlType::DateTime,
                 nullable: false,
             },
             FilterField::UpdatedAt => CursorSqlField {
-                column: "namespaces.updated_at",
+                column: "collections.updated_at",
                 sql_type: CursorSqlType::DateTime,
                 nullable: false,
             },
             _ => {
                 return Err(ApiError::BadRequest(format!(
-                    "Field '{}' is not orderable for namespaces",
+                    "Field '{}' is not orderable for collections",
                     field
                 )));
             }

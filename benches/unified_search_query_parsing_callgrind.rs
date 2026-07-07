@@ -7,7 +7,7 @@ use std::hint::black_box;
 // takes the page limits explicitly so the parse path holds no global state.
 const QUERY: &str = concat!(
     "q=asset%20server",
-    "&kinds=namespace,class,object",
+    "&kinds=collection,class,object",
     "&limit_per_kind=25",
     "&search_class_schema=true",
     "&search_object_data=false",

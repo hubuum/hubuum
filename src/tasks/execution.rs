@@ -14,15 +14,17 @@ use super::helpers::{
     flush_import_result_batches, sanitize_error_for_storage, should_abort_best_effort_execution,
 };
 use super::planning::plan_import;
-use super::resolution::{resolve_class_runtime, resolve_namespace_runtime, resolve_object_runtime};
+use super::resolution::{
+    resolve_class_runtime, resolve_collection_runtime, resolve_object_runtime,
+};
 use super::types::{
     ExecutionAccumulator, PlannedExecution, PlannedItem, PlannedTaskResult, RuntimeState,
     TerminalTaskUpdate,
 };
 use crate::db::traits::task_import::{
-    apply_permissions_db, create_class_db, create_class_relation_db, create_namespace_db,
+    apply_permissions_db, create_class_db, create_class_relation_db, create_collection_db,
     create_object_db, create_object_relation_db, lookup_group_by_name_db, update_class_db,
-    update_namespace_db, update_object_db,
+    update_collection_db, update_object_db,
 };
 
 pub(super) async fn execute_import_task(
@@ -379,29 +381,33 @@ pub(super) fn execute_planned_item(
     execution: &PlannedExecution,
 ) -> Result<(), ApiError> {
     match execution {
-        PlannedExecution::CreateNamespace(input) => {
-            let created = create_namespace_db(conn, input)?;
+        PlannedExecution::CreateCollection(input) => {
+            let created = create_collection_db(conn, input)?;
             if let Some(reference) = &input.ref_ {
-                runtime.namespaces_by_ref.insert(reference.clone(), created);
+                runtime
+                    .collections_by_ref
+                    .insert(reference.clone(), created);
             }
         }
-        PlannedExecution::UpdateNamespace {
-            namespace_id,
+        PlannedExecution::UpdateCollection {
+            collection_id,
             input,
         } => {
-            let updated = update_namespace_db(conn, *namespace_id, input)?;
+            let updated = update_collection_db(conn, *collection_id, input)?;
             if let Some(reference) = &input.ref_ {
-                runtime.namespaces_by_ref.insert(reference.clone(), updated);
+                runtime
+                    .collections_by_ref
+                    .insert(reference.clone(), updated);
             }
         }
         PlannedExecution::CreateClass(input) => {
-            let namespace = resolve_namespace_runtime(
+            let collection = resolve_collection_runtime(
                 conn,
                 runtime,
-                input.namespace_ref.as_deref(),
-                input.namespace_key.as_ref(),
+                input.collection_ref.as_deref(),
+                input.collection_key.as_ref(),
             )?;
-            let created = create_class_db(conn, input, namespace.id)?;
+            let created = create_class_db(conn, input, collection.id)?;
             if let Some(reference) = &input.ref_ {
                 runtime.classes_by_ref.insert(reference.clone(), created);
             }
@@ -466,12 +472,12 @@ pub(super) fn execute_planned_item(
             )?;
             create_object_relation_db(conn, &from_object, &to_object)?;
         }
-        PlannedExecution::ApplyNamespacePermissions(input) => {
-            let namespace = resolve_namespace_runtime(
+        PlannedExecution::ApplyCollectionPermissions(input) => {
+            let collection = resolve_collection_runtime(
                 conn,
                 runtime,
-                input.namespace_ref.as_deref(),
-                input.namespace_key.as_ref(),
+                input.collection_ref.as_deref(),
+                input.collection_key.as_ref(),
             )?;
             let group =
                 lookup_group_by_name_db(conn, &input.group_key.groupname)?.ok_or_else(|| {
@@ -479,7 +485,7 @@ pub(super) fn execute_planned_item(
                 })?;
             apply_permissions_db(
                 conn,
-                namespace.id,
+                collection.id,
                 group.id,
                 &input.permissions,
                 input.replace_existing.unwrap_or(false),

@@ -9,7 +9,10 @@
     DROP TABLE IF EXISTS remote_call_results CASCADE;
     DROP TABLE IF EXISTS report_task_outputs CASCADE;
     DROP TABLE IF EXISTS import_task_results CASCADE;
-    DROP TABLE IF EXISTS task_events CASCADE;
+    DROP TABLE IF EXISTS event_deliveries CASCADE;
+    DROP TABLE IF EXISTS event_subscriptions CASCADE;
+    DROP TABLE IF EXISTS event_sinks CASCADE;
+    DROP TABLE IF EXISTS events CASCADE;
     DROP TABLE IF EXISTS tasks CASCADE;
     DROP TABLE IF EXISTS token_scopes CASCADE;
     DROP TABLE IF EXISTS tokens CASCADE;
@@ -25,7 +28,7 @@
     DROP TABLE IF EXISTS user_groups CASCADE;
     DROP TABLE IF EXISTS service_accounts CASCADE;
     DROP TABLE IF EXISTS users CASCADE;
-    DROP TABLE IF EXISTS namespaces CASCADE;
+    DROP TABLE IF EXISTS collections CASCADE;
     DROP TABLE IF EXISTS groups CASCADE;
     DROP TABLE IF EXISTS principals CASCADE;
 
@@ -50,7 +53,7 @@
         SELECT CASE
             WHEN jsonb_typeof(subject_types) <> 'array' THEN FALSE
             ELSE jsonb_array_length(subject_types) > 0
-                AND subject_types <@ '["namespace", "class", "object", "class_relation", "object_relation"]'::jsonb
+                AND subject_types <@ '["collection", "class", "object", "class_relation", "object_relation"]'::jsonb
                 AND (
                     SELECT COUNT(*)
                     FROM jsonb_array_elements_text(subject_types)
@@ -85,7 +88,7 @@
         updated_at TIMESTAMP NOT NULL DEFAULT now()
     );
 
-    CREATE TABLE namespaces (
+    CREATE TABLE collections (
         id SERIAL PRIMARY KEY,
         name VARCHAR NOT NULL UNIQUE,
         description VARCHAR NOT NULL,
@@ -102,6 +105,7 @@
         email VARCHAR NULL,
         created_at TIMESTAMP NOT NULL DEFAULT now(),
         updated_at TIMESTAMP NOT NULL DEFAULT now(),
+        anonymized_at TIMESTAMP NULL,
         FOREIGN KEY (id, kind) REFERENCES principals (id, kind) ON DELETE CASCADE
     );
 
@@ -129,12 +133,12 @@
 
     CREATE TABLE permissions (
         id SERIAL PRIMARY KEY,
-        namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
+        collection_id INT REFERENCES collections (id) ON DELETE CASCADE NOT NULL,
         group_id INT REFERENCES groups (id) ON DELETE CASCADE NOT NULL,
-        has_read_namespace BOOLEAN NOT NULL,
-        has_update_namespace BOOLEAN NOT NULL,
-        has_delete_namespace BOOLEAN NOT NULL,
-        has_delegate_namespace BOOLEAN NOT NULL,
+        has_read_collection BOOLEAN NOT NULL,
+        has_update_collection BOOLEAN NOT NULL,
+        has_delete_collection BOOLEAN NOT NULL,
+        has_delegate_collection BOOLEAN NOT NULL,
         has_create_class BOOLEAN NOT NULL,
         has_read_class BOOLEAN NOT NULL,
         has_update_class BOOLEAN NOT NULL,
@@ -162,13 +166,15 @@
         has_execute_remote_target BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMP NOT NULL DEFAULT now(),
         updated_at TIMESTAMP NOT NULL DEFAULT now(),
-        UNIQUE (namespace_id, group_id)
+        has_read_audit BOOLEAN NOT NULL DEFAULT FALSE,
+        has_manage_event_subscription BOOLEAN NOT NULL DEFAULT FALSE,
+        UNIQUE (collection_id, group_id)
     );
 
     CREATE TABLE hubuumclass (
         id SERIAL PRIMARY KEY,
         name VARCHAR NOT NULL UNIQUE,
-        namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
+        collection_id INT REFERENCES collections (id) ON DELETE CASCADE NOT NULL,
         json_schema JSONB DEFAULT NULL,
         validate_schema BOOLEAN DEFAULT false NOT NULL,
         description VARCHAR NOT NULL,
@@ -179,7 +185,7 @@
     CREATE TABLE hubuumobject (
         id SERIAL PRIMARY KEY,
         name VARCHAR NOT NULL,
-        namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
+        collection_id INT REFERENCES collections (id) ON DELETE CASCADE NOT NULL,
         hubuum_class_id INT REFERENCES hubuumclass (id) ON DELETE CASCADE NOT NULL,
         data JSONB DEFAULT '{}'::jsonb NOT NULL,
         description VARCHAR NOT NULL,
@@ -225,7 +231,7 @@
     -- Table to store report templates
     CREATE TABLE report_templates (
         id SERIAL PRIMARY KEY,
-        namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
+        collection_id INT REFERENCES collections (id) ON DELETE CASCADE NOT NULL,
         name VARCHAR NOT NULL,
         description VARCHAR NOT NULL,
         content_type VARCHAR NOT NULL,
@@ -240,11 +246,11 @@
         default_limits JSONB,
         created_at TIMESTAMP NOT NULL DEFAULT now(),
         updated_at TIMESTAMP NOT NULL DEFAULT now(),
-        UNIQUE (namespace_id, name),
+        UNIQUE (collection_id, name),
         CHECK (content_type IN ('text/plain', 'text/html', 'text/csv')),
         CHECK (kind IN ('report', 'fragment')),
         CHECK (scope_kind IS NULL OR scope_kind IN (
-            'namespaces', 'classes', 'objects_in_class',
+            'collections', 'classes', 'objects_in_class',
             'class_relations', 'object_relations', 'related_objects'
         )),
         CHECK (default_missing_data_policy IS NULL OR default_missing_data_policy IN ('strict', 'null', 'omit')),
@@ -253,13 +259,13 @@
             OR
             (kind = 'report' AND scope_kind IN ('objects_in_class', 'related_objects') AND class_id IS NOT NULL)
             OR
-            (kind = 'report' AND scope_kind IN ('namespaces', 'classes', 'class_relations', 'object_relations') AND class_id IS NULL)
+            (kind = 'report' AND scope_kind IN ('collections', 'classes', 'class_relations', 'object_relations') AND class_id IS NULL)
         )
     );
 
     CREATE TABLE remote_targets (
         id SERIAL PRIMARY KEY,
-        namespace_id INT REFERENCES namespaces (id) ON DELETE CASCADE NOT NULL,
+        collection_id INT REFERENCES collections (id) ON DELETE CASCADE NOT NULL,
         class_id INT REFERENCES hubuumclass (id) ON DELETE CASCADE NULL,
         name VARCHAR NOT NULL,
         description VARCHAR NOT NULL DEFAULT '',
@@ -273,7 +279,7 @@
         enabled BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMP NOT NULL DEFAULT now(),
         updated_at TIMESTAMP NOT NULL DEFAULT now(),
-        UNIQUE (namespace_id, name),
+        UNIQUE (collection_id, name),
         CHECK (timeout_ms > 0),
         CHECK (jsonb_typeof(headers_template) = 'object'),
         CHECK (jsonb_typeof(auth_config) = 'object'),
@@ -344,15 +350,6 @@
         UNIQUE (submitted_by, idempotency_key)
     );
 
-    CREATE TABLE task_events (
-        id SERIAL PRIMARY KEY,
-        task_id INT REFERENCES tasks (id) ON DELETE CASCADE NOT NULL,
-        event_type VARCHAR NOT NULL,
-        message TEXT NOT NULL,
-        data JSONB NULL,
-        created_at TIMESTAMP NOT NULL DEFAULT now()
-    );
-
     CREATE TABLE import_task_results (
         id SERIAL PRIMARY KEY,
         task_id INT REFERENCES tasks (id) ON DELETE CASCADE NOT NULL,
@@ -364,6 +361,84 @@
         error TEXT NULL,
         details JSONB NULL,
         created_at TIMESTAMP NOT NULL DEFAULT now()
+    );
+
+    -- Unified event & audit stream. Events intentionally do not hold foreign
+    -- keys to domain tables: audit rows must survive deletion of the entity
+    -- they describe, and the append-only trigger rejects FK-driven rewrites.
+    CREATE TABLE events (
+        id BIGSERIAL PRIMARY KEY,
+        event_id UUID NOT NULL UNIQUE,
+        occurred_at TIMESTAMP NOT NULL DEFAULT now(),
+        entity_type TEXT NOT NULL,
+        entity_id INTEGER NULL,
+        entity_name TEXT NULL,
+        collection_id INTEGER NULL,
+        action TEXT NOT NULL,
+        actor_user_id INTEGER NULL,
+        actor_kind TEXT NOT NULL,
+        request_id UUID NULL,
+        correlation_id TEXT NULL,
+        summary TEXT NOT NULL,
+        "before" JSONB NULL,
+        "after" JSONB NULL,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        schema_version INTEGER NOT NULL DEFAULT 1,
+        dispatched_at TIMESTAMP NULL,
+        fanout_locked_until TIMESTAMP NULL,
+        fanout_claim_token UUID NULL
+    );
+
+    CREATE TABLE event_sinks (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR NOT NULL UNIQUE,
+        kind VARCHAR NOT NULL CHECK (kind IN ('webhook', 'amqp', 'valkey_stream', 'email')),
+        config JSONB NOT NULL DEFAULT '{}'::jsonb,
+        secret_ref VARCHAR NULL,
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now(),
+        CHECK (jsonb_typeof(config) = 'object'),
+        CHECK (secret_ref IS NULL OR length(trim(secret_ref)) > 0)
+    );
+
+    CREATE TABLE event_subscriptions (
+        id SERIAL PRIMARY KEY,
+        collection_id INT REFERENCES collections (id) ON DELETE CASCADE NOT NULL,
+        sink_id INT REFERENCES event_sinks (id) ON DELETE CASCADE NOT NULL,
+        name VARCHAR NOT NULL,
+        description VARCHAR NOT NULL DEFAULT '',
+        entity_types JSONB NOT NULL,
+        actions JSONB NOT NULL,
+        filter JSONB NOT NULL DEFAULT '{}'::jsonb,
+        routing JSONB NOT NULL DEFAULT '{}'::jsonb,
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now(),
+        UNIQUE (collection_id, name),
+        CHECK (jsonb_typeof(entity_types) = 'array'),
+        CHECK (jsonb_array_length(entity_types) > 0),
+        CHECK (jsonb_typeof(actions) = 'array'),
+        CHECK (jsonb_array_length(actions) > 0),
+        CHECK (jsonb_typeof(filter) = 'object'),
+        CHECK (jsonb_typeof(routing) = 'object')
+    );
+
+    CREATE TABLE event_deliveries (
+        id BIGSERIAL PRIMARY KEY,
+        event_id BIGINT REFERENCES events (id) ON DELETE CASCADE NOT NULL,
+        subscription_id INT REFERENCES event_subscriptions (id) ON DELETE CASCADE NOT NULL,
+        status VARCHAR NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending', 'in_flight', 'succeeded', 'failed', 'dead')),
+        attempts INT NOT NULL DEFAULT 0,
+        next_attempt_at TIMESTAMP NOT NULL DEFAULT now(),
+        last_error TEXT NULL,
+        locked_until TIMESTAMP NULL,
+        claim_token UUID NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now(),
+        UNIQUE (event_id, subscription_id),
+        CHECK (attempts >= 0)
     );
 
     CREATE TABLE report_task_outputs (
@@ -393,7 +468,7 @@
         id SERIAL PRIMARY KEY,
         task_id INT REFERENCES tasks (id) ON DELETE CASCADE NOT NULL UNIQUE,
         target_id INT REFERENCES remote_targets (id) ON DELETE SET NULL,
-        subject_type VARCHAR NOT NULL CHECK (subject_type IN ('namespace', 'class', 'object', 'class_relation', 'object_relation')),
+        subject_type VARCHAR NOT NULL CHECK (subject_type IN ('collection', 'class', 'object', 'class_relation', 'object_relation')),
         subject_id INT NOT NULL,
         method VARCHAR NOT NULL,
         rendered_url TEXT NOT NULL,
@@ -410,7 +485,7 @@
     ---- Indexes
     ----------------------
 
-    ---- Identity, groups, namespaces
+    ---- Identity, groups, collections
     CREATE INDEX idx_principals_name ON principals(name);
     CREATE INDEX idx_principals_kind ON principals(kind);
     CREATE INDEX idx_groups_groupname ON groups(groupname);
@@ -418,7 +493,7 @@
     CREATE INDEX idx_group_memberships_group_id ON group_memberships(group_id);
     CREATE INDEX idx_service_accounts_owner_group_id ON service_accounts(owner_group_id);
     CREATE INDEX idx_service_accounts_disabled_at ON service_accounts(disabled_at) WHERE disabled_at IS NOT NULL;
-    CREATE INDEX idx_namespaces_name ON namespaces(name);
+    CREATE INDEX idx_collections_name ON collections(name);
 
     ---- Tokens
     CREATE INDEX idx_tokens_principal_id ON tokens(principal_id);
@@ -427,12 +502,12 @@
     CREATE INDEX idx_token_scopes_token_id ON token_scopes(token_id);
 
     ---- Classes and objects
-    CREATE INDEX idx_hubuumclass_namespace_id ON hubuumclass(namespace_id);
-    CREATE INDEX idx_hubuumobject_namespace_id ON hubuumobject(namespace_id);
+    CREATE INDEX idx_hubuumclass_collection_id ON hubuumclass(collection_id);
+    CREATE INDEX idx_hubuumobject_collection_id ON hubuumobject(collection_id);
     CREATE INDEX idx_hubuumobject_hubuum_class_id ON hubuumobject(hubuum_class_id);
 
     ---- Permissions
-    CREATE INDEX idx_permissions_namespace_id ON permissions(namespace_id);
+    CREATE INDEX idx_permissions_collection_id ON permissions(collection_id);
     CREATE INDEX idx_permissions_group_id ON permissions(group_id);
 
     ---- Relations
@@ -447,10 +522,10 @@
     CREATE INDEX idx_hubuumobject_relation_class_relation_id ON hubuumobject_relation (class_relation_id);
 
     ---- Report templates
-    CREATE INDEX idx_report_templates_namespace_id ON report_templates(namespace_id);
+    CREATE INDEX idx_report_templates_collection_id ON report_templates(collection_id);
 
     ---- Remote targets
-    CREATE INDEX idx_remote_targets_namespace_id ON remote_targets(namespace_id);
+    CREATE INDEX idx_remote_targets_collection_id ON remote_targets(collection_id);
     CREATE INDEX idx_remote_targets_class_id ON remote_targets(class_id);
     CREATE INDEX idx_remote_targets_enabled ON remote_targets(enabled);
     CREATE INDEX idx_remote_call_results_target_id ON remote_call_results(target_id);
@@ -466,10 +541,28 @@
     CREATE INDEX idx_tasks_submitted_by ON tasks (submitted_by);
     CREATE INDEX idx_tasks_deleted_at ON tasks (deleted_at);
     CREATE INDEX idx_tasks_active_status ON tasks (deleted_at, status);
-    CREATE INDEX idx_task_events_task_id_created_at ON task_events (task_id, created_at);
     CREATE INDEX idx_import_task_results_task_id_created_at ON import_task_results (task_id, created_at);
     CREATE INDEX idx_report_task_outputs_task_id_created_at ON report_task_outputs (task_id, created_at);
     CREATE INDEX idx_report_task_outputs_output_expires_at ON report_task_outputs (output_expires_at);
+
+    ---- Events
+    CREATE INDEX events_entity_idx ON events (entity_type, entity_id);
+    CREATE INDEX events_collection_occurred_idx ON events (collection_id, occurred_at);
+    CREATE INDEX events_occurred_idx ON events (occurred_at);
+    CREATE INDEX events_metadata_gin_idx ON events USING GIN (metadata jsonb_path_ops);
+    CREATE INDEX events_fanout_backlog_idx ON events (occurred_at) WHERE dispatched_at IS NULL;
+    CREATE INDEX idx_event_sinks_enabled ON event_sinks(enabled);
+    CREATE INDEX idx_event_subscriptions_collection_id ON event_subscriptions(collection_id);
+    CREATE INDEX idx_event_subscriptions_sink_id ON event_subscriptions(sink_id);
+    CREATE INDEX idx_event_subscriptions_enabled ON event_subscriptions(enabled);
+    CREATE INDEX idx_event_deliveries_event_id ON event_deliveries(event_id);
+    CREATE INDEX idx_event_deliveries_subscription_id ON event_deliveries(subscription_id);
+    CREATE INDEX idx_event_deliveries_pending
+        ON event_deliveries(next_attempt_at, id)
+        WHERE status IN ('pending', 'failed');
+    CREATE INDEX idx_event_deliveries_in_flight_locks
+        ON event_deliveries(locked_until)
+        WHERE status = 'in_flight';
 
     ----------------------
     ---- Functions
@@ -593,9 +686,105 @@
         RETURN val ? k;
     EXCEPTION
         WHEN OTHERS THEN
-            RETURN false;
+        RETURN false;
     END;
     $$;
+
+    CREATE OR REPLACE FUNCTION enforce_events_append_only()
+    RETURNS TRIGGER AS $$
+    BEGIN
+        IF TG_OP = 'DELETE' THEN
+            IF current_setting('events.allow_purge', true) IS DISTINCT FROM 'on' THEN
+                RAISE EXCEPTION 'events table is append-only: DELETE is not permitted';
+            END IF;
+            RETURN OLD;
+        END IF;
+
+        IF NEW.id IS DISTINCT FROM OLD.id
+           OR NEW.event_id IS DISTINCT FROM OLD.event_id
+           OR NEW.occurred_at IS DISTINCT FROM OLD.occurred_at
+           OR NEW.entity_type IS DISTINCT FROM OLD.entity_type
+           OR NEW.entity_id IS DISTINCT FROM OLD.entity_id
+           OR NEW.entity_name IS DISTINCT FROM OLD.entity_name
+           OR NEW.collection_id IS DISTINCT FROM OLD.collection_id
+           OR NEW.action IS DISTINCT FROM OLD.action
+           OR NEW.actor_user_id IS DISTINCT FROM OLD.actor_user_id
+           OR NEW.actor_kind IS DISTINCT FROM OLD.actor_kind
+           OR NEW.request_id IS DISTINCT FROM OLD.request_id
+           OR NEW.correlation_id IS DISTINCT FROM OLD.correlation_id
+           OR NEW.summary IS DISTINCT FROM OLD.summary
+           OR NEW.before IS DISTINCT FROM OLD.before
+           OR NEW.after IS DISTINCT FROM OLD.after
+           OR NEW.metadata IS DISTINCT FROM OLD.metadata
+           OR NEW.schema_version IS DISTINCT FROM OLD.schema_version
+        THEN
+            RAISE EXCEPTION 'events table is append-only: only fan-out claim fields and dispatched_at may be updated';
+        END IF;
+
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    CREATE OR REPLACE FUNCTION notify_events_fanout()
+    RETURNS TRIGGER AS $$
+    BEGIN
+        PERFORM pg_notify('hubuum_events_fanout', NEW.id::text);
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    CREATE FUNCTION hubuum_record_history() RETURNS trigger LANGUAGE plpgsql AS $$
+    DECLARE
+      hist text := quote_ident(TG_TABLE_NAME || '_history');
+      seq text := quote_literal(TG_TABLE_NAME || '_history_seq');
+      ts timestamptz := clock_timestamp();
+      actor int := nullif(current_setting('hubuum.actor_id', true), '')::int;
+      base_cols text;
+      hist_cols text;
+    BEGIN
+      SELECT string_agg(format('($1).%1$I', a.attname), ', ' ORDER BY a.attnum),
+             string_agg(format('%1$I', a.attname), ', ' ORDER BY a.attnum)
+        INTO base_cols, hist_cols
+      FROM pg_attribute a
+      WHERE a.attrelid = TG_RELID
+        AND a.attnum > 0
+        AND NOT a.attisdropped;
+
+      IF TG_OP = 'INSERT' THEN
+        EXECUTE format(
+          'INSERT INTO %s (%s, op, valid_from, valid_to, actor_id, history_id)
+           SELECT %s, %L, $2, NULL, $3, nextval(%s)',
+          hist, hist_cols, base_cols, 'I', seq)
+          USING NEW, ts, actor;
+        RETURN NEW;
+      ELSIF TG_OP = 'UPDATE' THEN
+        EXECUTE format('UPDATE %s SET valid_to=$1 WHERE id=$2 AND valid_to IS NULL', hist)
+          USING ts, OLD.id;
+        EXECUTE format(
+          'INSERT INTO %s (%s, op, valid_from, valid_to, actor_id, history_id)
+           SELECT %s, %L, $2, NULL, $3, nextval(%s)',
+          hist, hist_cols, base_cols, 'U', seq)
+          USING NEW, ts, actor;
+        RETURN NEW;
+      ELSE
+        EXECUTE format('UPDATE %s SET valid_to=$1 WHERE id=$2 AND valid_to IS NULL', hist)
+          USING ts, OLD.id;
+        EXECUTE format(
+          'INSERT INTO %s (%s, op, valid_from, valid_to, actor_id, history_id)
+           SELECT %s, %L, $2, $2, $3, nextval(%s)',
+          hist, hist_cols, base_cols, 'D', seq)
+          USING OLD, ts, actor;
+        RETURN OLD;
+      END IF;
+    END; $$;
+
+    CREATE FUNCTION hubuum_skip_unchanged_temporal_update() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF to_jsonb(OLD) - 'updated_at' = to_jsonb(NEW) - 'updated_at' THEN
+        RETURN NULL;
+      END IF;
+      RETURN NEW;
+    END; $$;
 
     -- In relation tables, ensure that the from entry is always less than the to entry, this ensures
     -- that we don't need to check for both directions when querying the database
@@ -794,7 +983,7 @@
     CREATE OR REPLACE FUNCTION get_transitively_linked_objects(
         start_object_id INT,
         target_class_id INT,
-        valid_namespace_ids INT[],
+        valid_collection_ids INT[],
         max_depth INT DEFAULT 100
     )
     RETURNS TABLE (
@@ -845,8 +1034,8 @@
             WHERE object_edges.source_object_id = start_object_id
               AND (max_depth IS NULL OR max_depth >= 1)
               AND (
-                  COALESCE(cardinality(valid_namespace_ids), 0) = 0
-                  OR target_object.namespace_id = ANY(valid_namespace_ids)
+                  COALESCE(cardinality(valid_collection_ids), 0) = 0
+                  OR target_object.collection_id = ANY(valid_collection_ids)
               )
               AND (
                   target_object.hubuum_class_id = target_class_id
@@ -873,8 +1062,8 @@
             WHERE NOT (object_edges.target_object_id = ANY(graph_walk.traversal_path))
               AND (max_depth IS NULL OR graph_walk.depth < max_depth)
               AND (
-                  COALESCE(cardinality(valid_namespace_ids), 0) = 0
-                  OR target_object.namespace_id = ANY(valid_namespace_ids)
+                  COALESCE(cardinality(valid_collection_ids), 0) = 0
+                  OR target_object.collection_id = ANY(valid_collection_ids)
               )
               AND (
                   target_object.hubuum_class_id = target_class_id
@@ -905,7 +1094,7 @@
 
     CREATE OR REPLACE FUNCTION get_bidirectionally_related_objects(
         start_object_id INT,
-        valid_namespace_ids INT[],
+        valid_collection_ids INT[],
         max_depth INT
     )
     RETURNS TABLE (
@@ -915,8 +1104,8 @@
         path INT[],
         ancestor_name VARCHAR,
         descendant_name VARCHAR,
-        ancestor_namespace_id INT,
-        descendant_namespace_id INT,
+        ancestor_collection_id INT,
+        descendant_collection_id INT,
         ancestor_class_id INT,
         descendant_class_id INT,
         ancestor_description VARCHAR,
@@ -949,8 +1138,8 @@
             WHERE object_edges.source_object_id = start_object_id
               AND (max_depth IS NULL OR max_depth >= 1)
               AND (
-                  COALESCE(cardinality(valid_namespace_ids), 0) = 0
-                  OR target_object.namespace_id = ANY(valid_namespace_ids)
+                  COALESCE(cardinality(valid_collection_ids), 0) = 0
+                  OR target_object.collection_id = ANY(valid_collection_ids)
               )
 
             UNION ALL
@@ -968,8 +1157,8 @@
             WHERE NOT (object_edges.target_object_id = ANY(graph_walk.path))
               AND (max_depth IS NULL OR graph_walk.depth < max_depth)
               AND (
-                  COALESCE(cardinality(valid_namespace_ids), 0) = 0
-                  OR target_object.namespace_id = ANY(valid_namespace_ids)
+                  COALESCE(cardinality(valid_collection_ids), 0) = 0
+                  OR target_object.collection_id = ANY(valid_collection_ids)
               )
         ),
         deduped_walk AS (
@@ -988,8 +1177,8 @@
             deduped_walk.path,
             source_object.name AS ancestor_name,
             target_object.name AS descendant_name,
-            source_object.namespace_id AS ancestor_namespace_id,
-            target_object.namespace_id AS descendant_namespace_id,
+            source_object.collection_id AS ancestor_collection_id,
+            target_object.collection_id AS descendant_collection_id,
             source_object.hubuum_class_id AS ancestor_class_id,
             target_object.hubuum_class_id AS descendant_class_id,
             source_object.description AS ancestor_description,
@@ -1004,18 +1193,18 @@
         JOIN hubuumobject source_object ON source_object.id = deduped_walk.ancestor_object_id
         JOIN hubuumobject target_object ON target_object.id = deduped_walk.descendant_object_id
         WHERE (
-                COALESCE(cardinality(valid_namespace_ids), 0) = 0
-                OR source_object.namespace_id = ANY(valid_namespace_ids)
+                COALESCE(cardinality(valid_collection_ids), 0) = 0
+                OR source_object.collection_id = ANY(valid_collection_ids)
               )
           AND (
-                COALESCE(cardinality(valid_namespace_ids), 0) = 0
-                OR target_object.namespace_id = ANY(valid_namespace_ids)
+                COALESCE(cardinality(valid_collection_ids), 0) = 0
+                OR target_object.collection_id = ANY(valid_collection_ids)
               );
     $$ LANGUAGE sql STABLE;
 
     CREATE OR REPLACE FUNCTION get_bidirectionally_related_classes(
         start_class_id INT,
-        valid_namespace_ids INT[],
+        valid_collection_ids INT[],
         max_depth INT,
         filter_depth_op TEXT DEFAULT NULL,
         filter_depth_values INT[] DEFAULT NULL,
@@ -1031,8 +1220,8 @@
         path INT[],
         ancestor_name VARCHAR,
         descendant_name VARCHAR,
-        ancestor_namespace_id INT,
-        descendant_namespace_id INT,
+        ancestor_collection_id INT,
+        descendant_collection_id INT,
         ancestor_json_schema JSONB,
         descendant_json_schema JSONB,
         ancestor_validate_schema BOOLEAN,
@@ -1073,8 +1262,8 @@
             related_classes.path,
             source_class.name AS ancestor_name,
             target_class.name AS descendant_name,
-            source_class.namespace_id AS ancestor_namespace_id,
-            target_class.namespace_id AS descendant_namespace_id,
+            source_class.collection_id AS ancestor_collection_id,
+            target_class.collection_id AS descendant_collection_id,
             source_class.json_schema AS ancestor_json_schema,
             target_class.json_schema AS descendant_json_schema,
             source_class.validate_schema AS ancestor_validate_schema,
@@ -1089,12 +1278,12 @@
         JOIN hubuumclass source_class ON source_class.id = related_classes.ancestor_class_id
         JOIN hubuumclass target_class ON target_class.id = related_classes.descendant_class_id
         WHERE (
-                COALESCE(cardinality(valid_namespace_ids), 0) = 0
-                OR source_class.namespace_id = ANY(valid_namespace_ids)
+                COALESCE(cardinality(valid_collection_ids), 0) = 0
+                OR source_class.collection_id = ANY(valid_collection_ids)
               )
           AND (
-                COALESCE(cardinality(valid_namespace_ids), 0) = 0
-                OR target_class.namespace_id = ANY(valid_namespace_ids)
+                COALESCE(cardinality(valid_collection_ids), 0) = 0
+                OR target_class.collection_id = ANY(valid_collection_ids)
               )
           AND (
                 filter_depth_op IS NULL
@@ -1169,9 +1358,9 @@
     BEFORE UPDATE ON group_memberships
     FOR EACH ROW EXECUTE FUNCTION update_modified_column();
 
-    DROP TRIGGER IF EXISTS update_namespaces_updated_at ON namespaces;
-    CREATE TRIGGER update_namespaces_updated_at
-    BEFORE UPDATE ON namespaces
+    DROP TRIGGER IF EXISTS update_collections_updated_at ON collections;
+    CREATE TRIGGER update_collections_updated_at
+    BEFORE UPDATE ON collections
     FOR EACH ROW EXECUTE FUNCTION update_modified_column();
 
     DROP TRIGGER IF EXISTS update_permissions_updated_at ON permissions;
@@ -1233,3 +1422,68 @@
     CREATE TRIGGER update_tasks_updated_at
     BEFORE UPDATE ON tasks
     FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+    CREATE TRIGGER events_append_only
+    BEFORE UPDATE OR DELETE ON events
+    FOR EACH ROW EXECUTE FUNCTION enforce_events_append_only();
+
+    CREATE TRIGGER events_fanout_notify
+    AFTER INSERT ON events
+    FOR EACH ROW EXECUTE FUNCTION notify_events_fanout();
+
+    CREATE TRIGGER update_event_sinks_updated_at
+    BEFORE UPDATE ON event_sinks
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+    CREATE TRIGGER update_event_subscriptions_updated_at
+    BEFORE UPDATE ON event_subscriptions
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+    CREATE TRIGGER update_event_deliveries_updated_at
+    BEFORE UPDATE ON event_deliveries
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+    DO $$
+    DECLARE
+      t text;
+      ts timestamptz := transaction_timestamp();
+    BEGIN
+      FOREACH t IN ARRAY ARRAY[
+        'hubuumclass','hubuumobject','collections','hubuumclass_relation',
+        'hubuumobject_relation','report_templates','remote_targets'
+      ]
+      LOOP
+        EXECUTE format(
+          'CREATE TABLE %1$I_history (
+             LIKE %1$I,
+             op varchar NOT NULL CHECK (op IN (''I'',''U'',''D'')),
+             valid_from timestamptz NOT NULL,
+             valid_to timestamptz,
+             actor_id int,
+             history_id bigint NOT NULL
+           )', t);
+        EXECUTE format('CREATE SEQUENCE %1$I_history_seq OWNED BY %1$I_history.history_id', t);
+        EXECUTE format('ALTER TABLE %1$I_history ADD PRIMARY KEY (history_id)', t);
+        EXECUTE format('CREATE INDEX %1$I_history_id_from_idx ON %1$I_history (id, valid_from)', t);
+        EXECUTE format('CREATE INDEX %1$I_history_actor_idx ON %1$I_history (actor_id)', t);
+        EXECUTE format(
+          'CREATE TRIGGER %1$I_history_trg AFTER INSERT OR UPDATE OR DELETE ON %1$I
+           FOR EACH ROW EXECUTE FUNCTION hubuum_record_history()', t);
+        EXECUTE format(
+          'INSERT INTO %1$I_history
+           SELECT base.*, %2$L, $1, NULL, NULL, nextval(%3$L)
+           FROM %1$I base',
+          t, 'I', t || '_history_seq')
+          USING ts;
+      END LOOP;
+
+      FOREACH t IN ARRAY ARRAY[
+        'hubuumclass','hubuumobject','collections','report_templates','remote_targets'
+      ]
+      LOOP
+        EXECUTE format(
+          'CREATE TRIGGER %1$I_skip_unchanged_temporal_update_trg
+           BEFORE UPDATE ON %1$I
+           FOR EACH ROW EXECUTE FUNCTION hubuum_skip_unchanged_temporal_update()', t);
+      END LOOP;
+    END $$;
