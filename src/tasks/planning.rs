@@ -5,27 +5,27 @@ use chrono::Utc;
 use tracing::{Instrument, info, info_span};
 
 use super::helpers::{
-    class_to_resolution, collection_to_resolution, identifier_collection, normalize_pair,
-    object_to_resolution, planned_result, sanitize_error_for_storage, should_abort_import,
+    class_to_resolution, identifier_collection, normalize_pair, object_to_resolution,
+    planned_result, sanitize_error_for_storage, should_abort_import,
 };
 use super::resolution::{
-    remember_class, remember_collection, remember_object, resolve_class_planning,
-    resolve_collection_by_id_planning, resolve_collection_planning, resolve_object_planning,
+    lookup_existing_collection_for_import_db, remember_class, remember_collection, remember_object,
+    resolve_class_planning, resolve_collection_by_id_planning, resolve_collection_parent_planning,
+    resolve_collection_planning, resolve_object_planning,
 };
 use super::types::{
     ClassResolution, CollectionResolution, FailureKind, ObjectResolution, PlannedExecution,
     PlannedItem, PlanningFailure, PlanningOutcome, PlanningState,
 };
-use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
 use crate::db::traits::task_import::{
     lookup_class_by_collection_and_name, lookup_classes_by_collection_and_names,
-    lookup_collection_by_name, lookup_collections_by_names, lookup_direct_class_relation,
-    lookup_group_by_name, lookup_object_by_class_and_name, lookup_object_relation,
-    lookup_objects_by_class_and_names,
+    lookup_direct_class_relation, lookup_group_by_name, lookup_object_by_class_and_name,
+    lookup_object_relation, lookup_objects_by_class_and_names,
 };
+use crate::db::{DbPool, with_connection};
 use crate::models::{
-    ClassKey, Collection, CollectionID, CollectionKey, ImportAtomicity, ImportClassInput,
+    ClassKey, Collection, CollectionID, ImportAtomicity, ImportClassInput,
     ImportClassRelationInput, ImportCollectionInput, ImportCollectionPermissionInput,
     ImportCollisionPolicy, ImportMode, ImportObjectInput, ImportObjectRelationInput,
     ImportPermissionPolicy, ImportRequest, ObjectKey, Permissions,
@@ -143,35 +143,8 @@ async fn preload_collections_for_class_keys(
     state: &mut PlanningState,
     class_keys: &[ClassKey],
 ) -> Result<(), String> {
-    let names = class_keys
-        .iter()
-        .filter_map(|key| {
-            key.collection_key
-                .as_ref()
-                .map(|collection| collection.name.clone())
-        })
-        .filter(|name| {
-            !state.collections_by_name.contains_key(name)
-                && !state.missing_collection_names.contains(name)
-        })
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-
-    let collections = lookup_collections_by_names(pool, &names)
-        .await
-        .map_err(|err| err.to_string())?;
-    let found_names = collections
-        .iter()
-        .map(|collection| collection.name.clone())
-        .collect::<HashSet<_>>();
-    for collection in collections {
-        remember_collection(state, None, collection_to_resolution(collection));
-    }
-    for name in names {
-        if !found_names.contains(&name) {
-            state.missing_collection_names.insert(name);
-        }
+    for key in class_keys {
+        let _ = resolve_class_collection_for_preload(pool, state, key).await?;
     }
 
     Ok(())
@@ -241,23 +214,12 @@ async fn resolve_class_collection_for_preload(
 ) -> Result<Option<CollectionResolution>, String> {
     match (key.collection_ref.as_deref(), key.collection_key.as_ref()) {
         (Some(reference), None) => Ok(state.collections_by_ref.get(reference).cloned()),
-        (None, Some(CollectionKey { name })) => {
-            if let Some(collection) = state.collections_by_name.get(name) {
-                return Ok(Some(collection.clone()));
+        (None, Some(key)) => {
+            match resolve_collection_planning(pool, state, None, Some(key)).await {
+                Ok(collection) => Ok(Some(collection)),
+                Err(message) if message.contains("not found") => Ok(None),
+                Err(message) => Err(message),
             }
-            if state.missing_collection_names.contains(name) {
-                return Ok(None);
-            }
-            let collection = lookup_collection_by_name(pool, name)
-                .await
-                .map_err(|err| err.to_string())?
-                .map(collection_to_resolution);
-            if let Some(collection) = &collection {
-                remember_collection(state, None, collection.clone());
-            } else {
-                state.missing_collection_names.insert(name.clone());
-            }
-            Ok(collection)
         }
         _ => Ok(None),
     }
@@ -636,7 +598,21 @@ pub(super) async fn plan_collection(
         });
     }
 
-    if !state.planned_collection_names.insert(input.name.clone()) {
+    let parent = resolve_collection_parent_planning(pool, state, input)
+        .await
+        .map_err(|message| PlanningFailure {
+            kind: FailureKind::Validation,
+            item: planned_result(
+                "collection",
+                "lookup",
+                input.ref_.clone(),
+                Some(input.name.clone()),
+            ),
+            message,
+        })?;
+    let planned_key = (Some(parent.id), input.name.clone());
+
+    if !state.planned_collection_keys.insert(planned_key.clone()) {
         return Err(PlanningFailure {
             kind: FailureKind::Validation,
             item: planned_result(
@@ -646,27 +622,31 @@ pub(super) async fn plan_collection(
                 Some(input.name.clone()),
             ),
             message: format!(
-                "Duplicate collection name '{}' within import request",
-                input.name
+                "Duplicate collection name '{}' under parent '{}' within import request",
+                input.name, parent.name
             ),
         });
     }
 
-    let existing = state
-        .collections_by_name
-        .get(&input.name)
-        .cloned()
-        .filter(|collection| collection.exists_in_db)
-        .map(|collection_fixture| Collection {
-            id: collection_fixture.id,
-            name: collection_fixture.name,
-            description: collection_fixture.description,
-            created_at: Utc::now().naive_utc(),
-            updated_at: Utc::now().naive_utc(),
-            parent_collection_id: None,
-        })
-        .or(lookup_collection_by_name(pool, &input.name)
-            .await
+    let existing = if parent.exists_in_db {
+        if let Some(collection) = state
+            .collections_by_parent_name
+            .get(&(Some(parent.id), input.name.clone()))
+            .cloned()
+            .filter(|collection| collection.exists_in_db)
+        {
+            Some(Collection {
+                id: collection.id,
+                name: collection.name,
+                description: collection.description,
+                created_at: Utc::now().naive_utc(),
+                updated_at: Utc::now().naive_utc(),
+                parent_collection_id: collection.parent_collection_id,
+            })
+        } else {
+            with_connection(pool, |conn| {
+                lookup_existing_collection_for_import_db(conn, parent.id, &input.name)
+            })
             .map_err(|message| PlanningFailure {
                 kind: FailureKind::Runtime,
                 item: planned_result(
@@ -676,7 +656,11 @@ pub(super) async fn plan_collection(
                     Some(input.name.clone()),
                 ),
                 message: sanitize_error_for_storage(&message),
-            })?);
+            })?
+        }
+    } else {
+        None
+    };
 
     if let Some(collection) = existing {
         ensure_collection_permission_cached(
@@ -716,6 +700,7 @@ pub(super) async fn plan_collection(
             id: collection.id,
             name: collection.name.clone(),
             description: input.description.clone(),
+            parent_collection_id: collection.parent_collection_id,
             exists_in_db: true,
         };
         remember_collection(state, input.ref_.clone(), resolution.clone());
@@ -762,6 +747,7 @@ pub(super) async fn plan_collection(
             id: state.next_virtual_id(),
             name: input.name.clone(),
             description: input.description.clone(),
+            parent_collection_id: Some(parent.id),
             exists_in_db: false,
         };
         remember_collection(state, input.ref_.clone(), resolution.clone());

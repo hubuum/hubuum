@@ -6,15 +6,16 @@ use crate::models::{
     ImportObjectRelationInput, NewImportTaskResultRecord, Permissions, TaskStatus,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(super) struct CollectionResolution {
     pub(super) id: i32,
     pub(super) name: String,
     pub(super) description: String,
+    pub(super) parent_collection_id: Option<i32>,
     pub(super) exists_in_db: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(super) struct ClassResolution {
     pub(super) id: i32,
     pub(super) name: String,
@@ -24,7 +25,7 @@ pub(super) struct ClassResolution {
     pub(super) exists_in_db: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(super) struct ObjectResolution {
     pub(super) id: i32,
     pub(super) name: String,
@@ -40,14 +41,15 @@ pub(super) struct PlanningState {
     /// Submitting token's scope boundary (`None` = unscoped). Threaded into the
     /// per-collection permission checks so a scoped import cannot exceed it.
     pub(super) scopes: Option<Vec<crate::models::Permissions>>,
-    pub(super) planned_collection_names: HashSet<String>,
+    pub(super) planned_collection_keys: HashSet<(Option<i32>, String)>,
     pub(super) planned_class_keys: HashSet<(i32, String)>,
     pub(super) planned_object_keys: HashSet<(i32, String)>,
     pub(super) missing_collection_names: HashSet<String>,
     pub(super) missing_class_keys: HashSet<(i32, String)>,
     pub(super) missing_object_keys: HashSet<(i32, String)>,
     pub(super) collections_by_ref: HashMap<String, CollectionResolution>,
-    pub(super) collections_by_name: HashMap<String, CollectionResolution>,
+    pub(super) collections_by_name: HashMap<String, Vec<CollectionResolution>>,
+    pub(super) collections_by_parent_name: HashMap<(Option<i32>, String), CollectionResolution>,
     pub(super) collections_by_id: HashMap<i32, CollectionResolution>,
     pub(super) classes_by_ref: HashMap<String, ClassResolution>,
     pub(super) classes_by_key: HashMap<(i32, String), ClassResolution>,

@@ -40,6 +40,11 @@ under `root`.
 Collection names are unique among siblings. Two departments can both have a
 child named `assets` if those children have different parents.
 
+Import requests that refer to existing collections by natural key can use
+`CollectionKey.path` to disambiguate duplicate names in different branches. A
+bare `CollectionKey.name` is accepted only when that name resolves to exactly
+one collection.
+
 ## Inspecting and Moving
 
 | Endpoint | Purpose |

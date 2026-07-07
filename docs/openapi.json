@@ -12221,6 +12221,15 @@
         "properties": {
           "name": {
             "type": "string"
+          },
+          "path": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -14172,6 +14181,22 @@
           },
           "name": {
             "type": "string"
+          },
+          "parent_collection_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CollectionKey"
+              }
+            ]
+          },
+          "parent_collection_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "ref": {
             "type": [
