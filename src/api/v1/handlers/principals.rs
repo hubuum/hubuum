@@ -288,7 +288,7 @@ pub async fn list_principal_groups(
     ApiResponse::paginated(groups, total_count, &params)
 }
 
-/// One group's contribution to a principal's effective permissions on a collection.
+/// One group's direct permission row contribution on a collection.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct GroupGrant {
     pub group_id: i32,
@@ -296,7 +296,7 @@ pub struct GroupGrant {
     pub permissions: Vec<Permissions>,
 }
 
-/// A principal's effective permissions on a single collection, broken down by the
+/// A principal's direct permission rows on a single collection, broken down by the
 /// group that grants them.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct PrincipalCollectionPermissions {

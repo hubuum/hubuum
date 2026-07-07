@@ -1,12 +1,21 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    collection_closure (ancestor_collection_id, descendant_collection_id) {
+        ancestor_collection_id -> Int4,
+        descendant_collection_id -> Int4,
+        depth -> Int4,
+    }
+}
+
+diesel::table! {
     collections (id) {
         id -> Int4,
         name -> Varchar,
         description -> Varchar,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        parent_collection_id -> Nullable<Int4>,
     }
 }
 
@@ -17,6 +26,7 @@ diesel::table! {
         description -> Varchar,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        parent_collection_id -> Nullable<Int4>,
         op -> Varchar,
         valid_from -> Timestamptz,
         valid_to -> Nullable<Timestamptz>,
@@ -542,6 +552,7 @@ diesel::joinable!(token_scopes -> tokens (token_id));
 diesel::joinable!(tokens -> principals (principal_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    collection_closure,
     collections,
     collections_history,
     event_deliveries,

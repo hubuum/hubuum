@@ -663,6 +663,7 @@ pub(super) async fn plan_collection(
             description: collection_fixture.description,
             created_at: Utc::now().naive_utc(),
             updated_at: Utc::now().naive_utc(),
+            parent_collection_id: None,
         })
         .or(lookup_collection_by_name(pool, &input.name)
             .await

@@ -235,15 +235,12 @@ pub fn create_collection_db(
     conn: &mut diesel::PgConnection,
     input: &ImportCollectionInput,
 ) -> Result<Collection, ApiError> {
-    use crate::schema::collections::dsl::collections;
-
-    diesel::insert_into(collections)
-        .values((
-            crate::schema::collections::name.eq(&input.name),
-            crate::schema::collections::description.eq(&input.description),
-        ))
-        .get_result::<Collection>(conn)
-        .map_err(ApiError::from)
+    crate::db::traits::collection::insert_collection_row_with_closure(
+        conn,
+        &input.name,
+        &input.description,
+        None,
+    )
 }
 
 pub fn update_collection_db(

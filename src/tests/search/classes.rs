@@ -34,6 +34,7 @@ mod test {
                 NewCollection {
                     name: collection_name,
                     description: collection_description,
+                    parent_collection_id: None,
                 }
                 .save_and_grant_all_to(&context.pool, GroupID::new(admin_group.id).unwrap())
                 .await

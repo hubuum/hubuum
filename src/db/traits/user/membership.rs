@@ -138,8 +138,13 @@ where
         &'a I: IntoIterator<Item = &'a Permissions>,
     {
         use crate::models::PermissionFilter;
+        use crate::schema::collection_closure::dsl::{
+            ancestor_collection_id, collection_closure, descendant_collection_id,
+        };
         use crate::schema::collections::dsl::{collections, id as collections_table_id};
-        use crate::schema::permissions::dsl::{collection_id, group_id, permissions};
+        use crate::schema::permissions::dsl::{
+            collection_id as permission_collection_id, group_id, permissions,
+        };
 
         let requested: Vec<Permissions> = permissions_list.into_iter().copied().collect();
 
@@ -171,8 +176,12 @@ where
 
         with_connection(pool, |conn| {
             base_query
-                .inner_join(collections.on(collection_id.eq(collections_table_id)))
+                .inner_join(
+                    collection_closure.on(permission_collection_id.eq(ancestor_collection_id)),
+                )
+                .inner_join(collections.on(descendant_collection_id.eq(collections_table_id)))
                 .select(collections::all_columns())
+                .distinct()
                 .load::<Collection>(conn)
         })
     }

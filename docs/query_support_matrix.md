@@ -23,9 +23,11 @@ Notes:
 
 | Endpoints | Filter fields | Sort fields | Default sort | Notes |
 | --- | --- | --- | --- | --- |
-| `/api/v1/collections` | `id`, `name`, `description`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `description`, `created_at`, `updated_at` | `id.asc` | `permissions` narrows the collections to those where the caller has the named permission |
-| `/api/v1/collections/{collection_id}/permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at` | `id.asc` | returns `GroupPermission` rows |
-| `/api/v1/collections/{collection_id}/permissions/principal/{principal_id}` | `id`, `name`, `groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at` | `id.asc` | constrained to one collection and one principal's memberships (human or service account) |
+| `/api/v1/collections` | `id`, `name`, `description`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `description`, `created_at`, `updated_at` | `id.asc` | `permissions` narrows the collections to those where the caller has the named effective permission |
+| `/api/v1/collections/{collection_id}/children`, `/api/v1/collections/{collection_id}/ancestors` | n/a | n/a | n/a | hierarchy helpers; results are not query-parameter paginated |
+| `/api/v1/collections/{collection_id}/permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at` | `id.asc` | returns direct `GroupPermission` rows stored on the collection |
+| `/api/v1/collections/{collection_id}/permissions/principal/{principal_id}` | `id`, `name`, `groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at` | `id.asc` | direct rows constrained to one collection and one principal's memberships (human or service account) |
+| `/api/v1/collections/{collection_id}/permissions/effective/group/{group_id}`, `/api/v1/collections/{collection_id}/permissions/effective/principal/{principal_id}` | n/a | n/a | n/a | returns direct and inherited rows with source collection and depth; results are not query-parameter paginated |
 | `/api/v1/collections/{collection_id}/has_permissions/{permission}` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id.asc` | path permission already narrows the result set |
 | `/api/v1/remote-targets` | `id`, `name`, `description`, `collection_id`, `collections`, `kind`, `created_at`, `updated_at` | `id`, `name`, `description`, `collection_id`, `created_at`, `updated_at` | `id.asc` | `kind` filters the target HTTP method; results are scoped to collections where the caller has `ReadRemoteTarget` |
 

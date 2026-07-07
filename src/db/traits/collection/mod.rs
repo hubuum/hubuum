@@ -5,12 +5,12 @@ use crate::db::traits::GetCollection;
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::models::group::Group;
-use crate::models::output::GroupPermission;
+use crate::models::output::{EffectiveGroupPermission, GroupPermission};
 use crate::models::permissions::PermissionFilter;
 use crate::models::search::{FilterField, QueryOptions, QueryParamsExt};
 use crate::models::{
     Collection, CollectionID, HubuumObjectRelationID, NewCollection, NewCollectionWithAssignee,
-    NewPermission, Permission, Permissions, UpdateCollection,
+    Permission, Permissions, PermissionsList, UpdateCollection,
 };
 use crate::models::{HubuumClassRelation, NewHubuumObjectRelation};
 use crate::models::{HubuumObjectRelation, NewHubuumClassRelation};

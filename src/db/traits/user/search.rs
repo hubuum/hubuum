@@ -92,6 +92,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             return Ok(Vec::new());
         }
         let is_admin = is_admin && scopes.is_none();
+        use crate::schema::collection_closure::dsl::{
+            ancestor_collection_id, collection_closure, descendant_collection_id,
+        };
         use crate::schema::collections::dsl::{
             collections, created_at as collection_created_at,
             description as collection_description, id as collection_id, name as collection_name,
@@ -131,7 +134,17 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             );
 
             collections
-                .filter(collection_id.eq_any(permission_subquery.select(permissions_collection_id)))
+                .filter(
+                    collection_id.eq_any(
+                        permission_subquery
+                            .inner_join(
+                                collection_closure
+                                    .on(permissions_collection_id.eq(ancestor_collection_id)),
+                            )
+                            .select(descendant_collection_id)
+                            .distinct(),
+                    ),
+                )
                 .into_boxed()
         };
 
@@ -178,6 +191,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         is_admin: bool,
         scopes: Option<&[Permissions]>,
     ) -> Result<i64, ApiError> {
+        use crate::schema::collection_closure::dsl::{
+            ancestor_collection_id, collection_closure, descendant_collection_id,
+        };
         use crate::schema::collections::dsl::{
             collections, created_at as collection_created_at,
             description as collection_description, id as collection_id, name as collection_name,
@@ -216,7 +232,17 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             );
 
             collections
-                .filter(collection_id.eq_any(permission_subquery.select(permissions_collection_id)))
+                .filter(
+                    collection_id.eq_any(
+                        permission_subquery
+                            .inner_join(
+                                collection_closure
+                                    .on(permissions_collection_id.eq(ancestor_collection_id)),
+                            )
+                            .select(descendant_collection_id)
+                            .distinct(),
+                    ),
+                )
                 .into_boxed()
         };
 

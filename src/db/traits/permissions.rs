@@ -226,7 +226,7 @@ fn update_permission_for_revoke(
     update_perm
 }
 
-fn new_permission_from_list(
+pub(crate) fn new_permission_from_list(
     target_collection_id: i32,
     gid: i32,
     permission_list: &PermissionsList<Permissions>,

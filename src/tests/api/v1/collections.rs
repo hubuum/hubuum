@@ -118,6 +118,7 @@ mod tests {
             name: "test_collection_create".to_string(),
             description: "test collection create description".to_string(),
             group_id: admin_group.id,
+            parent_collection_id: None,
         };
 
         let resp = post_request(
@@ -231,6 +232,7 @@ mod tests {
             name: "test_collection_permissions".to_string(),
             description: "test collection permissions description".to_string(),
             group_id: admin_group.id,
+            parent_collection_id: None,
         };
 
         let resp = post_request(

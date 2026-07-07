@@ -22,6 +22,7 @@ mod test {
         let collection = NewCollection {
             name: crname.clone(),
             description: crname.clone(),
+            parent_collection_id: None,
         };
         let collection = collection
             .save_and_grant_all_to(pool, GroupID::new(admin_group.id).unwrap())

@@ -94,6 +94,7 @@ impl ExpandCollectionFromMap<HubuumClassExpanded> for HubuumClass {
                     description: "Unknown".to_string(),
                     created_at: chrono::NaiveDateTime::default(),
                     updated_at: chrono::NaiveDateTime::default(),
+                    parent_collection_id: None,
                 }
             }
         };

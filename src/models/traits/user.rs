@@ -506,6 +506,7 @@ mod test {
         let collection_fixture = NewCollection {
             name: "test_user_collection_listing".to_string(),
             description: "Test collection".to_string(),
+            parent_collection_id: None,
         }
         .save_and_grant_all_to(&context.pool, GroupID::new(test_group_1.id).unwrap())
         .await

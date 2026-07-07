@@ -27,8 +27,11 @@ pub trait UserPermissions: AuthzSubject {
         I: IntoIterator<Item = N>,
         N: CollectionAccessors,
     {
-        use crate::models::PermissionFilter;
-        use diesel::{dsl::sql, sql_types::BigInt};
+        use crate::db::traits::collection::permission_filter_sql;
+        use diesel::{
+            dsl::sql,
+            sql_types::{BigInt, Bool},
+        };
         use futures::stream::{self, StreamExt, TryStreamExt};
         use std::collections::HashSet;
 
@@ -48,6 +51,10 @@ pub trait UserPermissions: AuthzSubject {
         let lookup_table = crate::schema::permissions::dsl::permissions;
         let group_id_field = crate::schema::permissions::dsl::group_id;
         let collection_id_field = crate::schema::permissions::dsl::collection_id;
+        let closure_table = crate::schema::collection_closure::dsl::collection_closure;
+        let ancestor_collection_id = crate::schema::collection_closure::dsl::ancestor_collection_id;
+        let descendant_collection_id =
+            crate::schema::collection_closure::dsl::descendant_collection_id;
 
         let group_id_subquery = self.group_ids_subquery();
 
@@ -64,19 +71,22 @@ pub trait UserPermissions: AuthzSubject {
             .await?;
 
         let mut base_query = lookup_table
+            .inner_join(closure_table.on(collection_id_field.eq(ancestor_collection_id)))
             .into_boxed()
-            .filter(collection_id_field.eq_any(&collection_ids))
+            .filter(descendant_collection_id.eq_any(&collection_ids))
             .filter(group_id_field.eq_any(group_id_subquery));
 
         // Apply all permission filters
         for perm in requested {
-            base_query = perm.create_boxed_filter(base_query, true);
+            base_query = base_query.filter(sql::<Bool>(permission_filter_sql(perm, true)));
         }
 
         // Count the number of distinct collections that match all criteria
         let matching_collections_count = with_connection(pool, |conn| {
             base_query
-                .select(sql::<BigInt>("COUNT(DISTINCT collection_id)"))
+                .select(sql::<BigInt>(
+                    "COUNT(DISTINCT collection_closure.descendant_collection_id)",
+                ))
                 .first::<i64>(conn)
         })?;
 

@@ -61,8 +61,8 @@ Key consequences:
 
 Hubuum authorization is entirely **group → collection** (see
 [permissions.md](permissions.md)). Principals do not hold permissions directly;
-they hold **group memberships**, and groups hold permissions on collections
-(collections).
+they hold **group memberships**, and groups hold permissions on collections.
+Those grants apply to the collection itself and to descendant collections.
 
 - Membership lives in `group_memberships(principal_id, group_id)` — it is
   principal-centric, so **both users and service accounts can be members of a
@@ -236,8 +236,9 @@ serves both kinds:
 | `GET /api/v1/iam/principals/{principal_id}/tokens` | List token metadata (never the hash) | same as above |
 | `POST /api/v1/iam/principals/{principal_id}/tokens/{token_id}/revoke` | Soft-revoke a token | same as above |
 | `GET /api/v1/iam/principals/{principal_id}/groups` | List the principal's groups | same as above |
-| `GET /api/v1/iam/principals/{principal_id}/permissions` | Effective permissions across **all** collections, grouped by granting group | same as above |
-| `GET /api/v1/collections/{collection_id}/permissions/principal/{principal_id}` | Effective permissions on a single collection | collection read authority |
+| `GET /api/v1/iam/principals/{principal_id}/permissions` | Direct permission rows across **all** collections, grouped by granting group | same as above |
+| `GET /api/v1/collections/{collection_id}/permissions/principal/{principal_id}` | Direct permission rows on a single collection for the principal's groups | collection read authority |
+| `GET /api/v1/collections/{collection_id}/permissions/effective/principal/{principal_id}` | Direct and inherited permission rows on a single collection for the principal's groups | collection read authority |
 | `POST` / `DELETE /api/v1/iam/groups/{group_id}/members/{principal_id}` | Add/remove a member (human or SA) | **admin only** |
 
 Mint accepts `name`, `description`, `expires_at`, and `scopes`.

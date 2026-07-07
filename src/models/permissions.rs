@@ -44,6 +44,40 @@ pub enum Permissions {
 }
 
 impl Permissions {
+    pub const ALL: [Permissions; 31] = [
+        Permissions::ReadCollection,
+        Permissions::UpdateCollection,
+        Permissions::DeleteCollection,
+        Permissions::DelegateCollection,
+        Permissions::CreateClass,
+        Permissions::ReadClass,
+        Permissions::UpdateClass,
+        Permissions::DeleteClass,
+        Permissions::CreateObject,
+        Permissions::ReadObject,
+        Permissions::UpdateObject,
+        Permissions::DeleteObject,
+        Permissions::CreateClassRelation,
+        Permissions::ReadClassRelation,
+        Permissions::UpdateClassRelation,
+        Permissions::DeleteClassRelation,
+        Permissions::CreateObjectRelation,
+        Permissions::ReadObjectRelation,
+        Permissions::UpdateObjectRelation,
+        Permissions::DeleteObjectRelation,
+        Permissions::ReadTemplate,
+        Permissions::CreateTemplate,
+        Permissions::UpdateTemplate,
+        Permissions::DeleteTemplate,
+        Permissions::ReadRemoteTarget,
+        Permissions::CreateRemoteTarget,
+        Permissions::UpdateRemoteTarget,
+        Permissions::DeleteRemoteTarget,
+        Permissions::ExecuteRemoteTarget,
+        Permissions::ReadAudit,
+        Permissions::ManageEventSubscription,
+    ];
+
     /// ## Convert a string to a Permissions enum.
     ///
     /// ### Arguments
