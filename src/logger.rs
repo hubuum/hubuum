@@ -70,7 +70,7 @@ pub fn log_operation_read(
 pub fn log_authorization_grant(
     principal_id: i32,
     permissions: &[Permissions],
-    namespace_count: Option<usize>,
+    collection_count: Option<usize>,
     reason: &'static str,
 ) {
     if !tracing::enabled!(tracing::Level::DEBUG) {
@@ -88,7 +88,7 @@ pub fn log_authorization_grant(
         decision = "grant",
         principal_id,
         permissions,
-        namespace_count,
+        collection_count,
         reason,
     );
 }
@@ -96,7 +96,7 @@ pub fn log_authorization_grant(
 pub fn log_authorization_denial(
     principal_id: i32,
     permissions: &[Permissions],
-    namespace_count: Option<usize>,
+    collection_count: Option<usize>,
     reason: &'static str,
 ) {
     let permissions = permissions
@@ -110,7 +110,7 @@ pub fn log_authorization_denial(
         decision = "deny",
         principal_id,
         permissions,
-        namespace_count,
+        collection_count,
         reason,
     );
 }
@@ -433,7 +433,7 @@ mod tests {
         let request_id = uuid::Uuid::new_v4();
         let logs = capture_logs(|| {
             log_operation_mutation(
-                EntityType::Namespace,
+                EntityType::Collection,
                 Action::Created,
                 Some(9),
                 Some(12),
@@ -447,7 +447,7 @@ mod tests {
         assert_eq!(event["message"], "operation mutation recorded");
         assert_eq!(event["operation"], "mutation_recorded");
         assert_eq!(event["mutation_phase"], "recorded");
-        assert_eq!(event["entity_type"], "namespace");
+        assert_eq!(event["entity_type"], "collection");
         assert_eq!(event["action"], "created");
         assert_eq!(event["entity_id"], 9);
         assert_eq!(event["actor_principal_id"], 12);
@@ -468,7 +468,7 @@ mod tests {
             );
             let _guard = span.enter();
             log_operation_mutation(
-                EntityType::Namespace,
+                EntityType::Collection,
                 Action::Created,
                 Some(9),
                 Some(12),

@@ -53,7 +53,7 @@ Domain mutation-recorded logs are emitted from the audit event writer at `INFO`.
 | ----- | ----------- |
 | `operation` | `mutation_recorded` |
 | `mutation_phase` | `recorded` |
-| `entity_type` | Catalog entity label, such as `namespace` |
+| `entity_type` | Catalog entity label, such as `collection` |
 | `action` | Catalog action label, such as `created` |
 | `entity_id` | Entity identifier when available |
 | `actor_principal_id` | Acting principal when available |
@@ -67,7 +67,7 @@ Authorization decision logs use:
 | Grant | `DEBUG` |
 | Denial | `WARN` |
 
-Authorization records include `event_type=authorization`, `decision`, `principal_id`, requested `permissions` as a JSON array, nullable `namespace_count`, and a short `reason`.
+Authorization records include `event_type=authorization`, `decision`, `principal_id`, requested `permissions` as a JSON array, nullable `collection_count`, and a short `reason`.
 
 ## Sensitive Data Rules
 
