@@ -523,7 +523,7 @@ mod tests {
     }
 
     #[actix_rt::test]
-    async fn test_permission_grant_ccombinations() {
+    async fn test_permission_grant_combinations() {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
 
@@ -548,12 +548,12 @@ mod tests {
 
         for subset in subsets.iter() {
             let collection = scope
-                .collection_fixture("test_perm_grant_ccombinations")
+                .collection_fixture("test_perm_grant_combinations")
                 .await;
 
             let group = NewGroup {
-                groupname: "test_perm_grant_ccombinations".to_string(),
-                description: Some("Test group for ccombinations".to_string()),
+                groupname: "test_perm_grant_combinations".to_string(),
+                description: Some("Test group for combinations".to_string()),
             }
             .save_without_events(&pool)
             .await
@@ -583,7 +583,7 @@ mod tests {
     }
 
     #[actix_rt::test]
-    async fn test_permission_revoke_ccombinations() {
+    async fn test_permission_revoke_combinations() {
         let scope = TestScope::new();
         let pool = scope.pool.clone();
 
@@ -618,8 +618,8 @@ mod tests {
                 .await;
 
             let group = NewGroup {
-                groupname: "test_perm_revoke_ccombinations".to_string(),
-                description: Some("Test group for ccombinations".to_string()),
+                groupname: "test_perm_revoke_combinations".to_string(),
+                description: Some("Test group for combinations".to_string()),
             }
             .save_without_events(&pool)
             .await
@@ -670,7 +670,7 @@ mod tests {
 
         let group = NewGroup {
             groupname: "test_perm_grant_without_side_effects".to_string(),
-            description: Some("Test group for ccombinations".to_string()),
+            description: Some("Test group for combinations".to_string()),
         }
         .save_without_events(&pool)
         .await

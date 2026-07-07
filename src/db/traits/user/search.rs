@@ -98,7 +98,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             updated_at as collection_updated_at,
         };
         use crate::schema::permissions::dsl::{
-            collection_id as permissions_nid, group_id, permissions,
+            collection_id as permissions_collection_id, group_id, permissions,
         };
         let query_params = query_options.filters.clone();
 
@@ -131,7 +131,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             );
 
             collections
-                .filter(collection_id.eq_any(permission_subquery.select(permissions_nid)))
+                .filter(collection_id.eq_any(permission_subquery.select(permissions_collection_id)))
                 .into_boxed()
         };
 
@@ -184,7 +184,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             updated_at as collection_updated_at,
         };
         use crate::schema::permissions::dsl::{
-            collection_id as permissions_nid, group_id, permissions,
+            collection_id as permissions_collection_id, group_id, permissions,
         };
 
         // Fail-closed: a scoped token must carry the resource read permission.
@@ -216,7 +216,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             );
 
             collections
-                .filter(collection_id.eq_any(permission_subquery.select(permissions_nid)))
+                .filter(collection_id.eq_any(permission_subquery.select(permissions_collection_id)))
                 .into_boxed()
         };
 

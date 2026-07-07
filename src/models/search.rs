@@ -1101,17 +1101,17 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
     ///
     /// If any value is not a valid list of integers, return an ApiError::BadRequest.
     fn collections(&self) -> Result<Vec<i32>, ApiError> {
-        let mut nids = vec![];
+        let mut collection_ids = vec![];
 
         for p in self.iter() {
             if p.field == FilterField::Collections {
-                nids.extend(p.value.as_integer()?);
+                collection_ids.extend(p.value.as_integer()?);
             }
         }
 
-        nids.sort_unstable();
-        nids.dedup();
-        Ok(nids)
+        collection_ids.sort_unstable();
+        collection_ids.dedup();
+        Ok(collection_ids)
     }
 
     /// ## Get a list of all JSON schema entries in a list of parsed query parameters
