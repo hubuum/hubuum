@@ -668,8 +668,8 @@ macro_rules! filter_fields {
 
 filter_fields!(
     (Id, "id"),
-    (Namespaces, "namespaces"),
-    (NamespaceId, "namespace_id"),
+    (Collections, "collections"),
+    (CollectionId, "collection_id"),
     (Name, "name"),
     (Groupname, "groupname"),
     (Username, "username"),
@@ -704,8 +704,8 @@ filter_fields!(
     (ClassFrom, "from_classes"),
     (ClassToName, "to_class_name"),
     (ClassFromName, "from_class_name"),
-    (NamespacesFrom, "from_namespaces"),
-    (NamespacesTo, "to_namespaces"),
+    (CollectionsFrom, "from_collections"),
+    (CollectionsTo, "to_collections"),
     (JsonDataFrom, "from_json_data"),
     (JsonDataTo, "to_json_data"),
     (CreatedAtFrom, "from_created_at"),
