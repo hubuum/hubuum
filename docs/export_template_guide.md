@@ -1,14 +1,14 @@
-# Template Guide
+# Export Template Guide
 
-Stored report templates format stored report output from the async report API.
+Stored export templates format stored export output from the async export API.
 
-Use executable templates when you want `text/plain`, `text/html`, or `text/csv` output from a stored definition in `POST /api/v1/templates`.
-Run the template with `POST /api/v1/templates/{template_id}/reports`, then fetch the rendered result from
-`GET /api/v1/reports/{task_id}/output`.
+Use executable export templates when you want `text/plain`, `text/html`, or `text/csv` output from a stored definition in `POST /api/v1/export-templates`.
+Run the template with `POST /api/v1/export-templates/{template_id}/exports`, then fetch the rendered result from
+`GET /api/v1/exports/{task_id}/output`.
 
 See also:
 
-- [report_api.md](report_api.md) for report execution semantics
+- [export_api.md](export_api.md) for export execution semantics
 - [permissions.md](permissions.md) for template permissions
 
 ## What a template receives
@@ -20,7 +20,7 @@ Templates render against a context object with these top-level keys:
 - `warnings`
 - `request`
 - `source`
-  - present for templated `related_objects` reports and points at the hydrated root object
+  - present for templated `related_objects` exports and points at the hydrated root object
 
 Rather than start with the full context object, it is usually easier to think in terms of classes and objects.
 
@@ -64,11 +64,11 @@ If you create an executable template for that class:
 ```json
 {
   "collection_id": 7,
-  "name": "report.servers",
-  "description": "Server owner report",
+  "name": "export.servers",
+  "description": "Server owner export",
   "content_type": "text/plain",
   "template": "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}",
-  "kind": "report",
+  "kind": "export",
   "scope_kind": "objects_in_class",
   "class_id": 42,
   "default_query": "name__contains=srv-&sort=name",
@@ -88,7 +88,7 @@ and run it:
 }
 ```
 
-then `items` contains the matching objects, so templates can reference fields like:
+then `items` contains the matching objects, so export templates can reference fields like:
 
 - `{{ item.name }}`
 - `{{ item.description }}`
@@ -126,7 +126,7 @@ Example:
 
 ## Template syntax
 
-Stored templates use Jinja syntax. See the
+Stored export templates use Jinja syntax. See the
 [MiniJinja template syntax documentation](https://docs.rs/minijinja/latest/minijinja/syntax/)
 for the full expression and tag reference.
 
@@ -135,7 +135,7 @@ Common features:
 - `{{ meta.count }}` interpolates a value
 - `{% for item in items %}...{% endfor %}` iterates arrays
 - `{% if ... %}...{% endif %}` handles conditionals
-- `{% include "name" %}`, `{% import "name" as macros %}`, and `{% extends "name" %}` resolve templates by name within the same collection
+- `{% include "name" %}`, `{% import "name" as macros %}`, and `{% extends "name" %}` resolve export_templates by name within the same collection
 - normal Jinja expressions, filters, `set`, and macros are supported
 
 Examples:
@@ -210,21 +210,21 @@ First room: {{ host.related.rooms[0].name }}
 
 What we do not add on top of MiniJinja:
 
-- no custom database lookup functions from templates
+- no custom database lookup functions from export templates
 - no filesystem template loading
 - no cross-collection template loading
 - no relation helper functions such as `related_to(...)`
 
 ## Stored template composition
 
-Stored templates can compose other stored templates in the same collection by name.
+Stored export templates can compose other stored export templates in the same collection by name.
 
-Recommended naming for reusable stored templates:
+Recommended naming for reusable stored export templates:
 
 - `layout.<name>`
 - `macros.<name>`
 - `partial.<name>`
-- `report.<name>`
+- `export.<name>`
 
 Example layout template:
 
@@ -271,7 +271,7 @@ Template:
 <!-- doc-example: template-guide/plain/template -->
 
 ```text
-Report scope: {{ meta.scope.kind }}
+Export scope: {{ meta.scope.kind }}
 Rows: {{ meta.count }}
 
 {% for item in items %}- {{ item.name }} owned by {{ item.data.owner }}
@@ -283,7 +283,7 @@ Rendered output:
 <!-- doc-example: template-guide/plain/output -->
 
 ```text
-Report scope: objects_in_class
+Export scope: objects_in_class
 Rows: 2
 
 - srv-app-01 owned by alice
@@ -297,7 +297,7 @@ Template:
 <!-- doc-example: template-guide/html/template -->
 
 ```html
-<h1>Server report</h1>
+<h1>Server export</h1>
 <ul>{% for item in items %}<li><strong>{{ item.name }}</strong> - {{ item.data.hostname }}</li>{% endfor %}</ul>
 ```
 
@@ -306,7 +306,7 @@ Rendered output:
 <!-- doc-example: template-guide/html/output -->
 
 ```html
-<h1>Server report</h1>
+<h1>Server export</h1>
 <ul><li><strong>srv-app-01</strong> - srv-app-01.example.org</li><li><strong>srv-db-01</strong> - srv-db-01.example.org</li></ul>
 ```
 
@@ -384,20 +384,20 @@ For data keys that contain dots, spaces, or punctuation, use bracket notation:
 {% endfor %}
 ```
 
-## Relation report example
+## Relation export example
 
-Direct relation scopes use the normal `items` context. Templated `related_objects` reports are rooted at the requested source object: `items` contains that single hydrated source object, and `source` points to the same value.
+Direct relation scopes use the normal `items` context. Templated `related_objects` exports are rooted at the requested source object: `items` contains that single hydrated source object, and `source` points to the same value.
 
 Example executable template:
 
 ```json
 {
   "collection_id": 7,
-  "name": "report.host-related",
-  "description": "Related host report",
+  "name": "export.host-related",
+  "description": "Related host export",
   "content_type": "text/plain",
   "template": "Related objects for {{ source.name }}",
-  "kind": "report",
+  "kind": "export",
   "scope_kind": "related_objects",
   "class_id": 42,
   "default_query": "depth__lte=2&to_classes=91&sort=path",
@@ -421,22 +421,22 @@ Related objects for {{ source.name }}
 {% endfor %}
 ```
 
-For direct relation reports, `class_relations` items contain fields such as `from_hubuum_class_id` and `to_hubuum_class_id`, while `object_relations` items contain fields such as `from_hubuum_object_id`, `to_hubuum_object_id`, and `class_relation_id`.
+For direct relation exports, `class_relations` items contain fields such as `from_hubuum_class_id` and `to_hubuum_class_id`, while `object_relations` items contain fields such as `from_hubuum_object_id`, `to_hubuum_object_id`, and `class_relation_id`.
 
 ## Included related objects
 
-`objects_in_class` reports can add bounded related-object arrays to each item with `include.related_objects`. Use this when the report is centered on one class but the template needs nearby objects, such as a host's room.
+`objects_in_class` exports can add bounded related-object arrays to each item with `include.related_objects`. Use this when the export is centered on one class but the template needs nearby objects, such as a host's room.
 
 Example executable template:
 
 ```json
 {
   "collection_id": 7,
-  "name": "report.host-room",
-  "description": "Host room report",
+  "name": "export.host-room",
+  "description": "Host room export",
   "content_type": "text/plain",
   "template": "{% for item in items %}{{ item.name }}{% endfor %}",
-  "kind": "report",
+  "kind": "export",
   "scope_kind": "objects_in_class",
   "class_id": 42,
   "default_query": "name__equals=nommo",
@@ -463,13 +463,13 @@ Template:
 {% endfor %}
 ```
 
-The alias (`room` above) becomes `item.related.room` in templates and `related.room` in JSON output. Included values are arrays even when `limit` is `1`, and each related object includes its normal object fields plus `path`. A report can include up to 8 related-object aliases.
+The alias (`room` above) becomes `item.related.room` in export templates and `related.room` in JSON output. Included values are arrays even when `limit` is `1`, and each related object includes its normal object fields plus `path`. An export can include up to 8 related-object aliases.
 
-Use `class_relation_id` and `direction` when the relation meaning matters. Use `sort` (`path`, `name`, or `created_at`) to decide which related object appears first when the alias has a small `limit`. The top-level `related` item field is reserved for these report includes.
+Use `class_relation_id` and `direction` when the relation meaning matters. Use `sort` (`path`, `name`, or `created_at`) to decide which related object appears first when the alias has a small `limit`. The top-level `related` item field is reserved for these export includes.
 
 ## Missing data policy
 
-Missing values are controlled by `missing_data_policy` on the report request.
+Missing values are controlled by `missing_data_policy` on the export request.
 
 Example template:
 
@@ -482,7 +482,7 @@ Example template:
 
 If `primary_contact` does not exist:
 
-- `strict`: the report task fails
+- `strict`: the export task fails
 - `null`: renders `null`
 - `omit`: renders an empty string
 - `null` and `omit`: rendered missing lookups add a template warning that names the stored template where the missing lookup rendered
@@ -505,9 +505,9 @@ srv-app-01 owner=
 srv-db-01 owner=
 ```
 
-## Relation-aware object templates
+## Relation-aware object export_templates
 
-Templated object reports can expose hydrated relation-aware objects.
+Templated object exports can expose hydrated relation-aware objects.
 
 Hydrated objects keep the normal object fields:
 
@@ -542,7 +542,7 @@ Inferred aliases are normalized like this:
 - `Access Policy` -> `access_policies`
 - `Person async` -> `person_asyncs`
 
-Relation traversal is bidirectional in templates, so `room.related.hosts` works even if the stored
+Relation traversal is bidirectional in export templates, so `room.related.hosts` works even if the stored
 relation was originally created from `Host` to `Room`.
 
 `reachable` is the flattened companion to `related`:
@@ -575,7 +575,7 @@ reachable alias bucket.
 
 ### `related_objects`
 
-Templated `related_objects` reports expose:
+Templated `related_objects` exports expose:
 
 - `items`
   - always `[source]`
@@ -592,7 +592,7 @@ The default relation depth is `2`. You can override it with:
 
 ### `objects_in_class`
 
-Templated `objects_in_class` reports expose hydrated roots in `items` only when relation hydration
+Templated `objects_in_class` exports expose hydrated roots in `items` only when relation hydration
 is enabled explicitly:
 
 ```json
@@ -611,7 +611,7 @@ Assume:
 - a `Host` object is related to a `Room`
 - that `Room` is related to one or more `Person` objects
 
-For a templated `related_objects` report rooted at a host:
+For a templated `related_objects` export rooted at a host:
 
 ```text
 {% for host in items %}
@@ -623,7 +623,7 @@ People:
 {% endfor %}{% endfor %}{% endfor %}
 ```
 
-If you want the host report to flatten reachable people without manually stepping through rooms,
+If you want the host export to flatten reachable people without manually stepping through rooms,
 use `reachable`:
 
 ```text
@@ -664,8 +664,8 @@ People:
 - bob
 ```
 
-Use `related` when the report should preserve the path shape and show the intermediate room. Use
-`reachable` when the report should flatten the result to "all people this host can reach within the
+Use `related` when the export should preserve the path shape and show the intermediate room. Use
+`reachable` when the export should flatten the result to "all people this host can reach within the
 configured depth".
 
 `reachable.*` aliases only appear when there is at least one visible reachable object for that
@@ -673,7 +673,7 @@ class alias, so optional lookups should still be guarded in `strict` mode.
 
 ### Using `source`
 
-For templated `related_objects` reports, `source` is the same hydrated root object that also
+For templated `related_objects` exports, `source` is the same hydrated root object that also
 appears as `items[0]`.
 
 Example:
@@ -685,8 +685,8 @@ People:
 {% endfor %}
 ```
 
-Using `items` keeps templates reusable between `related_objects` and `objects_in_class`. Using
-`source` is convenient when a report is always rooted at one object.
+Using `items` keeps export_templates reusable between `related_objects` and `objects_in_class`. Using
+`source` is convenient when an export is always rooted at one object.
 
 Rendered output:
 
@@ -698,7 +698,7 @@ People:
 - bob
 ```
 
-For a class-wide host report, use `objects_in_class` plus `relation_context.depth`:
+For a class-wide host export, use `objects_in_class` plus `relation_context.depth`:
 
 ```text
 {% for host in items %}
@@ -754,20 +754,20 @@ host,room,person
 
 ## Limits and constraints
 
-- Stored templates support only `text/plain`, `text/html`, and `text/csv`
-- `application/json` does not use stored templates; submit JSON reports with `POST /api/v1/reports`
-- Executable report templates support every scope kind (`collections`, `classes`, `objects_in_class`,
+- Stored export templates support only `text/plain`, `text/html`, and `text/csv`
+- `application/json` does not use stored export templates; submit JSON exports with `POST /api/v1/exports`
+- Executable export templates support every scope kind (`collections`, `classes`, `objects_in_class`,
   `class_relations`, `object_relations`, `related_objects`); `class_id` is set only for
   `objects_in_class` and `related_objects`, and `include`/`relation_context` apply only to those scopes
 - Template loading for `include`/`import`/`extends` is limited to the same collection
-- HTML templates are autoescaped; plain text and CSV templates should use `tojson` or `csv_cell`
+- HTML export templates are autoescaped; plain text and CSV export_templates should use `tojson` or `csv_cell`
   when embedding JSON- or CSV-sensitive values
-- Hydrated relation templates are limited to relation depth `<= 2`
-- Rendered output still respects `limits.max_output_bytes`, capped by `HUBUUM_REPORT_MAX_OUTPUT_BYTES`
+- Hydrated relation export templates are limited to relation depth `<= 2`
+- Rendered output still respects `limits.max_output_bytes`, capped by `HUBUUM_EXPORT_MAX_OUTPUT_BYTES`
 
 ## CSV note
 
-`text/csv` templates are rendered as plain text.
+`text/csv` export templates are rendered as plain text.
 
 Hubuum now provides `|csv_cell` for individual CSV cells. Use it instead of hand-written quoting
 for fields that may contain commas, quotes, or newlines.
@@ -785,7 +785,7 @@ name,owner
 Missing values are controlled by `missing_data_policy`:
 
 - `strict`
-  - missing lookups fail the report task
+  - missing lookups fail the export task
 - `null`
   - missing lookups render as literal `null`
 - `omit`
@@ -794,7 +794,7 @@ Missing values are controlled by `missing_data_policy`:
 Current behavior:
 
 - rendered missing template lookups in `null` and `omit` modes add a warning per stored template involved in rendering
-- the `warnings` top-level context is still available for report warnings such as truncation
+- the `warnings` top-level context is still available for export warnings such as truncation
 - if you want to avoid failures in `strict` mode, guard optional lookups explicitly with checks such as:
   - `{% if item.data.owner is defined %}{{ item.data.owner }}{% endif %}`
   - `{% if host.related.rooms is defined and host.related.rooms %}...{% endif %}`
@@ -802,9 +802,9 @@ Current behavior:
 
 ## Typical workflow
 
-1. Create an executable stored template with `POST /api/v1/templates`
-2. Run that template with `POST /api/v1/templates/{template_id}/reports`
-3. Read the returned `TaskResponse`, wait for completion, then fetch the rendered result from `GET /api/v1/reports/{task_id}/output`
+1. Create an executable stored template with `POST /api/v1/export-templates`
+2. Run that template with `POST /api/v1/export-templates/{template_id}/exports`
+3. Read the returned `TaskResponse`, wait for completion, then fetch the rendered result from `GET /api/v1/exports/{task_id}/output`
 
 Example template run request:
 

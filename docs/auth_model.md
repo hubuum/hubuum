@@ -145,7 +145,7 @@ Enforcement details:
   **before any admin bypass**. A scoped token held by an admin cannot exceed its
   scopes — the admin "all access" fast paths apply only when the token is unscoped.
 - Scopes apply to *every* authority-bearing path, not just `can!` checks:
-  search/list/report visibility is intersected with scopes too. An admin's scoped
+  search/list/export visibility is intersected with scopes too. An admin's scoped
   token, for example, lists only `scope ∩ grant` collections.
 - Scopes may name permissions the principal does not currently hold — scoping only
   narrows, so unheld permissions in a scope set are simply inert.
@@ -170,7 +170,7 @@ Unknown strings are rejected (fail-closed) wherever scopes are parsed.
 
 ### Scopes and async tasks
 
-Asynchronous work (import / report / remote-call tasks) must not later run with more
+Asynchronous work (import / export / remote-call tasks) must not later run with more
 authority than the request that enqueued it. At enqueue time the task records a
 **scope snapshot**: the submitting token id, its `scoped` flag, and a JSON array of
 its effective scope strings. The worker reconstructs the scopes from this snapshot
@@ -263,7 +263,7 @@ Each handler declares the authority it requires. There are two families.
 - `Authenticated` — resolves the principal and, if the token is scoped, its scope
   set. Every downstream authority decision threads the scopes into the fail-closed
   pre-filter. All resource and task-creating endpoints (collections, classes,
-  objects, relations, templates, search, reports, imports, remote-target invocation)
+  objects, relations, export_templates, search, exports, imports, remote-target invocation)
   use this.
 
 **Human/IAM (privilege-separated):**

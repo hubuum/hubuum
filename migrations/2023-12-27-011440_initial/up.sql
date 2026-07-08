@@ -1,13 +1,13 @@
     -- Greenfield squashed schema. Defines the entire database in final form:
     -- principal abstraction (humans + service accounts), principal-centric group
     -- membership and tokens, rich token lifecycle + scopes, and the folded
-    -- remote-target schema. No backwards-compatibility shims.
+    -- remote-target schema.
 
     ----------------------
     ---- Drop (reverse dependency order; CASCADE covers the rest)
     ----------------------
     DROP TABLE IF EXISTS remote_call_results CASCADE;
-    DROP TABLE IF EXISTS report_task_outputs CASCADE;
+    DROP TABLE IF EXISTS export_task_outputs CASCADE;
     DROP TABLE IF EXISTS import_task_results CASCADE;
     DROP TABLE IF EXISTS event_deliveries CASCADE;
     DROP TABLE IF EXISTS event_subscriptions CASCADE;
@@ -17,7 +17,7 @@
     DROP TABLE IF EXISTS token_scopes CASCADE;
     DROP TABLE IF EXISTS tokens CASCADE;
     DROP TABLE IF EXISTS remote_targets CASCADE;
-    DROP TABLE IF EXISTS report_templates CASCADE;
+    DROP TABLE IF EXISTS export_templates CASCADE;
     DROP TABLE IF EXISTS hubuumobject_relation CASCADE;
     DROP TABLE IF EXISTS hubuumclass_reachability CASCADE;
     DROP TABLE IF EXISTS hubuumclass_relation CASCADE;
@@ -246,8 +246,8 @@
         UNIQUE (from_hubuum_object_id, to_hubuum_object_id)
     );
 
-    -- Table to store report templates
-    CREATE TABLE report_templates (
+    -- Table to store export templates
+    CREATE TABLE export_templates (
         id SERIAL PRIMARY KEY,
         collection_id INT REFERENCES collections (id) ON DELETE CASCADE NOT NULL,
         name VARCHAR NOT NULL,
@@ -266,7 +266,7 @@
         updated_at TIMESTAMP NOT NULL DEFAULT now(),
         UNIQUE (collection_id, name),
         CHECK (content_type IN ('text/plain', 'text/html', 'text/csv')),
-        CHECK (kind IN ('report', 'fragment')),
+        CHECK (kind IN ('export', 'fragment')),
         CHECK (scope_kind IS NULL OR scope_kind IN (
             'collections', 'classes', 'objects_in_class',
             'class_relations', 'object_relations', 'related_objects'
@@ -275,9 +275,9 @@
         CHECK (
             (kind = 'fragment' AND scope_kind IS NULL AND class_id IS NULL)
             OR
-            (kind = 'report' AND scope_kind IN ('objects_in_class', 'related_objects') AND class_id IS NOT NULL)
+            (kind = 'export' AND scope_kind IN ('objects_in_class', 'related_objects') AND class_id IS NOT NULL)
             OR
-            (kind = 'report' AND scope_kind IN ('collections', 'classes', 'class_relations', 'object_relations') AND class_id IS NULL)
+            (kind = 'export' AND scope_kind IN ('collections', 'classes', 'class_relations', 'object_relations') AND class_id IS NULL)
         )
     );
 
@@ -331,7 +331,7 @@
 
     CREATE TABLE tasks (
         id SERIAL PRIMARY KEY,
-        kind VARCHAR NOT NULL CHECK (kind IN ('import', 'report', 'export', 'reindex', 'remote_call')),
+        kind VARCHAR NOT NULL CHECK (kind IN ('import', 'export', 'reindex', 'remote_call')),
         status VARCHAR NOT NULL CHECK (
             status IN (
                 'queued',
@@ -459,7 +459,7 @@
         CHECK (attempts >= 0)
     );
 
-    CREATE TABLE report_task_outputs (
+    CREATE TABLE export_task_outputs (
         id SERIAL PRIMARY KEY,
         task_id INT REFERENCES tasks (id) ON DELETE CASCADE NOT NULL UNIQUE,
         template_name VARCHAR NULL,
@@ -553,8 +553,8 @@
     CREATE INDEX idx_hubuumobject_relation_on_to ON hubuumobject_relation (to_hubuum_object_id);
     CREATE INDEX idx_hubuumobject_relation_class_relation_id ON hubuumobject_relation (class_relation_id);
 
-    ---- Report templates
-    CREATE INDEX idx_report_templates_collection_id ON report_templates(collection_id);
+    ---- Export templates
+    CREATE INDEX idx_export_templates_collection_id ON export_templates(collection_id);
 
     ---- Remote targets
     CREATE INDEX idx_remote_targets_collection_id ON remote_targets(collection_id);
@@ -574,8 +574,8 @@
     CREATE INDEX idx_tasks_deleted_at ON tasks (deleted_at);
     CREATE INDEX idx_tasks_active_status ON tasks (deleted_at, status);
     CREATE INDEX idx_import_task_results_task_id_created_at ON import_task_results (task_id, created_at);
-    CREATE INDEX idx_report_task_outputs_task_id_created_at ON report_task_outputs (task_id, created_at);
-    CREATE INDEX idx_report_task_outputs_output_expires_at ON report_task_outputs (output_expires_at);
+    CREATE INDEX idx_export_task_outputs_task_id_created_at ON export_task_outputs (task_id, created_at);
+    CREATE INDEX idx_export_task_outputs_output_expires_at ON export_task_outputs (output_expires_at);
 
     ---- Events
     CREATE INDEX events_entity_idx ON events (entity_type, entity_id);
@@ -1466,10 +1466,10 @@
     REFERENCING OLD TABLE AS deleted_relations
     FOR EACH STATEMENT EXECUTE FUNCTION cleanup_invalid_object_relations();
 
-    -- Trigger to update report_templates updated_at column
-    DROP TRIGGER IF EXISTS update_report_templates_updated_at ON report_templates;
-    CREATE TRIGGER update_report_templates_updated_at
-    BEFORE UPDATE ON report_templates
+    -- Trigger to update export_templates updated_at column
+    DROP TRIGGER IF EXISTS update_export_templates_updated_at ON export_templates;
+    CREATE TRIGGER update_export_templates_updated_at
+    BEFORE UPDATE ON export_templates
     FOR EACH ROW EXECUTE FUNCTION update_modified_column();
 
     DROP TRIGGER IF EXISTS update_remote_targets_updated_at ON remote_targets;
@@ -1509,7 +1509,7 @@
     BEGIN
       FOREACH t IN ARRAY ARRAY[
         'hubuumclass','hubuumobject','collections','hubuumclass_relation',
-        'hubuumobject_relation','report_templates','remote_targets'
+        'hubuumobject_relation','export_templates','remote_targets'
       ]
       LOOP
         EXECUTE format(
@@ -1537,7 +1537,7 @@
       END LOOP;
 
       FOREACH t IN ARRAY ARRAY[
-        'hubuumclass','hubuumobject','collections','report_templates','remote_targets'
+        'hubuumclass','hubuumobject','collections','export_templates','remote_targets'
       ]
       LOOP
         EXECUTE format(

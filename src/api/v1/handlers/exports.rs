@@ -10,9 +10,9 @@ use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::can;
 use crate::config::{
-    DEFAULT_REPORT_DB_STATEMENT_TIMEOUT_MS, DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER,
-    DEFAULT_REPORT_MAX_OUTPUT_BYTES, DEFAULT_REPORT_OUTPUT_RETENTION_HOURS,
-    DEFAULT_REPORT_STAGE_TIMEOUT_MS, DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS, get_config,
+    DEFAULT_EXPORT_DB_STATEMENT_TIMEOUT_MS, DEFAULT_EXPORT_MAX_ACTIVE_TASKS_PER_USER,
+    DEFAULT_EXPORT_MAX_OUTPUT_BYTES, DEFAULT_EXPORT_OUTPUT_RETENTION_HOURS,
+    DEFAULT_EXPORT_STAGE_TIMEOUT_MS, DEFAULT_EXPORT_TEMPLATE_MAX_OBJECTS, get_config,
 };
 use crate::db::traits::UserPermissions;
 use crate::db::traits::task::{TaskBackend, TaskCreateRequest, TaskScopeSnapshot, TaskStateUpdate};
@@ -24,61 +24,61 @@ use crate::models::search::{
     parse_query_parameter,
 };
 use crate::models::{
-    ClassIdSet, CollectionID, CollectionReportTemplates, HubuumClassID, HubuumClassRelation,
-    HubuumObject, HubuumObjectID, HubuumObjectRelation, HubuumObjectWithPath,
-    NewReportTaskOutputRecord, NewTaskEventRecord, Permissions, RELATED_INCLUDE_DEFAULT_LIMIT,
-    RELATED_INCLUDE_DEFAULT_MAX_DEPTH, ReportContentType, ReportIncludeRelatedDirection,
-    ReportIncludeRelatedQuery, ReportIncludeRelatedSort, ReportJsonResponse, ReportMeta,
-    ReportMissingDataPolicy, ReportOutputLookup, ReportRequest, ReportScope, ReportScopeKind,
-    ReportTaskOutputRecord, ReportTemplate, ReportTemplateID, ReportWarning, TaskID, TaskKind,
-    TaskRecord, TaskResponse,
+    ClassIdSet, CollectionExportTemplates, CollectionID, ExportContentType,
+    ExportIncludeRelatedDirection, ExportIncludeRelatedQuery, ExportIncludeRelatedSort,
+    ExportJsonResponse, ExportMeta, ExportMissingDataPolicy, ExportOutputLookup, ExportRequest,
+    ExportScope, ExportScopeKind, ExportTaskOutputRecord, ExportTemplate, ExportTemplateID,
+    ExportWarning, HubuumClassID, HubuumClassRelation, HubuumObject, HubuumObjectID,
+    HubuumObjectRelation, HubuumObjectWithPath, NewExportTaskOutputRecord, NewTaskEventRecord,
+    Permissions, RELATED_INCLUDE_DEFAULT_LIMIT, RELATED_INCLUDE_DEFAULT_MAX_DEPTH, TaskID,
+    TaskKind, TaskRecord, TaskResponse,
 };
 use crate::pagination::page_limits_or_defaults;
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
 use crate::traits::{AuthzSubject, CollectionAccessors, SelfAccessors};
-use crate::utilities::reporting::{SizeLimitedWriter, render_template};
+use crate::utilities::exporting::{SizeLimitedWriter, render_template};
 
 use crate::models::traits::check_if_object_in_class;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct StoredReportTaskPayload {
-    report: ReportRequest,
+struct StoredExportTaskPayload {
+    export: ExportRequest,
     template_id: Option<i32>,
 }
 
-struct ReportArtifact {
-    content_type: ReportContentType,
-    json_output: Option<ReportJsonResponse>,
+struct ExportArtifact {
+    content_type: ExportContentType,
+    json_output: Option<ExportJsonResponse>,
     text_output: Option<String>,
-    meta: ReportMeta,
-    warnings: Vec<ReportWarning>,
+    meta: ExportMeta,
+    warnings: Vec<ExportWarning>,
     template_name: Option<String>,
-    timings: ReportExecutionTimings,
+    timings: ExportExecutionTimings,
 }
 
-const REPORT_WARNINGS_HEADER: &str = "X-Hubuum-Report-Warnings";
-const REPORT_TRUNCATED_HEADER: &str = "X-Hubuum-Report-Truncated";
+const EXPORT_WARNINGS_HEADER: &str = "X-Hubuum-Export-Warnings";
+const EXPORT_TRUNCATED_HEADER: &str = "X-Hubuum-Export-Truncated";
 
-struct ReportRuntime {
-    report: ReportRequest,
-    content_type: ReportContentType,
-    missing_data_policy: ReportMissingDataPolicy,
-    template: Option<ReportTemplate>,
-    collection_templates: Vec<ReportTemplate>,
+struct ExportRuntime {
+    export: ExportRequest,
+    content_type: ExportContentType,
+    missing_data_policy: ExportMissingDataPolicy,
+    template: Option<ExportTemplate>,
+    collection_templates: Vec<ExportTemplate>,
 }
 
-struct ReportExecution {
+struct ExportExecution {
     items: Vec<serde_json::Value>,
-    warnings: Vec<ReportWarning>,
-    meta: ReportMeta,
+    warnings: Vec<ExportWarning>,
+    meta: ExportMeta,
     template_items: Vec<serde_json::Value>,
     source: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-struct ReportExecutionTimings {
+struct ExportExecutionTimings {
     total_duration_ms: i32,
     query_duration_ms: i32,
     hydration_duration_ms: i32,
@@ -163,10 +163,10 @@ impl HydrationBudget {
     }
 }
 
-// Reproduces the per-root capacity check the old per-root query path applied:
-// `remaining_related_capacity()` reserves one slot for the root, the query fetched
-// `cap + 1` rows, and a root over `cap` errored with the fetched count (`cap + 1`).
-// Roots are processed in `items` order so the shared budget shrinks exactly as before.
+// Preserve the per-root capacity contract: reserve one slot for the root, inspect
+// at most `cap + 1` related rows, and return the fetched count when a root exceeds
+// its remaining capacity. Roots are processed in `items` order so the shared budget
+// shrinks predictably.
 fn take_related_within_budget(
     budget: &HydrationBudget,
     mut related: Vec<HubuumObjectWithPath>,
@@ -192,33 +192,33 @@ struct ReachableTemplateTarget {
 
 #[utoipa::path(
     post,
-    path = "/api/v1/reports",
-    tag = "reports",
+    path = "/api/v1/exports",
+    tag = "exports",
     security(("bearer_auth" = [])),
-    request_body = ReportRequest,
+    request_body = ExportRequest,
     responses(
-        (status = 202, description = "Report task accepted", body = TaskResponse),
+        (status = 202, description = "Export task accepted", body = TaskResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 409, description = "Conflict", body = ApiErrorResponse),
-        (status = 429, description = "Too many active report tasks", body = ApiErrorResponse)
+        (status = 429, description = "Too many active export tasks", body = ApiErrorResponse)
     )
 )]
 #[post("")]
-pub async fn run_report(
+pub async fn run_export(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     req: HttpRequest,
-    report: web::Json<ReportRequest>,
+    export: web::Json<ExportRequest>,
 ) -> Result<impl Responder, ApiError> {
-    let report = report.into_inner();
-    let task = submit_report_task(
+    let export = export.into_inner();
+    let task = submit_export_task(
         &pool,
         &requestor.principal,
         requestor.scopes(),
         Some(requestor.token_meta.id),
         req,
-        report,
+        export,
         None,
     )
     .await?;
@@ -232,7 +232,7 @@ pub async fn run_report(
     ))
 }
 
-pub(crate) async fn submit_report_task<S: AuthzSubject>(
+pub(crate) async fn submit_export_task<S: AuthzSubject>(
     pool: &DbPool,
     subject: &S,
     // Scope boundary of the submitting token, persisted as the task scope
@@ -240,26 +240,26 @@ pub(crate) async fn submit_report_task<S: AuthzSubject>(
     scopes: Option<&[Permissions]>,
     submitted_token_id: Option<i32>,
     req: HttpRequest,
-    report: ReportRequest,
-    template: Option<ReportTemplate>,
+    export: ExportRequest,
+    template: Option<ExportTemplate>,
 ) -> Result<TaskRecord, ApiError> {
     ensure_task_worker_running(pool.clone());
 
-    let task_payload = StoredReportTaskPayload {
-        report,
+    let task_payload = StoredExportTaskPayload {
+        export,
         template_id: template.as_ref().map(|template| template.id),
     };
     let payload = serde_json::to_value(&task_payload)?;
     let hash = request_hash(&payload)?;
     let idempotency_key = idempotency_key_from_headers(req.headers())?;
 
-    let runtime = prepare_report_runtime(pool, task_payload.report.clone(), template).await?;
-    validate_report_submission(&runtime)?;
+    let runtime = prepare_export_runtime(pool, task_payload.export.clone(), template).await?;
+    validate_export_submission(&runtime)?;
     let task_payload = runtime_to_task_payload(&runtime)?;
 
     let snapshot = TaskScopeSnapshot::from_request(submitted_token_id, scopes);
 
-    find_or_create_report_task(
+    find_or_create_export_task(
         pool,
         subject.principal_id(),
         snapshot,
@@ -272,20 +272,20 @@ pub(crate) async fn submit_report_task<S: AuthzSubject>(
 
 #[utoipa::path(
     get,
-    path = "/api/v1/reports/{task_id}",
-    tag = "reports",
+    path = "/api/v1/exports/{task_id}",
+    tag = "exports",
     security(("bearer_auth" = [])),
     params(
-        ("task_id" = i32, Path, description = "Report task ID")
+        ("task_id" = i32, Path, description = "Export task ID")
     ),
     responses(
-        (status = 200, description = "Report task projection", body = TaskResponse),
+        (status = 200, description = "Export task projection", body = TaskResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 404, description = "Report task not found", body = ApiErrorResponse)
+        (status = 404, description = "Export task not found", body = ApiErrorResponse)
     )
 )]
 #[get("/{task_id}")]
-pub async fn get_report(
+pub async fn get_export(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     task_id: web::Path<TaskID>,
@@ -293,41 +293,41 @@ pub async fn get_report(
     ensure_task_worker_running(pool.get_ref().clone());
     let task = task_id
         .into_inner()
-        .load_authorized_report(&pool, &requestor.principal)
+        .load_authorized_export(&pool, &requestor.principal)
         .await?;
-    let output = task.find_report_output_summary(&pool).await?;
+    let output = task.find_export_output_summary(&pool).await?;
     Ok(ApiResponse::new(
-        task.to_response_with_report_output(output.as_ref())?,
+        task.to_response_with_export_output(output.as_ref())?,
         StatusCode::OK,
     ))
 }
 
 #[utoipa::path(
     get,
-    path = "/api/v1/reports/{task_id}/output",
-    tag = "reports",
+    path = "/api/v1/exports/{task_id}/output",
+    tag = "exports",
     security(("bearer_auth" = [])),
     params(
-        ("task_id" = i32, Path, description = "Report task ID")
+        ("task_id" = i32, Path, description = "Export task ID")
     ),
     responses(
         (
             status = 200,
-            description = "Stored report output",
+            description = "Stored export output",
             content(
-                (ReportJsonResponse = "application/json"),
+                (ExportJsonResponse = "application/json"),
                 (String = "text/plain"),
                 (String = "text/html"),
                 (String = "text/csv")
             )
         ),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 404, description = "Report output not found", body = ApiErrorResponse),
-        (status = 410, description = "Report output expired", body = ApiErrorResponse)
+        (status = 404, description = "Export output not found", body = ApiErrorResponse),
+        (status = 410, description = "Export output expired", body = ApiErrorResponse)
     )
 )]
 #[get("/{task_id}/output")]
-pub async fn get_report_output(
+pub async fn get_export_output(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     task_id: web::Path<TaskID>,
@@ -335,31 +335,31 @@ pub async fn get_report_output(
     ensure_task_worker_running(pool.get_ref().clone());
     let task_id = task_id.into_inner();
     task_id
-        .load_authorized_report(&pool, &requestor.principal)
+        .load_authorized_export(&pool, &requestor.principal)
         .await?;
-    match task_id.find_report_output(&pool).await? {
-        ReportOutputLookup::Available(output) => render_report_task_output(output),
-        ReportOutputLookup::Expired { expires_at } => Err(ApiError::Gone(format!(
-            "Report output expired at {expires_at} UTC"
+    match task_id.find_export_output(&pool).await? {
+        ExportOutputLookup::Available(output) => render_export_task_output(output),
+        ExportOutputLookup::Expired { expires_at } => Err(ApiError::Gone(format!(
+            "Export output expired at {expires_at} UTC"
         ))),
-        ReportOutputLookup::Missing => {
-            Err(ApiError::NotFound("Report output not found".to_string()))
+        ExportOutputLookup::Missing => {
+            Err(ApiError::NotFound("Export output not found".to_string()))
         }
     }
 }
 
-async fn prepare_report_runtime(
+async fn prepare_export_runtime(
     pool: &DbPool,
-    report: ReportRequest,
-    template: Option<ReportTemplate>,
-) -> Result<ReportRuntime, ApiError> {
-    report.scope.validate()?;
-    validate_report_include(&report)?;
+    export: ExportRequest,
+    template: Option<ExportTemplate>,
+) -> Result<ExportRuntime, ApiError> {
+    export.scope.validate()?;
+    validate_export_include(&export)?;
 
     let collection_templates = match &template {
         Some(template) => {
             CollectionID::new(template.collection_id)?
-                .report_templates(pool, None)
+                .export_templates(pool, None)
                 .await?
         }
         None => Vec::new(),
@@ -367,16 +367,16 @@ async fn prepare_report_runtime(
     let content_type = template
         .as_ref()
         .map(|template| template.content_type)
-        .unwrap_or(ReportContentType::ApplicationJson);
+        .unwrap_or(ExportContentType::ApplicationJson);
 
-    Ok(ReportRuntime {
+    Ok(ExportRuntime {
         content_type,
-        missing_data_policy: report
+        missing_data_policy: export
             .missing_data_policy
-            .unwrap_or(ReportMissingDataPolicy::Strict),
+            .unwrap_or(ExportMissingDataPolicy::Strict),
         template,
         collection_templates,
-        report,
+        export,
     })
 }
 
@@ -385,12 +385,12 @@ async fn resolve_template(
     subject: &impl crate::traits::Search,
     scopes: Option<&[Permissions]>,
     template_id: Option<i32>,
-) -> Result<Option<ReportTemplate>, ApiError> {
+) -> Result<Option<ExportTemplate>, ApiError> {
     let Some(template_id) = template_id else {
         return Ok(None);
     };
 
-    let template = ReportTemplateID::new(template_id)?.instance(pool).await?;
+    let template = ExportTemplateID::new(template_id)?.instance(pool).await?;
     can!(
         pool,
         subject,
@@ -402,10 +402,10 @@ async fn resolve_template(
     Ok(Some(template))
 }
 
-fn validate_report_submission(runtime: &ReportRuntime) -> Result<(), ApiError> {
-    if runtime.report.relation_context.is_some()
+fn validate_export_submission(runtime: &ExportRuntime) -> Result<(), ApiError> {
+    if runtime.export.relation_context.is_some()
         && runtime
-            .report
+            .export
             .include
             .as_ref()
             .and_then(|include| include.related_objects.as_ref())
@@ -416,20 +416,20 @@ fn validate_report_submission(runtime: &ReportRuntime) -> Result<(), ApiError> {
         ));
     }
 
-    let mut query_options = prepare_query_options(&runtime.report)?;
+    let mut query_options = prepare_query_options(&runtime.export)?;
     let _ = resolve_relation_hydration_plan(runtime, &mut query_options)?;
     Ok(())
 }
 
-fn runtime_to_task_payload(runtime: &ReportRuntime) -> Result<StoredReportTaskPayload, ApiError> {
-    validate_report_submission(runtime)?;
-    Ok(StoredReportTaskPayload {
-        report: runtime.report.clone(),
+fn runtime_to_task_payload(runtime: &ExportRuntime) -> Result<StoredExportTaskPayload, ApiError> {
+    validate_export_submission(runtime)?;
+    Ok(StoredExportTaskPayload {
+        export: runtime.export.clone(),
         template_id: runtime.template.as_ref().map(|template| template.id),
     })
 }
 
-async fn find_or_create_report_task(
+async fn find_or_create_export_task(
     pool: &DbPool,
     submitted_by: i32,
     snapshot: TaskScopeSnapshot,
@@ -439,7 +439,7 @@ async fn find_or_create_report_task(
 ) -> Result<TaskRecord, ApiError> {
     let request_hash_for_match = request_hash_value.clone();
     let matches_request = |task: &TaskRecord| {
-        task.kind == TaskKind::Report.as_str()
+        task.kind == TaskKind::Export.as_str()
             && task.request_hash.as_deref() == Some(request_hash_for_match.as_str())
     };
 
@@ -456,7 +456,7 @@ async fn find_or_create_report_task(
     }
 
     match (TaskCreateRequest {
-        kind: TaskKind::Report,
+        kind: TaskKind::Export,
         submitted_by,
         idempotency_key: idempotency_key.clone(),
         request_hash: Some(request_hash_value),
@@ -466,7 +466,7 @@ async fn find_or_create_report_task(
         submitted_token_scoped: snapshot.scoped,
         submitted_token_scopes: snapshot.scopes,
     })
-    .create_with_active_report_limit(pool, max_active_report_tasks_per_user())
+    .create_with_active_export_limit(pool, max_active_export_tasks_per_user())
     .await
     {
         Ok(task) => Ok(task),
@@ -487,7 +487,7 @@ async fn find_or_create_report_task(
     }
 }
 
-pub(crate) async fn execute_report_task(
+pub(crate) async fn execute_export_task(
     pool: &DbPool,
     task: &TaskRecord,
     subject: &impl crate::traits::Search,
@@ -496,18 +496,18 @@ pub(crate) async fn execute_report_task(
     let payload = task
         .request_payload
         .clone()
-        .ok_or_else(|| ApiError::BadRequest("Report task payload is missing".to_string()))?;
-    let payload: StoredReportTaskPayload = serde_json::from_value(payload)?;
+        .ok_or_else(|| ApiError::BadRequest("Export task payload is missing".to_string()))?;
+    let payload: StoredExportTaskPayload = serde_json::from_value(payload)?;
     let template = resolve_template(pool, subject, scopes, payload.template_id).await?;
-    let runtime = prepare_report_runtime(pool, payload.report, template).await?;
-    validate_report_submission(&runtime)?;
+    let runtime = prepare_export_runtime(pool, payload.export, template).await?;
+    validate_export_submission(&runtime)?;
     let total_start = Instant::now();
-    let mut timings = ReportExecutionTimings::default();
+    let mut timings = ExportExecutionTimings::default();
 
     NewTaskEventRecord {
         task_id: task.id,
         event_type: "running".to_string(),
-        message: "Report execution started".to_string(),
+        message: "Export execution started".to_string(),
         data: None,
     }
     .append(pool)
@@ -531,34 +531,34 @@ pub(crate) async fn execute_report_task(
         event_type: "running".to_string(),
         message: "Query execution started".to_string(),
         data: Some(serde_json::json!({
-            "scope": runtime.report.scope.kind.as_str(),
+            "scope": runtime.export.scope.kind.as_str(),
             "content_type": runtime.content_type.as_mime(),
         })),
     }
     .append(pool)
     .await?;
 
-    // Report-scoped, in-flight query budget. While these query stages run, every
+    // Export-scoped, in-flight query budget. While these query stages run, every
     // DB query they issue is bounded by this `statement_timeout` (applied as a
     // transaction-local `SET LOCAL`), independently of the pool-global timeout
     // and without affecting bookkeeping writes outside these scopes.
-    let statement_timeout = report_statement_timeout();
-    let mut query_options = prepare_query_options(&runtime.report)?;
+    let statement_timeout = export_statement_timeout();
+    let mut query_options = prepare_query_options(&runtime.export)?;
     let relation_hydration = resolve_relation_hydration_plan(&runtime, &mut query_options)?;
     let query_start = Instant::now();
     let (items, mut warnings, truncated) = with_statement_timeout_scope(
         statement_timeout,
-        execute_scope(pool, subject, scopes, &runtime.report.scope, query_options),
+        execute_scope(pool, subject, scopes, &runtime.export.scope, query_options),
     )
     .await?;
     let mut items = items;
     with_statement_timeout_scope(
         statement_timeout,
-        apply_report_includes(pool, subject, scopes, &runtime.report, &mut items),
+        apply_export_includes(pool, subject, scopes, &runtime.export, &mut items),
     )
     .await?;
     timings.query_duration_ms = duration_to_millis_i32(query_start.elapsed());
-    enforce_report_stage_timeout(query_start, "query execution")?;
+    enforce_export_stage_timeout(query_start, "query execution")?;
 
     if relation_hydration
         .as_ref()
@@ -586,24 +586,24 @@ pub(crate) async fn execute_report_task(
     )
     .await?;
     timings.hydration_duration_ms = duration_to_millis_i32(hydration_start.elapsed());
-    enforce_report_stage_timeout(hydration_start, "relation hydration")?;
-    let template_report = runtime.template.is_some();
-    let item_count = if template_report {
+    enforce_export_stage_timeout(hydration_start, "relation hydration")?;
+    let template_export = runtime.template.is_some();
+    let item_count = if template_export {
         template_items.len()
     } else {
         items.len()
     };
-    let execution_items = if template_report {
+    let execution_items = if template_export {
         drop(items);
         Vec::new()
     } else {
         items
     };
-    let execution = ReportExecution {
-        meta: ReportMeta {
+    let execution = ExportExecution {
+        meta: ExportMeta {
             count: item_count,
             truncated,
-            scope: runtime.report.scope.clone(),
+            scope: runtime.export.scope.clone(),
             content_type: runtime.content_type,
         },
         items: execution_items,
@@ -615,20 +615,20 @@ pub(crate) async fn execute_report_task(
     NewTaskEventRecord {
         task_id: task.id,
         event_type: "running".to_string(),
-        message: "Rendering report output".to_string(),
+        message: "Rendering export output".to_string(),
         data: None,
     }
     .append(pool)
     .await?;
 
     let render_start = Instant::now();
-    let artifact = build_report_artifact(&runtime, execution, timings)?;
+    let artifact = build_export_artifact(&runtime, execution, timings)?;
     let mut timings = artifact.timings;
     timings.render_duration_ms = duration_to_millis_i32(render_start.elapsed());
     timings.total_duration_ms = duration_to_millis_i32(total_start.elapsed());
-    enforce_report_stage_timeout(render_start, "template rendering")?;
-    log_report_stage_metrics(task.id, &runtime, timings);
-    let artifact = ReportArtifact {
+    enforce_export_stage_timeout(render_start, "template rendering")?;
+    log_export_stage_metrics(task.id, &runtime, timings);
+    let artifact = ExportArtifact {
         timings,
         ..artifact
     };
@@ -636,17 +636,17 @@ pub(crate) async fn execute_report_task(
     NewTaskEventRecord {
         task_id: task.id,
         event_type: "running".to_string(),
-        message: "Persisting report output".to_string(),
+        message: "Persisting export output".to_string(),
         data: None,
     }
     .append(pool)
     .await?;
 
-    task.finalize_report_with_output(
+    task.finalize_export_with_output(
         pool,
         TaskStateUpdate {
             status: crate::models::TaskStatus::Succeeded,
-            summary: Some("Report completed successfully".to_string()),
+            summary: Some("Export completed successfully".to_string()),
             processed_items: 1,
             success_items: 1,
             failed_items: 0,
@@ -657,7 +657,7 @@ pub(crate) async fn execute_report_task(
             task_id: task.id,
             event_type: crate::models::TaskStatus::Succeeded.as_str().to_string(),
             message: format!(
-                "Report completed successfully in {:?}",
+                "Export completed successfully in {:?}",
                 total_start.elapsed()
             ),
             data: Some(serde_json::json!({
@@ -680,14 +680,14 @@ pub(crate) async fn execute_report_task(
 
 fn artifact_to_output_record(
     task_id: i32,
-    artifact: ReportArtifact,
-) -> Result<NewReportTaskOutputRecord, ApiError> {
+    artifact: ExportArtifact,
+) -> Result<NewExportTaskOutputRecord, ApiError> {
     let retention_hours = get_config()
-        .map(|config| config.report_output_retention_hours)
-        .unwrap_or(DEFAULT_REPORT_OUTPUT_RETENTION_HOURS);
+        .map(|config| config.export_output_retention_hours)
+        .unwrap_or(DEFAULT_EXPORT_OUTPUT_RETENTION_HOURS);
     let output_expires_at =
         chrono::Utc::now().naive_utc() + chrono::Duration::hours(retention_hours);
-    Ok(NewReportTaskOutputRecord {
+    Ok(NewExportTaskOutputRecord {
         task_id,
         template_name: artifact.template_name,
         content_type: artifact.content_type.as_mime().to_string(),
@@ -705,8 +705,8 @@ fn artifact_to_output_record(
     })
 }
 
-fn validate_report_include(report: &ReportRequest) -> Result<(), ApiError> {
-    let Some(include) = &report.include else {
+fn validate_export_include(export: &ExportRequest) -> Result<(), ApiError> {
+    let Some(include) = &export.include else {
         return Ok(());
     };
 
@@ -714,7 +714,7 @@ fn validate_report_include(report: &ReportRequest) -> Result<(), ApiError> {
         return Ok(());
     };
 
-    if !related_objects.is_empty() && report.scope.kind != ReportScopeKind::ObjectsInClass {
+    if !related_objects.is_empty() && export.scope.kind != ExportScopeKind::ObjectsInClass {
         return Err(ApiError::BadRequest(
             "include.related_objects is only supported for scope 'objects_in_class'".to_string(),
         ));
@@ -723,46 +723,46 @@ fn validate_report_include(report: &ReportRequest) -> Result<(), ApiError> {
     include.validate_related_objects()
 }
 
-fn add_truncation_warning(warnings: &mut Vec<ReportWarning>, truncated: bool) {
+fn add_truncation_warning(warnings: &mut Vec<ExportWarning>, truncated: bool) {
     if truncated {
-        warnings.push(ReportWarning {
+        warnings.push(ExportWarning {
             code: "truncated".to_string(),
-            message: "The report was truncated to the configured max_items limit".to_string(),
+            message: "The export was truncated to the configured max_items limit".to_string(),
             path: None,
         });
     }
 }
 
-fn build_report_artifact(
-    runtime: &ReportRuntime,
-    execution: ReportExecution,
-    timings: ReportExecutionTimings,
-) -> Result<ReportArtifact, ApiError> {
+fn build_export_artifact(
+    runtime: &ExportRuntime,
+    execution: ExportExecution,
+    timings: ExportExecutionTimings,
+) -> Result<ExportArtifact, ApiError> {
     match runtime.content_type {
-        ReportContentType::ApplicationJson => {
-            build_json_report_artifact(runtime, execution, timings)
+        ExportContentType::ApplicationJson => {
+            build_json_export_artifact(runtime, execution, timings)
         }
-        ReportContentType::TextPlain | ReportContentType::TextHtml | ReportContentType::TextCsv => {
-            build_text_report_artifact(runtime, execution, timings)
+        ExportContentType::TextPlain | ExportContentType::TextHtml | ExportContentType::TextCsv => {
+            build_text_export_artifact(runtime, execution, timings)
         }
     }
 }
 
-fn build_json_report_artifact(
-    runtime: &ReportRuntime,
-    execution: ReportExecution,
-    timings: ReportExecutionTimings,
-) -> Result<ReportArtifact, ApiError> {
-    let response = ReportJsonResponse {
+fn build_json_export_artifact(
+    runtime: &ExportRuntime,
+    execution: ExportExecution,
+    timings: ExportExecutionTimings,
+) -> Result<ExportArtifact, ApiError> {
+    let response = ExportJsonResponse {
         items: execution.items,
         meta: execution.meta.clone(),
         warnings: execution.warnings.clone(),
     };
 
-    enforce_json_output_limit(&response, &runtime.report)?;
+    enforce_json_output_limit(&response, &runtime.export)?;
 
-    Ok(ReportArtifact {
-        content_type: ReportContentType::ApplicationJson,
+    Ok(ExportArtifact {
+        content_type: ExportContentType::ApplicationJson,
         json_output: Some(response),
         text_output: None,
         meta: execution.meta,
@@ -772,19 +772,19 @@ fn build_json_report_artifact(
     })
 }
 
-fn build_text_report_artifact(
-    runtime: &ReportRuntime,
-    execution: ReportExecution,
-    timings: ReportExecutionTimings,
-) -> Result<ReportArtifact, ApiError> {
+fn build_text_export_artifact(
+    runtime: &ExportRuntime,
+    execution: ExportExecution,
+    timings: ExportExecutionTimings,
+) -> Result<ExportArtifact, ApiError> {
     let template = required_template(runtime, runtime.content_type)?;
-    let context = report_template_context(&runtime.report, &execution);
+    let context = export_template_context(&runtime.export, &execution);
     let max_output_bytes = runtime
-        .report
+        .export
         .limits
         .as_ref()
         .and_then(|limits| limits.max_output_bytes)
-        .unwrap_or_else(configured_report_max_output_bytes);
+        .unwrap_or_else(configured_export_max_output_bytes);
     let (rendered, template_warnings) = render_template(
         template,
         &runtime.collection_templates,
@@ -796,7 +796,7 @@ fn build_text_report_artifact(
     let mut warnings = execution.warnings;
     warnings.extend(template_warnings);
 
-    Ok(ReportArtifact {
+    Ok(ExportArtifact {
         content_type: runtime.content_type,
         json_output: None,
         text_output: Some(rendered),
@@ -808,46 +808,46 @@ fn build_text_report_artifact(
 }
 
 fn required_template(
-    runtime: &ReportRuntime,
-    content_type: ReportContentType,
-) -> Result<&ReportTemplate, ApiError> {
+    runtime: &ExportRuntime,
+    content_type: ExportContentType,
+) -> Result<&ExportTemplate, ApiError> {
     runtime.template.as_ref().ok_or_else(|| {
         ApiError::BadRequest(format!(
-            "Output type '{}' requires running an executable report template",
+            "Output type '{}' requires running an executable export template",
             content_type.as_mime()
         ))
     })
 }
 
-fn render_report_task_output(output: ReportTaskOutputRecord) -> Result<HttpResponse, ApiError> {
-    let content_type = ReportContentType::from_mime(&output.content_type)?;
-    let _meta: ReportMeta = serde_json::from_value(output.meta_json)?;
-    let warnings: Vec<ReportWarning> = serde_json::from_value(output.warnings_json)?;
+fn render_export_task_output(output: ExportTaskOutputRecord) -> Result<HttpResponse, ApiError> {
+    let content_type = ExportContentType::from_mime(&output.content_type)?;
+    let _meta: ExportMeta = serde_json::from_value(output.meta_json)?;
+    let warnings: Vec<ExportWarning> = serde_json::from_value(output.warnings_json)?;
     let warning_count = warnings.len();
     let truncated = output.truncated;
 
     match content_type {
-        ReportContentType::ApplicationJson => {
-            let response: ReportJsonResponse =
+        ExportContentType::ApplicationJson => {
+            let response: ExportJsonResponse =
                 serde_json::from_value(output.json_output.ok_or_else(|| {
                     ApiError::InternalServerError(
-                        "Stored report JSON output is missing".to_string(),
+                        "Stored export JSON output is missing".to_string(),
                     )
                 })?)?;
             let mut http_response = HttpResponse::build(StatusCode::OK);
-            for (key, value) in report_headers(warning_count, truncated) {
+            for (key, value) in export_headers(warning_count, truncated) {
                 http_response.insert_header((key, value));
             }
             Ok(http_response.json(response))
         }
-        ReportContentType::TextPlain | ReportContentType::TextHtml | ReportContentType::TextCsv => {
+        ExportContentType::TextPlain | ExportContentType::TextHtml | ExportContentType::TextCsv => {
             let mut response = HttpResponse::build(StatusCode::OK);
             response.content_type(content_type.as_mime());
-            for (key, value) in report_headers(warning_count, truncated) {
+            for (key, value) in export_headers(warning_count, truncated) {
                 response.insert_header((key, value));
             }
             Ok(response.body(output.text_output.ok_or_else(|| {
-                ApiError::InternalServerError("Stored report text output is missing".to_string())
+                ApiError::InternalServerError("Stored export text output is missing".to_string())
             })?))
         }
     }
@@ -857,35 +857,35 @@ fn duration_to_millis_i32(duration: std::time::Duration) -> i32 {
     i32::try_from(duration.as_millis()).unwrap_or(i32::MAX)
 }
 
-/// The report-scoped Postgres `statement_timeout` to apply to report queries,
-/// or `None` when disabled (`report_db_statement_timeout_ms == 0`).
+/// The export-scoped Postgres `statement_timeout` to apply to export queries,
+/// or `None` when disabled (`export_db_statement_timeout_ms == 0`).
 ///
 /// This is the in-flight, server-side query cancel that complements the
-/// post-completion wall-clock budget enforced by [`enforce_report_stage_timeout`].
-fn report_statement_timeout() -> Option<StatementTimeoutMs> {
+/// post-completion wall-clock budget enforced by [`enforce_export_stage_timeout`].
+fn export_statement_timeout() -> Option<StatementTimeoutMs> {
     let milliseconds = get_config()
-        .map(|config| config.report_db_statement_timeout_ms)
-        .unwrap_or(DEFAULT_REPORT_DB_STATEMENT_TIMEOUT_MS);
+        .map(|config| config.export_db_statement_timeout_ms)
+        .unwrap_or(DEFAULT_EXPORT_DB_STATEMENT_TIMEOUT_MS);
     StatementTimeoutMs::new(milliseconds)
 }
 
-/// Post-completion rejection guard for a report stage.
+/// Post-completion rejection guard for an export stage.
 ///
 /// This is **not** an in-flight interrupt: it is called after a stage has already
-/// finished and rejects the report if the stage took longer than the configured
+/// finished and rejects the export if the stage took longer than the configured
 /// budget. It bounds how long a stage is *accepted* to have taken, not how long
 /// it is *allowed to run*. In-flight protection comes from the MiniJinja fuel
-/// budget, `report_template_max_objects`, the output byte caps, the pool-global
-/// `db_statement_timeout_ms`, and the report-scoped `report_db_statement_timeout_ms`
+/// budget, `export_template_max_objects`, the output byte caps, the pool-global
+/// `db_statement_timeout_ms`, and the export-scoped `export_db_statement_timeout_ms`
 /// (both of which cancel slow queries server-side).
-fn enforce_report_stage_timeout(stage_start: Instant, stage_name: &str) -> Result<(), ApiError> {
+fn enforce_export_stage_timeout(stage_start: Instant, stage_name: &str) -> Result<(), ApiError> {
     let stage_timeout_ms = get_config()
-        .map(|config| config.report_stage_timeout_ms)
-        .unwrap_or(DEFAULT_REPORT_STAGE_TIMEOUT_MS);
+        .map(|config| config.export_stage_timeout_ms)
+        .unwrap_or(DEFAULT_EXPORT_STAGE_TIMEOUT_MS);
     let elapsed = stage_start.elapsed();
     if elapsed.as_millis() > u128::from(stage_timeout_ms) {
         return Err(ApiError::BadRequest(format!(
-            "Report {stage_name} exceeded the configured time budget ({}ms > {}ms)",
+            "Export {stage_name} exceeded the configured time budget ({}ms > {}ms)",
             elapsed.as_millis(),
             stage_timeout_ms
         )));
@@ -893,15 +893,15 @@ fn enforce_report_stage_timeout(stage_start: Instant, stage_name: &str) -> Resul
     Ok(())
 }
 
-fn log_report_stage_metrics(
+fn log_export_stage_metrics(
     task_id: i32,
-    runtime: &ReportRuntime,
-    timings: ReportExecutionTimings,
+    runtime: &ExportRuntime,
+    timings: ExportExecutionTimings,
 ) {
     tracing::info!(
-        message = "Report execution timings recorded",
+        message = "Export execution timings recorded",
         task_id = task_id,
-        scope = runtime.report.scope.kind.as_str(),
+        scope = runtime.export.scope.kind.as_str(),
         content_type = runtime.content_type.as_mime(),
         template_name = runtime
             .template
@@ -914,31 +914,31 @@ fn log_report_stage_metrics(
     );
 }
 
-fn report_template_context(
-    report: &ReportRequest,
-    execution: &ReportExecution,
+fn export_template_context(
+    export: &ExportRequest,
+    execution: &ExportExecution,
 ) -> serde_json::Value {
     json!({
         "items": &execution.template_items,
         "meta": &execution.meta,
         "warnings": &execution.warnings,
-        "request": report,
+        "request": export,
         "source": &execution.source,
     })
 }
 
-fn prepare_query_options(report: &ReportRequest) -> Result<QueryOptions, ApiError> {
-    let mut query_options = parse_query_parameter(report.query.as_deref().unwrap_or_default())?;
+fn prepare_query_options(export: &ExportRequest) -> Result<QueryOptions, ApiError> {
+    let mut query_options = parse_query_parameter(export.query.as_deref().unwrap_or_default())?;
     if query_options.cursor.is_some() {
         return Err(ApiError::BadRequest(
-            "Reports do not support cursor pagination".to_string(),
+            "Exports do not support cursor pagination".to_string(),
         ));
     }
 
-    validate_report_limits(report)?;
+    validate_export_limits(export)?;
 
     let (default_page_limit, max_page_limit) = page_limits_or_defaults();
-    let configured_limit = report
+    let configured_limit = export
         .limits
         .as_ref()
         .and_then(|limits| limits.max_items)
@@ -950,8 +950,8 @@ fn prepare_query_options(report: &ReportRequest) -> Result<QueryOptions, ApiErro
     Ok(query_options)
 }
 
-fn validate_report_limits(report: &ReportRequest) -> Result<(), ApiError> {
-    let Some(limits) = &report.limits else {
+fn validate_export_limits(export: &ExportRequest) -> Result<(), ApiError> {
+    let Some(limits) = &export.limits else {
         return Ok(());
     };
 
@@ -968,7 +968,7 @@ fn validate_report_limits(report: &ReportRequest) -> Result<(), ApiError> {
     }
 
     if let Some(max_output_bytes) = limits.max_output_bytes {
-        let server_max_output_bytes = configured_report_max_output_bytes();
+        let server_max_output_bytes = configured_export_max_output_bytes();
         if max_output_bytes > server_max_output_bytes {
             return Err(ApiError::BadRequest(format!(
                 "max_output_bytes ({max_output_bytes}) exceeds server maximum ({server_max_output_bytes})"
@@ -980,27 +980,27 @@ fn validate_report_limits(report: &ReportRequest) -> Result<(), ApiError> {
 }
 
 fn resolve_relation_hydration_plan(
-    runtime: &ReportRuntime,
+    runtime: &ExportRuntime,
     query_options: &mut QueryOptions,
 ) -> Result<Option<RelationHydrationPlan>, ApiError> {
     let has_template = runtime.template.is_some();
-    let scope = &runtime.report.scope;
-    let relation_context = runtime.report.relation_context.as_ref();
+    let scope = &runtime.export.scope;
+    let relation_context = runtime.export.relation_context.as_ref();
 
     if relation_context.is_some() && !has_template {
         return Err(ApiError::BadRequest(
-            "relation_context is only supported for templated text reports".to_string(),
+            "relation_context is only supported for templated text exports".to_string(),
         ));
     }
 
     if relation_context.is_some()
         && !matches!(
             scope.kind,
-            ReportScopeKind::ObjectsInClass | ReportScopeKind::RelatedObjects
+            ExportScopeKind::ObjectsInClass | ExportScopeKind::RelatedObjects
         )
     {
         return Err(ApiError::BadRequest(
-            "relation_context is only supported for objects_in_class and related_objects reports"
+            "relation_context is only supported for objects_in_class and related_objects exports"
                 .to_string(),
         ));
     }
@@ -1010,7 +1010,7 @@ fn resolve_relation_hydration_plan(
     }
 
     match scope.kind {
-        ReportScopeKind::ObjectsInClass => {
+        ExportScopeKind::ObjectsInClass => {
             let Some(context) = relation_context else {
                 return Ok(None);
             };
@@ -1019,7 +1019,7 @@ fn resolve_relation_hydration_plan(
                 enabled_for_scope: true,
             }))
         }
-        ReportScopeKind::RelatedObjects => {
+        ExportScopeKind::RelatedObjects => {
             let depth_limit = validate_relation_depth(
                 relation_context
                     .and_then(|context| context.depth)
@@ -1055,7 +1055,7 @@ async fn build_template_items(
     pool: &DbPool,
     user: &impl crate::traits::Search,
     scopes: Option<&[Permissions]>,
-    runtime: &ReportRuntime,
+    runtime: &ExportRuntime,
     items: &[serde_json::Value],
     relation_hydration: Option<RelationHydrationPlan>,
 ) -> Result<(Vec<serde_json::Value>, Option<serde_json::Value>), ApiError> {
@@ -1073,8 +1073,8 @@ async fn build_template_items(
 
     let mut hydration_budget = HydrationBudget::new(max_hydrated_template_objects());
 
-    match runtime.report.scope.kind {
-        ReportScopeKind::ObjectsInClass => {
+    match runtime.export.scope.kind {
+        ExportScopeKind::ObjectsInClass => {
             let roots = items
                 .iter()
                 .cloned()
@@ -1116,7 +1116,7 @@ async fn build_template_items(
                 .search_object_relations_between_ids(pool, &all_object_ids, scopes)
                 .await?;
 
-            // One class-metadata fetch over every object in the report.
+            // One class-metadata fetch over every object in the export.
             let mut all_objects = BTreeMap::<i32, HubuumObjectWithPath>::new();
             for root in &roots {
                 let root_with_path = object_with_root_path(root);
@@ -1166,8 +1166,8 @@ async fn build_template_items(
 
             Ok((hydrated_items, None))
         }
-        ReportScopeKind::RelatedObjects => {
-            let source_object = HubuumObjectID::new(runtime.report.scope.object_id_required()?)?
+        ExportScopeKind::RelatedObjects => {
+            let source_object = HubuumObjectID::new(runtime.export.scope.object_id_required()?)?
                 .instance(pool)
                 .await?;
             let source = object_with_root_path(&source_object);
@@ -1906,20 +1906,20 @@ fn collect_path_targets(
 
 fn max_hydrated_template_objects() -> usize {
     get_config()
-        .map(|config| config.report_template_max_objects)
-        .unwrap_or(DEFAULT_REPORT_TEMPLATE_MAX_OBJECTS)
+        .map(|config| config.export_template_max_objects)
+        .unwrap_or(DEFAULT_EXPORT_TEMPLATE_MAX_OBJECTS)
 }
 
-fn max_active_report_tasks_per_user() -> usize {
+fn max_active_export_tasks_per_user() -> usize {
     get_config()
-        .map(|config| config.report_max_active_tasks_per_user)
-        .unwrap_or(DEFAULT_REPORT_MAX_ACTIVE_TASKS_PER_USER)
+        .map(|config| config.export_max_active_tasks_per_user)
+        .unwrap_or(DEFAULT_EXPORT_MAX_ACTIVE_TASKS_PER_USER)
 }
 
-fn configured_report_max_output_bytes() -> usize {
+fn configured_export_max_output_bytes() -> usize {
     get_config()
-        .map(|config| config.report_max_output_bytes)
-        .unwrap_or(DEFAULT_REPORT_MAX_OUTPUT_BYTES)
+        .map(|config| config.export_max_output_bytes)
+        .unwrap_or(DEFAULT_EXPORT_MAX_OUTPUT_BYTES)
 }
 
 fn build_path_objects(
@@ -1987,21 +1987,21 @@ async fn execute_scope(
     pool: &DbPool,
     subject: &impl crate::traits::Search,
     scopes: Option<&[Permissions]>,
-    scope: &ReportScope,
+    scope: &ExportScope,
     mut query_options: QueryOptions,
-) -> Result<(Vec<serde_json::Value>, Vec<ReportWarning>, bool), ApiError> {
+) -> Result<(Vec<serde_json::Value>, Vec<ExportWarning>, bool), ApiError> {
     let item_limit = query_options.limit.unwrap_or(1).saturating_sub(1).max(1);
 
     let data = match scope.kind {
-        ReportScopeKind::Collections => to_json_items(
+        ExportScopeKind::Collections => to_json_items(
             subject
                 .search_collections(pool, query_options, scopes)
                 .await?,
         )?,
-        ReportScopeKind::Classes => {
+        ExportScopeKind::Classes => {
             to_json_items(subject.search_classes(pool, query_options, scopes).await?)?
         }
-        ReportScopeKind::ObjectsInClass => {
+        ExportScopeKind::ObjectsInClass => {
             push_exact_filter(
                 &mut query_options,
                 FilterField::ClassId,
@@ -2009,17 +2009,17 @@ async fn execute_scope(
             )?;
             to_json_items(subject.search_objects(pool, query_options, scopes).await?)?
         }
-        ReportScopeKind::ClassRelations => to_json_items(
+        ExportScopeKind::ClassRelations => to_json_items(
             subject
                 .search_class_relations(pool, query_options, scopes)
                 .await?,
         )?,
-        ReportScopeKind::ObjectRelations => to_json_items(
+        ExportScopeKind::ObjectRelations => to_json_items(
             subject
                 .search_object_relations(pool, query_options, scopes)
                 .await?,
         )?,
-        ReportScopeKind::RelatedObjects => {
+        ExportScopeKind::RelatedObjects => {
             let class_id = HubuumClassID::new(scope.class_id_required()?)?;
             let object_id = HubuumObjectID::new(scope.object_id_required()?)?;
             check_if_object_in_class(pool, &class_id, &object_id).await?;
@@ -2047,14 +2047,14 @@ async fn execute_scope(
     Ok((items, Vec::new(), truncated))
 }
 
-async fn apply_report_includes(
+async fn apply_export_includes(
     pool: &DbPool,
     user: &impl crate::traits::Search,
     scopes: Option<&[Permissions]>,
-    report: &ReportRequest,
+    export: &ExportRequest,
     items: &mut [serde_json::Value],
 ) -> Result<(), ApiError> {
-    let Some(related_objects) = report
+    let Some(related_objects) = export
         .include
         .as_ref()
         .and_then(|include| include.related_objects.as_ref())
@@ -2066,7 +2066,7 @@ async fn apply_report_includes(
         return Ok(());
     }
 
-    let root_object_ids = report_item_ids(items)?;
+    let root_object_ids = export_item_ids(items)?;
     for alias in related_objects.keys() {
         initialize_related_alias(items, alias)?;
     }
@@ -2084,9 +2084,9 @@ async fn apply_report_includes(
         let limit = include.limit.unwrap_or(RELATED_INCLUDE_DEFAULT_LIMIT);
         let direction = include
             .direction
-            .unwrap_or(ReportIncludeRelatedDirection::Any);
-        let sort = include.sort.unwrap_or(ReportIncludeRelatedSort::Path);
-        let include_query = ReportIncludeRelatedQuery {
+            .unwrap_or(ExportIncludeRelatedDirection::Any);
+        let sort = include.sort.unwrap_or(ExportIncludeRelatedSort::Path);
+        let include_query = ExportIncludeRelatedQuery {
             class_id: include.class_id,
             class_relation_id: include.class_relation_id,
             direction,
@@ -2111,7 +2111,7 @@ async fn apply_report_includes(
     Ok(())
 }
 
-fn report_item_ids(items: &[serde_json::Value]) -> Result<Vec<i32>, ApiError> {
+fn export_item_ids(items: &[serde_json::Value]) -> Result<Vec<i32>, ApiError> {
     items
         .iter()
         .map(|item| {
@@ -2120,12 +2120,12 @@ fn report_item_ids(items: &[serde_json::Value]) -> Result<Vec<i32>, ApiError> {
                 .and_then(serde_json::Value::as_i64)
                 .ok_or_else(|| {
                     ApiError::InternalServerError(
-                        "Report object item did not include integer id".to_string(),
+                        "Export object item did not include integer id".to_string(),
                     )
                 })?;
             i32::try_from(id).map_err(|_| {
                 ApiError::InternalServerError(format!(
-                    "Report object item id '{id}' is outside i32 range"
+                    "Export object item id '{id}' is outside i32 range"
                 ))
             })
         })
@@ -2165,7 +2165,7 @@ fn related_object_mut(
 ) -> Result<&mut serde_json::Map<String, serde_json::Value>, ApiError> {
     let Some(item_object) = item.as_object_mut() else {
         return Err(ApiError::InternalServerError(
-            "Report object item was not a JSON object".to_string(),
+            "Export object item was not a JSON object".to_string(),
         ));
     };
 
@@ -2174,7 +2174,7 @@ fn related_object_mut(
         .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
     related.as_object_mut().ok_or_else(|| {
         ApiError::InternalServerError(
-            "Report object item related field was not an object".to_string(),
+            "Export object item related field was not an object".to_string(),
         )
     })
 }
@@ -2222,36 +2222,36 @@ fn truncate_items(
     }
 }
 
-fn report_headers(warning_count: usize, truncated: bool) -> HashMap<String, String> {
+fn export_headers(warning_count: usize, truncated: bool) -> HashMap<String, String> {
     let mut headers = HashMap::new();
     headers.insert(
-        REPORT_WARNINGS_HEADER.to_string(),
+        EXPORT_WARNINGS_HEADER.to_string(),
         warning_count.to_string(),
     );
-    headers.insert(REPORT_TRUNCATED_HEADER.to_string(), truncated.to_string());
+    headers.insert(EXPORT_TRUNCATED_HEADER.to_string(), truncated.to_string());
     headers
 }
 
 fn enforce_json_output_limit(
-    response: &ReportJsonResponse,
-    report: &ReportRequest,
+    response: &ExportJsonResponse,
+    export: &ExportRequest,
 ) -> Result<(), ApiError> {
-    let max_output_bytes = report
+    let max_output_bytes = export
         .limits
         .as_ref()
         .and_then(|limits| limits.max_output_bytes)
-        .unwrap_or_else(configured_report_max_output_bytes);
+        .unwrap_or_else(configured_export_max_output_bytes);
 
     let mut writer = SizeLimitedWriter::new(max_output_bytes);
     if let Err(error) = serde_json::to_writer(&mut writer, response) {
         if writer.exceeded() {
             return Err(ApiError::PayloadTooLarge(format!(
-                "Rendered report exceeded max_output_bytes (> {max_output_bytes})"
+                "Rendered export exceeded max_output_bytes (> {max_output_bytes})"
             )));
         }
 
         return Err(ApiError::InternalServerError(format!(
-            "Failed to serialize report: {error}"
+            "Failed to serialize export: {error}"
         )));
     }
 
@@ -2263,15 +2263,15 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::models::{
-        ReportContentType, ReportInclude, ReportIncludeRelatedObject, ReportLimits, ReportMeta,
-        ReportMissingDataPolicy, ReportRelationContext, ReportRequest, ReportScope,
-        ReportScopeKind, ReportTaskOutputRecord, ReportTemplate, ReportTemplateKind,
+        ExportContentType, ExportInclude, ExportIncludeRelatedObject, ExportLimits, ExportMeta,
+        ExportMissingDataPolicy, ExportRelationContext, ExportRequest, ExportScope,
+        ExportScopeKind, ExportTaskOutputRecord, ExportTemplate, ExportTemplateKind,
     };
 
     use super::{
-        HydrationBudget, REPORT_TRUNCATED_HEADER, ReportRuntime, inferred_relation_alias,
-        normalize_alias_segment, pluralize_alias, render_report_task_output,
-        take_related_within_budget, validate_report_limits, validate_report_submission,
+        EXPORT_TRUNCATED_HEADER, ExportRuntime, HydrationBudget, inferred_relation_alias,
+        normalize_alias_segment, pluralize_alias, render_export_task_output,
+        take_related_within_budget, validate_export_limits, validate_export_submission,
     };
     use crate::errors::ApiError;
 
@@ -2346,10 +2346,10 @@ mod tests {
         }
     }
 
-    fn report_with_limits(limits: ReportLimits) -> ReportRequest {
-        ReportRequest {
-            scope: ReportScope {
-                kind: ReportScopeKind::ObjectsInClass,
+    fn export_with_limits(limits: ExportLimits) -> ExportRequest {
+        ExportRequest {
+            scope: ExportScope {
+                kind: ExportScopeKind::ObjectsInClass,
                 class_id: Some(1),
                 object_id: None,
             },
@@ -2361,39 +2361,39 @@ mod tests {
         }
     }
 
-    fn templated_report_with_include(
-        related_objects: HashMap<String, ReportIncludeRelatedObject>,
-    ) -> ReportRequest {
-        ReportRequest {
-            scope: ReportScope {
-                kind: ReportScopeKind::ObjectsInClass,
+    fn templated_export_with_include(
+        related_objects: HashMap<String, ExportIncludeRelatedObject>,
+    ) -> ExportRequest {
+        ExportRequest {
+            scope: ExportScope {
+                kind: ExportScopeKind::ObjectsInClass,
                 class_id: Some(1),
                 object_id: None,
             },
             query: None,
             missing_data_policy: None,
             limits: None,
-            include: Some(ReportInclude {
+            include: Some(ExportInclude {
                 related_objects: Some(related_objects),
             }),
-            relation_context: Some(ReportRelationContext { depth: Some(1) }),
+            relation_context: Some(ExportRelationContext { depth: Some(1) }),
         }
     }
 
-    fn report_runtime(report: ReportRequest) -> ReportRuntime {
-        ReportRuntime {
-            report,
-            content_type: ReportContentType::TextPlain,
-            missing_data_policy: ReportMissingDataPolicy::Strict,
-            template: Some(ReportTemplate {
+    fn export_runtime(export: ExportRequest) -> ExportRuntime {
+        ExportRuntime {
+            export,
+            content_type: ExportContentType::TextPlain,
+            missing_data_policy: ExportMissingDataPolicy::Strict,
+            template: Some(ExportTemplate {
                 id: 1,
                 collection_id: 1,
                 name: "summary".to_string(),
                 description: String::new(),
-                content_type: ReportContentType::TextPlain,
+                content_type: ExportContentType::TextPlain,
                 template: "{{ items|length }}".to_string(),
-                kind: ReportTemplateKind::Report,
-                scope_kind: Some(ReportScopeKind::ObjectsInClass),
+                kind: ExportTemplateKind::Export,
+                scope_kind: Some(ExportScopeKind::ObjectsInClass),
                 class_id: Some(1),
                 default_query: None,
                 include: None,
@@ -2407,26 +2407,26 @@ mod tests {
         }
     }
 
-    fn report_output_record(
+    fn export_output_record(
         meta_truncated: bool,
         output_truncated: bool,
-    ) -> ReportTaskOutputRecord {
-        ReportTaskOutputRecord {
+    ) -> ExportTaskOutputRecord {
+        ExportTaskOutputRecord {
             id: 1,
             task_id: 1,
             template_name: Some("summary".to_string()),
-            content_type: ReportContentType::TextPlain.as_mime().to_string(),
+            content_type: ExportContentType::TextPlain.as_mime().to_string(),
             json_output: None,
             text_output: Some("ok".to_string()),
-            meta_json: serde_json::to_value(ReportMeta {
+            meta_json: serde_json::to_value(ExportMeta {
                 count: 1,
                 truncated: meta_truncated,
-                scope: ReportScope {
-                    kind: ReportScopeKind::ObjectsInClass,
+                scope: ExportScope {
+                    kind: ExportScopeKind::ObjectsInClass,
                     class_id: Some(1),
                     object_id: None,
                 },
-                content_type: ReportContentType::TextPlain,
+                content_type: ExportContentType::TextPlain,
             })
             .unwrap(),
             warnings_json: serde_json::json!([]),
@@ -2469,7 +2469,7 @@ mod tests {
         let mut related_objects = HashMap::new();
         related_objects.insert(
             "owners".to_string(),
-            ReportIncludeRelatedObject {
+            ExportIncludeRelatedObject {
                 class_id: 2,
                 class_relation_id: None,
                 direction: None,
@@ -2478,9 +2478,9 @@ mod tests {
                 limit: None,
             },
         );
-        let runtime = report_runtime(templated_report_with_include(related_objects));
+        let runtime = export_runtime(templated_export_with_include(related_objects));
 
-        let error = validate_report_submission(&runtime).unwrap_err();
+        let error = validate_export_submission(&runtime).unwrap_err();
 
         assert_eq!(
             error.to_string(),
@@ -2490,19 +2490,19 @@ mod tests {
 
     #[test]
     fn allows_relation_context_with_empty_related_object_includes() {
-        let runtime = report_runtime(templated_report_with_include(HashMap::new()));
+        let runtime = export_runtime(templated_export_with_include(HashMap::new()));
 
-        validate_report_submission(&runtime).unwrap();
+        validate_export_submission(&runtime).unwrap();
     }
 
     #[test]
-    fn text_report_output_headers_use_persisted_truncated_column() {
-        let response = render_report_task_output(report_output_record(false, true)).unwrap();
+    fn text_export_output_headers_use_persisted_truncated_column() {
+        let response = render_export_task_output(export_output_record(false, true)).unwrap();
 
         assert_eq!(
             response
                 .headers()
-                .get(REPORT_TRUNCATED_HEADER)
+                .get(EXPORT_TRUNCATED_HEADER)
                 .unwrap()
                 .to_str()
                 .unwrap(),
@@ -2511,8 +2511,8 @@ mod tests {
     }
 
     #[test]
-    fn rejects_zero_report_limits() {
-        let max_items_error = validate_report_limits(&report_with_limits(ReportLimits {
+    fn rejects_zero_export_limits() {
+        let max_items_error = validate_export_limits(&export_with_limits(ExportLimits {
             max_items: Some(0),
             max_output_bytes: None,
         }))
@@ -2523,7 +2523,7 @@ mod tests {
             "max_items must be greater than 0"
         );
 
-        let max_output_error = validate_report_limits(&report_with_limits(ReportLimits {
+        let max_output_error = validate_export_limits(&export_with_limits(ExportLimits {
             max_items: None,
             max_output_bytes: Some(0),
         }))
@@ -2536,8 +2536,8 @@ mod tests {
     }
 
     #[test]
-    fn rejects_report_output_limit_above_server_cap() {
-        let error = validate_report_limits(&report_with_limits(ReportLimits {
+    fn rejects_export_output_limit_above_server_cap() {
+        let error = validate_export_limits(&export_with_limits(ExportLimits {
             max_items: None,
             max_output_bytes: Some(usize::MAX),
         }))
@@ -2555,7 +2555,7 @@ mod tests {
     }
 
     #[test]
-    fn hydration_budget_rejects_when_report_budget_is_exhausted() {
+    fn hydration_budget_rejects_when_export_budget_is_exhausted() {
         let mut budget = HydrationBudget::new(1);
 
         assert_eq!(budget.remaining_related_capacity().unwrap(), 0);

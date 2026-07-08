@@ -1,13 +1,13 @@
-# Report API
+# Export API
 
-The report API executes an authorized Hubuum query server-side through the generic task system.
+The export API executes an authorized Hubuum query server-side through the generic task system.
 
 Endpoints:
 
-- `POST /api/v1/reports`
-- `POST /api/v1/templates/{template_id}/reports`
-- `GET /api/v1/reports/{task_id}`
-- `GET /api/v1/reports/{task_id}/output`
+- `POST /api/v1/exports`
+- `POST /api/v1/export-templates/{template_id}/exports`
+- `GET /api/v1/exports/{task_id}`
+- `GET /api/v1/exports/{task_id}/output`
 
 Authentication:
 
@@ -42,44 +42,44 @@ Authentication:
 }
 ```
 
-`POST /api/v1/reports` is asynchronous, returns JSON output, and mirrors `POST /api/v1/imports`:
+`POST /api/v1/exports` is asynchronous, returns JSON output, and mirrors `POST /api/v1/imports`:
 
 - it returns `202 Accepted`
 - the response body is a generic `TaskResponse`
 - the response includes `Location: /api/v1/tasks/{id}`
 - `Idempotency-Key` is supported with the same reuse/conflict semantics as imports
-- if the submitting user already has too many active report tasks, it returns `429 Too Many Requests`
+- if the submitting user already has too many active export tasks, it returns `429 Too Many Requests`
 
 Use:
 
-- `GET /api/v1/reports/{task_id}` to fetch the report-task projection
-- `GET /api/v1/reports/{task_id}/output` to fetch the stored report output
+- `GET /api/v1/exports/{task_id}` to fetch the export-task projection
+- `GET /api/v1/exports/{task_id}/output` to fetch the stored export output
 
-Stored output is refetchable until cleanup. The output endpoint does not rerun the report.
+Stored output is refetchable until cleanup. The output endpoint does not rerun the export.
 
 Typical client flow:
 
 ```text
-POST /api/v1/reports
+POST /api/v1/exports
 -> 202 Accepted
 -> Location: /api/v1/tasks/12
 
 GET /api/v1/tasks/12
 -> poll until status is succeeded, failed, partially_succeeded, or cancelled
 
-GET /api/v1/reports/12/output
+GET /api/v1/exports/12/output
 -> fetch the stored JSON, text, HTML, or CSV output
 ```
 
-`GET /api/v1/reports/{task_id}` includes report-specific details when available:
+`GET /api/v1/exports/{task_id}` includes export-specific details when available:
 
-- `details.report.output_url`
-- `details.report.output_available`
-- `details.report.output_expires_at`
-- `details.report.template_name`
-- `details.report.output_content_type`
-- `details.report.warning_count`
-- `details.report.truncated`
+- `details.export.output_url`
+- `details.export.output_available`
+- `details.export.output_expires_at`
+- `details.export.template_name`
+- `details.export.output_content_type`
+- `details.export.warning_count`
+- `details.export.truncated`
 
 ### Supported scopes
 
@@ -102,13 +102,13 @@ Examples:
 - `from_classes=12&sort=created_at.desc`
 - `depth__lte=2&to_classes=91`
 
-Reports do not support cursor pagination. If `cursor` is present in `query`, the request fails with `400 Bad Request`.
+Exports do not support cursor pagination. If `cursor` is present in `query`, the request fails with `400 Bad Request`.
 
-If the rendered response exceeds `limits.max_output_bytes`, the report task fails with `413 Payload Too Large`. The request-level value must be greater than zero and cannot exceed the server's `HUBUUM_REPORT_MAX_OUTPUT_BYTES` setting. The server does not stream partial JSON, HTML, CSV, or text bodies.
+If the rendered response exceeds `limits.max_output_bytes`, the export task fails with `413 Payload Too Large`. The request-level value must be greater than zero and cannot exceed the server's `HUBUUM_EXPORT_MAX_OUTPUT_BYTES` setting. The server does not stream partial JSON, HTML, CSV, or text bodies.
 
-### Relation report examples
+### Relation export examples
 
-Report class relations from one class:
+Export class relations from one class:
 
 ```json
 {
@@ -122,7 +122,7 @@ Report class relations from one class:
 }
 ```
 
-Report object relations for relations pointing at one object:
+Export object relations for relations pointing at one object:
 
 ```json
 {
@@ -133,7 +133,7 @@ Report object relations for relations pointing at one object:
 }
 ```
 
-Report objects related to a root object:
+Export objects related to a root object:
 
 ```json
 {
@@ -146,11 +146,11 @@ Report objects related to a root object:
 }
 ```
 
-`related_objects` first verifies that `object_id` belongs to `class_id`, then returns matching related objects. JSON output items include the related object fields plus the relation `path`. For templated output, the report is rooted at the source object: `items` is `[source]`, and relation-aware traversal is exposed through `source.related`, `source.reachable`, and `source.paths`. The `depth` field is available for filtering and sorting through `query`, but is not included in the rendered item payload.
+`related_objects` first verifies that `object_id` belongs to `class_id`, then returns matching related objects. JSON output items include the related object fields plus the relation `path`. For templated output, the export is rooted at the source object: `items` is `[source]`, and relation-aware traversal is exposed through `source.related`, `source.reachable`, and `source.paths`. The `depth` field is available for filtering and sorting through `query`, but is not included in the rendered item payload.
 
 ### Including related objects
 
-`objects_in_class` reports can include related objects for every returned object. This is intended for reports such as "host is in room" where the base report lists hosts and the template needs a small bounded set of related room objects.
+`objects_in_class` exports can include related objects for every returned object. This is intended for exports such as "host is in room" where the base export lists hosts and the template needs a small bounded set of related room objects.
 
 ```json
 {
@@ -174,7 +174,7 @@ Report objects related to a root object:
 }
 ```
 
-Each key under `include.related_objects` is an alias. The alias must match `[A-Za-z_][A-Za-z0-9_]*`, and a request can include at most 8 aliases. Aliases are exposed as arrays at `item.related.<alias>` in MiniJinja templates and as `related.<alias>` in JSON report items. The top-level `related` report item field is reserved for report includes.
+Each key under `include.related_objects` is an alias. The alias must match `[A-Za-z_][A-Za-z0-9_]*`, and a request can include at most 8 aliases. Aliases are exposed as arrays at `item.related.<alias>` in MiniJinja export templates and as `related.<alias>` in JSON export items. The top-level `related` export item field is reserved for export includes.
 
 ```text
 {% for item in items %}{{ item.name }} is in {{ item.related.room[0].name }}
@@ -183,11 +183,11 @@ Each key under `include.related_objects` is an alias. The alias must match `[A-Z
 
 `class_id` is required and selects the related object class to include. `class_relation_id` is optional and restricts traversal to a specific class relation. `direction` is optional and can be `any` (default), `outgoing`, or `incoming`. `sort` is optional and can be `path` (default), `name`, or `created_at`; it decides which related objects are kept first when `limit` is smaller than the number of matches.
 
-`max_depth` defaults to `1` and must be between `1` and `10`. `limit` defaults to `1` and must be between `1` and `50`; it is applied per root object and per alias. Missing related objects render as an empty array, so `item.related.room` is always present in templates when the alias was requested.
+`max_depth` defaults to `1` and must be between `1` and `10`. `limit` defaults to `1` and must be between `1` and `50`; it is applied per root object and per alias. Missing related objects render as an empty array, so `item.related.room` is always present in export templates when the alias was requested.
 
 ## Template execution
 
-Text, HTML, and CSV reports are executed from executable report templates:
+Text, HTML, and CSV exports are executed from executable export templates:
 
 ```json
 {
@@ -200,7 +200,7 @@ Text, HTML, and CSV reports are executed from executable report templates:
 }
 ```
 
-For `related_objects` templates, pass the runtime root object:
+For `related_objects` export_templates, pass the runtime root object:
 
 ```json
 {
@@ -212,20 +212,20 @@ For `related_objects` templates, pass the runtime root object:
 The template stores the scope, class, include settings, relation context, content type, and default
 query/limits/policy. Runtime `query` replaces the template's default query when supplied.
 
-Executable templates support every report scope kind:
+Executable export templates support every export scope kind:
 
 - `objects_in_class` and `related_objects` are bound to a single class and require the template's `class_id`.
 - `collections`, `classes`, `class_relations`, and `object_relations` are class-agnostic and must not set `class_id`.
 
-`object_id` is only accepted at run time for `related_objects` templates; supplying it for any other scope
+`object_id` is only accepted at run time for `related_objects` export_templates; supplying it for any other scope
 is rejected with `400 Bad Request`.
 
 ## Output selection
 
 The server determines the output format at submission time based on the endpoint:
 
-1. `POST /api/v1/reports` returns `application/json`
-2. `POST /api/v1/templates/{template_id}/reports` returns the template's stored `content_type`
+1. `POST /api/v1/exports` returns `application/json`
+2. `POST /api/v1/export-templates/{template_id}/exports` returns the template's stored `content_type`
 
 Supported output types:
 
@@ -236,7 +236,7 @@ Supported output types:
 
 ## JSON output
 
-`GET /api/v1/reports/{task_id}/output` returns JSON output as a stable envelope:
+`GET /api/v1/exports/{task_id}/output` returns JSON output as a stable envelope:
 
 ```json
 {
@@ -263,9 +263,9 @@ Supported output types:
 ## Template output
 
 `text/plain`, `text/html`, and `text/csv` outputs require running an executable stored template with
-`POST /api/v1/templates/{template_id}/reports`.
+`POST /api/v1/export-templates/{template_id}/exports`.
 
-For concrete template examples and example context data, see [template_guide.md](template_guide.md).
+For concrete template examples and example context data, see [export_template_guide.md](export_template_guide.md).
 
 Templates use Jinja syntax, including loops, conditionals, expressions, macros, and same-collection `include`/`extends`/`import`.
 
@@ -277,7 +277,7 @@ The template context contains:
 - `request`
 - `source`
 
-For templated object reports with relation hydration enabled, objects expose:
+For templated object exports with relation hydration enabled, objects expose:
 
 - the normal object fields
 - `related`
@@ -311,7 +311,7 @@ Activation rules:
 Missing-field behavior:
 
 - `strict`
-  - missing lookups fail the report task
+  - missing lookups fail the export task
 - `null`
   - missing lookups render as `null`
 - `omit`
@@ -319,7 +319,7 @@ Missing-field behavior:
 - rendered missing lookups in `null` and `omit` modes add template warnings that identify the
   stored template where the missing value rendered
 
-Example relation-aware templates for a Host -> Room -> Person layout:
+Example relation-aware export templates for a Host -> Room -> Person layout:
 
 ```text
 {% for host in items %}
@@ -365,7 +365,7 @@ host,room,person
 {% endfor %}{% endfor %}{% endfor %}
 ```
 
-For `related_objects`, `items` is `[source]`, so the same templates work when the report is rooted
+For `related_objects`, `items` is `[source]`, so the same export_templates work when the export is rooted
 at a single host object. For `objects_in_class`, add `"relation_context": { "depth": 2 }` to
 enable `related.*` and `reachable.*`.
 
@@ -380,53 +380,53 @@ enable `related.*` and `reachable.*`.
 
 ## Render guards and cleanup
 
-- hydrated relation templates are limited to `depth <= 2`
+- hydrated relation export templates are limited to `depth <= 2`
 - the renderer enforces a recursion limit and a MiniJinja fuel budget
 - relation hydration enforces a maximum hydrated object count
-- `HUBUUM_REPORT_STAGE_TIMEOUT_MS` is a **post-completion rejection budget**, not
-  an in-flight interrupt: a report is rejected only *after* a stage (query,
+- `HUBUUM_EXPORT_STAGE_TIMEOUT_MS` is a **post-completion rejection budget**, not
+  an in-flight interrupt: an export is rejected only *after* a stage (query,
   hydration, render) finishes if that stage exceeded the budget. It bounds how
   long a stage is *accepted* to have taken, not how long it is *allowed to run*.
 - to actually cancel slow in-flight queries server-side, set
   `HUBUUM_DB_STATEMENT_TIMEOUT_MS` (0 = disabled). This is a **pool-global**
   Postgres `statement_timeout`: it applies to every database query the service
-  makes, not only report stages, so choose a value that accommodates legitimate
+  makes, not only export stages, so choose a value that accommodates legitimate
   long-running operations (e.g. large imports).
-- to cancel slow in-flight queries **only while executing reports**, set
-  `HUBUUM_REPORT_DB_STATEMENT_TIMEOUT_MS` (0 = disabled). This is a
-  **report-scoped** Postgres `statement_timeout`, applied as a transaction-local
-  `SET LOCAL` on report queries (scope query, includes, relation hydration), so
-  it bounds report queries aggressively without capping imports, admin
+- to cancel slow in-flight queries **only while executing exports**, set
+  `HUBUUM_EXPORT_DB_STATEMENT_TIMEOUT_MS` (0 = disabled). This is a
+  **export-scoped** Postgres `statement_timeout`, applied as a transaction-local
+  `SET LOCAL` on export queries (scope query, includes, relation hydration), so
+  it bounds export queries aggressively without capping imports, admin
   operations, or other DB work sharing the pool. When set it should typically be
-  `<= HUBUUM_REPORT_STAGE_TIMEOUT_MS`.
+  `<= HUBUUM_EXPORT_STAGE_TIMEOUT_MS`.
 - successful stored outputs get an `output_expires_at` timestamp at completion time
 - background task workers clean up expired stored outputs and append a `cleanup` task event
 
 Relevant env vars are documented centrally in [Quick Start](quick_start.md):
 
-- `HUBUUM_REPORT_OUTPUT_RETENTION_HOURS`
-- `HUBUUM_REPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS`
-- `HUBUUM_REPORT_MAX_ACTIVE_TASKS_PER_USER`
-- `HUBUUM_REPORT_TEMPLATE_RECURSION_LIMIT`
-- `HUBUUM_REPORT_TEMPLATE_FUEL`
-- `HUBUUM_REPORT_TEMPLATE_MAX_OBJECTS`
-- `HUBUUM_REPORT_MAX_OUTPUT_BYTES`
-- `HUBUUM_REPORT_STAGE_TIMEOUT_MS`
+- `HUBUUM_EXPORT_OUTPUT_RETENTION_HOURS`
+- `HUBUUM_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS`
+- `HUBUUM_EXPORT_MAX_ACTIVE_TASKS_PER_USER`
+- `HUBUUM_EXPORT_TEMPLATE_RECURSION_LIMIT`
+- `HUBUUM_EXPORT_TEMPLATE_FUEL`
+- `HUBUUM_EXPORT_TEMPLATE_MAX_OBJECTS`
+- `HUBUUM_EXPORT_MAX_OUTPUT_BYTES`
+- `HUBUUM_EXPORT_STAGE_TIMEOUT_MS`
 - `HUBUUM_DB_STATEMENT_TIMEOUT_MS`
-- `HUBUUM_REPORT_DB_STATEMENT_TIMEOUT_MS`
+- `HUBUUM_EXPORT_DB_STATEMENT_TIMEOUT_MS`
 
 ## Cost controls
 
 - `limits.max_items` caps rows returned from the scoped query
 - `limits.max_output_bytes` caps the rendered response size up to the server maximum
-- `HUBUUM_REPORT_MAX_ACTIVE_TASKS_PER_USER` caps active queued/validating/running report tasks per submitting user
+- `HUBUUM_EXPORT_MAX_ACTIVE_TASKS_PER_USER` caps active queued/validating/running export tasks per submitting user
 - if the result set is truncated, `meta.truncated` is set to `true`
 
 ## Response headers
 
-These are returned by `GET /api/v1/reports/{task_id}/output`:
+These are returned by `GET /api/v1/exports/{task_id}/output`:
 
-- `X-Hubuum-Report-Warnings`
+- `X-Hubuum-Export-Warnings`
   - number of warnings emitted during rendering
-- `X-Hubuum-Report-Truncated`
+- `X-Hubuum-Export-Truncated`
   - `true` when the result set was truncated to the configured item limit

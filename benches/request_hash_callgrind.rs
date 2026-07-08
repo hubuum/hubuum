@@ -4,7 +4,7 @@ use std::hint::black_box;
 use std::sync::LazyLock;
 
 // Idempotency request hashing canonicalises a JSON payload (recursively sorting
-// object keys) and SHA-256s the result. It runs for every import/report request
+// object keys) and SHA-256s the result. It runs for every import/export request
 // that carries an Idempotency-Key, so the payload shape is deliberately nested
 // and unsorted to exercise the canonicalisation path.
 static PAYLOAD: LazyLock<serde_json::Value> = LazyLock::new(|| {

@@ -110,7 +110,7 @@ ignored
     }
 
     #[test]
-    fn reports_missing_required_blocks_clearly() {
+    fn exports_missing_required_blocks_clearly() {
         let error = required_labeled_block("", "guide/missing").unwrap_err();
 
         assert!(error.contains("guide/missing"));

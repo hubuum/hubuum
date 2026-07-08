@@ -2,11 +2,11 @@
 //!
 //! This crate owns the reusable template execution boundary: fuel and recursion
 //! limits, simple validation/rendering helpers, and the curated filters/functions
-//! that should behave consistently across reports, remote targets, webhook
+//! that should behave consistently across exports, remote targets, webhook
 //! sinks, and future template consumers.
 //!
-//! It intentionally does not own Hubuum-specific concerns such as report
-//! database models, collection template loading, permission checks, report output
+//! It intentionally does not own Hubuum-specific concerns such as export
+//! database models, collection template loading, permission checks, export output
 //! persistence, API error types, or global app configuration. Callers pass
 //! `TemplateLimits` explicitly, usually through `prepare_template`, and may
 //! provide an optional missing-value recorder callback when they need

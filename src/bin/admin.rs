@@ -8,17 +8,17 @@ use tracing_subscriber::{
 };
 
 use hubuum::config::{
-    DEFAULT_DB_STATEMENT_TIMEOUT_MS, DEFAULT_REPORT_TEMPLATE_FUEL,
-    DEFAULT_REPORT_TEMPLATE_RECURSION_LIMIT,
+    DEFAULT_DB_STATEMENT_TIMEOUT_MS, DEFAULT_EXPORT_TEMPLATE_FUEL,
+    DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT,
 };
 use hubuum::db::{DbPool, init_pool_with_statement_timeout, with_connection};
 use hubuum::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
 use hubuum::logger;
-use hubuum::models::{ReportTaskOutputRecord, ReportTemplate, User};
-use hubuum::schema::report_task_outputs::dsl::report_task_outputs;
+use hubuum::models::{ExportTaskOutputRecord, ExportTemplate, User};
+use hubuum::schema::export_task_outputs::dsl::export_task_outputs;
 use hubuum::utilities::auth::generate_random_password;
+use hubuum::utilities::exporting::validate_template_with_limits;
 use hubuum::utilities::is_valid_log_level;
-use hubuum::utilities::reporting::validate_template_with_limits;
 
 #[derive(Parser)]
 #[command(
@@ -32,13 +32,13 @@ struct AdminCli {
     #[arg(long)]
     reset_password: Option<String>,
 
-    /// Validate all stored report templates against the Jinja renderer
+    /// Validate all stored export templates against the Jinja renderer
     #[arg(long, default_value_t = false)]
     audit_templates: bool,
 
-    /// Summarize stored report output health by template name
+    /// Summarize stored export output health by template name
     #[arg(long, default_value_t = false)]
-    report_template_health: bool,
+    export_template_health: bool,
 
     /// Database URL
     #[arg(long, env = "HUBUUM_DATABASE_URL")]
@@ -52,21 +52,21 @@ struct AdminCli {
     )]
     db_statement_timeout_ms: u64,
 
-    /// MiniJinja recursion limit for report template validation
+    /// MiniJinja recursion limit for export template validation
     #[arg(
         long,
-        env = "HUBUUM_REPORT_TEMPLATE_RECURSION_LIMIT",
-        default_value_t = DEFAULT_REPORT_TEMPLATE_RECURSION_LIMIT
+        env = "HUBUUM_EXPORT_TEMPLATE_RECURSION_LIMIT",
+        default_value_t = DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT
     )]
-    report_template_recursion_limit: usize,
+    export_template_recursion_limit: usize,
 
-    /// MiniJinja fuel budget for report template validation
+    /// MiniJinja fuel budget for export template validation
     #[arg(
         long,
-        env = "HUBUUM_REPORT_TEMPLATE_FUEL",
-        default_value_t = DEFAULT_REPORT_TEMPLATE_FUEL
+        env = "HUBUUM_EXPORT_TEMPLATE_FUEL",
+        default_value_t = DEFAULT_EXPORT_TEMPLATE_FUEL
     )]
-    report_template_fuel: u64,
+    export_template_fuel: u64,
 
     /// Log level
     /// Possible values: trace, debug, info, warn, error
@@ -97,12 +97,12 @@ async fn main() -> Result<(), ApiError> {
     } else if admin_cli.audit_templates {
         audit_templates(
             pool,
-            admin_cli.report_template_recursion_limit,
-            admin_cli.report_template_fuel,
+            admin_cli.export_template_recursion_limit,
+            admin_cli.export_template_fuel,
         )
         .await?;
-    } else if admin_cli.report_template_health {
-        report_template_health(pool).await?;
+    } else if admin_cli.export_template_health {
+        export_template_health(pool).await?;
     } else {
         println!("No command specified. Use --help for usage information.");
     }
@@ -120,10 +120,10 @@ async fn reset_password(pool: DbPool, username: &str) -> Result<(), ApiError> {
 
 async fn audit_templates(
     pool: DbPool,
-    report_template_recursion_limit: usize,
-    report_template_fuel: u64,
+    export_template_recursion_limit: usize,
+    export_template_fuel: u64,
 ) -> Result<(), ApiError> {
-    let templates = ReportTemplate::list_all(&pool).await?;
+    let templates = ExportTemplate::list_all(&pool).await?;
     let mut failures = Vec::new();
 
     for template in templates {
@@ -134,15 +134,15 @@ async fn audit_templates(
             template.collection_id,
             &collection_templates,
             template.content_type,
-            report_template_recursion_limit,
-            report_template_fuel,
+            export_template_recursion_limit,
+            export_template_fuel,
         ) {
             failures.push((template.collection_id, template.name, error.to_string()));
         }
     }
 
     if failures.is_empty() {
-        println!("All report templates validated successfully.");
+        println!("All export templates validated successfully.");
         return Ok(());
     }
 
@@ -165,13 +165,13 @@ struct TemplateHealthRow {
     total_duration_max: i32,
 }
 
-async fn report_template_health(pool: DbPool) -> Result<(), ApiError> {
+async fn export_template_health(pool: DbPool) -> Result<(), ApiError> {
     let outputs = with_connection(&pool, |conn| {
-        report_task_outputs.load::<ReportTaskOutputRecord>(conn)
+        export_task_outputs.load::<ExportTaskOutputRecord>(conn)
     })?;
 
     if outputs.is_empty() {
-        println!("No stored report outputs found.");
+        println!("No stored export outputs found.");
         return Ok(());
     }
 
@@ -188,7 +188,7 @@ async fn report_template_health(pool: DbPool) -> Result<(), ApiError> {
         entry.total_duration_max = entry.total_duration_max.max(output.total_duration_ms);
     }
 
-    println!("Report template health:");
+    println!("Export template health:");
     for (template_name, row) in &health {
         let avg_warnings = row.warning_total as f64 / row.runs as f64;
         let avg_total_duration_ms = row.total_duration_total as f64 / row.runs as f64;

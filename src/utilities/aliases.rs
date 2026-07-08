@@ -1,4 +1,4 @@
-//! Shared normalization for report template aliases.
+//! Shared normalization for export template aliases.
 //!
 //! Relation creation (`db::traits::relations`) and import processing
 //! (`db::traits::task_import`) both validate and canonicalize user-supplied template aliases the

@@ -298,11 +298,11 @@ pub async fn get_group_events(
 
 #[utoipa::path(
     get,
-    path = "/api/v1/templates/{template_id}/events",
+    path = "/api/v1/export-templates/{template_id}/events",
     tag = "events",
     security(("bearer_auth" = [])),
     params(
-        ("template_id" = i32, Path, description = "Report template id"),
+        ("template_id" = i32, Path, description = "Export template id"),
         ("action" = Option<String>, Query, description = "Optional action filter"),
         ("actor_kind" = Option<String>, Query, description = "Optional actor kind filter"),
         ("actor_user_id" = Option<i32>, Query, description = "Optional actor principal id filter"),
@@ -314,13 +314,13 @@ pub async fn get_group_events(
         ("cursor" = Option<String>, Query, description = "Cursor token from X-Next-Cursor")
     ),
     responses(
-        (status = 200, description = "Visible report template audit events", body = [EventResponse]),
+        (status = 200, description = "Visible export template audit events", body = [EventResponse]),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse)
     )
 )]
 #[get("/{template_id}/events")]
-pub async fn get_report_template_events(
+pub async fn get_export_template_events(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
     req: HttpRequest,
@@ -330,7 +330,7 @@ pub async fn get_report_template_events(
         pool,
         requestor,
         req,
-        Some((EntityType::ReportTemplate, template_id.into_inner())),
+        Some((EntityType::ExportTemplate, template_id.into_inner())),
     )
     .await
 }

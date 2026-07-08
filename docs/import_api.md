@@ -381,7 +381,7 @@ Allowed permission values:
 - `strict`
   - all imported mutations succeed or the import fails
 - `best_effort`
-  - successful items are committed and failed items are reported individually
+  - successful items are committed and failed items are exported individually
 
 ### `mode.collision_policy`
 

@@ -1456,19 +1456,19 @@ fn test_best_effort_execution_only_aborts_for_matching_policy_failures() {
 }
 
 #[test]
-fn test_process_one_task_report_failure_marks_single_failed_item() {
+fn test_process_one_task_export_failure_marks_single_failed_item() {
     let context = block_on(TestContext::new());
     let task = block_on(
         NewTaskRecord {
-            kind: TaskKind::Report.as_str().to_string(),
+            kind: TaskKind::Export.as_str().to_string(),
             status: TaskStatus::Queued.as_str().to_string(),
             submitted_by: Some(context.admin_user.id),
             submitted_token_id: None,
             submitted_token_scoped: false,
             submitted_token_scopes: serde_json::json!([]),
-            idempotency_key: Some(context.scoped_name("unimplemented-report-task")),
+            idempotency_key: Some(context.scoped_name("unimplemented-export-task")),
             request_hash: None,
-            request_payload: Some(serde_json::json!({"report": "demo"})),
+            request_payload: Some(serde_json::json!({"export": "demo"})),
             summary: None,
             total_items: 0,
             processed_items: 0,

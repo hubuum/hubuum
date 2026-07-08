@@ -3,7 +3,7 @@
 //! `AuthzSubject` is **identity-only**: it answers "who is this principal and
 //! which groups / admin status do they have", and nothing about token scopes.
 //! Scopes are threaded *separately* as an `Option<&[Permissions]>` parameter on
-//! every authz / search / report entry point:
+//! every authz / search / export entry point:
 //!
 //! * `None`        — unscoped: full principal authority (internal/background
 //!   callers, password-login tokens).

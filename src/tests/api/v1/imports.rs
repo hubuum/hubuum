@@ -238,7 +238,7 @@ mod tests {
     ) {
         let context = test_context;
         let task = NewTaskRecord {
-            kind: TaskKind::Report.as_str().to_string(),
+            kind: TaskKind::Export.as_str().to_string(),
             status: TaskStatus::Succeeded.as_str().to_string(),
             submitted_by: Some(context.admin_user.id),
             submitted_token_id: None,
@@ -247,7 +247,7 @@ mod tests {
             idempotency_key: None,
             request_hash: None,
             request_payload: None,
-            summary: Some("Synthetic report task".to_string()),
+            summary: Some("Synthetic export task".to_string()),
             total_items: 0,
             processed_items: 0,
             success_items: 0,
@@ -268,24 +268,24 @@ mod tests {
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let task_response: TaskResponse = test::read_body_json(resp).await;
-        assert_eq!(task_response.kind, TaskKind::Report);
+        assert_eq!(task_response.kind, TaskKind::Export);
         assert_eq!(task_response.status, TaskStatus::Succeeded);
         assert!(task_response.links.import.is_none());
-        let expected_report_link = format!("/api/v1/reports/{}", task.id);
-        let expected_output_link = format!("/api/v1/reports/{}/output", task.id);
+        let expected_export_link = format!("/api/v1/exports/{}", task.id);
+        let expected_output_link = format!("/api/v1/exports/{}/output", task.id);
         assert_eq!(
-            task_response.links.report.as_deref(),
-            Some(expected_report_link.as_str())
+            task_response.links.export.as_deref(),
+            Some(expected_export_link.as_str())
         );
         assert_eq!(
-            task_response.links.report_output.as_deref(),
+            task_response.links.export_output.as_deref(),
             Some(expected_output_link.as_str())
         );
         assert!(
             task_response
                 .details
                 .as_ref()
-                .and_then(|d| d.report.as_ref())
+                .and_then(|d| d.export.as_ref())
                 .is_some()
         );
     }
@@ -408,16 +408,16 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let report_key = context.scoped_name("report-task-idempotency");
-        let report_task = NewTaskRecord {
-            kind: TaskKind::Report.as_str().to_string(),
+        let export_key = context.scoped_name("export-task-idempotency");
+        let export_task = NewTaskRecord {
+            kind: TaskKind::Export.as_str().to_string(),
             status: TaskStatus::Queued.as_str().to_string(),
             submitted_by: Some(context.admin_user.id),
             submitted_token_id: None,
             submitted_token_scoped: false,
             submitted_token_scopes: serde_json::json!([]),
-            idempotency_key: Some(report_key.clone()),
-            request_hash: Some(context.scoped_name("report-task-hash")),
+            idempotency_key: Some(export_key.clone()),
+            request_hash: Some(context.scoped_name("export-task-hash")),
             request_payload: None,
             summary: None,
             total_items: 0,
@@ -455,7 +455,7 @@ mod tests {
             &body,
             vec![(
                 actix_web::http::header::HeaderName::from_static("idempotency-key"),
-                report_key,
+                export_key,
             )],
         )
         .await;
@@ -471,7 +471,7 @@ mod tests {
         let reused = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("/api/v1/tasks/{}", report_task.id),
+            &format!("/api/v1/tasks/{}", export_task.id),
         )
         .await;
         assert_response_status(reused, StatusCode::OK).await;

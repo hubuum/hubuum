@@ -11,9 +11,9 @@ use crate::errors::ApiError;
 use crate::events::{Action, ActorKind, EntityType, NewEvent, emit_event};
 use crate::models::search::QueryOptions;
 use crate::models::{
-    ImportTaskResultRecord, NewImportTaskResultRecord, NewReportTaskOutputRecord,
-    NewTaskEventRecord, NewTaskRecord, ReportOutputLookup, ReportTaskOutputRecord,
-    ReportTaskOutputSummaryRecord, TaskEventRecord, TaskID, TaskKind, TaskRecord, TaskResponse,
+    ExportOutputLookup, ExportTaskOutputRecord, ExportTaskOutputSummaryRecord,
+    ImportTaskResultRecord, NewExportTaskOutputRecord, NewImportTaskResultRecord,
+    NewTaskEventRecord, NewTaskRecord, TaskEventRecord, TaskID, TaskKind, TaskRecord, TaskResponse,
     TaskResultCounts, TaskStatus,
 };
 use crate::pagination::{CursorValue, decode_cursor_values, page_limits_or_defaults};
@@ -233,54 +233,54 @@ pub trait TaskBackend: TaskIdentifier {
         Ok((items, total_count))
     }
 
-    async fn find_report_output(
+    async fn find_export_output(
         &self,
         pool: &DbPool,
-    ) -> Result<ReportOutputLookup<ReportTaskOutputRecord>, ApiError> {
-        use crate::schema::report_task_outputs::dsl::{report_task_outputs, task_id};
+    ) -> Result<ExportOutputLookup<ExportTaskOutputRecord>, ApiError> {
+        use crate::schema::export_task_outputs::dsl::{export_task_outputs, task_id};
 
         let task_id_value = self.task_id();
         let now = Utc::now().naive_utc();
-        // Fetch without the expiry filter so an expired-but-present row is reported as `Expired`
+        // Fetch without the expiry filter so an expired-but-present row is exported as `Expired`
         // (410) rather than silently looking like a row that never existed (404).
         let record = with_connection(pool, |conn| {
-            report_task_outputs
+            export_task_outputs
                 .filter(task_id.eq(task_id_value))
-                .first::<ReportTaskOutputRecord>(conn)
+                .first::<ExportTaskOutputRecord>(conn)
                 .optional()
         })?;
 
         Ok(match record {
-            Some(record) if record.output_expires_at > now => ReportOutputLookup::Available(record),
-            Some(record) => ReportOutputLookup::Expired {
+            Some(record) if record.output_expires_at > now => ExportOutputLookup::Available(record),
+            Some(record) => ExportOutputLookup::Expired {
                 expires_at: record.output_expires_at,
             },
-            None => ReportOutputLookup::Missing,
+            None => ExportOutputLookup::Missing,
         })
     }
 
-    async fn find_report_output_summary(
+    async fn find_export_output_summary(
         &self,
         pool: &DbPool,
-    ) -> Result<ReportOutputLookup<ReportTaskOutputSummaryRecord>, ApiError> {
-        use crate::schema::report_task_outputs::dsl::{report_task_outputs, task_id};
+    ) -> Result<ExportOutputLookup<ExportTaskOutputSummaryRecord>, ApiError> {
+        use crate::schema::export_task_outputs::dsl::{export_task_outputs, task_id};
 
         let task_id_value = self.task_id();
         let now = Utc::now().naive_utc();
         let record = with_connection(pool, |conn| {
-            report_task_outputs
+            export_task_outputs
                 .filter(task_id.eq(task_id_value))
-                .select(ReportTaskOutputSummaryRecord::as_select())
-                .first::<ReportTaskOutputSummaryRecord>(conn)
+                .select(ExportTaskOutputSummaryRecord::as_select())
+                .first::<ExportTaskOutputSummaryRecord>(conn)
                 .optional()
         })?;
 
         Ok(match record {
-            Some(record) if record.output_expires_at > now => ReportOutputLookup::Available(record),
-            Some(record) => ReportOutputLookup::Expired {
+            Some(record) if record.output_expires_at > now => ExportOutputLookup::Available(record),
+            Some(record) => ExportOutputLookup::Expired {
                 expires_at: record.output_expires_at,
             },
-            None => ReportOutputLookup::Missing,
+            None => ExportOutputLookup::Missing,
         })
     }
 
@@ -388,15 +388,15 @@ pub trait TaskBackend: TaskIdentifier {
         Ok(record)
     }
 
-    async fn finalize_report_with_output(
+    async fn finalize_export_with_output(
         &self,
         pool: &DbPool,
         update: TaskStateUpdate,
         event: NewTaskEventRecord,
-        output: NewReportTaskOutputRecord,
+        output: NewExportTaskOutputRecord,
     ) -> Result<TaskRecord, ApiError> {
-        use crate::schema::report_task_outputs::dsl::{
-            report_task_outputs, task_id as report_output_task_id,
+        use crate::schema::export_task_outputs::dsl::{
+            export_task_outputs, task_id as export_output_task_id,
         };
         use crate::schema::tasks::dsl::{
             failed_items, finished_at, id, processed_items, request_payload, request_redacted_at,
@@ -406,11 +406,11 @@ pub trait TaskBackend: TaskIdentifier {
         let task_id_value = self.task_id();
         let record = with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
             // Idempotent so a future requeue / manual re-claim that re-finalizes the same task
-            // cannot trip the `report_task_outputs.task_id` UNIQUE constraint and roll back the
+            // cannot trip the `export_task_outputs.task_id` UNIQUE constraint and roll back the
             // transaction, which would otherwise leave the task stuck mid-flight.
-            diesel::insert_into(report_task_outputs)
+            diesel::insert_into(export_task_outputs)
                 .values(output)
-                .on_conflict(report_output_task_id)
+                .on_conflict(export_output_task_id)
                 .do_nothing()
                 .execute(conn)?;
 
@@ -434,7 +434,7 @@ pub trait TaskBackend: TaskIdentifier {
         })?;
 
         info!(
-            message = "Report task output stored and task finalized",
+            message = "Export task output stored and task finalized",
             task_id = record.id,
             task_kind = record.kind.as_str(),
             status = record.status.as_str(),
@@ -529,11 +529,11 @@ pub async fn list_tasks_with_total_count(
     Ok((items, total_count))
 }
 
-pub async fn list_report_task_output_summaries(
+pub async fn list_export_task_output_summaries(
     pool: &DbPool,
     task_ids: &[i32],
-) -> Result<Vec<ReportTaskOutputSummaryRecord>, ApiError> {
-    use crate::schema::report_task_outputs::dsl::{report_task_outputs, task_id};
+) -> Result<Vec<ExportTaskOutputSummaryRecord>, ApiError> {
+    use crate::schema::export_task_outputs::dsl::{export_task_outputs, task_id};
 
     if task_ids.is_empty() {
         return Ok(Vec::new());
@@ -543,22 +543,22 @@ pub async fn list_report_task_output_summaries(
     // `output_expired` flag is consistent with the single-task lookups rather than silently
     // collapsing expired rows into "no output" on the task-list endpoint.
     with_connection(pool, |conn| {
-        report_task_outputs
+        export_task_outputs
             .filter(task_id.eq_any(task_ids))
-            .select(ReportTaskOutputSummaryRecord::as_select())
+            .select(ExportTaskOutputSummaryRecord::as_select())
             .load(conn)
     })
 }
 
-pub async fn purge_expired_report_outputs(pool: &DbPool) -> Result<Vec<i32>, ApiError> {
-    use crate::schema::report_task_outputs::dsl::{
-        output_expires_at, report_task_outputs, task_id,
+pub async fn purge_expired_export_outputs(pool: &DbPool) -> Result<Vec<i32>, ApiError> {
+    use crate::schema::export_task_outputs::dsl::{
+        export_task_outputs, output_expires_at, task_id,
     };
 
     let now = Utc::now().naive_utc();
     let expired_task_ids = with_transaction(pool, |conn| {
         let expired_task_ids =
-            diesel::delete(report_task_outputs.filter(output_expires_at.le(now)))
+            diesel::delete(export_task_outputs.filter(output_expires_at.le(now)))
                 .returning(task_id)
                 .get_results::<i32>(conn)?;
 
@@ -569,14 +569,14 @@ pub async fn purge_expired_report_outputs(pool: &DbPool) -> Result<Vec<i32>, Api
                     &NewTaskEventRecord {
                         task_id: *expired_task_id,
                         event_type: "cleanup".to_string(),
-                        message: "Stored report output expired and was cleaned up".to_string(),
+                        message: "Stored export output expired and was cleaned up".to_string(),
                         data: Some(serde_json::json!({
                             "cleaned_at": now,
                         })),
                     },
                     ActorKind::System,
                     None,
-                    Some(TaskKind::Report.as_str()),
+                    Some(TaskKind::Export.as_str()),
                 )?;
             }
         }
@@ -586,10 +586,10 @@ pub async fn purge_expired_report_outputs(pool: &DbPool) -> Result<Vec<i32>, Api
 
     if !expired_task_ids.is_empty() {
         info!(
-            message = "Expired report outputs cleaned up",
+            message = "Expired export outputs cleaned up",
             cleaned_count = expired_task_ids.len(),
             retention_hours = get_config()
-                .map(|config| config.report_output_retention_hours)
+                .map(|config| config.export_output_retention_hours)
                 .unwrap_or(168)
         );
     }
@@ -703,7 +703,7 @@ pub async fn insert_import_results(
 pub(crate) fn executable_task_kind_values() -> [&'static str; 3] {
     [
         TaskKind::Import.as_str(),
-        TaskKind::Report.as_str(),
+        TaskKind::Export.as_str(),
         TaskKind::RemoteCall.as_str(),
     ]
 }
@@ -777,15 +777,15 @@ impl TaskCreateRequest {
         Ok(task)
     }
 
-    /// Queue this report task, rejecting it with `429` if the submitter already has
-    /// `max_active_report_tasks` queued/validating/running reports. Capacity is checked under a
+    /// Queue this export task, rejecting it with `429` if the submitter already has
+    /// `max_active_export_tasks` queued/validating/running exports. Capacity is checked under a
     /// per-user advisory lock so concurrent submissions cannot race past the limit.
-    pub async fn create_with_active_report_limit(
+    pub async fn create_with_active_export_limit(
         self,
         pool: &DbPool,
-        max_active_report_tasks: usize,
+        max_active_export_tasks: usize,
     ) -> Result<TaskRecord, ApiError> {
-        self.create_with_active_kind_limit(pool, TaskKind::Report, max_active_report_tasks)
+        self.create_with_active_kind_limit(pool, TaskKind::Export, max_active_export_tasks)
             .await
     }
 
@@ -904,9 +904,9 @@ fn task_capacity_lock_key(submitted_by: i32, kind: TaskKind) -> i64 {
     const KIND_STRIDE: i64 = 1_i64 << 32;
 
     let kind_slot = match kind {
-        TaskKind::Report => 1_i64,
+        TaskKind::Export => 1_i64,
         TaskKind::RemoteCall => 2_i64,
-        TaskKind::Import | TaskKind::Export | TaskKind::Reindex => 9_i64,
+        TaskKind::Import | TaskKind::Reindex => 9_i64,
     };
     BASE_KEY + (kind_slot * KIND_STRIDE) + i64::from(submitted_by)
 }
@@ -968,22 +968,18 @@ mod tests {
     #[test]
     fn test_task_capacity_lock_keys_do_not_collide_between_kind_slots() {
         assert_ne!(
-            task_capacity_lock_key(1_000_000_000, TaskKind::Report),
+            task_capacity_lock_key(1_000_000_000, TaskKind::Export),
             task_capacity_lock_key(0, TaskKind::RemoteCall)
         );
 
         let user_id = 42;
-        let report_key = task_capacity_lock_key(user_id, TaskKind::Report);
+        let export_key = task_capacity_lock_key(user_id, TaskKind::Export);
         let remote_call_key = task_capacity_lock_key(user_id, TaskKind::RemoteCall);
         let fallback_key = task_capacity_lock_key(user_id, TaskKind::Import);
 
-        assert_ne!(report_key, remote_call_key);
-        assert_ne!(report_key, fallback_key);
+        assert_ne!(export_key, remote_call_key);
+        assert_ne!(export_key, fallback_key);
         assert_ne!(remote_call_key, fallback_key);
-        assert_eq!(
-            fallback_key,
-            task_capacity_lock_key(user_id, TaskKind::Export)
-        );
         assert_eq!(
             fallback_key,
             task_capacity_lock_key(user_id, TaskKind::Reindex)
@@ -1114,21 +1110,21 @@ mod tests {
     }
 
     #[test]
-    fn test_report_task_active_limit_blocks_new_work_for_same_user() {
+    fn test_export_task_active_limit_blocks_new_work_for_same_user() {
         let context = block_on(TestContext::new());
         let first = block_on(
             TaskCreateRequest {
-                kind: TaskKind::Report,
+                kind: TaskKind::Export,
                 submitted_by: context.admin_user.id,
                 submitted_token_id: None,
                 submitted_token_scoped: false,
                 submitted_token_scopes: serde_json::json!([]),
-                idempotency_key: Some(context.scoped_name("report-cap-first")),
-                request_hash: Some(context.scoped_name("report-cap-first-hash")),
-                request_payload: serde_json::json!({"report": "first"}),
+                idempotency_key: Some(context.scoped_name("export-cap-first")),
+                request_hash: Some(context.scoped_name("export-cap-first-hash")),
+                request_payload: serde_json::json!({"export": "first"}),
                 total_items: 1,
             }
-            .create_with_active_report_limit(&context.pool, 1),
+            .create_with_active_export_limit(&context.pool, 1),
         )
         .unwrap();
 
@@ -1136,23 +1132,23 @@ mod tests {
 
         let error = block_on(
             TaskCreateRequest {
-                kind: TaskKind::Report,
+                kind: TaskKind::Export,
                 submitted_by: context.admin_user.id,
                 submitted_token_id: None,
                 submitted_token_scoped: false,
                 submitted_token_scopes: serde_json::json!([]),
-                idempotency_key: Some(context.scoped_name("report-cap-second")),
-                request_hash: Some(context.scoped_name("report-cap-second-hash")),
-                request_payload: serde_json::json!({"report": "second"}),
+                idempotency_key: Some(context.scoped_name("export-cap-second")),
+                request_hash: Some(context.scoped_name("export-cap-second-hash")),
+                request_payload: serde_json::json!({"export": "second"}),
                 total_items: 1,
             }
-            .create_with_active_report_limit(&context.pool, 1),
+            .create_with_active_export_limit(&context.pool, 1),
         )
         .unwrap_err();
 
         match error {
             ApiError::TooManyRequests(message) => {
-                assert!(message.contains("Too many active report tasks for user"));
+                assert!(message.contains("Too many active export tasks for user"));
             }
             other => panic!("expected TooManyRequests, got {other:?}"),
         }

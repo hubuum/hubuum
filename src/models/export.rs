@@ -8,7 +8,7 @@ use crate::errors::ApiError;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ReportScopeKind {
+pub enum ExportScopeKind {
     Collections,
     Classes,
     ObjectsInClass,
@@ -18,20 +18,20 @@ pub enum ReportScopeKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
-#[schema(example = openapi_examples::report_scope_example)]
-pub struct ReportScope {
-    pub kind: ReportScopeKind,
+#[schema(example = openapi_examples::export_scope_example)]
+pub struct ExportScope {
+    pub kind: ExportScopeKind,
     pub class_id: Option<i32>,
     pub object_id: Option<i32>,
 }
 
-impl ReportScope {
+impl ExportScope {
     pub fn validate(&self) -> Result<(), ApiError> {
         match self.kind {
-            ReportScopeKind::Collections
-            | ReportScopeKind::Classes
-            | ReportScopeKind::ClassRelations
-            | ReportScopeKind::ObjectRelations => {
+            ExportScopeKind::Collections
+            | ExportScopeKind::Classes
+            | ExportScopeKind::ClassRelations
+            | ExportScopeKind::ObjectRelations => {
                 if self.class_id.is_some() || self.object_id.is_some() {
                     return Err(ApiError::BadRequest(format!(
                         "Scope '{}' does not accept class_id or object_id",
@@ -39,7 +39,7 @@ impl ReportScope {
                     )));
                 }
             }
-            ReportScopeKind::ObjectsInClass => {
+            ExportScopeKind::ObjectsInClass => {
                 if self.class_id.is_none() {
                     return Err(ApiError::BadRequest(
                         "Scope 'objects_in_class' requires class_id".to_string(),
@@ -51,7 +51,7 @@ impl ReportScope {
                     ));
                 }
             }
-            ReportScopeKind::RelatedObjects => {
+            ExportScopeKind::RelatedObjects => {
                 if self.class_id.is_none() || self.object_id.is_none() {
                     return Err(ApiError::BadRequest(
                         "Scope 'related_objects' requires both class_id and object_id".to_string(),
@@ -77,7 +77,7 @@ impl ReportScope {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
-pub enum ReportContentType {
+pub enum ExportContentType {
     #[serde(rename = "application/json")]
     ApplicationJson,
     #[serde(rename = "text/plain")]
@@ -88,24 +88,24 @@ pub enum ReportContentType {
     TextCsv,
 }
 
-impl ReportContentType {
+impl ExportContentType {
     pub fn as_mime(self) -> &'static str {
         match self {
-            ReportContentType::ApplicationJson => "application/json",
-            ReportContentType::TextPlain => "text/plain",
-            ReportContentType::TextHtml => "text/html",
-            ReportContentType::TextCsv => "text/csv",
+            ExportContentType::ApplicationJson => "application/json",
+            ExportContentType::TextPlain => "text/plain",
+            ExportContentType::TextHtml => "text/html",
+            ExportContentType::TextCsv => "text/csv",
         }
     }
 
     pub fn from_mime(value: &str) -> Result<Self, ApiError> {
         match value {
-            "application/json" => Ok(ReportContentType::ApplicationJson),
-            "text/plain" => Ok(ReportContentType::TextPlain),
-            "text/html" => Ok(ReportContentType::TextHtml),
-            "text/csv" => Ok(ReportContentType::TextCsv),
+            "application/json" => Ok(ExportContentType::ApplicationJson),
+            "text/plain" => Ok(ExportContentType::TextPlain),
+            "text/html" => Ok(ExportContentType::TextHtml),
+            "text/csv" => Ok(ExportContentType::TextCsv),
             _ => Err(ApiError::BadRequest(format!(
-                "Unsupported report content type: '{}'",
+                "Unsupported export content type: '{}'",
                 value
             ))),
         }
@@ -113,7 +113,7 @@ impl ReportContentType {
 
     pub fn ensure_template_output(self) -> Result<Self, ApiError> {
         match self {
-            ReportContentType::ApplicationJson => Err(ApiError::BadRequest(
+            ExportContentType::ApplicationJson => Err(ApiError::BadRequest(
                 "Stored templates only support text/plain, text/html, and text/csv".to_string(),
             )),
             _ => Ok(self),
@@ -123,22 +123,22 @@ impl ReportContentType {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ReportMissingDataPolicy {
+pub enum ExportMissingDataPolicy {
     Strict,
     Null,
     Omit,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
-#[schema(example = openapi_examples::report_limits_example)]
-pub struct ReportLimits {
+#[schema(example = openapi_examples::export_limits_example)]
+pub struct ExportLimits {
     pub max_items: Option<usize>,
     pub max_output_bytes: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ReportIncludeRelatedDirection {
+pub enum ExportIncludeRelatedDirection {
     Any,
     Outgoing,
     Incoming,
@@ -146,46 +146,46 @@ pub enum ReportIncludeRelatedDirection {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ReportIncludeRelatedSort {
+pub enum ExportIncludeRelatedSort {
     Path,
     Name,
     CreatedAt,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
-pub struct ReportIncludeRelatedObject {
+pub struct ExportIncludeRelatedObject {
     pub class_id: i32,
     pub class_relation_id: Option<i32>,
-    pub direction: Option<ReportIncludeRelatedDirection>,
-    pub sort: Option<ReportIncludeRelatedSort>,
+    pub direction: Option<ExportIncludeRelatedDirection>,
+    pub sort: Option<ExportIncludeRelatedSort>,
     pub max_depth: Option<i32>,
     pub limit: Option<i32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReportIncludeRelatedQuery {
+pub struct ExportIncludeRelatedQuery {
     pub class_id: i32,
     pub class_relation_id: Option<i32>,
-    pub direction: ReportIncludeRelatedDirection,
-    pub sort: ReportIncludeRelatedSort,
+    pub direction: ExportIncludeRelatedDirection,
+    pub sort: ExportIncludeRelatedSort,
     pub max_depth: i32,
     pub limit: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
-pub struct ReportInclude {
-    pub related_objects: Option<HashMap<String, ReportIncludeRelatedObject>>,
+pub struct ExportInclude {
+    pub related_objects: Option<HashMap<String, ExportIncludeRelatedObject>>,
 }
 
-/// Bounds for `include.related_objects` hydration, shared by ad-hoc report requests
-/// (`POST /api/v1/reports`) and stored executable report templates so the two paths cannot drift.
+/// Bounds for `include.related_objects` hydration, shared by ad-hoc export requests
+/// (`POST /api/v1/exports`) and stored executable export templates so the two paths cannot drift.
 pub const RELATED_INCLUDE_DEFAULT_MAX_DEPTH: i32 = 1;
 pub const RELATED_INCLUDE_MAX_DEPTH_LIMIT: i32 = 10;
 pub const RELATED_INCLUDE_DEFAULT_LIMIT: i32 = 1;
 pub const RELATED_INCLUDE_MAX_LIMIT: i32 = 50;
 pub const RELATED_INCLUDE_MAX_ALIASES: usize = 8;
 
-impl ReportInclude {
+impl ExportInclude {
     /// Validate the `related_objects` block: alias count, alias syntax, and per-alias option
     /// bounds. Callers enforce scope-specific rules (e.g. that `include` is only valid for
     /// `objects_in_class`).
@@ -209,7 +209,7 @@ impl ReportInclude {
     }
 }
 
-impl ReportIncludeRelatedObject {
+impl ExportIncludeRelatedObject {
     fn validate(&self, alias: &str) -> Result<(), ApiError> {
         if self.class_id <= 0 {
             return Err(ApiError::BadRequest(format!(
@@ -263,67 +263,67 @@ fn validate_related_include_alias(alias: &str) -> Result<(), ApiError> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
-#[schema(example = openapi_examples::report_relation_context_example)]
+#[schema(example = openapi_examples::export_relation_context_example)]
 #[serde(deny_unknown_fields)]
-pub struct ReportRelationContext {
+pub struct ExportRelationContext {
     pub depth: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
-#[schema(example = openapi_examples::report_request_example)]
-pub struct ReportRequest {
-    pub scope: ReportScope,
+#[schema(example = openapi_examples::export_request_example)]
+pub struct ExportRequest {
+    pub scope: ExportScope,
     pub query: Option<String>,
-    pub missing_data_policy: Option<ReportMissingDataPolicy>,
-    pub limits: Option<ReportLimits>,
-    pub include: Option<ReportInclude>,
-    pub relation_context: Option<ReportRelationContext>,
+    pub missing_data_policy: Option<ExportMissingDataPolicy>,
+    pub limits: Option<ExportLimits>,
+    pub include: Option<ExportInclude>,
+    pub relation_context: Option<ExportRelationContext>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
-#[schema(example = openapi_examples::report_warning_example)]
-pub struct ReportWarning {
+#[schema(example = openapi_examples::export_warning_example)]
+pub struct ExportWarning {
     pub code: String,
     pub message: String,
     pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
-#[schema(example = openapi_examples::report_meta_example)]
-pub struct ReportMeta {
+#[schema(example = openapi_examples::export_meta_example)]
+pub struct ExportMeta {
     pub count: usize,
     pub truncated: bool,
-    pub scope: ReportScope,
-    pub content_type: ReportContentType,
+    pub scope: ExportScope,
+    pub content_type: ExportContentType,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
-#[schema(example = openapi_examples::report_json_response_example)]
-pub struct ReportJsonResponse {
+#[schema(example = openapi_examples::export_json_response_example)]
+pub struct ExportJsonResponse {
     pub items: Vec<serde_json::Value>,
-    pub meta: ReportMeta,
-    pub warnings: Vec<ReportWarning>,
+    pub meta: ExportMeta,
+    pub warnings: Vec<ExportWarning>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
-#[schema(example = openapi_examples::report_template_run_request_example)]
+#[schema(example = openapi_examples::export_template_run_request_example)]
 #[serde(deny_unknown_fields)]
-pub struct ReportTemplateRunRequest {
+pub struct ExportTemplateRunRequest {
     pub query: Option<String>,
     pub object_id: Option<i32>,
-    pub missing_data_policy: Option<ReportMissingDataPolicy>,
-    pub limits: Option<ReportLimits>,
+    pub missing_data_policy: Option<ExportMissingDataPolicy>,
+    pub limits: Option<ExportLimits>,
 }
 
-impl ReportScopeKind {
+impl ExportScopeKind {
     pub fn as_str(self) -> &'static str {
         match self {
-            ReportScopeKind::Collections => "collections",
-            ReportScopeKind::Classes => "classes",
-            ReportScopeKind::ObjectsInClass => "objects_in_class",
-            ReportScopeKind::ClassRelations => "class_relations",
-            ReportScopeKind::ObjectRelations => "object_relations",
-            ReportScopeKind::RelatedObjects => "related_objects",
+            ExportScopeKind::Collections => "collections",
+            ExportScopeKind::Classes => "classes",
+            ExportScopeKind::ObjectsInClass => "objects_in_class",
+            ExportScopeKind::ClassRelations => "class_relations",
+            ExportScopeKind::ObjectRelations => "object_relations",
+            ExportScopeKind::RelatedObjects => "related_objects",
         }
     }
 
@@ -335,7 +335,7 @@ impl ReportScopeKind {
     }
 }
 
-impl FromStr for ReportScopeKind {
+impl FromStr for ExportScopeKind {
     type Err = ApiError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
@@ -347,13 +347,13 @@ impl FromStr for ReportScopeKind {
             "object_relations" => Ok(Self::ObjectRelations),
             "related_objects" => Ok(Self::RelatedObjects),
             _ => Err(ApiError::BadRequest(format!(
-                "Unsupported report scope kind: '{value}'"
+                "Unsupported export scope kind: '{value}'"
             ))),
         }
     }
 }
 
-impl ReportMissingDataPolicy {
+impl ExportMissingDataPolicy {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Strict => "strict",
@@ -363,7 +363,7 @@ impl ReportMissingDataPolicy {
     }
 }
 
-impl FromStr for ReportMissingDataPolicy {
+impl FromStr for ExportMissingDataPolicy {
     type Err = ApiError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
@@ -372,7 +372,7 @@ impl FromStr for ReportMissingDataPolicy {
             "null" => Ok(Self::Null),
             "omit" => Ok(Self::Omit),
             _ => Err(ApiError::BadRequest(format!(
-                "Unsupported report missing data policy: '{value}'"
+                "Unsupported export missing data policy: '{value}'"
             ))),
         }
     }
@@ -384,70 +384,70 @@ impl FromStr for ReportMissingDataPolicy {
 mod openapi_examples {
     use super::*;
 
-    pub(super) fn report_scope_example() -> ReportScope {
-        ReportScope {
-            kind: ReportScopeKind::ObjectsInClass,
+    pub(super) fn export_scope_example() -> ExportScope {
+        ExportScope {
+            kind: ExportScopeKind::ObjectsInClass,
             class_id: Some(42),
             object_id: None,
         }
     }
 
-    pub(super) fn report_limits_example() -> ReportLimits {
-        ReportLimits {
+    pub(super) fn export_limits_example() -> ExportLimits {
+        ExportLimits {
             max_items: Some(100),
             max_output_bytes: Some(262_144),
         }
     }
 
-    pub(super) fn report_request_example() -> ReportRequest {
-        ReportRequest {
-            scope: report_scope_example(),
+    pub(super) fn export_request_example() -> ExportRequest {
+        ExportRequest {
+            scope: export_scope_example(),
             query: Some("name__icontains=server&sort=name".to_string()),
-            missing_data_policy: Some(ReportMissingDataPolicy::Strict),
-            limits: Some(report_limits_example()),
+            missing_data_policy: Some(ExportMissingDataPolicy::Strict),
+            limits: Some(export_limits_example()),
             include: None,
             relation_context: None,
         }
     }
 
-    pub(super) fn report_relation_context_example() -> ReportRelationContext {
-        ReportRelationContext { depth: Some(2) }
+    pub(super) fn export_relation_context_example() -> ExportRelationContext {
+        ExportRelationContext { depth: Some(2) }
     }
 
-    pub(super) fn report_warning_example() -> ReportWarning {
-        ReportWarning {
+    pub(super) fn export_warning_example() -> ExportWarning {
+        ExportWarning {
             code: "missing_value".to_string(),
             message: "Template lookup failed".to_string(),
             path: Some("item.data.owner".to_string()),
         }
     }
 
-    pub(super) fn report_meta_example() -> ReportMeta {
-        ReportMeta {
+    pub(super) fn export_meta_example() -> ExportMeta {
+        ExportMeta {
             count: 2,
             truncated: false,
-            scope: report_scope_example(),
-            content_type: ReportContentType::ApplicationJson,
+            scope: export_scope_example(),
+            content_type: ExportContentType::ApplicationJson,
         }
     }
 
-    pub(super) fn report_json_response_example() -> ReportJsonResponse {
-        ReportJsonResponse {
+    pub(super) fn export_json_response_example() -> ExportJsonResponse {
+        ExportJsonResponse {
             items: vec![
                 serde_json::json!({"id": 1, "name": "srv-01"}),
                 serde_json::json!({"id": 2, "name": "srv-02"}),
             ],
-            meta: report_meta_example(),
+            meta: export_meta_example(),
             warnings: vec![],
         }
     }
 
-    pub(super) fn report_template_run_request_example() -> ReportTemplateRunRequest {
-        ReportTemplateRunRequest {
+    pub(super) fn export_template_run_request_example() -> ExportTemplateRunRequest {
+        ExportTemplateRunRequest {
             query: Some("name__icontains=server&sort=name".to_string()),
             object_id: None,
-            missing_data_policy: Some(ReportMissingDataPolicy::Strict),
-            limits: Some(report_limits_example()),
+            missing_data_policy: Some(ExportMissingDataPolicy::Strict),
+            limits: Some(export_limits_example()),
         }
     }
 }

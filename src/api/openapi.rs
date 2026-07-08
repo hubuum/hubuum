@@ -1,9 +1,9 @@
 use crate::api::handlers::{auth, meta, probes};
 use crate::api::v1::handlers::history::HistoryResponse;
 use crate::api::v1::handlers::{
-    classes, collections, event_deliveries, event_sinks, event_subscriptions, events, groups,
-    imports, me, principals, relations, remote_targets, reports, search, service_accounts, tasks,
-    templates, users,
+    classes, collections, event_deliveries, event_sinks, event_subscriptions, events,
+    export_templates, exports, groups, imports, me, principals, relations, remote_targets, search,
+    service_accounts, tasks, users,
 };
 use crate::events::EventResponse;
 use crate::models::{
@@ -11,29 +11,29 @@ use crate::models::{
     EventDeliveryHealthResponse, EventDeliveryQueueHealth, EventDeliveryStatus,
     EventDeliveryStatusCounts, EventDeliveryUpdateResponse, EventFanoutHealth, EventSink,
     EventSinkDeliveryHealth, EventSinkKind, EventSubscription, EventSubscriptionDeliveryHealth,
-    EventWorkerHealth, EventWorkerWakeupStats, Group, GroupKey, GroupPermission, HubuumClass,
+    EventWorkerHealth, EventWorkerWakeupStats, ExportContentType, ExportJsonResponse, ExportLimits,
+    ExportMeta, ExportMissingDataPolicy, ExportRequest, ExportScope, ExportScopeKind,
+    ExportTaskDetails, ExportTemplate, ExportTemplateHistory, ExportTemplateID, ExportTemplateKind,
+    ExportTemplateRunRequest, ExportWarning, Group, GroupKey, GroupPermission, HubuumClass,
     HubuumClassExpanded, HubuumClassHistory, HubuumClassRelation, HubuumClassWithPath,
     HubuumObject, HubuumObjectHistory, HubuumObjectRelation, HubuumObjectWithPath, ImportAtomicity,
     ImportClassInput, ImportClassRelationInput, ImportCollectionInput,
     ImportCollectionPermissionInput, ImportCollisionPolicy, ImportGraph, ImportMode,
     ImportObjectInput, ImportObjectRelationInput, ImportPermissionPolicy, ImportRequest,
     ImportTaskDetails, ImportTaskResultResponse, LoginUser, NewCollectionWithAssignee,
-    NewEventSink, NewEventSubscription, NewGroup, NewHubuumClass, NewHubuumClassRelation,
-    NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation, NewRemoteTarget,
-    NewReportTemplate, NewServiceAccount, NewUser, ObjectKey, ObjectsByClass, Permission,
-    Permissions, PrincipalMemberResponse, PrincipalToken, PrincipalTokenMetadata,
-    RelatedClassGraph, RelatedObjectGraph, RemoteAuthConfig, RemoteCallResult, RemoteHttpMethod,
-    RemoteInvocationBodyOverride, RemoteInvocationParameters, RemoteInvocationSubject,
-    RemoteTarget, RemoteTargetHistory, RemoteTargetID, RemoteTargetInvokeRequest,
-    RemoteTargetSubjectType, ReportContentType, ReportJsonResponse, ReportLimits, ReportMeta,
-    ReportMissingDataPolicy, ReportRequest, ReportScope, ReportScopeKind, ReportTaskDetails,
-    ReportTemplate, ReportTemplateHistory, ReportTemplateID, ReportTemplateKind,
-    ReportTemplateRunRequest, ReportWarning, ServiceAccountResponse, TaskDetails,
+    NewEventSink, NewEventSubscription, NewExportTemplate, NewGroup, NewHubuumClass,
+    NewHubuumClassRelation, NewHubuumClassRelationFromClass, NewHubuumObject,
+    NewHubuumObjectRelation, NewRemoteTarget, NewServiceAccount, NewUser, ObjectKey,
+    ObjectsByClass, Permission, Permissions, PrincipalMemberResponse, PrincipalToken,
+    PrincipalTokenMetadata, RelatedClassGraph, RelatedObjectGraph, RemoteAuthConfig,
+    RemoteCallResult, RemoteHttpMethod, RemoteInvocationBodyOverride, RemoteInvocationParameters,
+    RemoteInvocationSubject, RemoteTarget, RemoteTargetHistory, RemoteTargetID,
+    RemoteTargetInvokeRequest, RemoteTargetSubjectType, ServiceAccountResponse, TaskDetails,
     TaskEventResponse, TaskKind, TaskLinks, TaskProgress, TaskResponse, TaskStatus,
     UnifiedSearchBatchResponse, UnifiedSearchDoneEvent, UnifiedSearchErrorEvent, UnifiedSearchKind,
     UnifiedSearchResponse, UnifiedSearchStartedEvent, UpdateCollection, UpdateEventSink,
-    UpdateEventSubscription, UpdateGroup, UpdateHubuumClass, UpdateHubuumObject,
-    UpdateRemoteTarget, UpdateReportTemplate, UpdateServiceAccount, UpdateUser, UserResponse,
+    UpdateEventSubscription, UpdateExportTemplate, UpdateGroup, UpdateHubuumClass,
+    UpdateHubuumObject, UpdateRemoteTarget, UpdateServiceAccount, UpdateUser, UserResponse,
 };
 use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER, page_limits_or_defaults};
 use actix_web::{HttpResponse, Responder};
@@ -130,9 +130,9 @@ use utoipa::{Modify, OpenApi, ToSchema};
         relations::delete_object_relation,
         search::get_search,
         search::stream_search,
-        reports::run_report,
-        reports::get_report,
-        reports::get_report_output,
+        exports::run_export,
+        exports::get_export,
+        exports::get_export_output,
         tasks::get_tasks,
         tasks::get_task,
         tasks::get_task_events,
@@ -142,7 +142,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         events::get_object_events,
         events::get_user_events,
         events::get_group_events,
-        events::get_report_template_events,
+        events::get_export_template_events,
         events::get_remote_target_events,
         event_sinks::create_event_sink,
         event_sinks::get_event_sinks,
@@ -162,14 +162,14 @@ use utoipa::{Modify, OpenApi, ToSchema};
         imports::create_import,
         imports::get_import,
         imports::get_import_results,
-        templates::get_templates,
-        templates::create_template,
-        templates::get_template,
-        templates::get_template_history,
-        templates::get_template_as_of,
-        templates::run_template_report,
-        templates::patch_template,
-        templates::delete_template,
+        export_templates::get_templates,
+        export_templates::create_template,
+        export_templates::get_template,
+        export_templates::get_template_history,
+        export_templates::get_template_as_of,
+        export_templates::run_template_export,
+        export_templates::patch_template,
+        export_templates::delete_template,
         remote_targets::get_remote_targets,
         remote_targets::create_remote_target,
         remote_targets::get_remote_target,
@@ -250,7 +250,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             HistoryResponse<HubuumClassHistory>,
             HistoryResponse<HubuumObjectHistory>,
             HistoryResponse<CollectionHistory>,
-            HistoryResponse<ReportTemplateHistory>,
+            HistoryResponse<ExportTemplateHistory>,
             HistoryResponse<RemoteTargetHistory>,
             HubuumClassExpanded,
             HubuumClassWithPath,
@@ -273,7 +273,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             TaskProgress,
             TaskLinks,
             ImportTaskDetails,
-            ReportTaskDetails,
+            ExportTaskDetails,
             TaskDetails,
             TaskResponse,
             TaskEventResponse,
@@ -315,28 +315,28 @@ use utoipa::{Modify, OpenApi, ToSchema};
             ImportCollectionPermissionInput,
             ImportGraph,
             ImportRequest,
-            ReportScopeKind,
-            ReportScope,
-            ReportContentType,
-            ReportMissingDataPolicy,
-            ReportLimits,
-            ReportRequest,
-            ReportWarning,
-            ReportMeta,
-            ReportJsonResponse,
+            ExportScopeKind,
+            ExportScope,
+            ExportContentType,
+            ExportMissingDataPolicy,
+            ExportLimits,
+            ExportRequest,
+            ExportWarning,
+            ExportMeta,
+            ExportJsonResponse,
             UnifiedSearchKind,
             UnifiedSearchResponse,
             UnifiedSearchBatchResponse,
             UnifiedSearchStartedEvent,
             UnifiedSearchDoneEvent,
             UnifiedSearchErrorEvent,
-            ReportTemplateID,
-            ReportTemplateKind,
-            ReportTemplate,
-            ReportTemplateHistory,
-            ReportTemplateRunRequest,
-            NewReportTemplate,
-            UpdateReportTemplate,
+            ExportTemplateID,
+            ExportTemplateKind,
+            ExportTemplate,
+            ExportTemplateHistory,
+            ExportTemplateRunRequest,
+            NewExportTemplate,
+            UpdateExportTemplate,
             RemoteTargetID,
             RemoteHttpMethod,
             RemoteAuthConfig,
@@ -366,8 +366,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
         (name = "classes", description = "Class and object-in-class endpoints"),
         (name = "tasks", description = "Generic long-running task endpoints"),
         (name = "imports", description = "Import submission and import-specific result endpoints"),
-        (name = "reports", description = "Server-side report execution endpoints"),
-        (name = "templates", description = "Stored report template management endpoints"),
+        (name = "exports", description = "Server-side export execution endpoints"),
+        (name = "export-templates", description = "Stored export template management endpoints"),
         (name = "remote-targets", description = "Collection-scoped remote target management and invocation endpoints")
     )
 )]
@@ -521,8 +521,8 @@ fn is_cursor_paginated_get(path: &str, method: &str) -> bool {
                 | "/api/v1/collections/{collection_id}/permissions/principal/{principal_id}"
                 | "/api/v1/collections/{collection_id}/has_permissions/{permission}"
                 | "/api/v1/tasks"
-                | "/api/v1/templates"
-                | "/api/v1/templates/{template_id}/history"
+                | "/api/v1/export-templates"
+                | "/api/v1/export-templates/{template_id}/history"
                 | "/api/v1/remote-targets/{remote_target_id}/history"
                 | "/api/v1/relations/classes"
                 | "/api/v1/relations/objects"
@@ -863,9 +863,9 @@ mod tests {
             "/api/v1/imports",
             "/api/v1/imports/{task_id}",
             "/api/v1/imports/{task_id}/results",
-            "/api/v1/reports",
-            "/api/v1/reports/{task_id}",
-            "/api/v1/reports/{task_id}/output",
+            "/api/v1/exports",
+            "/api/v1/exports/{task_id}",
+            "/api/v1/exports/{task_id}/output",
             "/api/v1/search",
             "/api/v1/search/stream",
             "/api/v1/tasks",
@@ -881,12 +881,12 @@ mod tests {
             "/api/v1/event-sinks/{sink_id}",
             "/api/v1/collections/{collection_id}/event-subscriptions",
             "/api/v1/collections/{collection_id}/event-subscriptions/{subscription_id}",
-            "/api/v1/templates",
-            "/api/v1/templates/{template_id}",
-            "/api/v1/templates/{template_id}/events",
-            "/api/v1/templates/{template_id}/history",
-            "/api/v1/templates/{template_id}/history/as-of",
-            "/api/v1/templates/{template_id}/reports",
+            "/api/v1/export-templates",
+            "/api/v1/export-templates/{template_id}",
+            "/api/v1/export-templates/{template_id}/events",
+            "/api/v1/export-templates/{template_id}/history",
+            "/api/v1/export-templates/{template_id}/history/as-of",
+            "/api/v1/export-templates/{template_id}/exports",
             "/api/v1/remote-targets",
             "/api/v1/remote-targets/{remote_target_id}/history",
             "/api/v1/remote-targets/{remote_target_id}/history/as-of",
@@ -935,18 +935,21 @@ mod tests {
             json.pointer("/paths/~1api~1v0~1auth~1login/post/responses/429")
                 .is_some()
         );
-        assert!(json.pointer("/paths/~1api~1v1~1reports/post").is_some());
+        assert!(json.pointer("/paths/~1api~1v1~1exports/post").is_some());
         assert!(
-            json.pointer("/paths/~1api~1v1~1reports~1{task_id}/get")
+            json.pointer("/paths/~1api~1v1~1exports~1{task_id}/get")
                 .is_some()
         );
         assert!(
-            json.pointer("/paths/~1api~1v1~1reports~1{task_id}~1output/get")
+            json.pointer("/paths/~1api~1v1~1exports~1{task_id}~1output/get")
                 .is_some()
         );
-        assert!(json.pointer("/paths/~1api~1v1~1templates/get").is_some());
         assert!(
-            json.pointer("/paths/~1api~1v1~1templates~1{template_id}~1reports/post")
+            json.pointer("/paths/~1api~1v1~1export-templates/get")
+                .is_some()
+        );
+        assert!(
+            json.pointer("/paths/~1api~1v1~1export-templates~1{template_id}~1exports/post")
                 .is_some()
         );
         assert!(

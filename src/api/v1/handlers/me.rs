@@ -147,6 +147,6 @@ pub async fn list_my_permissions(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
 ) -> Result<impl Responder, ApiError> {
-    let report = principal_permissions_response(&pool, &requestor.principal).await?;
-    Ok(ApiResponse::new(report, StatusCode::OK))
+    let export = principal_permissions_response(&pool, &requestor.principal).await?;
+    Ok(ApiResponse::new(export, StatusCode::OK))
 }

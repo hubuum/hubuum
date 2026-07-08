@@ -45,7 +45,7 @@ tokio::task_local! {
 /// While the future is being polled, every [`with_connection`] /
 /// [`with_transaction`] call made on the same task applies the given
 /// `statement_timeout` as a transaction-local `SET LOCAL statement_timeout`.
-/// This is how the report execution path bounds its queries independently of
+/// This is how the export execution path bounds its queries independently of
 /// the pool-global `db_statement_timeout_ms`, without threading the timeout
 /// through the search layer. A `statement_timeout` of `None` is a no-op scope.
 pub async fn with_statement_timeout_scope<F, R>(
@@ -161,7 +161,7 @@ pub fn updated_or_current<T, E>(
 /// transaction-local `SET LOCAL statement_timeout`. Postgres cancels any
 /// statement exceeding the budget server-side, and the override reverts
 /// automatically at COMMIT/ROLLBACK, so it never leaks back to the shared pool.
-/// This is the mechanism that makes report queries bounded independently of the
+/// This is the mechanism that makes export queries bounded independently of the
 /// pool-global `db_statement_timeout_ms`.
 ///
 /// Most callers should use [`with_connection`] and set the timeout ambiently via
@@ -240,8 +240,8 @@ where
 pub fn init_pool(database_url: &str, max_size: u32) -> DbPool {
     // Read the optional pool-global statement timeout from config. This is
     // intentionally pool-global: every connection handed out by this pool
-    // inherits it, so it bounds all DB work (reports, imports, admin commands,
-    // health/auth queries), not just report stages. 0 = disabled.
+    // inherits it, so it bounds all DB work (exports, imports, admin commands,
+    // health/auth queries), not just export stages. 0 = disabled.
     let statement_timeout_ms = crate::config::get_config()
         .map(|config| config.db_statement_timeout_ms)
         .unwrap_or(0);

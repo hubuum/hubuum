@@ -826,7 +826,7 @@ mod tests {
     }
 
     /// `/iam/me/permissions` is self-service for the authenticated principal and
-    /// reports effective collection permissions through its group memberships.
+    /// exports effective collection permissions through its group memberships.
     #[actix_web::test]
     async fn test_me_permissions_route_works_for_service_account() {
         let context = TestContext::new().await;
@@ -842,11 +842,11 @@ mod tests {
 
         let resp = get_request(pool, &token, &format!("{ME_ENDPOINT}/permissions")).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let report: Vec<crate::api::v1::handlers::principals::PrincipalCollectionPermissions> =
+        let export: Vec<crate::api::v1::handlers::principals::PrincipalCollectionPermissions> =
             test::read_body_json(resp).await;
 
         assert!(
-            report
+            export
                 .iter()
                 .any(|entry| entry.collection_id == fixture.collection.id),
             "self permissions should include the fixture collection"
@@ -945,10 +945,10 @@ mod tests {
         assert_eq!(resp.status(), expected);
     }
 
-    /// A principal's effective-permissions report lists each collection it can act
+    /// A principal's effective-permissions export lists each collection it can act
     /// on, broken down by the granting group (here, its owner group's grant).
     #[actix_web::test]
-    async fn test_principal_permissions_report_groups_by_granting_group() {
+    async fn test_principal_permissions_export_groups_by_granting_group() {
         use crate::api::v1::handlers::principals::PrincipalCollectionPermissions;
 
         let context = TestContext::new().await;
@@ -967,12 +967,12 @@ mod tests {
             &format!("{PRINCIPALS_ENDPOINT}/{}/permissions", sa.id),
         )
         .await;
-        let report: Vec<PrincipalCollectionPermissions> = test::read_body_json(resp).await;
+        let export: Vec<PrincipalCollectionPermissions> = test::read_body_json(resp).await;
 
-        let collection = report
+        let collection = export
             .iter()
             .find(|n| n.collection_id == fixture.collection.id)
-            .expect("report should include the collection the SA has access to");
+            .expect("export should include the collection the SA has access to");
         let grant_from_owner = collection
             .grants
             .iter()
@@ -980,7 +980,7 @@ mod tests {
 
         assert!(
             grant_from_owner,
-            "report should attribute the collection permissions to the owner group"
+            "export should attribute the collection permissions to the owner group"
         );
     }
 
@@ -1025,7 +1025,7 @@ mod tests {
     ) -> TaskRecord {
         synthetic_task_of_kind(
             pool,
-            TaskKind::Report,
+            TaskKind::Export,
             submitted_by,
             status,
             idempotency_key,

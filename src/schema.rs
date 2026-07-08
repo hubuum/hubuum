@@ -107,6 +107,74 @@ diesel::table! {
 }
 
 diesel::table! {
+    export_task_outputs (id) {
+        id -> Int4,
+        task_id -> Int4,
+        template_name -> Nullable<Varchar>,
+        content_type -> Varchar,
+        json_output -> Nullable<Jsonb>,
+        text_output -> Nullable<Text>,
+        meta_json -> Jsonb,
+        warnings_json -> Jsonb,
+        warning_count -> Int4,
+        truncated -> Bool,
+        output_expires_at -> Timestamp,
+        total_duration_ms -> Int4,
+        query_duration_ms -> Int4,
+        hydration_duration_ms -> Int4,
+        render_duration_ms -> Int4,
+        created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    export_templates (id) {
+        id -> Int4,
+        collection_id -> Int4,
+        name -> Varchar,
+        description -> Varchar,
+        content_type -> Varchar,
+        template -> Text,
+        kind -> Varchar,
+        scope_kind -> Nullable<Varchar>,
+        class_id -> Nullable<Int4>,
+        default_query -> Nullable<Text>,
+        include -> Nullable<Jsonb>,
+        relation_context -> Nullable<Jsonb>,
+        default_missing_data_policy -> Nullable<Varchar>,
+        default_limits -> Nullable<Jsonb>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    export_templates_history (history_id) {
+        id -> Int4,
+        collection_id -> Int4,
+        name -> Varchar,
+        description -> Varchar,
+        content_type -> Varchar,
+        template -> Text,
+        kind -> Varchar,
+        scope_kind -> Nullable<Varchar>,
+        class_id -> Nullable<Int4>,
+        default_query -> Nullable<Text>,
+        include -> Nullable<Jsonb>,
+        relation_context -> Nullable<Jsonb>,
+        default_missing_data_policy -> Nullable<Varchar>,
+        default_limits -> Nullable<Jsonb>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+        op -> Varchar,
+        valid_from -> Timestamptz,
+        valid_to -> Nullable<Timestamptz>,
+        actor_id -> Nullable<Int4>,
+        history_id -> Int8,
+    }
+}
+
+diesel::table! {
     group_memberships (principal_id, group_id) {
         principal_id -> Int4,
         group_id -> Int4,
@@ -384,74 +452,6 @@ diesel::table! {
 }
 
 diesel::table! {
-    report_task_outputs (id) {
-        id -> Int4,
-        task_id -> Int4,
-        template_name -> Nullable<Varchar>,
-        content_type -> Varchar,
-        json_output -> Nullable<Jsonb>,
-        text_output -> Nullable<Text>,
-        meta_json -> Jsonb,
-        warnings_json -> Jsonb,
-        warning_count -> Int4,
-        truncated -> Bool,
-        output_expires_at -> Timestamp,
-        total_duration_ms -> Int4,
-        query_duration_ms -> Int4,
-        hydration_duration_ms -> Int4,
-        render_duration_ms -> Int4,
-        created_at -> Timestamp,
-    }
-}
-
-diesel::table! {
-    report_templates (id) {
-        id -> Int4,
-        collection_id -> Int4,
-        name -> Varchar,
-        description -> Varchar,
-        content_type -> Varchar,
-        template -> Text,
-        kind -> Varchar,
-        scope_kind -> Nullable<Varchar>,
-        class_id -> Nullable<Int4>,
-        default_query -> Nullable<Text>,
-        include -> Nullable<Jsonb>,
-        relation_context -> Nullable<Jsonb>,
-        default_missing_data_policy -> Nullable<Varchar>,
-        default_limits -> Nullable<Jsonb>,
-        created_at -> Timestamp,
-        updated_at -> Timestamp,
-    }
-}
-
-diesel::table! {
-    report_templates_history (history_id) {
-        id -> Int4,
-        collection_id -> Int4,
-        name -> Varchar,
-        description -> Varchar,
-        content_type -> Varchar,
-        template -> Text,
-        kind -> Varchar,
-        scope_kind -> Nullable<Varchar>,
-        class_id -> Nullable<Int4>,
-        default_query -> Nullable<Text>,
-        include -> Nullable<Jsonb>,
-        relation_context -> Nullable<Jsonb>,
-        default_missing_data_policy -> Nullable<Varchar>,
-        default_limits -> Nullable<Jsonb>,
-        created_at -> Timestamp,
-        updated_at -> Timestamp,
-        op -> Varchar,
-        valid_from -> Timestamptz,
-        valid_to -> Nullable<Timestamptz>,
-        actor_id -> Nullable<Int4>,
-        history_id -> Int8,
-    }
-}
-
-diesel::table! {
     service_accounts (id) {
         id -> Int4,
         kind -> Varchar,
@@ -530,6 +530,9 @@ diesel::joinable!(event_deliveries -> event_subscriptions (subscription_id));
 diesel::joinable!(event_deliveries -> events (event_id));
 diesel::joinable!(event_subscriptions -> collections (collection_id));
 diesel::joinable!(event_subscriptions -> event_sinks (sink_id));
+diesel::joinable!(export_task_outputs -> tasks (task_id));
+diesel::joinable!(export_templates -> collections (collection_id));
+diesel::joinable!(export_templates -> hubuumclass (class_id));
 diesel::joinable!(group_memberships -> groups (group_id));
 diesel::joinable!(group_memberships -> principals (principal_id));
 diesel::joinable!(hubuumclass -> collections (collection_id));
@@ -543,9 +546,6 @@ diesel::joinable!(remote_call_results -> remote_targets (target_id));
 diesel::joinable!(remote_call_results -> tasks (task_id));
 diesel::joinable!(remote_targets -> collections (collection_id));
 diesel::joinable!(remote_targets -> hubuumclass (class_id));
-diesel::joinable!(report_task_outputs -> tasks (task_id));
-diesel::joinable!(report_templates -> collections (collection_id));
-diesel::joinable!(report_templates -> hubuumclass (class_id));
 diesel::joinable!(service_accounts -> groups (owner_group_id));
 diesel::joinable!(tasks -> tokens (submitted_token_id));
 diesel::joinable!(token_scopes -> tokens (token_id));
@@ -559,6 +559,9 @@ diesel::allow_tables_to_appear_in_same_query!(
     event_sinks,
     event_subscriptions,
     events,
+    export_task_outputs,
+    export_templates,
+    export_templates_history,
     group_memberships,
     groups,
     hubuumclass,
@@ -576,9 +579,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     remote_call_results,
     remote_targets,
     remote_targets_history,
-    report_task_outputs,
-    report_templates,
-    report_templates_history,
     service_accounts,
     tasks,
     token_scopes,

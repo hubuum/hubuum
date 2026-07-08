@@ -226,7 +226,7 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn test_event_delivery_health_reports_pipeline_aggregates() {
+    async fn test_event_delivery_health_exports_pipeline_aggregates() {
         let context = TestContext::new().await;
         let fixture = create_delivery(&context).await;
 

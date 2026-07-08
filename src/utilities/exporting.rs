@@ -17,7 +17,7 @@ use minijinja::{
 
 use crate::config::get_config;
 use crate::errors::ApiError;
-use crate::models::{ReportContentType, ReportMissingDataPolicy, ReportTemplate, ReportWarning};
+use crate::models::{ExportContentType, ExportMissingDataPolicy, ExportTemplate, ExportWarning};
 
 const TEMPLATE_ENV_CACHE_MAX_ENTRIES: usize = 128;
 
@@ -26,8 +26,8 @@ struct TemplateEnvCacheKey {
     collection_id: i32,
     collection_signature: CollectionTemplateSignature,
     template_name: String,
-    content_type: ReportContentType,
-    missing_data_policy: ReportMissingDataPolicy,
+    content_type: ExportContentType,
+    missing_data_policy: ExportMissingDataPolicy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -49,7 +49,7 @@ static TEMPLATE_ENV_CACHE: OnceLock<
 #[derive(Debug, Default)]
 struct TemplateWarningCapture {
     missing_value_keys: HashSet<(String, Option<String>)>,
-    warnings: Vec<ReportWarning>,
+    warnings: Vec<ExportWarning>,
 }
 
 thread_local! {
@@ -60,8 +60,8 @@ pub fn validate_template(
     template_name: &str,
     template_source: &str,
     collection_id: i32,
-    collection_templates: &[ReportTemplate],
-    content_type: ReportContentType,
+    collection_templates: &[ExportTemplate],
+    content_type: ExportContentType,
 ) -> Result<(), ApiError> {
     let (recursion_limit, fuel) = template_limits_from_config();
     validate_template_with_limits(
@@ -79,8 +79,8 @@ pub fn validate_template_with_limits(
     template_name: &str,
     template_source: &str,
     collection_id: i32,
-    collection_templates: &[ReportTemplate],
-    content_type: ReportContentType,
+    collection_templates: &[ExportTemplate],
+    content_type: ExportContentType,
     recursion_limit: usize,
     fuel: u64,
 ) -> Result<(), ApiError> {
@@ -90,7 +90,7 @@ pub fn validate_template_with_limits(
         collection_id,
         collection_templates,
         content_type,
-        ReportMissingDataPolicy::Omit,
+        ExportMissingDataPolicy::Omit,
         TemplateLimits::new(recursion_limit, fuel),
     )?;
 
@@ -103,9 +103,9 @@ pub fn validate_template_with_limits(
     Ok(())
 }
 
-/// Size-bounded `Write` sink shared by both report output paths. minijinja's
+/// Size-bounded `Write` sink shared by both export output paths. minijinja's
 /// `render_captured_to` (text/html/csv) and `serde_json::to_writer` (JSON) both write into this as
-/// they produce bytes, so an oversized report aborts at the configured byte budget instead of being
+/// they produce bytes, so an oversized export aborts at the configured byte budget instead of being
 /// fully materialized before the 413. Memory stays bounded by `max_bytes` because writing stops at
 /// the cap. The JSON size check ignores the captured bytes; the template path keeps them via
 /// `into_string`.
@@ -130,7 +130,7 @@ impl SizeLimitedWriter {
 
     pub fn into_string(self) -> Result<String, ApiError> {
         String::from_utf8(self.buffer).map_err(|error| {
-            ApiError::InternalServerError(format!("Rendered report was not valid UTF-8: {error}"))
+            ApiError::InternalServerError(format!("Rendered export was not valid UTF-8: {error}"))
         })
     }
 }
@@ -139,7 +139,7 @@ impl Write for SizeLimitedWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.buffer.len().saturating_add(buf.len()) > self.max_bytes {
             self.exceeded = true;
-            return Err(io::Error::other("report output limit exceeded"));
+            return Err(io::Error::other("export output limit exceeded"));
         }
 
         self.buffer.extend_from_slice(buf);
@@ -152,13 +152,13 @@ impl Write for SizeLimitedWriter {
 }
 
 pub fn render_template(
-    template: &ReportTemplate,
-    collection_templates: &[ReportTemplate],
+    template: &ExportTemplate,
+    collection_templates: &[ExportTemplate],
     context: &serde_json::Value,
-    content_type: ReportContentType,
-    missing_data_policy: ReportMissingDataPolicy,
+    content_type: ExportContentType,
+    missing_data_policy: ExportMissingDataPolicy,
     max_output_bytes: usize,
-) -> Result<(String, Vec<ReportWarning>), ApiError> {
+) -> Result<(String, Vec<ExportWarning>), ApiError> {
     let (recursion_limit, fuel) = template_limits_from_config();
     let cache_key = TemplateEnvCacheKey {
         collection_id: template.collection_id,
@@ -227,7 +227,7 @@ pub fn render_template(
         Err(error) => {
             if writer.exceeded() {
                 return Err(ApiError::PayloadTooLarge(format!(
-                    "Rendered report exceeded max_output_bytes (> {max_output_bytes})"
+                    "Rendered export exceeded max_output_bytes (> {max_output_bytes})"
                 )));
             }
             Err(template_error("Template render failed", error))
@@ -246,7 +246,7 @@ fn template_env_cache()
 
 fn collection_signature(
     collection_id: i32,
-    collection_templates: &[ReportTemplate],
+    collection_templates: &[ExportTemplate],
 ) -> CollectionTemplateSignature {
     let mut templates = collection_templates
         .iter()
@@ -281,9 +281,9 @@ fn build_environment(
     template_name: &str,
     template_source: &str,
     collection_id: i32,
-    collection_templates: &[ReportTemplate],
-    content_type: ReportContentType,
-    missing_data_policy: ReportMissingDataPolicy,
+    collection_templates: &[ExportTemplate],
+    content_type: ExportContentType,
+    missing_data_policy: ExportMissingDataPolicy,
     limits: TemplateLimits,
 ) -> Result<CachedTemplateEnvironment, ApiError> {
     let mut env = Environment::new();
@@ -299,13 +299,13 @@ fn build_environment(
     env.set_recursion_limit(limits.recursion_limit());
     env.set_fuel(Some(limits.fuel()));
     env.set_auto_escape_callback(move |_| match content_type {
-        ReportContentType::TextHtml => AutoEscape::Html,
+        ExportContentType::TextHtml => AutoEscape::Html,
         _ => AutoEscape::None,
     });
     env.set_formatter(move |out, state, value| match missing_data_policy {
-        ReportMissingDataPolicy::Strict => escape_formatter(out, state, value),
-        ReportMissingDataPolicy::Omit => format_nullable_value(out, state, value, None),
-        ReportMissingDataPolicy::Null => format_nullable_value(out, state, value, Some("null")),
+        ExportMissingDataPolicy::Strict => escape_formatter(out, state, value),
+        ExportMissingDataPolicy::Omit => format_nullable_value(out, state, value, None),
+        ExportMissingDataPolicy::Null => format_nullable_value(out, state, value, Some("null")),
     });
     env.set_loader(move |name| {
         if name.contains('/') || name.contains("::") {
@@ -330,13 +330,13 @@ fn template_limits_from_config() -> (usize, u64) {
     get_config()
         .map(|config| {
             (
-                config.report_template_recursion_limit,
-                config.report_template_fuel,
+                config.export_template_recursion_limit,
+                config.export_template_fuel,
             )
         })
         .unwrap_or((
-            crate::config::DEFAULT_REPORT_TEMPLATE_RECURSION_LIMIT,
-            crate::config::DEFAULT_REPORT_TEMPLATE_FUEL,
+            crate::config::DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT,
+            crate::config::DEFAULT_EXPORT_TEMPLATE_FUEL,
         ))
 }
 
@@ -344,7 +344,7 @@ fn build_collection_template_map(
     collection_id: i32,
     template_name: &str,
     template_source: &str,
-    collection_templates: &[ReportTemplate],
+    collection_templates: &[ExportTemplate],
 ) -> HashMap<String, String> {
     let mut templates = collection_templates
         .iter()
@@ -355,7 +355,7 @@ fn build_collection_template_map(
     templates
 }
 
-fn validation_context(content_type: ReportContentType) -> serde_json::Value {
+fn validation_context(content_type: ExportContentType) -> serde_json::Value {
     serde_json::json!({
         "items": [],
         "meta": {
@@ -393,10 +393,10 @@ fn validation_context(content_type: ReportContentType) -> serde_json::Value {
     })
 }
 
-fn undefined_behavior(missing_data_policy: ReportMissingDataPolicy) -> UndefinedBehavior {
+fn undefined_behavior(missing_data_policy: ExportMissingDataPolicy) -> UndefinedBehavior {
     match missing_data_policy {
-        ReportMissingDataPolicy::Strict => UndefinedBehavior::Strict,
-        ReportMissingDataPolicy::Null | ReportMissingDataPolicy::Omit => {
+        ExportMissingDataPolicy::Strict => UndefinedBehavior::Strict,
+        ExportMissingDataPolicy::Null | ExportMissingDataPolicy::Omit => {
             UndefinedBehavior::Chainable
         }
     }
@@ -436,7 +436,7 @@ fn begin_template_warning_capture() {
     });
 }
 
-fn finish_template_warning_capture() -> Vec<ReportWarning> {
+fn finish_template_warning_capture() -> Vec<ExportWarning> {
     TEMPLATE_WARNING_CAPTURE.with(|capture| {
         capture
             .borrow_mut()
@@ -459,7 +459,7 @@ fn record_missing_value_warning(missing: MissingValue) {
             return;
         }
         capture.missing_value_keys.insert(key);
-        capture.warnings.push(ReportWarning {
+        capture.warnings.push(ExportWarning {
             code: "template_missing_value".to_string(),
             message: format!("Template '{template_name}' rendered one or more missing values"),
             path,
@@ -470,10 +470,10 @@ fn record_missing_value_warning(missing: MissingValue) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{ReportScopeKind, ReportTemplateKind};
+    use crate::models::{ExportScopeKind, ExportTemplateKind};
     use crate::tests::docs_examples::required_labeled_block;
 
-    const TEMPLATE_GUIDE: &str = include_str!("../../docs/template_guide.md");
+    const TEMPLATE_GUIDE: &str = include_str!("../../docs/export_template_guide.md");
 
     #[test]
     fn limited_string_writer_accumulates_under_limit() {
@@ -496,19 +496,19 @@ mod tests {
         id: i32,
         collection_id: i32,
         name: &str,
-        content_type: ReportContentType,
+        content_type: ExportContentType,
         source: &str,
-    ) -> ReportTemplate {
+    ) -> ExportTemplate {
         let now = chrono::Utc::now().naive_utc();
-        ReportTemplate {
+        ExportTemplate {
             id,
             collection_id,
             name: name.to_string(),
             description: "template".to_string(),
             content_type,
             template: source.to_string(),
-            kind: ReportTemplateKind::Report,
-            scope_kind: Some(ReportScopeKind::ObjectsInClass),
+            kind: ExportTemplateKind::Export,
+            scope_kind: Some(ExportScopeKind::ObjectsInClass),
             class_id: Some(1),
             default_query: None,
             include: None,
@@ -578,9 +578,9 @@ mod tests {
 
     fn assert_template_guide_example(
         name: &str,
-        content_type: ReportContentType,
-        missing_data_policy: ReportMissingDataPolicy,
-    ) -> (String, Vec<ReportWarning>) {
+        content_type: ExportContentType,
+        missing_data_policy: ExportMissingDataPolicy,
+    ) -> (String, Vec<ExportWarning>) {
         let template = template(
             100,
             10,
@@ -604,8 +604,8 @@ mod tests {
     fn template_guide_plain_text_example_matches_renderer() {
         let (rendered, warnings) = assert_template_guide_example(
             "plain",
-            ReportContentType::TextPlain,
-            ReportMissingDataPolicy::Strict,
+            ExportContentType::TextPlain,
+            ExportMissingDataPolicy::Strict,
         );
 
         assert_eq!(
@@ -619,8 +619,8 @@ mod tests {
     fn template_guide_html_example_matches_renderer() {
         let (rendered, warnings) = assert_template_guide_example(
             "html",
-            ReportContentType::TextHtml,
-            ReportMissingDataPolicy::Strict,
+            ExportContentType::TextHtml,
+            ExportMissingDataPolicy::Strict,
         );
 
         assert_eq!(rendered, template_guide_block("template-guide/html/output"));
@@ -631,8 +631,8 @@ mod tests {
     fn template_guide_csv_example_matches_renderer() {
         let (rendered, warnings) = assert_template_guide_example(
             "csv",
-            ReportContentType::TextCsv,
-            ReportMissingDataPolicy::Strict,
+            ExportContentType::TextCsv,
+            ExportMissingDataPolicy::Strict,
         );
 
         assert_eq!(rendered, template_guide_block("template-guide/csv/output"));
@@ -643,8 +643,8 @@ mod tests {
     fn template_guide_nested_array_example_matches_renderer() {
         let (rendered, warnings) = assert_template_guide_example(
             "nested-array",
-            ReportContentType::TextPlain,
-            ReportMissingDataPolicy::Strict,
+            ExportContentType::TextPlain,
+            ExportMissingDataPolicy::Strict,
         );
 
         assert_eq!(
@@ -658,13 +658,13 @@ mod tests {
     fn template_guide_missing_data_policy_examples_match_renderer() {
         let (null_rendered, null_warnings) = assert_template_guide_example(
             "missing-data",
-            ReportContentType::TextPlain,
-            ReportMissingDataPolicy::Null,
+            ExportContentType::TextPlain,
+            ExportMissingDataPolicy::Null,
         );
         let (omit_rendered, omit_warnings) = assert_template_guide_example(
             "missing-data",
-            ReportContentType::TextPlain,
-            ReportMissingDataPolicy::Omit,
+            ExportContentType::TextPlain,
+            ExportMissingDataPolicy::Omit,
         );
 
         assert_eq!(
@@ -687,7 +687,7 @@ mod tests {
             1,
             10,
             "servers.txt",
-            ReportContentType::TextPlain,
+            ExportContentType::TextPlain,
             "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}",
         );
         let context = serde_json::json!({
@@ -701,8 +701,8 @@ mod tests {
             &template,
             &[],
             &context,
-            ReportContentType::TextPlain,
-            ReportMissingDataPolicy::Strict,
+            ExportContentType::TextPlain,
+            ExportMissingDataPolicy::Strict,
             usize::MAX,
         )
         .unwrap();
@@ -717,14 +717,14 @@ mod tests {
             2,
             10,
             "layout.html",
-            ReportContentType::TextHtml,
+            ExportContentType::TextHtml,
             "<ul>{% block body %}{% endblock %}</ul>",
         );
         let child = template(
             3,
             10,
             "child.html",
-            ReportContentType::TextHtml,
+            ExportContentType::TextHtml,
             "{% extends \"layout.html\" %}{% block body %}{% for item in items %}<li>{{ item.name }}</li>{% endfor %}{% endblock %}",
         );
         let context = serde_json::json!({
@@ -735,8 +735,8 @@ mod tests {
             &child,
             &[layout],
             &context,
-            ReportContentType::TextHtml,
-            ReportMissingDataPolicy::Strict,
+            ExportContentType::TextHtml,
+            ExportMissingDataPolicy::Strict,
             usize::MAX,
         )
         .unwrap();
@@ -750,7 +750,7 @@ mod tests {
             4,
             10,
             "missing.txt",
-            ReportContentType::TextPlain,
+            ExportContentType::TextPlain,
             "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}",
         );
         let context = serde_json::json!({
@@ -761,8 +761,8 @@ mod tests {
             &template,
             &[],
             &context,
-            ReportContentType::TextPlain,
-            ReportMissingDataPolicy::Omit,
+            ExportContentType::TextPlain,
+            ExportMissingDataPolicy::Omit,
             usize::MAX,
         )
         .unwrap();
@@ -774,12 +774,12 @@ mod tests {
     }
 
     #[test]
-    fn renders_null_for_missing_values_and_reports_warning() {
+    fn renders_null_for_missing_values_and_exports_warning() {
         let template = template(
             5,
             10,
             "missing-null.txt",
-            ReportContentType::TextPlain,
+            ExportContentType::TextPlain,
             "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}",
         );
         let context = serde_json::json!({
@@ -790,8 +790,8 @@ mod tests {
             &template,
             &[],
             &context,
-            ReportContentType::TextPlain,
-            ReportMissingDataPolicy::Null,
+            ExportContentType::TextPlain,
+            ExportMissingDataPolicy::Null,
             usize::MAX,
         )
         .unwrap();
@@ -808,14 +808,14 @@ mod tests {
             6,
             10,
             "escape.html",
-            ReportContentType::TextHtml,
+            ExportContentType::TextHtml,
             "{{ items[0].name }}",
         );
         let text_template = template(
             7,
             10,
             "escape.txt",
-            ReportContentType::TextPlain,
+            ExportContentType::TextPlain,
             "{{ items[0].name }}",
         );
         let context = serde_json::json!({
@@ -826,8 +826,8 @@ mod tests {
             &html_template,
             &[],
             &context,
-            ReportContentType::TextHtml,
-            ReportMissingDataPolicy::Strict,
+            ExportContentType::TextHtml,
+            ExportMissingDataPolicy::Strict,
             usize::MAX,
         )
         .unwrap();
@@ -835,8 +835,8 @@ mod tests {
             &text_template,
             &[],
             &context,
-            ReportContentType::TextPlain,
-            ReportMissingDataPolicy::Strict,
+            ExportContentType::TextPlain,
+            ExportMissingDataPolicy::Strict,
             usize::MAX,
         )
         .unwrap();
@@ -853,14 +853,14 @@ mod tests {
             8,
             10,
             "macros.txt",
-            ReportContentType::TextPlain,
+            ExportContentType::TextPlain,
             "{% macro owner(item) %}{{ item.data.owner }}{% endmacro %}",
         );
         let child = template(
             9,
             10,
             "child.txt",
-            ReportContentType::TextPlain,
+            ExportContentType::TextPlain,
             "{% import \"macros.txt\" as macros %}{{ items[0].name }}={{ macros.owner(items[0]) }}",
         );
         let context = serde_json::json!({
@@ -871,8 +871,8 @@ mod tests {
             &child,
             &[macros],
             &context,
-            ReportContentType::TextPlain,
-            ReportMissingDataPolicy::Strict,
+            ExportContentType::TextPlain,
+            ExportMissingDataPolicy::Strict,
             usize::MAX,
         )
         .unwrap();
@@ -887,14 +887,14 @@ mod tests {
             15,
             10,
             "partial.owner.txt",
-            ReportContentType::TextPlain,
+            ExportContentType::TextPlain,
             "{{ items[0].data.owner }}",
         );
-        let report = template(
+        let export = template(
             16,
             10,
-            "report.hosts.txt",
-            ReportContentType::TextPlain,
+            "export.hosts.txt",
+            ExportContentType::TextPlain,
             "{% include \"partial.owner.txt\" %}",
         );
         let context = serde_json::json!({
@@ -902,11 +902,11 @@ mod tests {
         });
 
         let (rendered, warnings) = render_template(
-            &report,
+            &export,
             &[partial],
             &context,
-            ReportContentType::TextPlain,
-            ReportMissingDataPolicy::Omit,
+            ExportContentType::TextPlain,
+            ExportMissingDataPolicy::Omit,
             usize::MAX,
         )
         .unwrap();
@@ -922,7 +922,7 @@ mod tests {
             14,
             10,
             "helpers.txt",
-            ReportContentType::TextPlain,
+            ExportContentType::TextPlain,
             "{{ items|join_nonempty(\" | \") }}\n{{ missing|default_if_empty(\"fallback\") }}\n{{ coalesce(missing, none, \"owner\") }}\n{{ when|format_datetime(\"date\") }}\n{{ csv|csv_cell }}\n{{ payload|tojson }}",
         );
         let context = serde_json::json!({
@@ -936,8 +936,8 @@ mod tests {
             &template,
             &[],
             &context,
-            ReportContentType::TextPlain,
-            ReportMissingDataPolicy::Omit,
+            ExportContentType::TextPlain,
+            ExportMissingDataPolicy::Omit,
             usize::MAX,
         )
         .unwrap();
@@ -956,14 +956,14 @@ mod tests {
             10,
             20,
             "layout.html",
-            ReportContentType::TextHtml,
+            ExportContentType::TextHtml,
             "<ul>{% block body %}{% endblock %}</ul>",
         );
         let child = template(
             11,
             10,
             "child.html",
-            ReportContentType::TextHtml,
+            ExportContentType::TextHtml,
             "{% extends \"layout.html\" %}{% block body %}<li>{{ items[0].name }}</li>{% endblock %}",
         );
         let context = serde_json::json!({
@@ -974,8 +974,8 @@ mod tests {
             &child,
             &[layout],
             &context,
-            ReportContentType::TextHtml,
-            ReportMissingDataPolicy::Strict,
+            ExportContentType::TextHtml,
+            ExportMissingDataPolicy::Strict,
             usize::MAX,
         )
         .unwrap_err();
@@ -989,14 +989,14 @@ mod tests {
             12,
             10,
             "child.html",
-            ReportContentType::TextHtml,
+            ExportContentType::TextHtml,
             "{% extends \"layout.html\" %}{% block body %}<li>{{ items[0].name }}</li>{% endblock %}",
         );
         let mut layout_v1 = template(
             13,
             10,
             "layout.html",
-            ReportContentType::TextHtml,
+            ExportContentType::TextHtml,
             "<ul class=\"v1\">{% block body %}{% endblock %}</ul>",
         );
         let mut layout_v2 = layout_v1.clone();
@@ -1010,8 +1010,8 @@ mod tests {
             &child,
             &[layout_v1.clone()],
             &context,
-            ReportContentType::TextHtml,
-            ReportMissingDataPolicy::Strict,
+            ExportContentType::TextHtml,
+            ExportMissingDataPolicy::Strict,
             usize::MAX,
         )
         .unwrap();
@@ -1020,8 +1020,8 @@ mod tests {
             &child,
             &[layout_v2],
             &context,
-            ReportContentType::TextHtml,
-            ReportMissingDataPolicy::Strict,
+            ExportContentType::TextHtml,
+            ExportMissingDataPolicy::Strict,
             usize::MAX,
         )
         .unwrap();
@@ -1036,14 +1036,14 @@ mod tests {
             17,
             10,
             "child.html",
-            ReportContentType::TextHtml,
+            ExportContentType::TextHtml,
             "{% extends \"layout.html\" %}{% block body %}<li>{{ items[0].name }}</li>{% endblock %}",
         );
         let layout_v1 = template(
             18,
             10,
             "layout.html",
-            ReportContentType::TextHtml,
+            ExportContentType::TextHtml,
             "<ul class=\"v1\">{% block body %}{% endblock %}</ul>",
         );
         let mut layout_v2 = layout_v1.clone();
@@ -1056,8 +1056,8 @@ mod tests {
             &child,
             &[layout_v1],
             &context,
-            ReportContentType::TextHtml,
-            ReportMissingDataPolicy::Strict,
+            ExportContentType::TextHtml,
+            ExportMissingDataPolicy::Strict,
             usize::MAX,
         )
         .unwrap();
@@ -1065,8 +1065,8 @@ mod tests {
             &child,
             &[layout_v2],
             &context,
-            ReportContentType::TextHtml,
-            ReportMissingDataPolicy::Strict,
+            ExportContentType::TextHtml,
+            ExportMissingDataPolicy::Strict,
             usize::MAX,
         )
         .unwrap();

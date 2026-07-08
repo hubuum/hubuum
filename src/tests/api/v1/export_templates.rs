@@ -3,9 +3,9 @@ mod tests {
     use actix_web::{http::StatusCode, test};
 
     use crate::models::{
-        Collection, NewCollectionWithAssignee, NewHubuumClass, NewReportTemplate, Permissions,
-        PermissionsList, ReportContentType, ReportLimits, ReportMissingDataPolicy, ReportScopeKind,
-        ReportTemplate, ReportTemplateKind, UpdateReportTemplate,
+        Collection, ExportContentType, ExportLimits, ExportMissingDataPolicy, ExportScopeKind,
+        ExportTemplate, ExportTemplateKind, NewCollectionWithAssignee, NewExportTemplate,
+        NewHubuumClass, Permissions, PermissionsList, UpdateExportTemplate,
     };
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_paginated_collection_total_count, assert_response_status};
@@ -14,7 +14,7 @@ mod tests {
     };
     use crate::traits::{CanDelete, CanSave, PermissionController};
 
-    const TEMPLATES_ENDPOINT: &str = "/api/v1/templates";
+    const TEMPLATES_ENDPOINT: &str = "/api/v1/export-templates";
 
     async fn create_collection(pool: &crate::db::DbPool, suffix: &str) -> Collection {
         let admin_group = ensure_admin_group(pool).await;
@@ -30,14 +30,14 @@ mod tests {
         .unwrap()
     }
 
-    fn new_template_payload(collection_id: i32, name: &str) -> NewReportTemplate {
-        NewReportTemplate {
+    fn new_template_payload(collection_id: i32, name: &str) -> NewExportTemplate {
+        NewExportTemplate {
             collection_id,
             name: name.to_string(),
             description: "template description".to_string(),
-            content_type: ReportContentType::TextPlain,
+            content_type: ExportContentType::TextPlain,
             template: "{% for item in items %}{{ item.name }}\n{% endfor %}".to_string(),
-            kind: ReportTemplateKind::Fragment,
+            kind: ExportTemplateKind::Fragment,
             scope_kind: None,
             class_id: None,
             default_query: None,
@@ -51,15 +51,15 @@ mod tests {
     fn new_template_payload_with_content_type(
         collection_id: i32,
         name: &str,
-        content_type: ReportContentType,
-    ) -> NewReportTemplate {
-        NewReportTemplate {
+        content_type: ExportContentType,
+    ) -> NewExportTemplate {
+        NewExportTemplate {
             collection_id,
             name: name.to_string(),
             description: "template description".to_string(),
             content_type,
             template: "{% for item in items %}{{ item.name }}\n{% endfor %}".to_string(),
-            kind: ReportTemplateKind::Fragment,
+            kind: ExportTemplateKind::Fragment,
             scope_kind: None,
             class_id: None,
             default_query: None,
@@ -70,8 +70,8 @@ mod tests {
         }
     }
 
-    fn empty_update_template_payload() -> UpdateReportTemplate {
-        UpdateReportTemplate {
+    fn empty_update_template_payload() -> UpdateExportTemplate {
+        UpdateExportTemplate {
             collection_id: None,
             name: None,
             description: None,
@@ -95,11 +95,11 @@ mod tests {
         let create_payload = new_template_payload(collection.id, "tmpl-crud");
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &create_payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
-        let created: ReportTemplate = test::read_body_json(resp).await;
+        let created: ExportTemplate = test::read_body_json(resp).await;
 
         assert_eq!(created.collection_id, collection.id);
         assert_eq!(created.name, "tmpl-crud");
-        assert_eq!(created.content_type, ReportContentType::TextPlain);
+        assert_eq!(created.content_type, ExportContentType::TextPlain);
 
         let resp = get_request(
             &pool,
@@ -108,10 +108,10 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let fetched: ReportTemplate = test::read_body_json(resp).await;
+        let fetched: ExportTemplate = test::read_body_json(resp).await;
         assert_eq!(fetched.id, created.id);
 
-        let patch_payload = UpdateReportTemplate {
+        let patch_payload = UpdateExportTemplate {
             collection_id: None,
             name: Some("tmpl-crud-v2".to_string()),
             description: Some("updated".to_string()),
@@ -128,12 +128,12 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let patched: ReportTemplate = test::read_body_json(resp).await;
+        let patched: ExportTemplate = test::read_body_json(resp).await;
         assert_eq!(patched.name, "tmpl-crud-v2");
 
         let resp = get_request(&pool, &admin_token, TEMPLATES_ENDPOINT).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let listed: Vec<ReportTemplate> = test::read_body_json(resp).await;
+        let listed: Vec<ExportTemplate> = test::read_body_json(resp).await;
         assert!(listed.iter().any(|template| template.id == created.id));
 
         let resp = delete_request(
@@ -187,11 +187,11 @@ mod tests {
         let mut created_ids = Vec::new();
         for resp in expected_ids {
             let resp = assert_response_status(resp, StatusCode::CREATED).await;
-            let created: ReportTemplate = test::read_body_json(resp).await;
+            let created: ExportTemplate = test::read_body_json(resp).await;
             created_ids.push(created.id);
         }
 
-        let (templates, total_count): (Vec<ReportTemplate>, i64) =
+        let (export_templates, total_count): (Vec<ExportTemplate>, i64) =
             assert_paginated_collection_total_count(
                 &pool,
                 &admin_token,
@@ -211,7 +211,7 @@ mod tests {
 
         assert_eq!(total_count, created_ids.len() as i64);
         assert_eq!(
-            templates
+            export_templates
                 .iter()
                 .map(|template| template.id)
                 .collect::<Vec<_>>(),
@@ -238,13 +238,13 @@ mod tests {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
         let collection = create_collection(&pool, "legacy_syntax").await;
 
-        let payload = NewReportTemplate {
+        let payload = NewExportTemplate {
             collection_id: collection.id,
             name: "tmpl-legacy".to_string(),
             description: "legacy syntax".to_string(),
-            content_type: ReportContentType::TextPlain,
+            content_type: ExportContentType::TextPlain,
             template: "{{#each items}}{{this.name}}\\n{{/each}}".to_string(),
-            kind: ReportTemplateKind::Fragment,
+            kind: ExportTemplateKind::Fragment,
             scope_kind: None,
             class_id: None,
             default_query: None,
@@ -265,13 +265,13 @@ mod tests {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
         let collection = create_collection(&pool, "same_collection_composition").await;
 
-        let layout = NewReportTemplate {
+        let layout = NewExportTemplate {
             collection_id: collection.id,
             name: "layout.html".to_string(),
             description: "layout".to_string(),
-            content_type: ReportContentType::TextHtml,
+            content_type: ExportContentType::TextHtml,
             template: "<ul>{% block body %}{% endblock %}</ul>".to_string(),
-            kind: ReportTemplateKind::Fragment,
+            kind: ExportTemplateKind::Fragment,
             scope_kind: None,
             class_id: None,
             default_query: None,
@@ -283,15 +283,15 @@ mod tests {
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &layout).await;
         assert_response_status(resp, StatusCode::CREATED).await;
 
-        let child = NewReportTemplate {
+        let child = NewExportTemplate {
             collection_id: collection.id,
             name: "child.html".to_string(),
             description: "child".to_string(),
-            content_type: ReportContentType::TextHtml,
+            content_type: ExportContentType::TextHtml,
             template:
                 "{% extends \"layout.html\" %}{% block body %}<li>{{ items[0].name }}</li>{% endblock %}"
                     .to_string(),
-            kind: ReportTemplateKind::Fragment,
+            kind: ExportTemplateKind::Fragment,
             scope_kind: None,
             class_id: None,
             default_query: None,
@@ -311,13 +311,13 @@ mod tests {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
         let collection = create_collection(&pool, "helper_validation").await;
 
-        let payload = NewReportTemplate {
+        let payload = NewExportTemplate {
             collection_id: collection.id,
-            name: "report.hosts".to_string(),
+            name: "export.hosts".to_string(),
             description: "helper coverage".to_string(),
-            content_type: ReportContentType::TextPlain,
+            content_type: ExportContentType::TextPlain,
             template: "{{ csv|csv_cell }} {{ payload|tojson }} {{ coalesce(primary, fallback, \"owner\") }} {{ values|join_nonempty(\"; \") }} {{ when|format_datetime(\"date\") }}".to_string(),
-            kind: ReportTemplateKind::Fragment,
+            kind: ExportTemplateKind::Fragment,
             scope_kind: None,
             class_id: None,
             default_query: None,
@@ -339,13 +339,13 @@ mod tests {
         let source_collection = create_collection(&pool, "cross_collection_source").await;
         let target_collection = create_collection(&pool, "cross_collection_target").await;
 
-        let layout = NewReportTemplate {
+        let layout = NewExportTemplate {
             collection_id: source_collection.id,
             name: "layout.html".to_string(),
             description: "layout".to_string(),
-            content_type: ReportContentType::TextHtml,
+            content_type: ExportContentType::TextHtml,
             template: "<ul>{% block body %}{% endblock %}</ul>".to_string(),
-            kind: ReportTemplateKind::Fragment,
+            kind: ExportTemplateKind::Fragment,
             scope_kind: None,
             class_id: None,
             default_query: None,
@@ -357,15 +357,15 @@ mod tests {
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &layout).await;
         assert_response_status(resp, StatusCode::CREATED).await;
 
-        let child = NewReportTemplate {
+        let child = NewExportTemplate {
             collection_id: target_collection.id,
             name: "child.html".to_string(),
             description: "child".to_string(),
-            content_type: ReportContentType::TextHtml,
+            content_type: ExportContentType::TextHtml,
             template:
                 "{% extends \"layout.html\" %}{% block body %}<li>{{ items[0].name }}</li>{% endblock %}"
                     .to_string(),
-            kind: ReportTemplateKind::Fragment,
+            kind: ExportTemplateKind::Fragment,
             scope_kind: None,
             class_id: None,
             default_query: None,
@@ -396,7 +396,7 @@ mod tests {
         let create_payload = new_template_payload(source_collection.id, "tmpl-move");
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &create_payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
-        let created: ReportTemplate = test::read_body_json(resp).await;
+        let created: ExportTemplate = test::read_body_json(resp).await;
 
         let test_user = create_test_user(&pool).await;
         let test_group = create_test_group(&pool).await;
@@ -415,7 +415,7 @@ mod tests {
             .await
             .unwrap();
 
-        let move_payload = UpdateReportTemplate {
+        let move_payload = UpdateExportTemplate {
             collection_id: Some(target_collection.id),
             name: None,
             description: None,
@@ -449,7 +449,7 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let moved: ReportTemplate = test::read_body_json(resp).await;
+        let moved: ExportTemplate = test::read_body_json(resp).await;
         assert_eq!(moved.collection_id, target_collection.id);
 
         source_collection
@@ -473,12 +473,12 @@ mod tests {
 
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &src_payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
-        let source_template: ReportTemplate = test::read_body_json(resp).await;
+        let source_template: ExportTemplate = test::read_body_json(resp).await;
 
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &dst_payload).await;
         assert_response_status(resp, StatusCode::CREATED).await;
 
-        let move_payload = UpdateReportTemplate {
+        let move_payload = UpdateExportTemplate {
             collection_id: Some(target_collection.id),
             name: None,
             description: None,
@@ -530,13 +530,13 @@ mod tests {
 
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload_a).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
-        let created_a: ReportTemplate = test::read_body_json(resp).await;
+        let created_a: ExportTemplate = test::read_body_json(resp).await;
 
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload_b).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
-        let created_b: ReportTemplate = test::read_body_json(resp).await;
+        let created_b: ExportTemplate = test::read_body_json(resp).await;
 
-        let rename_payload = UpdateReportTemplate {
+        let rename_payload = UpdateExportTemplate {
             collection_id: None,
             name: Some(created_a.name),
             description: None,
@@ -565,7 +565,7 @@ mod tests {
         let create_payload = new_template_payload(source_collection.id, "tmpl-move-no-update");
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &create_payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
-        let created: ReportTemplate = test::read_body_json(resp).await;
+        let created: ExportTemplate = test::read_body_json(resp).await;
 
         let test_user = create_test_user(&pool).await;
         let test_group = create_test_group(&pool).await;
@@ -584,7 +584,7 @@ mod tests {
             .await
             .unwrap();
 
-        let move_payload = UpdateReportTemplate {
+        let move_payload = UpdateExportTemplate {
             collection_id: Some(target_collection.id),
             name: None,
             description: None,
@@ -624,11 +624,11 @@ mod tests {
 
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &visible_payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
-        let visible_template: ReportTemplate = test::read_body_json(resp).await;
+        let visible_template: ExportTemplate = test::read_body_json(resp).await;
 
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &hidden_payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
-        let hidden_template: ReportTemplate = test::read_body_json(resp).await;
+        let hidden_template: ExportTemplate = test::read_body_json(resp).await;
 
         let test_user = create_test_user(&pool).await;
         let test_group = create_test_group(&pool).await;
@@ -649,7 +649,7 @@ mod tests {
 
         let resp = get_request(&pool, &user_token, TEMPLATES_ENDPOINT).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let listed: Vec<ReportTemplate> = test::read_body_json(resp).await;
+        let listed: Vec<ExportTemplate> = test::read_body_json(resp).await;
 
         assert!(
             listed
@@ -683,7 +683,7 @@ mod tests {
         let payload = new_template_payload(collection.id, "tmpl-admin-visible");
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
-        let created: ReportTemplate = test::read_body_json(resp).await;
+        let created: ExportTemplate = test::read_body_json(resp).await;
 
         collection
             .revoke_without_events(
@@ -709,7 +709,7 @@ mod tests {
 
         let resp = get_request(&pool, &admin_token, TEMPLATES_ENDPOINT).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let listed: Vec<ReportTemplate> = test::read_body_json(resp).await;
+        let listed: Vec<ExportTemplate> = test::read_body_json(resp).await;
 
         assert!(listed.iter().any(|template| template.id == created.id));
 
@@ -724,7 +724,7 @@ mod tests {
         let payload = new_template_payload(collection.id, "tmpl-get-delete-forbidden");
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
-        let created: ReportTemplate = test::read_body_json(resp).await;
+        let created: ExportTemplate = test::read_body_json(resp).await;
 
         let resp = get_request(
             &pool,
@@ -753,7 +753,7 @@ mod tests {
         let payload = new_template_payload_with_content_type(
             collection.id,
             "tmpl-invalid-content-type",
-            ReportContentType::ApplicationJson,
+            ExportContentType::ApplicationJson,
         );
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
         assert_response_status(resp, StatusCode::BAD_REQUEST).await;
@@ -769,12 +769,12 @@ mod tests {
         let payload = new_template_payload(collection.id, "partial.not-executable");
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
-        let created: ReportTemplate = test::read_body_json(resp).await;
+        let created: ExportTemplate = test::read_body_json(resp).await;
 
         let resp = post_request(
             &pool,
             &admin_token,
-            &format!("{TEMPLATES_ENDPOINT}/{}/reports", created.id),
+            &format!("{TEMPLATES_ENDPOINT}/{}/exports", created.id),
             &serde_json::json!({}),
         )
         .await;
@@ -784,11 +784,11 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn test_report_template_rejects_class_in_another_collection() {
+    async fn test_export_template_rejects_class_in_another_collection() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
         let template_collection =
-            create_collection(&pool, "report_class_template_collection").await;
-        let class_collection = create_collection(&pool, "report_class_target_collection").await;
+            create_collection(&pool, "export_class_template_collection").await;
+        let class_collection = create_collection(&pool, "export_class_target_collection").await;
         let class = NewHubuumClass {
             name: "foreign-template-class".to_string(),
             collection_id: class_collection.id,
@@ -800,14 +800,14 @@ mod tests {
         .await
         .unwrap();
 
-        let payload = NewReportTemplate {
+        let payload = NewExportTemplate {
             collection_id: template_collection.id,
-            name: "report.foreign-class".to_string(),
-            description: "bad report template".to_string(),
-            content_type: ReportContentType::TextPlain,
+            name: "export.foreign-class".to_string(),
+            description: "bad export template".to_string(),
+            content_type: ExportContentType::TextPlain,
             template: "{{ items|length }}".to_string(),
-            kind: ReportTemplateKind::Report,
-            scope_kind: Some(ReportScopeKind::ObjectsInClass),
+            kind: ExportTemplateKind::Export,
+            scope_kind: Some(ExportScopeKind::ObjectsInClass),
             class_id: Some(class.id),
             default_query: None,
             include: None,
@@ -827,7 +827,7 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn test_patch_report_template_class_scope_to_collection_scope() {
+    async fn test_patch_export_template_class_scope_to_collection_scope() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
         let collection = create_collection(&pool, "patch_scope_change").await;
         let class = NewHubuumClass {
@@ -841,15 +841,15 @@ mod tests {
         .await
         .unwrap();
 
-        // Start as an objects_in_class report bound to a class.
-        let create_payload = NewReportTemplate {
+        // Start as an objects_in_class export bound to a class.
+        let create_payload = NewExportTemplate {
             collection_id: collection.id,
-            name: "report.scope-change".to_string(),
-            description: "scope change report".to_string(),
-            content_type: ReportContentType::TextPlain,
+            name: "export.scope-change".to_string(),
+            description: "scope change export".to_string(),
+            content_type: ExportContentType::TextPlain,
             template: "{% for item in items %}{{ item.name }}{% endfor %}".to_string(),
-            kind: ReportTemplateKind::Report,
-            scope_kind: Some(ReportScopeKind::ObjectsInClass),
+            kind: ExportTemplateKind::Export,
+            scope_kind: Some(ExportScopeKind::ObjectsInClass),
             class_id: Some(class.id),
             default_query: None,
             include: None,
@@ -859,12 +859,12 @@ mod tests {
         };
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &create_payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
-        let created: ReportTemplate = test::read_body_json(resp).await;
+        let created: ExportTemplate = test::read_body_json(resp).await;
 
         // PATCH to a collection scope without clearing class_id explicitly; the carried-forward
         // class_id must be dropped rather than rejected.
-        let patch = UpdateReportTemplate {
-            scope_kind: Some(ReportScopeKind::Collections),
+        let patch = UpdateExportTemplate {
+            scope_kind: Some(ExportScopeKind::Collections),
             ..empty_update_template_payload()
         };
         let resp = patch_request(
@@ -875,15 +875,15 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let patched: ReportTemplate = test::read_body_json(resp).await;
-        assert_eq!(patched.scope_kind, Some(ReportScopeKind::Collections));
+        let patched: ExportTemplate = test::read_body_json(resp).await;
+        assert_eq!(patched.scope_kind, Some(ExportScopeKind::Collections));
         assert_eq!(patched.class_id, None);
 
         collection.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
-    async fn test_patch_report_template_clears_nullable_defaults() {
+    async fn test_patch_export_template_clears_nullable_defaults() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
         let collection = create_collection(&pool, "patch_clear_defaults").await;
         let class = NewHubuumClass {
@@ -897,20 +897,20 @@ mod tests {
         .await
         .unwrap();
 
-        let created = NewReportTemplate {
+        let created = NewExportTemplate {
             collection_id: collection.id,
-            name: "report.clear-defaults".to_string(),
-            description: "clear defaults report".to_string(),
-            content_type: ReportContentType::TextPlain,
+            name: "export.clear-defaults".to_string(),
+            description: "clear defaults export".to_string(),
+            content_type: ExportContentType::TextPlain,
             template: "{% for item in items %}{{ item.name }}{% endfor %}".to_string(),
-            kind: ReportTemplateKind::Report,
-            scope_kind: Some(ReportScopeKind::ObjectsInClass),
+            kind: ExportTemplateKind::Export,
+            scope_kind: Some(ExportScopeKind::ObjectsInClass),
             class_id: Some(class.id),
             default_query: Some("sort=name".to_string()),
             include: None,
             relation_context: None,
-            default_missing_data_policy: Some(ReportMissingDataPolicy::Strict),
-            default_limits: Some(ReportLimits {
+            default_missing_data_policy: Some(ExportMissingDataPolicy::Strict),
+            default_limits: Some(ExportLimits {
                 max_items: Some(100),
                 max_output_bytes: Some(262_144),
             }),
@@ -928,11 +928,11 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let patched: ReportTemplate = test::read_body_json(resp).await;
+        let patched: ExportTemplate = test::read_body_json(resp).await;
         assert_eq!(patched.default_query.as_deref(), Some("sort=name"));
         assert_eq!(
             patched.default_missing_data_policy,
-            Some(ReportMissingDataPolicy::Strict)
+            Some(ExportMissingDataPolicy::Strict)
         );
         assert!(patched.default_limits.is_some());
 
@@ -949,18 +949,18 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let patched: ReportTemplate = test::read_body_json(resp).await;
+        let patched: ExportTemplate = test::read_body_json(resp).await;
         assert_eq!(patched.default_query, None);
         assert_eq!(patched.default_missing_data_policy, None);
         assert_eq!(patched.default_limits, None);
-        assert_eq!(patched.scope_kind, Some(ReportScopeKind::ObjectsInClass));
+        assert_eq!(patched.scope_kind, Some(ExportScopeKind::ObjectsInClass));
         assert_eq!(patched.class_id, Some(class.id));
 
         collection.delete_without_events(&pool).await.unwrap();
     }
 
     #[actix_web::test]
-    async fn test_report_template_rejects_class_id_for_collection_scope() {
+    async fn test_export_template_rejects_class_id_for_collection_scope() {
         let (pool, admin_token, _) = setup_pool_and_tokens().await;
         let collection = create_collection(&pool, "collection_scope_class_id").await;
         let class = NewHubuumClass {
@@ -974,14 +974,14 @@ mod tests {
         .await
         .unwrap();
 
-        let payload = NewReportTemplate {
+        let payload = NewExportTemplate {
             collection_id: collection.id,
-            name: "report.collections-with-class".to_string(),
-            description: "invalid collection report".to_string(),
-            content_type: ReportContentType::TextPlain,
+            name: "export.collections-with-class".to_string(),
+            description: "invalid collection export".to_string(),
+            content_type: ExportContentType::TextPlain,
             template: "{% for item in items %}{{ item.name }}{% endfor %}".to_string(),
-            kind: ReportTemplateKind::Report,
-            scope_kind: Some(ReportScopeKind::Collections),
+            kind: ExportTemplateKind::Export,
+            scope_kind: Some(ExportScopeKind::Collections),
             class_id: Some(class.id),
             default_query: None,
             include: None,
@@ -1016,14 +1016,14 @@ mod tests {
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &fragment).await;
         assert_response_status(resp, StatusCode::CREATED).await;
 
-        let report = NewReportTemplate {
+        let export = NewExportTemplate {
             collection_id: collection.id,
-            name: "report.kind-report".to_string(),
-            description: "report template".to_string(),
-            content_type: ReportContentType::TextPlain,
+            name: "export.kind-export".to_string(),
+            description: "export template".to_string(),
+            content_type: ExportContentType::TextPlain,
             template: "{% for item in items %}{{ item.name }}{% endfor %}".to_string(),
-            kind: ReportTemplateKind::Report,
-            scope_kind: Some(ReportScopeKind::ObjectsInClass),
+            kind: ExportTemplateKind::Export,
+            scope_kind: Some(ExportScopeKind::ObjectsInClass),
             class_id: Some(class.id),
             default_query: None,
             include: None,
@@ -1031,23 +1031,23 @@ mod tests {
             default_missing_data_policy: None,
             default_limits: None,
         };
-        let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &report).await;
+        let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &export).await;
         assert_response_status(resp, StatusCode::CREATED).await;
 
         let resp = get_request(
             &pool,
             &admin_token,
             &format!(
-                "{TEMPLATES_ENDPOINT}?collection_id={}&kind=report",
+                "{TEMPLATES_ENDPOINT}?collection_id={}&kind=export",
                 collection.id
             ),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let reports: Vec<ReportTemplate> = test::read_body_json(resp).await;
-        assert_eq!(reports.len(), 1);
-        assert!(reports.iter().all(|t| t.kind == ReportTemplateKind::Report));
-        assert_eq!(reports[0].name, "report.kind-report");
+        let exports: Vec<ExportTemplate> = test::read_body_json(resp).await;
+        assert_eq!(exports.len(), 1);
+        assert!(exports.iter().all(|t| t.kind == ExportTemplateKind::Export));
+        assert_eq!(exports[0].name, "export.kind-export");
 
         let resp = get_request(
             &pool,
@@ -1059,12 +1059,12 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let fragments: Vec<ReportTemplate> = test::read_body_json(resp).await;
+        let fragments: Vec<ExportTemplate> = test::read_body_json(resp).await;
         assert_eq!(fragments.len(), 1);
         assert!(
             fragments
                 .iter()
-                .all(|t| t.kind == ReportTemplateKind::Fragment)
+                .all(|t| t.kind == ExportTemplateKind::Fragment)
         );
         assert_eq!(fragments[0].name, "partial.kind-fragment");
 
@@ -1079,7 +1079,7 @@ mod tests {
         let create_payload = new_template_payload(collection.id, "tmpl-update-test");
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &create_payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
-        let created: ReportTemplate = test::read_body_json(resp).await;
+        let created: ExportTemplate = test::read_body_json(resp).await;
 
         let test_user = create_test_user(&pool).await;
         let test_group = create_test_group(&pool).await;
@@ -1099,7 +1099,7 @@ mod tests {
             .await
             .unwrap();
 
-        let update_payload = UpdateReportTemplate {
+        let update_payload = UpdateExportTemplate {
             collection_id: None,
             name: None,
             description: Some("updated description".to_string()),
@@ -1134,7 +1134,7 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let updated: ReportTemplate = test::read_body_json(resp).await;
+        let updated: ExportTemplate = test::read_body_json(resp).await;
         assert_eq!(updated.description, "updated description");
 
         collection.delete_without_events(&pool).await.unwrap();
@@ -1150,7 +1150,7 @@ mod tests {
         let create_payload = new_template_payload(collection.id, "tmpl-delete-test");
         let resp = post_request(&pool, &admin_token, TEMPLATES_ENDPOINT, &create_payload).await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
-        let created: ReportTemplate = test::read_body_json(resp).await;
+        let created: ExportTemplate = test::read_body_json(resp).await;
 
         let test_user = create_test_user(&pool).await;
         let test_group = create_test_group(&pool).await;
@@ -1203,7 +1203,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_api_template_history_list_and_as_of() {
-        use crate::models::{NewReportTemplate, UpdateReportTemplate};
+        use crate::models::{NewExportTemplate, UpdateExportTemplate};
         use crate::traits::{CanSave, CanUpdate};
 
         let (pool, admin_token, _normal_token) = setup_pool_and_tokens().await;
@@ -1211,14 +1211,14 @@ mod tests {
         let event_context = hubuum_events_core::EventContext::system();
 
         // Create then update so there are two versions.
-        let created = NewReportTemplate {
+        let created = NewExportTemplate {
             collection_id: collection.id,
             name: "template_history_api".to_string(),
             description: "v1".to_string(),
-            content_type: crate::models::ReportContentType::TextPlain,
+            content_type: crate::models::ExportContentType::TextPlain,
             template: "content".to_string(),
-            kind: crate::models::ReportTemplateKind::Report,
-            scope_kind: Some(crate::models::ReportScopeKind::Collections),
+            kind: crate::models::ExportTemplateKind::Export,
+            scope_kind: Some(crate::models::ExportScopeKind::Collections),
             class_id: None,
             default_query: None,
             include: None,
@@ -1230,7 +1230,7 @@ mod tests {
         .await
         .unwrap();
 
-        UpdateReportTemplate {
+        UpdateExportTemplate {
             collection_id: None,
             name: None,
             description: Some("v2".to_string()),

@@ -561,7 +561,7 @@ mod tests {
         cleanup(&classes).await;
     }
 
-    // The old directional class-relation transitive routes are gone; these deeper
+    // Directional class-relation transitive routes are not mounted; these deeper
     // paths match no route and return a plain `404`. `{first}`/`{second}` are
     // substituted with the fixture class ids since rstest cases cannot reference
     // runtime values.
@@ -572,7 +572,7 @@ mod tests {
         StatusCode::NOT_FOUND
     )]
     #[actix_web::test]
-    async fn test_old_directional_class_routes_removed(
+    async fn test_unmounted_directional_class_routes_return_not_found(
         #[future(awt)] test_context: TestContext,
         #[case] path_template: &str,
         #[case] expected: StatusCode,
@@ -581,7 +581,7 @@ mod tests {
         // Cases share the run's test database, so derive a unique fixture prefix per case to avoid
         // class-name collisions.
         let prefix = format!(
-            "old_directional_class_routes_removed_{}",
+            "unmounted_directional_class_routes_return_not_found_{}",
             path_template.replace(['/', '{', '}', '.'], "_")
         );
         let classes = create_test_classes(&context, &prefix).await;
@@ -1445,10 +1445,15 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn test_old_related_objects_route_removed(#[future(awt)] test_context: TestContext) {
+    async fn test_unmounted_related_objects_route_returns_not_found(
+        #[future(awt)] test_context: TestContext,
+    ) {
         let context = test_context;
-        let (classes, relations) =
-            create_classes_and_relations(&context, "old_related_objects_route_removed").await;
+        let (classes, relations) = create_classes_and_relations(
+            &context,
+            "unmounted_related_objects_route_returns_not_found",
+        )
+        .await;
         let objects = create_objects_in_classes(&context.pool, &classes).await;
         let _ =
             create_object_relation(&context.pool, &objects[0], &objects[1], &relations[0]).await;

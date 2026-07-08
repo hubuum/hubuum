@@ -2,13 +2,14 @@
 
 The task API is the generic interface for long-running operations.
 
-Imports, reports, and remote target invocations are public task-producing APIs today, and the task
-model is designed so later exports or reindex jobs can use the same status and event model too.
+Imports, exports, and remote target invocations are public task-producing APIs today, and the task
+model is designed so reserved reindex jobs and future task kinds can use the same status and event
+model too.
 
 The current architecture is:
 
 - generic task framework: task submission state, lifecycle, polling, and event history
-- typed per-task-kind result tables: import results and report outputs live behind task-kind-specific endpoints rather than in a fully generic result table
+- typed per-task-kind result tables: import results and export outputs live behind task-kind-specific endpoints rather than in a fully generic result table
 
 Endpoints:
 
@@ -30,7 +31,6 @@ Access rules:
 Current and reserved task kinds:
 
 - `import`
-- `report`
 - `export`
 - `reindex`
 - `remote_call`
@@ -38,7 +38,7 @@ Current and reserved task kinds:
 Public task-producing endpoints today:
 
 - `POST /api/v1/imports`
-- `POST /api/v1/reports`
+- `POST /api/v1/exports`
 - `POST /api/v1/remote-targets/{target_id}/invoke`
 
 ## Task statuses
@@ -145,14 +145,14 @@ Example for an import:
 
 For a non-import task kind, the import-specific links may be `null`.
 
-Example for a report:
+Example for an export:
 
 ```json
 {
   "task": "/api/v1/tasks/22",
   "events": "/api/v1/tasks/22/events",
-  "report": "/api/v1/reports/22",
-  "report_output": "/api/v1/reports/22/output"
+  "export": "/api/v1/exports/22",
+  "export_output": "/api/v1/exports/22/output"
 }
 ```
 
@@ -215,7 +215,7 @@ Sorting:
 
 Filters:
 
-- `kind` (optional): `import`, `report`, `export`, `reindex`
+- `kind` (optional): `import`, `export`, `reindex`, `remote_call`
 - `status` (optional): `queued`, `validating`, `running`, `succeeded`, `failed`, `partially_succeeded`, `cancelled`
 - `submitted_by` (optional): admin-only filter by user ID; non-admin callers are always restricted to their own tasks regardless of this parameter
 
@@ -239,15 +239,15 @@ Current example:
 }
 ```
 
-Report example:
+Export example:
 
 ```json
 {
-  "report": {
-    "output_url": "/api/v1/reports/22/output",
+  "export": {
+    "output_url": "/api/v1/exports/22/output",
     "output_available": true,
     "output_expires_at": "2026-04-06T10:15:23",
-    "template_name": "report.host_room_people",
+    "template_name": "export.host_room_people",
     "output_content_type": "text/plain",
     "warning_count": 1,
     "truncated": false
@@ -310,7 +310,7 @@ Example:
 
 Typical client flow:
 
-1. Create a task indirectly through a task-producing endpoint such as `POST /api/v1/imports` or `POST /api/v1/reports`
+1. Create a task indirectly through a task-producing endpoint such as `POST /api/v1/imports` or `POST /api/v1/exports`
 2. Read the `Location` header or the returned `links.task`
 3. Poll `GET /api/v1/tasks/{task_id}` until the status is terminal
 4. Optionally fetch `GET /api/v1/tasks/{task_id}/events`
@@ -344,12 +344,12 @@ GET /api/v1/tasks/12
 - `links.import` and `links.import_results` are present
 - import item outcomes come from the import-specific result model, not a generic shared result table
 
-### Report task
+### Export task
 
-- `kind` is `report`
-- `details.report.output_url` is present
-- `links.report` and `links.report_output` are present
-- the stored output lives behind `GET /api/v1/reports/{task_id}/output`
+- `kind` is `export`
+- `details.export.output_url` is present
+- `links.export` and `links.export_output` are present
+- the stored output lives behind `GET /api/v1/exports/{task_id}/output`
 
 ## Errors
 

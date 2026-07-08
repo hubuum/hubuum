@@ -95,7 +95,7 @@ Fields:
 | `description` | string | yes | Human-readable description. |
 | `method` | string | yes | One of `get`, `post`, `patch`, `delete`. |
 | `url_template` | string | yes | MiniJinja template. Rendered URL must be HTTPS. |
-| `headers_template` | object | no | JSON object whose values are string templates. Defaults to `{}`. |
+| `headers_template` | object | no | JSON object whose values are string export_templates. Defaults to `{}`. |
 | `body_template` | string or null | no | Optional template rendered to the outbound request body. |
 | `auth_config` | object | no | Defaults to `{ "type": "none" }`. |
 | `allowed_subject_types` | array | yes | Non-empty list of allowed subject types. Values are `collection`, `class`, `object`, `class_relation`, and `object_relation`. |
@@ -328,8 +328,8 @@ On success, Hubuum creates a queued task and returns `202 Accepted`:
     "events": "/api/v1/tasks/42/events",
     "import": null,
     "import_results": null,
-    "report": null,
-    "report_output": null
+    "export": null,
+    "export_output": null
   },
   "details": null
 }
@@ -379,8 +379,8 @@ Outbound calls are constrained to mitigate server-side request forgery (SSRF):
   unless `HUBUUM_REMOTE_CALL_ALLOW_PRIVATE_TARGETS` is enabled for the deployment
 - the screened address is pinned for the connection, so a host cannot rebind to a private address
   between the screening and the request
-- URL, header, and body templates render with the shared MiniJinja fuel and recursion limits used by
-  report templates
+- URL, header, and body export templates render with the shared MiniJinja fuel and recursion limits used by
+  export templates
 - each submitting user can have only a bounded number of queued, validating, or running remote-call
   tasks at once
 - the response body is read only up to `HUBUUM_REMOTE_CALL_MAX_RESPONSE_BYTES`; anything beyond that
@@ -394,8 +394,8 @@ Relevant configuration:
 | `HUBUUM_REMOTE_CALL_MAX_RESPONSE_BYTES` | `262144` | Maximum response body bytes read and stored as a preview. |
 | `HUBUUM_REMOTE_CALL_ALLOW_PRIVATE_TARGETS` | `false` | Allow targets that resolve to private/internal addresses. |
 | `HUBUUM_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER` | `100` | Maximum queued, validating, or running remote-call tasks per submitting user. |
-| `HUBUUM_REPORT_TEMPLATE_RECURSION_LIMIT` | `64` | Shared MiniJinja recursion limit for report and remote target templates. |
-| `HUBUUM_REPORT_TEMPLATE_FUEL` | `50000` | Shared MiniJinja execution fuel budget for report and remote target templates. |
+| `HUBUUM_EXPORT_TEMPLATE_RECURSION_LIMIT` | `64` | Shared MiniJinja recursion limit for export and remote target export_templates. |
+| `HUBUUM_EXPORT_TEMPLATE_FUEL` | `50000` | Shared MiniJinja execution fuel budget for export and remote target export_templates. |
 
 There is no public remote-call result endpoint in this first version. Use the generic task and task
 event endpoints to poll status and inspect task-level events.

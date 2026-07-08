@@ -90,7 +90,7 @@ mod tests {
         let foreign_task_id = create_synthetic_task(
             &context,
             other_user.id,
-            TaskKind::Report,
+            TaskKind::Export,
             TaskStatus::Succeeded,
             "tasks_list_foreign",
         )
@@ -98,7 +98,7 @@ mod tests {
         let own_task_id = create_synthetic_task(
             &context,
             context.normal_user.id,
-            TaskKind::Report,
+            TaskKind::Export,
             TaskStatus::Succeeded,
             "tasks_list_own",
         )
@@ -119,7 +119,7 @@ mod tests {
         let normal_user_task_id = create_synthetic_task(
             &context,
             context.normal_user.id,
-            TaskKind::Report,
+            TaskKind::Export,
             TaskStatus::Succeeded,
             "tasks_list_admin_normal",
         )
@@ -127,7 +127,7 @@ mod tests {
         let other_user_task_id = create_synthetic_task(
             &context,
             other_user.id,
-            TaskKind::Report,
+            TaskKind::Export,
             TaskStatus::Succeeded,
             "tasks_list_admin_other",
         )
@@ -166,7 +166,7 @@ mod tests {
         let _ = create_synthetic_task(
             &context,
             other_user.id,
-            TaskKind::Report,
+            TaskKind::Export,
             TaskStatus::Running,
             "tasks_filter_wrong_kind",
         )
@@ -213,12 +213,12 @@ mod tests {
             "tasks_sort_kind_import",
         )
         .await;
-        let report_id = create_synthetic_task(
+        let export_id = create_synthetic_task(
             &context,
             other_user.id,
-            TaskKind::Report,
+            TaskKind::Export,
             TaskStatus::Succeeded,
-            "tasks_sort_kind_report",
+            "tasks_sort_kind_export",
         )
         .await;
         let reindex_id = create_synthetic_task(
@@ -237,7 +237,7 @@ mod tests {
         let tasks = get_tasks(&context, &context.admin_token, &url).await;
         let ids = tasks.iter().map(|task| task.id).collect::<Vec<_>>();
 
-        assert_eq!(ids, vec![import_id, reindex_id, report_id]);
+        assert_eq!(ids, vec![export_id, import_id, reindex_id]);
     }
 
     #[rstest]
@@ -248,20 +248,20 @@ mod tests {
         let context = test_context;
         let other_user = create_test_user(&context.pool).await;
 
-        let report_id_one = create_synthetic_task(
+        let export_id_one = create_synthetic_task(
             &context,
             other_user.id,
-            TaskKind::Report,
+            TaskKind::Export,
             TaskStatus::Succeeded,
-            "tasks_sort_multi_report_one",
+            "tasks_sort_multi_export_one",
         )
         .await;
-        let report_id_two = create_synthetic_task(
+        let export_id_two = create_synthetic_task(
             &context,
             other_user.id,
-            TaskKind::Report,
+            TaskKind::Export,
             TaskStatus::Succeeded,
-            "tasks_sort_multi_report_two",
+            "tasks_sort_multi_export_two",
         )
         .await;
         let import_id = create_synthetic_task(
@@ -280,7 +280,7 @@ mod tests {
         let tasks = get_tasks(&context, &context.admin_token, &url).await;
         let ids = tasks.iter().map(|task| task.id).collect::<Vec<_>>();
 
-        assert_eq!(ids, vec![import_id, report_id_two, report_id_one]);
+        assert_eq!(ids, vec![export_id_two, export_id_one, import_id]);
     }
 
     #[rstest]

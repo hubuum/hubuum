@@ -6472,6 +6472,1076 @@
         ]
       }
     },
+    "/api/v1/export-templates": {
+      "get": {
+        "tags": [
+          "export-templates"
+        ],
+        "summary": "Get Api V1 Export Templates",
+        "description": "Auto-generated documentation for GET /api/v1/export-templates. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1ExportTemplates",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Templates visible to caller The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ExportTemplate"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "export-templates"
+        ],
+        "summary": "Post Api V1 Export Templates",
+        "description": "Auto-generated documentation for POST /api/v1/export-templates.",
+        "operationId": "postApiV1ExportTemplates",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewExportTemplate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Template created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportTemplate"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/export-templates/{template_id}": {
+      "get": {
+        "tags": [
+          "export-templates"
+        ],
+        "summary": "Get Api V1 Export Templates By Template Id",
+        "description": "Auto-generated documentation for GET /api/v1/export-templates/{template_id}.",
+        "operationId": "getApiV1ExportTemplatesByTemplateId",
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Template ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Template",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportTemplate"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Template not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "export-templates"
+        ],
+        "summary": "Delete Api V1 Export Templates By Template Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/export-templates/{template_id}.",
+        "operationId": "deleteApiV1ExportTemplatesByTemplateId",
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Template ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Template deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Template not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "export-templates"
+        ],
+        "summary": "Patch Api V1 Export Templates By Template Id",
+        "description": "Auto-generated documentation for PATCH /api/v1/export-templates/{template_id}.",
+        "operationId": "patchApiV1ExportTemplatesByTemplateId",
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Template ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateExportTemplate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Template updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportTemplate"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Template not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/export-templates/{template_id}/events": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Get Api V1 Export Templates By Template Id Events",
+        "description": "Auto-generated documentation for GET /api/v1/export-templates/{template_id}/events.",
+        "operationId": "getApiV1ExportTemplatesByTemplateIdEvents",
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Export template id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "description": "Optional action filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_kind",
+            "in": "query",
+            "description": "Optional actor kind filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_user_id",
+            "in": "query",
+            "description": "Optional actor principal id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "collection_id",
+            "in": "query",
+            "description": "Optional collection id filter",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "occurred_after",
+            "in": "query",
+            "description": "Optional lower occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "occurred_before",
+            "in": "query",
+            "description": "Optional upper occurred_at bound, RFC3339 or YYYY-MM-DD",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Cursor page size",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Supported fields: id, occurred_at",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor token from X-Next-Cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Visible export template audit events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/export-templates/{template_id}/exports": {
+      "post": {
+        "tags": [
+          "export-templates"
+        ],
+        "summary": "Post Api V1 Export Templates By Template Id Exports",
+        "description": "Auto-generated documentation for POST /api/v1/export-templates/{template_id}/exports.",
+        "operationId": "postApiV1ExportTemplatesByTemplateIdExports",
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Executable export template ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportTemplateRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Export task accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Template not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many active export tasks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/export-templates/{template_id}/history": {
+      "get": {
+        "tags": [
+          "export-templates"
+        ],
+        "summary": "Get Api V1 Export Templates By Template Id History",
+        "description": "Auto-generated documentation for GET /api/v1/export-templates/{template_id}/history. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1ExportTemplatesByTemplateIdHistory",
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Template ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Template history The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HistoryResponse_ExportTemplateHistory"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Template not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/export-templates/{template_id}/history/as-of": {
+      "get": {
+        "tags": [
+          "export-templates"
+        ],
+        "summary": "Get Api V1 Export Templates By Template Id History As Of",
+        "description": "Auto-generated documentation for GET /api/v1/export-templates/{template_id}/history/as-of.",
+        "operationId": "getApiV1ExportTemplatesByTemplateIdHistoryAsOf",
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Template ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "at",
+            "in": "query",
+            "description": "RFC3339 timestamp",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Template version at timestamp",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryResponse_ExportTemplateHistory"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Template or version not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/exports": {
+      "post": {
+        "tags": [
+          "exports"
+        ],
+        "summary": "Post Api V1 Exports",
+        "description": "Auto-generated documentation for POST /api/v1/exports.",
+        "operationId": "postApiV1Exports",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Export task accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many active export tasks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/exports/{task_id}": {
+      "get": {
+        "tags": [
+          "exports"
+        ],
+        "summary": "Get Api V1 Exports By Task Id",
+        "description": "Auto-generated documentation for GET /api/v1/exports/{task_id}.",
+        "operationId": "getApiV1ExportsByTaskId",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Export task ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Export task projection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Export task not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/exports/{task_id}/output": {
+      "get": {
+        "tags": [
+          "exports"
+        ],
+        "summary": "Get Api V1 Exports By Task Id Output",
+        "description": "Auto-generated documentation for GET /api/v1/exports/{task_id}/output.",
+        "operationId": "getApiV1ExportsByTaskIdOutput",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Export task ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stored export output",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportJsonResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Export output not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Export output expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/iam/groups": {
       "get": {
         "tags": [
@@ -10421,226 +11491,6 @@
         ]
       }
     },
-    "/api/v1/reports": {
-      "post": {
-        "tags": [
-          "reports"
-        ],
-        "summary": "Post Api V1 Reports",
-        "description": "Auto-generated documentation for POST /api/v1/reports.",
-        "operationId": "postApiV1Reports",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReportRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "description": "Report task accepted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too many active report tasks",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/reports/{task_id}": {
-      "get": {
-        "tags": [
-          "reports"
-        ],
-        "summary": "Get Api V1 Reports By Task Id",
-        "description": "Auto-generated documentation for GET /api/v1/reports/{task_id}.",
-        "operationId": "getApiV1ReportsByTaskId",
-        "parameters": [
-          {
-            "name": "task_id",
-            "in": "path",
-            "description": "Report task ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Report task projection",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Report task not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/reports/{task_id}/output": {
-      "get": {
-        "tags": [
-          "reports"
-        ],
-        "summary": "Get Api V1 Reports By Task Id Output",
-        "description": "Auto-generated documentation for GET /api/v1/reports/{task_id}/output.",
-        "operationId": "getApiV1ReportsByTaskIdOutput",
-        "parameters": [
-          {
-            "name": "task_id",
-            "in": "path",
-            "description": "Report task ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Stored report output",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReportJsonResponse"
-                }
-              },
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "text/csv": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Report output not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "410": {
-            "description": "Report output expired",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
     "/api/v1/search": {
       "get": {
         "tags": [
@@ -10890,7 +11740,7 @@
           {
             "name": "kind",
             "in": "query",
-            "description": "Optional task kind filter (import|report|export|reindex)",
+            "description": "Optional task kind filter (import|export|reindex|remote_call)",
             "required": true,
             "schema": {
               "type": "string"
@@ -11125,856 +11975,6 @@
           },
           "404": {
             "description": "Task not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/templates": {
-      "get": {
-        "tags": [
-          "templates"
-        ],
-        "summary": "Get Api V1 Templates",
-        "description": "Auto-generated documentation for GET /api/v1/templates. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
-        "operationId": "getApiV1Templates",
-        "parameters": [
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "name": "sort",
-            "in": "query",
-            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Templates visible to caller The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
-            "headers": {
-              "X-Next-Cursor": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
-              },
-              "X-Total-Count": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/ReportTemplate"
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      },
-      "post": {
-        "tags": [
-          "templates"
-        ],
-        "summary": "Post Api V1 Templates",
-        "description": "Auto-generated documentation for POST /api/v1/templates.",
-        "operationId": "postApiV1Templates",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/NewReportTemplate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Template created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReportTemplate"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/templates/{template_id}": {
-      "get": {
-        "tags": [
-          "templates"
-        ],
-        "summary": "Get Api V1 Templates By Template Id",
-        "description": "Auto-generated documentation for GET /api/v1/templates/{template_id}.",
-        "operationId": "getApiV1TemplatesByTemplateId",
-        "parameters": [
-          {
-            "name": "template_id",
-            "in": "path",
-            "description": "Template ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Template",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReportTemplate"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Template not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      },
-      "delete": {
-        "tags": [
-          "templates"
-        ],
-        "summary": "Delete Api V1 Templates By Template Id",
-        "description": "Auto-generated documentation for DELETE /api/v1/templates/{template_id}.",
-        "operationId": "deleteApiV1TemplatesByTemplateId",
-        "parameters": [
-          {
-            "name": "template_id",
-            "in": "path",
-            "description": "Template ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Template deleted"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Template not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      },
-      "patch": {
-        "tags": [
-          "templates"
-        ],
-        "summary": "Patch Api V1 Templates By Template Id",
-        "description": "Auto-generated documentation for PATCH /api/v1/templates/{template_id}.",
-        "operationId": "patchApiV1TemplatesByTemplateId",
-        "parameters": [
-          {
-            "name": "template_id",
-            "in": "path",
-            "description": "Template ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateReportTemplate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Template updated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReportTemplate"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Template not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/templates/{template_id}/events": {
-      "get": {
-        "tags": [
-          "events"
-        ],
-        "summary": "Get Api V1 Templates By Template Id Events",
-        "description": "Auto-generated documentation for GET /api/v1/templates/{template_id}/events.",
-        "operationId": "getApiV1TemplatesByTemplateIdEvents",
-        "parameters": [
-          {
-            "name": "template_id",
-            "in": "path",
-            "description": "Report template id",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "action",
-            "in": "query",
-            "description": "Optional action filter",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "actor_kind",
-            "in": "query",
-            "description": "Optional actor kind filter",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "actor_user_id",
-            "in": "query",
-            "description": "Optional actor principal id filter",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "collection_id",
-            "in": "query",
-            "description": "Optional collection id filter",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "occurred_after",
-            "in": "query",
-            "description": "Optional lower occurred_at bound, RFC3339 or YYYY-MM-DD",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "occurred_before",
-            "in": "query",
-            "description": "Optional upper occurred_at bound, RFC3339 or YYYY-MM-DD",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Cursor page size",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0
-            }
-          },
-          {
-            "name": "sort",
-            "in": "query",
-            "description": "Comma-separated sort fields. Supported fields: id, occurred_at",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "Cursor token from X-Next-Cursor",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Visible report template audit events",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/EventResponse"
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/templates/{template_id}/history": {
-      "get": {
-        "tags": [
-          "templates"
-        ],
-        "summary": "Get Api V1 Templates By Template Id History",
-        "description": "Auto-generated documentation for GET /api/v1/templates/{template_id}/history. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
-        "operationId": "getApiV1TemplatesByTemplateIdHistory",
-        "parameters": [
-          {
-            "name": "template_id",
-            "in": "path",
-            "description": "Template ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "name": "sort",
-            "in": "query",
-            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Template history The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
-            "headers": {
-              "X-Next-Cursor": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
-              },
-              "X-Total-Count": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/HistoryResponse_ReportTemplateHistory"
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Template not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/templates/{template_id}/history/as-of": {
-      "get": {
-        "tags": [
-          "templates"
-        ],
-        "summary": "Get Api V1 Templates By Template Id History As Of",
-        "description": "Auto-generated documentation for GET /api/v1/templates/{template_id}/history/as-of.",
-        "operationId": "getApiV1TemplatesByTemplateIdHistoryAsOf",
-        "parameters": [
-          {
-            "name": "template_id",
-            "in": "path",
-            "description": "Template ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          },
-          {
-            "name": "at",
-            "in": "query",
-            "description": "RFC3339 timestamp",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Template version at timestamp",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HistoryResponse_ReportTemplateHistory"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Template or version not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/templates/{template_id}/reports": {
-      "post": {
-        "tags": [
-          "templates"
-        ],
-        "summary": "Post Api V1 Templates By Template Id Reports",
-        "description": "Auto-generated documentation for POST /api/v1/templates/{template_id}/reports.",
-        "operationId": "postApiV1TemplatesByTemplateIdReports",
-        "parameters": [
-          {
-            "name": "template_id",
-            "in": "path",
-            "description": "Executable report template ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReportTemplateRunRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "description": "Report task accepted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Template not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too many active report tasks",
             "content": {
               "application/json": {
                 "schema": {
@@ -13040,6 +13040,713 @@
           }
         }
       },
+      "ExportContentType": {
+        "type": "string",
+        "enum": [
+          "application/json",
+          "text/plain",
+          "text/html",
+          "text/csv"
+        ]
+      },
+      "ExportInclude": {
+        "type": "object",
+        "properties": {
+          "related_objects": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ExportIncludeRelatedObject"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ExportIncludeRelatedDirection": {
+        "type": "string",
+        "enum": [
+          "any",
+          "outgoing",
+          "incoming"
+        ]
+      },
+      "ExportIncludeRelatedObject": {
+        "type": "object",
+        "required": [
+          "class_id"
+        ],
+        "properties": {
+          "class_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "class_relation_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "direction": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportIncludeRelatedDirection"
+              }
+            ]
+          },
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "max_depth": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "sort": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportIncludeRelatedSort"
+              }
+            ]
+          }
+        }
+      },
+      "ExportIncludeRelatedSort": {
+        "type": "string",
+        "enum": [
+          "path",
+          "name",
+          "created_at"
+        ]
+      },
+      "ExportJsonResponse": {
+        "type": "object",
+        "required": [
+          "items",
+          "meta",
+          "warnings"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {}
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ExportMeta"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportWarning"
+            }
+          }
+        },
+        "example": {
+          "items": [
+            {
+              "id": 1,
+              "name": "srv-01"
+            },
+            {
+              "id": 2,
+              "name": "srv-02"
+            }
+          ],
+          "meta": {
+            "content_type": "application/json",
+            "count": 2,
+            "scope": {
+              "class_id": 42,
+              "kind": "objects_in_class",
+              "object_id": null
+            },
+            "truncated": false
+          },
+          "warnings": []
+        }
+      },
+      "ExportLimits": {
+        "type": "object",
+        "properties": {
+          "max_items": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "max_output_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          }
+        },
+        "example": {
+          "max_items": 100,
+          "max_output_bytes": 262144
+        }
+      },
+      "ExportMeta": {
+        "type": "object",
+        "required": [
+          "count",
+          "truncated",
+          "scope",
+          "content_type"
+        ],
+        "properties": {
+          "content_type": {
+            "$ref": "#/components/schemas/ExportContentType"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ExportScope"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "example": {
+          "content_type": "application/json",
+          "count": 2,
+          "scope": {
+            "class_id": 42,
+            "kind": "objects_in_class",
+            "object_id": null
+          },
+          "truncated": false
+        }
+      },
+      "ExportMissingDataPolicy": {
+        "type": "string",
+        "enum": [
+          "strict",
+          "null",
+          "omit"
+        ]
+      },
+      "ExportRelationContext": {
+        "type": "object",
+        "properties": {
+          "depth": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "depth": 2
+        }
+      },
+      "ExportRequest": {
+        "type": "object",
+        "required": [
+          "scope"
+        ],
+        "properties": {
+          "include": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportInclude"
+              }
+            ]
+          },
+          "limits": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportLimits"
+              }
+            ]
+          },
+          "missing_data_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportMissingDataPolicy"
+              }
+            ]
+          },
+          "query": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "relation_context": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportRelationContext"
+              }
+            ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ExportScope"
+          }
+        },
+        "example": {
+          "include": null,
+          "limits": {
+            "max_items": 100,
+            "max_output_bytes": 262144
+          },
+          "missing_data_policy": "strict",
+          "query": "name__icontains=server&sort=name",
+          "relation_context": null,
+          "scope": {
+            "class_id": 42,
+            "kind": "objects_in_class",
+            "object_id": null
+          }
+        }
+      },
+      "ExportScope": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "class_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ExportScopeKind"
+          },
+          "object_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        },
+        "example": {
+          "class_id": 42,
+          "kind": "objects_in_class",
+          "object_id": null
+        }
+      },
+      "ExportScopeKind": {
+        "type": "string",
+        "enum": [
+          "collections",
+          "classes",
+          "objects_in_class",
+          "class_relations",
+          "object_relations",
+          "related_objects"
+        ]
+      },
+      "ExportTaskDetails": {
+        "type": "object",
+        "required": [
+          "output_url",
+          "output_available",
+          "output_expired"
+        ],
+        "properties": {
+          "output_available": {
+            "type": "boolean"
+          },
+          "output_content_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "output_expired": {
+            "type": "boolean",
+            "description": "True when output was produced but has since passed its retention window. Distinguishes an\nexpired export from one that was never generated (both have `output_available = false`)."
+          },
+          "output_expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "output_url": {
+            "type": "string"
+          },
+          "template_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "truncated": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "warning_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "ExportTemplate": {
+        "type": "object",
+        "required": [
+          "id",
+          "collection_id",
+          "name",
+          "description",
+          "content_type",
+          "template",
+          "kind",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "class_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "collection_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "content_type": {
+            "$ref": "#/components/schemas/ExportContentType"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "default_limits": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportLimits"
+              }
+            ]
+          },
+          "default_missing_data_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportMissingDataPolicy"
+              }
+            ]
+          },
+          "default_query": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "include": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportInclude"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ExportTemplateKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "relation_context": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportRelationContext"
+              }
+            ]
+          },
+          "scope_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportScopeKind"
+              }
+            ]
+          },
+          "template": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "example": {
+          "class_id": 42,
+          "collection_id": 7,
+          "content_type": "text/plain",
+          "created_at": "2026-03-06T12:00:00",
+          "default_limits": {
+            "max_items": 100,
+            "max_output_bytes": 262144
+          },
+          "default_missing_data_policy": "strict",
+          "default_query": "sort=name",
+          "description": "Template for owner listing",
+          "id": 1,
+          "include": null,
+          "kind": "export",
+          "name": "owner-export",
+          "relation_context": null,
+          "scope_kind": "objects_in_class",
+          "template": "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}",
+          "updated_at": "2026-03-06T12:00:00"
+        }
+      },
+      "ExportTemplateHistory": {
+        "type": "object",
+        "required": [
+          "id",
+          "collection_id",
+          "name",
+          "description",
+          "content_type",
+          "template",
+          "kind",
+          "created_at",
+          "updated_at",
+          "op",
+          "valid_from",
+          "history_id"
+        ],
+        "properties": {
+          "actor_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "class_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "collection_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "content_type": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "default_limits": {},
+          "default_missing_data_policy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "default_query": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "history_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "include": {},
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "op": {
+            "type": "string"
+          },
+          "relation_context": {},
+          "scope_kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "template": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "valid_from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "valid_to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "ExportTemplateID": {
+        "type": "integer",
+        "format": "int32",
+        "description": "Identifier wrapper for a [`ExportTemplate`]."
+      },
+      "ExportTemplateKind": {
+        "type": "string",
+        "enum": [
+          "export",
+          "fragment"
+        ]
+      },
+      "ExportTemplateRunRequest": {
+        "type": "object",
+        "properties": {
+          "limits": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportLimits"
+              }
+            ]
+          },
+          "missing_data_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportMissingDataPolicy"
+              }
+            ]
+          },
+          "object_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "query": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "limits": {
+            "max_items": 100,
+            "max_output_bytes": 262144
+          },
+          "missing_data_policy": "strict",
+          "object_id": null,
+          "query": "name__icontains=server&sort=name"
+        }
+      },
+      "ExportWarning": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "example": {
+          "code": "missing_value",
+          "message": "Template lookup failed",
+          "path": "item.data.owner"
+        }
+      },
       "Group": {
         "type": "object",
         "required": [
@@ -13169,6 +13876,125 @@
                   "null"
                 ],
                 "format": "int32"
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "valid_from": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "valid_to": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "actor_username": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A serialized history row plus the resolved username of its actor (if any)."
+      },
+      "HistoryResponse_ExportTemplateHistory": {
+        "allOf": [
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "collection_id",
+              "name",
+              "description",
+              "content_type",
+              "template",
+              "kind",
+              "created_at",
+              "updated_at",
+              "op",
+              "valid_from",
+              "history_id"
+            ],
+            "properties": {
+              "actor_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32"
+              },
+              "class_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32"
+              },
+              "collection_id": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "content_type": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "default_limits": {},
+              "default_missing_data_policy": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "default_query": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "description": {
+                "type": "string"
+              },
+              "history_id": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "id": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "include": {},
+              "kind": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "op": {
+                "type": "string"
+              },
+              "relation_context": {},
+              "scope_kind": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "template": {
+                "type": "string"
               },
               "updated_at": {
                 "type": "string",
@@ -13458,125 +14284,6 @@
               },
               "url_template": {
                 "type": "string"
-              },
-              "valid_from": {
-                "type": "string",
-                "format": "date-time"
-              },
-              "valid_to": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "format": "date-time"
-              }
-            }
-          },
-          {
-            "type": "object",
-            "properties": {
-              "actor_username": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            }
-          }
-        ],
-        "description": "A serialized history row plus the resolved username of its actor (if any)."
-      },
-      "HistoryResponse_ReportTemplateHistory": {
-        "allOf": [
-          {
-            "type": "object",
-            "required": [
-              "id",
-              "collection_id",
-              "name",
-              "description",
-              "content_type",
-              "template",
-              "kind",
-              "created_at",
-              "updated_at",
-              "op",
-              "valid_from",
-              "history_id"
-            ],
-            "properties": {
-              "actor_id": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "format": "int32"
-              },
-              "class_id": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "format": "int32"
-              },
-              "collection_id": {
-                "type": "integer",
-                "format": "int32"
-              },
-              "content_type": {
-                "type": "string"
-              },
-              "created_at": {
-                "type": "string",
-                "format": "date-time"
-              },
-              "default_limits": {},
-              "default_missing_data_policy": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "default_query": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "description": {
-                "type": "string"
-              },
-              "history_id": {
-                "type": "integer",
-                "format": "int64"
-              },
-              "id": {
-                "type": "integer",
-                "format": "int32"
-              },
-              "include": {},
-              "kind": {
-                "type": "string"
-              },
-              "name": {
-                "type": "string"
-              },
-              "op": {
-                "type": "string"
-              },
-              "relation_context": {},
-              "scope_kind": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "template": {
-                "type": "string"
-              },
-              "updated_at": {
-                "type": "string",
-                "format": "date-time"
               },
               "valid_from": {
                 "type": "string",
@@ -14839,6 +15546,119 @@
           }
         }
       },
+      "NewExportTemplate": {
+        "type": "object",
+        "required": [
+          "collection_id",
+          "name",
+          "description",
+          "content_type",
+          "template",
+          "kind"
+        ],
+        "properties": {
+          "class_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "collection_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "content_type": {
+            "$ref": "#/components/schemas/ExportContentType"
+          },
+          "default_limits": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportLimits"
+              }
+            ]
+          },
+          "default_missing_data_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportMissingDataPolicy"
+              }
+            ]
+          },
+          "default_query": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "include": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportInclude"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ExportTemplateKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "relation_context": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportRelationContext"
+              }
+            ]
+          },
+          "scope_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportScopeKind"
+              }
+            ]
+          },
+          "template": {
+            "type": "string"
+          }
+        },
+        "example": {
+          "class_id": 42,
+          "collection_id": 7,
+          "content_type": "text/plain",
+          "default_limits": {
+            "max_items": 100,
+            "max_output_bytes": 262144
+          },
+          "default_missing_data_policy": "strict",
+          "default_query": "sort=name",
+          "description": "Template for owner listing",
+          "include": null,
+          "kind": "export",
+          "name": "owner-export",
+          "relation_context": null,
+          "scope_kind": "objects_in_class",
+          "template": "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}"
+        }
+      },
       "NewGroup": {
         "type": "object",
         "required": [
@@ -15082,119 +15902,6 @@
           "url_template": {
             "type": "string"
           }
-        }
-      },
-      "NewReportTemplate": {
-        "type": "object",
-        "required": [
-          "collection_id",
-          "name",
-          "description",
-          "content_type",
-          "template",
-          "kind"
-        ],
-        "properties": {
-          "class_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          },
-          "collection_id": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "content_type": {
-            "$ref": "#/components/schemas/ReportContentType"
-          },
-          "default_limits": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportLimits"
-              }
-            ]
-          },
-          "default_missing_data_policy": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportMissingDataPolicy"
-              }
-            ]
-          },
-          "default_query": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "description": {
-            "type": "string"
-          },
-          "include": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportInclude"
-              }
-            ]
-          },
-          "kind": {
-            "$ref": "#/components/schemas/ReportTemplateKind"
-          },
-          "name": {
-            "type": "string"
-          },
-          "relation_context": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportRelationContext"
-              }
-            ]
-          },
-          "scope_kind": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportScopeKind"
-              }
-            ]
-          },
-          "template": {
-            "type": "string"
-          }
-        },
-        "example": {
-          "class_id": 42,
-          "collection_id": 7,
-          "content_type": "text/plain",
-          "default_limits": {
-            "max_items": 100,
-            "max_output_bytes": 262144
-          },
-          "default_missing_data_policy": "strict",
-          "default_query": "sort=name",
-          "description": "Template for owner listing",
-          "include": null,
-          "kind": "report",
-          "name": "owner-report",
-          "relation_context": null,
-          "scope_kind": "objects_in_class",
-          "template": "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}"
         }
       },
       "NewServiceAccount": {
@@ -16235,713 +16942,6 @@
           "object_relation"
         ]
       },
-      "ReportContentType": {
-        "type": "string",
-        "enum": [
-          "application/json",
-          "text/plain",
-          "text/html",
-          "text/csv"
-        ]
-      },
-      "ReportInclude": {
-        "type": "object",
-        "properties": {
-          "related_objects": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "additionalProperties": {
-              "$ref": "#/components/schemas/ReportIncludeRelatedObject"
-            },
-            "propertyNames": {
-              "type": "string"
-            }
-          }
-        }
-      },
-      "ReportIncludeRelatedDirection": {
-        "type": "string",
-        "enum": [
-          "any",
-          "outgoing",
-          "incoming"
-        ]
-      },
-      "ReportIncludeRelatedObject": {
-        "type": "object",
-        "required": [
-          "class_id"
-        ],
-        "properties": {
-          "class_id": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "class_relation_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          },
-          "direction": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportIncludeRelatedDirection"
-              }
-            ]
-          },
-          "limit": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          },
-          "max_depth": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          },
-          "sort": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportIncludeRelatedSort"
-              }
-            ]
-          }
-        }
-      },
-      "ReportIncludeRelatedSort": {
-        "type": "string",
-        "enum": [
-          "path",
-          "name",
-          "created_at"
-        ]
-      },
-      "ReportJsonResponse": {
-        "type": "object",
-        "required": [
-          "items",
-          "meta",
-          "warnings"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {}
-          },
-          "meta": {
-            "$ref": "#/components/schemas/ReportMeta"
-          },
-          "warnings": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ReportWarning"
-            }
-          }
-        },
-        "example": {
-          "items": [
-            {
-              "id": 1,
-              "name": "srv-01"
-            },
-            {
-              "id": 2,
-              "name": "srv-02"
-            }
-          ],
-          "meta": {
-            "content_type": "application/json",
-            "count": 2,
-            "scope": {
-              "class_id": 42,
-              "kind": "objects_in_class",
-              "object_id": null
-            },
-            "truncated": false
-          },
-          "warnings": []
-        }
-      },
-      "ReportLimits": {
-        "type": "object",
-        "properties": {
-          "max_items": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "minimum": 0
-          },
-          "max_output_bytes": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "minimum": 0
-          }
-        },
-        "example": {
-          "max_items": 100,
-          "max_output_bytes": 262144
-        }
-      },
-      "ReportMeta": {
-        "type": "object",
-        "required": [
-          "count",
-          "truncated",
-          "scope",
-          "content_type"
-        ],
-        "properties": {
-          "content_type": {
-            "$ref": "#/components/schemas/ReportContentType"
-          },
-          "count": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "scope": {
-            "$ref": "#/components/schemas/ReportScope"
-          },
-          "truncated": {
-            "type": "boolean"
-          }
-        },
-        "example": {
-          "content_type": "application/json",
-          "count": 2,
-          "scope": {
-            "class_id": 42,
-            "kind": "objects_in_class",
-            "object_id": null
-          },
-          "truncated": false
-        }
-      },
-      "ReportMissingDataPolicy": {
-        "type": "string",
-        "enum": [
-          "strict",
-          "null",
-          "omit"
-        ]
-      },
-      "ReportRelationContext": {
-        "type": "object",
-        "properties": {
-          "depth": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          }
-        },
-        "additionalProperties": false,
-        "example": {
-          "depth": 2
-        }
-      },
-      "ReportRequest": {
-        "type": "object",
-        "required": [
-          "scope"
-        ],
-        "properties": {
-          "include": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportInclude"
-              }
-            ]
-          },
-          "limits": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportLimits"
-              }
-            ]
-          },
-          "missing_data_policy": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportMissingDataPolicy"
-              }
-            ]
-          },
-          "query": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "relation_context": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportRelationContext"
-              }
-            ]
-          },
-          "scope": {
-            "$ref": "#/components/schemas/ReportScope"
-          }
-        },
-        "example": {
-          "include": null,
-          "limits": {
-            "max_items": 100,
-            "max_output_bytes": 262144
-          },
-          "missing_data_policy": "strict",
-          "query": "name__icontains=server&sort=name",
-          "relation_context": null,
-          "scope": {
-            "class_id": 42,
-            "kind": "objects_in_class",
-            "object_id": null
-          }
-        }
-      },
-      "ReportScope": {
-        "type": "object",
-        "required": [
-          "kind"
-        ],
-        "properties": {
-          "class_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          },
-          "kind": {
-            "$ref": "#/components/schemas/ReportScopeKind"
-          },
-          "object_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          }
-        },
-        "example": {
-          "class_id": 42,
-          "kind": "objects_in_class",
-          "object_id": null
-        }
-      },
-      "ReportScopeKind": {
-        "type": "string",
-        "enum": [
-          "collections",
-          "classes",
-          "objects_in_class",
-          "class_relations",
-          "object_relations",
-          "related_objects"
-        ]
-      },
-      "ReportTaskDetails": {
-        "type": "object",
-        "required": [
-          "output_url",
-          "output_available",
-          "output_expired"
-        ],
-        "properties": {
-          "output_available": {
-            "type": "boolean"
-          },
-          "output_content_type": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "output_expired": {
-            "type": "boolean",
-            "description": "True when output was produced but has since passed its retention window. Distinguishes an\nexpired report from one that was never generated (both have `output_available = false`)."
-          },
-          "output_expires_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "output_url": {
-            "type": "string"
-          },
-          "template_name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "truncated": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "warning_count": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          }
-        }
-      },
-      "ReportTemplate": {
-        "type": "object",
-        "required": [
-          "id",
-          "collection_id",
-          "name",
-          "description",
-          "content_type",
-          "template",
-          "kind",
-          "created_at",
-          "updated_at"
-        ],
-        "properties": {
-          "class_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          },
-          "collection_id": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "content_type": {
-            "$ref": "#/components/schemas/ReportContentType"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "default_limits": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportLimits"
-              }
-            ]
-          },
-          "default_missing_data_policy": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportMissingDataPolicy"
-              }
-            ]
-          },
-          "default_query": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "description": {
-            "type": "string"
-          },
-          "id": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "include": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportInclude"
-              }
-            ]
-          },
-          "kind": {
-            "$ref": "#/components/schemas/ReportTemplateKind"
-          },
-          "name": {
-            "type": "string"
-          },
-          "relation_context": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportRelationContext"
-              }
-            ]
-          },
-          "scope_kind": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportScopeKind"
-              }
-            ]
-          },
-          "template": {
-            "type": "string"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        },
-        "example": {
-          "class_id": 42,
-          "collection_id": 7,
-          "content_type": "text/plain",
-          "created_at": "2026-03-06T12:00:00",
-          "default_limits": {
-            "max_items": 100,
-            "max_output_bytes": 262144
-          },
-          "default_missing_data_policy": "strict",
-          "default_query": "sort=name",
-          "description": "Template for owner listing",
-          "id": 1,
-          "include": null,
-          "kind": "report",
-          "name": "owner-report",
-          "relation_context": null,
-          "scope_kind": "objects_in_class",
-          "template": "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}",
-          "updated_at": "2026-03-06T12:00:00"
-        }
-      },
-      "ReportTemplateHistory": {
-        "type": "object",
-        "required": [
-          "id",
-          "collection_id",
-          "name",
-          "description",
-          "content_type",
-          "template",
-          "kind",
-          "created_at",
-          "updated_at",
-          "op",
-          "valid_from",
-          "history_id"
-        ],
-        "properties": {
-          "actor_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          },
-          "class_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          },
-          "collection_id": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "content_type": {
-            "type": "string"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "default_limits": {},
-          "default_missing_data_policy": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "default_query": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "description": {
-            "type": "string"
-          },
-          "history_id": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "id": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "include": {},
-          "kind": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "op": {
-            "type": "string"
-          },
-          "relation_context": {},
-          "scope_kind": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "template": {
-            "type": "string"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "valid_from": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "valid_to": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          }
-        }
-      },
-      "ReportTemplateID": {
-        "type": "integer",
-        "format": "int32",
-        "description": "Identifier wrapper for a [`ReportTemplate`]."
-      },
-      "ReportTemplateKind": {
-        "type": "string",
-        "enum": [
-          "report",
-          "fragment"
-        ]
-      },
-      "ReportTemplateRunRequest": {
-        "type": "object",
-        "properties": {
-          "limits": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportLimits"
-              }
-            ]
-          },
-          "missing_data_policy": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportMissingDataPolicy"
-              }
-            ]
-          },
-          "object_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          },
-          "query": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "additionalProperties": false,
-        "example": {
-          "limits": {
-            "max_items": 100,
-            "max_output_bytes": 262144
-          },
-          "missing_data_policy": "strict",
-          "object_id": null,
-          "query": "name__icontains=server&sort=name"
-        }
-      },
-      "ReportWarning": {
-        "type": "object",
-        "required": [
-          "code",
-          "message"
-        ],
-        "properties": {
-          "code": {
-            "type": "string"
-          },
-          "message": {
-            "type": "string"
-          },
-          "path": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "example": {
-          "code": "missing_value",
-          "message": "Template lookup failed",
-          "path": "item.data.owner"
-        }
-      },
       "ServiceAccountResponse": {
         "type": "object",
         "description": "Public response shape, combining the service-account row with its principal\nname (the name lives on `principals`).",
@@ -16995,6 +16995,16 @@
       "TaskDetails": {
         "type": "object",
         "properties": {
+          "export": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportTaskDetails"
+              }
+            ]
+          },
           "import": {
             "oneOf": [
               {
@@ -17002,16 +17012,6 @@
               },
               {
                 "$ref": "#/components/schemas/ImportTaskDetails"
-              }
-            ]
-          },
-          "report": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportTaskDetails"
               }
             ]
           }
@@ -17052,7 +17052,6 @@
         "type": "string",
         "enum": [
           "import",
-          "report",
           "export",
           "reindex",
           "remote_call"
@@ -17068,6 +17067,18 @@
           "events": {
             "type": "string"
           },
+          "export": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "export_output": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "import": {
             "type": [
               "string",
@@ -17075,18 +17086,6 @@
             ]
           },
           "import_results": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "report": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "report_output": {
             "type": [
               "string",
               "null"
@@ -17140,7 +17139,6 @@
           "partially_succeeded_tasks",
           "cancelled_tasks",
           "import_tasks",
-          "report_tasks",
           "export_tasks",
           "reindex_tasks",
           "total_task_events",
@@ -17196,10 +17194,6 @@
             "format": "int64"
           },
           "reindex_tasks": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "report_tasks": {
             "type": "integer",
             "format": "int64"
           },
@@ -17600,6 +17594,119 @@
           }
         }
       },
+      "UpdateExportTemplate": {
+        "type": "object",
+        "properties": {
+          "class_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "collection_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "default_limits": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportLimits"
+              }
+            ]
+          },
+          "default_missing_data_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportMissingDataPolicy"
+              }
+            ]
+          },
+          "default_query": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "include": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportInclude"
+              }
+            ]
+          },
+          "kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportTemplateKind"
+              }
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "relation_context": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportRelationContext"
+              }
+            ]
+          },
+          "scope_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportScopeKind"
+              }
+            ]
+          },
+          "template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "example": {
+          "class_id": null,
+          "collection_id": 9,
+          "default_query": "sort=name.desc",
+          "description": "Updated template description",
+          "kind": null,
+          "name": "owner-export-v2",
+          "scope_kind": null,
+          "template": "{% for item in items %}{{ item.name }}\n{% endfor %}"
+        }
+      },
       "UpdateGroup": {
         "type": "object",
         "properties": {
@@ -17783,119 +17890,6 @@
           }
         }
       },
-      "UpdateReportTemplate": {
-        "type": "object",
-        "properties": {
-          "class_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          },
-          "collection_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          },
-          "default_limits": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportLimits"
-              }
-            ]
-          },
-          "default_missing_data_policy": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportMissingDataPolicy"
-              }
-            ]
-          },
-          "default_query": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "description": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "include": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportInclude"
-              }
-            ]
-          },
-          "kind": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportTemplateKind"
-              }
-            ]
-          },
-          "name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "relation_context": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportRelationContext"
-              }
-            ]
-          },
-          "scope_kind": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportScopeKind"
-              }
-            ]
-          },
-          "template": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "example": {
-          "class_id": null,
-          "collection_id": 9,
-          "default_query": "sort=name.desc",
-          "description": "Updated template description",
-          "kind": null,
-          "name": "owner-report-v2",
-          "scope_kind": null,
-          "template": "{% for item in items %}{{ item.name }}\n{% endfor %}"
-        }
-      },
       "UpdateServiceAccount": {
         "type": "object",
         "description": "Mutable fields on a service account.",
@@ -18041,12 +18035,12 @@
       "description": "Import submission and import-specific result endpoints"
     },
     {
-      "name": "reports",
-      "description": "Server-side report execution endpoints"
+      "name": "exports",
+      "description": "Server-side export execution endpoints"
     },
     {
-      "name": "templates",
-      "description": "Stored report template management endpoints"
+      "name": "export-templates",
+      "description": "Stored export template management endpoints"
     },
     {
       "name": "remote-targets",
