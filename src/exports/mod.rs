@@ -2144,7 +2144,7 @@ mod tests {
     };
 
     use super::{
-        HydrationBudget, EXPORT_TRUNCATED_HEADER, ExportRuntime, inferred_relation_alias,
+        EXPORT_TRUNCATED_HEADER, ExportRuntime, HydrationBudget, inferred_relation_alias,
         normalize_alias_segment, pluralize_alias, render_export_task_output,
         take_related_within_budget, validate_export_limits, validate_export_submission,
     };

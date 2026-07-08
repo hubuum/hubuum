@@ -80,12 +80,9 @@ async fn preload_collections_for_class_keys(
     let names = class_keys
         .iter()
         .filter_map(|key| {
-            key.collection_key.as_ref().and_then(|collection| {
-                collection
-                    .path
-                    .is_none()
-                    .then_some(collection.name.clone())
-            })
+            key.collection_key
+                .as_ref()
+                .and_then(|collection| collection.path.is_none().then_some(collection.name.clone()))
         })
         .filter(|name| {
             !state.collections_by_name.contains_key(name)
@@ -186,11 +183,13 @@ async fn resolve_class_collection_for_preload(
 ) -> Result<Option<CollectionResolution>, String> {
     match (key.collection_ref.as_deref(), key.collection_key.as_ref()) {
         (Some(reference), None) => Ok(state.collections_by_ref.get(reference).cloned()),
-        (None, Some(key)) => match resolve_collection_planning(pool, state, None, Some(key)).await {
-            Ok(collection) => Ok(Some(collection)),
-            Err(message) if message.contains("not found") => Ok(None),
-            Err(message) => Err(message),
-        },
+        (None, Some(key)) => {
+            match resolve_collection_planning(pool, state, None, Some(key)).await {
+                Ok(collection) => Ok(Some(collection)),
+                Err(message) if message.contains("not found") => Ok(None),
+                Err(message) => Err(message),
+            }
+        }
         _ => Ok(None),
     }
 }
