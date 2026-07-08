@@ -329,7 +329,7 @@ pub async fn move_collection_parent(
 ) -> Result<impl Responder, ApiError> {
     let collection = collection_id.instance(&pool).await?;
     let new_parent_id = update_parent.into_inner().parent_collection_id;
-    let new_parent = CollectionID::new(new_parent_id)?.instance(&pool).await?;
+    let new_parent = new_parent_id.instance(&pool).await?;
 
     can!(
         &pool,
@@ -362,7 +362,7 @@ pub async fn move_collection_parent(
     let updated = crate::models::collection::move_collection(
         &pool,
         collection.id,
-        new_parent_id,
+        new_parent_id.id(),
         Some(&event_context),
     )
     .await?;

@@ -391,7 +391,7 @@ impl SaveCollectionWithAssigneeRecord for NewCollectionWithAssignee {
         let new_collection = NewCollection {
             name: self.name.clone(),
             description: self.description.clone(),
-            parent_collection_id: self.parent_collection_id,
+            parent_collection_id: self.parent_collection_id.map(CollectionID::id),
         };
 
         new_collection
@@ -407,7 +407,7 @@ impl SaveCollectionWithAssigneeRecord for NewCollectionWithAssignee {
         let new_collection = NewCollection {
             name: self.name.clone(),
             description: self.description.clone(),
-            parent_collection_id: self.parent_collection_id,
+            parent_collection_id: self.parent_collection_id.map(CollectionID::id),
         };
 
         new_collection

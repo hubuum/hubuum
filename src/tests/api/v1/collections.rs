@@ -224,6 +224,47 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
+    async fn test_invalid_parent_collection_id_in_body_is_rejected(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let admin_group = ensure_admin_group(&context.pool).await;
+        let collection = context
+            .collection_fixture("invalid_parent_collection_id_body")
+            .await;
+
+        let create_body = serde_json::json!({
+            "name": context.scoped_name("invalid_parent_collection_id_create"),
+            "description": "invalid parent collection id",
+            "group_id": admin_group.id,
+            "parent_collection_id": 0
+        });
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            COLLECTION_ENDPOINT,
+            &create_body,
+        )
+        .await;
+        let _ = assert_response_status(resp, http::StatusCode::BAD_REQUEST).await;
+
+        let move_body = serde_json::json!({
+            "parent_collection_id": 0
+        });
+        let resp = put_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{COLLECTION_ENDPOINT}/{}/parent", collection.collection.id),
+            &move_body,
+        )
+        .await;
+        let _ = assert_response_status(resp, http::StatusCode::BAD_REQUEST).await;
+
+        collection.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
     async fn test_api_collection_permissions(#[future(awt)] test_context: TestContext) {
         let context = test_context;
         let admin_group = ensure_admin_group(&context.pool).await;

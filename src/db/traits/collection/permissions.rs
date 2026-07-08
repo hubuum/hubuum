@@ -54,97 +54,6 @@ fn build_effective_group_permissions(
         .collect()
 }
 
-pub(crate) fn permission_filter_sql(permission: Permissions, target: bool) -> &'static str {
-    match (permission, target) {
-        (Permissions::ReadCollection, true) => "permissions.has_read_collection = TRUE",
-        (Permissions::ReadCollection, false) => "permissions.has_read_collection = FALSE",
-        (Permissions::UpdateCollection, true) => "permissions.has_update_collection = TRUE",
-        (Permissions::UpdateCollection, false) => "permissions.has_update_collection = FALSE",
-        (Permissions::DeleteCollection, true) => "permissions.has_delete_collection = TRUE",
-        (Permissions::DeleteCollection, false) => "permissions.has_delete_collection = FALSE",
-        (Permissions::DelegateCollection, true) => "permissions.has_delegate_collection = TRUE",
-        (Permissions::DelegateCollection, false) => "permissions.has_delegate_collection = FALSE",
-        (Permissions::CreateClass, true) => "permissions.has_create_class = TRUE",
-        (Permissions::CreateClass, false) => "permissions.has_create_class = FALSE",
-        (Permissions::ReadClass, true) => "permissions.has_read_class = TRUE",
-        (Permissions::ReadClass, false) => "permissions.has_read_class = FALSE",
-        (Permissions::UpdateClass, true) => "permissions.has_update_class = TRUE",
-        (Permissions::UpdateClass, false) => "permissions.has_update_class = FALSE",
-        (Permissions::DeleteClass, true) => "permissions.has_delete_class = TRUE",
-        (Permissions::DeleteClass, false) => "permissions.has_delete_class = FALSE",
-        (Permissions::CreateObject, true) => "permissions.has_create_object = TRUE",
-        (Permissions::CreateObject, false) => "permissions.has_create_object = FALSE",
-        (Permissions::ReadObject, true) => "permissions.has_read_object = TRUE",
-        (Permissions::ReadObject, false) => "permissions.has_read_object = FALSE",
-        (Permissions::UpdateObject, true) => "permissions.has_update_object = TRUE",
-        (Permissions::UpdateObject, false) => "permissions.has_update_object = FALSE",
-        (Permissions::DeleteObject, true) => "permissions.has_delete_object = TRUE",
-        (Permissions::DeleteObject, false) => "permissions.has_delete_object = FALSE",
-        (Permissions::CreateClassRelation, true) => "permissions.has_create_class_relation = TRUE",
-        (Permissions::CreateClassRelation, false) => {
-            "permissions.has_create_class_relation = FALSE"
-        }
-        (Permissions::ReadClassRelation, true) => "permissions.has_read_class_relation = TRUE",
-        (Permissions::ReadClassRelation, false) => "permissions.has_read_class_relation = FALSE",
-        (Permissions::UpdateClassRelation, true) => "permissions.has_update_class_relation = TRUE",
-        (Permissions::UpdateClassRelation, false) => {
-            "permissions.has_update_class_relation = FALSE"
-        }
-        (Permissions::DeleteClassRelation, true) => "permissions.has_delete_class_relation = TRUE",
-        (Permissions::DeleteClassRelation, false) => {
-            "permissions.has_delete_class_relation = FALSE"
-        }
-        (Permissions::CreateObjectRelation, true) => {
-            "permissions.has_create_object_relation = TRUE"
-        }
-        (Permissions::CreateObjectRelation, false) => {
-            "permissions.has_create_object_relation = FALSE"
-        }
-        (Permissions::ReadObjectRelation, true) => "permissions.has_read_object_relation = TRUE",
-        (Permissions::ReadObjectRelation, false) => "permissions.has_read_object_relation = FALSE",
-        (Permissions::UpdateObjectRelation, true) => {
-            "permissions.has_update_object_relation = TRUE"
-        }
-        (Permissions::UpdateObjectRelation, false) => {
-            "permissions.has_update_object_relation = FALSE"
-        }
-        (Permissions::DeleteObjectRelation, true) => {
-            "permissions.has_delete_object_relation = TRUE"
-        }
-        (Permissions::DeleteObjectRelation, false) => {
-            "permissions.has_delete_object_relation = FALSE"
-        }
-        (Permissions::ReadTemplate, true) => "permissions.has_read_template = TRUE",
-        (Permissions::ReadTemplate, false) => "permissions.has_read_template = FALSE",
-        (Permissions::CreateTemplate, true) => "permissions.has_create_template = TRUE",
-        (Permissions::CreateTemplate, false) => "permissions.has_create_template = FALSE",
-        (Permissions::UpdateTemplate, true) => "permissions.has_update_template = TRUE",
-        (Permissions::UpdateTemplate, false) => "permissions.has_update_template = FALSE",
-        (Permissions::DeleteTemplate, true) => "permissions.has_delete_template = TRUE",
-        (Permissions::DeleteTemplate, false) => "permissions.has_delete_template = FALSE",
-        (Permissions::ReadRemoteTarget, true) => "permissions.has_read_remote_target = TRUE",
-        (Permissions::ReadRemoteTarget, false) => "permissions.has_read_remote_target = FALSE",
-        (Permissions::CreateRemoteTarget, true) => "permissions.has_create_remote_target = TRUE",
-        (Permissions::CreateRemoteTarget, false) => "permissions.has_create_remote_target = FALSE",
-        (Permissions::UpdateRemoteTarget, true) => "permissions.has_update_remote_target = TRUE",
-        (Permissions::UpdateRemoteTarget, false) => "permissions.has_update_remote_target = FALSE",
-        (Permissions::DeleteRemoteTarget, true) => "permissions.has_delete_remote_target = TRUE",
-        (Permissions::DeleteRemoteTarget, false) => "permissions.has_delete_remote_target = FALSE",
-        (Permissions::ExecuteRemoteTarget, true) => "permissions.has_execute_remote_target = TRUE",
-        (Permissions::ExecuteRemoteTarget, false) => {
-            "permissions.has_execute_remote_target = FALSE"
-        }
-        (Permissions::ReadAudit, true) => "permissions.has_read_audit = TRUE",
-        (Permissions::ReadAudit, false) => "permissions.has_read_audit = FALSE",
-        (Permissions::ManageEventSubscription, true) => {
-            "permissions.has_manage_event_subscription = TRUE"
-        }
-        (Permissions::ManageEventSubscription, false) => {
-            "permissions.has_manage_event_subscription = FALSE"
-        }
-    }
-}
-
 pub async fn total_collection_count_from_backend(pool: &DbPool) -> Result<i64, ApiError> {
     use crate::schema::collections::dsl::*;
 
@@ -227,9 +136,7 @@ pub async fn principal_on_paginated_with_total_count_from_backend<
             .into_boxed();
 
         for perm in query_options.filters.permissions()?.iter().cloned() {
-            query = query.filter(diesel::dsl::sql::<diesel::sql_types::Bool>(
-                permission_filter_sql(perm, true),
-            ));
+            crate::apply_permission_filter!(query, perm, true);
         }
 
         for param in &query_options.filters {
@@ -654,9 +561,7 @@ pub async fn groups_on_paginated_with_total_count_from_backend<T: CollectionAcce
             .into_boxed();
 
         for perm in permission_filters.iter().cloned() {
-            query = query.filter(diesel::dsl::sql::<diesel::sql_types::Bool>(
-                permission_filter_sql(perm, true),
-            ));
+            crate::apply_permission_filter!(query, perm, true);
         }
 
         for param in &query_options.filters {

@@ -53,7 +53,7 @@ pub struct NewCollectionWithAssignee {
     pub name: String,
     pub description: String,
     pub group_id: i32,
-    pub parent_collection_id: Option<i32>,
+    pub parent_collection_id: Option<CollectionID>,
 }
 
 /// A new collection, without an assignee. Used for creating new collection entries
@@ -70,7 +70,7 @@ pub struct NewCollection {
 
 #[derive(Serialize, Deserialize, Clone, ToSchema)]
 pub struct UpdateCollectionParent {
-    pub parent_collection_id: i32,
+    pub parent_collection_id: CollectionID,
 }
 
 #[allow(dead_code)]
@@ -523,7 +523,7 @@ mod tests {
             name: scope.scoped_name("inherited_child"),
             description: "Child collection".to_string(),
             group_id: child_group.id,
-            parent_collection_id: Some(parent.collection.id),
+            parent_collection_id: Some(CollectionID::new(parent.collection.id).unwrap()),
         }
         .save_without_events(&pool)
         .await
@@ -630,7 +630,7 @@ mod tests {
             name: scope.scoped_name("move_child"),
             description: "Child collection".to_string(),
             group_id: child_group.id,
-            parent_collection_id: Some(parent.collection.id),
+            parent_collection_id: Some(CollectionID::new(parent.collection.id).unwrap()),
         }
         .save_without_events(&pool)
         .await
@@ -647,7 +647,7 @@ mod tests {
             name: scope.scoped_name("move_grandchild"),
             description: "Grandchild collection".to_string(),
             group_id: grandchild_group.id,
-            parent_collection_id: Some(child.id),
+            parent_collection_id: Some(CollectionID::new(child.id).unwrap()),
         }
         .save_without_events(&pool)
         .await

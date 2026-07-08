@@ -23,10 +23,10 @@ use crate::db::traits::task_import::{create_class_db, create_object_db};
 use crate::db::with_connection;
 use crate::errors::ApiError;
 use crate::models::{
-    ClassKey, CollectionKey, ImportAtomicity, ImportClassInput, ImportCollectionInput,
-    ImportCollisionPolicy, ImportMode, ImportObjectInput, ImportPermissionPolicy,
-    NewCollectionWithAssignee, NewImportTaskResultRecord, NewTaskRecord, ObjectKey, TaskKind,
-    TaskStatus,
+    ClassKey, CollectionID, CollectionKey, ImportAtomicity, ImportClassInput,
+    ImportCollectionInput, ImportCollisionPolicy, ImportMode, ImportObjectInput,
+    ImportPermissionPolicy, NewCollectionWithAssignee, NewImportTaskResultRecord, NewTaskRecord,
+    ObjectKey, TaskKind, TaskStatus,
 };
 use crate::schema::collections::dsl::{collections, name as collection_name};
 use crate::schema::hubuumclass::dsl::{hubuumclass, name as class_name};
@@ -846,7 +846,7 @@ fn test_resolve_collection_planning_rejects_ambiguous_bare_name() {
             name: child_name.clone(),
             description: "first ambiguous child".to_string(),
             group_id: parent_one.owner_group.id,
-            parent_collection_id: Some(parent_one.collection.id),
+            parent_collection_id: Some(CollectionID::new(parent_one.collection.id).unwrap()),
         })
         .save_without_events(&context.pool),
     )
@@ -856,7 +856,7 @@ fn test_resolve_collection_planning_rejects_ambiguous_bare_name() {
             name: child_name.clone(),
             description: "second ambiguous child".to_string(),
             group_id: parent_two.owner_group.id,
-            parent_collection_id: Some(parent_two.collection.id),
+            parent_collection_id: Some(CollectionID::new(parent_two.collection.id).unwrap()),
         })
         .save_without_events(&context.pool),
     )
@@ -890,7 +890,7 @@ fn test_resolve_collection_planning_uses_path_to_disambiguate_name() {
             name: child_name.clone(),
             description: "first path child".to_string(),
             group_id: parent_one.owner_group.id,
-            parent_collection_id: Some(parent_one.collection.id),
+            parent_collection_id: Some(CollectionID::new(parent_one.collection.id).unwrap()),
         })
         .save_without_events(&context.pool),
     )
@@ -900,7 +900,7 @@ fn test_resolve_collection_planning_uses_path_to_disambiguate_name() {
             name: child_name.clone(),
             description: "second path child".to_string(),
             group_id: parent_two.owner_group.id,
-            parent_collection_id: Some(parent_two.collection.id),
+            parent_collection_id: Some(CollectionID::new(parent_two.collection.id).unwrap()),
         })
         .save_without_events(&context.pool),
     )

@@ -27,11 +27,7 @@ pub trait UserPermissions: AuthzSubject {
         I: IntoIterator<Item = N>,
         N: CollectionAccessors,
     {
-        use crate::db::traits::collection::permission_filter_sql;
-        use diesel::{
-            dsl::sql,
-            sql_types::{BigInt, Bool},
-        };
+        use diesel::{AggregateExpressionMethods, dsl::count};
         use futures::stream::{self, StreamExt, TryStreamExt};
         use std::collections::HashSet;
 
@@ -78,15 +74,13 @@ pub trait UserPermissions: AuthzSubject {
 
         // Apply all permission filters
         for perm in requested {
-            base_query = base_query.filter(sql::<Bool>(permission_filter_sql(perm, true)));
+            crate::apply_permission_filter!(base_query, perm, true);
         }
 
         // Count the number of distinct collections that match all criteria
         let matching_collections_count = with_connection(pool, |conn| {
             base_query
-                .select(sql::<BigInt>(
-                    "COUNT(DISTINCT collection_closure.descendant_collection_id)",
-                ))
+                .select(count(descendant_collection_id).aggregate_distinct())
                 .first::<i64>(conn)
         })?;
 

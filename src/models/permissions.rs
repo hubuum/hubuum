@@ -258,84 +258,11 @@ pub trait PermissionFilter<'a, Q> {
 impl<'a> PermissionFilter<'a, permissions::BoxedQuery<'a, diesel::pg::Pg>> for Permissions {
     fn create_boxed_filter(
         self,
-        query: permissions::BoxedQuery<diesel::pg::Pg>,
+        mut query: permissions::BoxedQuery<diesel::pg::Pg>,
         target: bool,
     ) -> permissions::BoxedQuery<diesel::pg::Pg> {
-        match self {
-            Permissions::ReadCollection => {
-                query.filter(permissions::has_read_collection.eq(target))
-            }
-            Permissions::UpdateCollection => {
-                query.filter(permissions::has_update_collection.eq(target))
-            }
-            Permissions::DeleteCollection => {
-                query.filter(permissions::has_delete_collection.eq(target))
-            }
-            Permissions::DelegateCollection => {
-                query.filter(permissions::has_delegate_collection.eq(target))
-            }
-            Permissions::CreateClass => query.filter(permissions::has_create_class.eq(target)),
-            Permissions::ReadClass => query.filter(permissions::has_read_class.eq(target)),
-            Permissions::UpdateClass => query.filter(permissions::has_update_class.eq(target)),
-            Permissions::DeleteClass => query.filter(permissions::has_delete_class.eq(target)),
-            Permissions::CreateObject => query.filter(permissions::has_create_object.eq(target)),
-            Permissions::ReadObject => query.filter(permissions::has_read_object.eq(target)),
-            Permissions::UpdateObject => query.filter(permissions::has_update_object.eq(target)),
-            Permissions::DeleteObject => query.filter(permissions::has_delete_object.eq(target)),
-            Permissions::CreateClassRelation => {
-                query.filter(permissions::has_create_class_relation.eq(target))
-            }
-            Permissions::ReadClassRelation => {
-                query.filter(permissions::has_read_class_relation.eq(target))
-            }
-            Permissions::UpdateClassRelation => {
-                query.filter(permissions::has_update_class_relation.eq(target))
-            }
-            Permissions::DeleteClassRelation => {
-                query.filter(permissions::has_delete_class_relation.eq(target))
-            }
-            Permissions::CreateObjectRelation => {
-                query.filter(permissions::has_create_object_relation.eq(target))
-            }
-            Permissions::ReadObjectRelation => {
-                query.filter(permissions::has_read_object_relation.eq(target))
-            }
-            Permissions::UpdateObjectRelation => {
-                query.filter(permissions::has_update_object_relation.eq(target))
-            }
-            Permissions::DeleteObjectRelation => {
-                query.filter(permissions::has_delete_object_relation.eq(target))
-            }
-            Permissions::ReadTemplate => query.filter(permissions::has_read_template.eq(target)),
-            Permissions::CreateTemplate => {
-                query.filter(permissions::has_create_template.eq(target))
-            }
-            Permissions::UpdateTemplate => {
-                query.filter(permissions::has_update_template.eq(target))
-            }
-            Permissions::DeleteTemplate => {
-                query.filter(permissions::has_delete_template.eq(target))
-            }
-            Permissions::ReadRemoteTarget => {
-                query.filter(permissions::has_read_remote_target.eq(target))
-            }
-            Permissions::CreateRemoteTarget => {
-                query.filter(permissions::has_create_remote_target.eq(target))
-            }
-            Permissions::UpdateRemoteTarget => {
-                query.filter(permissions::has_update_remote_target.eq(target))
-            }
-            Permissions::DeleteRemoteTarget => {
-                query.filter(permissions::has_delete_remote_target.eq(target))
-            }
-            Permissions::ExecuteRemoteTarget => {
-                query.filter(permissions::has_execute_remote_target.eq(target))
-            }
-            Permissions::ReadAudit => query.filter(permissions::has_read_audit.eq(target)),
-            Permissions::ManageEventSubscription => {
-                query.filter(permissions::has_manage_event_subscription.eq(target))
-            }
-        }
+        crate::apply_permission_filter!(query, self, target);
+        query
     }
 }
 

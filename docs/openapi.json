@@ -14758,11 +14758,14 @@
             "type": "string"
           },
           "parent_collection_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CollectionID"
+              }
+            ]
           }
         },
         "example": {
@@ -17497,8 +17500,7 @@
         ],
         "properties": {
           "parent_collection_id": {
-            "type": "integer",
-            "format": "int32"
+            "$ref": "#/components/schemas/CollectionID"
           }
         }
       },
